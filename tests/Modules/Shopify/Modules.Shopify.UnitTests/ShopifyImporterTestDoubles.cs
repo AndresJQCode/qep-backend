@@ -324,8 +324,87 @@ internal sealed class FakeOrderWriter(FakeUnitOfWork unitOfWork) : IShopifyOrder
             throw fail();
         }
 
-        return Task.FromResult(Result(draft));
+        var result = Result(draft);
+        if (!result.IsRejected && !States.ContainsKey(result.OrderId))
+        {
+            // Lo que Quotations guardó: la importación lee el pedido después de escribir (spec 2026-11-14).
+            var pickup = draft.Shipping?.IsStorePickup == true;
+            States[result.OrderId] = new ShopifyOrderState(
+                result.OrderId, 1, "Open", true, false, false, "PaymentPending", result.ClientId, draft.BillingAccount.Currency, pickup,
+                [.. draft.Lines.Select(Line)],
+                pickup ? new ShopifyShippingDraft(true, null, null, null, 0m, 0, false) : draft.Shipping ?? new ShopifyShippingDraft(false, null, null, null, 0m, 0, false),
+                pickup ? null : Fingerprint(draft.ShippingParty),
+                null,
+                Blank(draft.BuyerNotes));
+        }
+
+        return Task.FromResult(result);
     }
+
+    /// <summary>El pedido de QEP de cada id, como lo leería el adaptador. <see cref="ApplyEditAsync"/> lo cambia como Quotations:
+    /// versión distinta → <c>concurrency.conflict</c>; no editable → <c>order.order.not_editable</c>.</summary>
+    public Dictionary<Guid, ShopifyOrderState> States { get; } = [];
+
+    public List<ShopifyOrderEditDraft> Edits { get; } = [];
+
+    /// <summary>Fuerza la respuesta del aplicar (o lanza); <c>null</c> sigue con la conducta en memoria.</summary>
+    public Func<ShopifyOrderEditDraft, ShopifyOrderEditOutcome?>? OnApplyEdit { get; set; }
+
+    public Task<ShopifyOrderState?> ReadStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+        Task.FromResult(States.GetValueOrDefault(orderId));
+
+    public Task<ShopifyOrderEditOutcome> ApplyEditAsync(ShopifyOrderEditDraft draft, CancellationToken cancellationToken)
+    {
+        Edits.Add(draft);
+        Log.Add("edit");
+        if (OnApplyEdit?.Invoke(draft) is { } forced)
+        {
+            return Task.FromResult(forced);
+        }
+
+        if (!States.TryGetValue(draft.OrderId, out var state))
+        {
+            return Task.FromResult(new ShopifyOrderEditOutcome(null, "order.order.not_found"));
+        }
+
+        if (state.Version != draft.ExpectedVersion)
+        {
+            throw new BuildingBlocks.Application.RequestConcurrencyException("concurrency.conflict", "The order changed.");
+        }
+
+        if (!state.IsEditable)
+        {
+            return Task.FromResult(new ShopifyOrderEditOutcome(null, "order.order.not_editable"));
+        }
+
+        var buyerNotes = draft.ReplaceBuyerNotes ? Blank(draft.BuyerNotes) : state.BuyerNotes;
+        var updated = state with
+        {
+            Lines = draft.Lines is null ? state.Lines : [.. draft.Lines.Select(Line)],
+            Shipping = draft.Shipping ?? state.Shipping,
+            ShippingParty = draft.ShippingParty is null ? state.ShippingParty : Fingerprint(draft.ShippingParty),
+            BuyerNotes = buyerNotes,
+        };
+        var changed = !updated.Lines.SequenceEqual(state.Lines) || updated.Shipping != state.Shipping
+            || updated.ShippingParty != state.ShippingParty || updated.BuyerNotes != state.BuyerNotes;
+        if (changed)
+        {
+            updated = updated with { Version = state.Version + 1 };
+        }
+
+        States[draft.OrderId] = updated;
+        return Task.FromResult(new ShopifyOrderEditOutcome(updated, null));
+    }
+
+    private static ShopifyOrderLineState Line(ShopifyOrderLineDraft line) =>
+        new(line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage);
+
+    private static ShopifyShippingFingerprint? Fingerprint(ShopifyPartyDraft? party) =>
+        party is { DepartmentId: { } department, CityId: { } city }
+            ? new ShopifyShippingFingerprint(party.Name, party.Phone, party.Email, party.Address, department, city)
+            : null;
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     public Task<ShopifyOrderOutcome> SyncPaymentStatusAsync(
         Guid tenantId, Guid orderId, string financialStatus, CancellationToken cancellationToken)

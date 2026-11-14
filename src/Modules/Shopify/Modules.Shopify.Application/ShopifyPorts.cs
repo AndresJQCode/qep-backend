@@ -425,6 +425,53 @@ public sealed record ShopifyOrderOutcome(ShopifyOrderOutcomeKind Kind, string? C
     public static ShopifyOrderOutcome Ignored(string code) => new(ShopifyOrderOutcomeKind.Ignored, code);
 }
 
+/// <summary>Spec 2026-11-14: una línea del pedido de QEP como la guardó Quotations (precio con IVA, descuento en porcentaje).</summary>
+public sealed record ShopifyOrderLineState(
+    Guid VariantId, Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
+
+/// <summary>
+/// Spec 2026-11-14 §3 y §4: el pedido de QEP como lo compara la sincronización de ediciones, con tipos propios.
+/// <see cref="Status"/> y <see cref="PaymentStatus"/> viajan por nombre (<c>Open</c>, <c>Archived</c>, <c>Cancelled</c>;
+/// <c>PaymentPending</c>…): con <see cref="IsPrepared"/> e <see cref="IsInvoiced"/> arman el motivo por el que no se edita (plan
+/// D20). <see cref="Shipping"/> es el envío como el borrador del importador, y <see cref="ShippingParty"/> la parte como quedó
+/// guardada (<c>null</c> sin parte). <see cref="ShippingCountry"/> es el país de la parte; <c>null</c> es Colombia (D21).
+/// </summary>
+public sealed record ShopifyOrderState(
+    Guid OrderId,
+    long Version,
+    string Status,
+    bool IsEditable,
+    bool IsPrepared,
+    bool IsInvoiced,
+    string PaymentStatus,
+    Guid ClientId,
+    string Currency,
+    bool IsStorePickup,
+    IReadOnlyList<ShopifyOrderLineState> Lines,
+    ShopifyShippingDraft Shipping,
+    ShopifyShippingFingerprint? ShippingParty,
+    string? ShippingCountry,
+    string? BuyerNotes);
+
+/// <summary>Spec 2026-11-14 §4: los grupos de un cambio que se aplican al pedido; cada uno en <c>null</c> no se toca.
+/// <see cref="BuyerNotes"/> sólo cuenta con <see cref="ReplaceBuyerNotes"/>. <see cref="ExpectedVersion"/> es la versión del
+/// pedido con la que se planeó.</summary>
+public sealed record ShopifyOrderEditDraft(
+    Guid TenantId,
+    Guid OrderId,
+    long ExpectedVersion,
+    IReadOnlyList<ShopifyOrderLineDraft>? Lines,
+    ShopifyShippingDraft? Shipping,
+    ShopifyPartyDraft? ShippingParty,
+    bool ReplaceBuyerNotes,
+    string? BuyerNotes,
+    DateTimeOffset OccurredAt);
+
+/// <summary><see cref="State"/> es el pedido después de escribir (la proyección sale de acá, nunca del borrador);
+/// <see cref="RejectedCode"/> es la regla del pedido que lo rechazó (<c>order.order.not_editable</c>,
+/// <c>order.order.store_pickup</c>, <c>order.order.items_required</c>…).</summary>
+public sealed record ShopifyOrderEditOutcome(ShopifyOrderState? State, string? RejectedCode);
+
 /// <summary>
 /// Spec 2026-10-15 §6.2 y §6.3: el único camino de Shopify a los pedidos de Quotations. Adaptador en Bootstrapper
 /// (<c>ShopifyOrderWriter</c>) sobre <c>IExternalOrderWriter</c>; ningún consumidor referencia Quotations.Application.
@@ -457,6 +504,15 @@ public interface IShopifyOrderWriter
     /// con <c>AlreadyExisted</c>, o <c>null</c>. Sólo lee. Lo usa §6.3 antes de ignorar una fila en espera que se canceló: si el
     /// worker cayó entre crear el pedido y marcar la fila, el pedido de QEP existe y hay que anularlo, no ignorarlo.</summary>
     Task<ShopifyOrderWriteResult?> FindByExternalKeyAsync(Guid tenantId, string externalKey, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14: el pedido de QEP como lo compara la sincronización de ediciones, o <c>null</c> si no existe en
+    /// ese tenant. Sólo lee.</summary>
+    Task<ShopifyOrderState?> ReadStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14 §4: aplica los grupos de un cambio. Las reglas del pedido vuelven en
+    /// <see cref="ShopifyOrderEditOutcome.RejectedCode"/>; <c>concurrency.conflict</c> (el pedido cambió desde que se planeó) se
+    /// propaga.</summary>
+    Task<ShopifyOrderEditOutcome> ApplyEditAsync(ShopifyOrderEditDraft draft, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-15 §6.1 y §6.2: el asesor de la tienda es una membresía del tenant. Adaptador sobre Tenancy e

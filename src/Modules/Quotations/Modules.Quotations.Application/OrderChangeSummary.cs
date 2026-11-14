@@ -14,6 +14,17 @@ public static class OrderChangeSummary
     public static string CreatedFromExternal(OrderSource source, string reference) =>
         Trim($"Creado desde {source} ({reference}).");
 
+    /// <summary>Spec 2026-11-14 §4: una edición que llegó de la plataforma, una entrada por grupo aplicado. Sin autor: la hizo
+    /// la plataforma, no una persona de QEP.</summary>
+    public static string EditedFromExternal(OrderSource source, ExternalOrderEditGroup group) => group switch
+    {
+        ExternalOrderEditGroup.Lines => Trim($"{source} editó los productos."),
+        ExternalOrderEditGroup.Shipping => Trim($"{source} editó el envío."),
+        ExternalOrderEditGroup.Party => Trim($"{source} editó la dirección de envío."),
+        ExternalOrderEditGroup.BuyerNotes => Trim($"{source} editó la nota del cliente."),
+        _ => throw new ArgumentOutOfRangeException(nameof(group), group, "Unknown external edit group."),
+    };
+
     // El pedido de la tienda sale directo del checkout: no hay solicitud que nombrar.
     public static string CreatedFromStore() => "Creado desde la tienda.";
 

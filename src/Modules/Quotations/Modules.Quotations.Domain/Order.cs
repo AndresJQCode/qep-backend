@@ -1632,6 +1632,174 @@ public sealed class Order
         return true;
     }
 
+    /// <summary>
+    /// Spec 2026-11-14 §4: aplica una edición que hizo la plataforma (Shopify) sobre un pedido externo editable. Sólo cambia los
+    /// grupos que llegan y que de verdad son distintos de lo que el pedido tiene; sin diferencias no toca nada (ni la versión).
+    /// <list type="bullet">
+    /// <item>Las líneas llegan preciadas: se reemplazan todas, sin repreciar ni aplicar descuentos de catálogo. La que sigue
+    /// (misma variante) conserva su id y su costo congelado; con el pedido pagado, la nueva congela su costo con
+    /// <paramref name="costs"/> (§4.3).</item>
+    /// <item>El envío pasa por las reglas de coherencia del pedido (<see cref="ShippingDetails"/>).</item>
+    /// <item>La parte de envío se modifica en su fila; si el pedido no la tenía, se crea y se quitan de las notas las líneas que
+    /// empiezan por <see cref="ExternalOrderEdit.NotesLinePrefix"/>. Un pedido de recogida no la admite.</item>
+    /// <item>La nota del comprador va a <see cref="BuyerNotes"/>; <see cref="Notes"/> no se toca (salvo la línea cruda de la
+    /// dirección).</item>
+    /// </list>
+    /// Todo se valida antes de cambiar nada, y la versión sube una sola vez. No recalcula el estado de pago: el pago de un pedido
+    /// externo lo lleva la plataforma (plan 2026-11-14, D18).
+    /// </summary>
+    public ExternalOrderEditResult ApplyExternalEdit(ExternalOrderEdit edit, OrderLineCosts costs, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+        ArgumentNullException.ThrowIfNull(costs);
+        EnsureEditable("An external edit can only be applied while the order is editable.");
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only an external order takes its edits from the platform.");
+        }
+
+        OrderParty? party = null;
+        if (edit.ShippingParty is { } details)
+        {
+            if (IsStorePickup)
+            {
+                throw new QuotationsDomainException(
+                    ExternalOrderErrors.StorePickup, "An order picked up at the store has no shipping party.");
+            }
+
+            party = OrderParty.Create(Id, QuotationPartyRole.Shipping, details);
+            if (!party.IsComplete)
+            {
+                throw new QuotationsDomainException(
+                    ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+            }
+        }
+
+        var shipping = edit.Shipping?.Validated(IsStorePickup, Currency, "order.order");
+        if (shipping is { CashOnDelivery: true } && !CashOnDelivery
+            && (_paymentProofs.Count > 0 || PaymentStatus != OrderPaymentStatus.PaymentPending))
+        {
+            throw CashOnDeliveryPendingOnly();
+        }
+
+        var lines = edit.Lines is null ? null : CandidateLines(edit.Lines, occurredAt);
+        var buyerNotes = NormalizeNotes(edit.BuyerNotes);
+        var result = new ExternalOrderEditResult(
+            lines is not null && !SameItems(lines),
+            shipping is not null && shipping != ShippingDetails,
+            party is not null && Shipping?.ToDetails() != party.ToDetails(),
+            edit.ReplaceBuyerNotes && !string.Equals(buyerNotes, BuyerNotes, StringComparison.Ordinal));
+        if (!result.Any)
+        {
+            return result;
+        }
+
+        if (result.LinesChanged)
+        {
+            ReplaceExternalLines(lines!, edit.Lines!, costs, occurredAt);
+        }
+
+        if (result.ShippingChanged)
+        {
+            AssignShipping(shipping!);
+        }
+
+        if (result.PartyChanged)
+        {
+            if (Shipping is { } current)
+            {
+                current.Apply(party!.ToDetails());
+            }
+            else
+            {
+                _parties.Add(party!);
+                Notes = NormalizeNotes(string.Join(
+                    '\n',
+                    (Notes ?? string.Empty).Split('\n')
+                        .Where(line => !line.StartsWith(edit.NotesLinePrefix, StringComparison.Ordinal))));
+            }
+        }
+
+        if (result.BuyerNotesChanged)
+        {
+            BuyerNotes = buyerNotes;
+        }
+
+        RecalculateTotals();
+        UpdatedAt = occurredAt;
+        Version++;
+        return result;
+    }
+
+    // Las líneas como se guardarían (precio redondeado, IVA según la moneda), sin agregarlas: valida cantidad, precio, descuento
+    // y tasa antes de tocar el pedido, y deja comparar contra lo guardado.
+    private OrderItem[] CandidateLines(IReadOnlyCollection<OrderLineInput> lines, DateTimeOffset occurredAt)
+    {
+        if (lines.Count == 0)
+        {
+            throw new QuotationsDomainException("order.order.items_required", "An order needs at least one product.");
+        }
+
+        if (lines.Select(line => line.VariantId).Distinct().Count() != lines.Count)
+        {
+            throw new QuotationsDomainException("order.item.duplicate_product", "La variante ya está en el pedido.");
+        }
+
+        return lines
+            .Select((line, index) => OrderItem.Create(
+                OrderItemId.New(), Id, line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
+                line.TaxPercentage, index + 1, Currency, PriceRounding, occurredAt))
+            .ToArray();
+    }
+
+    private bool SameItems(OrderItem[] candidates) =>
+        candidates.Length == _items.Count
+        && candidates.All(candidate => _items.Any(item => item.SameAs(candidate)));
+
+    private void ReplaceExternalLines(
+        OrderItem[] candidates, IReadOnlyCollection<OrderLineInput> lines, OrderLineCosts costs, DateTimeOffset occurredAt)
+    {
+        // El costo se busca antes de tocar una línea, para que un costo sin buscar no deje el pedido a medias (§4.3).
+        var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
+        var newCosts = sold
+            ? candidates
+                .Where(candidate => _items.All(item => item.VariantId != candidate.VariantId))
+                .ToDictionary(candidate => candidate.VariantId, candidate => costs.For(candidate.VariantId))
+            : [];
+        var inputs = lines.ToArray();
+        _items.RemoveAll(item => candidates.All(candidate => candidate.VariantId != item.VariantId));
+        for (var index = 0; index < candidates.Length; index++)
+        {
+            var candidate = candidates[index];
+            var input = inputs[index];
+            if (_items.FirstOrDefault(item => item.VariantId == candidate.VariantId) is { } kept)
+            {
+                kept.ApplyExternal(
+                    input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, index + 1, Currency,
+                    PriceRounding, occurredAt);
+                if (input.Product is { } snapshot)
+                {
+                    kept.CaptureProduct(snapshot);
+                }
+
+                continue;
+            }
+
+            if (input.Product is { } product)
+            {
+                candidate.CaptureProduct(product);
+            }
+
+            if (sold)
+            {
+                candidate.FreezeCost(newCosts[candidate.VariantId], occurredAt);
+            }
+
+            _items.Add(candidate);
+        }
+    }
+
     // Spec 2026-11-10 §3.2: la regla de US-14 («al menos un comprobante salvo pago pendiente») ya no existe: el pago
     // de un pedido interno sale de los comprobantes, así que sin ellos simplemente queda pendiente.
     private void AddProofs(

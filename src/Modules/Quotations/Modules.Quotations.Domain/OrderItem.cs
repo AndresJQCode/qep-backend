@@ -148,6 +148,33 @@ public sealed class OrderItem
         DateTimeOffset occurredAt) =>
         Apply(quantity, UnitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
 
+    /// <summary>Spec 2026-11-14 §4: la línea que una edición de la plataforma conserva, con el precio y el descuento que la
+    /// plataforma cobró ahora (sin repreciar contra el catálogo). Conserva su id y su costo congelado.</summary>
+    internal void ApplyExternal(
+        decimal quantity,
+        decimal unitPrice,
+        decimal discountPercentage,
+        int taxPercentage,
+        int position,
+        string currency,
+        PriceRounding rounding,
+        DateTimeOffset occurredAt)
+    {
+        DiscountOrigin = QuotationDiscountOrigin.Own;
+        Position = position;
+        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
+    }
+
+    /// <summary>La misma línea, comparada como se guarda: precio redondeado con la regla del documento y sin IVA fuera de
+    /// COP. Así una edición que llega igual a lo que el pedido ya tiene no cuenta como cambio.</summary>
+    internal bool SameAs(OrderItem other) =>
+        VariantId == other.VariantId
+        && ProductId == other.ProductId
+        && Quantity == other.Quantity
+        && UnitPrice == other.UnitPrice
+        && DiscountPercentage == other.DiscountPercentage
+        && TaxPercentage == other.TaxPercentage;
+
     internal void ApplyDiscount(
         decimal discountPercentage,
         QuotationDiscountOrigin origin,
