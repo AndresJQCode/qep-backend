@@ -154,7 +154,8 @@ Resuelve D-7 del spec de réplicas por una tercera vía: ni la tabla `messaging.
 Resuelve DP-1 del spec de réplicas: los contadores pasan a Valkey y los límites quedan como están, sin dividirlos por
 pod ni atarlos a `replicas`.
 
-Las ocho políticas de `AddRateLimiter` (`Program.cs:86-202`) y el limitador por clave:
+Las ocho políticas de `AddRateLimiter` (`Program.cs:86-202`) —siete de ventana fija y la de concurrencia del webhook— y
+el limitador por clave. Pasan a Valkey las siete ventanas fijas más el límite por clave:
 
 | Política | Partición | Límite | Pasa a Valkey |
 | --- | --- | --- | --- |
@@ -172,24 +173,28 @@ Las ocho políticas de `AddRateLimiter` (`Program.cs:86-202`) y el limitador por
 réplicas, DP-1). Se queda en memoria.
 
 - **Primitiva:** ventana fija compartida. Clave `qep:rl:{política}:{partición}:{inicioDeVentana}` donde
-  `inicioDeVentana` es `floor(ahoraUnix / ventana) × ventana`. Un script Lua (`EVALSHA`, cargado al conectar):
-  `INCR` y, si devolvió 1, `EXPIRE ventana + 1`; devuelve el contador. Un solo viaje por request, atómico entre pods, y
-  la clave muere sola al cerrar la ventana. El permiso se niega si el contador supera `PermitLimit`. La partición entra
+  `inicioDeVentana` es `floor(ahoraUnix / ventana) × ventana`. Una transacción sin Lua —la ACL de producción quita
+  `@scripting` (DP-V4)—: `MULTI`, `INCR` (`INCRBY` con más de un permiso), `EXPIRE clave (ventana + 1) NX`, `EXEC`;
+  devuelve el contador. Un solo viaje por request, atómico entre pods, y la clave muere sola al cerrar la ventana. El permiso se niega si el contador supera `PermitLimit`. La partición entra
   a la clave con un hash corto (SHA-256 truncado) cuando lleva un patrón de ruta, para que la clave no cargue texto
   libre.
 - **Punto de extensión.** `System.Threading.RateLimiting` permite un `RateLimiter` propio por partición:
-  `RateLimitPartition.Get(key, factory)` devuelve lo que la fábrica construya, y el middleware de ASP.NET llama
-  `AcquireAsync`, que es asíncrono y admite una ida a la red. Se escribe `ValkeyFixedWindowRateLimiter : RateLimiter`
-  (en Bootstrapper) que en `AcquireAsyncCore` corre el script y en `AttemptAcquireCore` —el camino síncrono, que el
-  middleware no usa— delega en el respaldo. `ApiKeyRateLimiter` ya construye con `PartitionedRateLimiter.Create` y
-  llama `AcquireAsync` (`ApiKeyRateLimiter.cs:20-32`): cambia la fábrica, no el llamador. Las ocho políticas de
-  `Program.cs` pasan a construirse desde una fábrica de Bootstrapper que recibe la política y las opciones y decide
-  Valkey o memoria según el flag; los números no se mueven de donde están.
+  `RateLimitPartition.Get(key, factory)` devuelve lo que la fábrica construya. Se escribe
+  `ValkeyFixedWindowRateLimiter : RateLimiter` (en Bootstrapper) que en `AcquireAsyncCore` corre la transacción. Su
+  `AttemptAcquireCore` —el camino síncrono— **siempre niega, sin contar nada y sin metadata**: el
+  `RateLimitingMiddleware` de ASP.NET llama primero `AttemptAcquire` y sólo espera `AcquireAsync` cuando ése niega
+  (verificado contra el IL de ASP.NET Core 10.0.11). Si el camino síncrono concediera, toda política saldría de Valkey en
+  silencio. `ApiKeyRateLimiter` ya construye con `PartitionedRateLimiter.Create` y llama `AcquireAsync`
+  (`ApiKeyRateLimiter.cs:20-32`): cambia la fábrica, no el llamador. Las siete políticas de ventana fija de `Program.cs`
+  pasan a construirse desde una fábrica de Bootstrapper (`SharedRateLimitPartitions`) que recibe la política y las
+  opciones y decide Valkey o memoria según el flag; los números no se mueven de donde están.
 - **`Retry-After`.** `ExternalRateLimitRejection.WriteAsync` (`Program.cs:91`) lo calcula hoy del lease del limitador
   de memoria; con Valkey, el lease trae el segundo en que cierra la ventana (`inicioDeVentana + ventana − ahora`).
 - **Respaldo:** el limitador de ventana fija de memoria con las mismas opciones, por pod, construido perezosamente la
   primera vez que Valkey falla para esa partición. Nunca «permitir». Con Valkey caído se vuelve exactamente a hoy: el
-  doble de intentos con dos pods, durante lo que dure la caída, y el contador de fallbacks lo muestra.
+  doble de intentos con dos pods, durante lo que dure la caída, y el contador de fallbacks lo muestra. **Con Valkey
+  intermitente** (unas operaciones pasan y otras vencen el tope) cada request cuenta en Valkey o en el respaldo de su pod,
+  así que un cliente puede llegar hasta (N + 1) × límite con N pods en vez de N × límite: acotado, nunca sin límite.
 
 ### 4. Caché de sesión (D-4)
 

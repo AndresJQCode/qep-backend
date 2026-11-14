@@ -816,6 +816,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Open && PaymentStatus == PaymentPending && PaymentProofs.Count == 0 && !IsPrepared && !IsInvoiced` (D5 y spec 2026-11-10, `Order.CanBeCancelledByBuyer`: un pedido con cualquier comprobante, preparado o facturado ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
 - **`Order.LinkBuyerAccount` no sube `Version`, pero `Version` es token de concurrencia.** El enlace del alta diferida es invisible para el `If-Match` de la consola, y aun así su `UPDATE` lleva `WHERE version = …`: si otra escritura ganó, `BuyerOrderGateway.LinkAsync` relee y reintenta una vez (sólo si sigue vacío). El checkout resuelve la sesión del comprador siempre que llega el header, no sólo con `updateProfile`; `ScalarTextAsync` de las pruebas de Store devuelve `""` para un `NULL`.
 - **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`. `BuyerNotes` la escribe sólo `CreateFromStore` y nada más la toca; un método nuevo que la edite le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill).
+- **`ValkeyFixedWindowRateLimiter.AttemptAcquireCore` tiene que seguir negando** (spec 2026-11-13, D-3).
+  - `RateLimitingMiddleware` llama primero `AttemptAcquire` y sólo con un rechazo pasa a `AcquireAsync`. Si el camino
+    síncrono concede, por ejemplo desde el respaldo de memoria, todas las políticas salen de Valkey en silencio y vuelven
+    a contar por pod. Lo amarran `TheSynchronousAttemptDefersToTheAsyncPath` y los `*SharedAcrossTwoHosts` de
+    `ExternalApiSurfaceTests`.
+  - Bajo la ACL de producción (`-@scripting`) no hay Lua. El contador es `MULTI` + `INCR` + `EXPIRE … NX` + `EXEC`.
+  - Una política nueva de ventana fija pasa por `SharedRateLimitPartitions.FixedWindow`, no por
+    `RateLimitPartition.GetFixedWindowLimiter`. Si no, queda por pod y sin error.
+  - Una partición que lleve el patrón de ruta va con `hashPartition: true`.
 
 ## Verificación
 

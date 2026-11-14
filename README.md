@@ -2666,10 +2666,25 @@ El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Pl
 
 La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
 
+**Limitadores compartidos (D-3, `Valkey:Areas:RateLimiting`).** Las siete políticas de ventana fija de `Program.cs` y el
+límite por clave de la API externa pasan por `SharedRateLimitPartitions`. Con el área prendida cuentan en Valkey, en la
+clave `qep:rl:{política}:{partición}:{inicioDeVentana}`. La ventana está alineada a la época Unix, así que todos los pods
+cortan en el mismo segundo. Si Valkey no responde, cada partición vuelve al limitador de memoria de su pod: nunca deja
+pasar sin límite. El limitador de concurrencia del webhook se queda en memoria siempre, porque protege al pod.
+
+- **Claves con IP.** En las políticas sin hash (`public`, `telemetry`, `external`, las de la tienda menos credenciales) la
+  IP del cliente va tal cual en el nombre de la clave. La clave vive como mucho la ventana más 1 s.
+- **Claves con patrón de ruta.** `credentials` y `storefront-credentials` llevan el patrón de ruta, y entran hasheadas
+  (`ShortHash`).
+- **Métricas.** Con el área prendida, la métrica `aspnetcore.rate_limiting` de requests en cola cuenta **todos** los
+  requests como encolados. El middleware los manda a `AcquireAsync`, porque el camino síncrono siempre niega: no es una
+  cola real.
+
 ### Infraestructura local
 
-`compose.yaml` solo levanta PostgreSQL 18 y el `otel-collector`. No hay Redis
-ni broker de mensajería: el patrón Outbox cumple ese rol dentro del monolito.
+`compose.yaml` levanta PostgreSQL 18, Valkey (`valkey/valkey:9.1.3-alpine`, en `6379`) y el `otel-collector`. No hay
+broker de mensajería: el patrón Outbox cumple ese rol dentro del monolito. Si ya tienes otro Valkey en `6379`, no levantes
+el del compose: chocan el puerto.
 
 ### Biblioteca de archivos (Cloudflare R2)
 
@@ -4720,8 +4735,9 @@ viene por campo en `errors`.
 `idempotencyKey` repite el `502` y **no** reenvía; decidir si se manda otro exige un `idempotencyKey` nuevo, y esa decisión es del sistema externo.
 
 **Límites.** Dos, porque el rate limiter corre antes de autenticar: 600 por minuto por IP (frena a quien prueba claves inventadas,
-`ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Los dos
-viven en memoria:** hoy hay una réplica, y con más el límite efectivo se multiplica por el número de réplicas. Ambos deben ser mayores que 0: un 0 o un negativo tumba el arranque (`ValidateOnStart`), no se interpreta como «sin límite».
+`ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Con
+`Valkey:Areas:RateLimiting` prendido los dos se cuentan en Valkey** y valen para todas las réplicas. Apagado, o con Valkey caído, cada
+réplica lleva su propia cuenta en memoria y el límite efectivo se multiplica por el número de réplicas. Ambos deben ser mayores que 0: un 0 o un negativo tumba el arranque (`ValidateOnStart`), no se interpreta como «sin límite».
 
 **Autoría.** El mensaje queda firmado con la clave (`sent_by_kind = 4`, `sent_by_api_key_id`, `sent_by_api_key_name`) y el hilo lo muestra como
 `sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí
