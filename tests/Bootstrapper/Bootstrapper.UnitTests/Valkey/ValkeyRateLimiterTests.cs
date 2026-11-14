@@ -137,6 +137,28 @@ public sealed class ValkeyRateLimiterTests(ValkeyPlainServer server) : IClassFix
         Assert.Null(fallingBack.IdleDuration);
     }
 
+    // RateLimitingMiddleware llama primero AttemptAcquire y sólo con un rechazo pasa a AcquireAsync: si el camino síncrono
+    // concediera desde memoria, ninguna política llegaría a Valkey. Se niega sin contar nada, para que decida el asíncrono.
+    [Fact]
+    public async Task TheSynchronousAttemptDefersToTheAsyncPath()
+    {
+        var clock = RateLimitClock.AtWindowStart(60);
+        await using var pod = await Node.StartAsync(PlainConnectionString());
+        var policy = NewPolicy();
+        using var limiter = pod.Limiter(policy, clock);
+
+        using (var attempt = limiter.AttemptAcquire(1))
+        {
+            Assert.False(attempt.IsAcquired);
+            Assert.False(attempt.TryGetMetadata(MetadataName.RetryAfter, out _));
+        }
+
+        Assert.Null(limiter.GetStatistics());
+        Assert.True(await AcquireAsync(limiter));
+        var key = ValkeyKeys.RateLimit(policy, Partition, clock.GetUtcNow().ToUnixTimeSeconds());
+        Assert.Equal(1, (long)await pod.Database.StringGetAsync(key));
+    }
+
     // La ACL de producción quita @scripting (DP-V4): el contador no puede depender de EVAL.
     [Fact]
     public async Task TheRateLimitUsesNoScript()

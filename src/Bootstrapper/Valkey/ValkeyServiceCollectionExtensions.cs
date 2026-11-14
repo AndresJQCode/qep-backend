@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Bootstrapper.Valkey.Presence;
+using Bootstrapper.Valkey.RateLimiting;
 using Modules.Messaging.Application;
 
 namespace Bootstrapper.Valkey;
@@ -37,6 +38,11 @@ public static class ValkeyServiceCollectionExtensions
 
         var valkey = configuration.GetSection(ValkeyOptions.SectionName).Get<ValkeyOptions>() ?? new ValkeyOptions();
         AddPresence(services, IsOn(valkey, ValkeyArea.Presence));
+
+        // Los limitadores (D-3): la fábrica decide memoria o Valkey con el interruptor del área, y apagada devuelve
+        // exactamente la partición de memoria de antes.
+        services.AddSingleton(provider => new SharedRateLimitPartitions(
+            provider.GetRequiredService<ValkeyGateway>(), provider.GetRequiredService<TimeProvider>()));
         return services;
     }
 

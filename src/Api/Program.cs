@@ -8,6 +8,7 @@ using Bootstrapper.Csrf;
 using Bootstrapper.Health;
 using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
+using Bootstrapper.Valkey.RateLimiting;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
 using Modules.ApiAccess.Api;
@@ -88,30 +89,38 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     // Spec 2026-10-30 §6.1: solo la API externa lleva cuerpo y Retry-After en su 429 por IP; el resto queda como hoy.
     options.OnRejected = ExternalRateLimitRejection.WriteAsync;
-    static FixedWindowRateLimiterOptions FixedWindow(string _) => new()
-    {
-        PermitLimit = 120,
-        Window = TimeSpan.FromMinutes(1),
-        QueueLimit = 0,
-    };
+    // Spec 2026-11-13, D-3: las siete ventanas fijas salen de SharedRateLimitPartitions, que las cuenta en memoria como
+    // siempre o, con Valkey:Areas:RateLimiting, en Valkey para todos los pods. Los números siguen acá. El webhook no pasa
+    // por ahí: es concurrencia y protege al pod.
+    static SharedRateLimitPartitions Shared(HttpContext httpContext) =>
+        httpContext.RequestServices.GetRequiredService<SharedRateLimitPartitions>();
     options.AddPolicy(
         RateLimiterPolicies.Public,
-        httpContext => RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-            factory: FixedWindow));
+        httpContext => Shared(httpContext).FixedWindow(
+            RateLimiterPolicies.Public,
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
 
     // Endpoints de credenciales: 10 por minuto por IP y por endpoint. La clave usa el PATRÓN de ruta,
     // no el path, para que /invitations/{token}/accept-with-password no abra una partición por token.
+    // En Valkey la partición entra hasheada (lleva el patrón de ruta).
     options.AddPolicy(
         RateLimiterPolicies.Credentials,
-        httpContext => RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{httpContext.Connection.RemoteIpAddress}",
-            factory: _ => new FixedWindowRateLimiterOptions
+        httpContext => Shared(httpContext).FixedWindow(
+            RateLimiterPolicies.Credentials,
+            $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{httpContext.Connection.RemoteIpAddress}",
+            new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 10,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
-            }));
+            },
+            hashPartition: true));
 
     // Telemetría del navegador: 600 por minuto por IP. UseRateLimiter corre antes de UseAuthentication (más abajo),
     // así que acá no hay usuario ni tenant con qué particionar: lo único que se ve es la IP del cliente. 600 sobra para
@@ -119,9 +128,10 @@ builder.Services.AddRateLimiter(options =>
     // quien quiera inflar las métricas. Sin IP (TestServer) todos comparten la partición "unknown", como en Public.
     options.AddPolicy(
         RateLimiterPolicies.Telemetry,
-        httpContext => RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-            factory: _ => new FixedWindowRateLimiterOptions
+        httpContext => Shared(httpContext).FixedWindow(
+            RateLimiterPolicies.Telemetry,
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 600,
                 Window = TimeSpan.FromMinutes(1),
@@ -151,9 +161,10 @@ builder.Services.AddRateLimiter(options =>
     // límite por clave (300) corre después, como filtro del grupo. Se particiona por IP y nunca por el header.
     options.AddPolicy(
         RateLimiterPolicies.External,
-        httpContext => RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-            factory: _ => new FixedWindowRateLimiterOptions
+        httpContext => Shared(httpContext).FixedWindow(
+            RateLimiterPolicies.External,
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            new FixedWindowRateLimiterOptions
             {
                 PermitLimit = httpContext.RequestServices.GetRequiredService<IOptions<ApiAccessOptions>>().Value.RateLimit.PerIpPerMinute,
                 Window = TimeSpan.FromMinutes(1),
@@ -166,9 +177,10 @@ builder.Services.AddRateLimiter(options =>
     // del filtro de la clave: los intentos con clave inventada también gastan el cupo de su IP.
     options.AddPolicy(
         RateLimiterPolicies.StorefrontRead,
-        httpContext => RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
-            factory: _ => new FixedWindowRateLimiterOptions
+        httpContext => Shared(httpContext).FixedWindow(
+            RateLimiterPolicies.StorefrontRead,
+            StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
+            new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 300,
                 Window = TimeSpan.FromMinutes(1),
@@ -176,9 +188,10 @@ builder.Services.AddRateLimiter(options =>
             }));
     options.AddPolicy(
         RateLimiterPolicies.StorefrontSubmit,
-        httpContext => RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
-            factory: _ => new FixedWindowRateLimiterOptions
+        httpContext => Shared(httpContext).FixedWindow(
+            RateLimiterPolicies.StorefrontSubmit,
+            StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
+            new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 5,
                 Window = TimeSpan.FromMinutes(10),
@@ -186,17 +199,19 @@ builder.Services.AddRateLimiter(options =>
             }));
 
     // Credenciales de compradores: 10 por minuto por ruta y por IP del visitante. La clave usa el PATRÓN de ruta (no el path) para que
-    // cada ruta lleve su contador y el host de la tienda no abra una partición por tienda.
+    // cada ruta lleve su contador y el host de la tienda no abra una partición por tienda. En Valkey la partición entra hasheada.
     options.AddPolicy(
         RateLimiterPolicies.StorefrontCredentials,
-        httpContext => RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext))}",
-            factory: _ => new FixedWindowRateLimiterOptions
+        httpContext => Shared(httpContext).FixedWindow(
+            RateLimiterPolicies.StorefrontCredentials,
+            $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext))}",
+            new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 10,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
-            }));
+            },
+            hashPartition: true));
 
     static string? StorefrontSecret(HttpContext httpContext) =>
         httpContext.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;

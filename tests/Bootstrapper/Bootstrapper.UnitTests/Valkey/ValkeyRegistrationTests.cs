@@ -1,5 +1,7 @@
+using System.Threading.RateLimiting;
 using Bootstrapper.Valkey;
 using Bootstrapper.Valkey.Presence;
+using Bootstrapper.Valkey.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
@@ -26,6 +28,32 @@ public sealed class ValkeyRegistrationTests
             services,
             descriptor => descriptor.ServiceType == typeof(IHostedService)
                 && descriptor.ImplementationType == typeof(PresenceHeartbeatWorker));
+    }
+
+    [Fact]
+    public void WithRateLimitingOnThePartitionsUseValkey()
+    {
+        var services = Register(("Valkey:Areas:RateLimiting", "true"));
+        using var provider = services.BuildServiceProvider();
+
+        var partition = provider.GetRequiredService<SharedRateLimitPartitions>().FixedWindow(
+            "public", "203.0.113.7", new FixedWindowRateLimiterOptions { PermitLimit = 1, Window = TimeSpan.FromMinutes(1) });
+
+        using var limiter = partition.Factory(partition.PartitionKey);
+        Assert.IsType<ValkeyFixedWindowRateLimiter>(limiter);
+    }
+
+    [Fact]
+    public void WithRateLimitingOffThePartitionsStayInMemory()
+    {
+        var services = Register(("Valkey:Areas:RateLimiting", "false"));
+        using var provider = services.BuildServiceProvider();
+
+        var partition = provider.GetRequiredService<SharedRateLimitPartitions>().FixedWindow(
+            "public", "203.0.113.7", new FixedWindowRateLimiterOptions { PermitLimit = 1, Window = TimeSpan.FromMinutes(1) });
+
+        using var limiter = partition.Factory(partition.PartitionKey);
+        Assert.IsType<FixedWindowRateLimiter>(limiter);
     }
 
     internal static ServiceCollection Register(params (string Key, string Value)[] settings)

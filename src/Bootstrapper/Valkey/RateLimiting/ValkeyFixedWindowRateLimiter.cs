@@ -25,6 +25,7 @@ internal sealed class ValkeyFixedWindowRateLimiter : RateLimiter
     private readonly TimeProvider _time;
     private readonly long _windowSeconds;
     private readonly ValkeyRateLimitLease _acquired = new(isAcquired: true, retryAfter: null);
+    private readonly ValkeyRateLimitLease _deferred = new(isAcquired: false, retryAfter: null);
 
     private long _lastAcquireTimestamp;
     private FixedWindowRateLimiter? _fallback;
@@ -108,12 +109,16 @@ internal sealed class ValkeyFixedWindowRateLimiter : RateLimiter
                 retryAfter: TimeSpan.FromSeconds(Math.Max(1, windowStart + _windowSeconds - now)));
     }
 
-    /// <summary>El camino síncrono: el middleware de ASP.NET no lo usa, y sin red de por medio sólo responde el de memoria.</summary>
+    /// <summary>
+    /// El camino síncrono siempre se niega, sin contar nada ni metadata. <c>RateLimitingMiddleware</c> llama primero
+    /// <c>AttemptAcquire</c> y sólo con un rechazo pasa a <c>AcquireAsync</c>: si esto concediera desde la memoria, como
+    /// suponía D-3 («el middleware no lo usa»), ninguna política llegaría a Valkey. Negar es seguro: quien sólo use el camino
+    /// síncrono queda limitado de más, nunca sin límite.
+    /// </summary>
     protected override RateLimitLease AttemptAcquireCore(int permitCount)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        Interlocked.Exchange(ref _lastAcquireTimestamp, _time.GetTimestamp());
-        return Fallback().AttemptAcquire(permitCount);
+        return _deferred;
     }
 
     protected override void Dispose(bool disposing)

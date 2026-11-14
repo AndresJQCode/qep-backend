@@ -92,8 +92,10 @@ public static class QepServiceCollectionExtensions
             .Bind(configuration.GetSection(ApiAccessOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<ApiAccessOptions>, ApiAccessOptionsValidator>();
+        // Sus particiones salen de SharedRateLimitPartitions, que registra AddQepValkey: en memoria o en Valkey según
+        // Valkey:Areas:RateLimiting (spec 2026-11-13, D-3).
         services.AddSingleton<ApiKeyRateLimiter>();
-        // Valkey (spec 2026-11-13, D-1): cliente, opciones, métricas y gateway.
+        // Valkey (spec 2026-11-13, D-1): cliente, opciones, métricas, gateway, presencia y fábrica de limitadores.
         services.AddQepValkey(configuration);
         services.AddScoped<IRequestDispatcher, RequestDispatcher>();
         services.AddScoped<
