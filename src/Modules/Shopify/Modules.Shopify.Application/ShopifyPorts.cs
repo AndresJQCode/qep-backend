@@ -193,6 +193,23 @@ public interface IShopifyProductLookup
     /// incluidas (variante o producto): el importador las marca <c>product_unmatched</c>.</summary>
     Task<IReadOnlyDictionary<string, ShopifyProductRef>> FindByCodesAsync(
         Guid tenantId, IReadOnlyCollection<string> skus, CancellationToken cancellationToken);
+
+    /// <summary>Por id de variante (spec 2026-11-13: la línea personalizada asociada); uno que no existe en el tenant no aparece.
+    /// Inactivas incluidas, con <c>IsActive = false</c> (vendible, como <c>FindByCodesAsync</c>). La tasa, con la misma regla.</summary>
+    Task<IReadOnlyDictionary<Guid, ShopifyProductRef>> FindByVariantIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
+}
+
+/// <summary>Lo que pinta la lista de asociaciones de líneas personalizadas (spec 2026-11-13, D3/D4): <see cref="DisplayName"/> es
+/// el nombre visible de la variante (producto más valores de opción).</summary>
+public sealed record ShopifyVariantLabel(Guid VariantId, string DisplayName, string Code, bool IsActive);
+
+/// <summary>Nombre y código de variantes de Catalog para la bandeja de Shopify; adaptador en Bootstrapper.</summary>
+public interface IShopifyVariantLabels
+{
+    /// <summary>Una variante inexistente o de otro tenant no aparece: quien llama la pinta como borrada (D5).</summary>
+    Task<IReadOnlyDictionary<Guid, ShopifyVariantLabel>> DescribeAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
 }
 
 /// <summary>La ciudad DIVIPOLA de la dirección de envío, con su departamento: la parte de envío del pedido pide los dos.

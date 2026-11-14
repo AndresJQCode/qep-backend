@@ -117,6 +117,46 @@ public sealed class ShopifyAdaptersTests
         Assert.Empty(found);
     }
 
+    // Spec 2026-11-13: la línea personalizada asociada llega por el id de la variante; la inactiva vuelve marcada.
+    [Fact]
+    public async Task ProductLookupFindsByVariantIdWithItsTaxAndActivity()
+    {
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, Now);
+        var world = VariantWorld.Create(TenantId, Now, taxRateId: rate.Id, largeIsActive: false);
+        var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository(rate));
+
+        var found = await lookup.FindByVariantIdsAsync(
+            TenantId, [world.Medium.Id.Value, world.Large.Id.Value, Guid.CreateVersion7()], Ct);
+
+        Assert.Equal(2, found.Count);
+        Assert.Equal(new ShopifyProductRef(world.Medium.Id.Value, world.Product.Id.Value, "CAM-M", true, 19), found[world.Medium.Id.Value]);
+        Assert.False(found[world.Large.Id.Value].IsActive);
+    }
+
+    [Fact]
+    public async Task ProductLookupByVariantIdIgnoresAnotherTenant()
+    {
+        var world = VariantWorld.Create(Guid.CreateVersion7(), Now);
+        var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository());
+
+        var found = await lookup.FindByVariantIdsAsync(TenantId, [world.Medium.Id.Value], Ct);
+
+        Assert.Empty(found);
+    }
+
+    [Fact]
+    public async Task VariantLabelsCarryDisplayNameCodeAndActivity()
+    {
+        var world = VariantWorld.Create(TenantId, Now, largeIsActive: false);
+        var labels = new ShopifyVariantLabels(new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size));
+
+        var found = await labels.DescribeAsync(TenantId, [world.Medium.Id.Value, world.Large.Id.Value, Guid.CreateVersion7()], Ct);
+
+        Assert.Equal(2, found.Count);
+        Assert.Equal(new ShopifyVariantLabel(world.Medium.Id.Value, "Camiseta básica – M", "CAM-M", true), found[world.Medium.Id.Value]);
+        Assert.Equal(new ShopifyVariantLabel(world.Large.Id.Value, "Camiseta básica – L", "CAM-L", false), found[world.Large.Id.Value]);
+    }
+
     // ---- Pedido (§6.2.3 y §6.3) ----
 
     [Fact]

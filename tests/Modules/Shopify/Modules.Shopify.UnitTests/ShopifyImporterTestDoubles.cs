@@ -109,6 +109,17 @@ internal sealed class FakeProductLookup : IShopifyProductLookup
 
     public List<IReadOnlyCollection<string>> Requests { get; } = [];
 
+    public Dictionary<Guid, ShopifyProductRef> ByVariant { get; } = [];
+
+    public List<IReadOnlyCollection<Guid>> VariantRequests { get; } = [];
+
+    /// <summary>Una variante por id (línea personalizada asociada); el SKU es el id, que no se mira.</summary>
+    public FakeProductLookup WithVariant(Guid variantId, int taxPercentage = 19, bool active = true)
+    {
+        ByVariant[variantId] = new ShopifyProductRef(variantId, Guid.CreateVersion7(), variantId.ToString(), active, taxPercentage);
+        return this;
+    }
+
     public FakeProductLookup With(string sku, int taxPercentage = 19, bool active = true)
     {
         // Dos ids distintos a propósito: un intercambio de VariantId y ProductId en el importador tiene que verse.
@@ -122,6 +133,14 @@ internal sealed class FakeProductLookup : IShopifyProductLookup
         Requests.Add([.. skus]);
         return Task.FromResult<IReadOnlyDictionary<string, ShopifyProductRef>>(
             skus.Where(Products.ContainsKey).Distinct(StringComparer.Ordinal).ToDictionary(sku => sku, sku => Products[sku], StringComparer.Ordinal));
+    }
+
+    public Task<IReadOnlyDictionary<Guid, ShopifyProductRef>> FindByVariantIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        VariantRequests.Add([.. variantIds]);
+        return Task.FromResult<IReadOnlyDictionary<Guid, ShopifyProductRef>>(
+            variantIds.Where(ByVariant.ContainsKey).Distinct().ToDictionary(id => id, id => ByVariant[id]));
     }
 }
 
