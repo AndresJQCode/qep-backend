@@ -35,7 +35,8 @@ public sealed record ExternalOrderDraft(
     DateTimeOffset OccurredAt,
     ShippingDetails? Shipping = null,
     string? ExternalKey = null,
-    string? ExternalShippingTitle = null);
+    string? ExternalShippingTitle = null,
+    string? BuyerNotes = null);
 
 /// <summary><see cref="AlreadyExisted"/> dice que la clave externa ya tenía pedido y no se creó otro: el
 /// consumidor marca su espejo igual, sin volver a publicar nada. <see cref="ClientId"/> es el cliente del pedido
@@ -202,7 +203,7 @@ public sealed class ExternalOrderService(
                 var order = Order.CreateExternal(
                     OrderId.New(), draft.TenantId, orderNumber, header, draft.Parties.ToDomain(), billingAccount, lines,
                     draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, draft.Source, draft.ExternalReference,
-                    draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle, costs);
+                    draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle, costs, draft.BuyerNotes);
                 // Decisión del owner (spec 2026-10-27 §4): un pedido de una integración se precia siempre con el valor por
                 // defecto de su moneda, no con la regla del tenant. Se fija acá, explícito, y OrderPricingRecalculation
                 // lo mantiene así cuando el pedido se edita.

@@ -22,6 +22,24 @@ public sealed class OrderResponseComposerTests
     public void TheDetailResponseHasNoStoreRequestProperty() =>
         Assert.Null(typeof(OrderDetailResponse).GetProperty("StoreRequest"));
 
+    // Spec 2026-11-14: la nota del comprador viaja en el DTO y en la respuesta del detalle, aparte de las notas del asesor.
+    [Fact]
+    public void TheOrderDtoAndResponseCarryTheBuyerNotes()
+    {
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0003",
+            new OrderHeader(ClientId, AdvisorId, "COP", null, IsRetail: false, null, false, []),
+            QuotationParties.Empty, OrderBuilders.BillingAccount,
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", AdvisorId, [], Now, OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null, OrderLineCosts.None, buyerNotes: "Sin cebolla");
+
+        var dto = order.ToDto();
+
+        Assert.Equal(("Sin cebolla", "Shopify #1001"), (dto.BuyerNotes, dto.Notes));
+        Assert.Equal("Sin cebolla", OrderResponses.ToResponse(dto).BuyerNotes);
+    }
+
     [Fact]
     public async Task AStoreOrderComposesLikeAnyOtherOrder()
     {

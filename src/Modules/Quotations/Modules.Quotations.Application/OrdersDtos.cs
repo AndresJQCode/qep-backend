@@ -88,7 +88,10 @@ public sealed record OrderDto(
     /// <summary>Lo que falta por pagar: neto − consignado, con el redondeo de la moneda (pesos enteros en COP). Negativo
     /// es sobrante. Un total que no cierra se explica con un campo: la pantalla no resta comprobantes, que con la
     /// fracción de la retención le daría un saldo de centavos que no se ve (spec 2026-11-10 §3.2).</summary>
-    decimal Balance);
+    decimal Balance,
+    /// <summary>La nota del comprador (tienda pública o Shopify), aparte de <see cref="Notes"/>, que es del asesor
+    /// (spec 2026-11-14).</summary>
+    string? BuyerNotes = null);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
@@ -308,7 +311,9 @@ public sealed record OrderResponse(
     /// <summary>Lo que falta por pagar: neto − consignado, con el redondeo de la moneda (pesos enteros en COP). Negativo
     /// es sobrante. Un total que no cierra se explica con un campo: la pantalla no resta comprobantes, que con la
     /// fracción de la retención le daría un saldo de centavos que no se ve (spec 2026-11-10 §3.2).</summary>
-    decimal Balance);
+    decimal Balance,
+    /// <summary>Ver <see cref="OrderDto.BuyerNotes"/>.</summary>
+    string? BuyerNotes = null);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y

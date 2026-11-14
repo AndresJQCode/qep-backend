@@ -521,7 +521,8 @@ public sealed class ShopifyOrderImporter(
             snapshot.CreatedAt,
             shippingResult.Draft,
             ExternalKey(connection, snapshot.OrderId),
-            shippingResult.UnrecognizedTitle);
+            shippingResult.UnrecognizedTitle,
+            Blank(snapshot.Note));
 
     /// <summary>§6.2.3 paso 2 (H24): las pasarelas unidas con <c>", "</c> y recortadas al ancho de la columna.</summary>
     private static string? PaymentMethod(IReadOnlyList<string> gateways)
@@ -530,16 +531,12 @@ public sealed class ShopifyOrderImporter(
         return joined.Length == 0 ? null : joined.Length <= PaymentMethodMaxLength ? joined : joined[..PaymentMethodMaxLength].TrimEnd();
     }
 
-    /// <summary>§6.2.3 paso 2: <c>Shopify #1001</c> y, en otra línea, la nota del comprador; si la dirección no quedó como parte
-    /// de envío, otra línea con la dirección cruda. Sin tope (H24).</summary>
+    /// <summary>§6.2.3 paso 2: <c>Shopify #1001</c> y, si la dirección no quedó como parte de envío, otra línea con la dirección
+    /// cruda. Sin tope (H24). La nota del comprador ya no va acá sino en <see cref="ShopifyOrderDraft.BuyerNotes"/> (spec
+    /// 2026-11-14): las notas son del asesor y no viajan a Shopify.</summary>
     private static string Notes(ShopifyOrderSnapshot snapshot, ShopifyAddress? unresolvedAddress)
     {
         var parts = new List<string> { $"Shopify {snapshot.Name}" };
-        if (Blank(snapshot.Note) is { } note)
-        {
-            parts.Add(note);
-        }
-
         if (unresolvedAddress is { } address && RawAddress(address) is { Length: > 0 } raw)
         {
             parts.Add($"{RawAddressLabel}{raw}");

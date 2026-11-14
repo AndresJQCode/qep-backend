@@ -1284,6 +1284,77 @@ public sealed class OrderTests
             OrderPaymentStatus.PaymentPending, notes, ConvertedBy, [], Now, OrderSource.Shopify, "#1001",
             ShippingDetails.None, null, null, OrderLineCosts.None);
 
+    // Spec 2026-11-14: la nota del comprador de Shopify va aparte de las notas del asesor, como la de la tienda pública.
+    [Fact]
+    public void CreateExternalKeepsTheBuyerNotesApartFromNotes()
+    {
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0003", Header(), QuotationParties.Empty, Account, [Line()],
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", ConvertedBy, [], Now, OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null, OrderLineCosts.None, buyerNotes: "  Dejar en portería ");
+
+        Assert.Equal(("Shopify #1001", "Dejar en portería"), (order.Notes, order.BuyerNotes));
+    }
+
+    [Fact]
+    public void UpdateExternalBuyerNotesChangesOnlyBuyerNotesAndBumpsVersion()
+    {
+        var order = NewShopifyOrder("Shopify #1001");
+        var later = Now.AddHours(1);
+
+        var changed = order.UpdateExternalBuyerNotes("  Sin cebolla ", later);
+
+        Assert.True(changed);
+        Assert.Equal(("Sin cebolla", "Shopify #1001"), (order.BuyerNotes, order.Notes));
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    [Fact]
+    public void UpdateExternalBuyerNotesWithTheSameTextChangesNothing()
+    {
+        var order = NewShopifyOrder("Shopify #1001");
+        order.UpdateExternalBuyerNotes("Sin cebolla", Now.AddHours(1));
+
+        var changed = order.UpdateExternalBuyerNotes(" Sin cebolla  ", Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal((Now.AddHours(1), 2), (order.UpdatedAt, order.Version));
+    }
+
+    // D22: vacío o sólo espacios es lo mismo que null.
+    [Fact]
+    public void UpdateExternalBuyerNotesWithBlankOnANullNoteChangesNothing()
+    {
+        var order = NewShopifyOrder("Shopify #1001");
+
+        Assert.False(order.UpdateExternalBuyerNotes("   ", Now.AddHours(1)));
+        Assert.Null(order.BuyerNotes);
+        Assert.Equal(1, order.Version);
+    }
+
+    // La nota del comprador de la tienda pública es lo que él escribió: el asesor no la cambia.
+    [Fact]
+    public void UpdateExternalBuyerNotesOnAStoreOrderIsSourceInvalid()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7(), notes: "Entregar en portería");
+
+        var error = Assert.Throws<QuotationsDomainException>(() => order.UpdateExternalBuyerNotes("Otra", Now.AddHours(1)));
+
+        Assert.Equal("order.order.source_invalid", error.Code);
+        Assert.Equal("Entregar en portería", order.BuyerNotes);
+    }
+
+    [Fact]
+    public void UpdateExternalBuyerNotesOnAPreparedOrderIsNotEditable()
+    {
+        var order = NewShopifyOrder("Shopify #1001");
+        order.Prepare(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() => order.UpdateExternalBuyerNotes("Otra", Now.AddHours(1)));
+
+        Assert.Equal("order.order.not_editable", error.Code);
+    }
+
     [Fact]
     public void AttachExternalShippingAddsThePartyAndDropsTheRawAddressLine()
     {

@@ -156,7 +156,8 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
                     shipping.CarrierId, shipping.CarrierName, ToChargeMode(shipping.ChargeMode), shipping.FreightAmount,
                     shipping.FreightTaxPercentage, shipping.CashOnDelivery),
             draft.ExternalKey,
-            draft.ExternalShippingTitle);
+            draft.ExternalShippingTitle,
+            draft.BuyerNotes);
     }
 
     // Spec 2026-10-26 D-C4: la parte de envío como la guardó Quotations. Una guardada está completa (OrderParty.IsComplete), así

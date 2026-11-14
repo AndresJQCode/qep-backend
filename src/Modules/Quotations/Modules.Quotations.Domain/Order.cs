@@ -286,9 +286,13 @@ public sealed class Order
     public string? Notes { get; private set; }
 
     /// <summary>
-    /// La nota que el comprador escribió en el checkout de la tienda (spec 2026-11-10, D9). <see cref="Notes"/> la
-    /// sobrescriben <c>UpdateNotes</c>, <c>AddPaymentProofs</c> y <c>AttachExternalShipping</c>; ésta se fija al crear
-    /// el pedido de la tienda y no cambia, para que el comprador siga viendo lo que escribió.
+    /// La nota que el comprador escribió en el checkout (spec 2026-11-10, D9; Shopify desde el spec 2026-11-14).
+    /// <see cref="Notes"/> la sobrescriben <c>UpdateNotes</c>, <c>AddPaymentProofs</c> y <c>AttachExternalShipping</c>;
+    /// ésta la escriben sólo <see cref="CreateFromStore"/>, <see cref="CreateExternal"/> (la importación de Shopify) y
+    /// <see cref="UpdateExternalBuyerNotes"/> (la sincronización de Shopify y la corrección del asesor, sólo en pedidos de
+    /// Shopify). En un pedido de la tienda pública no cambia, para que el comprador siga viendo lo que escribió. Los
+    /// pedidos de Shopify importados antes del spec 2026-11-14 la tienen en <c>null</c>: su nota sigue dentro de
+    /// <see cref="Notes"/> (sin backfill).
     /// </summary>
     public string? BuyerNotes { get; private set; }
 
@@ -479,7 +483,8 @@ public sealed class Order
     /// <summary>Un pedido que trae una integración (Shopify y las que vengan). La elegibilidad del cliente
     /// —completo o incompleto— vive en Application: el dominio sólo exige que haya un id. Si nace
     /// <see cref="OrderPaymentStatus.FullPaymentReceived"/>, congela el costo de sus líneas con
-    /// <paramref name="costs"/> al crearse (spec costo de producto §4.3).</summary>
+    /// <paramref name="costs"/> al crearse (spec costo de producto §4.3). <paramref name="buyerNotes"/> es la nota del
+    /// comprador en la plataforma, que va a <see cref="BuyerNotes"/> y no a <see cref="Notes"/> (spec 2026-11-14).</summary>
     public static Order CreateExternal(
         OrderId id,
         Guid tenantId,
@@ -498,7 +503,8 @@ public sealed class Order
         ShippingDetails shipping,
         string? externalKey,
         string? externalShippingTitle,
-        OrderLineCosts costs)
+        OrderLineCosts costs,
+        string? buyerNotes = null)
     {
         if (source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store)
         {
@@ -523,6 +529,7 @@ public sealed class Order
             shipping, lines, paymentStatus, notes, createdBy, proofs, occurredAt, costs);
         order.ExternalKey = key;
         order.ExternalShippingTitle = NormalizeExternalShippingTitle(externalShippingTitle);
+        order.BuyerNotes = NormalizeNotes(buyerNotes);
         return order;
     }
 
@@ -1514,6 +1521,33 @@ public sealed class Order
         }
 
         Notes = normalized;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-14: cambia la nota del comprador de un pedido de Shopify (la sincronización desde Shopify y la
+    /// corrección del asesor). Sólo pedidos externos (<see cref="OrderSource.Shopify"/>): la nota de un pedido de la tienda
+    /// pública es lo que el comprador escribió y no se toca. <c>true</c> si cambió; vacío o sólo espacios es <c>null</c>
+    /// (D22), así que mandar <c>""</c> sobre una nota nula no cambia nada. No toca <see cref="Notes"/>.
+    /// </summary>
+    public bool UpdateExternalBuyerNotes(string? buyerNotes, DateTimeOffset occurredAt)
+    {
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only an external order takes its buyer notes from the platform.");
+        }
+
+        EnsureEditable("The buyer notes can only change while the order is editable.");
+        var normalized = NormalizeNotes(buyerNotes);
+        if (string.Equals(normalized, BuyerNotes, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        BuyerNotes = normalized;
         UpdatedAt = occurredAt;
         Version++;
         return true;

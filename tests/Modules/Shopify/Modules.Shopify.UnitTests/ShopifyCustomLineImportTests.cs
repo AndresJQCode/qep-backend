@@ -243,6 +243,19 @@ public sealed class ShopifyCustomLineImportTests
         Assert.Equal((2m, 10.0000m), (line.Quantity, line.DiscountPercentage));
     }
 
+    // Spec 2026-11-14: la nota del comprador va a BuyerNotes; Notes queda para «Shopify #N» (y la dirección cruda).
+    [Fact]
+    public async Task TheBuyerNoteGoesToBuyerNotesNotToNotes()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(note: "Sin cebolla");
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        var draft = Assert.Single(world.Writer.Creates).Draft;
+        Assert.Equal(("Shopify #1001", "Sin cebolla"), (draft.Notes, draft.BuyerNotes));
+    }
+
     // Se compara el JSON y no el texto: System.Text.Json escapa siempre los caracteres fuera del plano básico (el emoji sale como
     // un par sustituto \uXXXX), y es el mismo valor para quien lo lee. Las dos llaves van siempre y en ese orden.
     private static void AssertWaiting(ShopifyOrderMirror row, ShopifyImportOutcome outcome, string detail)

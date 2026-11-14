@@ -146,6 +146,21 @@ public sealed class ShopifyImportFlowTests
         Assert.Equal(1L, await ScalarAsync<long>(flow.ConnectionString, "SELECT count(*) FROM customers.customers"));
     }
 
+    // Spec 2026-11-14: la nota del comprador queda en buyer_notes, y notes sólo con «Shopify #N»; el detalle la devuelve.
+    [Fact]
+    public async Task ImportPutsTheBuyerNoteInBuyerNotes()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture("taxes-included", order => order["note"] = "Dejar en portería"));
+
+        Assert.Equal("Shopify #1001|Dejar en portería", await flow.ScalarAsync("SELECT notes || '|' || buyer_notes FROM quotations.orders"));
+        var orderId = await flow.ScalarAsync("SELECT id::text FROM quotations.orders");
+        using var client = flow.Client(OrdersPermissions.OrderRead);
+        var detail = await client.GetFromJsonAsync<JsonObject>($"/api/v1/tenants/{flow.World.TenantId}/orders/{orderId}", Ct);
+        Assert.Equal("Dejar en portería", detail!["order"]!["buyerNotes"]!.GetValue<string>());
+    }
+
     // §6.2.3: el pedido de Shopify nace sin cotización, así que no aparece en la lista de cotizaciones.
     [Fact]
     public async Task ImportNoQuotationNotInQuotationsList()

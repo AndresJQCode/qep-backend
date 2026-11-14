@@ -335,7 +335,8 @@ public sealed record ShopifyOrderDraft(
     DateTimeOffset OccurredAt,
     ShopifyShippingDraft? Shipping,
     string ExternalKey,
-    string? ExternalShippingTitle);
+    string? ExternalShippingTitle,
+    string? BuyerNotes = null);
 
 /// <summary>Lo que devolvió el alta: el pedido (nuevo o el que ya existía con esa clave, <see cref="AlreadyExisted"/>) o el
 /// código con que una regla del pedido lo rechazó (<c>order_rejected</c>, §6.2.3 paso 5). <see cref="ClientId"/> es el cliente
