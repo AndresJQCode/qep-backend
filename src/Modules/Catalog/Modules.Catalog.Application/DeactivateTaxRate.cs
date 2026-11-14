@@ -13,6 +13,7 @@ public sealed class DeactivateTaxRateHandler(
     ITaxRateRepository repository,
     IProductRepository productRepository,
     ITaxRateCustomerUsage customerUsage,
+    ITaxRateGeographyLookup geography,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -67,6 +68,6 @@ public sealed class DeactivateTaxRateHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return taxRate.ToDto();
+        return await taxRate.ToDtoAsync(geography, cancellationToken);
     }
 }
