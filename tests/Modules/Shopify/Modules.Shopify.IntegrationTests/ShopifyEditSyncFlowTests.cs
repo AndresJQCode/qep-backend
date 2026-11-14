@@ -315,6 +315,51 @@ public sealed class ShopifyEditSyncFlowTests
         Assert.Equal("1", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_edits WHERE decided_by IS NOT NULL"));
     }
 
+    /// <summary>La dirección como la devuelve Shopify después del <c>orderUpdate</c> de QEP (plan D12): el nombre de QEP en
+    /// <c>first_name</c> (Shopify arma <c>name</c>), la dirección entera en <c>address1</c>, la ciudad y el departamento de QEP.</summary>
+    private static JsonObject EchoOfTheEnvigadoCorrection(string updatedAt, string address1 = "Calle 10 # 43-20 Apto 301") =>
+        Fixture(order =>
+        {
+            order["updated_at"] = updatedAt;
+            var address = order["shipping_address"]!.AsObject();
+            address["name"] = "Laura Gómez";
+            address["first_name"] = "Laura Gómez";
+            address["last_name"] = "";
+            address["address1"] = address1;
+            address["address2"] = "";
+            address["city"] = "ENVIGADO";
+            address["province"] = "ANTIOQUIA";
+            address["province_code"] = "ANT";
+        });
+
+    // Spec 2026-11-14 §3 y §5 (anti-objetivo: el eco de una corrección de QEP no aparece como cambio). El asesor corrige la ciudad,
+    // Shopify devuelve orders/updated con ella: no hay cambio y la versión aplicada adopta el snapshot. La proyección no se mueve
+    // (plan D3), así que la edición siguiente de Shopify sobre la dirección es conflicto: gana lo del asesor (Review Focus 5).
+    [Fact]
+    public async Task TheEchoOfAPushedCorrectionCreatesNoChange()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await ShopifyOrderPushWorkerTests.CorrectTheCityToEnvigadoAsync(flow);
+        var projection = await flow.ScalarAsync("SELECT applied_projection::text FROM shopify.orders");
+
+        await flow.DeliverAsync("orders/updated", "wh-2", EchoOfTheEnvigadoCorrection("2026-10-01T10:30:00-05:00"));
+
+        Assert.Equal("0", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_edits"));
+        Assert.Equal("ENVIGADO", await flow.ScalarAsync("SELECT applied_payload -> 'shippingAddress' ->> 'city' FROM shopify.orders"));
+        Assert.Equal(projection, await flow.ScalarAsync("SELECT applied_projection::text FROM shopify.orders"));
+
+        await flow.DeliverAsync(
+            "orders/updated", "wh-3", EchoOfTheEnvigadoCorrection("2026-10-01T11:00:00-05:00", address1: "Carrera 43A # 1-50"));
+
+        Assert.Equal("Pending|ShippingAddress|Conflict|qep_changed", await flow.ScalarAsync(
+            """
+            SELECT e.status || '|' || (g ->> 'kind') || '|' || (g ->> 'outcome') || '|' || (g ->> 'reason')
+            FROM shopify.order_edits e, jsonb_array_elements(e.groups) AS g
+            """));
+        Assert.Equal("Calle 10 # 43-20 Apto 301", await flow.ScalarAsync("SELECT address FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
     [Fact]
     public async Task ListChangesAndSummaryCountPendingAndBlocked()
     {

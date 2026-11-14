@@ -99,6 +99,30 @@ public sealed class CitySynonymEndToEndTests
                 ("order", orderId)));
     }
 
+    // Spec 2026-11-14 §5: la ciudad que corrige el sistema también viaja a Shopify. Confirmar el sinónimo deja, junto con la parte
+    // de envío en Cali, el envío de la dirección pendiente para el worker.
+    [Fact]
+    public async Task ConfirmingASynonymPushesTheCityToShopify()
+    {
+        await using var shop = await CalliShop.StartAsync(operatorTenantId: OperatorTenantId);
+        await ExecuteAsync(shop.ConnectionString, "DELETE FROM geography.city_synonyms WHERE id = @id", ("id", shop.SynonymId));
+        var rowId = await ScalarAsync<Guid>(
+            shop.ConnectionString, "SELECT id FROM geography.unresolved_cities WHERE normalized_text = 'CALLI'");
+        using var client = OperatorClient(shop);
+
+        var resolved = await client.PostAsJsonAsync($"{Operator}/unresolved/{rowId}/resolve", new { cityId = shop.CaliId }, Ct);
+        Assert.Equal(HttpStatusCode.OK, resolved.StatusCode);
+        await DrainAsync(shop);
+
+        Assert.Equal(shop.CaliId, await ShippingCityAsync(shop, shop.OrderId));
+        Assert.Equal(
+            "1|Pending|{ShippingAddress}",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                "SELECT count(*) || '|' || max(status) || '|' || max(groups::text) FROM shopify.order_pushes WHERE qep_order_id = @order",
+                ("order", shop.OrderId)));
+    }
+
     // §4.6: el sinónimo apunta a CALIMA y corrigió dos pedidos; uno se prepara (sigue abierto, pero ya no es editable; spec
     // 2026-11-10). El impacto de pasarlo a CALI cuenta el editable, lista el preparado entre los que no se tocan, y al confirmar
     // el PUT sólo el editable cambia de ciudad: el preparado salta con order_not_pending y se queda en CALIMA.
