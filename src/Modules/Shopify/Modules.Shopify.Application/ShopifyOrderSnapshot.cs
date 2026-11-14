@@ -48,8 +48,21 @@ public sealed record ShopifyOrderSnapshot(
 
 /// <summary>Una línea del pedido. <see cref="Sku"/> nulo cuando Shopify no lo trae o viene vacío (el importador responde
 /// <c>product_unmatched</c>); <see cref="DiscountAmount"/> es la suma de las asignaciones de descuento de la línea, sobre
-/// <c>OriginalUnitPrice × Quantity</c>.</summary>
-public sealed record ShopifyLine(string? Sku, decimal Quantity, decimal OriginalUnitPrice, decimal DiscountAmount);
+/// <c>OriginalUnitPrice × Quantity</c>.
+/// <para><see cref="IsCustom"/> marca una línea personalizada: la que el comercio escribió a mano, sin producto ni variante en
+/// Shopify. Sólo lo es si la línea trae <b>explícitamente</b> los dos ids en <c>null</c> (REST <c>product_id</c> y
+/// <c>variant_id</c>; GraphQL <c>variant</c> y <c>product</c>): una llave ausente no cuenta, porque Shopify real siempre las manda
+/// y una fixture sin ellas dejaría todas las líneas como personalizadas. Una línea de un producto borrado conserva uno de los dos
+/// ids y no es personalizada. <see cref="Title"/> es el nombre de la línea, con el que el comercio la asocia a una variante.</para>
+/// <para><see cref="Title"/> e <see cref="IsCustom"/> tienen default para que los snapshots guardados antes de este cambio
+/// (sin esas llaves) sigan deserializando.</para></summary>
+public sealed record ShopifyLine(
+    string? Sku,
+    decimal Quantity,
+    decimal OriginalUnitPrice,
+    decimal DiscountAmount,
+    string? Title = null,
+    bool IsCustom = false);
 
 /// <summary>Una línea de envío, retiradas incluidas: descartarlas es del importador (§6.2.2). <see cref="TaxAmount"/> es la suma
 /// de sus <c>tax_lines</c>/<c>taxLines</c>.</summary>

@@ -75,7 +75,9 @@ public static class GraphQlOrderParser
                     OptionalAmount(line, $"{field}.originalUnitPriceSet.shopMoney.amount", "originalUnitPriceSet.shopMoney.amount") ?? 0m,
                     Items(line, "discountAllocations", $"{field}.discountAllocations")
                         .Select((allocation, i) => OptionalAmount(allocation, $"{field}.discountAllocations[{i}].allocatedAmountSet.shopMoney.amount", "allocatedAmountSet.shopMoney.amount") ?? 0m)
-                        .Sum());
+                        .Sum(),
+                    OptionalString(line, "title", $"{field}.title"),
+                    IsExplicitNull(line, "variant") && IsExplicitNull(line, "product"));
             })
             .ToArray();
 

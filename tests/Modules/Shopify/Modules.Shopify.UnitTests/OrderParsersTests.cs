@@ -236,6 +236,91 @@ public sealed class OrderParsersTests
         }
     }
 
+    private const string CustomTitle = "Garantía por 1 año + Envío Prioritario🚛";
+
+    private const string RestOrderHead = """
+        {"id": 42, "name": "#2001", "created_at": "2026-10-01T10:00:00-05:00", "updated_at": "2026-10-01T10:00:00-05:00",
+         "currency": "COP", "total_price_set": {"shop_money": {"amount": "50000.00"}}, "financial_status": "paid",
+        """;
+
+    private const string GraphQlOrderHead = """
+        {"id": "gid://shopify/Order/42", "name": "#2001", "createdAt": "2026-10-01T10:00:00-05:00", "updatedAt": "2026-10-01T10:00:00-05:00",
+         "currencyCode": "COP", "totalPriceSet": {"shopMoney": {"amount": "50000.00"}}, "displayFinancialStatus": "PAID",
+        """;
+
+    [Fact]
+    public void ParseRestCustomLineReadsTitleAndIsCustom()
+    {
+        var snapshot = RestOrderParser.Parse(Json(RestOrderHead + """
+            "line_items": [{"title": "Garantía por 1 año + Envío Prioritario🚛", "product_id": null, "variant_id": null,
+              "product_exists": false, "sku": null, "quantity": 1, "price": "5000.00", "discount_allocations": []}]}
+            """));
+
+        Assert.Equal(new ShopifyLine(null, 1m, 5_000m, 0m, CustomTitle, true), Assert.Single(snapshot.Lines));
+    }
+
+    [Fact]
+    public void ParseGraphQlCustomLineReadsTitleAndIsCustom()
+    {
+        var snapshot = GraphQlOrderParser.Parse(Json(GraphQlOrderHead + """
+            "lineItems": {"nodes": [{"title": "Garantía por 1 año + Envío Prioritario🚛", "variant": null, "product": null,
+              "sku": null, "quantity": 1, "originalUnitPriceSet": {"shopMoney": {"amount": "5000.0"}}, "discountAllocations": []}]}}
+            """));
+
+        Assert.Equal(new ShopifyLine(null, 1m, 5_000m, 0m, CustomTitle, true), Assert.Single(snapshot.Lines));
+    }
+
+    [Theory]
+    [InlineData("rest")]
+    [InlineData("graphql")]
+    public void ALineOfADeletedProductIsNotCustom(string format)
+    {
+        var json = format == "rest"
+            ? RestOrderHead + """
+                "line_items": [{"title": "Camiseta", "product_id": 632910392, "variant_id": 808950810, "product_exists": false,
+                  "sku": "CAM-001", "quantity": 1, "price": "5000.00", "discount_allocations": []}]}
+                """
+            : GraphQlOrderHead + """
+                "lineItems": {"nodes": [{"title": "Camiseta", "variant": {"id": "gid://shopify/ProductVariant/1"}, "product": null,
+                  "sku": "CAM-001", "quantity": 1, "originalUnitPriceSet": {"shopMoney": {"amount": "5000.0"}}, "discountAllocations": []}]}}
+                """;
+
+        var line = Assert.Single(Parse(format, json).Lines);
+
+        Assert.False(line.IsCustom);
+        Assert.Equal(("CAM-001", "Camiseta"), (line.Sku, line.Title));
+    }
+
+    // Review Focus 1: las fixtures no traen las llaves de ids; «ausente» no es «null», o todo pedido quedaría en espera.
+    [Theory]
+    [InlineData("rest")]
+    [InlineData("graphql")]
+    public void ALineWithoutTheIdKeysIsNotCustom(string format)
+    {
+        var snapshot = format == "rest"
+            ? RestOrderParser.Parse(Fixture("rest", "taxes-included"))
+            : GraphQlOrderParser.Parse(Fixture("graphql", "taxes-included"));
+
+        Assert.NotEmpty(snapshot.Lines);
+        Assert.All(snapshot.Lines, line => Assert.False(line.IsCustom));
+    }
+
+    [Fact]
+    public void AnOldPayloadWithoutTitleReadsDefaults()
+    {
+        var snapshot = RestOrderParser.Parse(Fixture("rest", "taxes-included"));
+        var node = System.Text.Json.Nodes.JsonNode.Parse(ShopifyOrderIngestion.WritePayload(snapshot))!;
+        foreach (var line in node["lines"]!.AsArray())
+        {
+            line!.AsObject().Remove("title");
+            line.AsObject().Remove("isCustom");
+        }
+
+        var read = ShopifyOrderIngestion.ReadPayload(node.ToJsonString());
+
+        Assert.Equal(new ShopifyLine("CAM-001", 2m, 50_000m, 0m), Assert.Single(read.Lines));
+    }
+
     // El record compara sus colecciones por referencia: se comparan aparte, en orden, y el resto con ellas neutralizadas.
     private static void AssertSameSnapshot(ShopifyOrderSnapshot expected, ShopifyOrderSnapshot actual)
     {

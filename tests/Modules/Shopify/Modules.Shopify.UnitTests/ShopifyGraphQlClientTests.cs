@@ -414,10 +414,27 @@ public sealed class ShopifyGraphQlQueryContractTests
     public void OrderQueryRequestsEveryFieldTheParserReads()
     {
         var order = SampleOrder();
+        // D2: IsCustom exige variant y product en null; si la consulta deja de pedirlos, la llave falta y sale false.
+        foreach (var line in order["lineItems"]!["nodes"]!.AsArray())
+        {
+            line!["variant"] = null;
+            line["product"] = null;
+        }
 
         var snapshot = GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(order));
 
         AssertPopulated(snapshot, "snapshot");
+    }
+
+    [Fact]
+    public void LineQueryAsksForTitleVariantAndProduct()
+    {
+        foreach (var query in new[] { ShopifyGraphQlClient.OrderQuery, ShopifyGraphQlClient.OrderLinesQuery })
+        {
+            Assert.Contains("title", query, StringComparison.Ordinal);
+            Assert.Contains("variant { id }", query, StringComparison.Ordinal);
+            Assert.Contains("product { id }", query, StringComparison.Ordinal);
+        }
     }
 
     // El comprador sale primero del pedido y, sin él, del cliente: la consulta tiene que pedir el correo y el teléfono del
@@ -461,6 +478,8 @@ public sealed class ShopifyGraphQlQueryContractTests
     {
         ("id", "order") => "gid://shopify/Order/1001",
         ("id", "customer") => "gid://shopify/Customer/7",
+        ("id", "variant") => "gid://shopify/ProductVariant/1",
+        ("id", "product") => "gid://shopify/Product/1",
         ("name", "order") => "#1001",
         ("name", "shippingAddress") => "Laura Gómez",
         ("email", "order") => "pedido@example.co",

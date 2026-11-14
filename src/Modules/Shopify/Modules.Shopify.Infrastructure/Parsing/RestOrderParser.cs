@@ -68,7 +68,9 @@ public static class RestOrderParser
                     OptionalAmount(line, $"{field}.price", "price_set.shop_money.amount", "price") ?? 0m,
                     Items(line, "discount_allocations", $"{field}.discount_allocations")
                         .Select((allocation, i) => OptionalAmount(allocation, $"{field}.discount_allocations[{i}].amount", "amount_set.shop_money.amount", "amount") ?? 0m)
-                        .Sum());
+                        .Sum(),
+                    OptionalString(line, "title", $"{field}.title"),
+                    IsExplicitNull(line, "product_id") && IsExplicitNull(line, "variant_id"));
             })
             .ToArray();
 
