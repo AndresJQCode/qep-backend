@@ -186,7 +186,8 @@ public sealed class ListShopifyOrderChangesHandler(
 /// <c>Blocked</c> con su motivo, se guarda y responde 422 <c>shopify.edit.&lt;motivo&gt;</c>. Si el pedido cambió entre el plan y la
 /// escritura, Quotations responde <c>concurrency.conflict</c> (412) y el cambio no se toca.</item>
 /// <item><b>Rechazar</b> y <b>revisar</b> (sólo un bloqueado, plan D9) adoptan el snapshot como versión aplicada sin tocar el pedido:
-/// el siguiente diff no vuelve a proponer lo mismo.</item>
+/// el siguiente diff no vuelve a proponer lo mismo. Antes, lo que el cambio aplicaba y el pedido ya tiene (un aceptar anterior que
+/// confirmó en Quotations y no guardó) pasa a la proyección (<see cref="ShopifyOrderEdits.SettleAsync"/>, review N-2).</item>
 /// </list>
 /// </summary>
 public sealed class ShopifyChangeDecider(
@@ -217,7 +218,8 @@ public sealed class ShopifyChangeDecider(
         var projection = ShopifyOrderEdits.ProjectionOf(row, store, applied, order);
         var plan = await planner.PlanAsync(store, row, applied, projection, incoming, order, row.QepAttributes, cancellationToken);
         var now = clock.UtcNow;
-        if (plan.BlockReason is { } reason)
+        // Review N-2: sin nada que escribir pero con lo aplicado ya en el pedido, se termina en vez de bloquear.
+        if (plan.BlockReason is { } reason && !ShopifyOrderEdits.OnlySettles(edit, plan))
         {
             throw await BlockAsync(edit, reason, ShopifyOrderEdits.WriteGroups(plan.Groups), now, cancellationToken);
         }
@@ -255,6 +257,14 @@ public sealed class ShopifyChangeDecider(
     {
         var (edit, decidedBy) = await OpenAsync(tenantId, changeId, cancellationToken);
         var row = await ShopifyOrderSupport.FindAsync(mirrors, tenantId, edit.MirrorOrderId, cancellationToken);
+        // Review N-2: si un aceptar anterior confirmó en Quotations y su guardado cayó, lo que el pedido ya tiene de este cambio pasa
+        // a la proyección antes de adoptar el snapshot; si no, la edición siguiente de ese grupo sería un conflicto falso.
+        if (await stores.FindAsync(tenantId, row.ConnectionId, cancellationToken) is { } store
+            && await orders.ReadStateAsync(tenantId, edit.QepOrderId, cancellationToken) is { } order)
+        {
+            await applier.SettleAsync(store, row, edit, order, cancellationToken);
+        }
+
         var now = clock.UtcNow;
         close(edit, decidedBy, now);
         row.AdoptPayload(edit.Payload);

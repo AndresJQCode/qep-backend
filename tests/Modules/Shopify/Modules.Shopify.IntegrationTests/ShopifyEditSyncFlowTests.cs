@@ -180,6 +180,93 @@ public sealed class ShopifyEditSyncFlowTests
         await AssertTheNextQuantityEditAppliesAsync(flow);
     }
 
+    /// <summary>La cantidad ya editada (1) y, más tarde, otra nota: un <c>orders/updated</c> que no toca las líneas.</summary>
+    private static JsonObject NoteEditedAfterTheQuantity() =>
+        Fixture(order =>
+        {
+            order["updated_at"] = "2026-10-01T10:45:00-05:00";
+            order["line_items"]![0]!["current_quantity"] = 1;
+            order["note"] = "Llamar antes";
+        });
+
+    private static Task<string> ProjectedQuantityAsync(Flow flow) =>
+        flow.ScalarAsync("SELECT trim_scale((applied_projection -> 'lines' -> 0 ->> 'quantity')::numeric)::text FROM shopify.orders");
+
+    // Review N-1: el guardado que marca el cambio aplicado falla y, antes del reintento, un snapshot más nuevo lo reemplaza. Las
+    // líneas ya están en el pedido y el snapshot nuevo las conserva: el cambio reemplazado las aplicaba, así que la proyección las toma.
+    [Fact]
+    public async Task AnAutomaticApplySupersededBeforeItsSaveKeepsTheProjectionInSync()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.SetEditSyncAsync("Automatic");
+        await flow.FailTheNextAppliedChangeAsync();
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+
+        await flow.DeliverAsync("orders/updated", "wh-3", NoteEditedAfterTheQuantity());
+
+        Assert.Equal("1", await ProjectedQuantityAsync(flow));
+        await AssertTheNextQuantityEditAppliesAsync(flow);
+    }
+
+    // Review N-1, tienda manual: el aceptar falla después de Quotations y llega un orders/updated que no toca las líneas.
+    [Fact]
+    public async Task AFailedAcceptSupersededByAnotherUpdateKeepsTheProjectionInSync()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var accept = $"{ChangesRoute(flow.World.TenantId)}/{await flow.ScalarAsync("SELECT id::text FROM shopify.order_edits")}/accept";
+        await flow.FailTheNextAppliedChangeAsync();
+        Assert.False((await client.PostAsync(accept, content: null, Ct)).IsSuccessStatusCode);
+
+        await flow.DeliverAsync("orders/updated", "wh-3", NoteEditedAfterTheQuantity());
+
+        Assert.Equal("1", await ProjectedQuantityAsync(flow));
+        await flow.SetEditSyncAsync("Automatic");
+        await AssertTheNextQuantityEditAppliesAsync(flow);
+    }
+
+    // Review N-2: lo aplicado ya está en el pedido, pero antes del reintento el pedido dejó de ser editable. No hay nada que
+    // escribir: el cambio queda aplicado (no bloqueado) y la proyección toma lo que el pedido tiene.
+    [Fact]
+    public async Task ARetryOnAnOrderThatIsNoLongerEditableSettlesInsteadOfBlocking()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.SetEditSyncAsync("Automatic");
+        await flow.FailTheNextAppliedChangeAsync();
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var orderId = await flow.ScalarAsync("SELECT id::text FROM quotations.orders");
+        Assert.True((await client.PostAsync(
+            $"/api/v1/tenants/{flow.World.TenantId}/orders/{orderId}/prepare", content: null, Ct)).IsSuccessStatusCode);
+
+        await flow.DeliverAsync("orders/updated", "wh-3", QuantityEdited());
+
+        Assert.Equal("Applied", await flow.ScalarAsync("SELECT coalesce(string_agg(status, ','), '(none)') FROM shopify.order_edits"));
+        Assert.Equal("1", await ProjectedQuantityAsync(flow));
+    }
+
+    // Review N-2: rechazar el cambio cuyo aceptar falló después de Quotations también deja la proyección con lo que el pedido tiene.
+    [Fact]
+    public async Task RejectingAChangeWhoseAcceptFailedKeepsTheProjectionInSync()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var change = $"{ChangesRoute(flow.World.TenantId)}/{await flow.ScalarAsync("SELECT id::text FROM shopify.order_edits")}";
+        await flow.FailTheNextAppliedChangeAsync();
+        Assert.False((await client.PostAsync($"{change}/accept", content: null, Ct)).IsSuccessStatusCode);
+
+        var rejected = await client.PostAsync($"{change}/reject", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, rejected.StatusCode);
+        Assert.Equal("1", await ProjectedQuantityAsync(flow));
+    }
+
     // La edición siguiente de Shopify sobre las líneas se aplica: el asesor no las tocó, así que no es conflicto qep_changed.
     private static async Task AssertTheNextQuantityEditAppliesAsync(Flow flow)
     {
