@@ -78,6 +78,10 @@ public interface IShopifyOrderMirrorRepository
     /// <summary>Spec 2026-11-14 §6: la fila del espejo de un pedido de QEP, con tracking; <c>null</c> si el pedido no vino de
     /// Shopify. Va por <c>IX_shopify_orders_tenant_qep_order</c>.</summary>
     Task<ShopifyOrderMirror?> FindByQepOrderIdAsync(Guid tenantId, Guid qepOrderId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14 §6: las filas de una página de cambios, en una sola lectura y sin tracking. Las que no son del tenant
+    /// no aparecen.</summary>
+    Task<IReadOnlyList<ShopifyOrderMirror>> ListByIdsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-11-14 §3 y §6: los cambios de Shopify (<c>shopify.order_edits</c>). Con tracking salvo las listas; lo

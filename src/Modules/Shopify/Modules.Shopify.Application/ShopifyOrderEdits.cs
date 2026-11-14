@@ -65,7 +65,14 @@ public sealed class ShopifyOrderEdits(
         }
 
         var store = change.Store;
-        var applied = ShopifyOrderIngestion.ReadPayload(row.AppliedPayload ?? previousPayload);
+        if (row.AppliedPayload is null)
+        {
+            // Plan D6: la base de una fila importada antes de la sincronización es el payload que tenía. Se guarda como versión
+            // aplicada para que aceptar el cambio después planee contra la misma base (la fila ya tiene el snapshot nuevo).
+            row.AdoptPayload(previousPayload);
+        }
+
+        var applied = ShopifyOrderIngestion.ReadPayload(row.AppliedPayload!);
         var projection = ProjectionOf(row, store, applied, order);
         var plan = await planner.PlanAsync(store, row, applied, projection, snapshot, order, row.QepAttributes, cancellationToken);
         var now = clock.UtcNow;
@@ -151,7 +158,8 @@ public sealed class ShopifyOrderEdits(
             state = outcome.State;
         }
 
-        edit.MarkApplied(WriteGroups(plan.Groups), decidedBy, clock.UtcNow);
+        // Al aceptar, todo puede haber quedado como eco (el asesor ya lo había hecho a mano): el cambio conserva lo que mostraba.
+        edit.MarkApplied(plan.IsEmpty ? edit.Groups : WriteGroups(plan.Groups), decidedBy, clock.UtcNow);
         row.RecordApplied(
             ShopifyOrderIngestion.WritePayload(incoming),
             ShopifyOrderProjection.Write(Merge(projection, state, plan, incoming, store)));

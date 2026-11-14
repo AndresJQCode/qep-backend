@@ -36,4 +36,14 @@ public static class ShopifyAuditActions
     public const string CustomLineMappingDeleted = "shopify.custom_line_mapping.deleted";
 
     public const string CustomLineMappingResourceType = "shopify_custom_line_mapping";
+
+    // Spec 2026-11-14 §4: las decisiones de una persona sobre un cambio de Shopify. Aplicar uno solo (tienda automática) lo
+    // audita Quotations como integración (quotation.order.external_edit_applied).
+    public const string OrderEditAccepted = "shopify.order_edit.accepted";
+
+    public const string OrderEditRejected = "shopify.order_edit.rejected";
+
+    public const string OrderEditReviewed = "shopify.order_edit.reviewed";
+
+    public const string OrderEditResourceType = "shopify_order_edit";
 }

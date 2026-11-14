@@ -641,7 +641,8 @@ internal sealed class StoreHandlersWorld
         ReviewHandler.HandleAsync(new ReviewShopifyOrderWarningsCommand(TenantId, rowId), TestContext.Current.CancellationToken);
 
     public Task<ShopifyOrdersSummaryDto> SummaryAsync(string timeZone, DateTimeOffset now) =>
-        new GetShopifyOrdersSummaryHandler(Context, new ShopifyEnabledModules(), Mirrors, new FixedTenantClock(timeZone, now))
+        new GetShopifyOrdersSummaryHandler(
+                Context, new ShopifyEnabledModules(), Mirrors, new FakeOrderEditRepository(Database), new FixedTenantClock(timeZone, now))
             .HandleAsync(new GetShopifyOrdersSummaryQuery(TenantId), TestContext.Current.CancellationToken);
 
     public ShopifyStore SeedStore()

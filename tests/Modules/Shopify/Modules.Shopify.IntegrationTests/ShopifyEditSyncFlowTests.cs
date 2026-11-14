@@ -1,8 +1,10 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Modules.Quotations.Application;
 using Modules.Shopify.Infrastructure.Workers;
 using Modules.Storage.Application;
 using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
@@ -97,6 +99,120 @@ public sealed class ShopifyEditSyncFlowTests
         Assert.Equal("0", await flow.ScalarAsync(
             "SELECT count(*)::text FROM shopify.order_edits, jsonb_array_elements(groups) AS g WHERE g ->> 'outcome' = 'Conflict'"));
         Assert.Equal("Llamar antes", await flow.ScalarAsync("SELECT buyer_notes FROM quotations.orders"));
+    }
+
+    private static void Renumber(JsonObject order, long id, string name)
+    {
+        order["id"] = id;
+        order["admin_graphql_api_id"] = $"gid://shopify/Order/{id}";
+        order["name"] = name;
+    }
+
+    private static string ChangesRoute(Guid tenantId) => $"/api/v1/tenants/{tenantId}/shopify/changes";
+
+    // Spec 2026-11-14 §4: el flujo del owner para un pedido preparado que no ha salido: deshacer la preparación y aceptar.
+    [Fact]
+    public async Task APreparedOrderBlocksAndAcceptAfterUnprepareApplies()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var orderId = await flow.ScalarAsync("SELECT id::text FROM quotations.orders");
+        var orders = $"/api/v1/tenants/{flow.World.TenantId}/orders/{orderId}";
+        Assert.True((await client.PostAsync($"{orders}/prepare", content: null, Ct)).IsSuccessStatusCode);
+
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+
+        Assert.Equal("Blocked|order_not_editable", await flow.ScalarAsync("SELECT status || '|' || status_reason FROM shopify.order_edits"));
+        var changeId = await flow.ScalarAsync("SELECT id::text FROM shopify.order_edits");
+        var accept = $"{ChangesRoute(flow.World.TenantId)}/{changeId}/accept";
+        var refused = await client.PostAsync(accept, content: null, Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        Assert.Equal("shopify.edit.order_not_editable", (await refused.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>());
+
+        Assert.True((await client.PostAsync($"{orders}/unprepare", content: null, Ct)).IsSuccessStatusCode);
+        var accepted = await client.PostAsync(accept, content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        Assert.Equal("Applied", (await accepted.Content.ReadFromJsonAsync<JsonObject>(Ct))!["status"]!.GetValue<string>());
+        Assert.Equal("1", await flow.ScalarAsync("SELECT trim_scale(quantity)::text FROM quotations.order_items"));
+        Assert.Equal("1", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_edits WHERE decided_by IS NOT NULL"));
+    }
+
+    [Fact]
+    public async Task ListChangesAndSummaryCountPendingAndBlocked()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-a", Fixture(order => Renumber(order, 5550000000401, "#1401")));
+        await flow.DeliverAsync("orders/create", "wh-b", Fixture(order => Renumber(order, 5550000000402, "#1402")));
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var prepared = await flow.ScalarAsync(
+            "SELECT qep_order_id::text FROM shopify.orders WHERE shopify_order_id = 5550000000402");
+        Assert.True((await client.PostAsync(
+            $"/api/v1/tenants/{flow.World.TenantId}/orders/{prepared}/prepare", content: null, Ct)).IsSuccessStatusCode);
+
+        await flow.DeliverAsync("orders/updated", "wh-c", Fixture(order =>
+        {
+            Renumber(order, 5550000000401, "#1401");
+            order["updated_at"] = "2026-10-01T10:30:00-05:00";
+            order["note"] = "Llamar antes";
+        }));
+        await flow.DeliverAsync("orders/updated", "wh-d", Fixture(order =>
+        {
+            Renumber(order, 5550000000402, "#1402");
+            order["updated_at"] = "2026-10-01T10:30:00-05:00";
+            order["note"] = "Llamar antes";
+        }));
+
+        var page = await client.GetFromJsonAsync<JsonObject>(ChangesRoute(flow.World.TenantId), Ct);
+        var summary = await client.GetFromJsonAsync<JsonObject>($"/api/v1/tenants/{flow.World.TenantId}/shopify/orders/summary", Ct);
+
+        Assert.Equal(2, page!["total"]!.GetValue<int>());
+        Assert.Equal(
+            ["Blocked", "Pending"],
+            page["items"]!.AsArray().Select(item => item!["status"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(2, summary!["changesToReview"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task ChangesOfAnOrderComeNewestFirst()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited("2026-10-01T10:30:00-05:00"));
+        await flow.DeliverAsync("orders/updated", "wh-3", Fixture(order =>
+        {
+            order["updated_at"] = "2026-10-01T11:00:00-05:00";
+            order["note"] = "Llamar antes";
+        }));
+        using var client = flow.Client(OrdersPermissions.OrderRead);
+        var mirrorId = await flow.ScalarAsync("SELECT id::text FROM shopify.orders");
+
+        var changes = await client.GetFromJsonAsync<JsonArray>($"/api/v1/tenants/{flow.World.TenantId}/shopify/orders/{mirrorId}/changes", Ct);
+
+        Assert.Equal(
+            ["Pending", "Superseded"],
+            changes!.Select(change => change!["status"]!.GetValue<string>()).ToArray());
+        Assert.Equal("#1001", changes![0]!["orderName"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task TheChangeCarriesTheOrderCurrencyAndRawAmounts()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+        using var client = flow.Client(OrdersPermissions.OrderRead);
+
+        var page = await client.GetFromJsonAsync<JsonObject>(ChangesRoute(flow.World.TenantId), Ct);
+
+        var change = page!["items"]![0]!;
+        Assert.Equal("COP", change["currency"]!.GetValue<string>());
+        var lines = change["groups"]!.AsArray().Single(group => group!["kind"]!.GetValue<string>() == "Lines")!;
+        Assert.Equal("Apply", lines["outcome"]!.GetValue<string>());
+        var row = lines["rows"]![0]!;
+        Assert.Equal(System.Text.Json.JsonValueKind.Number, row["before"]!["unitPrice"]!.GetValueKind());
+        Assert.Equal((2m, 1m), (row["before"]!["quantity"]!.GetValue<decimal>(), row["after"]!["quantity"]!.GetValue<decimal>()));
     }
 
     /// <summary>Un tenant con la tienda enlazada y configurada, como el de <c>ShopifyImportFlowTests</c>, con el webhook y el

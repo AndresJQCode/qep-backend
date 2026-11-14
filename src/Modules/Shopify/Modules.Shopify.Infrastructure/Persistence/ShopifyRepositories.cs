@@ -197,6 +197,17 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
             .OrderByDescending(row => row.ShopifyCreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ShopifyOrderMirror>> ListByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        var wanted = ids.ToArray();
+        return wanted.Length == 0
+            ? []
+            : await dbContext.Orders.AsNoTracking()
+                .Where(row => row.TenantId == tenantId && wanted.Contains(row.Id))
+                .ToListAsync(cancellationToken);
+    }
+
     // El resultado de SqlQuery: EF lo llena por nombre de columna.
     private sealed class CountsRow
     {

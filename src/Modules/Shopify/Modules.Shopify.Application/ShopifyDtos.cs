@@ -134,6 +134,39 @@ public sealed record ShopifyOrderPageDto(IReadOnlyList<ShopifyOrderRowDto> Items
 /// Es un endpoint y no una suma del cliente porque la lista está paginada (tope 50). <see cref="WithWarnings"/> cuenta sólo los
 /// avisos sin revisar; <see cref="CancelledAfterInvoice"/>, las filas <c>Cancelled</c> con <c>invoiced_before_cancel</c> (hay
 /// que revertir la factura a mano); <see cref="ImportedToday"/>, las filas importadas desde la medianoche en el huso del tenant,
-/// en cualquier estado posterior.
+/// en cualquier estado posterior; <see cref="ChangesToReview"/>, los cambios de Shopify <c>Pending</c> y <c>Blocked</c> (spec
+/// 2026-11-14 §6, la sección «Cambios por revisar»).
 /// </summary>
-public sealed record ShopifyOrdersSummaryDto(int Waiting, int WithWarnings, int CancelledAfterInvoice, int ImportedToday);
+public sealed record ShopifyOrdersSummaryDto(int Waiting, int WithWarnings, int CancelledAfterInvoice, int ImportedToday, int ChangesToReview);
+
+/// <summary>
+/// Spec 2026-11-14 §6: un cambio de Shopify como lo pinta la bandeja («Cambios por revisar») y el detalle del pedido.
+/// <para>BFF: <see cref="Groups"/> viaja armado (grupo, decisión, motivo y filas de antes y después con textos, números crudos y
+/// booleanos), porque el frontend no conoce el diff de Shopify ni los enums de QEP; sólo los pinta. Los enums (<see cref="Status"/>,
+/// <c>kind</c>, <c>outcome</c>) van por nombre y los motivos (<see cref="StatusReason"/>, <c>reason</c>) en <c>snake_case</c>, que el
+/// frontend traduce con su diccionario. Los montos van como número crudo en <see cref="Currency"/> (plan D19): el frontend ya
+/// formatea por moneda, y un texto armado acá fijaría el formato regional en dos lugares.</para>
+/// <para><see cref="Currency"/> es la del pedido de QEP: sale de <c>shopify.orders.currency</c>, que la importación exige igual a la
+/// de la cuenta de cobro (<c>currency_mismatch</c>); siempre presente. <see cref="DecidedByName"/> es el nombre de quien aceptó,
+/// rechazó o revisó; <c>null</c> si lo decidió el sistema.</para>
+/// </summary>
+public sealed record ShopifyOrderChangeDto(
+    Guid Id,
+    Guid MirrorOrderId,
+    Guid ConnectionId,
+    string? StoreName,
+    string OrderName,
+    Guid? QepOrderId,
+    string? QepOrderNumber,
+    string Currency,
+    string Status,
+    string? StatusReason,
+    DateTimeOffset? BaseUpdatedAt,
+    DateTimeOffset SnapshotUpdatedAt,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? DecidedAt,
+    string? DecidedByName,
+    JsonElement Groups);
+
+/// <summary>Spec 2026-11-14 §6 <c>GET /changes</c>: la página y el total del filtro, como <see cref="ShopifyOrderPageDto"/>.</summary>
+public sealed record ShopifyOrderChangePageDto(IReadOnlyList<ShopifyOrderChangeDto> Items, int Total, int Page, int PageSize);

@@ -228,6 +228,11 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
         Task.FromResult(
             database.Orders.Values.Concat(database.PendingOrders)
                 .FirstOrDefault(row => row.TenantId == tenantId && row.QepOrderId == qepOrderId));
+
+    public Task<IReadOnlyList<ShopifyOrderMirror>> ListByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyOrderMirror>>(
+            [.. database.Orders.Values.Concat(database.PendingOrders).Where(row => row.TenantId == tenantId && ids.Contains(row.Id))]);
 }
 
 /// <summary>Los cambios de Shopify (spec 2026-11-14) en la «base»: lo agregado queda pendiente hasta el guardado de
