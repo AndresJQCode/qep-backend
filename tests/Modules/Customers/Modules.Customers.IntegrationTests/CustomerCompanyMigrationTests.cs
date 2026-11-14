@@ -48,7 +48,7 @@ public sealed class CustomerCompanyMigrationTests
     [Fact]
     public async Task TheMigrationAddsANullableCompanyColumn()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);

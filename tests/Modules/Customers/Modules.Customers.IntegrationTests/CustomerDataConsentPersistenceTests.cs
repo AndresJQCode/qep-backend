@@ -355,7 +355,7 @@ public sealed class CustomerDataConsentPersistenceTests
     [Fact]
     public async Task ADeadlockWhileLockingIsAConflict()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartOwnServerAsync();
         using var fixture = Start(database.GetConnectionString());
         var survivor = await InsertCustomerAsync(fixture.ConnectionString, Tenant);
         var merged = await InsertCustomerAsync(fixture.ConnectionString, Tenant, mergedInto: survivor);
@@ -408,7 +408,7 @@ public sealed class CustomerDataConsentPersistenceTests
 
             if (await CountAsync(
                 connectionString,
-                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%merged_into_id AS%FOR UPDATE%'") == 1)
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%merged_into_id AS%FOR UPDATE%'") == 1)
             {
                 return;
             }

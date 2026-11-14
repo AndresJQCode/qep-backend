@@ -402,13 +402,13 @@ public sealed class CustomerExportApiTests
     }
 
     private static QepApiFactory Factory(
-        Testcontainers.PostgreSql.PostgreSqlContainer database, CapturingExportStorage storage) =>
+        TestDatabase database, CapturingExportStorage storage) =>
         new(
             database.GetConnectionString(),
             services => services.AddScoped<ICustomerExportStorage>(_ => storage));
 
     private static QepApiFactory FactoryAt(
-        Testcontainers.PostgreSql.PostgreSqlContainer database,
+        TestDatabase database,
         CapturingExportStorage storage,
         DateTimeOffset utcNow) =>
         new(

@@ -6,7 +6,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
@@ -22,7 +21,7 @@ public sealed class CustomerDataConsentsServiceTests
     private static readonly Guid Tenant = Guid.Parse(TenantId);
     private static readonly DateTimeOffset Now = new(2026, 10, 26, 12, 0, 0, TimeSpan.Zero);
 
-    private sealed class Fixture(PostgreSqlContainer database, QepApiFactory factory, HttpClient client, Guid cityId, Guid classificationId)
+    private sealed class Fixture(TestDatabase database, QepApiFactory factory, HttpClient client, Guid cityId, Guid classificationId)
         : IAsyncDisposable
     {
         public string ConnectionString { get; } = database.GetConnectionString();
@@ -247,7 +246,7 @@ public sealed class CustomerDataConsentsServiceTests
 
             var blocked = await CountAsync(
                 connectionString,
-                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%INSERT INTO customers.data_consents%'");
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%INSERT INTO customers.data_consents%'");
             if (blocked == expected)
             {
                 return;
