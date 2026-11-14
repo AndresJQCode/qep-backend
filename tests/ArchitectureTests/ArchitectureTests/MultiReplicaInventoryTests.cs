@@ -179,6 +179,22 @@ public sealed class MultiReplicaInventoryTests
         }
     }
 
+    /// <summary>Un interruptor presente pero en <c>"false"</c> vale lo mismo que ausente: una violación por clave.</summary>
+    [Fact]
+    public void MoreThanOneReplicaRejectsEveryValkeySwitchSetToFalse()
+    {
+        var keys = MultiReplicaInventory.SharedStateSwitches.Values.Append("Valkey__Enabled").ToList();
+        var configMap = "data:\n  Seed__ExportLoad__Quotations: \"0\"\n" + string.Concat(keys.Select(key => $"  {key}: \"false\"\n"));
+
+        var violations = ReplicaViolations(Deployment(replicas: 2), configMap);
+
+        Assert.Equal(3, keys.Count);
+        foreach (var key in keys)
+        {
+            Assert.Single(violations, violation => violation.StartsWith(key + " ", StringComparison.Ordinal));
+        }
+    }
+
     [Fact]
     public void MoreThanOneReplicaPassesWithEverySwitchOn()
     {
