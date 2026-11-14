@@ -9,7 +9,7 @@ using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -18,11 +18,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// «Talla» y «Color» inactivas en el primer acceso, una sola vez; una opción o un valor que
 /// alguna variante usa no se borra (409 <c>catalog.option.in_use</c>), uno sin uso sí.
 /// </summary>
-public sealed class OptionLibraryApiTests
+public sealed class OptionLibraryApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-00000000f001";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-00000000f002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-00000000f0dd";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-00000000f0dc";
     private static readonly DateTimeOffset Now = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
 
@@ -34,8 +34,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task FirstListSeedsTallaAndColorInactive()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
 
         var options = await ListAsync(client, TenantId);
@@ -72,8 +71,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task ADeletedSeedDoesNotComeBack()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
 
         var talla = (await ListAsync(client, TenantId)).Items.Single(option => option.Name == "Talla");
@@ -87,8 +85,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task CreateReturnsAnActiveOptionWithItsValuesInOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
 
         var response = await CreateAsync(client, TenantId, " Material ", ["Algodón", " Lino "]);
@@ -103,8 +100,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task CreateRejectsDuplicateNameInTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, Manage);
         await ListAsync(client, TenantId);
@@ -120,8 +116,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task CreateWithBlankValueReturnsTheErrorsMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
 
         var response = await CreateAsync(client, TenantId, "Material", ["Algodón", " "]);
@@ -136,8 +131,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task UpdateReplacesNameStateAndValuesInOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
         var talla = (await ListAsync(client, TenantId)).Items.Single(option => option.Name == "Talla");
         var small = talla.Values.Single(value => value.Name == "S");
@@ -171,8 +165,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task UpdateWithoutIsActiveIsRejectedWithTheErrorsMapAndChangesNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
         var created = await ReadAsync<OptionResponse>(await CreateAsync(client, TenantId, "Material", ["Algodón"]));
         var cotton = created.Values.Single();
@@ -196,8 +189,8 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task DeleteUnusedOptionSucceeds()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
         var created = await ReadAsync<OptionResponse>(await CreateAsync(client, TenantId, "Material", ["Algodón"]));
 
@@ -211,8 +204,8 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task DeleteOptionUsedByVariantReturnsInUse()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
         var created = await ReadAsync<OptionResponse>(await CreateAsync(client, TenantId, "Material", ["Algodón", "Lino"]));
         await SaveProductUsingAsync(factory, created.Id, created.Values[0].Id);
@@ -233,8 +226,8 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task UpdateThatDropsAValueInUseReturnsInUseAndAnUnusedOneIsDeleted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
         var created = await ReadAsync<OptionResponse>(await CreateAsync(client, TenantId, "Material", ["Algodón", "Lino"]));
         var used = created.Values[0];
@@ -287,8 +280,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task UnknownOptionIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, Manage);
 
         var response = await DeleteAsync(client, TenantId, Guid.CreateVersion7());
@@ -300,8 +292,8 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task OtherTenantGets403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var owner = CreateClient(factory, SubjectId, TenantId, Manage);
         using var intruder = CreateClient(factory, OtherSubjectId, OtherTenantId, Manage);
         var created = await ReadAsync<OptionResponse>(await CreateAsync(owner, TenantId, "Material", ["Algodón"]));
@@ -321,8 +313,7 @@ public sealed class OptionLibraryApiTests
     [Fact]
     public async Task ReadWithoutManagePermissionCanList()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var reader = CreateClient(factory, SubjectId, TenantId, ReadOnly);
 
         var list = await reader.GetAsync(OptionsPath(TenantId), TestContext.Current.CancellationToken);
@@ -364,7 +355,7 @@ public sealed class OptionLibraryApiTests
 
     // Las variantes todavía no entran por HTTP (Tarea 5): el producto con opción se guarda por el
     // agregado, como en CatalogVariantPersistenceTests.
-    private static async Task SaveProductUsingAsync(QepApiFactory factory, Guid optionId, Guid valueId)
+    private async Task SaveProductUsingAsync(QepApiFactory factory, Guid optionId, Guid valueId)
     {
         var product = Product.Create(
             ProductId.New(),
@@ -402,7 +393,7 @@ public sealed class OptionLibraryApiTests
             },
         };
 
-    private static async Task<int> CountAsync(PostgreSqlContainer database, string sql)
+    private static async Task<int> CountAsync(TestDatabase database, string sql)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -410,17 +401,6 @@ public sealed class OptionLibraryApiTests
         return Convert.ToInt32(
             await command.ExecuteScalarAsync(TestContext.Current.CancellationToken),
             System.Globalization.CultureInfo.InvariantCulture);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

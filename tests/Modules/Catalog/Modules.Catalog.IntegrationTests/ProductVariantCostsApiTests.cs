@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -13,9 +13,9 @@ namespace Modules.Catalog.IntegrationTests;
 /// <c>catalog.product_cost.read</c> (o manage), se escribe con <c>.manage</c>, y un cliente que
 /// no lo conoce ni lo ve ni lo borra al editar el resto del producto.
 /// </summary>
-public sealed class ProductVariantCostsApiTests
+public sealed class ProductVariantCostsApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000071";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000072";
 
     private static readonly string[] Base = [CatalogPermissions.ProductRead, CatalogPermissions.ProductManage];
@@ -28,8 +28,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task GetWithoutCostReadReturnsNullCosts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
         using var reader = Client(factory, [CatalogPermissions.ProductRead]);
         var created = await CreateAsync(manager, "VC-1", TwelveThousand);
@@ -43,8 +42,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task GetWithCostReadReturnsTheMapOrEmpty()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
         using var reader = Client(factory, [CatalogPermissions.ProductRead, CatalogPermissions.ProductCostRead]);
         var withCost = await CreateAsync(manager, "VC-1", TwelveThousand);
@@ -63,8 +61,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task ManageWithoutReadAlsoSeesCosts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, [.. Base, CatalogPermissions.ProductCostManage]);
         var created = await CreateAsync(manager, "VC-1", TwelveThousand);
 
@@ -76,8 +73,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task PostWithCostsWithoutManageIs403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = Client(factory, Base);
 
         var response = await client.PostAsJsonAsync(
@@ -97,8 +93,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task PutWithCostsWithoutManageIs403AndChangesNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
         using var client = Client(factory, Base);
         var created = await CreateAsync(manager, "VC-1", TwelveThousand);
@@ -120,8 +115,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task PutWithoutCostsKeepsTheSavedCostForAManagerWithoutCostPermissions()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
         using var editor = Client(factory, Base);
         var created = await CreateAsync(manager, "VC-1", TwelveThousand);
@@ -142,8 +136,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task PutWithAnEmptyMapClearsTheCost()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
         var created = await CreateAsync(manager, "VC-1", TwelveThousand);
 
@@ -160,8 +153,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task ZeroOrUnknownCurrencyCostIs422WithTheField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
 
         var zero = await manager.PostAsJsonAsync(
@@ -189,8 +181,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task ASubCentCostIs422WithTheFieldNotA500()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
 
         var response = await manager.PostAsJsonAsync(
@@ -206,8 +197,7 @@ public sealed class ProductVariantCostsApiTests
     [Fact]
     public async Task TheProductListAndSelectorNeverCarryCosts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
         await CreateAsync(manager, "VC-1", TwelveThousand);
 
@@ -217,9 +207,9 @@ public sealed class ProductVariantCostsApiTests
         Assert.DoesNotContain("\"costs\"", raw, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string ProductsUrl => $"/api/v1/tenants/{TenantId}/catalog/products";
+    private string ProductsUrl => $"/api/v1/tenants/{TenantId}/catalog/products";
 
-    private static async Task<ProductResponse> CreateAsync(
+    private async Task<ProductResponse> CreateAsync(
         HttpClient client, string code, Dictionary<string, decimal>? costs)
     {
         var response = await client.PostAsJsonAsync(
@@ -229,21 +219,10 @@ public sealed class ProductVariantCostsApiTests
         return product!;
     }
 
-    private static async Task<JsonDocument> GetJsonAsync(HttpClient client, Guid productId) =>
+    private async Task<JsonDocument> GetJsonAsync(HttpClient client, Guid productId) =>
         JsonDocument.Parse(await client.GetStringAsync($"{ProductsUrl}/{productId}", TestContext.Current.CancellationToken));
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
-    private static HttpClient Client(QepApiFactory factory, string[] permissions)
+    private HttpClient Client(QepApiFactory factory, string[] permissions)
     {
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Subject-Id", SubjectId);

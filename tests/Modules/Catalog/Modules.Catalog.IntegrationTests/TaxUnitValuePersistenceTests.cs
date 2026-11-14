@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -48,17 +48,6 @@ public sealed class TaxUnitValuePersistenceTests
             Assert.True(await repository.AnyAsync("CO", token));
             Assert.False(await repository.AnyAsync("ES", token));
         }
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>

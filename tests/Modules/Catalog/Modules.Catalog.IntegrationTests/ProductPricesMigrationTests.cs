@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -61,7 +61,7 @@ public sealed class ProductPricesMigrationTests
     [Fact]
     public async Task AddProductPricesCopiesEveryLegacyPriceLosslessly()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewCatalogContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -94,7 +94,7 @@ public sealed class ProductPricesMigrationTests
     [Fact]
     public async Task AddProductPricesRenamesTheHistoryToPriceBaseWithItsCurrency()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewCatalogContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -121,7 +121,7 @@ public sealed class ProductPricesMigrationTests
     [Fact]
     public async Task RevertingCopiesTheCollectionBackIntoTheLegacyColumns()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewCatalogContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -202,16 +202,5 @@ public sealed class ProductPricesMigrationTests
         }
 
         return [.. rows];
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 }

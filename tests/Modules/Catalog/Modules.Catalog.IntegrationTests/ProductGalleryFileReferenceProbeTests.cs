@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Storage.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -15,9 +15,9 @@ namespace Modules.Catalog.IntegrationTests;
 /// La sonda <c>catalog</c> responde si alguna galería, de cualquier producto, todavía tiene el
 /// archivo. Storage la consulta antes de purgar una foto liberada.
 /// </summary>
-public sealed class ProductGalleryFileReferenceProbeTests
+public sealed class ProductGalleryFileReferenceProbeTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000011";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000012";
     private const string PublicBaseUrl = "https://cdn.qep.test";
 
@@ -32,8 +32,8 @@ public sealed class ProductGalleryFileReferenceProbeTests
     [Fact]
     public async Task TrueWhileAGalleryHasTheFile()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory);
         var file = await UploadImageAsync(client, database, "una.png");
         await CreateWithGalleryAsync(client, "Vela", "VS-001", file);
@@ -44,8 +44,8 @@ public sealed class ProductGalleryFileReferenceProbeTests
     [Fact]
     public async Task FalseForAFileInNoGallery()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory);
         var file = await UploadImageAsync(client, database, "suelta.png");
 
@@ -55,8 +55,8 @@ public sealed class ProductGalleryFileReferenceProbeTests
     [Fact]
     public async Task TrueWhileAnotherGalleryStillHasTheFile()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory);
         var file = await UploadImageAsync(client, database, "compartida.png");
         var first = await CreateWithGalleryAsync(client, "Vela", "VS-001", file);
@@ -70,8 +70,8 @@ public sealed class ProductGalleryFileReferenceProbeTests
     [Fact]
     public async Task TheGalleryFileIndexExists()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory);
         // El cliente fuerza el arranque del host, que aplica las migraciones.
         await UploadImageAsync(client, database, "una.png");
@@ -95,7 +95,7 @@ public sealed class ProductGalleryFileReferenceProbeTests
         return await probe.HasReferencesAsync(fileId, TestContext.Current.CancellationToken);
     }
 
-    private static async Task<ProductResponse> CreateWithGalleryAsync(
+    private async Task<ProductResponse> CreateWithGalleryAsync(
         HttpClient client,
         string name,
         string sku,
@@ -113,7 +113,7 @@ public sealed class ProductGalleryFileReferenceProbeTests
         return await ReadProductAsync(response);
     }
 
-    private static async Task PutWithoutGalleryAsync(HttpClient client, ProductResponse current)
+    private async Task PutWithoutGalleryAsync(HttpClient client, ProductResponse current)
     {
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{current.Id}",
@@ -145,9 +145,9 @@ public sealed class ProductGalleryFileReferenceProbeTests
 
     // El estado Available se fuerza por SQL: completar la subida exige R2 y el escáner, que no
     // existen en una prueba (ver ProductImageApiTests.UploadFileAsync).
-    private static async Task<Guid> UploadImageAsync(
+    private async Task<Guid> UploadImageAsync(
         HttpClient client,
-        PostgreSqlContainer database,
+        TestDatabase database,
         string name)
     {
         var response = await client.PostAsJsonAsync(
@@ -170,18 +170,7 @@ public sealed class ProductGalleryFileReferenceProbeTests
         return fileId;
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
-    private static HttpClient CreateClient(QepApiFactory factory)
+    private HttpClient CreateClient(QepApiFactory factory)
     {
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Subject-Id", SubjectId);

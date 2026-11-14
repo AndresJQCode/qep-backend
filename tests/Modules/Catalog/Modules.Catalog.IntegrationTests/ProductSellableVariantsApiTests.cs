@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Modules.Storage.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -15,11 +15,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// ítem, las variantes vendibles para que el selector de cotizaciones y pedidos agregue una línea
 /// sin otra llamada. Sin el parámetro el listado queda como lo dejó la Tarea 5.
 /// </summary>
-public sealed class ProductSellableVariantsApiTests
+public sealed class ProductSellableVariantsApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-0000000000e1";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-0000000000e2";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000e3";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000e4";
     private const string PublicBaseUrl = "https://cdn.qep.test";
 
@@ -40,8 +40,7 @@ public sealed class ProductSellableVariantsApiTests
     [Fact]
     public async Task ListWithVariantsReturnsSellableVariantsInOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M", "L");
@@ -116,8 +115,7 @@ public sealed class ProductSellableVariantsApiTests
     [Fact]
     public async Task ListWithVariantsReturnsTheSingleVariantOfAProductWithoutOptions()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var created = await ReadProductAsync(await PostProductAsync(
@@ -139,8 +137,7 @@ public sealed class ProductSellableVariantsApiTests
     [Fact]
     public async Task ListWithoutFlagKeepsTodayShape()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M");
@@ -180,8 +177,7 @@ public sealed class ProductSellableVariantsApiTests
     [Fact]
     public async Task ListWithVariantsHidesInactiveVariants()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M", "L");
@@ -214,8 +210,7 @@ public sealed class ProductSellableVariantsApiTests
     [Fact]
     public async Task ListWithVariantsGivesNoVariantsForAnInactiveProduct()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var active = await ReadProductAsync(await PostProductAsync(
@@ -240,8 +235,8 @@ public sealed class ProductSellableVariantsApiTests
     [Fact]
     public async Task ListWithVariantsReturnsTheVariantPhotoOrTheMainOne()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var main = await UploadImageAsync(client, TenantId, database, "principal.png");
@@ -279,8 +274,7 @@ public sealed class ProductSellableVariantsApiTests
     [Fact]
     public async Task ListWithVariantsAndSearchReturnsAllSellableVariantsOfTheMatch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M");
@@ -308,8 +302,7 @@ public sealed class ProductSellableVariantsApiTests
     [Fact]
     public async Task ListWithVariantsForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory, OtherSubjectId, OtherTenantId, CatalogPermissions.ProductRead);
 
@@ -372,7 +365,7 @@ public sealed class ProductSellableVariantsApiTests
     // Mismo atajo que ProductVariantsApiTests: la sesión de carga por la API y el estado Available
     // por SQL, porque el binario va contra R2, que en pruebas no existe.
     private static async Task<Guid> UploadImageAsync(
-        HttpClient client, string tenantId, PostgreSqlContainer database, string name)
+        HttpClient client, string tenantId, TestDatabase database, string name)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/files",
@@ -391,7 +384,7 @@ public sealed class ProductSellableVariantsApiTests
         return fileId;
     }
 
-    private static async Task PublishAsync(PostgreSqlContainer database, Guid fileId)
+    private static async Task PublishAsync(TestDatabase database, Guid fileId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -401,17 +394,6 @@ public sealed class ProductSellableVariantsApiTests
         command.Parameters.AddWithValue("id", fileId);
         command.Parameters.AddWithValue("key", $"public/{fileId}.png");
         Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

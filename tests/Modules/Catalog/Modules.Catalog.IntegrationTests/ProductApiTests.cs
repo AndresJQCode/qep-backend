@@ -3,15 +3,15 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
-public sealed class ProductApiTests
+public sealed class ProductApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     // CA-CAT-02-01, primera mitad: la ruta responde para el tenant autenticado. La lista está
@@ -20,8 +20,7 @@ public sealed class ProductApiTests
     [Fact]
     public async Task ListReturnsAnEmptyCatalogForANewTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory, SubjectId, TenantId, CatalogPermissions.ProductRead);
 
@@ -42,8 +41,7 @@ public sealed class ProductApiTests
     [Fact]
     public async Task ListForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         // Tiene el permiso: el 403 tiene que venir del tenant que no coincide, no de un permiso
         // faltante, o la prueba sobreviviría a que se quite el aislamiento de tenant.
         using var client = CreateClient(
@@ -60,8 +58,7 @@ public sealed class ProductApiTests
     [Fact]
     public async Task ListWithoutTheReadPermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory, SubjectId, TenantId, "tenancy.settings.read");
 
@@ -70,17 +67,6 @@ public sealed class ProductApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     // El stub de desarrollo concede sólo los defaults de tenancy cuando X-Permissions no está
