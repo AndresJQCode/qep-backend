@@ -45,6 +45,31 @@ public sealed class ShopifyCustomLineImportTests
         Assert.Equal([service], Assert.Single(world.Products.VariantRequests));
     }
 
+    // Una línea personalizada con descuento de Shopify se precia con la misma regla que una de SKU: el mismo porcentaje y el mismo
+    // precio unitario que una línea equivalente (mismo precio, cantidad, descuento e IVA).
+    [Fact]
+    public async Task AMappedCustomLineWithADiscountGetsTheSameDiscountPercentageAsAnEquivalentSkuLine()
+    {
+        var world = new ImporterWorld();
+        var service = Guid.CreateVersion7();
+        world.Products.WithVariant(service, taxPercentage: 19);
+        world.CustomLines.Map(ConnectionId, Garantia, service);
+        var snapshot = Order(lines:
+        [
+            new ShopifyLine("CAM-001", 2m, 5_000m, 1_000m),
+            new ShopifyLine(null, 2m, 5_000m, 1_000m, Garantia, true),
+        ]);
+        var row = world.RowFor(snapshot);
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        Assert.Equal(ShopifyImportState.Imported, outcome.State);
+        var (draft, _) = Assert.Single(world.Writer.Creates);
+        var (sku, custom) = (draft.Lines[0], draft.Lines[1]);
+        Assert.NotEqual(0m, custom.DiscountPercentage);
+        Assert.Equal((sku.DiscountPercentage, sku.UnitPrice, sku.Quantity), (custom.DiscountPercentage, custom.UnitPrice, custom.Quantity));
+    }
+
     [Fact]
     public async Task ACustomLineWithoutMappingWaitsWithItsTitle()
     {

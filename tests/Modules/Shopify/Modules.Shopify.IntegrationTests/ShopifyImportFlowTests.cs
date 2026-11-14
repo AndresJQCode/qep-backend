@@ -26,6 +26,8 @@ public sealed class ShopifyImportFlowTests
 {
     private const string ShopifyOrderKeyPrefix = "954889:";
 
+    private const string Garantia = "Garantía por 1 año + Envío Prioritario🚛";
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
@@ -421,6 +423,81 @@ public sealed class ShopifyImportFlowTests
             "Calle 10 # 43-20, Apto 301, CALLI, Valle del Cauca, CO",
             await flow.ScalarAsync("SELECT sample_address FROM geography.unresolved_cities"));
         Assert.Contains("Dirección de envío de Shopify: ", await flow.ScalarAsync("SELECT notes FROM quotations.orders"), StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-13: una línea personalizada sin asociación deja el pedido esperando con su nombre; el asesor la asocia desde la
+    // bandeja (POST) y reintenta, y el pedido se importa con la variante elegida.
+    [Fact]
+    public async Task CustomLineWaitsThenMappingAndRetryImportsWithTheMappedVariant()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture("taxes-included", order => AddCustomLine(order, Garantia)));
+
+        Assert.Equal("Waiting", await flow.MirrorAsync(5550000000001, "import_state"));
+        Assert.Equal("product_unmatched", await flow.MirrorAsync(5550000000001, "wait_reason"));
+        // jsonb reordena los espacios y System.Text.Json escapa el emoji: se compara el JSON, no el texto.
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse("""{"skus": [], "customTitles": ["Garantía por 1 año + Envío Prioritario🚛"]}"""),
+            JsonNode.Parse(await flow.MirrorAsync(5550000000001, "wait_detail::text") ?? "null")));
+        Assert.Equal(0L, await ScalarAsync<long>(flow.ConnectionString, "SELECT count(*) FROM quotations.orders"));
+
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var mapped = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{flow.World.TenantId}/shopify/stores/{flow.World.ConnectionId}/custom-line-mappings",
+            new { title = Garantia, variantId = flow.World.Gorra },
+            Ct);
+        Assert.Equal(HttpStatusCode.Created, mapped.StatusCode);
+        var rowId = await flow.MirrorAsync(5550000000001, "id");
+        var retry = await client.PostAsync($"/api/v1/tenants/{flow.World.TenantId}/shopify/orders/{rowId}/retry", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        Assert.Equal("Imported", await flow.MirrorAsync(5550000000001, "import_state"));
+        var variants = await ScalarAsync<string>(
+            flow.ConnectionString,
+            "SELECT string_agg(variant_id::text, ',' ORDER BY variant_id::text) FROM quotations.order_items WHERE order_id = @o",
+            ("o", await flow.QepOrderAsync(5550000000001)));
+        Assert.Equal(
+            string.Join(',', new[] { flow.World.Camiseta, flow.World.Gorra }.Select(id => id.ToString()).Order(StringComparer.Ordinal)),
+            variants);
+    }
+
+    // Una vez asociado el nombre, el siguiente pedido con ese nombre entra a la primera, sin esperar.
+    [Fact]
+    public async Task ASecondOrderWithTheMappedTitleImportsWithoutWaiting()
+    {
+        await using var flow = await Flow.StartAsync();
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var mapped = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{flow.World.TenantId}/shopify/stores/{flow.World.ConnectionId}/custom-line-mappings",
+            new { title = Garantia, variantId = flow.World.Gorra },
+            Ct);
+        Assert.Equal(HttpStatusCode.Created, mapped.StatusCode);
+
+        await flow.DeliverAsync("orders/create", "wh-2", Fixture("taxes-included", order =>
+        {
+            Renumber(order, 5550000000501, "#1501");
+            AddCustomLine(order, Garantia);
+        }));
+
+        Assert.Equal("Imported", await flow.MirrorAsync(5550000000501, "import_state"));
+        Assert.Equal("1|none|none", await flow.DeliveryAsync("wh-2"));
+    }
+
+    // Una línea personalizada (sin llaves de producto ni de variante) con el título de la asociación; el total sube lo que ella
+    // cuesta para que el pedido no dispare total_difference.
+    private static void AddCustomLine(JsonObject order, string title)
+    {
+        var line = JsonNode.Parse(
+            """
+            {"id":9001,"product_id":null,"variant_id":null,"product_exists":false,"sku":null,"quantity":1,"price":"5000.00",
+             "price_set":{"shop_money":{"amount":"5000.00","currency_code":"COP"}},"total_discount":"0.00","discount_allocations":[]}
+            """)!.AsObject();
+        line["title"] = title;
+        order["line_items"]!.AsArray().Add(line);
+        order["total_price"] = "124000.00";
+        order["total_price_set"]!["shop_money"]!["amount"] = "124000.00";
+        order["total_price_set"]!["presentment_money"]!["amount"] = "124000.00";
     }
 
     private static int Column(IReadOnlyList<string> header, string name)
