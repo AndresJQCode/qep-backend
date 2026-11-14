@@ -103,6 +103,32 @@ public sealed class ShopifyOrderPushWorkerTests
             await flow.ScalarAsync("SELECT status || '|' || failure_code || '|' || attempts FROM shopify.order_pushes"));
     }
 
+    // Review B3-B: cerrar el envío por SQL sube la versión. Una corrección que había leído el pendiente y se fusiona con él choca
+    // (412) en vez de responder 200 sobre un envío que ya nadie va a mandar.
+    [Fact]
+    public async Task ClosingAPushAsFailedBumpsItsVersion()
+    {
+        await using var flow = await Flow.StartAsync(services =>
+        {
+            services.RemoveAll<IShopifyOrderUpdater>();
+            services.AddSingleton<IShopifyOrderUpdater>(new RecordingUpdater());
+        });
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await CorrectTheNoteAsync(flow, "A");
+        var pushId = Guid.Parse(await flow.ScalarAsync("SELECT id::text FROM shopify.order_pushes"));
+        var before = long.Parse(await flow.ScalarAsync("SELECT version::text FROM shopify.order_pushes"), System.Globalization.CultureInfo.InvariantCulture);
+
+        await using (var scope = flow.Factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IShopifyOrderPushQueue>()
+                .MarkFailedAsync(pushId, DateTimeOffset.UtcNow, ShopifyPushFailureCodes.RetriesExhausted, Ct);
+        }
+
+        Assert.Equal(
+            $"Failed|{before + 1}",
+            await flow.ScalarAsync("SELECT status || '|' || version FROM shopify.order_pushes"));
+    }
+
     /// <summary>El asesor guarda sólo otra nota del cliente (la dirección no viaja; los atributos son los del fixture).</summary>
     internal static async Task CorrectTheNoteAsync(Flow flow, string note)
     {

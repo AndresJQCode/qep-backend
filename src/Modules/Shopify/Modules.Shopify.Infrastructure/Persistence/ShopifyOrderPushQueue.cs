@@ -6,8 +6,10 @@ using Modules.Shopify.Infrastructure.Workers;
 namespace Modules.Shopify.Infrastructure.Persistence;
 
 /// <summary>Spec 2026-11-14 §5: la cola de <see cref="ShopifyOrderPushWorker"/>, como la de los trabajos de corrección de ciudad.
-/// Ninguna sentencia toca <c>version</c>: una corrección que se fusiona con el pendiente mientras se manda no choca con el
-/// reclamo.</summary>
+/// El reclamo y la espera no tocan <c>version</c>: una corrección que se fusiona con el pendiente mientras se manda no choca con
+/// ellos. Cerrar el envío sí la sube (<see cref="MarkFailedAsync"/>, review B3-B): una corrección que leyó el pendiente y se
+/// fusiona con él después choca (412) en vez de responder 200 sobre un envío que nadie va a mandar. Es terminal, así que no
+/// choca con ningún reclamo.</summary>
 internal sealed class ShopifyOrderPushQueue(ShopifyDbContext dbContext) : IShopifyOrderPushQueue
 {
     private static readonly string Pending = nameof(ShopifyOrderPushStatus.Pending);
@@ -57,7 +59,7 @@ internal sealed class ShopifyOrderPushQueue(ShopifyDbContext dbContext) : IShopi
         dbContext.Database.ExecuteSqlAsync(
             $"""
             UPDATE shopify.order_pushes
-               SET status = {Failed}, failure_code = {code}, lease_until = NULL, updated_at = {now}
+               SET status = {Failed}, failure_code = {code}, lease_until = NULL, updated_at = {now}, version = version + 1
              WHERE id = {id} AND status = {Pending}
             """,
             cancellationToken);
