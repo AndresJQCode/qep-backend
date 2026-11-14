@@ -32,7 +32,11 @@ public sealed class ExternalApiAuthTests
            "components":[{"type":"BODY","text":"Hola {{first_name}}, ¿sigues interesado?"}]},
           {"id":"2","name":"borrador","language":"es","status":"REJECTED","category":"MARKETING","components":[{"type":"BODY","text":"x"}]},
           {"id":"3","name":"promo","language":"es","status":"APPROVED","category":"MARKETING",
-           "components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Mira"}]}
+           "components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Mira"}]},
+          {"id":"4","name":"qep_cotizacion","language":"es","status":"APPROVED","category":"UTILITY","parameter_format":"NAMED",
+           "components":[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{nombre_contacto}}"}]},
+          {"id":"5","name":"encuesta","language":"es","status":"APPROVED","category":"MARKETING",
+           "components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"x"},{"type":"BUTTONS","buttons":[{"type":"FLOW","text":"Abrir"}]}]}
         ]}
         """;
 
@@ -320,7 +324,7 @@ public sealed class ExternalApiAuthTests
     }
 
     [Fact]
-    public async Task TemplatesOnlyListSendableOnes()
+    public async Task TemplatesListTheExternallySendableOnesWithTheirHeader()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
@@ -332,12 +336,21 @@ public sealed class ExternalApiAuthTests
         var response = await client.GetAsync(ExternalTemplatesUrl(f.ConnectionId), Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var template = Assert.Single((await BodyAsync(response)).EnumerateArray().ToArray());
-        Assert.Equal("seguimiento", template.GetProperty("name").GetString());
-        Assert.Equal("es", template.GetProperty("language").GetString());
-        Assert.Equal("UTILITY", template.GetProperty("category").GetString());
-        Assert.Equal(["first_name"], template.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
-        Assert.False(template.TryGetProperty("body", out var ignored));
+        var templates = (await BodyAsync(response)).EnumerateArray().ToArray();
+        // encuesta (botón Flow) y borrador (rechazada) quedan fuera; el orden es por nombre.
+        Assert.Equal(["promo", "qep_cotizacion", "seguimiento"], templates.Select(item => item.GetProperty("name").GetString()));
+        var promo = templates[0];
+        Assert.Equal("image", promo.GetProperty("header").GetProperty("type").GetString());
+        Assert.Empty(promo.GetProperty("parameters").EnumerateArray());
+        var quotation = templates[1];
+        Assert.Equal("document", quotation.GetProperty("header").GetProperty("type").GetString());
+        Assert.Equal(["nombre_contacto"], quotation.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
+        var followUp = templates[2];
+        Assert.Equal("es", followUp.GetProperty("language").GetString());
+        Assert.Equal("UTILITY", followUp.GetProperty("category").GetString());
+        Assert.Equal(JsonValueKind.Null, followUp.GetProperty("header").ValueKind);
+        Assert.Equal(["first_name"], followUp.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
+        Assert.False(followUp.TryGetProperty("body", out var ignored));
     }
 
     [Fact]

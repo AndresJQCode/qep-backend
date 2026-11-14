@@ -57,7 +57,7 @@ public sealed class ReadHandlersTests
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
-        Assert.Equal(["zenvia", "whatsapp-cloud", "instagram", "shopify", "external-api"], catalog.Providers.Select(provider => provider.Key));
+        Assert.Equal(["zenvia", "whatsapp-cloud", "instagram", "shopify", "external-api", "anthropic"], catalog.Providers.Select(provider => provider.Key));
     }
 
     // Spec §5.2: cada proveedor trae onboarding; los campos internos no salen del catálogo.
@@ -201,6 +201,56 @@ public sealed class ReadHandlersTests
 
         Assert.True(response.Secrets[ZenviaFieldKeys.ApiToken].Configured);
         Assert.False(response.Secrets[ZenviaFieldKeys.ApiToken].Readable);
+    }
+
+    // Plan 2026-11-12 (D-A23): la pantalla muestra los últimos 4 de la clave de Anthropic para reconocerla. Se calcula al leer, de la
+    // clave descifrada: no hay otra copia en claro que borrar ni que re-cifrar.
+    [Fact]
+    public async Task TheAnthropicKeyShowsItsLastFourCharacters()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedAnthropic("sk-ant-api03-SENTINEL-wxyz");
+
+        var response = await bed.GetHandler().HandleAsync(new GetConnectionQuery(bed.TenantId, connection.Id), Ct);
+
+        Assert.Equal("wxyz", response.Secrets["apiKey"].Hint);
+        Assert.DoesNotContain("SENTINEL", JsonSerializer.Serialize(response), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnUnreadableKeyHasNoHint()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedAnthropic("sk-ant-api03-SENTINEL-wxyz");
+        bed.Protector.Unreadable.Add((connection.Id, "apiKey"));
+
+        var response = await bed.GetHandler().HandleAsync(new GetConnectionQuery(bed.TenantId, connection.Id), Ct);
+
+        Assert.Null(response.Secrets["apiKey"].Hint);
+    }
+
+    // Un secreto sin revealSuffix nunca deja ver nada.
+    [Fact]
+    public async Task AZenviaTokenHasNoHint()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+
+        var response = await bed.GetHandler().HandleAsync(new GetConnectionQuery(bed.TenantId, connection.Id), Ct);
+
+        Assert.Null(response.Secrets[ZenviaFieldKeys.ApiToken].Hint);
+    }
+
+    // Una clave tan corta que los 4 serían casi toda: no se muestra nada.
+    [Fact]
+    public async Task AKeyShorterThanTwiceTheSuffixHasNoHint()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.SeedAnthropic("abcdefg");
+
+        var response = await bed.GetHandler().HandleAsync(new GetConnectionQuery(bed.TenantId, connection.Id), Ct);
+
+        Assert.Null(response.Secrets["apiKey"].Hint);
     }
 
     // Un id de otro tenant, pedido por la ruta del propio, responde igual que uno inexistente.

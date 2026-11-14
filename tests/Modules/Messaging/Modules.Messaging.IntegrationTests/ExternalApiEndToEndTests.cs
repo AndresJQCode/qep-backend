@@ -23,7 +23,9 @@ public sealed class ExternalApiEndToEndTests
     private const string Catalog = """
         {"data":[
           {"id":"1","name":"aviso_despacho","language":"es_CO","status":"APPROVED","category":"UTILITY",
-           "components":[{"type":"BODY","text":"Hola {{1}}, tu pedido {{2}} va en camino."}]}
+           "components":[{"type":"BODY","text":"Hola {{1}}, tu pedido {{2}} va en camino."}]},
+          {"id":"2","name":"aviso_logo","language":"es_CO","status":"APPROVED","category":"UTILITY",
+           "components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Tu guía {{1}} está {{2}}."}]}
         ]}
         """;
 
@@ -136,6 +138,52 @@ public sealed class ExternalApiEndToEndTests
         }
     }
 
+    private static object HeaderBody(Guid idempotencyKey, Guid connectionId, string name, object header, Dictionary<string, string>? parameters = null) => new
+    {
+        idempotencyKey,
+        connectionId,
+        to = Phone,
+        template = new { name, language = Language, header, parameters = parameters ?? new Dictionary<string, string> { ["1"] = "1014853", ["2"] = "Pendiente" } },
+    };
+
+    [Fact]
+    public async Task AHeaderLinkNeverAppearsInLogsOrFailureTables()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, traceLogs: true);
+        using var _ = f.Host;
+        var key = await CreateKeyAsync(f, "ERP Contable");
+        using var client = CreateExternalClient(f.Host, key.Plaintext);
+        const string marker = "link-secreto-7Q2";
+
+        var ok = await SendAsync(client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = $"https://cdn.example.com/logo.png?token={marker}" }));
+        var invalid = await SendAsync(client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = $"http://cdn.example.com/logo.png?token={marker}" }));
+        var mismatch = await SendAsync(client, HeaderBody(
+            Guid.CreateVersion7(), f.ConnectionId, "aviso_despacho", new { type = "image", link = $"https://cdn.example.com/logo.png?token={marker}" },
+            new Dictionary<string, string> { ["1"] = "Ana", ["2"] = "4821" }));
+
+        Assert.Equal(HttpStatusCode.Created, ok.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+        Assert.Equal("validation.failed", (await BodyAsync(invalid)).GetProperty("code").GetString());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, mismatch.StatusCode);
+        Assert.Equal("messaging.template.header_mismatch", (await BodyAsync(mismatch)).GetProperty("code").GetString());
+
+        // Controles positivos: el host registra desde Trace y los rechazos sí dejaron filas, así que «no aparece» no es «no se escribió».
+        Assert.Contains(LogLevel.Trace, f.Logs.Levels);
+        Assert.True(await CountAsync(f.ConnectionString, "SELECT count(*) FROM platform.request_failures") > 0);
+
+        var texts = new Dictionary<string, string> { ["logs"] = f.Logs.AllText };
+        foreach (var table in new[] { "platform.request_failures", "api_access.api_key_requests", "audit.entries" })
+        {
+            texts[table] = await RowsAsync(f.ConnectionString, table);
+        }
+
+        foreach (var (source, text) in texts)
+        {
+            Assert.False(text.Contains(marker, StringComparison.Ordinal), $"El link del encabezado aparece en {source}.");
+        }
+    }
+
     [Fact]
     public async Task AKeyCreatedInTheAdminWorksEndToEnd()
     {
@@ -150,7 +198,9 @@ public sealed class ExternalApiEndToEndTests
         var sent = await SendAsync(client, Body(Guid.CreateVersion7(), f.ConnectionId));
 
         Assert.Equal(f.ConnectionId, Assert.Single(connections.EnumerateArray()).GetProperty("id").GetGuid());
-        Assert.Equal(TemplateName, Assert.Single(templates.EnumerateArray()).GetProperty("name").GetString());
+        Assert.Equal([TemplateName, "aviso_logo"], templates.EnumerateArray().Select(template => template.GetProperty("name").GetString()!).Order().ToArray());
+        var logo = templates.EnumerateArray().Single(template => template.GetProperty("name").GetString() == "aviso_logo");
+        Assert.Equal("image", logo.GetProperty("header").GetProperty("type").GetString());
         Assert.Equal(HttpStatusCode.Created, sent.StatusCode);
         var body = await BodyAsync(sent);
         var conversationId = body.GetProperty("conversationId").GetGuid();

@@ -10,6 +10,8 @@ using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
+using Modules.Ai.Api;
+using Modules.Ai.Infrastructure;
 using Modules.ApiAccess.Api;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
@@ -318,6 +320,8 @@ app.MapMessagingHub();
 app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();
+// Spec 2026-10-29 y plan 2026-11-12: los agentes IA, con el proveedor que elige el tenant.
+app.MapAiEndpoints();
 app.MapSupplierEndpoints();
 // Spec 2026-10-30: administración de claves de API.
 app.MapApiKeyEndpoints();
@@ -402,6 +406,11 @@ await app.Services.InitializeShopifyDatabaseAsync(
 // Automations (spec 2026-10-21 §4.1): después de Messaging e Integrations, cuyas conexiones y conversaciones referencia sin FK, y de
 // Audit (escribe en audit.entries).
 await app.Services.InitializeAutomationsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Ai (spec 2026-10-29 §4.1): después de Messaging (escribe en messaging.connection_bots desde Bootstrapper) e Integrations, cuyas
+// conexiones referencia sin FK, y de Audit (escribe en audit.entries).
+await app.Services.InitializeAiDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.

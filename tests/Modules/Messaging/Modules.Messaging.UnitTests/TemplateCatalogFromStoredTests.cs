@@ -49,4 +49,25 @@ public sealed class TemplateCatalogFromStoredTests
         Assert.Empty(dto.Parameters);
         Assert.Equal(TemplateCatalog.Positional, dto.ParameterFormat);
     }
+
+    [Theory]
+    [InlineData("IMAGE")]
+    [InlineData("VIDEO")]
+    [InlineData("DOCUMENT")]
+    [InlineData("LOCATION")]
+    public void AStoredMediaHeaderNormalizesLikeTheMetaListing(string format)
+    {
+        var components = $$"""[{"type":"HEADER","format":"{{format}}"},{"type":"BODY","text":"Hola {{1}}"}]""";
+
+        var stored = TemplateCatalog.FromStored("aviso_logo", "es", "UTILITY", "POSITIONAL", components);
+        var listed = Assert.Single(TemplateCatalog.Normalize(
+        [
+            System.Text.Json.JsonDocument.Parse(
+                $$"""{"name":"aviso_logo","language":"es","status":"APPROVED","category":"UTILITY","components":{{components}}}""").RootElement.Clone(),
+        ]));
+
+        Assert.Equal(
+            (listed.Sendable, listed.UnsupportedReason, listed.HeaderMedia, listed.SendableWithHeaderMedia),
+            (stored.Sendable, stored.UnsupportedReason, stored.HeaderMedia, stored.SendableWithHeaderMedia));
+    }
 }

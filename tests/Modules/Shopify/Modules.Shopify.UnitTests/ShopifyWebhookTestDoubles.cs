@@ -198,6 +198,11 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
             database.Orders.Values.FirstOrDefault(row => row.TenantId == tenantId && row.Id == id)
             ?? database.PendingOrders.FirstOrDefault(row => row.TenantId == tenantId && row.Id == id));
 
+    // Es SQL sobre el jsonb del payload: se prueba contra Postgres (ShopifyDocumentSourcesApiTests), no acá.
+    public Task<IReadOnlyList<string>> ListAttributeKeysAsync(
+        Guid tenantId, Guid connectionId, int recentOrders, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     // Los filtros y los conteos son SQL: se prueban contra Postgres (ShopifyInboxApiTests), no acá.
     public Task<(IReadOnlyList<ShopifyOrderMirror> Items, int Total)> SearchAsync(
         Guid tenantId, ShopifyOrderFilter filter, int page, int pageSize, CancellationToken cancellationToken) =>
