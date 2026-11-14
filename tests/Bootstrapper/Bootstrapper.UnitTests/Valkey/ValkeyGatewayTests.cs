@@ -126,6 +126,23 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
         Assert.Equal(0, harness.Recorder.Connected());
     }
 
+    // Valkey caído no puede retener el arranque del host: el connect espera hasta ~2 s y sigue en segundo plano. Una IP
+    // no enrutable cuelga el SYN (un puerto cerrado respondería al instante y no probaría nada); el connectTimeout de 10 s
+    // es lo que el arranque esperaría sin el tope.
+    [Fact]
+    public async Task AnUnreachableValkeyDoesNotHoldTheStartup()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        await using var harness = await Harness.StartAsync("10.255.255.1:6379,connectTimeout=10000");
+        stopwatch.Stop();
+
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"El arranque tardó {stopwatch.Elapsed}.");
+        Assert.False(harness.Connection.Multiplexer?.IsConnected == true);
+        var attempt = await harness.Gateway.TryAsync(
+            ValkeyArea.RateLimiting, db => db.PingAsync(), TestContext.Current.CancellationToken);
+        Assert.False(attempt.Succeeded);
+    }
+
     // Review Focus 2: las excepciones de StackExchange.Redis traen host:puerto en el mensaje.
     [Fact]
     public async Task TheStartupLogNamesTheKeyAndNeverTheValue()

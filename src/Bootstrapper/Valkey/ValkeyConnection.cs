@@ -27,7 +27,9 @@ internal sealed partial class ValkeyConnection(
 
     private const string ConnectionStringKey = "ConnectionStrings:" + ConnectionStringName;
 
+    private readonly Lock _gate = new();
     private ConnectionMultiplexer? _multiplexer;
+    private bool _disposed;
 
     /// <summary><c>null</c>: apagado, sin cadena o todavía no conectó.</summary>
     public IConnectionMultiplexer? Multiplexer => Volatile.Read(ref _multiplexer);
@@ -72,10 +74,10 @@ internal sealed partial class ValkeyConnection(
             return;
         }
 
-        ConnectionMultiplexer multiplexer;
+        Task<ConnectionMultiplexer> connecting;
         try
         {
-            multiplexer = await ConnectionMultiplexer.ConnectAsync(BuildOptions(connectionString));
+            connecting = ConnectionMultiplexer.ConnectAsync(BuildOptions(connectionString));
         }
         catch (Exception exception)
         {
@@ -84,10 +86,60 @@ internal sealed partial class ValkeyConnection(
             return;
         }
 
-        multiplexer.ConnectionFailed += OnConnectionFailed;
-        multiplexer.ConnectionRestored += OnConnectionRestored;
-        Volatile.Write(ref _multiplexer, multiplexer);
-        LogStarted(logger, ConnectionStringKey, multiplexer.IsConnected);
+        // Se espera el connect, para que los primeros requests no corran sobre el respaldo de memoria, pero con tope: con
+        // Valkey caído ConnectAsync tarda el connectTimeout por cada intento, y eso no puede retener el arranque del host.
+        // Pasado el tope (o cancelado el arranque) el connect sigue en segundo plano y se instala cuando termine.
+        try
+        {
+            Attach(await connecting.WaitAsync(StartupConnectTimeout, cancellationToken).ConfigureAwait(false));
+        }
+        catch (TimeoutException)
+        {
+            LogConnectPending(logger, ConnectionStringKey);
+            _ = AttachWhenConnectedAsync(connecting);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _ = AttachWhenConnectedAsync(connecting);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogConnectFailed(logger, ConnectionStringKey, exception.GetType().Name);
+        }
+    }
+
+    /// <summary>Lo que <see cref="StartAsync"/> espera el primer connect antes de dejar arrancar al host.</summary>
+    internal static readonly TimeSpan StartupConnectTimeout = TimeSpan.FromSeconds(2);
+
+    private async Task AttachWhenConnectedAsync(Task<ConnectionMultiplexer> connecting)
+    {
+        try
+        {
+            Attach(await connecting.ConfigureAwait(false));
+        }
+        catch (Exception exception)
+        {
+            LogConnectFailed(logger, ConnectionStringKey, exception.GetType().Name);
+        }
+    }
+
+    // Un connect que termina después de Dispose no se instala: se cierra, o quedaría un multiplexer vivo sin dueño.
+    private void Attach(ConnectionMultiplexer multiplexer)
+    {
+        lock (_gate)
+        {
+            if (!_disposed)
+            {
+                multiplexer.ConnectionFailed += OnConnectionFailed;
+                multiplexer.ConnectionRestored += OnConnectionRestored;
+                Volatile.Write(ref _multiplexer, multiplexer);
+                LogStarted(logger, ConnectionStringKey, multiplexer.IsConnected);
+                return;
+            }
+        }
+
+        multiplexer.Dispose();
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -106,7 +158,13 @@ internal sealed partial class ValkeyConnection(
 
     private ConnectionMultiplexer? Detach()
     {
-        var multiplexer = Interlocked.Exchange(ref _multiplexer, null);
+        ConnectionMultiplexer? multiplexer;
+        lock (_gate)
+        {
+            _disposed = true;
+            multiplexer = Interlocked.Exchange(ref _multiplexer, null);
+        }
+
         if (multiplexer is not null)
         {
             multiplexer.ConnectionFailed -= OnConnectionFailed;
@@ -136,6 +194,9 @@ internal sealed partial class ValkeyConnection(
 
     [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "Valkey connection failed ({FailureType}, {ConnectionType}); areas fall back until it is restored.")]
     private static partial void LogConnectionFailed(ILogger logger, ConnectionFailureType failureType, ConnectionType connectionType);
+
+    [LoggerMessage(EventId = 7, Level = LogLevel.Warning, Message = "Valkey client from {Key} did not connect within the startup bound; it keeps connecting in the background and every area uses its local fallback meanwhile.")]
+    private static partial void LogConnectPending(ILogger logger, string key);
 
     [LoggerMessage(EventId = 6, Level = LogLevel.Information, Message = "Valkey connection restored ({ConnectionType}).")]
     private static partial void LogConnectionRestored(ILogger logger, ConnectionType connectionType);
