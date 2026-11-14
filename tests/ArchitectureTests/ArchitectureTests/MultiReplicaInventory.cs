@@ -1,0 +1,207 @@
+namespace ArchitectureTests;
+
+/// <summary>
+/// Cómo convive un hosted service con otro pod que corre el mismo código (spec 2026-10-29, D-6, y la decisión P3 del plan
+/// 2026-11-13). <see cref="Unsafe"/> es listable para que la prueba no exija arreglarlo ya, pero bloquea <c>replicas &gt; 1</c>.
+/// </summary>
+public enum WorkerClassification
+{
+    /// <summary>Reclama cada unidad de trabajo con <c>FOR UPDATE SKIP LOCKED</c> o con un lease.</summary>
+    Claimed,
+
+    /// <summary>Correr dos veces da lo mismo: un <c>DELETE</c> por corte, un <c>UPSERT</c>, un <c>ON CONFLICT</c>.</summary>
+    Idempotent,
+
+    /// <summary>Toma un advisory lock antes de cada unidad de trabajo.</summary>
+    AdvisoryLock,
+
+    /// <summary>La segunda instancia choca con una clave única o con la concurrencia optimista: sólo log o un tick perdido.</summary>
+    Noisy,
+
+    /// <summary>Tiene que correr en cada pod y no reparte trabajo (un listener, una métrica del pod).</summary>
+    PerPod,
+
+    /// <summary>Apagado en producción por configuración; prendido, sólo vale con una réplica.</summary>
+    OffInProduction,
+
+    /// <summary>Con dos pods duplica un efecto externo o una fila. Bloquea <c>replicas &gt; 1</c>.</summary>
+    Unsafe,
+}
+
+/// <summary>Cómo se comporta un estado en memoria con dos pods.</summary>
+public enum StateClassification
+{
+    /// <summary>Cada pod tiene el suyo y eso está bien: el mismo comportamiento que con una réplica.</summary>
+    PerPodByDesign,
+
+    /// <summary>Se comparte entre pods (Valkey) y cae a la copia local si lo compartido falla.</summary>
+    SharedWithLocalFallback,
+
+    /// <summary>Con dos pods cada uno ve la mitad, o el límite se duplica. Bloquea <c>replicas &gt; 1</c>.</summary>
+    Unsafe,
+}
+
+/// <param name="Evidence">«archivo:línea — mecanismo».</param>
+public sealed record WorkerEntry(string TypeFullName, WorkerClassification Classification, string Evidence);
+
+/// <param name="Evidence">«archivo:línea — mecanismo».</param>
+public sealed record StateEntry(string TypeFullName, StateClassification Classification, string Evidence);
+
+/// <summary>
+/// El inventario D-6: todo hosted service y todo estado en memoria de nuestros ensamblados, con cómo convive con otro pod.
+/// Lo exige <c>MultiReplicaInventoryTests</c>: quien agrega un worker o un singleton con estado lo clasifica acá, en el
+/// mismo commit. Va por nombre completo y no por <c>typeof</c> porque casi todos los workers son <c>internal</c> de su
+/// módulo; una entrada que ya no está registrada pone roja otra prueba, así que el texto no queda viejo en silencio.
+/// </summary>
+public static class MultiReplicaInventory
+{
+    // Verificado contra el código el 2026-11-13, rama feature/replicas-multiples (54 hosted services). Las rutas son
+    // relativas a src/.
+    public static readonly IReadOnlyList<WorkerEntry> Workers =
+    [
+        // --- Claimed: FOR UPDATE SKIP LOCKED o lease. ---
+        new("Modules.Tenancy.Infrastructure.Messaging.OutboxPublisherWorker", WorkerClassification.Claimed,
+            "Modules/Tenancy/Modules.Tenancy.Infrastructure/Messaging/OutboxProcessor.cs:27 — FOR UPDATE SKIP LOCKED"),
+        new("Modules.Quotations.Infrastructure.Exports.ExportJobWorker", WorkerClassification.Claimed,
+            "Modules/Quotations/Modules.Quotations.Infrastructure/Persistence/ExportJobQueue.cs:46 — FOR UPDATE SKIP LOCKED con lease"),
+        new("Modules.Messaging.Infrastructure.Media.MediaCopyWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Media/MediaCopyWorker.cs:76 — FOR UPDATE SKIP LOCKED y next_attempt_at como lease"),
+        new("Modules.Messaging.Infrastructure.Campaigns.CampaignDispatchWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Campaigns/CampaignDispatchStore.cs:171-173 — FOR UPDATE OF r SKIP LOCKED y locked_until"),
+        new("Modules.Messaging.Infrastructure.Webhook.WebhookDeliveryWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookDeliveryWorker.cs:178-180 — reclamo por claimed_until"),
+        new("Modules.Shopify.Infrastructure.Workers.ShopifyWebhookDeliveryWorker", WorkerClassification.Claimed,
+            "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/WebhookDeliveries.cs:53 — reclamo por lease_until"),
+        new("Modules.Automations.Infrastructure.Engine.AutomationInboxWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Persistence/AutomationInbox.cs:41 — FOR UPDATE SKIP LOCKED con lease"),
+        new("Modules.Identity.Infrastructure.Messaging.SessionRevocationWorker", WorkerClassification.Claimed,
+            "Modules/Identity/Modules.Identity.Infrastructure/Persistence/IdentityInboxClaims.cs:38-43 — ClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
+        new("Modules.Identity.Infrastructure.Messaging.OrphanUserCleanupWorker", WorkerClassification.Claimed,
+            "Modules/Identity/Modules.Identity.Infrastructure/Persistence/IdentityInboxClaims.cs:38-43 — ClaimedOutboxConsumer; el borrado además bajo pg_advisory_xact_lock (OrphanUserCleanupWorker.cs:191)"),
+        new("Modules.Pipeline.Infrastructure.Messaging.QuotationEventsWorker", WorkerClassification.Claimed,
+            "Modules/Pipeline/Modules.Pipeline.Infrastructure/Persistence/PipelineInbox.cs:50-55 — ClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
+        new("Modules.Shopify.Infrastructure.Workers.CitySynonymEventsWorker", WorkerClassification.Claimed,
+            "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyInbox.cs:49-54 — ShopifyClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
+        new("Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/CustomerDeletion/CustomerMediaPurgeProcessor.cs:34 — ClaimedOutboxConsumer (MessagingInbox.cs:50)"),
+        new("Modules.Messaging.Infrastructure.Coexistence.CoexistenceEventsWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/HistorySync/CoexistenceEventsProcessor.cs:28 — ClaimedOutboxConsumer; el alta además con ON CONFLICT (connection_id) DO NOTHING (:61)"),
+        new("Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/HistorySync/HistorySyncRequestProcessor.cs:96-102 — FOR UPDATE SKIP LOCKED y claimed_until de 2 min"),
+        new("Modules.Messaging.Infrastructure.ScheduledMessages.ScheduledMessageWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/ScheduledMessages/ScheduledMessageStore.cs:25-28 — FOR UPDATE SKIP LOCKED y locked_until"),
+        new("Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker", WorkerClassification.Claimed,
+            "Modules/ServiceContracts/Modules.ServiceContracts.Infrastructure/Reminders/TenantRunStore.cs:26 — reclamo por (tenant, día) con ON CONFLICT … DO UPDATE y claimed_until"),
+        new("Modules.Loans.Infrastructure.Generation.LoansGenerationWorker", WorkerClassification.Claimed,
+            "Modules/Loans/Modules.Loans.Infrastructure/Generation/TenantRunStore.cs:24-27 — reclamo por (tenant, día) con claimed_until"),
+        new("Modules.Buyers.Infrastructure.Signup.BuyerSignupRequestedWorker", WorkerClassification.Claimed,
+            "Modules/Buyers/Modules.Buyers.Infrastructure/Signup/BuyersInboxClaims.cs:27-31 — reclamo en el inbox con claimed_until"),
+        new("Modules.Shopify.Infrastructure.Workers.ShopifyCityCorrectionWorker", WorkerClassification.Claimed,
+            "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyCityCorrectionRepositories.cs:135 — FOR UPDATE SKIP LOCKED con lease por intento"),
+        new("Modules.Shopify.Infrastructure.Workers.ShopifyReconcileWorker", WorkerClassification.Claimed,
+            "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyRepositories.cs:199-202 — lease por tienda (reconcile_lease_until)"),
+        new("Modules.Notifications.Infrastructure.Messaging.InvitationDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.PasswordResetDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.EmailVerificationDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.ExistingAccountDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.QuotationsExportReadyDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.QuotationsExportFailedDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.ProductExportDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.CustomerExportDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.SupplierExportDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.BuyerVerificationDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.BuyerPasswordResetDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.BuyerExistingAccountDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.Messaging.BuyerAccountDeletedDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+
+        // --- AdvisoryLock. ---
+        new("Modules.Integrations.Infrastructure.Shopify.ShopifyTokenRefreshWorker", WorkerClassification.AdvisoryLock,
+            "Modules/Integrations/Modules.Integrations.Infrastructure/Persistence/IntegrationsUnitOfWork.cs:33 — pg_try_advisory_xact_lock(ShopifyTokenLock.Namespace, hashtext(id)) por conexión"),
+
+        // --- Idempotent: el segundo pod no encuentra nada que hacer. ---
+        new("Modules.Integrations.Infrastructure.SecretProtection.ConnectionSecretRekeyWorker", WorkerClassification.Idempotent,
+            "Modules/Integrations/Modules.Integrations.Infrastructure/SecretProtection/ConnectionSecretRekeyWorker.cs:249,297 — recifrar dos veces da lo mismo; el lote que choca por versión se salta"),
+        new("Modules.Customers.Infrastructure.Phones.CustomerPhoneBackfillWorker", WorkerClassification.Idempotent,
+            "Modules/Customers/Modules.Customers.Infrastructure/Phones/CustomerPhoneBackfillWorker.cs:11-13 — recalcula phone_e164 donde es NULL; el resultado es determinista"),
+        new("Modules.Storage.Infrastructure.ObjectStorage.StagingCleanupWorker", WorkerClassification.Idempotent,
+            "Modules/Storage/Modules.Storage.Infrastructure/ObjectStorage/StagingCleanupProcessor.cs:60-76 — borrado por corte de edad; borrar en R2 lo que ya no está no falla"),
+        new("Modules.Storage.Infrastructure.PaymentProofs.PaymentProofOrphanCleanupWorker", WorkerClassification.Idempotent,
+            "Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofOrphanCleanupProcessor.cs:105-143 — borrado de huérfanos por corte de edad, cada 24 h"),
+        new("Modules.Messaging.Infrastructure.Webhook.WebhookPurgeWorker", WorkerClassification.Idempotent,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookPurgeWorker.cs:62 — DELETE por corte"),
+        new("Modules.Buyers.Infrastructure.BuyerHousekeepingWorker", WorkerClassification.Idempotent,
+            "Modules/Buyers/Modules.Buyers.Infrastructure/BuyerHousekeepingWorker.cs:134-180 — DELETE por corte"),
+        new("Modules.Integrations.Infrastructure.Shopify.ShopifyInstallSweeper", WorkerClassification.Idempotent,
+            "Modules/Integrations/Modules.Integrations.Infrastructure/Shopify/ShopifyInstallSweeper.cs:86 — DELETE por corte"),
+        new("Modules.ApiAccess.Infrastructure.ApiKeyRequestPurgeWorker", WorkerClassification.Idempotent,
+            "Modules/ApiAccess/Modules.ApiAccess.Infrastructure/ApiKeyRequestPurgeWorker.cs:61 — DELETE por corte"),
+
+        // --- Noisy: el segundo choca con el inbox o con Version y sólo deja log o un tick perdido. ---
+        new("Modules.Audit.Infrastructure.Messaging.AuditProjectionWorker", WorkerClassification.Noisy,
+            "Modules/Audit/Modules.Audit.Infrastructure/Messaging/AuditProjectionWorker.cs:59 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
+        new("Modules.Storage.Infrastructure.PaymentProofs.PaymentProofMoveWorker", WorkerClassification.Noisy,
+            "Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveProcessor.cs:19 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
+        new("Modules.Storage.Infrastructure.ProductImages.ProductImageReleaseWorker", WorkerClassification.Noisy,
+            "Modules/Storage/Modules.Storage.Infrastructure/ProductImages/ProductImageReleaseProcessor.cs:19 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
+        new("Modules.Integrations.Infrastructure.Meta.InstagramTokenRefreshWorker", WorkerClassification.Noisy,
+            "Modules/Integrations/Modules.Integrations.Infrastructure/Meta/InstagramTokenRefreshWorker.cs:204 — sin candado: dos llamadas a Meta y el perdedor choca por Version (spec, «Fuera de alcance»)"),
+        new("Modules.Quotations.Infrastructure.Expiration.QuotationExpirationWorker", WorkerClassification.Noisy,
+            "Modules/Quotations/Modules.Quotations.Infrastructure/Expiration/QuotationExpirationProcessor.cs:56-88 — barrido en los dos pods; Version es token de concurrencia y el segundo choca sin duplicar historial"),
+
+        // --- PerPod: tiene que correr en cada pod y no reparte trabajo. ---
+        new("Modules.Messaging.Infrastructure.Realtime.MessagingEventsListener", WorkerClassification.PerPod,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Realtime/MessagingEventsListener.cs:83 — LISTEN por pod para los clientes conectados a ese pod"),
+        new("Bootstrapper.Observability.QueueSamplerWorker", WorkerClassification.PerPod,
+            "Bootstrapper/Observability/QueueSamplerWorker.cs:18-26 — sólo lee la base y publica el gauge del pod; el dashboard agrega con max/avg"),
+        new("Bootstrapper.ApiKeys.ExternalApiCallLogWriter", WorkerClassification.PerPod,
+            "Bootstrapper/ApiKeys/ExternalApiCallLogWriter.cs:26 — drena el canal en memoria de su propio pod"),
+        new("Modules.Tenancy.Infrastructure.OperatorTenantStartupWarning", WorkerClassification.PerPod,
+            "Modules/Tenancy/Modules.Tenancy.Infrastructure/OperatorTenantStartupWarning.cs:29-37 — sólo advierte en el log al arrancar"),
+        new("Bootstrapper.Valkey.ValkeyConnection", WorkerClassification.PerPod,
+            "Bootstrapper/Valkey/ValkeyConnection.cs:19-35 — el multiplexer de Valkey de cada pod"),
+        new("Bootstrapper.Valkey.Presence.PresenceHeartbeatWorker", WorkerClassification.PerPod,
+            "Bootstrapper/Valkey/Presence/PresenceHeartbeatWorker.cs:33-56 — late los conectados a su pod (ZADD idempotente); sólo con Valkey:Areas:Presence"),
+
+        // --- OffInProduction. ---
+        new("Bootstrapper.Seeding.ExportLoadSeedWorker", WorkerClassification.OffInProduction,
+            "Bootstrapper/Seeding/ExportLoadSeedWorker.cs:48-51 — no hace nada con Seed:ExportLoad:Quotations <= 0, y k8s/prod-configMap.yaml:158 lo fija en \"0\""),
+    ];
+
+    public static readonly IReadOnlyList<StateEntry> State =
+    [
+        // Valkey base (spec 2026-11-13, D-2 y D-3) ya está en esta rama: 9c0cdfa1 y e2a946a8. Compartido sólo con el área
+        // prendida en producción, que es prerrequisito del Bloque C.
+        new("Modules.Messaging.Application.MessagingPresence", StateClassification.SharedWithLocalFallback,
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:60-74 — con Valkey:Areas:Presence el hub escribe en qep:presence:{tenantId} y esto queda de respaldo local"),
+        new("Bootstrapper.ApiKeys.ApiKeyRateLimiter", StateClassification.SharedWithLocalFallback,
+            "Bootstrapper/Valkey/RateLimiting/SharedRateLimitPartitions.cs:33-45 — con Valkey:Areas:RateLimiting la ventana se cuenta en Valkey y cae a memoria si falla"),
+
+        new("Bootstrapper.ApiKeys.ExternalApiCallLogChannel", StateClassification.PerPodByDesign,
+            "Bootstrapper/ApiKeys/ExternalApiCallLogChannel.cs:21 — Channel.CreateBounded por pod; lo no escrito se pierde con SIGKILL, igual que con un pod"),
+        new("Bootstrapper.Observability.QueueGauges", StateClassification.PerPodByDesign,
+            "Bootstrapper/Observability/QueueGauges.cs:20 — la última lectura del pod; el dashboard agrega con max/avg"),
+        new("Bootstrapper.Valkey.ValkeyConnection", StateClassification.PerPodByDesign,
+            "Bootstrapper/Valkey/ValkeyConnection.cs:31 — el multiplexer de cada pod"),
+        new("Modules.Messaging.Infrastructure.Webhook.WebhookRouting", StateClassification.PerPodByDesign,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookRouting.cs:12 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
+        new("Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus", StateClassification.PerPodByDesign,
+            "Modules/Automations/Modules.Automations.Infrastructure/Engine/AutomationsModuleStatus.cs:14 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
+        new("Modules.Authorization.Application.ModuleEntitlementMask", StateClassification.PerPodByDesign,
+            "Modules/Authorization/Modules.Authorization.Application/ModuleEntitlementMask.cs:17 — tabla inmutable armada de los permisos registrados; igual en cada pod"),
+        new("Modules.Authorization.Application.RoleCatalog", StateClassification.PerPodByDesign,
+            "Modules/Authorization/Modules.Authorization.Application/RoleCatalog.cs:72 — tabla inmutable armada del código; igual en cada pod"),
+        new("Modules.Automations.Infrastructure.Seed.SystemTemplateCatalog", StateClassification.PerPodByDesign,
+            "Modules/Automations/Modules.Automations.Infrastructure/Seed/SystemTemplateCatalog.cs:45 — plantillas embebidas leídas al arrancar; igual en cada pod"),
+        new("Modules.Integrations.Infrastructure.Meta.InstagramAppSettings", StateClassification.PerPodByDesign,
+            "Modules/Integrations/Modules.Integrations.Infrastructure/Meta/MetaInstagramOptions.cs:88-93 — opciones leídas al construir; igual en cada pod"),
+        new("Modules.Integrations.Infrastructure.Shopify.ShopifyAppSettings", StateClassification.PerPodByDesign,
+            "Modules/Integrations/Modules.Integrations.Infrastructure/Shopify/ShopifyAppOptionsValidator.cs:82-87 — opciones leídas al construir; igual en cada pod"),
+        new("Modules.Integrations.Infrastructure.Verification.ConnectionTesterRegistry", StateClassification.PerPodByDesign,
+            "Modules/Integrations/Modules.Integrations.Infrastructure/Verification/ConnectionTesterRegistry.cs:10 — diccionario inmutable de los testers registrados"),
+        new("Modules.Messaging.Infrastructure.Webhook.MarketingOptOutButtons", StateClassification.PerPodByDesign,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/MarketingOptOutButtons.cs:13 — textos de la configuración, inmutables; igual en cada pod"),
+    ];
+
+    private const string OutboxDelivery =
+        "Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/OutboxDeliveryWorker.cs:44 — reclamo en el inbox con lease de 2 min (Persistence/InboxClaims.cs:31-35)";
+}

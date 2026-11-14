@@ -396,22 +396,26 @@ A mano: iniciar sesión, navegar y abrir Mensajería en dos pestañas; los logs 
 
 ## Inventario D-6
 
-**Al 2026-11-13, commit `cf977683` (rama `feature/replicas-multiples`): 52 `AddHostedService` en `src/`.** Evidencia de partida, no fuente de verdad: la Tarea 5 la reemplaza por la del día, y la Tarea 8 la rehace el día del merge. La evidencia por worker está en el spec («Lo que ya funciona», «Fuera de alcance»); lo que el spec no cita, marcado *verificar*.
+**Reenumerado el 2026-11-13 en la Tarea 5, commit `2b8655fa` (rama `feature/replicas-multiples`): 54 hosted services**, los mismos 54 en las dos cuentas: las 54 líneas `AddHostedService` de `src/` y lo que `MultiReplicaInventoryTests` detecta en el contenedor real (con la configuración mínima más todas las áreas de Valkey prendidas). Respecto de los 52 de `cf977683` se suman los dos de Valkey de esta rama: `ValkeyConnection` (por fábrica, `ValkeyServiceCollectionExtensions.cs:33`) y `PresenceHeartbeatWorker` (sólo con `Valkey:Areas:Presence`). Ningún `Unsafe`. La fuente de verdad, con archivo, línea y mecanismo de cada uno, es `tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs`; la Tarea 8 la rehace el día del merge.
 
 | Clasificación | Hosted services |
 | --- | --- |
-| `Claimed` (32) | `OutboxPublisherWorker`, `ExportJobWorker`, `MediaCopyWorker`, `CampaignDispatchWorker`, `WebhookDeliveryWorker`, `ShopifyWebhookDeliveryWorker`, `AutomationInboxWorker`, `SessionRevocationWorker`, `OrphanUserCleanupWorker`, `QuotationEventsWorker`, `CitySynonymEventsWorker`, `CustomerMediaPurgeWorker`, los 13 `*DeliveryWorker` de Notifications (`Invitation`, `PasswordReset`, `EmailVerification`, `ExistingAccount`, `QuotationsExportReady`, `QuotationsExportFailed`, `ProductExport`, `CustomerExport`, `SupplierExport`, `BuyerVerification`, `BuyerPasswordReset`, `BuyerExistingAccount`, `BuyerAccountDeleted`), `ServiceContractsReminderWorker`, `LoansGenerationWorker`, `BuyerSignupRequestedWorker`, `HistorySyncRequestWorker`, `ScheduledMessageWorker`, `ShopifyCityCorrectionWorker`, `ShopifyReconcileWorker` |
+| `Claimed` (33) | `OutboxPublisherWorker`, `ExportJobWorker`, `MediaCopyWorker`, `CampaignDispatchWorker`, `WebhookDeliveryWorker`, `ShopifyWebhookDeliveryWorker`, `AutomationInboxWorker`, `SessionRevocationWorker`, `OrphanUserCleanupWorker`, `QuotationEventsWorker`, `CitySynonymEventsWorker`, `CustomerMediaPurgeWorker`, `CoexistenceEventsWorker`, los 13 `*DeliveryWorker` de Notifications (`Invitation`, `PasswordReset`, `EmailVerification`, `ExistingAccount`, `QuotationsExportReady`, `QuotationsExportFailed`, `ProductExport`, `CustomerExport`, `SupplierExport`, `BuyerVerification`, `BuyerPasswordReset`, `BuyerExistingAccount`, `BuyerAccountDeleted`), `ServiceContractsReminderWorker`, `LoansGenerationWorker`, `BuyerSignupRequestedWorker`, `HistorySyncRequestWorker`, `ScheduledMessageWorker`, `ShopifyCityCorrectionWorker`, `ShopifyReconcileWorker` |
 | `AdvisoryLock` (1) | `ShopifyTokenRefreshWorker` |
-| `Idempotent` (9) | `CoexistenceEventsWorker`, `ConnectionSecretRekeyWorker`, `CustomerPhoneBackfillWorker`, `StagingCleanupWorker`, `PaymentProofOrphanCleanupWorker`, `WebhookPurgeWorker`, `BuyerHousekeepingWorker`, `ShopifyInstallSweeper`, `ApiKeyRequestPurgeWorker` |
+| `Idempotent` (8) | `ConnectionSecretRekeyWorker`, `CustomerPhoneBackfillWorker`, `StagingCleanupWorker`, `PaymentProofOrphanCleanupWorker`, `WebhookPurgeWorker`, `BuyerHousekeepingWorker`, `ShopifyInstallSweeper`, `ApiKeyRequestPurgeWorker` |
 | `Noisy` (5) | `AuditProjectionWorker`, `PaymentProofMoveWorker`, `ProductImageReleaseWorker`, `InstagramTokenRefreshWorker`, `QuotationExpirationWorker` |
-| `PerPod` (4) | `MessagingEventsListener`, `QueueSamplerWorker`, `ExternalApiCallLogWriter` (*verificar*: drena el canal de su pod), `OperatorTenantStartupWarning` (*verificar*: sólo advierte al arrancar) |
+| `PerPod` (6) | `MessagingEventsListener`, `QueueSamplerWorker`, `ExternalApiCallLogWriter` (drena el canal de su pod), `OperatorTenantStartupWarning` (sólo advierte al arrancar), `ValkeyConnection`, `PresenceHeartbeatWorker` |
 | `OffInProduction` (1) | `ExportLoadSeedWorker` (`Seed__ExportLoad__Quotations: "0"`, `k8s/prod-configMap.yaml:158`) |
 
-| Estado en memoria (2026-11-13) | Clasificación de partida |
+`CoexistenceEventsWorker` pasó de `Idempotent` a `Claimed`: el código reclama con `ClaimedOutboxConsumer` (`CoexistenceEventsProcessor.cs:28`), además del `ON CONFLICT` del alta.
+
+| Estado en memoria (2026-11-13, 15 tipos detectados) | Clasificación |
 | --- | --- |
-| `MessagingPresence` (`ConcurrentDictionary`, singleton) | `Unsafe` hasta el plan Valkey base; después `SharedWithLocalFallback` |
-| `ApiKeyRateLimiter` (singleton) | `Unsafe` hasta el plan Valkey base; después `SharedWithLocalFallback` |
+| `MessagingPresence`, `ApiKeyRateLimiter` | `SharedWithLocalFallback`: el plan Valkey base está en esta rama (`9c0cdfa1`, `e2a946a8`). Compartido **sólo** con `Valkey:Areas:Presence` y `RateLimiting` prendidas en producción, prerrequisito del Bloque C |
 | `ExternalApiCallLogChannel` (`Channel.CreateBounded`) | `PerPodByDesign` (se pierde con `SIGKILL`, igual que hoy) |
 | `QueueGauges` | `PerPodByDesign` (dashboard con `max`/`avg`) |
+| `ValkeyConnection` | `PerPodByDesign` (el multiplexer de cada pod) |
 | `WebhookRouting`, `AutomationsModuleStatus` (`IMemoryCache` de 60 s) | `PerPodByDesign` (el retraso de un minuto ya existe con un pod) |
-| `ColombianHolidays` (`static readonly ConcurrentDictionary`, determinista) | `static`, fuera de la prueba (P4): inofensivo |
+| `ModuleEntitlementMask`, `RoleCatalog`, `SystemTemplateCatalog`, `InstagramAppSettings`, `ShopifyAppSettings`, `ConnectionTesterRegistry`, `MarketingOptOutButtons` | `PerPodByDesign`: tablas inmutables armadas del código o de la configuración al construir; iguales en cada pod |
+
+**`static` mutables (P4), revisados a mano el mismo día:** ningún campo `static` no `readonly` en `src/` (sólo propiedades de sólo lectura). Los `static readonly` con colección son tablas constantes, salvo `ColombianHolidays.Cache` (`static readonly ConcurrentDictionary`, determinista): inofensivo.
