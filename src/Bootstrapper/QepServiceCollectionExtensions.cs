@@ -59,6 +59,7 @@ using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Loans.Infrastructure;
+using Modules.Support.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Store.Infrastructure;
@@ -67,6 +68,8 @@ using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
+using SupportPermissions = Modules.Support.Application.SupportPermissions;
+using SupportPolicies = Modules.Support.Application.SupportPolicies;
 using StorePermissions = Modules.Store.Application.StorePermissions;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
@@ -1143,6 +1146,7 @@ public static class QepServiceCollectionExtensions
         services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
+        services.AddSupportInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
         services.AddBuyersInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
@@ -1821,6 +1825,10 @@ public static class QepServiceCollectionExtensions
                 // Spec de préstamos (2026-10-31): los préstamos que la empresa otorga los administra quien administra la empresa.
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
+                // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
+                SupportPermissions.Read,
+                SupportPermissions.Manage,
+                SupportPermissions.SettingsManage,
                 // Spec de la tienda en línea (owner, 2026-11-03): publicar la tienda y fijar sus cuentas de cobro es de admin y de nadie más.
                 // La bandeja de solicitudes ya la tiene: es quotations.order.manage, el permiso de Pedidos.
                 StorePermissions.SettingsManage,
@@ -1888,7 +1896,10 @@ public static class QepServiceCollectionExtensions
                 MessagingPermissions.ResolutionReasonManage,
                 // Spec 2026-10-13 D32: la asesora trabaja sus negocios; los ajustes del embudo los decide quien administra.
                 PipelinePermissions.DealRead,
-                PipelinePermissions.DealManage
+                PipelinePermissions.DealManage,
+                // Spec 2026-11-14 (soporte, C1): el asesor atiende los tickets; configurar los tipos y el umbral es de admin.
+                SupportPermissions.Read,
+                SupportPermissions.Manage
             ]));
         services.AddSingleton(new RoleDefinition(
             "billing",
@@ -2557,6 +2568,29 @@ public static class QepServiceCollectionExtensions
             "Préstamos",
             "medium",
             RequiredModules: [ModuleKeys.Loans]));
+        // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
+        // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.Read,
+            "Ver tickets de soporte",
+            "Permite ver todos los tickets de soporte del tenant, su detalle y su trazabilidad.",
+            "Soporte",
+            "low",
+            RequiredModules: [ModuleKeys.Support]));
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.Manage,
+            "Gestionar tickets de soporte",
+            "Permite crear tickets y cambiar su estado, su responsable, su tipo y su cliente.",
+            "Soporte",
+            "medium",
+            RequiredModules: [ModuleKeys.Support]));
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.SettingsManage,
+            "Configurar soporte",
+            "Permite crear, editar y ordenar los tipos de ticket y fijar cuántos días hábiles antes un ticket está por vencer.",
+            "Soporte",
+            "medium",
+            RequiredModules: [ModuleKeys.Support]));
         // Spec de la tienda en línea (2026-11-03): con [store], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece. La bandeja no declara permiso nuevo: usa quotations.order.manage.
         services.AddSingleton(new PermissionDefinition(
@@ -2986,6 +3020,25 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 LoansPermissions.Manage,
                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
+            // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                SupportPermissions.Read,
+                policy => AddPermissionRequirement(policy, SupportPermissions.Read))
+            .AddPolicy(
+                SupportPermissions.Manage,
+                policy => AddPermissionRequirement(policy, SupportPermissions.Manage))
+            .AddPolicy(
+                SupportPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, SupportPermissions.SettingsManage))
+            // Plan D5: ver tickets acepta leer o gestionar, y D15: leer los ajustes acepta además configurar. Un solo claim con
+            // varios valores permitidos; no son permisos, así que no se asignan a roles.
+            .AddPolicy(
+                SupportPolicies.TicketView,
+                policy => AddAnyPermissionRequirement(policy, SupportPermissions.Read, SupportPermissions.Manage))
+            .AddPolicy(
+                SupportPolicies.SettingsView,
+                policy => AddAnyPermissionRequirement(
+                    policy, SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage))
             // Spec de la tienda en línea: sin esta política, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 StorePermissions.SettingsManage,
@@ -3002,5 +3055,13 @@ public static class QepServiceCollectionExtensions
     {
         policy.RequireAuthenticatedUser();
         policy.RequireClaim(QepClaimTypes.Permission, permission);
+    }
+
+    private static void AddAnyPermissionRequirement(
+        AuthorizationPolicyBuilder policy,
+        params string[] permissions)
+    {
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(QepClaimTypes.Permission, permissions);
     }
 }
