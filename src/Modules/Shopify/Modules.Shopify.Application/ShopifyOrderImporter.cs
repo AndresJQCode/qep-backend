@@ -253,7 +253,9 @@ public sealed class ShopifyOrderImporter(
         // Personalizada con nombre: el título normalizado, o null si la línea va por SKU.
         static string? CustomTitleOf(ShopifyLine line) => line.IsCustom && string.IsNullOrWhiteSpace(line.Sku) ? ShopifyCustomLineMapping.NormalizeTitle(line.Title) : null;
 
-        var skus = snapshot.Lines
+        // Spec 2026-11-14 (D2): una línea que una edición de Shopify dejó en 0 ya no es del pedido; no entra ni hace esperar.
+        var current = snapshot.Lines.Where(line => !line.IsRemoved).ToArray();
+        var skus = current
             .Where(line => CustomTitleOf(line) is null)
             .Select(line => line.Sku?.Trim())
             .Where(sku => !string.IsNullOrEmpty(sku))
@@ -264,7 +266,7 @@ public sealed class ShopifyOrderImporter(
             ? new Dictionary<string, ShopifyProductRef>(StringComparer.Ordinal)
             : await products.FindByCodesAsync(tenantId, skus, cancellationToken);
 
-        var customTitles = snapshot.Lines
+        var customTitles = current
             .Select(CustomTitleOf)
             .OfType<string>()
             .Distinct(StringComparer.Ordinal)
@@ -279,8 +281,8 @@ public sealed class ShopifyOrderImporter(
 
         var unmatchedSkus = new List<string?>();
         var unmatchedTitles = new List<string>();
-        var lines = new List<ShopifyOrderLineDraft>(snapshot.Lines.Count);
-        foreach (var line in snapshot.Lines)
+        var lines = new List<ShopifyOrderLineDraft>(current.Length);
+        foreach (var line in current)
         {
             ShopifyProductRef? product;
             if (CustomTitleOf(line) is { } title)
@@ -318,7 +320,8 @@ public sealed class ShopifyOrderImporter(
                 product.ProductId,
                 line.Quantity,
                 ShopifyPricing.UnitPriceWithVat(line.OriginalUnitPrice, snapshot.TaxesIncluded, product.TaxPercentage, currency),
-                ShopifyPricing.DiscountPercentage(line.DiscountAmount, line.OriginalUnitPrice, line.Quantity),
+                // D2: Shopify reparte el descuento sobre la línea original; el porcentaje sale de la cantidad original.
+                ShopifyPricing.DiscountPercentage(line.DiscountAmount, line.OriginalUnitPrice, line.OriginalQuantity ?? line.Quantity),
                 product.TaxPercentage));
         }
 

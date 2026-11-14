@@ -206,6 +206,43 @@ public sealed class ShopifyCustomLineImportTests
         Assert.Empty(world.Products.VariantRequests);
     }
 
+    // D2: una línea que una edición de Shopify dejó en 0 (original > 0) no entra al pedido ni hace esperar, aunque su SKU no exista.
+    [Fact]
+    public async Task ARemovedLineIsNotImported()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(lines:
+        [
+            new ShopifyLine("CAM-001", 1m, 119_000m, 0m, Id: 1, OriginalQuantity: 1m),
+            new ShopifyLine("NO-EXISTE", 0m, 50_000m, 0m, Id: 2, OriginalQuantity: 2m),
+        ]);
+        var row = world.RowFor(snapshot);
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        Assert.Equal(ShopifyImportState.Imported, outcome.State);
+        var (draft, _) = Assert.Single(world.Writer.Creates);
+        var line = Assert.Single(draft.Lines);
+        Assert.Equal(1m, line.Quantity);
+        Assert.Equal(["CAM-001"], Assert.Single(world.Products.Requests));
+    }
+
+    // Review Focus 2: discount_allocations reparte el descuento sobre la línea original; el porcentaje se calcula con la cantidad
+    // original, no con la vigente, o una línea a la que le quitaron unidades sale con otro precio neto.
+    [Fact]
+    public async Task DiscountPercentageUsesTheOriginalQuantity()
+    {
+        var world = new ImporterWorld();
+        var snapshot = Order(lines: [new ShopifyLine("CAM-001", 2m, 10_000m, 4_000m, Id: 1, OriginalQuantity: 4m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var (draft, _) = Assert.Single(world.Writer.Creates);
+        var line = Assert.Single(draft.Lines);
+        Assert.Equal((2m, 10.0000m), (line.Quantity, line.DiscountPercentage));
+    }
+
     // Se compara el JSON y no el texto: System.Text.Json escapa siempre los caracteres fuera del plano básico (el emoji sale como
     // un par sustituto \uXXXX), y es el mismo valor para quien lo lee. Las dos llaves van siempre y en ese orden.
     private static void AssertWaiting(ShopifyOrderMirror row, ShopifyImportOutcome outcome, string detail)
