@@ -1113,11 +1113,30 @@ internal static class QuotationsApiHarness
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
-        return await dbContext.Outbox
+        var messages = await dbContext.Outbox
             .AsNoTracking()
             .Where(message => message.EventName == eventName)
             .OrderBy(message => message.OccurredAt)
             .ToListAsync(TestContext.Current.CancellationToken);
+
+        // En el host compartido de una clase (SharedQuotationsHost) la base trae los eventos de las pruebas
+        // anteriores: se descartan los que ya estaban cuando esta prueba empezó, y quedan los mismos que vería
+        // con una base propia.
+        return factory is QepApiFactory { OutboxBaseline: { } baseline }
+            ? messages.Where(message => !baseline.Contains(message.Id)).ToList()
+            : messages;
+    }
+
+    /// <summary>Los ids del outbox que ya existen: el punto de partida de una prueba en el host compartido.</summary>
+    internal static async Task<HashSet<Guid>> OutboxIdsAsync(WebApplicationFactory<Program> factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return (await dbContext.Outbox
+            .AsNoTracking()
+            .Select(message => message.Id)
+            .ToListAsync(TestContext.Current.CancellationToken))
+            .ToHashSet();
     }
 
     // Los workers de Notifications sí corren en el host de pruebas: el correo sale solo, y se
@@ -1259,6 +1278,10 @@ internal static class QuotationsApiHarness
 
         /// <summary>Lo que el envío le entregó al sender, sin salir a Zenvia.</summary>
         public RecordingWhatsAppSender WhatsAppSender { get; } = new();
+
+        /// <summary>Sólo en el host compartido de una clase: los eventos del outbox que existían cuando empezó la
+        /// prueba en curso, que <see cref="OutboxMessagesAsync"/> descarta. <c>null</c> en un host propio.</summary>
+        internal IReadOnlySet<Guid>? OutboxBaseline { get; set; }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {

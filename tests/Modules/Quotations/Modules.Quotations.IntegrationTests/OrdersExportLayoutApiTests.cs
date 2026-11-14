@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// la auditoría en el outbox. Permisos de settings pedidos por X-Permissions como texto: este
 /// proyecto no referencia Modules.Tenancy.Application (hallazgo 13).
 /// </summary>
-public sealed class OrdersExportLayoutApiTests
+public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsRead = "tenancy.settings.read";
     private const string SettingsUpdate = "tenancy.settings.update";
@@ -24,8 +24,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task GetWithoutAStoredLayoutReturnsTheCatalogWithETagOne()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead);
         using var _ = client;
 
@@ -73,8 +72,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task TheFirstPutWithIfMatchOneCreatesTheLayoutAndReturnsETagTwo()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -108,8 +106,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithAStaleVersionIsAPreconditionFailure()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -129,8 +126,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithoutARowAndAVersionOtherThanOneIsAPreconditionFailure()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -143,8 +139,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithoutIfMatchIsPreconditionRequired()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -160,8 +155,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutAcceptsAWeakIfMatch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -176,8 +170,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithABlankHeaderMarksTheColumn()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -194,8 +187,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithATooLongFixedValueMarksTheColumn()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -212,8 +204,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithAnUnknownKindMarksTheColumn()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -229,8 +220,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithoutColumnsMarksTheList()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -251,8 +241,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithAnUnknownKeyIsColumnsInvalid()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -266,8 +255,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithARepeatedKeyUnderAnotherHeaderIsSaved()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -291,8 +279,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithTwoVisibleColumnsSharingAHeaderIsHeaderDuplicated()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -304,8 +291,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutHidingEveryColumnIsAllHidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = (await DefaultColumnsAsync(client, tenantId))
@@ -320,8 +306,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithFortyOneFixedColumnsIsTooManyFixedColumns()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var forty = await DefaultColumnsAsync(client, tenantId);
@@ -342,8 +327,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = owner;
         var (_, _, otherOwner) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
@@ -360,8 +344,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task GetForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, SettingsRead);
         using var _ = owner;
         var (_, _, otherOwner) = await RegisterTenantAsync(factory, SettingsRead);
@@ -376,8 +359,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithOnlySettingsReadIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -390,8 +372,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task GetWithoutSettingsReadIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsUpdate);
         using var _ = client;
 
@@ -403,8 +384,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task AChangedLayoutIsAuditedAndAnUnchangedOneIsNot()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -438,8 +418,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithoutSomeCatalogKeysCompletesThemAtTheEnd()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -480,8 +459,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task RestoringIsAPutWithTheCatalogDefaultsWithoutFixedColumns()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var defaults = await DefaultColumnsAsync(client, tenantId);
@@ -506,8 +484,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task GetWithoutAStoredLayoutReturnsTheDefaultSheetName()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead);
         using var _ = client;
 
@@ -523,8 +500,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithOnlyANewSheetNameSavesItAndAudits()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -549,8 +525,7 @@ public sealed class OrdersExportLayoutApiTests
     [Fact]
     public async Task PutWithoutASheetNameKeepsTheStoredOne()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);
@@ -575,8 +550,7 @@ public sealed class OrdersExportLayoutApiTests
     [InlineData("History")]
     public async Task PutWithAnInvalidSheetNameMarksTheField(string sheetName)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var columns = await DefaultColumnsAsync(client, tenantId);

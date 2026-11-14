@@ -13,13 +13,12 @@ namespace Modules.Quotations.IntegrationTests;
 /// records de producción, así que renombrar una propiedad las deja en verde aunque el frontend deje
 /// de encontrar el campo.
 /// </summary>
-public sealed class OrderContractApiTests
+public sealed class OrderContractApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Fact]
     public async Task TheOrderTravelsWithItsNewRoutesAndFieldNames()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, ReportingPermissions.OrdersRead]);
         using var _ = client;
@@ -102,8 +101,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task ProofsAndMarkPaidHangFromTheOrderItself()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -142,8 +140,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task TheQuotationScopedOrderActionsNoLongerExist()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotationId = Guid.CreateVersion7();
@@ -183,8 +180,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task ExportFiltersByOrderNumberAndAnswersWithTheOrderCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -213,8 +209,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task TheSalesRoutesNoLongerExist()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotationId = Guid.CreateVersion7();
@@ -253,8 +248,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task TheDetailCarriesTheNewAxesAndTheBalance()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

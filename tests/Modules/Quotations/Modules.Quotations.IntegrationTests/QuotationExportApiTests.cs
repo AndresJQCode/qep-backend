@@ -15,14 +15,13 @@ namespace Modules.Quotations.IntegrationTests;
 /// La exportación de cotizaciones por correo (spec 2026-09-12): el POST valida y encola en
 /// milisegundos, y el worker arma el Excel después.
 /// </summary>
-public sealed class QuotationExportApiTests
+public sealed class QuotationExportApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     // También prueba que `/export` no lo captura `/{quotationId:guid}`.
     [Fact]
     public async Task ExportIsAcceptedAndLeavesAPendingJobForWhoAskedForIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -45,8 +44,7 @@ public sealed class QuotationExportApiTests
     [Fact]
     public async Task ExportWithoutDatesIsUnprocessableWithTheFieldErrors()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -64,8 +62,7 @@ public sealed class QuotationExportApiTests
     [Fact]
     public async Task ExportWithARangeLongerThanOneYearIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -126,8 +123,7 @@ public sealed class QuotationExportApiTests
     [Fact]
     public async Task ExportWithoutTheReadPermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, QuotationsPermissions.QuotationManage);
         using var _ = client;
 
@@ -141,8 +137,7 @@ public sealed class QuotationExportApiTests
     [Fact]
     public async Task ExportForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var (_, _, otherOwner) = await RegisterTenantAsync(factory, QuotationsPermissions.QuotationRead);
@@ -158,8 +153,7 @@ public sealed class QuotationExportApiTests
     [Fact]
     public async Task TheSynchronousGetExportIsGone()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -256,8 +250,7 @@ public sealed class QuotationExportApiTests
     [Fact]
     public async Task RowsCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -328,8 +321,7 @@ public sealed class QuotationExportApiTests
     [Fact]
     public async Task QuotationsThatShareTheCreationInstantComeOutOnceEachByNumber()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);

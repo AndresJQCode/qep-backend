@@ -9,7 +9,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// Task 1B de la tienda pública: una parte de facturación o de entrega puede estar fuera de Colombia. Allá la ciudad
 /// es un texto; en Colombia sigue siendo un par de ids de DIVIPOLA y nada del contrato anterior cambia.
 /// </summary>
-public sealed class QuotationPartiesApiTests
+public sealed class QuotationPartiesApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string QuotationUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}";
@@ -60,8 +60,7 @@ public sealed class QuotationPartiesApiTests
     [Fact]
     public async Task AQuotationSavedWithoutCountryIsColombian()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -81,8 +80,7 @@ public sealed class QuotationPartiesApiTests
     [Fact]
     public async Task AForeignBillingPartyRoundTrips()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -108,8 +106,7 @@ public sealed class QuotationPartiesApiTests
     [Fact]
     public async Task ASpanishBillingPartyWithACcIsA422OnItsType()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -127,8 +124,7 @@ public sealed class QuotationPartiesApiTests
     [Fact]
     public async Task ASpanishBillingPartyWithANifRoundTrips()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -151,8 +147,7 @@ public sealed class QuotationPartiesApiTests
     [Fact]
     public async Task AForeignPartyWithDivipolaIdsIsRejectedWithItsField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -172,8 +167,7 @@ public sealed class QuotationPartiesApiTests
     [Fact]
     public async Task ConvertingAForeignQuotationCopiesItsCityText()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);

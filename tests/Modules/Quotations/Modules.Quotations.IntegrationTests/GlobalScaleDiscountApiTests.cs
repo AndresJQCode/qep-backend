@@ -19,7 +19,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// guardado si, que sobreviva la conversion, y que el composer arme los pisos disponibles contra
 /// el catalogo real.
 /// </summary>
-public sealed class GlobalScaleDiscountApiTests
+public sealed class GlobalScaleDiscountApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static readonly int[] FiftyPack = [50];
 
@@ -33,8 +33,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task ThePreviewAppliesTheGlobalFloorWithoutSavingIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithSixUnitsAsync(client, tenantId);
@@ -61,8 +60,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task SavingPersistsTheGlobalFloor()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithSixUnitsAsync(client, tenantId);
@@ -81,8 +79,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task TheAvailableFloorsComeFromTheProductsOfTheQuotation()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -110,8 +107,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task SavingWithoutAFloorClearsIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithSixUnitsAsync(client, tenantId);
@@ -136,8 +132,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task AFloorBelowOneIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithSixUnitsAsync(client, tenantId);
@@ -155,8 +150,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task AFloorNoProductOffersIsKeptButAppliesToNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithSixUnitsAsync(client, tenantId);
@@ -175,8 +169,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task AddingALineWithoutThatFloorLeavesTheChoiceInPlace()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var narrow = await CreateProductWithGapInScalesAsync(client, tenantId);
@@ -202,8 +195,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task TheOrderPreviewAppliesTheGlobalFloorWithoutSavingIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order) = await PendingOrderAsync(client, factory, tenantId);
@@ -224,8 +216,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task ThePendingOrderSavesTheGlobalFloor()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order) = await PendingOrderAsync(client, factory, tenantId);
@@ -247,8 +238,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task AVoidedQuotationRejectsTheChange()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithSixUnitsAsync(client, tenantId);
@@ -271,8 +261,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task SavingTheFloorLeavesHistory()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await DraftWithSixUnitsAsync(client, tenantId);
@@ -297,8 +286,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task BelowTheMinimumPurchaseTheGlobalDiscountIsSweptAwayOriginIncluded()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -330,8 +318,7 @@ public sealed class GlobalScaleDiscountApiTests
     [Fact]
     public async Task TheResponseSaysWhyTheFloorDidNotApplyToALine()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

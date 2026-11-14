@@ -16,7 +16,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// jsonb en orden, el Replace sobre la entidad rastreada sin método Update, el choque de PK de dos
 /// primeros guardados traducido a 412 (D9), y la migración que aplica y revierte.
 /// </summary>
-public sealed class OrdersExportLayoutPersistenceTests
+public sealed class OrdersExportLayoutPersistenceTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string LastMigrationBeforeTheLayout = "20260923152513_AddQuotationIsRetail";
 
@@ -99,8 +99,7 @@ public sealed class OrdersExportLayoutPersistenceTests
     [Fact]
     public async Task ReplacingATrackedLayoutPersistsThroughSaveChanges()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory);
         using var _ = client;
         await SaveFirstLayoutAsync(factory, tenantId, OrdersExportColumnSetting.Catalog("email", "Correo", visible: true));

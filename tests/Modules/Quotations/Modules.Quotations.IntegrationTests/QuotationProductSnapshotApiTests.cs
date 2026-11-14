@@ -11,15 +11,14 @@ namespace Modules.Quotations.IntegrationTests;
 /// enviarla o al convertirla en pedido—. El cambio en Catalog se hace por su API, como lo haría
 /// una persona, y no tocando la tabla: lo que se prueba es que Quotations deje de mirarla.
 /// </summary>
-public sealed class QuotationProductSnapshotApiTests
+public sealed class QuotationProductSnapshotApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
     [Fact]
     public async Task ASentQuotationKeepsTheProductItWasSentWithWhileADraftFollowsTheCatalog()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -68,8 +67,7 @@ public sealed class QuotationProductSnapshotApiTests
     [Fact]
     public async Task ConvertingADraftFreezesTheProduct()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -96,8 +94,7 @@ public sealed class QuotationProductSnapshotApiTests
     [Fact]
     public async Task ALineAddedToAPendingOrderIsFrozenWhenAdded()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);

@@ -9,15 +9,14 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>US-12 (envío, reutilizando la carga de archivos que Storage ya expone -- sin motor
 /// de PDF nuevo en el backend) y US-11 (anulación).</summary>
-public sealed class QuotationSendVoidApiTests
+public sealed class QuotationSendVoidApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     // `PdfFileId` queda en null a proposito desde que el backend genera el documento: era el
     // `FileResource` que subia el navegador. El PDF ahora vive en `quotation_pdfs`.
     [Fact]
     public async Task SendMarksAsSentAndStampsSentAt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -42,8 +41,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task SendToTheBillingPartyWithoutOneIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -76,8 +74,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task SendWorksWithoutABody()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -114,8 +111,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task SendIgnoresAPdfFileIdSentByAnOlderFrontend()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -136,8 +132,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task SendingAnAlreadySentQuotationResendsIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -163,8 +158,7 @@ public sealed class QuotationSendVoidApiTests
     [InlineData(true)]
     public async Task VoidWorksFromDraftOrSent(bool sendFirst)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -193,8 +187,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task VoidingAnAlreadyVoidedQuotationIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -216,8 +209,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task EditingAVoidedQuotationIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -244,8 +236,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task AddingAnItemToASentQuotationIsAllowed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -268,8 +259,7 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task VoidForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
@@ -416,8 +406,8 @@ public sealed class QuotationSendVoidApiTests
     [Fact]
     public async Task TheQuotationDetailListsTheClientsContacts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var companyId = await CreateActiveCustomerAsync(client, tenantId);

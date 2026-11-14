@@ -11,7 +11,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Anular, facturar y revertir la facturación de un pedido.</summary>
-public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
+public sealed class OrderCancelAndInvoiceApiTests(SharedQuotationsHost sharedHost) : OrderApiTests, IClassFixture<SharedQuotationsHost>
 {
     // Spec 2026-09-16: anular desde Pending deja quién, cuándo y por qué, lo persiste, no toca la
     // cotización (decisión 3) y lo audita. Los nombres de los campos se leen del JSON crudo: son el
@@ -19,8 +19,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task CancelAPendingOrderReturnsItCancelledWithWhoWhenAndWhy()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -76,8 +75,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task CancelAPaidOrderKeepsThePaidMark()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. CancellerPermissions, OrdersPermissions.OrderApprove]);
         using var _ = client;
@@ -109,8 +107,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task CancelWithOnlyTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -137,8 +134,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task CancelAnUnknownOrderIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
         using var _ = client;
 
@@ -157,8 +153,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task CancelRejectsAMissingOrTooLongReasonAndASecondCancellation()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -197,8 +192,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task InvoiceAPaidOrderReturnsItInvoicedWithWhoAndWhen()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, InvoicerPermissions);
         using var _ = client;
         var approved = await CreateApprovedOrderAsync(client, factory, tenantId);
@@ -244,8 +238,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task InvoicingRevertedLeavesTheOrderPaidAndCancellable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. InvoicerPermissions, OrdersPermissions.OrderCancel]);
         using var _ = client;
@@ -294,8 +287,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task InvoiceAndRevertWithOnlyTheApprovePermissionAreForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, InvoicerPermissions);
         using var _ = client;
         var approved = await CreateApprovedOrderAsync(client, factory, tenantId);
@@ -327,8 +319,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task InvoiceAndRevertAnUnknownOrderAreNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, InvoicerPermissions);
         using var _ = client;
         var unknown = Guid.CreateVersion7();
@@ -357,8 +348,7 @@ public sealed class OrderCancelAndInvoiceApiTests : OrderApiTests
     [Fact]
     public async Task InvoiceAndRevertRejectTheWrongStateWithTheirDomainCodes()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. InvoicerPermissions, OrdersPermissions.OrderCancel]);
         using var _ = client;

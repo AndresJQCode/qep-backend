@@ -8,7 +8,7 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Los ajustes del pedido por tenant (spec 2026-11-10 §6): <c>GET</c> y <c>PUT /orders-settings</c>,
 /// con los permisos de settings y el documento entero en los dos sentidos.</summary>
-public sealed class OrderSettingsApiTests
+public sealed class OrderSettingsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsRead = "tenancy.settings.read";
     private const string SettingsUpdate = "tenancy.settings.update";
@@ -18,8 +18,7 @@ public sealed class OrderSettingsApiTests
     [Fact]
     public async Task ATenantThatNeverSavedGetsTheDefaults()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead);
         using var _ = client;
 
@@ -32,8 +31,7 @@ public sealed class OrderSettingsApiTests
     [Fact]
     public async Task SavingReplacesTheWholeDocumentAndIsAudited()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -59,8 +57,7 @@ public sealed class OrderSettingsApiTests
     [Fact]
     public async Task AMissingFieldIsAValidationError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var ownedClient = client;
 
@@ -78,8 +75,7 @@ public sealed class OrderSettingsApiTests
     [Fact]
     public async Task ReadingNeedsTheSettingsPermission()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 

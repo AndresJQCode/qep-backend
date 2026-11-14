@@ -21,7 +21,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// del dominio después de copiar, y corregir sólo montos. La respuesta de la API no expone la clave
 /// (OrderPaymentProofResponse no cambia), así que se lee de la base.
 /// </summary>
-public sealed class OrderPaymentProofPublicationApiTests
+public sealed class OrderPaymentProofPublicationApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string PublicKeyPattern = "^payment-proofs/[0-9a-f]{32}\\.pdf$";
 
@@ -409,8 +409,7 @@ public sealed class OrderPaymentProofPublicationApiTests
     [Fact]
     public async Task ConvertingWithPublicLinksOffWritesNoAttachedEvent()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await NewSentQuotationAsync(client, factory, tenantId);
@@ -595,8 +594,7 @@ public sealed class OrderPaymentProofPublicationApiTests
     [Fact]
     public async Task APaymentProofAlreadyAttachedButNotMovedCannotBeAttachedToAnotherOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var firstQuotation = await NewSentQuotationAsync(client, factory, tenantId);
@@ -619,8 +617,7 @@ public sealed class OrderPaymentProofPublicationApiTests
     [Fact]
     public async Task APaymentProofOfAnotherProofCannotBeUsedAsAReplacement()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await NewSentQuotationAsync(client, factory, tenantId);
@@ -647,8 +644,7 @@ public sealed class OrderPaymentProofPublicationApiTests
     [Fact]
     public async Task APaymentProofCanBeReplacedWithItsOwnFile()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await NewSentQuotationAsync(client, factory, tenantId);
@@ -670,8 +666,7 @@ public sealed class OrderPaymentProofPublicationApiTests
     [Fact]
     public async Task AUserFileCanStillBeAttachedToAnotherOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var firstQuotation = await NewSentQuotationAsync(client, factory, tenantId);
@@ -740,8 +735,7 @@ public sealed class OrderPaymentProofPublicationApiTests
     [Fact]
     public async Task UpdatingTheSameProofTwiceIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await NewSentQuotationAsync(client, factory, tenantId);
