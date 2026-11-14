@@ -173,7 +173,7 @@ tenant factura con varias empresas en municipios distintos.
 
 | # | Propuesta |
 | --- | --- |
-| A11 | **Selecciones en el mismo cuerpo que cambia la empresa o el municipio** (owner, 2026-11-13, opción c). Si un cuerpo cambia la empresa o el municipio de la operación, primero corre la re-resolución (§7.6). Después, un id de tipo municipal en `billingWithholdingTaxRateIds` / `withholdingTaxRateIds` se **acepta** si es la tasa de la empresa nueva para el municipio resultante (el `companyRate.taxRateId` que mostraría la vista previa) y se **ignora en silencio** si no (sin 422): uno elegido contra la empresa o el municipio anteriores nunca coincide. Una entrada municipal de `withholdingPercentages` se **aplica** si, tras la re-resolución y los selectores, hay una fila de ese tipo en la fuente vigente, y se ignora en silencio si no. Sin cambio de empresa ni de municipio, la validación es la de siempre. Los selectores nacionales se procesan como hoy. El frontend quita las selecciones municipales del borrador en el paso del cambio, así que lo que llegue se eligió después (spec del frontend §6.5). |
+| A11 | **Selecciones en el mismo cuerpo que cambia la empresa o el municipio** (owner, 2026-11-13, opción c). Si un cuerpo cambia la empresa o el municipio de la operación, primero corre la re-resolución (§7.6). Después, un id de tipo municipal en `billingWithholdingTaxRateIds` / `withholdingTaxRateIds` se **acepta** si es la tasa de la empresa nueva para el municipio resultante (el `companyRate.taxRateId` que mostraría la vista previa) y se **ignora en silencio** si no (sin 422): uno elegido contra la empresa o el municipio anteriores nunca coincide. Una entrada municipal de `withholdingPercentages` se **aplica** si, tras la re-resolución y los selectores, hay una fila de ese tipo en la fuente vigente, y se ignora en silencio si no. Sin cambio de empresa ni de municipio, la validación es la de siempre. Los selectores nacionales se procesan como hoy. El frontend quita las selecciones municipales del borrador en el paso del cambio, así que lo que llegue se eligió después (spec del frontend §6.5). «Sin retención» viaja como marca explícita en `clearedWithholdingTypes` (owner, 2026-11-13): un envío guarda todo lo que eligió el asesor, también la ausencia de tasa (§7.6). |
 | A12 | **Municipio de la empresa en el documento.** La respuesta expone `billingCompanyCity` desde `billing_company_city_id` guardado, para que «Usar el de la empresa» compare sin pedir Companies (§9.4). |
 | A13 | ~~Documentos legados (`status = Legacy`)~~ **Retirada** (2026-11-12): no existen filas ReteICA congeladas sin municipio. |
 | A14 | **`status` derivado al leer, sin columna nueva**, con los datos de hoy de la empresa y del cliente y con precedencia explícita (§9.4). En el pedido, sin fila: cliente no agente → `CustomerNotAgent`; cliente agente y empresa con tasa → `NotSelected`. |
@@ -365,9 +365,27 @@ en ese mismo cuerpo:
   borra los porcentajes municipales del borrador en el momento del cambio: el que llegue se tecleó después. Riesgo residual
   conocido: otro cliente de la API que mande un porcentaje viejo junto con el cambio de empresa lo verá aplicado; hoy la SPA es el
   único cliente.
-- Un cuerpo que cambia la empresa o el municipio no puede quitar en ese mismo cuerpo la fila municipal que deja la re-resolución:
-  sin id coincidente, gana la re-resolución. Se quita en el guardado siguiente.
 - Los ids nacionales se procesan como hoy.
+
+**«Sin retención» explícito (owner, 2026-11-13).** Un envío guarda todo lo que eligió el asesor, también la ausencia de tasa. Como la
+ausencia de un id es ambigua (no eligió nada, o eligió «Sin retención»), la elección viaja como marca:
+
+- Campo NUEVO opcional `clearedWithholdingTypes: string[]` en `CreateQuotationRequest`, `SaveQuotationRequest`,
+  `SaveOrderEditsRequest` y las cuatro vistas previas (los mismos cuerpos que `withholdingPercentages`). Ausente, `null` o `[]` = sin
+  marca. `CreateOrderRequest` no cambia (A10).
+- Significado: los tipos municipales para los que el asesor eligió «Sin retención». En la cotización actúa sobre el selector de
+  facturación propia (`Billing`); en la edición del pedido, sobre el selector del pedido. No actúa sobre la fuente `Customer` de la
+  cotización.
+- Para cada tipo de la lista se quita la fila de ese tipo en la fuente sobre la que actúa (en la cotización, la de facturación propia,
+  sea o no la vigente; en el pedido, la del pedido); sin fila no hace nada. Corre después de los selectores
+  y antes de los porcentajes (§7.7), haya o no cambio de empresa o de municipio en el mismo cuerpo: con cambio, quita la fila que dejó
+  la re-resolución.
+- Validación (422): un tipo que no es municipal en el país de la empresa → `{quotation|order}.billing.withholding_type_invalid`
+  (NUEVO); el mismo tipo en `clearedWithholdingTypes` y, en el mismo cuerpo, como id municipal en el selector o con una entrada no
+  `null` en `withholdingPercentages` → `{quotation|order}.billing.withholding_selection_conflict` (NUEVO). Las dos se validan siempre,
+  también con cambio de empresa o de municipio (no se ignoran en silencio como los ids de A11).
+- Historial: quitar una fila por la marca es un cambio de selector como quitarla hoy (el mismo resumen del `Edited` de la cotización o
+  del `PartiesChanged` del pedido); si descarta un porcentaje editado, se anota como en la re-resolución (`WithholdingRateEdited`, §7.8).
 
 Sin cambio de empresa ni de municipio, la validación es la de siempre: un id municipal que no es `companyRate` es
 `{quotation|order}.billing.withholding_tax_rate_invalid` y un porcentaje sin fila es `…withholding_percentage_not_editable`.
@@ -395,9 +413,10 @@ como hoy con D23).
   lo sumo 3 decimales → si no, 422 NUEVO `quotation.billing.withholding_percentage_invalid` /
   `order.billing.withholding_percentage_invalid`. Cotización con `EnsureEditable`; pedido con `Order.IsEditable`.
 - Totales: `Touch` → `RecalculateTotals` (`Quotation.cs:1205-1240`), y lo equivalente en `Order` (`Order.cs:1692-1716`).
-- Orden dentro de un guardado: cuenta → municipio → re-resolución → selectores → porcentajes. Si el cuerpo cambió empresa o
-  municipio, un selector municipal se acepta sólo si es la tasa de la empresa nueva para el municipio resultante y un porcentaje
-  municipal se aplica sólo si queda una fila de ese tipo; lo demás se ignora en silencio (A11, §7.6).
+- Orden dentro de un guardado: cuenta → municipio → re-resolución → selectores → tipos marcados «Sin retención»
+  (`clearedWithholdingTypes`) → porcentajes. Si el cuerpo cambió empresa o municipio, un selector municipal se acepta sólo si es la
+  tasa de la empresa nueva para el municipio resultante y un porcentaje municipal se aplica sólo si queda una fila de ese tipo; lo
+  demás se ignora en silencio (A11, §7.6). La marca quita la fila de su tipo con o sin ese cambio (§7.6).
 - Historial: si la re-resolución descarta un porcentaje editado, se anota igual; si el mismo cuerpo fija después un porcentaje, se
   anotan los dos eventos, en ese orden.
 - Al convertir, el pedido hereda la fila con su porcentaje efectivo y el del catálogo.
@@ -578,6 +597,10 @@ no se mueve (owner, 2026-11-13). En la cotización van en la raíz de `Quotation
   - Si el cuerpo cambia la empresa o el municipio, un id municipal de los selectores se acepta sólo si es la tasa de la empresa
     nueva para el municipio resultante, y una entrada municipal de `withholdingPercentages` se aplica sólo si queda una fila de ese
     tipo; lo demás se ignora en silencio, sin 422 (A11, §7.6).
+  - `clearedWithholdingTypes: ["ReteICA"]` — tipos municipales con «Sin retención» elegido; ausente, `null` o `[]` = sin marca.
+    Quita la fila de ese tipo (selector de facturación propia en la cotización, selector del pedido), con o sin cambio de empresa o
+    de municipio. Un tipo no municipal → `…withholding_type_invalid`; el mismo tipo también con id municipal en el selector o con
+    porcentaje no `null` → `…withholding_selection_conflict` (§7.6).
 - `CreateOrderRequest` (pedido manual) no cambia (A10).
 - `billingWithholdingTaxRateIds` (cotización) y `withholdingTaxRateIds` (pedido) no cambian de forma: para un tipo municipal sólo
   aceptan la tasa de `municipalWithholdings[].companyRate` (A4).
@@ -598,6 +621,8 @@ no se mueve (owner, 2026-11-13). En la cotización van en la raíz de `Quotation
 | `quotation.billing.operation_city_invalid` / `order.billing.operation_city_invalid` | `operationCityId` inexistente |
 | `quotation.billing.withholding_percentage_invalid` / `order.billing.withholding_percentage_invalid` | `p <= 0`, `p > 100` o más de 3 decimales |
 | `quotation.billing.withholding_percentage_not_editable` / `order.billing.withholding_percentage_not_editable` | tipo no municipal, o sin fila de ese tipo en la fuente vigente |
+| `quotation.billing.withholding_type_invalid` / `order.billing.withholding_type_invalid` | `clearedWithholdingTypes` trae un tipo que no es municipal en el país de la empresa |
+| `quotation.billing.withholding_selection_conflict` / `order.billing.withholding_selection_conflict` | un tipo en `clearedWithholdingTypes` llega en el mismo cuerpo como id municipal del selector o con una entrada no `null` en `withholdingPercentages` |
 
 Existentes que se reutilizan: `catalog.tax_rate.in_use` (ahora también por empresas), `quotation.billing.withholding_tax_rate_invalid`
 y `order.billing.withholding_tax_rate_invalid` (selector municipal con una tasa que no es la de la empresa para ese municipio),
@@ -693,6 +718,12 @@ Integración (Testcontainers, un proyecto a la vez):
   **anterior** y un porcentaje → el id se ignora sin 422, la fila sale de la re-resolución y el porcentaje se aplica sólo si queda
   una fila de ese tipo (si no, se ignora sin 422). Igual en la edición del pedido y en las dos vistas previas. Sin cambio de empresa
   ni de municipio, el id que no es `companyRate` sigue siendo `…withholding_tax_rate_invalid`.
+- «Sin retención» explícito (owner, 2026-11-13): (1) un `PUT` de cotización con facturación propia que cambia la empresa y trae
+  `clearedWithholdingTypes: ["ReteICA"]` y un id de Retefuente → sin fila ReteICA y la Retefuente aplicada, igual en su vista previa;
+  (2) lo mismo en la edición del pedido y su vista previa; (3) el mismo tipo en la marca y como id del selector (o con porcentaje no
+  `null`) → 422 `…withholding_selection_conflict`; (4) `clearedWithholdingTypes: ["Retefuente"]` → 422 `…withholding_type_invalid`;
+  (5) sin cambio de empresa ni de municipio, la marca quita la fila ReteICA existente y, si estaba editada, anota
+  `WithholdingRateEdited`.
 - `billingCompanyCity` (A12): presente con empresa CO; `null` en un documento anterior hasta reenviar la cuenta; reenviar la misma
   empresa lo completa sin re-resolver.
 - Documento anterior (A8): sin `operation_city_id` da `NoOperationCity`; fijarlo en uno editable resuelve la ReteICA con la regla.
