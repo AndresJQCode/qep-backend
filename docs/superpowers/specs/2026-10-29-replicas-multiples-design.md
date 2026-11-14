@@ -367,11 +367,14 @@ Inofensivos con dos pods: producen ruido en el log o trabajo repetido, no datos 
   `ScheduledMessageWorker`: cada uno es un `DELETE` por corte, idempotente; el segundo pod borra cero filas. En las dos
   limpiezas de Storage, borrar en R2 una clave que ya no existe no falla; *no verificado* si la auditoría puede quedar
   dos veces. Arreglo: `pg_try_advisory_xact_lock` por pasada.
-- **`InstagramTokenRefreshWorker`** corre al arrancar y después cada 24 h (`InstagramTokenRefreshWorker.cs:21, 54, 84`),
-  **sin candado**: los dos pods pueden refrescar el mismo token a la vez. El que pierde falla por `Version` al guardar y
-  reintenta en el siguiente tick; no hay doble envío ni dato malo, pero sí dos llamadas a Meta y un error en el log en
-  cada arranque simultáneo. *No verificado* si Meta invalida el anterior al refrescar; si lo hiciera, gana el último
-  que guarda y no se pierde nada. Arreglo: `pg_try_advisory_xact_lock` por conexión, como `ShopifyTokenRefreshWorker`.
+- **`InstagramTokenRefreshWorker`: resuelto (owner, 2026-11-14), sale de «Fuera de alcance».** Corre al arrancar y
+  después cada 24 h, y ahora refresca cada conexión bajo `pg_try_advisory_xact_lock(InstagramTokenLock.Namespace = 20261114,
+  hashtext(id))`, como `ShopifyTokenRefreshWorker`: el candado se toma antes de leer la conexión y de llamar a Meta, y
+  ocupado la conexión se difiere a la siguiente corrida. El motivo: *no verificado* si Meta invalida el token viejo al
+  refrescar, y si lo hace, el pod que pierde guarda un token muerto o recibe un 4xx y marca la conexión `NeedsAttention`
+  con `token_expired` sin motivo, un camino que no pasa por `Version`. Alcance: sólo el worker; conectar y reconectar no
+  toman el candado (`IntegrationsUnitOfWork.TryLockInstagramTokenAsync`, clasificación `AdvisoryLock` en
+  `MultiReplicaInventory.cs`).
 - **`ConnectionSecretRekeyWorker`** y **`CustomerPhoneBackfillWorker`**: idempotentes por diseño; un lote que choca se
   salta y se cuenta (`ConnectionSecretRekeyWorker.cs:24-26`).
 - **Correos dos veces, un residual que ya existe:** `OutboxDeliveryWorker` reclama con lease de 2 min

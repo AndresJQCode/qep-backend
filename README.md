@@ -3882,7 +3882,9 @@ corto, lo cambia por el largo (60 días), lee `/me` (tiene que ser cuenta `BUSIN
 cuenta al webhook (`POST /{igUserId}/subscribed_apps`) y guarda la conexión `Active` con `igUserId`, `username`,
 `accountName` y `tokenExpiresAt`, más la ruta `(instagram, igUserId)` que usa el webhook. El `redirectUri` tiene que
 ser de un origen de `Meta:Instagram:AllowedRedirectOrigins`. Un worker diario (`Integrations:Instagram`) refresca el
-token cuando le quedan menos de 15 días; un `190` lo pasa a `NeedsAttention` (`token_expired`).
+token cuando le quedan menos de 15 días; un `190` lo pasa a `NeedsAttention` (`token_expired`). Cada conexión se refresca
+bajo un candado de base por conexión (`InstagramTokenLock`, owner 2026-11-14), así que con varias réplicas un solo pod llama
+a Meta por token; el que no lo consigue la difiere a la siguiente corrida.
 
 **Webhook.** `GET /api/webhooks/instagram` responde el `hub.challenge` con el mismo `Meta:App:WebhookVerifyToken`.
 `POST` valida `X-Hub-Signature-256` con `Meta:Instagram:AppSecret` (y acepta también `Meta:App:AppSecret`, por si Meta

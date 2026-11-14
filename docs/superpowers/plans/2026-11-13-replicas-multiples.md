@@ -401,9 +401,9 @@ A mano: iniciar sesión, navegar y abrir Mensajería en dos pestañas; los logs 
 | Clasificación | Hosted services |
 | --- | --- |
 | `Claimed` (33) | `OutboxPublisherWorker`, `ExportJobWorker`, `MediaCopyWorker`, `CampaignDispatchWorker`, `WebhookDeliveryWorker`, `ShopifyWebhookDeliveryWorker`, `AutomationInboxWorker`, `SessionRevocationWorker`, `OrphanUserCleanupWorker`, `QuotationEventsWorker`, `CitySynonymEventsWorker`, `CustomerMediaPurgeWorker`, `CoexistenceEventsWorker`, los 13 `*DeliveryWorker` de Notifications (`Invitation`, `PasswordReset`, `EmailVerification`, `ExistingAccount`, `QuotationsExportReady`, `QuotationsExportFailed`, `ProductExport`, `CustomerExport`, `SupplierExport`, `BuyerVerification`, `BuyerPasswordReset`, `BuyerExistingAccount`, `BuyerAccountDeleted`), `ServiceContractsReminderWorker`, `LoansGenerationWorker`, `BuyerSignupRequestedWorker`, `HistorySyncRequestWorker`, `ScheduledMessageWorker`, `ShopifyCityCorrectionWorker`, `ShopifyReconcileWorker` |
-| `AdvisoryLock` (1) | `ShopifyTokenRefreshWorker` |
+| `AdvisoryLock` (2) | `ShopifyTokenRefreshWorker`, `InstagramTokenRefreshWorker` (pasó de `Noisy` por decisión del owner del 2026-11-14: candado por conexión, `InstagramTokenLock.Namespace` = 20261114) |
 | `Idempotent` (8) | `ConnectionSecretRekeyWorker`, `CustomerPhoneBackfillWorker`, `StagingCleanupWorker`, `PaymentProofOrphanCleanupWorker`, `WebhookPurgeWorker`, `BuyerHousekeepingWorker`, `ShopifyInstallSweeper`, `ApiKeyRequestPurgeWorker` |
-| `Noisy` (5) | `AuditProjectionWorker`, `PaymentProofMoveWorker`, `ProductImageReleaseWorker`, `InstagramTokenRefreshWorker`, `QuotationExpirationWorker` |
+| `Noisy` (4) | `AuditProjectionWorker`, `PaymentProofMoveWorker`, `ProductImageReleaseWorker`, `QuotationExpirationWorker` |
 | `PerPod` (6) | `MessagingEventsListener`, `QueueSamplerWorker`, `ExternalApiCallLogWriter` (drena el canal de su pod), `OperatorTenantStartupWarning` (sólo advierte al arrancar), `ValkeyConnection`, `PresenceHeartbeatWorker` |
 | `OffInProduction` (1) | `ExportLoadSeedWorker` (`Seed__ExportLoad__Quotations: "0"`, `k8s/prod-configMap.yaml:158`) |
 
