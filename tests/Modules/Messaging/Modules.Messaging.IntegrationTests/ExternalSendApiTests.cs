@@ -990,4 +990,84 @@ public sealed class ExternalSendApiTests
         Assert.Equal(linkB, await ScalarAsync<string>(f.ConnectionString, "SELECT details->'template'->'header'->>'link' FROM messaging.messages WHERE direction = 2"));
         Assert.Equal(1L, await OutboundMessagesAsync(f));
     }
+
+    /// <summary>El hilo como lo lee un asesor: los mensajes de la conversación que abrió el envío externo.</summary>
+    private static async Task<JsonElement[]> ThreadAsync(Fixture f)
+    {
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        using var reader = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+        var thread = await reader.GetFromJsonAsync<JsonElement>(MessagesUrl(f.Tenant.TenantId, conversationId), Ct);
+        return [.. thread.GetProperty("items").EnumerateArray().Select(item => item.Clone())];
+    }
+
+    private static JsonElement TemplateItem(JsonElement[] thread, string name) =>
+        thread.Single(item => item.GetProperty("template").ValueKind == JsonValueKind.Object && item.GetProperty("template").GetProperty("name").GetString() == name)
+            .GetProperty("template");
+
+    [Fact]
+    public async Task TheThreadShowsTheHeaderOfAnExternalSend()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(
+            f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "factura_pdf", new { type = "document", link = "https://cdn.example.com/f.pdf", filename = "Factura-1.pdf" }))).StatusCode);
+        // Meta da un wamid por mensaje: con el mismo id la segunda fila chocaría con el índice único del id externo.
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, Catalog);
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.OK, MetaOk.Replace("wamid.external", "wamid.external-2", StringComparison.Ordinal));
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(
+            f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = LogoLink }))).StatusCode);
+
+        var thread = await ThreadAsync(f);
+
+        Assert.All(thread, item => Assert.Equal("Template", item.GetProperty("kind").GetString()));
+        var document = TemplateItem(thread, "factura_pdf").GetProperty("header");
+        Assert.Equal("document", document.GetProperty("type").GetString());
+        Assert.Equal("https://cdn.example.com/f.pdf", document.GetProperty("link").GetString());
+        Assert.Equal("Factura-1.pdf", document.GetProperty("filename").GetString());
+        var image = TemplateItem(thread, "aviso_logo").GetProperty("header");
+        Assert.Equal("image", image.GetProperty("type").GetString());
+        Assert.Equal(LogoLink, image.GetProperty("link").GetString());
+        Assert.Equal(JsonValueKind.Null, image.GetProperty("filename").ValueKind);
+    }
+
+    [Fact]
+    public async Task AStoredHttpLinkIsHiddenFromTheThread()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(
+            f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = LogoLink }))).StatusCode);
+
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.messages SET details = jsonb_set(details, '{template,header,link}', '\"http://cdn.example.com/logo.png\"') WHERE direction = 2");
+        var tampered = TemplateItem(await ThreadAsync(f), "aviso_logo");
+
+        Assert.Equal(JsonValueKind.Null, tampered.GetProperty("header").ValueKind);
+        Assert.Equal("aviso_logo", tampered.GetProperty("name").GetString());
+
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.messages SET details = details #- '{template,header}' WHERE direction = 2");
+        var old = TemplateItem(await ThreadAsync(f), "aviso_logo");
+
+        Assert.Equal(JsonValueKind.Null, old.GetProperty("header").ValueKind);
+    }
+
+    [Fact]
+    public async Task ASendWithoutHeaderHasANullHeaderInTheThread()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, Body(Guid.CreateVersion7(), f.ConnectionId))).StatusCode);
+
+        var template = TemplateItem(await ThreadAsync(f), "aviso_despacho");
+
+        Assert.Equal(JsonValueKind.Null, template.GetProperty("header").ValueKind);
+    }
 }
