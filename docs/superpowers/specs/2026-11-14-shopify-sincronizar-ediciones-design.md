@@ -171,11 +171,20 @@ Estado del cambio al crearse:
   preparar; un facturado no): la parte de envío (nombre, teléfono, dirección, ciudad de la lista; también crearla si el pedido no la
   tiene), la nota y los atributos de Shopify. Hoy el pedido no edita su parte de envío (`Order.cs:1617`); esto agrega ese
   camino sólo para pedidos de Shopify.
-- **Nota y atributos de Shopify viven en el módulo Shopify, no en el pedido** (decisión mía). `Order` no tiene atributos,
-  y la nota del comprador hoy va dentro de `Order.Notes`, que es lo que sale en «Observaciones» del Excel del ERP:
-  moverla rompería esa hoja, y `BuyerNotes` es de la tienda pública (sólo la escribe `CreateFromStore`). Por eso se
-  guardan en la fila del espejo como **valores de QEP** (`qep_note`, `qep_attributes`, nulos mientras nadie los corrija),
-  se editan por un endpoint de Shopify y se comparan ahí para conflicto y eco. `Order.Notes` no cambia.
+- **Notas del pedido** (owner, 2026-11-14): el pedido tiene **notas internas** (`Order.Notes`, del asesor) y **notas del
+  cliente** (`Order.BuyerNotes`, lo que el comprador escribió al comprar). En un pedido de Shopify la nota del comprador va
+  a `BuyerNotes` (al importar, al aplicar un cambio y al corregirla el asesor), y es la que se sincroniza en los dos
+  sentidos. `Notes` sigue con «Shopify #N» y la dirección cruda, y no viaja a Shopify. La regla de `CLAUDE.md` «sólo
+  `CreateFromStore` escribe `BuyerNotes`» se amplía: también la importación y la sincronización de Shopify, y el asesor
+  sólo en pedidos de Shopify (en los de la tienda pública sigue intocable: el comprador la ve). Pedidos ya importados: sin
+  backfill (su nota sigue dentro de `Notes`), como `AddOrderBuyerNotes`.
+- **Excel de pedidos** (owner): «Observaciones» sigue saliendo de `Notes` (sólo notas internas). Se agrega al catálogo una
+  columna nueva **«Notas del cliente»** desde `BuyerNotes` (sirve también a los pedidos de la tienda pública). Revisar la
+  regla de choque de encabezados con los layouts guardados (README § Columnas del Excel de pedidos). Decisión mía: en los
+  layouts guardados nace **oculta**, para no cambiar la hoja que ya importa el ERP de cada tenant; el tenant la activa.
+- **Atributos de Shopify viven en el módulo Shopify** (decisión mía): `Order` no tiene ese campo. Se guardan en la fila
+  del espejo como valor de QEP (`qep_attributes`, nulo mientras nadie los corrija), se editan por un endpoint de Shopify y
+  se comparan ahí para conflicto y eco.
 - **Las correcciones del sistema también viajan** (decisión mía). Los trabajos de sinónimos de ciudad
   (`ShopifyCityCorrectionProcessor`) y la bandeja de ciudades corrigen la ciudad del pedido: actualizan la proyección
   (no cuentan como «el asesor lo tocó») y encolan el envío a Shopify, porque el objetivo es que Shopify quede con la
