@@ -158,7 +158,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 
 ## Bloque A — módulo, dominio y persistencia (Tareas 1–5, un implementador)
 
-### Tarea 1: clave de módulo `support` y migración de Tenancy
+### Task 1: clave de módulo `support` y migración de Tenancy
 
 **Files:**
 - Modify: `src/Modules/Tenancy/Modules.Tenancy.Domain/TenantModuleKey.cs` (después de `Ai`, línea 82; `All`, línea 89)
@@ -186,7 +186,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $TU` → PASS.
 - [ ] **Paso 5:** commit `feat(tenancy): add support module key` con los archivos de este paso (la integración de Tenancy corre al final del bloque).
 
-### Tarea 2: esqueleto del módulo, permisos y `SupportLayerTests`
+### Task 2: esqueleto del módulo, permisos y `SupportLayerTests`
 
 **Files:**
 - Create: `src/Modules/Support/Modules.Support.{Domain,Application,Infrastructure,Api}/*.csproj` (copias de los de Loans: mismas referencias y paquetes; `InternalsVisibleTo` a `Modules.Support.UnitTests` en Application e Infrastructure y a `Modules.Support.IntegrationTests` en Infrastructure)
@@ -236,7 +236,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $AT` → PASS (todas, también `EveryPermissionConstantDeclaresItsModules` y `NoSystemRolePermissionComesFromTheMetadataFallback`).
 - [ ] **Paso 5:** commit `feat(support): scaffold support module with permissions and layer tests`.
 
-### Tarea 3: días hábiles y estados (dominio puro)
+### Task 3: días hábiles y estados (dominio puro)
 
 **Files:**
 - Create: `Modules.Support.Domain/ISupportBusinessCalendar.cs`, `SupportBusinessDays.cs`, `SupportClockContext.cs`, `SupportTicketStatus.cs`, `SupportDueState.cs`, `SupportErrorCodes.cs`, `SupportDomainException.cs`
@@ -293,7 +293,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $SU` → PASS.
 - [ ] **Paso 5:** commit `feat(support): add business-day clock and ticket status machine`.
 
-### Tarea 4: agregados `SupportTicketType` y `SupportTicket`
+### Task 4: agregados `SupportTicketType` y `SupportTicket`
 
 **Files:**
 - Create: `Modules.Support.Domain/SupportTicketId.cs`, `SupportTicketTypeId.cs`, `SupportTicketType.cs`, `SupportTicketTypeDefaults.cs`, `SupportTicketNumber.cs`, `TicketRequester.cs`, `SupportTicketIntake.cs`, `ManualIntakeMedium.cs`, `SupportReplyChannel.cs`, `SupportTicketEventKind.cs`, `SupportTicketEvent.cs`, `SupportTicket.cs`
@@ -373,7 +373,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $SU` → PASS.
 - [ ] **Paso 5:** commit `feat(support): add ticket and ticket type aggregates`.
 
-### Tarea 5: persistencia, siembra, contador y auditoría
+### Task 5: persistencia, siembra, contador y auditoría
 
 **Files:**
 - Create: `Modules.Support.Infrastructure/Persistence/SupportDbContext.cs`, `SupportDbContextFactory.cs`, `SupportUnitOfWork.cs`, `SupportTicketRepository.cs`, `SupportTicketTypeRepository.cs`, `SupportProvisioner.cs`, `SupportTicketNumberGenerator.cs`, `SupportAuditPublisher.cs`, `UniqueViolation.cs`, `Migrations/<ts>_InitialSupport.cs`
@@ -458,7 +458,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 
 ## Bloque B — adaptadores, API de tipos y de tickets (Tareas 6–10, un implementador)
 
-### Tarea 6: adaptadores de Bootstrapper (calendario, clientes, miembros, sonda de usuarios)
+### Task 6: adaptadores de Bootstrapper (calendario, clientes, miembros, sonda de usuarios)
 
 **Files:**
 - Create: `Modules.Support.Application/ISupportBusinessCalendarSource.cs`, `ISupportCustomerLookup.cs`, `ISupportMemberDirectory.cs`
@@ -516,7 +516,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $BU --filter "FullyQualifiedName~SupportBusinessCalendarTests"`; `dotnet test $SI --filter "FullyQualifiedName~SupportUserReferenceProbeTests" -- xUnit.MaxParallelThreads=4` → PASS.
 - [ ] **Paso 5:** commit `feat(support): add calendar, customer and member adapters`.
 
-### Tarea 7: API de tipos de ticket y de ajustes de Soporte
+### Task 7: API de tipos de ticket y de ajustes de Soporte
 
 **Files:**
 - Create: `Modules.Support.Application/TicketTypes/ListTicketTypes.cs`, `CreateTicketType.cs`, `UpdateTicketType.cs`, `ReorderTicketTypes.cs`; `Settings/GetSupportSettings.cs`, `Settings/UpdateSupportSettings.cs`; `SupportDtos.cs` (tipos de tipo y `SupportSettingsDto`), `SupportNotFound.cs`
@@ -572,7 +572,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $SU`; `dotnet test $SI --filter "FullyQualifiedName~SupportTicketTypesApiTests|FullyQualifiedName~SupportSettingsApiTests|FullyQualifiedName~SupportAccessApiTests" -- xUnit.MaxParallelThreads=4` → PASS.
 - [ ] **Paso 5:** commit `feat(support): add ticket type and support settings api`.
 
-### Tarea 8: alta manual, detalle y responsables
+### Task 8: alta manual, detalle y responsables
 
 **Files:**
 - Create: `Modules.Support.Application/Tickets/CreateTicket.cs`, `GetTicket.cs`, `ListSupportAssignees.cs`, `SupportTicketDtoComposer.cs`, `SupportTicketRules.cs`; `SupportDtos.cs` (DTO de ticket de «Contrato para las pantallas»)
@@ -620,7 +620,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $SU`; `dotnet test $SI --filter "FullyQualifiedName~SupportTicketsApiTests|FullyQualifiedName~SupportCustomerReferenceLockApiTests" -- xUnit.MaxParallelThreads=4` → PASS.
 - [ ] **Paso 5:** commit `feat(support): create manual tickets and read their detail`.
 
-### Tarea 9: bandeja con filtros y resumen
+### Task 9: bandeja con filtros y resumen
 
 **Files:**
 - Create: `Modules.Support.Application/Tickets/ListTickets.cs`
@@ -650,7 +650,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $SU`; `dotnet test $SI --filter "FullyQualifiedName~SupportInboxApiTests" -- xUnit.MaxParallelThreads=4` → PASS.
 - [ ] **Paso 5:** commit `feat(support): list tickets with due filters and status summary`.
 
-### Tarea 10: acciones del ticket (estado, responsable, tipo, cliente)
+### Task 10: acciones del ticket (estado, responsable, tipo, cliente)
 
 **Files:**
 - Create: `Modules.Support.Application/Tickets/ChangeTicketStatus.cs`, `AssignTicket.cs`, `ChangeTicketType.cs`, `LinkTicketCustomer.cs`
@@ -691,7 +691,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 
 ## Bloque C — clientes, documentación y cierre (Tareas 11–12, un implementador)
 
-### Tarea 11: un ticket bloquea el borrado del cliente y la fusión lo mueve
+### Task 11: un ticket bloquea el borrado del cliente y la fusión lo mueve
 
 **Files:**
 - Modify: `src/Modules/Customers/Modules.Customers.Application/BulkDeleteCustomers.cs:31-41`
@@ -719,7 +719,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 - [ ] **Paso 4:** `dotnet test $CU --filter "FullyQualifiedName~BulkDeleteCustomersTests"`; `dotnet test $BU --filter "FullyQualifiedName~CustomerMergeReferencesTests"`; `dotnet test $CI --filter "FullyQualifiedName~CustomerDeletionAcrossModulesTests.EachBlockerIsFound" -- xUnit.MaxParallelThreads=4`; `dotnet test $PI --filter "FullyQualifiedName~CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema" -- xUnit.MaxParallelThreads=4` → PASS.
 - [ ] **Paso 5:** commit `feat(customers): block customer deletion by support tickets and move them on merge`.
 
-### Tarea 12: documentación y verificación final
+### Task 12: documentación y verificación final
 
 **Files:**
 - Modify: `README.md` (sección `### Soporte` después de `### Préstamos`, línea 4627: módulo, esquema, clave `support` sin dependencias, permisos y roles, rutas, siembra perezosa, reloj, migraciones `AddSupportModuleKey` e `InitialSupport`)
