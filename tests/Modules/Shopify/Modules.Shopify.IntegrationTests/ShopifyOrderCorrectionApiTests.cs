@@ -160,6 +160,24 @@ public sealed class ShopifyOrderCorrectionApiTests
         Assert.True(errors.ContainsKey("attributes[0].key"));
     }
 
+    // Review Minor 4: un null en la lista de atributos es un 422 con su índice, no un 500.
+    [Fact]
+    public async Task ANullAttributeIs422WithItsIndex()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var body = await CorrectionBodyAsync(
+            flow, withParty: false, attributes: new JsonArray(new JsonObject { ["key"] = "documento", ["value"] = "1" }, null));
+
+        var response = await PutAsync(client, flow, body);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("validation.failed", problem!["code"]!.GetValue<string>());
+        Assert.Equal(["attributes[1]"], problem["errors"]!.AsObject().Select(pair => pair.Key).ToArray());
+    }
+
     [Fact]
     public async Task GetSyncShowsAttributesAndThePendingPush()
     {

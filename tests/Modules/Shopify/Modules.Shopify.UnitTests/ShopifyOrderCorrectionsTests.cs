@@ -209,6 +209,18 @@ public sealed class ShopifyOrderCorrectionsTests
         Assert.Equal(new HashSet<string>(StringComparer.Ordinal) { "attributes" }, nullAttributes);
     }
 
+    // Review Minor 4: un elemento null en la lista era un 500 (ChildRules salta los null y el handler los desreferenciaba).
+    [Fact]
+    public void ANullAttributeIsAValidationErrorOnItsIndex()
+    {
+        var command = new CorrectShopifyOrderCommand(
+            ImporterWorld.TenantId, Guid.CreateVersion7(), 1, null, null, [new("Documento", "1"), null!]);
+
+        var keys = new CorrectShopifyOrderValidator().Validate(command).Errors.Select(error => error.PropertyName).ToArray();
+
+        Assert.Equal(["attributes[1]"], keys);
+    }
+
     [Fact]
     public async Task AnInvalidCorrectionIsAValidationErrorBeforeAnyWrite()
     {

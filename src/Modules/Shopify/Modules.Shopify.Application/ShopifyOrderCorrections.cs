@@ -114,6 +114,12 @@ public sealed class CorrectShopifyOrderValidator : AbstractValidator<CorrectShop
                 .All(group => group.Count() == 1))
             .WithMessage("Two attributes cannot have the same key.")
             .OverridePropertyName("attributes");
+        // ChildRules salta los elementos null: sin esta regla, un [null] llega al handler y es un 500 (review Minor 4).
+        RuleForEach(command => command.Attributes)
+            .NotNull()
+            .WithMessage("An attribute cannot be null.")
+            .When(command => command.Attributes is not null)
+            .OverridePropertyName("attributes");
         RuleForEach(command => command.Attributes)
             .ChildRules(attribute =>
             {
