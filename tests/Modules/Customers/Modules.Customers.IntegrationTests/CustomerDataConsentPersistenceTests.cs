@@ -12,13 +12,14 @@ namespace Modules.Customers.IntegrationTests;
 /// garantizan sus CHECK y no sólo el agregado. Las filas inválidas entran por SQL (el agregado no deja armarlas); las válidas,
 /// por <see cref="ICustomerDataConsentRepository"/> y <see cref="ICustomersUnitOfWork"/>.
 /// </summary>
-public sealed class CustomerDataConsentPersistenceTests
+public sealed class CustomerDataConsentPersistenceTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     private static readonly Guid Tenant = Guid.Parse(TenantId);
     private static readonly Guid OtherTenant = Guid.Parse(OtherTenantId);
     private static readonly DateTimeOffset Now = new(2026, 10, 26, 12, 0, 0, TimeSpan.Zero);
 
-    private sealed class Fixture(QepApiFactory factory, string connectionString) : IDisposable
+    // ownsFactory en false: el host compartido de la clase lo libera su fixture, no la prueba.
+    private sealed class Fixture(QepApiFactory factory, string connectionString, bool ownsFactory = true) : IDisposable
     {
         public QepApiFactory Factory { get; } = factory;
 
@@ -39,7 +40,13 @@ public sealed class CustomerDataConsentPersistenceTests
                 return unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
             });
 
-        public void Dispose() => Factory.Dispose();
+        public void Dispose()
+        {
+            if (ownsFactory)
+            {
+                Factory.Dispose();
+            }
+        }
     }
 
     // Arrancar el host migra la base: después de esto customers.data_consents existe.
@@ -48,6 +55,13 @@ public sealed class CustomerDataConsentPersistenceTests
         var factory = new QepApiFactory(connectionString);
         _ = factory.Services;
         return new Fixture(factory, connectionString);
+    }
+
+    // El host de la clase, para las pruebas que siembran clientes con ids propios y sólo miran sus filas.
+    private Fixture Shared()
+    {
+        _ = sharedHost.Factory.Services;
+        return new Fixture(sharedHost.Factory, sharedHost.Database.GetConnectionString(), ownsFactory: false);
     }
 
     private static DataConsentIdentity IdentityWith(string? waId = "573001234567") =>
@@ -157,7 +171,7 @@ public sealed class CustomerDataConsentPersistenceTests
 
     // Un evento desconocido viola también CK_data_consents_actor, que sólo admite los tres eventos, y PostgreSQL evalúa los
     // CHECK por orden de nombre: siempre reporta ése primero. Para ver que CK_data_consents_event rechaza solo, se lo quita en
-    // una transacción que se revierte (la base es del contenedor de esta prueba).
+    // una transacción que se revierte (la base es de esta clase de pruebas, que corren de a una).
     private static async Task InsertConsentWithoutTheActorCheckAsync(string connectionString, Dictionary<string, object?> columns)
     {
         await using var connection = new NpgsqlConnection(connectionString);
@@ -239,8 +253,7 @@ public sealed class CustomerDataConsentPersistenceTests
     [InlineData(ViolatedRow.UnknownEvent, "CK_data_consents_event")]
     public async Task EachCheckRejectsItsRow(ViolatedRow row, string constraint)
     {
-        await using var database = await StartDatabaseAsync();
-        using var fixture = Start(database.GetConnectionString());
+        using var fixture = Shared();
         var customerId = await InsertCustomerAsync(fixture.ConnectionString, Tenant);
 
         var columns = ColumnsFor(row, customerId);
@@ -294,8 +307,7 @@ public sealed class CustomerDataConsentPersistenceTests
     [Fact]
     public async Task TheLatestIsOrderedByOccurredAtThenSequence()
     {
-        await using var database = await StartDatabaseAsync();
-        using var fixture = Start(database.GetConnectionString());
+        using var fixture = Shared();
         var customerId = await InsertCustomerAsync(fixture.ConnectionString, Tenant);
         var first = ChatbotRow(customerId, DataConsentEvent.Accepted, Now);
         var second = ChatbotRow(customerId, DataConsentEvent.Rejected, Now);
@@ -322,8 +334,7 @@ public sealed class CustomerDataConsentPersistenceTests
     [Fact]
     public async Task LockingFollowsOneMergeHopAndNeedsTheTransaction()
     {
-        await using var database = await StartDatabaseAsync();
-        using var fixture = Start(database.GetConnectionString());
+        using var fixture = Shared();
         var survivor = await InsertCustomerAsync(fixture.ConnectionString, Tenant);
         var merged = await InsertCustomerAsync(fixture.ConnectionString, Tenant, mergedInto: survivor);
         var foreign = await InsertCustomerAsync(fixture.ConnectionString, OtherTenant);

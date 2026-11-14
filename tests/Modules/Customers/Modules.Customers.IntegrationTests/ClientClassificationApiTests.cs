@@ -16,7 +16,7 @@ namespace Modules.Customers.IntegrationTests;
 /// Catalog: catalogo de referencia chico, tenant-scoped, con nombre y prefijo unicos por tenant
 /// y estado activo/inactivo reversible.
 /// </summary>
-public sealed class ClientClassificationApiTests
+public sealed class ClientClassificationApiTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     private static string ClassificationsUrl(string tenantId = TenantId) =>
         $"/api/v1/tenants/{tenantId}/customers/classifications";
@@ -35,8 +35,7 @@ public sealed class ClientClassificationApiTests
     [Fact]
     public async Task ListReturnsAnEmptyCatalogForANewTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateClassificationManager(factory);
 
         var body = await ListAsync(client, TenantId);
@@ -96,8 +95,7 @@ public sealed class ClientClassificationApiTests
     [Fact]
     public async Task CreateWithOnlyTheReadPermissionIsForbiddenAndPersistsNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var reader = CreateClient(
             factory, SubjectId, TenantId, CustomersPermissions.ClassificationRead);
 
@@ -110,8 +108,7 @@ public sealed class ClientClassificationApiTests
     [Fact]
     public async Task CreateWithBlankNameOrPrefixReturnsThePerFieldErrorMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateClassificationManager(factory);
 
         var response = await CreateClassificationAsync(client, TenantId, "   ", "   ");
@@ -178,8 +175,7 @@ public sealed class ClientClassificationApiTests
     [Fact]
     public async Task GetUpdateDeactivateAndDeleteReturnNotFoundForAnUnknownId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateClassificationManager(factory);
         var missing = Guid.CreateVersion7();
 

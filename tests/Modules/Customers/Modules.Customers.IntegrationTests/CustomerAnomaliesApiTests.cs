@@ -8,7 +8,7 @@ namespace Modules.Customers.IntegrationTests;
 
 /// <summary>CD-04: <c>GET /customers/anomalies</c> agrupa los clientes que comparten celular o número de documento. Incluye
 /// inactivos e incompletos, ordena cada grupo por <c>created_at, id</c> y pagina grupos, no clientes.</summary>
-public sealed class CustomerAnomaliesApiTests
+public sealed class CustomerAnomaliesApiTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     private const string SharedPhone = "+573043549660";
 
@@ -182,8 +182,7 @@ public sealed class CustomerAnomaliesApiTests
     [Fact]
     public async Task AnUnknownOrMissingKindIs422OnKind()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var unknown = await client.GetAsync(AnomaliesUrl("?kind=Phone"), TestContext.Current.CancellationToken);
@@ -198,8 +197,7 @@ public sealed class CustomerAnomaliesApiTests
     [Fact]
     public async Task AHugePageIs422OnPageInsteadOfAnOverflowingOffset()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var response = await client.GetAsync(
