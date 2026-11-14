@@ -1,6 +1,6 @@
 # Shopify: sincronizar ediciones del pedido en los dos sentidos
 
-Fecha: 2026-11-14. Estado: **diseño, pendiente de aprobación del owner**. Extiende
+Fecha: 2026-11-14. Estado: **aprobado por el owner** (2026-11-14), sin implementar. Extiende
 [2026-10-15-integracion-shopify-pedidos-design.md](2026-10-15-integracion-shopify-pedidos-design.md), que dejó fuera
 (§6.3 y §14) las ediciones de líneas, envío, dirección y cliente después de importar.
 
