@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -15,11 +14,13 @@ namespace Modules.Tenancy.IntegrationTests;
 /// tenants. Sin eso un cliente sólo puede descubrir qué le está permitido intentándolo y
 /// leyendo el 403 — que no puede ocultar una acción antes de que se intente. Ver SDD-OD-10.
 /// </summary>
-public sealed class AuthorizationCatalogApiTests
+public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string TenantId = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string OtherTenantId = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] ReadOnlyPermissions =
@@ -52,8 +53,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task TheCatalogNamesTheOrderPermissions()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
 
@@ -122,8 +122,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task TheCatalogNamesThePosPermissionsAndTheCashierRole()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
 
@@ -181,8 +180,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task EffectivePermissionsReturnsWhatTheCallerActuallyHas()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add(
             "X-Permissions",
@@ -210,8 +208,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task EffectivePermissionsNeedsNoPermissionOfItsOwn()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "none.at.all");
 
@@ -230,8 +227,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task EffectivePermissionsRejectsAnotherTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
 
         // Autenticado para OtherTenant, preguntando por el tenant sembrado.
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
@@ -246,8 +242,7 @@ public sealed class AuthorizationCatalogApiTests
     [Fact]
     public async Task EffectivePermissionsRejectsAnonymous()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync(

@@ -16,7 +16,7 @@ namespace Modules.Tenancy.IntegrationTests;
 /// stub sobre un tenant con fila y el endpoint <c>/modules</c>. Corre con el stub de desarrollo; la
 /// cookie real va en <c>RealAuthenticationApiTests</c>.
 /// </summary>
-public sealed class TenantModulesApiTests
+public sealed class TenantModulesApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
     // Es la prueba de que EF ordena el INSERT de tenants antes que el de tenant_modules: los dos
     // salen del mismo SaveChangesAsync de TenantRegistrationService, y sin la FK en el modelo el
@@ -52,8 +52,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task TheStubMasksARegisteredTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerId) = await RegisterAsync(factory);
         using var client = StubClient(factory, ownerId, tenantId, "catalog.product.read", "tenancy.settings.read");
         Assert.Contains("catalog.product.read", await EffectivePermissionsAsync(client, tenantId));
@@ -81,8 +80,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task TheStubLeavesASimulatedTenantAlone()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var tenantId = Guid.CreateVersion7();
         using var client = StubClient(factory, Guid.CreateVersion7(), tenantId, "catalog.product.read");
 
@@ -92,8 +90,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task ModulesListsTheEightInOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerId) = await RegisterAsync(factory);
         using var client = StubClient(factory, ownerId, tenantId);
 
@@ -120,8 +117,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task TurningCustomersOffNamesItAsTheRootCause()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerId) = await RegisterAsync(factory);
         using var client = StubClient(factory, ownerId, tenantId);
 
@@ -141,8 +137,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task ASimulatedTenantSeesEverythingOn()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var tenantId = Guid.CreateVersion7();
         using var client = StubClient(factory, Guid.CreateVersion7(), tenantId);
 
@@ -159,8 +154,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task ModulesOfAnotherTenantAreForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerId) = await RegisterAsync(factory);
         using var client = StubClient(factory, ownerId, tenantId);
 
