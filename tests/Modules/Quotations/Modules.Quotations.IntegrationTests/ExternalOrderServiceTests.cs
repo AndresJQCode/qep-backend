@@ -16,7 +16,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// <summary>Spec 2026-10-15 §5.4: el puerto con el que una integración (Shopify) crea pedidos sin sesión HTTP.
 /// Las líneas llegan preciadas y el cliente puede estar incompleto; el estado de pago que avisa la plataforma
 /// sólo manda mientras el pedido no tenga comprobantes propios.</summary>
-public sealed class ExternalOrderServiceTests
+public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -25,8 +25,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task AShopifyOrderIgnoresTheTenantRule()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, TenancyPermissions.SettingsUpdate]);
         using var _ = client;
@@ -74,8 +73,8 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task CreatesAnOrderForAnIncompleteCustomerAndPublishesOrderCreated()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var incompleteId = await CreateActiveCustomerAsync(client, tenantId);
@@ -125,8 +124,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task SyncPaymentStatusChangesAnOrderWithoutProofsAndIsRejectedWithThem()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -170,8 +168,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task CancelLeavesTheOrderCancelledWithItsHistoryAndEvent()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -205,8 +202,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task ShopifyCancelWinsOverAPreparedArchivedOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
         var order = await CreateAsync(factory, Draft(setup, "#4001"));
@@ -255,8 +251,7 @@ public sealed class ExternalOrderServiceTests
     [InlineData(false)]
     public async Task ShopifyPaymentSyncOnAPreparedOrderHonorsTheAutoArchiveSetting(bool autoArchive)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(
             factory, [.. ManagerPermissions, TenancyPermissions.SettingsRead, TenancyPermissions.SettingsUpdate]);
         using var _ = setup.Client;
@@ -309,8 +304,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task CreateAsyncWithShippingPersistsShippingAndTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
         var shipping = new ShippingDetails(null, null, FreightChargeMode.Charged, 15_000m, 19, false);
@@ -335,8 +329,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task CreateAsyncWithSameExternalKeyReturnsExistingOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
 
@@ -362,8 +355,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task CreateAsyncConcurrentSameExternalKeyCreatesOneOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
         var draft = Draft(setup, "#2003", externalKey: "shop-1:order-2003");
@@ -382,8 +374,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task CreateAsyncLosingTheIndexRaceDiscardsAndReturnsTheWinnerWithoutSkippingTheNumber()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
         var draft = Draft(setup, "#2007", externalKey: "shop-1:order-2007");
@@ -415,8 +406,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task CreateAsyncSameExternalKeyInAnotherTenantCreatesItsOwnOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
         var other = await ArrangeAsync(factory);
@@ -482,8 +472,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task FindByExternalKeyAsyncReturnsTheOrderOnlyInItsTenantAndSource()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
         var other = await ArrangeAsync(factory);
@@ -509,8 +498,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task GetOrderExposesExternalShippingTitle()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
 
@@ -862,8 +850,7 @@ public sealed class ExternalOrderServiceTests
     [Fact]
     public async Task CreateAsyncReturnsTheShippingPartyAsPersisted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
         var padded = Party() with { Name = "  Ana Pérez  ", Phone = " 3001112233 " };
@@ -1031,8 +1018,7 @@ public sealed class ExternalOrderServiceTests
     [InlineData(OrderSource.Store)]
     public async Task CreateRejectsASourceThatIsNotAnExternalPlatform(OrderSource source)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await ArrangeAsync(factory);
         using var _ = setup.Client;
 

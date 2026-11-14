@@ -14,14 +14,13 @@ namespace Modules.Quotations.IntegrationTests;
 /// contenedor real, como las consulta Storage: sin su registro, los barridos de Storage no ven los
 /// pedidos.
 /// </summary>
-public sealed class PaymentProofReferenceProbeTests
+public sealed class PaymentProofReferenceProbeTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     // D11: el archivo de un comprobante adjunto está referenciado; uno que ningún pedido usa, no.
     [Fact]
     public async Task TheFileReferenceProbeSeesOnlyAttachedProofs()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotation = await NewSentQuotationAsync(client, factory, tenantId);

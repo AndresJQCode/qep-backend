@@ -14,7 +14,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// (<see cref="StubPdfRenderer"/>) y la copia pública la publica <c>StubPdfStorage</c>, como en el
 /// envío de la cotización.
 /// </summary>
-public sealed class OrderSendApiTests
+public sealed class OrderSendApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string SendUrl(Guid tenantId, Guid orderId) =>
         $"/api/v1/tenants/{tenantId}/orders/{orderId}/send";
@@ -93,8 +93,7 @@ public sealed class OrderSendApiTests
     [Fact]
     public async Task SendWorksWithoutABody()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var order = await CreateOrderAsync(client, factory, tenantId);
@@ -112,8 +111,7 @@ public sealed class OrderSendApiTests
     [Fact]
     public async Task SendingACancelledOrderIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
         using var _ = client;
         var order = await CreateOrderAsync(client, factory, tenantId);
@@ -131,8 +129,7 @@ public sealed class OrderSendApiTests
     [Fact]
     public async Task SendingToBillingWithoutABillingPartyIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var order = await CreateOrderAsync(client, factory, tenantId);
@@ -150,8 +147,7 @@ public sealed class OrderSendApiTests
     [Fact]
     public async Task SendingWithoutTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var order = await CreateOrderAsync(client, factory, tenantId);
@@ -174,8 +170,7 @@ public sealed class OrderSendApiTests
     [Fact]
     public async Task SendingAnUnknownOrderIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -360,8 +355,8 @@ public sealed class OrderSendApiTests
     [Fact]
     public async Task AContactWithoutPhoneIs422RecipientMissing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var companyId = await CreateActiveCustomerAsync(client, tenantId);
@@ -381,8 +376,7 @@ public sealed class OrderSendApiTests
     [Fact]
     public async Task TheOrderDetailListsTheClientsContacts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var companyId = await CreateActiveCustomerAsync(client, tenantId);

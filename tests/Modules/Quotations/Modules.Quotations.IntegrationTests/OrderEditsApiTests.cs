@@ -14,7 +14,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// (<c>PUT /orders/{orderId}</c> con <c>If-Match</c>) y el cálculo previo
 /// (<c>POST /orders/{orderId}/preview</c>), contra Postgres real.
 /// </summary>
-public sealed class OrderEditsApiTests
+public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/order";
@@ -29,8 +29,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task SavingEditsChangesTheOrderAndLeavesTheQuotationUntouched()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -58,8 +57,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task FindUntrackedLoadsBothAggregatesWithoutTrackingThem()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -109,8 +107,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task TheOrderResponseCarriesTheVersion()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var (quotation, order, _) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -137,8 +134,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task SaveAppliesProductsProofsAndNotesTogetherAndReturnsTheNewVersion()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, _) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -180,8 +176,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task SaveDerivesThePaymentStatusOnTheServer()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -206,8 +201,7 @@ public sealed class OrderEditsApiTests
     [InlineData(1, "PartialPaymentReceived")]
     public async Task SaveComparesTheProofsAgainstTheNetOfRetention(int shortBy, string expected)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(
@@ -233,8 +227,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task PreviewComparesTheProofsAgainstTheNetOfRetention()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(
@@ -259,8 +252,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task SaveRemovesAndCorrectsProofsAndRecalculatesThePaymentStatus()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -302,8 +294,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task SaveCorrectsThePaidOnDateOfAnExistingProof()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -348,8 +339,7 @@ public sealed class OrderEditsApiTests
     public async Task CorrectingAProofAmountOnAPaidOrderRequiresTheApprovePermission(
         bool withApprove, HttpStatusCode expectedStatus, string expectedPayment)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, manager) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = manager;
         var (order, productId, proofId) = await CreatePaidOrderWithProofAsync(
@@ -376,8 +366,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task CorrectingAProofAmountOnAPaidOrderThroughTheProofsRouteIsForbiddenWithOnlyManage()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, manager) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = manager;
         var (order, _, proofId) = await CreatePaidOrderWithProofAsync(manager, factory, tenantId, ownerUserId);
@@ -397,8 +386,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task CorrectingOnlyThePaidOnDateOfAPaidOrderProofStaysWithManage()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, manager) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = manager;
         var (order, productId, proofId) = await CreatePaidOrderWithProofAsync(
@@ -422,8 +410,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task AFailureHalfwayPersistsNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -457,8 +444,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task AStaleOrMissingIfMatchIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -480,8 +466,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task APreparedOrderIsNotEditable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -504,8 +489,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task SavingWithoutChangesKeepsTheVersion()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -527,8 +511,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task AnInvalidBodyIsRejectedByTheRegisteredValidator()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, _) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -547,8 +530,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task AnUnknownOrderIdIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, _, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -570,8 +552,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task PreviewReturnsTheRecalculatedDocumentWithoutPersistingIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -612,8 +593,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task PreviewAppliesProofUpdatesAndRemovalsWithoutPersistingThem()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -661,8 +641,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task PreviewReportsTheSameDomainErrorAsSaving()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -684,8 +663,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task PreviewOnAPreparedOrderIsNotEditable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -724,8 +702,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task EditingTheBillingPartySavesItWithPersonTypeAndRecalculates()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -759,8 +736,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task TheOrderEditorAcceptsAForeignShippingParty()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -786,8 +762,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task AnOrderBillingPartyWithACcAbroadIsA422OnItsType()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -810,8 +785,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task EditingAnExistingBillingRowKeepsASingleRow()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -835,8 +809,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task AnAbsentBillingLeavesItUntouched()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -860,8 +833,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task JuridicaWithCcIsA422()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -879,8 +851,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task AnInvoicedOrderCannotChangeItsBilling()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
         using var _ = client;
@@ -908,8 +879,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task PreviewAppliesTheBillingBlockWithoutPersistingIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -934,8 +904,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task PreviewAcceptsAnIncompleteBillingRow()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
@@ -955,8 +924,7 @@ public sealed class OrderEditsApiTests
     [Fact]
     public async Task PreviewWithBillingLeavesTheStoredOrderWithoutTheRow()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);

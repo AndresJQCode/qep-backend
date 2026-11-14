@@ -11,7 +11,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Agregar productos a un pedido y marcarlo pagado.</summary>
-public sealed class OrderItemsAndMarkPaidApiTests : OrderApiTests
+public sealed class OrderItemsAndMarkPaidApiTests(SharedQuotationsHost sharedHost) : OrderApiTests, IClassFixture<SharedQuotationsHost>
 {
     // A pedido (2026-09): "Editar" un pedido pendiente para sumarle productos que faltaron al
     // convertir. Con el pago pendiente (sin comprobantes) agregar un producto no tiene nada que
@@ -19,8 +19,7 @@ public sealed class OrderItemsAndMarkPaidApiTests : OrderApiTests
     [Fact]
     public async Task AddOrderItemsAddsAProductAndRecalculatesTheQuotationTotal()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -65,8 +64,7 @@ public sealed class OrderItemsAndMarkPaidApiTests : OrderApiTests
     [Fact]
     public async Task AddOrderItemsRecalculatesThePaymentStatusWhenTheTotalGrows()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -97,8 +95,7 @@ public sealed class OrderItemsAndMarkPaidApiTests : OrderApiTests
     [Fact]
     public async Task AddOrderItemsRejectsAPreparedOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -129,8 +126,7 @@ public sealed class OrderItemsAndMarkPaidApiTests : OrderApiTests
     [Fact]
     public async Task AddOrderItemsRejectsAProductAlreadyInTheQuotation()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -154,8 +150,7 @@ public sealed class OrderItemsAndMarkPaidApiTests : OrderApiTests
     [Fact]
     public async Task AddOrderItemsForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
@@ -183,8 +178,7 @@ public sealed class OrderItemsAndMarkPaidApiTests : OrderApiTests
     [Fact]
     public async Task MarkPaidWithOnlyTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -211,8 +205,7 @@ public sealed class OrderItemsAndMarkPaidApiTests : OrderApiTests
     [Fact]
     public async Task MarkPaidWithTheApprovePermissionSucceedsWithoutTheManagePermission()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

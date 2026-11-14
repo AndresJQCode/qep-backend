@@ -11,7 +11,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Convertir una cotización en pedido: numeración, rechazos, lectura y permisos.</summary>
-public sealed class OrderConversionRulesApiTests : OrderApiTests
+public sealed class OrderConversionRulesApiTests(SharedQuotationsHost sharedHost) : OrderApiTests, IClassFixture<SharedQuotationsHost>
 {
     /// <summary>
     /// El caso que motivó el spec 2026-09-17 de numeración: un tenant que viene de otro sistema
@@ -49,8 +49,7 @@ public sealed class OrderConversionRulesApiTests : OrderApiTests
     [Fact]
     public async Task AConvertedQuotationWithAnApprovedOrderCanNoLongerBeEditedVoidedOrResent()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -101,8 +100,7 @@ public sealed class OrderConversionRulesApiTests : OrderApiTests
     [Fact]
     public async Task ConvertingAnAlreadyConvertedQuotationIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -134,8 +132,8 @@ public sealed class OrderConversionRulesApiTests : OrderApiTests
     [Fact]
     public async Task ConvertingAQuotationThatAlreadyHasAnOrderIsAlreadyConverted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -284,8 +282,7 @@ public sealed class OrderConversionRulesApiTests : OrderApiTests
     [Fact]
     public async Task GetOrderReturnsTheConvertedOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -316,8 +313,7 @@ public sealed class OrderConversionRulesApiTests : OrderApiTests
     [Fact]
     public async Task GetOrderForAnUnconvertedQuotationReturnsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -332,8 +328,7 @@ public sealed class OrderConversionRulesApiTests : OrderApiTests
     [Fact]
     public async Task ConvertForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
@@ -357,8 +352,7 @@ public sealed class OrderConversionRulesApiTests : OrderApiTests
     [Fact]
     public async Task ConvertAQuotationEditedAfterBeingSentSucceeds()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -385,8 +379,7 @@ public sealed class OrderConversionRulesApiTests : OrderApiTests
     [Fact]
     public async Task ResendingMakesAnEditedQuotationConvertibleAgain()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

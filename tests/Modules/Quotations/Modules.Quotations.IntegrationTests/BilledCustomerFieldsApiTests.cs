@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Politica de campos del cliente: marcar un pedido como pagado exige el documento del cliente facturado
 /// solo si el tenant lo pide al facturar (spec 2026-11-10 §3.2; antes, al aprobar).</summary>
-public sealed class BilledCustomerFieldsApiTests
+public sealed class BilledCustomerFieldsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -38,8 +38,7 @@ public sealed class BilledCustomerFieldsApiTests
     [Fact]
     public async Task MarkingPaidAnOrderOfACustomerWithoutDocumentFollowsThePolicy()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         await SetTenantCustomerFieldPolicyAsync(factory, tenantId, false, false, true, true);
@@ -68,8 +67,7 @@ public sealed class BilledCustomerFieldsApiTests
     [Fact]
     public async Task MarkingPaidAnOrderWithoutFreightPassesForACustomerWithoutCityUnderACityOnBillingPolicy()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         await SetTenantCustomerFieldPolicyAsync(factory, tenantId, false, false, false, true);

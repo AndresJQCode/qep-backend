@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// (<c>POST /quotations/preview</c>), contra Postgres real (spec 2026-10-18 §7). Gemelo de
 /// <see cref="ManualOrderApiTests"/> por el lado de la cotización.
 /// </summary>
-public sealed class QuotationOneStepCreationApiTests
+public sealed class QuotationOneStepCreationApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string AuditEvent = "platform.audit.recorded.v1";
 
@@ -23,8 +23,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task CreateWithTheWholeDocumentReturnsItsLinesAndTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var body = await BaseBodyAsync(client, tenantId);
@@ -46,8 +45,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task CreateWithLinesLeavesCreatedAndItemAddedInTheHistory()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var body = await BaseBodyAsync(client, tenantId);
@@ -69,8 +67,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task PreviewCalculatesWithoutPersisting()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var body = await BaseBodyAsync(client, tenantId);
@@ -95,8 +92,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task PreviewDoesNotSpendTheNumber()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await UseCounterAsync(factory, tenantId);
@@ -115,8 +111,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task ACreationRejectedByAnItemDoesNotSpendTheNumber()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await UseCounterAsync(factory, tenantId);
@@ -135,8 +130,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task PreviewAndCreateAgreeOnTheTotal()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -166,8 +160,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task BothRoutesAreForbiddenForAnotherTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var body = await BaseBodyAsync(owner, tenantId);
@@ -184,8 +177,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task BothRoutesAreForbiddenWithoutTheManagePermission()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var body = await BaseBodyAsync(owner, tenantId);
@@ -204,8 +196,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task ACustomerOfAnotherTenantIsNotFoundInBothRoutes()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var body = await BaseBodyAsync(client, tenantId);
@@ -223,8 +214,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task AProductOfAnotherTenantIsTheSaveError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var body = await BaseBodyAsync(client, tenantId);
@@ -243,8 +233,8 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task AnIncompleteCustomerIsRejectedInBothRoutes()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var body = await BaseBodyAsync(client, tenantId);
@@ -260,8 +250,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task ARepeatedVariantIsAFieldErrorInBothRoutes()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var body = await BaseBodyAsync(client, tenantId);
@@ -286,8 +275,7 @@ public sealed class QuotationOneStepCreationApiTests
     [Fact]
     public async Task ADisabledFreightChargeModeIsRejectedInBothRoutes()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, "tenancy.settings.read", "tenancy.settings.update"]);
         using var _ = client;

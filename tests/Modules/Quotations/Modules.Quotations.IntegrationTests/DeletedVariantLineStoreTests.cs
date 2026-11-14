@@ -10,7 +10,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// <summary>El SQL por nombre sobre las tablas de Quotations que corre el borrado de producto (spec 2026-11-08):
 /// el congelado del código y el nombre en líneas sin foto, y la carga de los borradores afectados. Contra el
 /// esquema migrado.</summary>
-public sealed class DeletedVariantLineStoreTests
+public sealed class DeletedVariantLineStoreTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -167,8 +167,7 @@ public sealed class DeletedVariantLineStoreTests
     [Fact]
     public async Task ListDraftsReturnsOnlyTrackedDraftsOfTheTenantWithThoseVariants()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (otherTenantId, _, otherClient) = await RegisterTenantAsync(factory, ManagerPermissions);

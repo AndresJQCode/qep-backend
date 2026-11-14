@@ -13,7 +13,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// Cliente, asesora, moneda y totales viven en la cotizacion de origen y el pedido no los repite,
 /// asi que cada fila los trae ya resueltos: sin eso, quien pinta la tabla hace un GET por fila.
 /// </summary>
-public sealed class OrderListApiTests
+public sealed class OrderListApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -21,8 +21,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListFiltersByClientAndSourceOnTheOrderItself()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -87,8 +86,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListReturnsEveryOrderOfTheTenantNewestFirst()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -111,8 +109,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListFiltersByOrderNumberAsPartialText()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -135,8 +132,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListFiltersByClientCuc()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var productId = await CreateProductWithScalesAsync(client, tenantId);
@@ -158,8 +154,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListFiltersByStatus()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -185,8 +180,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListRejectsAnUnknownStatus()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -203,8 +197,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task ListRequiresThePermissionToReadOrders()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [QuotationsPermissions.QuotationRead]);
         using var _ = client;
@@ -221,8 +214,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task GetReturnsTheOrderWithItsQuotationComposed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -250,8 +242,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task GetAnUnknownOrderIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -328,8 +319,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task TheDefaultListHidesArchivedOrders()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -351,8 +341,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task FilteringByFulfillmentAndInvoiced()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
         using var _ = client;
         var prepared = await CreatePaidOrderAsync(client, factory, tenantId);
@@ -380,8 +369,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task AnInvoicedArchivedOrderStillReadsAsInvoiced()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
         using var _ = client;
         var order = await CreatePaidOrderAsync(client, factory, tenantId);
@@ -399,8 +387,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task AnUnknownFulfillmentOrInvoicedFilterIs422()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -421,8 +408,7 @@ public sealed class OrderListApiTests
     [Fact]
     public async Task TheListRowCarriesFulfillmentAndInvoiced()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

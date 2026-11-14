@@ -11,15 +11,14 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Comprobantes de pago de un pedido: agregar, corregir, reemplazar y quitar.</summary>
-public sealed class OrderPaymentProofsApiTests : OrderApiTests
+public sealed class OrderPaymentProofsApiTests(SharedQuotationsHost sharedHost) : OrderApiTests, IClassFixture<SharedQuotationsHost>
 {
     // A pedido (2026-09): "Aprobar pedido" se bloquea mientras el pago no esta completo, y esta
     // ruta es la forma de destrabarlo sin recrear el pedido -- cargar lo que falto al convertir.
     [Fact]
     public async Task AddPaymentProofsAddsThemAndUpdatesThePaymentStatus()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -54,8 +53,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task AddPaymentProofsCorrectsAnExistingProofAmount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -98,8 +96,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task AddPaymentProofsCorrectsAnExistingProofPaidOnDate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -142,8 +139,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task AddPaymentProofsRejectsCorrectingAProofThatDoesNotExistOnThisOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -169,8 +165,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task AddPaymentProofsRejectsAPreparedOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -204,8 +199,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task AddingProofsAndMarkingPaidAreAuditedAsOrderActions()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -240,8 +234,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task AddOrderPaymentProofsReplacesTheFileOfAnExistingProof()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -275,8 +268,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task RemoveOrderPaymentProofRemovesAnExistingProof()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -307,8 +299,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task RemoveOrderPaymentProofRejectsAnUnknownProof()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -331,8 +322,7 @@ public sealed class OrderPaymentProofsApiTests : OrderApiTests
     [Fact]
     public async Task RemoveOrderPaymentProofOnAPreparedOrderIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

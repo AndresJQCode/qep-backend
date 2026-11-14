@@ -10,7 +10,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// cotización en Quotations— por el adaptador de <c>Bootstrapper</c>, que ninguna prueba
 /// unitaria ve. Éstas lo recorren punta a punta.
 /// </summary>
-public sealed class QuotationAdvisorNameApiTests
+public sealed class QuotationAdvisorNameApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     // X-Permissions reemplaza el set por defecto del stub, así que los permisos de Tenancy para
     // leer el roster y renombrar se piden explícitos.
@@ -20,8 +20,7 @@ public sealed class QuotationAdvisorNameApiTests
     [Fact]
     public async Task TheQuotationDetailCarriesTheAdvisorNameOnceTheMemberIsNamed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -48,8 +47,7 @@ public sealed class QuotationAdvisorNameApiTests
     [Fact]
     public async Task TheQuotationListShowsTheAdvisorNameAndFallsBackToTheEmail()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -73,8 +71,7 @@ public sealed class QuotationAdvisorNameApiTests
     [Fact]
     public async Task TheOrderListShowsTheAdvisorNameAndFallsBackToTheEmail()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

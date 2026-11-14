@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// <c>If-Match</c>) y su cálculo previo (<c>POST /quotations/{quotationId}/preview</c>), contra
 /// Postgres real. Gemelo de <see cref="OrderEditsApiTests"/> por el lado de la cotización.
 /// </summary>
-public sealed class QuotationEditsApiTests
+public sealed class QuotationEditsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string QuotationUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}";
@@ -21,8 +21,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task TheQuotationResponseCarriesTheVersionAndTheSaveSetsTheETag()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -44,8 +43,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task SaveAppliesTheHeaderAndTheItemDiffInOneRequest()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, keptProductId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -99,8 +97,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task SaveRequiresAFreshIfMatch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -126,8 +123,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task SaveOnAConvertedQuotationIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -156,8 +152,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task PreviewReturnsTheRecalculatedDocumentWithoutPersistingIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -187,8 +182,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task PreviewReportsTheSameDomainErrorAsSaving()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -212,8 +206,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task AnUnknownQuotationIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
@@ -234,8 +227,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateReplacesTheEditableHeaderFields()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -274,8 +266,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateWithStorePickupDropsTheShippingPartyAndPersists()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -316,8 +307,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateBillingToTheFinalConsumerDropsRetentionAndVatSurplusAndPersists()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         // Retención del cliente: una Retefuente asignada (spec impuestos por tipo §7.4); sólo retiene con empresa
@@ -384,8 +374,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateBillingToTheFinalConsumerWithABillingPartyIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -411,8 +400,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task PreviewWithABillingPartyNamedButWithoutIdentificationIsAccepted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -439,8 +427,7 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task UpdateWithABillingPartyNamedButWithoutIdentificationIsUnprocessableOnTheField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -482,8 +469,8 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task SavingASentQuotationWithADeletedLineKeepsItsDiscount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, keptProductId, deletedProductId) =
@@ -516,8 +503,8 @@ public sealed class QuotationEditsApiTests
     [Fact]
     public async Task ChangingCurrencyWithADeletedLineIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (quotation, keptProductId, deletedProductId) =

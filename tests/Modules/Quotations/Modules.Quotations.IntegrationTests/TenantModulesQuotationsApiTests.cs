@@ -12,13 +12,12 @@ namespace Modules.Quotations.IntegrationTests;
 /// Módulos por tenant sobre cotizaciones y pedidos (spec 2026-10-07): un tenant registrado nace con
 /// los seis, y apagar uno corta el acceso en el request siguiente.
 /// </summary>
-public sealed class TenantModulesQuotationsApiTests
+public sealed class TenantModulesQuotationsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Fact]
     public async Task QuotationsAreForbiddenOnceTheModuleIsTurnedOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         Assert.Equal(
@@ -35,8 +34,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task EffectivePermissionsDropQuotationsOnceTurnedOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -51,8 +49,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task TurningCustomersBackOnRestoresQuotations()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -73,8 +70,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task TheListHidesTheOrderOnceOrdersIsTurnedOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -99,8 +95,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task TheRoleCatalogHidesThePermissionsOfAModuleThatIsOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.AdvisorshipRead]);
         using var _ = client;
@@ -124,8 +119,7 @@ public sealed class TenantModulesQuotationsApiTests
     [Fact]
     public async Task TheOrdersExportLayoutNeedsOrders()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, Modules.Tenancy.Application.TenancyPermissions.SettingsRead]);
         using var _ = client;

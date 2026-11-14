@@ -11,7 +11,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Convertir una cotización en pedido: lo que se copia y lo que responde.</summary>
-public sealed class OrderConvertApiTests : OrderApiTests
+public sealed class OrderConvertApiTests(SharedQuotationsHost sharedHost) : OrderApiTests, IClassFixture<SharedQuotationsHost>
 {
     // Decisión del owner 2026-10-18: las notas del pedido son un solo campo. `notes` ausente o null hereda las
     // de la cotización; con texto las reemplaza; "" las borra. Se manda JSON crudo para fijar qué viaja.
@@ -22,8 +22,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [InlineData("""{"notes":"","paymentProofs":[]}""", null)]
     public async Task ConvertingKeepsASingleNotesField(string body, string? expected)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -45,8 +44,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertingIgnoresAPaymentStatusSentByAnOldClient()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -67,8 +65,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertingCopiesTheQuotationAndFreezesIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -106,8 +103,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertingAnswersTheOrderDetail()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -133,8 +129,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertWithoutAPaymentMethodSucceeds()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -160,8 +155,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertKeepsThePaidOnDateOfEachProof()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -194,8 +188,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertWithoutPaidOnLeavesTheProofWithoutAPaymentDate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -274,8 +267,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertWithPaymentPendingRequiresNoProofs()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -300,8 +292,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertADraftQuotationIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -318,8 +309,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertWithAZeroAmountProofIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -340,8 +330,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task ConvertedOrderCarriesTheBillingPartyFiscalTypes()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -368,8 +357,7 @@ public sealed class OrderConvertApiTests : OrderApiTests
     [Fact]
     public async Task TheOrderClientBlockCarriesCountryPersonTypeAndIdentificationType()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId, personType: "Juridica");

@@ -13,7 +13,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// resuelva precio, escala, código y nombre visible de la variante contra Postgres, y que la línea
 /// guarde las dos referencias.
 /// </summary>
-public sealed class QuotationVariantLinesApiTests
+public sealed class QuotationVariantLinesApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -22,8 +22,7 @@ public sealed class QuotationVariantLinesApiTests
     [Fact]
     public async Task TwoSizesOfTheSameProductAreTwoLines()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -48,8 +47,7 @@ public sealed class QuotationVariantLinesApiTests
     [Fact]
     public async Task TheSameVariantTwiceIsTheDuplicateProductError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -69,8 +67,7 @@ public sealed class QuotationVariantLinesApiTests
     [Fact]
     public async Task SixMAndSixLDoNotReachADozenScaleWithoutGrouping()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -89,8 +86,7 @@ public sealed class QuotationVariantLinesApiTests
     [Fact]
     public async Task EachSizeIsPricedWithItsOwnScales()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -111,8 +107,7 @@ public sealed class QuotationVariantLinesApiTests
     [Fact]
     public async Task SixMAndSixLReachADozenScaleThatGroups()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -131,8 +126,7 @@ public sealed class QuotationVariantLinesApiTests
     [Fact]
     public async Task ASentLineKeepsTheVariantNameAfterTheProductIsRenamed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -153,8 +147,7 @@ public sealed class QuotationVariantLinesApiTests
     [Fact]
     public async Task AManualOrderWithTwoSizesHasTwoLines()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -183,8 +176,7 @@ public sealed class QuotationVariantLinesApiTests
     [Fact]
     public async Task AddingAVariantTheOrderAlreadyHasIsTheDuplicateProductError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

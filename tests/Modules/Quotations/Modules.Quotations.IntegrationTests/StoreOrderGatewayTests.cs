@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza y crea el pedido
 /// de una solicitud contra Postgres, con catálogo, cliente y empresa sembrados.</summary>
-public sealed class StoreOrderGatewayTests
+public sealed class StoreOrderGatewayTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -76,8 +76,8 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreateMakesAPendingDeliveredStoreOrderForAnIncompleteCustomer()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -108,8 +108,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreateKeepsTheBuyerAccountOfTheDraft()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -133,8 +132,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreateStoresTheBillingAndShippingParties()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -167,8 +165,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreateStoresAForeignShippingParty()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -190,8 +187,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task ABillingPartyWithRetentionAppliesRetention()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         // El cliente practica retención: tiene una Retefuente asignada (spec impuestos por tipo §7.4).
@@ -228,8 +224,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task StoreOrderTakesCustomerRatesDespiteOwnBilling()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
@@ -287,8 +282,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task AForeignTaxIdBillingPartyRoundTrips()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -406,8 +400,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task TheCreatedOrderTotalEqualsTheQuote()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -433,8 +426,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreatePublishesOrderCreatedAndAudits()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -462,8 +454,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task TheExternalKeyCarriesTheClientRequestId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -488,8 +479,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task FindExistingFindsByClientRequestId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -518,8 +508,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CountBySourceSinceCountsCancelledStoreOrders()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
         using var _ = client;
@@ -558,8 +547,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task TheCreatedOrderIsInItsAccountsCurrency()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);

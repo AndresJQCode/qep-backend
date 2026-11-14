@@ -12,13 +12,12 @@ namespace Modules.Quotations.IntegrationTests;
 /// hay. Contra la base de verdad y no contra un doble, porque lo que se prueba es justo el SQL y el
 /// mapeo — y los CHECK, que sólo existen ahí.
 /// </summary>
-public sealed class DocumentNumberingFormatLookupTests
+public sealed class DocumentNumberingFormatLookupTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Fact]
     public async Task ATenantWithoutARowGetsTheDefaultFormat()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var tenantId = Guid.CreateVersion7();
 
         var quotation = await LookupAsync(factory, tenantId, DocumentNumberType.Quotation);
