@@ -85,8 +85,13 @@ public static class TenantModuleKeys
     /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Ai = TenantModuleKey.Define("ai");
 
+    /// <summary>Spec 2026-11-14: soporte (tickets y PQRSF). Sin dependencias (C9): un ticket puede no tener cliente y el
+    /// calendario se lee aunque <see cref="Messaging"/> esté apagado. Queda fuera de <see cref="DefaultForNewTenants"/>: se
+    /// prende por tenant.</summary>
+    public static readonly TenantModuleKey Support = TenantModuleKey.Define("support");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Support];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
