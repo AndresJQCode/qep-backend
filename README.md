@@ -2574,6 +2574,32 @@ secuencial en `Program.cs` después de `app.Build()`; el orden importa (por
 ejemplo, Tenancy se inicializa antes que Audit porque
 `DropAuditOwnership` transfiere la propiedad de una tabla entre ambos).
 
+#### Migraciones con pods viejos y nuevos (expand/contract)
+
+Durante un rollout, el pod nuevo migra mientras los viejos siguen atendiendo con el código anterior. Con una réplica
+ya pasa (`maxSurge: 1`); con dos, son dos pods viejos contra el esquema nuevo. Por eso (spec
+`2026-10-29-replicas-multiples-design.md`, D-5):
+
+1. **Toda migración es expand/contract.** Una versión agrega —columna nullable o con default, tabla, índice— y el
+   código viejo la ignora. Quitar, renombrar o volver `NOT NULL` algo que el código viejo escribe va en **otra**
+   versión, cuando ya no queda ningún pod viejo vivo.
+2. **Una migración que rompe al código viejo se despliega con corte:** estrategia `Recreate` o el backend a cero
+   réplicas, como se hizo con las variantes ([Catálogo: opciones, variantes y galería](#catálogo-opciones-variantes-y-galería),
+   «Despliegue»). El PDB no lo impide: sólo frena desalojos, no un `scale` ni un `Recreate`.
+3. **El handoff de cada spec dice si su migración es aditiva.** Si no lo dice, asume que no.
+
+**El candado de arranque.** Las 24 inicializaciones (migraciones de cada módulo y siembras) y `RunQepSeedAsync` corren
+dentro de `RunUnderStartupLockAsync` (`src/Api/Program.cs`, `src/Bootstrapper/Startup/StartupLock.cs`): una
+transacción sobre una conexión propia, directa a Postgres y sin pool, que toma `pg_advisory_xact_lock(20261113, 1)`.
+Así dos pods nunca migran ni siembran a la vez; el segundo espera al primero, y cuando le toca, las migraciones ya
+están aplicadas y no hace nada. El candado es un semáforo, no una unidad de trabajo: las migraciones siguen en sus
+propias conexiones del pool. La conexión se resuelve como la del listener de Mensajería —`QepDatabaseListener` si está,
+no está vacía y no es un `#{…}#` sin resolver; si no, `QepDatabase`—, porque un advisory lock de transacción no puede pasar por
+PgBouncer en modo `transaction`. Los logs dicen cuánto esperó el pod (`EventId` 4108, con el **nombre** de la clave de
+conexión, nunca su valor) y cuánto tardó el bloque (4109). Un 4110 (`Warning`) avisa que la conexión del candado se
+perdió antes de soltarlo: si pasó a mitad del bloque, otro pod pudo empezar a migrar a la vez, y conviene revisar
+el log de los dos. Una inicialización nueva va **dentro** del lambda de `RunUnderStartupLockAsync`, nunca después.
+
 ### Observabilidad
 
 OpenTelemetry (único estándar, sin SDKs propietarios) para trazas y métricas,

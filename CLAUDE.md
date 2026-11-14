@@ -172,6 +172,19 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`Api.exe` corriendo bloquea todo.** `dotnet build`, `dotnet test` y los comandos `ef`
   fallan por archivo bloqueado. Detener el proceso primero. El nombre es `Api.exe` porque
   `src/Api/Api.csproj` no declara `AssemblyName`.
+- **Toda migración es expand/contract: durante el rollout, pods viejos atienden contra el esquema nuevo** (spec
+  2026-10-29, D-5). Agregar va en una versión; quitar, renombrar o volver `NOT NULL` lo que el código viejo escribe, en
+  otra. Una migración que rompe al código viejo se despliega con corte (`Recreate` o el backend a cero réplicas), y el
+  handoff del spec dice si es aditiva; si no lo dice, no lo es. Las reglas completas:
+  [README § Migraciones con pods viejos y nuevos](README.md#migraciones-con-pods-viejos-y-nuevos-expandcontract).
+- **Un hosted service o un singleton con estado nuevo se clasifica en `MultiReplicaInventory`, en el mismo commit**
+  (`tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs`, spec 2026-10-29, D-6). `MultiReplicaInventoryTests`
+  lo detecta en el contenedor real y se pone en rojo si falta, o si queda una entrada que ya no está registrada. La
+  clasificación lleva su evidencia (archivo, línea y mecanismo: `SKIP LOCKED`, lease, advisory lock, `DELETE` por corte…).
+  `Unsafe` se puede listar, pero `MoreThanOneReplicaRequiresNoUnsafeEntry` bloquea `replicas > 1` mientras quede uno.
+- **Una inicialización nueva al arrancar va dentro del lambda de `RunUnderStartupLockAsync` en `Program.cs`, nunca
+  después.** Fuera del candado de arranque (`pg_advisory_xact_lock(20261113, 1)`, `StartupLock.cs`), dos pods la corren a
+  la vez. Lo que dicen los logs 4108, 4109 y 4110 está en el mismo § del README.
 - **Las migraciones se generan con el factory de diseño, no con `--startup-project`.**
   `Api.csproj` no referencia `Microsoft.EntityFrameworkCore.Design`:
 
