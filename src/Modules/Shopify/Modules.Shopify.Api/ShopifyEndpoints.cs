@@ -112,6 +112,7 @@ public static class ShopifyEndpoints
                 request.DocumentAttributeKey,
                 request.DocumentTypeAttributeKey,
                 request.DefaultIdentificationType,
+                request.HistoryDays,
                 RequireVersion(httpContext)),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{store.Version}\"";
@@ -190,4 +191,5 @@ public sealed record UpdateShopifyStoreRequest(
     Guid? DefaultClassificationId,
     string? DocumentAttributeKey,
     string? DocumentTypeAttributeKey,
-    string? DefaultIdentificationType);
+    string? DefaultIdentificationType,
+    int? HistoryDays);

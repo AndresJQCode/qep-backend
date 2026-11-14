@@ -1,6 +1,8 @@
 # Shopify: días de historial para «Sincronizar ahora»
 
-Fecha: 2026-10-21. Estado: **diseño acordado en conversación, sin implementar**. Extiende el spec
+Fecha: 2026-10-21. Estado: **backend implementado** (2026-11-14, rama `feature/shopify-historial-dias`); frontend
+pendiente. El 422 fuera de rango lleva `errors.historyDays` (camelCase, como el resto del validador del `PUT`); el `CHECK`
+quedó como `CK_stores_history_days`. Extiende el spec
 [2026-10-15-integracion-shopify-pedidos-design.md](2026-10-15-integracion-shopify-pedidos-design.md), que dejó
 fuera el historial en D-S4 («Un botón “Traer los últimos N días”»).
 

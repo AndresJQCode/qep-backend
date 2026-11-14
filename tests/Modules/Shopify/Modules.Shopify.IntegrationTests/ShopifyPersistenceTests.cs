@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Audit.Domain;
 using Modules.Shopify.Application;
@@ -149,7 +150,7 @@ public sealed class ShopifyPersistenceTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
         var (advisor, classification, company) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
-        store.Configure(advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), classification, "Cédula", "Tipo", "NIT", advisor, Now);
+        store.Configure(advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), classification, "Cédula", "Tipo", "NIT", 14, advisor, Now);
 
         using (var scope = factory.Services.CreateScope())
         {
@@ -165,6 +166,52 @@ public sealed class ShopifyPersistenceTests
         Assert.Equal(
             ((Guid?)advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), (Guid?)classification, "Cédula", "Tipo", "NIT", 2L),
             (saved.AdvisorMembershipId, saved.Billing, saved.DefaultClassificationId, saved.DocumentAttributeKey, saved.DocumentTypeAttributeKey, saved.DefaultIdentificationType, saved.Version));
+        Assert.Equal(14, saved.HistoryDays);
+        Assert.Equal(14, await ScalarAsync<int>(
+            database.GetConnectionString(), "SELECT history_days FROM shopify.stores WHERE connection_id = @c", ("c", store.ConnectionId)));
+    }
+
+    // Spec 2026-10-21: el CHECK de la columna repite el rango del dominio; un UPDATE a mano fuera de 1..30 no entra.
+    [Fact]
+    public async Task HistoryDaysOutOfRangeIsRejectedByTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().Add(store);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var error = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => ExecuteAsync(
+            connectionString, "UPDATE shopify.stores SET history_days = 31 WHERE connection_id = @c", ("c", store.ConnectionId)));
+
+        Assert.Equal(("23514", "CK_stores_history_days"), (error.SqlState, error.ConstraintName));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM shopify.stores WHERE history_days IS NOT NULL"));
+    }
+
+    // La migración sube y baja: abajo la columna no existe; arriba vuelve, y el host queda en la última para lo que siga.
+    [Fact]
+    public async Task AddStoreHistoryDaysMigratesDownAndUp()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var scope = factory.Services.CreateScope();
+        var migrator = scope.ServiceProvider.GetRequiredService<ShopifyDbContext>()
+            .GetInfrastructure().GetRequiredService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
+        const string ColumnCount =
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'shopify' AND table_name = 'stores' AND column_name = 'history_days'";
+
+        await migrator.MigrateAsync("20261026211954_AddCityCorrectionJobs", Ct);
+        var down = await ScalarAsync<long>(connectionString, ColumnCount);
+        await migrator.MigrateAsync(null, Ct);
+        var up = await ScalarAsync<long>(connectionString, ColumnCount);
+
+        Assert.Equal((0L, 1L), (down, up));
     }
 
     private static ShopifyOrderMirror Seen(Guid tenantId, Guid connectionId, long shopifyOrderId, DateTimeOffset createdAt, Guid? qepCustomerId)
