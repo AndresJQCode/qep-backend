@@ -69,15 +69,17 @@ public static class GraphQlOrderParser
             .Select((line, index) =>
             {
                 var field = $"lineItems[{index}]";
+                var sku = OptionalString(line, "sku", $"{field}.sku");
                 return new ShopifyLine(
-                    OptionalString(line, "sku", $"{field}.sku"),
+                    sku,
                     Find(line, "quantity") is { } quantity ? Decimal(quantity, $"{field}.quantity") : 0m,
                     OptionalAmount(line, $"{field}.originalUnitPriceSet.shopMoney.amount", "originalUnitPriceSet.shopMoney.amount") ?? 0m,
                     Items(line, "discountAllocations", $"{field}.discountAllocations")
                         .Select((allocation, i) => OptionalAmount(allocation, $"{field}.discountAllocations[{i}].allocatedAmountSet.shopMoney.amount", "allocatedAmountSet.shopMoney.amount") ?? 0m)
                         .Sum(),
                     OptionalString(line, "title", $"{field}.title"),
-                    IsExplicitNull(line, "variant") && IsExplicitNull(line, "product"));
+                    // Una variante borrada deja variant y product en null, pero la línea conserva su SKU: una custom nunca lo tiene.
+                    IsExplicitNull(line, "variant") && IsExplicitNull(line, "product") && string.IsNullOrWhiteSpace(sku));
             })
             .ToArray();
 

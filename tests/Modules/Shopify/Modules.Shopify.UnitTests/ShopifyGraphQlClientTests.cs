@@ -428,7 +428,16 @@ public sealed class ShopifyGraphQlQueryContractTests
 
         var snapshot = GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(order));
 
-        AssertPopulated(snapshot, "snapshot");
+        // Una custom no tiene SKU, así que con SKU poblado IsCustom es false: se comprueba aparte, y el resto se mira poblado.
+        Assert.All(snapshot.Lines, line => Assert.False(line.IsCustom));
+        var withoutSku = JsonNode.Parse(order.ToJsonString())!;
+        foreach (var line in withoutSku["lineItems"]!["nodes"]!.AsArray())
+        {
+            line!.AsObject()["sku"] = null;
+        }
+
+        Assert.All(GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(withoutSku)).Lines, line => Assert.True(line.IsCustom));
+        AssertPopulated(snapshot with { Lines = [.. snapshot.Lines.Select(line => line with { IsCustom = true })] }, "snapshot");
     }
 
     // Se mira el nodo de las líneas del pedido y no el texto de la consulta: ShippingLineFields también pide `title`.

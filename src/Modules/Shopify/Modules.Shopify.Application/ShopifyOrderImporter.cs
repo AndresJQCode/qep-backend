@@ -251,7 +251,7 @@ public sealed class ShopifyOrderImporter(
         Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken)
     {
         // Personalizada con nombre: el título normalizado, o null si la línea va por SKU.
-        static string? CustomTitleOf(ShopifyLine line) => line.IsCustom ? ShopifyCustomLineMapping.NormalizeTitle(line.Title) : null;
+        static string? CustomTitleOf(ShopifyLine line) => line.IsCustom && string.IsNullOrWhiteSpace(line.Sku) ? ShopifyCustomLineMapping.NormalizeTitle(line.Title) : null;
 
         var skus = snapshot.Lines
             .Where(line => CustomTitleOf(line) is null)

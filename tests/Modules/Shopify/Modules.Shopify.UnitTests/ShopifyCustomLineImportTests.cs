@@ -131,6 +131,23 @@ public sealed class ShopifyCustomLineImportTests
         Assert.Empty(world.CustomLines.Requests);
     }
 
+    // Una custom jamás tiene SKU: una línea marcada personalizada con SKU va por SKU y no casa por nombre.
+    [Fact]
+    public async Task ALineMarkedCustomButWithASkuGoesBySkuAndNotByTitle()
+    {
+        var world = new ImporterWorld();
+        var service = Guid.CreateVersion7();
+        world.Products.WithVariant(service);
+        world.CustomLines.Map(ConnectionId, "Camiseta", service);
+        var snapshot = Order(lines: [new ShopifyLine("SIN-CATALOGO", 1m, 50_000m, 0m, "Camiseta", true)]);
+        var row = world.RowFor(snapshot);
+
+        var outcome = await world.ImportAsync(row, snapshot);
+
+        AssertWaiting(row, outcome, """{"skus":["SIN-CATALOGO"],"customTitles":[]}""");
+        Assert.Empty(world.CustomLines.Requests);
+    }
+
     // Review Focus 5.
     [Fact]
     public async Task AMappingOfAnotherStoreDoesNotApply()

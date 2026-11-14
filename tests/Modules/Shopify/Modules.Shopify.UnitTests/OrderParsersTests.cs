@@ -291,6 +291,28 @@ public sealed class OrderParsersTests
         Assert.Equal(("CAM-001", "Camiseta"), (line.Sku, line.Title));
     }
 
+    // Una variante borrada deja variant y product en null, pero la línea conserva su SKU: es de producto, no personalizada.
+    [Theory]
+    [InlineData("rest")]
+    [InlineData("graphql")]
+    public void ALineWithNullIdsButASkuIsNotCustom(string format)
+    {
+        var json = format == "rest"
+            ? RestOrderHead + """
+                "line_items": [{"title": "Camiseta", "product_id": null, "variant_id": null,
+                  "sku": "CAM-001", "quantity": 1, "price": "5000.00", "discount_allocations": []}]}
+                """
+            : GraphQlOrderHead + """
+                "lineItems": {"nodes": [{"title": "Camiseta", "variant": null, "product": null,
+                  "sku": "CAM-001", "quantity": 1, "originalUnitPriceSet": {"shopMoney": {"amount": "5000.0"}}, "discountAllocations": []}]}}
+                """;
+
+        var line = Assert.Single(Parse(format, json).Lines);
+
+        Assert.False(line.IsCustom);
+        Assert.Equal("CAM-001", line.Sku);
+    }
+
     // Review Focus 1: las fixtures no traen las llaves de ids; «ausente» no es «null», o todo pedido quedaría en espera.
     [Theory]
     [InlineData("rest")]

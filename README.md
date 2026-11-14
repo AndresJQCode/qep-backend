@@ -4450,7 +4450,8 @@ nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibl
 **Líneas personalizadas** (spec `2026-11-13-shopify-lineas-personalizadas-design.md`). Una línea personalizada es la que el
 comercio escribe a mano en el pedido de Shopify, sin producto: llega con `product_id` y `variant_id` en `null` y sólo trae su
 `title` (Shopify lo limita a 255 caracteres). El importador la marca `isCustom` sólo si esas dos llaves vienen presentes y en
-`null` (una llave ausente no cuenta) y la resuelve por **nombre exacto** —recortado, ordinal, sensible a mayúsculas y
+`null` (una llave ausente no cuenta) y la línea no trae SKU (una variante borrada también deja los ids en `null`, pero
+conserva el SKU: es de producto) y la resuelve por **nombre exacto** —recortado, ordinal, sensible a mayúsculas y
 emojis— contra las asociaciones de su tienda (`shopify.custom_line_mappings`: `connection_id + title → variant_id`); una
 línea de producto real nunca casa por nombre, y una asociación nunca aplica fuera de su tienda. Sin asociación (o con una
 variante inexistente o inactiva) el pedido queda `Waiting` con `product_unmatched` y su `wait_detail` es
