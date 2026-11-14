@@ -298,6 +298,36 @@ public sealed class ShopifyCustomLineMappingsApiTests
                 ("t", world.TenantId)));
     }
 
+    // Aislamiento por tienda dentro del mismo tenant: la asociación de A no se ve, no se borra ni bloquea el título en B.
+    [Fact]
+    public async Task AMappingOfStoreADoesNotLeakToStoreBOfTheSameTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        var storeB = await LinkStoreAsync(factory, world.TenantId, world.Tenant.OwnerUserId, "otra-tienda.myshopify.com", shopId: "954890", name: "Otra tienda");
+        var routeB = $"/api/v1/tenants/{world.TenantId}/shopify/stores/{storeB}/custom-line-mappings";
+        using var client = ClientOf(factory, world);
+        var created = await client.PostAsJsonAsync(Route(world), new { title = Garantia, variantId = world.Gorra }, Ct);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var id = (await created.Content.ReadFromJsonAsync<JsonObject>(Ct))!["id"]!.GetValue<Guid>();
+
+        var listB = (await client.GetFromJsonAsync<JsonArray>(routeB, Ct))!;
+        var deletedThroughB = await client.DeleteAsync($"{routeB}/{id}", Ct);
+        var createdInB = await client.PostAsJsonAsync(routeB, new { title = Garantia, variantId = world.Gorra }, Ct);
+
+        Assert.Empty(listB);
+        Assert.Equal(HttpStatusCode.NoContent, deletedThroughB.StatusCode);
+        Assert.Equal(
+            1L,
+            await ScalarAsync<long>(
+                connectionString,
+                "SELECT count(*) FROM shopify.custom_line_mappings WHERE id = @id AND connection_id = @c",
+                ("id", id), ("c", world.ConnectionId)));
+        Assert.Equal(HttpStatusCode.Created, createdInB.StatusCode);
+    }
+
     private static HttpClient ClientOf(QepApiFactory factory, ShopifyWorld world) =>
         CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
 

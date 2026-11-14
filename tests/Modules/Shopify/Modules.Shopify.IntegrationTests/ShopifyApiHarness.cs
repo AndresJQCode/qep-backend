@@ -322,7 +322,7 @@ internal static class ShopifyApiHarness
     /// <c>token_expired</c>.
     /// </summary>
     public static async Task<Guid> LinkStoreAsync(
-        WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token")
+        WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token", string shopId = "954889", string name = "Mi tienda")
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -331,11 +331,11 @@ internal static class ShopifyApiHarness
         var connection = IntegrationConnection.Create(
             IntegrationProviders.Shopify,
             tenantId,
-            "Mi tienda",
+            name,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [ShopifyFieldKeys.ShopDomain] = shop,
-                [ShopifyFieldKeys.ShopId] = "954889",
+                [ShopifyFieldKeys.ShopId] = shopId,
                 [ShopifyFieldKeys.Scopes] = "read_orders,read_customers",
                 [ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
                 [ShopifyFieldKeys.RefreshTokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
