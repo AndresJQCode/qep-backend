@@ -109,6 +109,20 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
             .ToListAsync(cancellationToken))
         .ToHashSet(StringComparer.Ordinal);
 
+    // Activas e inactivas: una empresa desactivada se puede reactivar con sus tasas, así que las sigue usando.
+    public Task<bool> AnyWithTaxRateAsync(
+        Guid tenantId,
+        Guid taxRateId,
+        CancellationToken cancellationToken) =>
+        dbContext.Companies
+            .AsNoTracking()
+            .AnyAsync(
+                company =>
+                    company.TenantId == tenantId &&
+                    EF.Property<List<CompanyTaxRate>>(company, "_withholdingTaxRates")
+                        .Any(rate => rate.TaxRateId == taxRateId),
+                cancellationToken);
+
     public void Add(Company company) => dbContext.Companies.Add(company);
 
     // Las cuentas bancarias se van con la empresa sin que este método las toque: son una colección

@@ -16,7 +16,8 @@ public sealed record CreateCompanyCommand(
     string? CityName,
     string? Phone,
     string? Email,
-    string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    string? Address,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Las reglas viven en CompanyWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCompanyValidator : AbstractValidator<CreateCompanyCommand>
@@ -31,7 +32,8 @@ public sealed class CreateCompanyHandler(
     ICompanyGeographyLookup geographyLookup,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<CreateCompanyCommand> validator)
+    IValidator<CreateCompanyCommand> validator,
+    ICompanyTaxRateLookup taxRateLookup)
     : ICommandHandler<CreateCompanyCommand, CompanyDto>
 {
     public async Task<CompanyDto> HandleAsync(
@@ -64,6 +66,12 @@ public sealed class CreateCompanyHandler(
                     "The city was not found.");
         }
 
+        // Spec ReteICA por empresa §7.3: en el alta, ausente es «ninguna». Se valida antes de crear, como la ciudad.
+        var withholdingTaxRateIds = command.WithholdingTaxRateIds ?? [];
+        var withholdingTaxRates = await taxRateLookup.FindManyAsync(
+            command.TenantId, withholdingTaxRateIds, cancellationToken);
+        CompanyWithholdingRules.Validate(withholdingTaxRates, withholdingTaxRateIds, [], command.Country!);
+
         var now = clock.UtcNow;
         var company = Company.Create(
             CompanyId.New(),
@@ -82,6 +90,7 @@ public sealed class CreateCompanyHandler(
                 Address = command.Address
             },
             now);
+        company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
 
         repository.Add(company);
         auditPublisher.Publish(
@@ -98,6 +107,9 @@ public sealed class CreateCompanyHandler(
         // tiene detras ninguna rama de traduccion de 23505.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return company.ToDto(city);
+        return company.ToDto(
+            city,
+            await CompanyMapping.ResolveWithholdingTaxRatesAsync(
+                company.WithholdingTaxRateIds, withholdingTaxRates, geographyLookup, cancellationToken));
     }
 }

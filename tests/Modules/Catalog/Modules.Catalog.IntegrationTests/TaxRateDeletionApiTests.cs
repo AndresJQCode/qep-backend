@@ -278,6 +278,32 @@ public sealed class TaxRateDeletionApiTests(SharedCatalogHost sharedHost) : ICla
         Assert.Equal(1, await CountTaxRateAsync(database, taxRateId));
     }
 
+    // Spec ReteICA por empresa §7.2: una empresa con la tasa municipal asignada también la deja «en uso». Sin FK entre los
+    // esquemas, la consulta es la única barrera.
+    [Fact]
+    public async Task ARateAssignedOnlyToACompanyCannotBeDeleted()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        using var companies = CreateClient(
+            factory, SubjectId, TenantId, Modules.Companies.Application.CompaniesPermissions.CompanyRead,
+            Modules.Companies.Application.CompaniesPermissions.CompanyManage);
+        var taxRateId = await TaxRateCompanyFixtures.CreateMunicipalRateAsync(
+            database.GetConnectionString(), TenantId, "ReteICA Bogotá");
+        await TaxRateCompanyFixtures.AssignToANewCompanyAsync(
+            companies, database.GetConnectionString(), TenantId, taxRateId);
+
+        var response = await DeleteTaxRateAsync(client, TenantId, taxRateId);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.in_use",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+        Assert.Equal(1, await CountTaxRateAsync(database, taxRateId));
+    }
+
     // Un cliente fusionado ya no se edita ni se cotiza: su tasa no frena el borrado.
     [Fact]
     public async Task DeletingARateAssignedOnlyToAMergedCustomerIsAllowed()
