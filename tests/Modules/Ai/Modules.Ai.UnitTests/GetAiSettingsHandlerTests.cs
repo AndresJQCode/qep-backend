@@ -51,5 +51,8 @@ public sealed class GetAiSettingsHandlerTests
 
         public Task<AiCredentialResolution> ResolveAsync(Guid tenantId, AiProvider provider, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task MarkNeedsAttentionAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }

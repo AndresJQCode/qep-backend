@@ -46,6 +46,22 @@ public interface IAiProviderCredentials
 
     /// <summary>Un estado por cada proveedor de <see cref="AiProviders.All"/>, en ese orden. Sin claves.</summary>
     Task<IReadOnlyList<AiProviderConnectionState>> DescribeAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-10-29 §4.5 y plan 2026-11-12 C-19: el proveedor rechazó la cuenta de forma definitiva (clave, permiso o saldo). La conexión de
+    /// ese proveedor pasa de <c>Active</c> a <c>NeedsAttention</c> con <paramref name="failureCode"/> (uno de <see cref="AiCredentialFailures"/>),
+    /// así que sus agentes dejan de tomar conversaciones y los del otro proveedor siguen. La saca una prueba exitosa de la clave en
+    /// Integraciones. Si no estaba <c>Active</c>, no hace nada.
+    /// </summary>
+    Task MarkNeedsAttentionAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken);
+}
+
+/// <summary>Los motivos con que una conexión de proveedor de IA queda en <c>NeedsAttention</c> (<c>last_failure_code</c> en Integrations).</summary>
+public static class AiCredentialFailures
+{
+    public const string CredentialsRejected = "credentials_rejected";
+    public const string PermissionDenied = "permission_denied";
+    public const string QuotaExhausted = "quota_exhausted";
 }
 
 public sealed record GetAiSettingsQuery(Guid TenantId) : IQuery<AiSettingsDto>;
