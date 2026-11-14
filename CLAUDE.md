@@ -449,6 +449,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **En esta máquina las pruebas de integración necesitan `$env:Seed__Enabled = "false"`.** Los user-secrets traen
   `Seed:*` y el host de pruebas falla en el arranque con `Seed:OwnerEmail is required when Seed:Enabled is true`. No es
   del código: es la configuración local del developer (2026-10-21).
+- **Las pruebas de integración comparten host por clase (`Shared<Modulo>Host`), y no todas pueden** (2026-11-14; Quotations
+  bajó de 63 a 16 min). Una prueba nueva usa `sharedHost.StartTestAsync()` sólo si corre con la configuración por defecto y no
+  toca nada global: dobles que anotan llamadas, colas o workers que reclaman filas de toda la base, `IClock` o
+  `WithWebHostBuilder`, conteos o SQL sin tenant, semillas o migraciones. Si toca algo de eso, levanta su propio host
+  (`StartDatabaseAsync` + `new QepApiFactory`); las de migración usan `StartEmptyDatabaseAsync`. Una prueba compartida que rompe
+  la regla falla según el orden de las demás de su clase, y el síntoma no se parece a la causa. `OutboxMessagesAsync` ya
+  descarta los eventos de las pruebas anteriores (`OutboxBaseline`).
 - **Un `FromSql` crudo debe listar todas las columnas mapeadas de la entidad.** El `SELECT … FOR UPDATE` de
   `QuotationSettingsStore` no se puede componer (EF lo envolvería en una subconsulta), así que EF no completa
   las columnas que falten: al agregar `freight_tax_rate_id` a `tenant_quotation_settings`, guardar el mínimo de
