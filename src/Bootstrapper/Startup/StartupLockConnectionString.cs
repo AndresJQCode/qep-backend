@@ -3,10 +3,12 @@ using Microsoft.Extensions.Configuration;
 namespace Bootstrapper.Startup;
 
 /// <summary>
-/// Qué conexión usa el candado de arranque (spec 2026-10-29, D-2). Un advisory lock de transacción no puede pasar por
-/// PgBouncer en modo <c>transaction</c> con garantías, así que va directo a Postgres con la misma regla del listener de
-/// Messaging: <c>ConnectionStrings:QepDatabaseListener</c> si existe, no está vacía (tras <c>Trim</c>) y no es el token
-/// del pipeline sin resolver (<c>#{…}#</c>); si no, <c>QepDatabase</c>.
+/// Qué conexión usa el candado de arranque (spec 2026-10-29, D-2). Va directo a Postgres por preferencia, con la misma
+/// regla del listener de Messaging: <c>ConnectionStrings:QepDatabaseListener</c> si existe, no está vacía (tras
+/// <c>Trim</c>) y no es el token del pipeline sin resolver (<c>#{…}#</c>); si no, <c>QepDatabase</c>. Si cae a
+/// <c>QepDatabase</c> sigue serializando: el candado es de transacción, y PgBouncer en modo <c>transaction</c> sostiene el
+/// mismo backend mientras la transacción está abierta. Lo que se degrada es el costo: ocupa un backend del pooler durante
+/// todo el bloque y queda sujeto a los timeouts del pooler, que pueden cortar la conexión a mitad del bloque (el 4110).
 ///
 /// Es una copia de <c>ListenerConnectionString</c> porque esa es <c>internal</c> de Messaging y Bootstrapper no debe
 /// abrirle sus internals. La amarra <c>StartupLockConnectionStringParityTests</c>, como

@@ -909,7 +909,9 @@ pide `operator.usage.read` y sólo responde en el tenant operador (otro tenant r
 los tres), el `period` normalizado y una fila por tenant con sus conversaciones del periodo (`whatsApp`, `instagram`, `total`) y los
 `connected` ahora mismo. Una conversación cuenta una vez por canal si tuvo al menos un mensaje entrante en vivo (no importado) desde el inicio del
 periodo, con la semana desde el lunes y el día y el mes en hora de Bogotá; un tenant sin actividad aparece en cero y el operador no aparece.
-Los conectados salen de la presencia del hub de la bandeja, que es por proceso: sólo vale con una réplica.
+Los conectados salen de la presencia del hub de la bandeja. Con `Valkey:Areas:Presence` prendido es compartida entre
+pods (`ValkeyMessagingPresence`); apagado es por pod, y con más de una réplica el reporte ve sólo a los conectados al pod
+que lo atiende.
 
 ### Tenant operador
 
@@ -2594,8 +2596,10 @@ transacción sobre una conexión propia, directa a Postgres y sin pool, que toma
 Así dos pods nunca migran ni siembran a la vez; el segundo espera al primero, y cuando le toca, las migraciones ya
 están aplicadas y no hace nada. El candado es un semáforo, no una unidad de trabajo: las migraciones siguen en sus
 propias conexiones del pool. La conexión se resuelve como la del listener de Mensajería —`QepDatabaseListener` si está,
-no está vacía y no es un `#{…}#` sin resolver; si no, `QepDatabase`—, porque un advisory lock de transacción no puede pasar por
-PgBouncer en modo `transaction`. Los logs dicen cuánto esperó el pod (`EventId` 4108, con el **nombre** de la clave de
+no está vacía y no es un `#{…}#` sin resolver; si no, `QepDatabase`—: va directo por preferencia; si cae a
+`QepDatabase` sigue serializando, porque el candado es de transacción y PgBouncer en modo `transaction` sostiene el
+mismo backend mientras la transacción está abierta. Lo que se degrada es el costo: ocupa un backend del pooler durante
+todo el bloque y queda sujeto a los timeouts del pooler, que pueden cortar la conexión a mitad del bloque. Los logs dicen cuánto esperó el pod (`EventId` 4108, con el **nombre** de la clave de
 conexión, nunca su valor) y cuánto tardó el bloque (4109). Un 4110 (`Warning`) avisa que la conexión del candado se
 perdió antes de soltarlo: si pasó a mitad del bloque, otro pod pudo empezar a migrar a la vez, y conviene revisar
 el log de los dos. Una inicialización nueva va **dentro** del lambda de `RunUnderStartupLockAsync`, nunca después.
@@ -3670,7 +3674,7 @@ avisa, no transporta: la autorización sigue en los `GET`.
 | Hub | `/api/v1/hubs/messaging`, política `messaging.conversation.read`; al conectar revalida módulo `messaging` y membresía activa (`MessagingHub`). |
 | Tenant | `X-Tenant-Id` o, **sólo bajo `/api/v1/hubs/`**, el query `tenantId`: el handshake WebSocket del navegador no lleva headers (`TenantRequestResolver`). |
 | Eventos | `conversationChanged { conversationId }` y `inboundMessage { conversationId, messageId }` al grupo del tenant; `notify { conversationId, reason }` al miembro asignado, o al tenant si nadie la tiene. |
-| Fanout | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Con dos réplicas no hace falta sticky session ni Redis. |
+| Fanout | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Para el reparto de eventos, con dos réplicas no hace falta sticky session ni Valkey. El handshake del hub sí lo necesitaría: `negotiate` crea la conexión en la memoria del pod que lo atiende, así que con más de una réplica el frontend tiene que saltarlo y conectar sólo por WebSocket (`skipNegotiation: true`, spec `2026-10-29-replicas-multiples-design.md`, D-1). |
 | Fallos | Un aviso que falla no reintenta la entrega ni deshace el envío: se registra y el polling relajado del frontend (60/30 s) lo recoge. |
 
 Lo que se publica: asignar, transferir, liberar, resolver, reabrir, leído, no leído, saliente consolidado

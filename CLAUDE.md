@@ -462,6 +462,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **En esta máquina las pruebas de integración necesitan `$env:Seed__Enabled = "false"`.** Los user-secrets traen
   `Seed:*` y el host de pruebas falla en el arranque con `Seed:OwnerEmail is required when Seed:Enabled is true`. No es
   del código: es la configuración local del developer (2026-10-21).
+- **No pongas `ConnectionStrings:QepDatabaseListener` en tus user-secrets sin fijarla en el harness** (spec 2026-10-29,
+  D-2). Sólo `SeedStartupTests` la fija vacía; las demás factorías de integración corren en `Development` y cargan los
+  user-secrets, y el candado de arranque (`StartupLockConnectionString`) y el listener de Messaging la usan en **cada** host
+  de prueba. Con un valor inalcanzable, todo host falla al arrancar; con uno alcanzable, todos los hosts de prueba se
+  serializan en un solo advisory lock global (`pg_advisory_xact_lock(20261113, 1)`) de esa base, aunque cada uno tenga su
+  propio contenedor. Si la necesitas en local, fíjala en el harness (vacía o al contenedor de la prueba).
 - **Un `FromSql` crudo debe listar todas las columnas mapeadas de la entidad.** El `SELECT … FOR UPDATE` de
   `QuotationSettingsStore` no se puede componer (EF lo envolvería en una subconsulta), así que EF no completa
   las columnas que falten: al agregar `freight_tax_rate_id` a `tenant_quotation_settings`, guardar el mínimo de

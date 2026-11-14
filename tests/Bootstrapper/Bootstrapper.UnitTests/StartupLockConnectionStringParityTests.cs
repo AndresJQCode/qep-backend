@@ -5,11 +5,13 @@ using Modules.Messaging.Infrastructure.Realtime;
 namespace Bootstrapper.UnitTests;
 
 /// <summary>
-/// Spec 2026-10-29 (réplicas múltiples), D-2: el candado de arranque es un advisory lock de transacción y tiene que ir
-/// directo a Postgres, igual que el <c>LISTEN</c> del listener de Messaging. <see cref="StartupLockConnectionString"/> es
-/// una copia de <see cref="ListenerConnectionString"/> porque esa es <c>internal</c> de Messaging; esta prueba las amarra.
-/// Si una cambia (un <c>Trim</c> o un <c>#{…}#</c> de menos) sin la otra, el candado podría pasar por PgBouncer sin que
-/// nadie lo note.
+/// Spec 2026-10-29 (réplicas múltiples), D-2: el candado de arranque es un advisory lock de transacción que va directo a
+/// Postgres por preferencia, con la misma regla que el <c>LISTEN</c> del listener de Messaging; si cae a
+/// <c>QepDatabase</c> sigue serializando, porque PgBouncer en modo <c>transaction</c> sostiene el backend mientras la
+/// transacción está abierta, pero ocupa un backend del pooler todo el bloque y queda sujeto a sus timeouts.
+/// <see cref="StartupLockConnectionString"/> es una copia de <see cref="ListenerConnectionString"/> porque esa es
+/// <c>internal</c> de Messaging; esta prueba las amarra. Si una cambia (un <c>Trim</c> o un <c>#{…}#</c> de menos) sin la
+/// otra, el candado podría caer al pooler sin que nadie lo note.
 /// </summary>
 public sealed class StartupLockConnectionStringParityTests
 {
