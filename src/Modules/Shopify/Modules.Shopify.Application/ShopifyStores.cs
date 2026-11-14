@@ -18,7 +18,8 @@ public sealed record GetShopifyStoreQuery(Guid TenantId, Guid ConnectionId) : IQ
 public sealed record GetShopifyDocumentSourcesQuery(Guid TenantId, Guid ConnectionId) : IQuery<ShopifyDocumentSourcesDto>;
 
 /// <summary>Spec 2026-10-15 §6.1 y §7 <c>PUT /stores/{connectionId}</c> (<c>integrations.connection.manage</c>).
-/// <paramref name="ExpectedVersion"/> llega por <c>If-Match</c>.</summary>
+/// <paramref name="ExpectedVersion"/> llega por <c>If-Match</c>. <paramref name="HistoryDays"/> (spec 2026-10-21) es nulo o de 1 a
+/// <see cref="ShopifyStore.HistoryDaysMax"/>; como el resto del <c>PUT</c>, reemplaza: ausente apaga el historial.</summary>
 public sealed record UpdateShopifyStoreCommand(
     Guid TenantId,
     Guid ConnectionId,
@@ -31,6 +32,7 @@ public sealed record UpdateShopifyStoreCommand(
     string? DocumentAttributeKey,
     string? DocumentTypeAttributeKey,
     string? DefaultIdentificationType,
+    int? HistoryDays,
     long ExpectedVersion) : ICommand<ShopifyStoreDto>;
 
 /// <summary>
@@ -63,6 +65,11 @@ public sealed class UpdateShopifyStoreValidator : AbstractValidator<UpdateShopif
             .Must(type => ShopifyDocumentTypes.Normalize(type) is not null)
             .WithMessage($"The default identification type must be one of {string.Join(", ", ShopifyDocumentTypes.Supported)}.")
             .OverridePropertyName("defaultIdentificationType");
+        // Spec 2026-10-21: nulo es sin historial; con valor, el rango de ShopifyStore.Configure.
+        RuleFor(command => command.HistoryDays)
+            .InclusiveBetween(1, ShopifyStore.HistoryDaysMax)
+            .When(command => command.HistoryDays is not null)
+            .OverridePropertyName("historyDays");
         RuleFor(command => command.ExpectedVersion).GreaterThan(0).OverridePropertyName("expectedVersion");
     }
 
@@ -242,7 +249,7 @@ public sealed class UpdateShopifyStoreHandler(
             command.DocumentAttributeKey!,
             command.DocumentTypeAttributeKey!,
             ShopifyDocumentTypes.Normalize(command.DefaultIdentificationType)!,
-            store.HistoryDays,
+            command.HistoryDays,
             updatedBy,
             clock.UtcNow);
         if (isNew)
@@ -277,6 +284,7 @@ public sealed class UpdateShopifyStoreHandler(
         ["documentAttributeKey"] = store.DocumentAttributeKey,
         ["documentTypeAttributeKey"] = store.DocumentTypeAttributeKey,
         ["defaultIdentificationType"] = store.DefaultIdentificationType,
+        ["historyDays"] = store.HistoryDays?.ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
 
     /// <summary>El detalle de <c>shopify.store.updated</c>, con la misma forma que <c>tenancy.settings.updated</c>: un arreglo JSON
@@ -397,6 +405,7 @@ internal static class ShopifyStoreSupport
             store.DocumentAttributeKey,
             store.DocumentTypeAttributeKey,
             store.DefaultIdentificationType,
+            store.HistoryDays,
             store.LastReconciledAt,
             store.UpdatedAt,
             store.Version);

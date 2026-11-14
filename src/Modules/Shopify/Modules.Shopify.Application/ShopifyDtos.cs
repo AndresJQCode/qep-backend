@@ -27,6 +27,8 @@ public sealed record ShopifyStoreSummaryDto(
 /// <c>null</c> si su id lo es, o si ya no existe). <see cref="Version"/> es lo que el formulario manda en <c>If-Match</c>; la misma
 /// versión sale en el <c>ETag</c>. Una tienda sin configurar trae los ids en <c>null</c> y las claves por defecto
 /// (<c>Documento</c>, <c>Tipo de documento</c>, <c>CC</c>), que es lo que el formulario pinta de entrada.
+/// <see cref="HistoryDays"/> (spec 2026-10-21) son los días antes del enlace que trae «Sincronizar ahora»; <c>null</c> es sin
+/// historial, y viaja siempre, también en <c>null</c>, para que el campo del formulario arranque vacío.
 /// </summary>
 public sealed record ShopifyStoreDto(
     Guid ConnectionId,
@@ -44,6 +46,7 @@ public sealed record ShopifyStoreDto(
     string DocumentAttributeKey,
     string DocumentTypeAttributeKey,
     string DefaultIdentificationType,
+    int? HistoryDays,
     DateTimeOffset? LastReconciledAt,
     DateTimeOffset UpdatedAt,
     long Version);
