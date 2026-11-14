@@ -2,7 +2,7 @@
 
 - **Fecha:** 2026-11-13
 - **Módulos:** Messaging (Application, Infrastructure, Api). Sin migración. Frontend en su propio spec (§2, meta 5).
-- **Estado:** en revisión del owner, sin construir
+- **Estado:** construido en `feature/api-externa-encabezado-multimedia`; pendiente de merge a `develop`
 - **Verificado contra el código:** `origin/develop` en `bfc5b7bf`
 - **Spec hermano:** `envios-venezuela-backend`, `docs/superpowers/specs/2026-11-13-notificaciones-por-qep-design.md` (el primer
   integrador que lo usa; QEP no depende de él)
@@ -120,7 +120,7 @@ Después de la validación de forma, contra la plantilla del catálogo (todo `42
 | Vino `header` de otro tipo (`video` para una `IMAGE`) | `messaging.template.header_mismatch` |
 | Claves de `parameters` distintas | `messaging.template.parameters_mismatch` (como hoy) |
 
-`header_mismatch` es un solo código con el `detail` diciendo qué pide la plantilla (`"The template requires an image header."`):
+`header_mismatch` es un solo código con el `detail` diciendo qué pide la plantilla (`"La plantilla requiere un encabezado de imagen."`, o `"La plantilla no tiene encabezado multimedia."` cuando manda `header` y no lo pide):
 el integrador lo corrige mirando el listado (§4.4), y tres códigos para el mismo arreglo no le dan nada. Se agrega a
 `MessagingErrorCodes`, al README y a la tabla de errores externos.
 

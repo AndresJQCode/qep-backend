@@ -87,7 +87,7 @@ public sealed class SendExternalTemplateValidator : AbstractValidator<SendExtern
         else if (!ExternalMediaLink.IsValidFileName(header.Filename))
         {
             context.AddFailure(new ValidationFailure(
-                prefix + "filename", $"Envía un nombre de hasta {ExternalMediaLink.MaxFileNameLength} caracteres, sin / ni \\."));
+                prefix + "filename", $"Envía un nombre de hasta {ExternalMediaLink.MaxFileNameLength} caracteres, sin / ni \\, y no vacío."));
         }
     }
 

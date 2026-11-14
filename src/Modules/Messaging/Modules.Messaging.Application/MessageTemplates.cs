@@ -187,6 +187,7 @@ public sealed record TemplateHeader(string Type, string? Link, string? MediaId, 
 }
 
 /// <summary>R10: lo que sale de armar una plantilla con sus valores, igual para el envío humano y para el worker.</summary>
+// Ojo: Send y DetailsJson pueden llevar el enlace del encabezado multimedia; nunca se loguean.
 public sealed record BuiltTemplate(TemplateSend Send, string Text, string DetailsJson);
 
 /// <summary>Spec 2026-10-11 §5.2: <c>GET /connections</c>. <c>displayPhoneNumber</c> es <c>null</c> si la conexión no lo guardó.</summary>
