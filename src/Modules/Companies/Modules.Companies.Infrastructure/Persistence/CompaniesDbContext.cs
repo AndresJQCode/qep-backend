@@ -95,7 +95,30 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
         // empresa, incluido el numero de cuenta" y nada mas. La unicidad que quedo —que una
         // empresa no repita la misma cuenta— es invariante del agregado y se comprueba en memoria.
         ConfigureBankAccounts(company);
+        ConfigureWithholdingTaxRates(company);
     }
+
+    // Las tasas municipales asignadas (spec ReteICA por empresa §7.3): sólo el id de la tasa, sin FK a catalog (Companies
+    // nunca referencia Catalog). El índice (tenant_id, tax_rate_id) responde «¿alguna empresa usa esta tasa?» sin recorrer
+    // la tabla. Calcado de customers.customer_tax_rates.
+    private static void ConfigureWithholdingTaxRates(
+        Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<Company> company) =>
+        company.OwnsMany<CompanyTaxRate>("_withholdingTaxRates", rate =>
+        {
+            rate.ToTable("company_withholding_tax_rates", "companies");
+            rate.WithOwner().HasForeignKey("CompanyId");
+            rate.Property<CompanyId>("CompanyId")
+                .HasColumnName("company_id")
+                .HasConversion(id => id.Value, value => new CompanyId(value))
+                .ValueGeneratedNever();
+            rate.Property(value => value.TenantId).HasColumnName("tenant_id");
+            // Clave asignada por el cliente: sin ValueGeneratedNever, EF toma una fila nueva de una empresa rastreada como
+            // Modified (UPDATE de 0 filas -> 412) en vez de Added. Mismo motivo que en customer_tax_rates.
+            rate.Property(value => value.TaxRateId).HasColumnName("tax_rate_id").ValueGeneratedNever();
+            rate.HasKey("CompanyId", nameof(CompanyTaxRate.TaxRateId)).HasName("PK_company_withholding_tax_rates");
+            rate.HasIndex(value => new { value.TenantId, value.TaxRateId })
+                .HasDatabaseName("IX_company_withholding_tax_rates_tenant_tax_rate");
+        });
 
     /// <summary>
     /// Las cuentas bancarias, como coleccion **owned** en tabla propia.
