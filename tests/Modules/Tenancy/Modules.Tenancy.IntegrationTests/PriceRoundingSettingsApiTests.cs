@@ -7,24 +7,24 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
 
-public sealed class PriceRoundingSettingsApiTests
+public sealed class PriceRoundingSettingsApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string TenantId = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string OtherTenantId = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
-    private static string Url => $"/api/v1/tenants/{TenantId}/settings/price-rounding";
+    private string Url => $"/api/v1/tenants/{TenantId}/settings/price-rounding";
 
     [Fact]
     public async Task GetListsEveryCatalogueCurrencyWithItsDefault()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -40,8 +40,7 @@ public sealed class PriceRoundingSettingsApiTests
     [Fact]
     public async Task PutReturnsTheWholeListAndGetReadsItBack()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -64,8 +63,8 @@ public sealed class PriceRoundingSettingsApiTests
     [Fact]
     public async Task PuttingTheDefaultBackRemovesTheStoredRow()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = host.Database;
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         (await PutAsync(client, Body(("USD", 2, "Up")))).EnsureSuccessStatusCode();
@@ -90,8 +89,7 @@ public sealed class PriceRoundingSettingsApiTests
     [InlineData("USD", 2, "Ceiling", "Currencies[1].Mode")]
     public async Task PutRejectsAnInvalidRuleWithItsField(string currency, int decimals, string mode, string field)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -103,8 +101,7 @@ public sealed class PriceRoundingSettingsApiTests
     [Fact]
     public async Task PutWithoutAllCatalogueCurrenciesIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -123,8 +120,7 @@ public sealed class PriceRoundingSettingsApiTests
     [Fact]
     public async Task PutWithAnUnknownOrRepeatedCurrencyIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -154,8 +150,7 @@ public sealed class PriceRoundingSettingsApiTests
     [Fact]
     public async Task PutWithoutCurrenciesIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         (await PutAsync(client, Body(("USD", 2, "Up")))).EnsureSuccessStatusCode();
@@ -171,8 +166,7 @@ public sealed class PriceRoundingSettingsApiTests
     [Fact]
     public async Task ReadingAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
@@ -186,8 +180,8 @@ public sealed class PriceRoundingSettingsApiTests
     [Fact]
     public async Task TheChangeIsAuditedInTheSameTransaction()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = host.Database;
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -252,16 +246,16 @@ public sealed class PriceRoundingSettingsApiTests
             : new { currency = code, decimals = change.Decimals, mode = change.Mode };
     }
 
-    private static Task<HttpResponseMessage> PutAsync(HttpClient client, object body) =>
+    private Task<HttpResponseMessage> PutAsync(HttpClient client, object body) =>
         client.PutAsJsonAsync(Url, body, TestContext.Current.CancellationToken);
 
-    private static async Task SeedTenantAsync(QepApiFactory factory)
+    private async Task SeedTenantAsync(QepApiFactory factory)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
         dbContext.Tenants.Add(Tenant.Create(
             new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
-            "qcode-demo",
+            $"t-{Guid.NewGuid():N}",
             "QCode Demo",
             "es-CO",
             "America/Bogota",
@@ -269,17 +263,6 @@ public sealed class PriceRoundingSettingsApiTests
             MembershipId.New(),
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(QepApiFactory factory, string subjectId, string tenantId)

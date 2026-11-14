@@ -8,22 +8,23 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
-public sealed class TenantSettingsApiTests
+public sealed class TenantSettingsApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string TenantId = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string OtherTenantId = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     [Fact]
     public async Task PutChangesDefaultCurrencyAndNumberFormat()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -43,8 +44,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithoutCurrencyAndNumberFormatKeepsTheStoredValues()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -79,8 +79,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PersonTypeRequirementRoundTripsAndDefaultsToNever()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var settings = await client.GetFromJsonAsync<JsonElement>(
@@ -115,8 +114,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task CustomerFieldPolicyRoundTripsAndDefaultsToRequired()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var settings = await client.GetFromJsonAsync<JsonElement>(
@@ -144,8 +142,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithoutCustomerFieldPolicyKeepsTheStoredValue()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -165,8 +162,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithAnInconsistentPolicyIsA422WithTheDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -214,8 +210,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task TheRegionalSettingsCarryThePolicy()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -235,8 +230,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task GetReturnsColombiaAndPutChangesTheCountry()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var settings = await client.GetFromJsonAsync<JsonElement>(
@@ -257,8 +251,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithoutCountryKeepsTheStoredValue()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -291,8 +284,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithAMalformedCountryIsA422WithTheDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -308,8 +300,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutAcceptsEurNowThatTheCatalogueHasIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -324,8 +315,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task GetCurrenciesReturnsTheCatalogueToAnyAuthenticatedCaller()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -344,8 +334,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task PutWithUnsupportedCurrencyIsA422WithTheDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         var etag = await GetEtagAsync(client, TenantId);
@@ -361,8 +350,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task GetAndPutWithCurrentEtagUpdatesSettings()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -378,8 +366,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task TenantCannotReadOrUpdateAnotherTenantSettings()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
 
         // Autenticado como OtherTenant, intentando alcanzar el tenant sembrado.
@@ -397,8 +384,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task MemberWithReadButWithoutUpdateCanReadButNotUpdate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
 
         using var client = CreateClient(factory, SubjectId, TenantId);
@@ -420,8 +406,7 @@ public sealed class TenantSettingsApiTests
     [Fact]
     public async Task StaleEtagOnSecondUpdateYieldsPreconditionFailed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         await SeedSeededTenantAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
 
@@ -516,15 +501,15 @@ public sealed class TenantSettingsApiTests
     /// prueba tiene que crear el suyo. El <c>ownerMembershipId</c> es nuevo y nunca se persiste
     /// como membership, así que no hace falta un usuario dueño real para estas pruebas.
     /// </summary>
-    private static async Task SeedSeededTenantAsync(QepApiFactory factory)
+    private async Task SeedSeededTenantAsync(QepApiFactory factory)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
-        // Nombre completo del struct: el campo constante `TenantId` de esta clase tapa el tipo
+        // Nombre completo del struct: el campo `TenantId` de esta clase tapa el tipo
         // `Modules.Tenancy.Domain.TenantId` para cualquier referencia sin calificar.
         dbContext.Tenants.Add(Tenant.Create(
             new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)),
-            "qcode-demo",
+            $"t-{Guid.NewGuid():N}",
             "QCode Demo",
             "es-CO",
             "America/Bogota",
@@ -545,17 +530,6 @@ public sealed class TenantSettingsApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.NotNull(response.Headers.ETag);
         return response.Headers.ETag!.Tag;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(
