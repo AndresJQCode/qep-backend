@@ -309,6 +309,8 @@ app.MapInstagramWebhook(RateLimiterPolicies.Webhook);
 app.MapShopifyWebhook(RateLimiterPolicies.Webhook);
 // Spec 2026-10-15 §7: las rutas por tenant de Shopify: la configuración de la tienda, la bandeja y «Sincronizar ahora».
 app.MapShopifyEndpoints();
+// Spec 2026-11-13: las asociaciones de líneas personalizadas de cada tienda (nombre exacto → variante de Catalog).
+app.MapShopifyCustomLineMappingEndpoints();
 app.MapMessagingEndpoints();
 // Spec 2026-10-30 §5.2: la API externa, autenticada con X-Api-Key. Después de Messaging, de cuyos handlers depende.
 app.MapExternalApi();

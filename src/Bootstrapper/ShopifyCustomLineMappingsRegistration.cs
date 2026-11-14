@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Shopify.Application;
 
@@ -10,6 +11,10 @@ public static class ShopifyCustomLineMappingsRegistration
     public static IServiceCollection AddShopifyCustomLineMappings(this IServiceCollection services)
     {
         services.AddScoped<IShopifyVariantLabels, ShopifyVariantLabels>();
+        // El validador entra con AddValidatorsFromAssemblyContaining<UpdateShopifyStoreValidator> (mismo ensamblado).
+        services.AddScoped<IQueryHandler<ListShopifyCustomLineMappingsQuery, IReadOnlyList<ShopifyCustomLineMappingDto>>, ListShopifyCustomLineMappingsHandler>();
+        services.AddScoped<ICommandHandler<CreateShopifyCustomLineMappingCommand, ShopifyCustomLineMappingDto>, CreateShopifyCustomLineMappingHandler>();
+        services.AddScoped<ICommandHandler<DeleteShopifyCustomLineMappingCommand, bool>, DeleteShopifyCustomLineMappingHandler>();
         return services;
     }
 }
