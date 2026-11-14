@@ -16,10 +16,10 @@ public sealed class QuotationWithholdingLookupTests
     private static readonly Guid CityId = Guid.Parse("01900000-0000-7000-8000-000000001310");
 
     private static readonly TaxRate Retefuente = TaxRate.Create(
-        TaxRateId.New(), TenantId, "Retefuente 2,5 %", 2.5m, "Retefuente", "CO", null, Now);
+        TaxRateId.New(), TenantId, "Retefuente 2,5 %", 2.5m, "Retefuente", "CO", null, null, Now);
 
     private static readonly TaxRate ReteIca = TaxRate.Create(
-        TaxRateId.New(), TenantId, "ReteICA Bogotá", 0.966m, "ReteICA", "CO", 4m, Now);
+        TaxRateId.New(), TenantId, "ReteICA Bogotá", 0.966m, "ReteICA", "CO", 4m, Guid.CreateVersion7(), Now);
 
     [Theory]
     [InlineData(2026, 49_799)]
@@ -69,9 +69,9 @@ public sealed class QuotationWithholdingLookupTests
     [Fact]
     public async Task ForRatesReturnsEveryFoundRateWithItsState()
     {
-        var inactive = TaxRate.Create(TaxRateId.New(), TenantId, "Retefuente vieja", 3.5m, "Retefuente", "CO", null, Now);
+        var inactive = TaxRate.Create(TaxRateId.New(), TenantId, "Retefuente vieja", 3.5m, "Retefuente", "CO", null, null, Now);
         inactive.Deactivate(Now);
-        var vat = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19 %", 19m, "IVA", "CO", null, Now);
+        var vat = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19 %", 19m, "IVA", "CO", null, null, Now);
         var lookup = Lookup(new FakeCustomerRepository(), [ReteIca, inactive, vat], Uvt(2026, 49_799m));
 
         var candidates = await lookup.ForRatesAsync(
@@ -89,7 +89,7 @@ public sealed class QuotationWithholdingLookupTests
     [Fact]
     public async Task ARateOfAnUnknownCountryNeverThrows()
     {
-        var foreign = TaxRate.Create(TaxRateId.New(), TenantId, "Retención extranjera", 2m, "Retefuente", "CO", null, Now);
+        var foreign = TaxRate.Create(TaxRateId.New(), TenantId, "Retención extranjera", 2m, "Retefuente", "CO", null, null, Now);
         typeof(TaxRate).GetProperty(nameof(TaxRate.Country))!.SetValue(foreign, "ZZ");
         var customer = NewCustomer();
         customer.SetWithholdingTaxRates([Retefuente.Id.Value, foreign.Id.Value], Now);

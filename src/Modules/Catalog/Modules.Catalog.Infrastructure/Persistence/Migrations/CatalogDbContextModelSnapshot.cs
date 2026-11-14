@@ -446,6 +446,10 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<Guid?>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
                     b.Property<string>("Country")
                         .IsRequired()
                         .HasMaxLength(2)
@@ -504,6 +508,9 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "Name")
                         .IsUnique()
                         .HasDatabaseName("IX_tax_rates_tenant_name");
+
+                    b.HasIndex("TenantId", "Type", "CityId")
+                        .HasDatabaseName("IX_tax_rates_tenant_type_city");
 
                     b.ToTable("tax_rates", "catalog");
                 });

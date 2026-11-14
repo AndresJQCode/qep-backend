@@ -77,6 +77,7 @@ public sealed class CreateTaxRateHandler(
             command.Type,
             command.Country,
             command.MinimumBase,
+            cityId: null,
             now);
 
         // Después del dominio, para que un tipo que no admite base diga minimum_base_not_allowed
