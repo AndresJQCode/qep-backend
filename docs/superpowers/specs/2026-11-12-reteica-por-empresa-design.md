@@ -310,6 +310,9 @@ en las dos tablas, sin FK (como `city_id` de las partes, `QuotationsDbContext.cs
   `quotation.billing.operation_city_invalid` / `order.billing.operation_city_invalid`. `null` explícito = «el de la empresa».
 - Cotización: editable con `EnsureEditable`. Pedido: con `Order.IsEditable` (`order.order.not_editable`).
 - Pedidos que nacen sin cotización (manual, tienda, Shopify/externo): `OperationCityId = BillingAccount.CityId` (R5, A10).
+- Cotización nueva (`POST /quotations` y su vista previa `POST /quotations/preview`, mismo cuerpo) [owner 2026-11-14]: nace con la
+  empresa y el municipio que diga el cuerpo — `operationCityId` explícito, o el de la empresa si viene ausente o `null` (no hay
+  municipio guardado que conservar) — y con lo que el asesor eligió para la ReteICA; reglas en §7.6, «En la creación».
 - Convertir: el pedido hereda `OperationCityId` (junto a la foto, `Order.cs:395`).
 
 **Foto.** `WithholdingRate` gana `Guid? CityId` y `decimal CatalogPercentage` (NUEVOS). `Percentage` pasa a ser el **efectivo** y
@@ -389,6 +392,28 @@ ausencia de un id es ambigua (no eligió nada, o eligió «Sin retención»), la
 
 Sin cambio de empresa ni de municipio, la validación es la de siempre: un id municipal que no es `companyRate` es
 `{quotation|order}.billing.withholding_tax_rate_invalid` y un porcentaje sin fila es `…withholding_percentage_not_editable`.
+
+**En la creación (owner, 2026-11-14).** Al crear una cotización (`CreateQuotationRequest`, en `POST /quotations` y en
+`POST /quotations/preview`) el asesor elige lo mismo que en el editor: municipio de la operación, la ReteICA de facturación propia,
+su porcentaje y «Sin retención». No hay documento guardado contra el cual «cambiar» la empresa o el municipio, así que la creación
+**no** dispara la re-resolución ni la regla de A11:
+
+- La empresa y el municipio de la operación salen del mismo cuerpo: `operationCityId` explícito, o el de la empresa si viene
+  ausente o `null` (A7 igual: país sin tipos municipales → `null`). La fuente `Customer` nace con la regla del cliente para esa
+  empresa y ese municipio (§7.5).
+- Los selectores, la marca y los porcentajes se validan **contra la empresa y el municipio de ese mismo cuerpo**, con la validación
+  de siempre: un id municipal en `billingWithholdingTaxRateIds` que no es el `companyRate` de ese cuerpo →
+  `quotation.billing.withholding_tax_rate_invalid`; un porcentaje sin fila de su tipo en la fuente vigente →
+  `quotation.billing.withholding_percentage_not_editable`; `clearedWithholdingTypes` con las validaciones de arriba
+  (`withholding_type_invalid`, `withholding_selection_conflict`). Nada se ignora en silencio: lo que manda la SPA se eligió sobre la
+  vista previa de ese mismo cuerpo, cuyo `companyRate` es el de esa empresa y ese municipio.
+- Orden: cuenta → municipio → fuente `Customer` → selectores → «Sin retención» → porcentajes (el de §7.7 sin el paso de
+  re-resolución).
+- Historial [agente]: la creación no escribe `WithholdingRateEdited` ni el resumen de aplicación a mano. Lo elegido es parte de la
+  creación, como el encabezado, que el `Created` tampoco resume (`QuotationDraftBuilder.cs:102`); la fila guarda el porcentaje
+  efectivo y el del catálogo, así que `percentageOverridden` lo muestra.
+- La vista previa sin id responde `operationCity`, `billingCompanyCity` y `municipalWithholdings` (con `companyRate`) igual que las
+  otras (§9.4): así la SPA ofrece la tasa de la empresa antes de que exista el documento.
 
 Para cada tipo municipal `T` del país de la empresa:
 
@@ -601,6 +626,8 @@ no se mueve (owner, 2026-11-13). En la cotización van en la raíz de `Quotation
     Quita la fila de ese tipo (selector de facturación propia en la cotización, selector del pedido), con o sin cambio de empresa o
     de municipio. Un tipo no municipal → `…withholding_type_invalid`; el mismo tipo también con id municipal en el selector o con
     porcentaje no `null` → `…withholding_selection_conflict` (§7.6).
+  - En `CreateQuotationRequest` (alta y `POST /quotations/preview`) los cuatro campos valen igual, sin re-resolución ni A11: se
+    validan contra la empresa y el municipio del mismo cuerpo (§7.6, «En la creación», owner 2026-11-14).
 - `CreateOrderRequest` (pedido manual) no cambia (A10).
 - `billingWithholdingTaxRateIds` (cotización) y `withholdingTaxRateIds` (pedido) no cambian de forma: para un tipo municipal sólo
   aceptan la tasa de `municipalWithholdings[].companyRate` (A4).
@@ -724,6 +751,11 @@ Integración (Testcontainers, un proyecto a la vez):
   `null`) → 422 `…withholding_selection_conflict`; (4) `clearedWithholdingTypes: ["Retefuente"]` → 422 `…withholding_type_invalid`;
   (5) sin cambio de empresa ni de municipio, la marca quita la fila ReteICA existente y, si estaba editada, anota
   `WithholdingRateEdited`.
+- Creación con ReteICA (owner 2026-11-14), en `POST /quotations` y en `POST /quotations/preview`, con facturación propia: el id
+  ReteICA de la empresa para el municipio de la operación → fila aplicada; más `withholdingPercentages` → aplicado con
+  `percentageOverridden = true` y sin `WithholdingRateEdited`; `clearedWithholdingTypes: ["ReteICA"]` → sin fila; el id ReteICA de
+  la empresa para **otro** municipio → 422 `quotation.billing.withholding_tax_rate_invalid` (no se ignora); con `operationCityId`
+  explícito la validación es contra ese municipio. La vista previa sin id devuelve `companyRate` antes de crear.
 - `billingCompanyCity` (A12): presente con empresa CO; `null` en un documento anterior hasta reenviar la cuenta; reenviar la misma
   empresa lo completa sin re-resolver.
 - Documento anterior (A8): sin `operation_city_id` da `NoOperationCity`; fijarlo en uno editable resuelve la ReteICA con la regla.
@@ -736,5 +768,6 @@ Integración (Testcontainers, un proyecto a la vez):
 1. **Ley**: confirmar el literal «sin establecimiento, donde se perfecciona la venta» (Ley 14 de 1983 / Ley 1819 de 2016 art. 343).
    Sólo afecta la copia de ayuda del frontend: el municipio de la operación se elige a mano.
 
+Resuelta el 2026-11-14: la ReteICA se elige también al crear la cotización (§7.6, «En la creación»).
 Resueltas el 2026-11-12: A4/A5 (R11), despliegue conjunto (R12), porcentaje en el PDF (R13), A3 (R14), A6 (R15), A10 (R16).
 Retiradas por no haber datos ReteICA (§11.2): tenants ambiguos, asignaciones ReteICA de clientes no migradas, «fijar una vez» de A1.
