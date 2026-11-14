@@ -573,7 +573,7 @@ public sealed class ReconcileStoreTests
             var stores = new FakeStoreRepository(Database);
             var mirrors = new FakeOrderMirrorRepository(Database);
             IShopifyOrderChangeReaction reaction = realReaction ? new ShopifyOrderChanges(Writer, new FakeCustomerDirectory(), Clock) : Reaction;
-            Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, reaction, UnitOfWork, Clock);
+            Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, reaction, new NoShopifyOrderEditDetector(), UnitOfWork, Clock);
             Leases = new FakeReconcileLeases(Database);
             Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, Directory, UnitOfWork, Clock, Time, Logs);
             Directory.Connections[Connection.ShopDomain] = Connection;

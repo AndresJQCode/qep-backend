@@ -113,6 +113,27 @@ public sealed class NoShopifyOrderChangeReaction : IShopifyOrderChangeReaction
     public Task ReactAsync(ShopifyOrderChange change, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
+/// <summary>
+/// Spec 2026-11-14 §3: la detección de ediciones sobre un pedido ya importado. La implementa <c>ShopifyOrderEdits</c>, que
+/// Bootstrapper registra antes de <c>AddShopifyWebhookProcessing</c> (que sólo deja <see cref="NoShopifyOrderEditDetector"/> si nadie
+/// registró otro). La ingesta la llama después del espejo y antes de la reacción de §6.3, en la misma unidad de trabajo: lo que
+/// escribe en la fila y en <c>order_edits</c> entra en el mismo commit que el snapshot. Lo que aplica en el pedido de QEP lo confirma
+/// Quotations por su cuenta (otro scope), así que un reintento ve el pedido ya cambiado y lo toma como eco.
+/// </summary>
+public interface IShopifyOrderEditDetector
+{
+    /// <summary><paramref name="previousPayload"/> es el payload de la fila antes de <c>ApplySnapshot</c>: la base de una fila
+    /// importada antes de la sincronización (sin versión aplicada, plan D6).</summary>
+    Task DetectAsync(ShopifyOrderChange change, string previousPayload, CancellationToken cancellationToken);
+}
+
+/// <summary>La detección vacía, el registro por defecto de <c>AddShopifyWebhookProcessing</c>. En el host la reemplaza
+/// <c>ShopifyOrderEdits</c>.</summary>
+public sealed class NoShopifyOrderEditDetector : IShopifyOrderEditDetector
+{
+    public Task DetectAsync(ShopifyOrderChange change, string previousPayload, CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
 /// <summary>Un cliente de QEP como lo necesita el importador (§6.2.1): si existe, si está completo y si está activo. Un cliente
 /// encontrado inactivo deja el pedido en espera con <c>customer_inactive</c>.
 /// <para>Spec 2026-10-26: <see cref="Created"/> dice que el alta lo creó (no es el dueño del documento que ya existía, H8) y

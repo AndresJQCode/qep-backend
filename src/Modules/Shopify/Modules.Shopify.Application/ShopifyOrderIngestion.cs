@@ -25,6 +25,7 @@ public sealed class ShopifyOrderIngestion(
     IShopifyOrderMirrorRepository mirrors,
     IShopifyOrderImporter importer,
     IShopifyOrderChangeReaction reaction,
+    IShopifyOrderEditDetector editDetector,
     IShopifyUnitOfWork unitOfWork,
     IClock clock)
 {
@@ -90,6 +91,7 @@ public sealed class ShopifyOrderIngestion(
 
         var row = await mirrors.FindAsync(connection.TenantId, connection.ConnectionId, snapshot.OrderId, cancellationToken);
         ShopifyMirrorState? previous = null;
+        string? previousPayload = null;
         bool applied;
         if (row is null)
         {
@@ -102,15 +104,20 @@ public sealed class ShopifyOrderIngestion(
         {
             // ApplySnapshot pisa FinancialStatus y CancelledAt; lo que §6.3 compara se lee antes.
             previous = ShopifyMirrorState.Of(row);
+            // Spec 2026-11-14 (plan D6): la base de una fila importada antes de la sincronización es el payload que tenía.
+            previousPayload = row.Payload;
             var existing = row;
             applied = Guarded(() => existing.ApplySnapshot(payload, snapshot.UpdatedAt, header));
         }
 
-        // La reacción va antes del guardado, en la misma unidad de trabajo. Si falla no se guarda el snapshot, la
-        // entrega vuelve con su lease y el reintento ve el mismo estado anterior: el cambio no se pierde.
+        // La detección de ediciones (spec 2026-11-14 §3) y la reacción de §6.3 van antes del guardado, en la misma unidad de
+        // trabajo y con el mismo cambio. Si fallan no se guarda el snapshot, la entrega vuelve con su lease y el reintento ve el
+        // mismo estado anterior: el cambio no se pierde.
         if (applied && previous is not null)
         {
-            await reaction.ReactAsync(new ShopifyOrderChange(connection, store, row, previous, snapshot), cancellationToken);
+            var change = new ShopifyOrderChange(connection, store, row, previous, snapshot);
+            await editDetector.DetectAsync(change, previousPayload!, cancellationToken);
+            await reaction.ReactAsync(change, cancellationToken);
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);

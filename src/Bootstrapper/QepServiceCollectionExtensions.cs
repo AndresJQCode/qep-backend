@@ -1254,6 +1254,13 @@ public static class QepServiceCollectionExtensions
         // §6.3: pago y cancelación de los pedidos ya importados. Va antes de AddShopifyWebhookProcessing, que sólo
         // registra la reacción vacía si nadie registró otra (TryAdd).
         services.AddScoped<IShopifyOrderChangeReaction, ShopifyOrderChanges>();
+        // Spec 2026-11-14 §3: las ediciones de Shopify sobre pedidos importados, con el mismo patrón (TryAdd en
+        // AddShopifyWebhookProcessing). Los resolvedores de líneas y envío son los de la importación.
+        services.AddScoped<ShopifyLineResolver>();
+        services.AddScoped<ShopifyShippingResolver>();
+        services.AddScoped<ShopifyEditPlanner>();
+        services.AddScoped<ShopifyOrderEdits>();
+        services.AddScoped<IShopifyOrderEditDetector>(provider => provider.GetRequiredService<ShopifyOrderEdits>());
         services.AddShopifyWebhookProcessing();
         services.AddShopifyWebhookWorker();
         // Spec 2026-10-26 D-C6: el consumidor de los eventos de sinónimos de Geography, que siembra los trabajos de corrección, y

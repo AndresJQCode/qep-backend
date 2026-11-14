@@ -71,6 +71,8 @@ public static class ShopifyInfrastructureExtensions
         // La reacción de §6.3 vacía por defecto; Bootstrapper registra ShopifyOrderChanges antes de llamar a este método, y el
         // TryAdd no la pisa.
         services.TryAddScoped<IShopifyOrderChangeReaction, NoShopifyOrderChangeReaction>();
+        // Spec 2026-11-14 §3: la detección de ediciones, con el mismo patrón (Bootstrapper registra ShopifyOrderEdits antes).
+        services.TryAddScoped<IShopifyOrderEditDetector, NoShopifyOrderEditDetector>();
         services.AddScoped<ShopifyOrderIngestion>();
         services.AddScoped<ShopifyWebhookDeliveryProcessor>();
         // §5.3: la conciliación y «Sincronizar ahora» pasan cada pedido por la misma ingesta; necesitan también

@@ -629,7 +629,7 @@ internal sealed class StoreHandlersWorld
     public Task<ShopifyOrderRowDto> RetryAsync(Guid rowId)
     {
         var ingestion = new ShopifyOrderIngestion(
-            Stores, Mirrors, Importer, new NoShopifyOrderChangeReaction(), UnitOfWork, Clock);
+            Stores, Mirrors, Importer, new NoShopifyOrderChangeReaction(), new NoShopifyOrderEditDetector(), UnitOfWork, Clock);
         return new RetryShopifyOrderHandler(Context, new ShopifyEnabledModules(), Mirrors, Stores, Connections, ingestion, UnitOfWork, Mapper)
             .HandleAsync(new RetryShopifyOrderCommand(TenantId, rowId), TestContext.Current.CancellationToken);
     }

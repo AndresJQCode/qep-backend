@@ -502,7 +502,7 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
             UnitOfWork = new FakeUnitOfWork(Database);
             Reaction = new FakeOrderChangeReaction(UnitOfWork);
             Ingestion = new ShopifyOrderIngestion(
-                new FakeStoreRepository(Database), new FakeOrderMirrorRepository(Database), Importer, Reaction, UnitOfWork, Clock);
+                new FakeStoreRepository(Database), new FakeOrderMirrorRepository(Database), Importer, Reaction, new NoShopifyOrderEditDetector(), UnitOfWork, Clock);
         }
 
         public FakeShopifyDatabase Database { get; } = new();
