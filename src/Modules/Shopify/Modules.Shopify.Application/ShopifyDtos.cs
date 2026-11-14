@@ -69,7 +69,9 @@ public sealed record ShopifyDocumentSourcesDto(IReadOnlyList<string> Sources);
 /// <see cref="WaitReason"/> con el código de §6.2 (<c>store_not_configured</c>, …, <c>order_rejected</c>); los textos los tiene
 /// el diccionario del frontend.</item>
 /// <item><see cref="WaitDetail"/> es el JSON que guardó el importador, o <c>null</c>. Con <c>product_unmatched</c> es
-/// <c>{"skus":[…]}</c>, y una línea sin SKU llega como <c>null</c> dentro del arreglo: <c>{"skus":[null]}</c>. Con
+/// <c>{"skus":[…],"customTitles":[…]}</c>, las dos llaves siempre presentes: <c>skus</c> trae los SKU sin resolver (una línea sin SKU
+/// llega como <c>null</c> dentro del arreglo: <c>{"skus":[null],"customTitles":[]}</c>) y <c>customTitles</c> los nombres de líneas
+/// personalizadas sin asociación, que la bandeja ofrece asociar a un producto. Con
 /// <c>currency_mismatch</c>, <c>{"orderCurrency","billingCurrency"}</c>; con <c>customer_inactive</c>, <c>{"customerId"}</c>;
 /// con <c>order_rejected</c>, <c>{"code"}</c>; con los del envío, <c>{"shippingTitle","amount"}</c>. Una fila
 /// <c>Cancelled</c> después de facturar trae <c>{"reason":"invoiced_before_cancel"}</c>.</item>

@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Shopify.Application;
+using Modules.Shopify.Domain;
 using Npgsql;
 
 namespace Modules.Shopify.Infrastructure.Persistence;
@@ -26,6 +27,13 @@ internal sealed class ShopifyUnitOfWork(ShopifyDbContext dbContext) : IShopifyUn
         {
             throw new RequestConcurrencyException(
                 "concurrency.conflict", "The Shopify store changed while the operation was being committed.", exception);
+        }
+        // Spec 2026-11-13: el mismo nombre de línea personalizada ya está asociado en esa tienda. No es una carrera que se
+        // reintente sino un 409 al asesor, con su propio código.
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception, ShopifyDbContext.CustomLineMappingConnectionTitleIndex))
+        {
+            throw new ResourceConflictException(
+                ShopifyErrorCodes.CustomLineAlreadyMapped, "That custom line title is already mapped in this store.", exception);
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception, ShopifyDbContext.OrderConnectionIndex))
         {

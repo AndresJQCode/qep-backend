@@ -28,4 +28,12 @@ public static class ShopifyAuditActions
     public const string OrderResourceType = "order";
 
     public const string CustomerResourceType = "customer";
+
+    // Spec 2026-11-13 (D8): las asociaciones de líneas personalizadas de una tienda. El recurso es la asociación y el detalle lleva
+    // la conexión, el título y la variante.
+    public const string CustomLineMappingCreated = "shopify.custom_line_mapping.created";
+
+    public const string CustomLineMappingDeleted = "shopify.custom_line_mapping.deleted";
+
+    public const string CustomLineMappingResourceType = "shopify_custom_line_mapping";
 }

@@ -495,6 +495,16 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   worker atiende), amarradas por `ShopifyWebhookTopicsParityTests` (2026-10-18, `7b83a958`), y
   `ShopifyCashOnDeliveryGateways.Normalize` copia `CarrierName.Normalize`, amarrada por `ShopifyNormalizationParityTests`
   (2026-10-18, `e157d9c2`).
+- **`shopify.custom_line_mappings` es contrato con `lulo-crm-migrator`, que la siembra por SQL** (`INSERT … ON CONFLICT
+  (connection_id, title) DO NOTHING`, spec 2026-11-13). Renombrar una columna (`id`, `tenant_id`, `connection_id`, `title`,
+  `variant_id`, `created_at`, `created_by`) o el índice `IX_custom_line_mappings_connection_title` compila, pasa las pruebas de
+  este repo y rompe la siembra de la migración de Lulo v1; se cambia junto con el spec del migrador. `title` va recortado y
+  `created_by` es id de **membresía** activa, no de usuario (como `stores.updated_by`): el migrador siembra la del dueño. Y
+  `IsCustom` exige las llaves de ids presentes en `null` **y que la línea no tenga SKU**: un fixture sin `product_id`/`variant_id`
+  no es una línea personalizada, y con «ausente = nulo» todo pedido de los fixtures quedaría en espera. Una variante borrada en
+  Shopify deja `variant` y `product` en `null` pero conserva el SKU: esa línea es de producto y nunca casa por nombre (los dos
+  parsers y `ShopifyOrderImporter.CustomTitleOf` aplican la misma regla). El 409 sale sólo del índice
+  (`ShopifyUnitOfWork` lo traduce por nombre): no lo muevas a una consulta previa en el handler.
 - **`develop` no va a `main` sin el frontend de Shopify** (2026-10-18). `shopify` está en `DefaultForNewTenants`
   (`TenantModuleKey.cs`, decisión del owner del 2026-10-15) y en `Production` la app está configurada a la fuerza —sin ella
   el pod no arranca—, así que el catálogo de Integraciones de todo tenant nuevo trae la tarjeta Shopify con

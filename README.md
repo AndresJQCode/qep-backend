@@ -4447,6 +4447,25 @@ nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibl
 (`features/shopify`), y uno que no conozca se muestra con un mensaje genérico. La normalización está en
 `ShopifyLastErrorCodes`.
 
+**Líneas personalizadas** (spec `2026-11-13-shopify-lineas-personalizadas-design.md`). Una línea personalizada es la que el
+comercio escribe a mano en el pedido de Shopify, sin producto: llega con `product_id` y `variant_id` en `null` y sólo trae su
+`title` (Shopify lo limita a 255 caracteres). El importador la marca `isCustom` sólo si esas dos llaves vienen presentes y en
+`null` (una llave ausente no cuenta) y la línea no trae SKU (una variante borrada también deja los ids en `null`, pero
+conserva el SKU: es de producto) y la resuelve por **nombre exacto** —recortado, ordinal, sensible a mayúsculas y
+emojis— contra las asociaciones de su tienda (`shopify.custom_line_mappings`: `connection_id + title → variant_id`); una
+línea de producto real nunca casa por nombre, y una asociación nunca aplica fuera de su tienda. Sin asociación (o con una
+variante inexistente o inactiva) el pedido queda `Waiting` con `product_unmatched` y su `wait_detail` es
+`{"skus":[…],"customTitles":[…]}`, siempre con las dos llaves: `skus` lleva los SKU sin resolver (`null` para una línea sin
+SKU) y `customTitles` los nombres que faltan por asociar. Los pedidos que ya estaban en espera antes del despliegue no traen
+el nombre hasta que Shopify los vuelva a mandar (webhook `orders/updated` o conciliación).
+
+Desde la bandeja, «Asociar a un producto» hace `POST /tenants/{tenantId}/shopify/stores/{connectionId}/custom-line-mappings
+{ title, variantId }` (`quotations.order.manage`; 201 con la fila, 409 `shopify.custom_line.already_mapped` si el nombre ya
+está asociado, 422 `shopify.custom_line.variant_not_found` o `variant_inactive`) y luego `POST …/shopify/orders/{id}/retry`.
+`GET` de la misma ruta (`quotations.order.read`) lista las asociaciones por título con el nombre y el código de la variante,
+y `DELETE …/custom-line-mappings/{id}` (204, también si ya no existe) la quita. Si Catalog borró la variante, el `GET` la
+sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`, para poder quitarla.
+
 **Configuración.**
 
 | Clave | Dónde vive en prod | Qué |

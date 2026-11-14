@@ -53,4 +53,14 @@ public static class ShopifyErrorCodes
     /// <summary>§5.1: firma <c>X-Shopify-Hmac-Sha256</c> ausente o inválida (401, sin encolar). No está en la tabla de §7.1: es el
     /// análogo de <c>messaging.webhook.signature_invalid</c>, a ratificar.</summary>
     public const string WebhookSignatureInvalid = "shopify.webhook.signature_invalid";
+
+    /// <summary>Spec 2026-11-13: la tienda ya asoció ese nombre de línea personalizada a una variante. 409, por el índice único
+    /// <c>IX_custom_line_mappings_connection_title</c>.</summary>
+    public const string CustomLineAlreadyMapped = "shopify.custom_line.already_mapped";
+
+    /// <summary>Spec 2026-11-13: la variante no existe en el tenant. 422.</summary>
+    public const string CustomLineVariantNotFound = "shopify.custom_line.variant_not_found";
+
+    /// <summary>Spec 2026-11-13: la variante existe pero está inactiva. 422.</summary>
+    public const string CustomLineVariantInactive = "shopify.custom_line.variant_inactive";
 }

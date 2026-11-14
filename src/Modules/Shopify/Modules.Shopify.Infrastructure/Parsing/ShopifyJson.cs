@@ -27,6 +27,10 @@ internal static class ShopifyJson
             ? value
             : null;
 
+    /// <summary>La llave existe y vale <c>null</c>. Ausente → <c>false</c> (a diferencia de <see cref="Find"/>, que las confunde).</summary>
+    public static bool IsExplicitNull(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Null;
+
     /// <summary>Recorre un camino de propiedades (<c>total_price_set.shop_money.amount</c>).</summary>
     public static JsonElement? FindPath(JsonElement element, string path)
     {

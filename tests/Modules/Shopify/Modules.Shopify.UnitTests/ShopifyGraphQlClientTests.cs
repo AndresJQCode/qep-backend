@@ -414,10 +414,46 @@ public sealed class ShopifyGraphQlQueryContractTests
     public void OrderQueryRequestsEveryFieldTheParserReads()
     {
         var order = SampleOrder();
+        // D2: IsCustom exige variant y product en null. La muestra sólo trae las llaves que la consulta pide: se exigen antes de
+        // ponerlas en null, o la prueba seguiría verde aunque LineFields dejara de pedirlas.
+        foreach (var line in order["lineItems"]!["nodes"]!.AsArray())
+        {
+            var fields = line!.AsObject();
+            Assert.True(fields.ContainsKey("variant"), "LineFields no pide variant { id }.");
+            Assert.True(fields.ContainsKey("product"), "LineFields no pide product { id }.");
+            Assert.True(fields.ContainsKey("title"), "LineFields no pide title.");
+            fields["variant"] = null;
+            fields["product"] = null;
+        }
 
         var snapshot = GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(order));
 
-        AssertPopulated(snapshot, "snapshot");
+        // Una custom no tiene SKU, así que con SKU poblado IsCustom es false: se comprueba aparte, y el resto se mira poblado.
+        Assert.All(snapshot.Lines, line => Assert.False(line.IsCustom));
+        var withoutSku = JsonNode.Parse(order.ToJsonString())!;
+        foreach (var line in withoutSku["lineItems"]!["nodes"]!.AsArray())
+        {
+            line!.AsObject()["sku"] = null;
+        }
+
+        Assert.All(GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(withoutSku)).Lines, line => Assert.True(line.IsCustom));
+        AssertPopulated(snapshot with { Lines = [.. snapshot.Lines.Select(line => line with { IsCustom = true })] }, "snapshot");
+    }
+
+    // Se mira el nodo de las líneas del pedido y no el texto de la consulta: ShippingLineFields también pide `title`.
+    [Fact]
+    public void LineQueryAsksForTitleVariantAndProduct()
+    {
+        foreach (var query in new[] { ShopifyGraphQlClient.OrderQuery, ShopifyGraphQlClient.OrderLinesQuery })
+        {
+            var order = Selection.Parse(query).Children.Single(child => child.Name == "order");
+            var fields = order.Children.Single(child => child.Name == "lineItems")
+                .Children.Single(child => child.Name == "nodes").Children;
+
+            Assert.Contains(fields, field => field.Name == "title" && field.Children.Count == 0);
+            Assert.Contains(fields, field => field.Name == "variant" && field.Children.Any(child => child.Name == "id"));
+            Assert.Contains(fields, field => field.Name == "product" && field.Children.Any(child => child.Name == "id"));
+        }
     }
 
     // El comprador sale primero del pedido y, sin él, del cliente: la consulta tiene que pedir el correo y el teléfono del
@@ -461,6 +497,8 @@ public sealed class ShopifyGraphQlQueryContractTests
     {
         ("id", "order") => "gid://shopify/Order/1001",
         ("id", "customer") => "gid://shopify/Customer/7",
+        ("id", "variant") => "gid://shopify/ProductVariant/1",
+        ("id", "product") => "gid://shopify/Product/1",
         ("name", "order") => "#1001",
         ("name", "shippingAddress") => "Laura Gómez",
         ("email", "order") => "pedido@example.co",

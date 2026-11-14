@@ -34,6 +34,10 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     /// <summary>Spec 2026-10-26 D-C6: un trabajo por mensaje, destino e id; el consumidor de eventos no siembra dos veces.</summary>
     public const string CityCorrectionJobMessageTargetIndex = "IX_city_correction_jobs_message_target";
 
+    /// <summary>Spec 2026-11-13: una asociación por conexión y título. <c>ShopifyUnitOfWork</c> discrimina por este nombre y
+    /// responde <c>shopify.custom_line.already_mapped</c> (409).</summary>
+    public const string CustomLineMappingConnectionTitleIndex = "IX_custom_line_mappings_connection_title";
+
     private const int EnumNameMaxLength = 16;
 
     // La lista de ciudades pedidas por un trabajo como uuid[] (el mismo par que Messaging usa para sus audiencias).
@@ -51,6 +55,8 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     public DbSet<ShopifyCityCorrection> CityCorrections => Set<ShopifyCityCorrection>();
 
     public DbSet<ShopifyCityCorrectionJob> CityCorrectionJobs => Set<ShopifyCityCorrectionJob>();
+
+    public DbSet<ShopifyCustomLineMapping> CustomLineMappings => Set<ShopifyCustomLineMapping>();
 
     internal DbSet<ShopifyInboxMessage> Inbox => Set<ShopifyInboxMessage>();
 
@@ -73,9 +79,30 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         ConfigureDelivery(modelBuilder);
         ConfigureCityCorrection(modelBuilder);
         ConfigureCityCorrectionJob(modelBuilder);
+        ConfigureCustomLineMapping(modelBuilder);
         ConfigureInbox(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+    }
+
+    // Contrato con lulo-crm-migrator, que siembra esta tabla por SQL: los nombres y los tipos de las columnas no se cambian.
+    private static void ConfigureCustomLineMapping(ModelBuilder modelBuilder)
+    {
+        var mapping = modelBuilder.Entity<ShopifyCustomLineMapping>();
+        mapping.ToTable("custom_line_mappings", Schema);
+        mapping.HasKey(value => value.Id);
+        mapping.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        mapping.Property(value => value.TenantId).HasColumnName("tenant_id");
+        mapping.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        mapping.Property(value => value.Title).HasColumnName("title").HasMaxLength(ShopifyCustomLineMapping.TitleMaxLength);
+        // Referencia blanda a catalog.product_variants: otro esquema, sin FK.
+        mapping.Property(value => value.VariantId).HasColumnName("variant_id");
+        mapping.Property(value => value.CreatedAt).HasColumnName("created_at");
+        mapping.Property(value => value.CreatedBy).HasColumnName("created_by");
+
+        mapping.HasIndex(value => new { value.ConnectionId, value.Title })
+            .IsUnique()
+            .HasDatabaseName(CustomLineMappingConnectionTitleIndex);
     }
 
     private static void ConfigureCityCorrectionJob(ModelBuilder modelBuilder)

@@ -1272,6 +1272,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IHistoricalCityBackfill, HistoricalCityBackfillAdapter>();
         // §5.3: el cron de la conciliación, cada Shopify:Reconcile:IntervalMinutes.
         services.AddShopifyReconcileWorker();
+        // Spec 2026-11-13: las asociaciones de líneas personalizadas (nombres de variantes de Catalog).
+        services.AddShopifyCustomLineMappings();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
