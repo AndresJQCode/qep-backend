@@ -190,6 +190,13 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
               CASE WHEN jsonb_typeof(recent.attributes) = 'object' THEN recent.attributes ELSE jsonb_build_object() END) AS keys(key)
             """).ToListAsync(cancellationToken);
 
+    // Por IX_shopify_orders_tenant_qep_order. Con tracking: la corrección y la decisión de un cambio escriben la fila.
+    public Task<ShopifyOrderMirror?> FindByQepOrderIdAsync(Guid tenantId, Guid qepOrderId, CancellationToken cancellationToken) =>
+        dbContext.Orders
+            .Where(row => row.TenantId == tenantId && row.QepOrderId == qepOrderId)
+            .OrderByDescending(row => row.ShopifyCreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
     // El resultado de SqlQuery: EF lo llena por nombre de columna.
     private sealed class CountsRow
     {
@@ -201,6 +208,65 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
 
         public int ImportedToday { get; init; }
     }
+}
+
+/// <summary>Spec 2026-11-14 §3: los cambios de Shopify. Con tracking para escribir; las listas, sin. Todo filtra por
+/// <c>tenant_id</c>.</summary>
+internal sealed class ShopifyOrderEditRepository(ShopifyDbContext dbContext) : IShopifyOrderEditRepository
+{
+    private static readonly ShopifyOrderEditStatus[] ToReview = [ShopifyOrderEditStatus.Pending, ShopifyOrderEditStatus.Blocked];
+
+    // IX_order_edits_mirror_status. El más nuevo, por si una carrera dejó dos abiertos: el siguiente snapshot los reemplaza.
+    public Task<ShopifyOrderEdit?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        dbContext.OrderEdits
+            .Where(edit => edit.TenantId == tenantId && edit.MirrorOrderId == mirrorOrderId && ToReview.Contains(edit.Status))
+            .OrderByDescending(edit => edit.CreatedAt)
+            .ThenByDescending(edit => edit.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<ShopifyOrderEdit?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+        dbContext.OrderEdits.SingleOrDefaultAsync(edit => edit.TenantId == tenantId && edit.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<ShopifyOrderEdit>> ListByMirrorAsync(
+        Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        await dbContext.OrderEdits
+            .AsNoTracking()
+            .Where(edit => edit.TenantId == tenantId && edit.MirrorOrderId == mirrorOrderId)
+            .OrderByDescending(edit => edit.CreatedAt)
+            .ThenByDescending(edit => edit.Id)
+            .ToListAsync(cancellationToken);
+
+    // IX_order_edits_tenant_status_created (tenant_id, status, created_at).
+    public async Task<(IReadOnlyList<ShopifyOrderEdit> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ShopifyOrderEditStatus> statuses,
+        Guid? connectionId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(statuses);
+        var wanted = statuses.ToArray();
+        var query = dbContext.OrderEdits.AsNoTracking().Where(edit => edit.TenantId == tenantId && wanted.Contains(edit.Status));
+        if (connectionId is { } connection)
+        {
+            query = query.Where(edit => edit.ConnectionId == connection);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(edit => edit.CreatedAt)
+            .ThenByDescending(edit => edit.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return (items, total);
+    }
+
+    public Task<int> CountToReviewAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        dbContext.OrderEdits.CountAsync(edit => edit.TenantId == tenantId && ToReview.Contains(edit.Status), cancellationToken);
+
+    public void Add(ShopifyOrderEdit edit) => dbContext.OrderEdits.Add(edit);
 }
 
 /// <summary>

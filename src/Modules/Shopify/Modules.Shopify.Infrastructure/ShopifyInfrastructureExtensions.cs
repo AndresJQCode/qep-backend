@@ -38,6 +38,7 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyWebhookDeliveryQueue>(provider => provider.GetRequiredService<WebhookDeliveries>());
         services.AddScoped<IShopifyStoreRepository, ShopifyStoreRepository>();
         services.AddScoped<IShopifyOrderMirrorRepository, ShopifyOrderMirrorRepository>();
+        services.AddScoped<IShopifyOrderEditRepository, ShopifyOrderEditRepository>();
         services.AddScoped<IShopifyCityCorrectionRepository, ShopifyCityCorrectionRepository>();
         services.AddScoped<IShopifyCityCorrectionJobRepository, ShopifyCityCorrectionJobRepository>();
         services.AddScoped<IShopifyCustomLineMappingRepository, ShopifyCustomLineMappingRepository>();

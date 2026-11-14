@@ -161,6 +161,22 @@ public sealed class ShopifyImportFlowTests
         Assert.Equal("Dejar en portería", detail!["order"]!["buyerNotes"]!.GetValue<string>());
     }
 
+    // Spec 2026-11-14 §2: la importación guarda la versión de Shopify que aplicó y lo que QEP escribió a partir de ella, leído del
+    // pedido después de escribir (plan D4).
+    [Fact]
+    public async Task ImportRecordsTheAppliedPayloadAndProjection()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture("taxes-included", order => order["note"] = "Dejar en portería"));
+
+        Assert.Equal("#1001", await flow.ScalarAsync("SELECT applied_payload ->> 'name' FROM shopify.orders"));
+        Assert.Equal("1", await flow.ScalarAsync("SELECT jsonb_array_length(applied_projection -> 'lines')::text FROM shopify.orders"));
+        Assert.Equal(
+            await flow.ScalarAsync("SELECT buyer_notes FROM quotations.orders"),
+            await flow.ScalarAsync("SELECT applied_projection ->> 'buyerNotes' FROM shopify.orders"));
+    }
+
     // §6.2.3: el pedido de Shopify nace sin cotización, así que no aparece en la lista de cotizaciones.
     [Fact]
     public async Task ImportNoQuotationNotInQuotationsList()

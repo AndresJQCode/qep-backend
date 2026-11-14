@@ -74,6 +74,37 @@ public interface IShopifyOrderMirrorRepository
     /// aunque el recorrido tarde.
     /// </summary>
     Task<IReadOnlyList<ShopifyOrderMirror>> ListImportedAfterAsync(Guid? afterId, int limit, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14 §6: la fila del espejo de un pedido de QEP, con tracking; <c>null</c> si el pedido no vino de
+    /// Shopify. Va por <c>IX_shopify_orders_tenant_qep_order</c>.</summary>
+    Task<ShopifyOrderMirror?> FindByQepOrderIdAsync(Guid tenantId, Guid qepOrderId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-14 §3 y §6: los cambios de Shopify (<c>shopify.order_edits</c>). Con tracking salvo las listas; lo
+/// agregado commitea con <see cref="IShopifyUnitOfWork"/>. Todo método recibe <c>tenantId</c>.</summary>
+public interface IShopifyOrderEditRepository
+{
+    /// <summary>El cambio pendiente o bloqueado de la fila, si hay (a lo sumo uno).</summary>
+    Task<ShopifyOrderEdit?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    Task<ShopifyOrderEdit?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
+
+    /// <summary>Los cambios de la fila en todos los estados, los más nuevos primero.</summary>
+    Task<IReadOnlyList<ShopifyOrderEdit>> ListByMirrorAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    /// <summary>«Cambios por revisar»: los de esos estados (y de esa tienda, si viene), los más nuevos primero, y el total.</summary>
+    Task<(IReadOnlyList<ShopifyOrderEdit> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ShopifyOrderEditStatus> statuses,
+        Guid? connectionId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>El contador del resumen: los <c>Pending</c> más los <c>Blocked</c>.</summary>
+    Task<int> CountToReviewAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    void Add(ShopifyOrderEdit edit);
 }
 
 /// <summary>Spec 2026-10-26 §5: las huellas de los sinónimos (<c>shopify.city_corrections</c>). Con tracking; lo agregado commitea

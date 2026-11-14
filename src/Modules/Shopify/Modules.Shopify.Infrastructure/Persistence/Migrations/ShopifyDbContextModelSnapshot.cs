@@ -337,11 +337,101 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                     b.ToTable("custom_line_mappings", "shopify");
                 });
 
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyOrderEdit", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("BaseUpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("base_updated_at");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DecidedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("decided_at");
+
+                    b.Property<Guid?>("DecidedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("decided_by");
+
+                    b.Property<string>("Groups")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("groups");
+
+                    b.Property<Guid>("MirrorOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("mirror_order_id");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.Property<Guid>("QepOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("qep_order_id");
+
+                    b.Property<DateTimeOffset>("SnapshotUpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("snapshot_updated_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("StatusReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("status_reason");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MirrorOrderId", "Status")
+                        .HasDatabaseName("IX_order_edits_mirror_status");
+
+                    b.HasIndex("TenantId", "Status", "CreatedAt")
+                        .HasDatabaseName("IX_order_edits_tenant_status_created");
+
+                    b.ToTable("order_edits", "shopify", t =>
+                        {
+                            t.HasCheckConstraint("CK_order_edits_status", "status IN ('Pending','Applied','Blocked','Rejected','Reviewed','Superseded')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Shopify.Domain.ShopifyOrderMirror", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<string>("AppliedPayload")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("applied_payload");
+
+                    b.Property<string>("AppliedProjection")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("applied_projection");
 
                     b.Property<int>("Attempts")
                         .HasColumnType("integer")
@@ -396,6 +486,10 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb")
                         .HasColumnName("payload");
+
+                    b.Property<string>("QepAttributes")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("qep_attributes");
 
                     b.Property<Guid?>("QepCustomerId")
                         .HasColumnType("uuid")
@@ -717,6 +811,15 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_webhook_deliveries_webhook_id");
 
                     b.ToTable("webhook_deliveries", "shopify");
+                });
+
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyOrderEdit", b =>
+                {
+                    b.HasOne("Modules.Shopify.Domain.ShopifyOrderMirror", null)
+                        .WithMany()
+                        .HasForeignKey("MirrorOrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Shopify.Domain.ShopifyStore", b =>

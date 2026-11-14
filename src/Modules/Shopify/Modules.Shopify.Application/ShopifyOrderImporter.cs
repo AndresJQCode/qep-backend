@@ -232,6 +232,16 @@ public sealed class ShopifyOrderImporter(
             row.RecordLastError(syncError);
         }
 
+        // Spec 2026-11-14 §2: la versión aplicada y lo que QEP escribió a partir de ella, leído del pedido después de escribir (plan
+        // D4). También con AlreadyExisted: el pedido de QEP es el que quedó, y es contra él que se mide lo que toque el asesor.
+        if (await orders.ReadStateAsync(tenantId, result.OrderId, cancellationToken) is { } state)
+        {
+            row.RecordApplied(
+                ShopifyOrderIngestion.WritePayload(snapshot),
+                ShopifyOrderProjection.Write(
+                    ShopifyOrderProjection.From(state, ShopifyCustomerResolver.DocumentOf(store, snapshot), snapshot.Attributes)));
+        }
+
         return new ShopifyImportOutcome(row.ImportState);
     }
 

@@ -111,6 +111,10 @@ internal sealed class FakeShopifyDatabase
 
     public List<ShopifyCityCorrectionJob> CityCorrectionJobs { get; } = [];
 
+    public List<ShopifyOrderEdit> PendingOrderEdits { get; } = [];
+
+    public List<ShopifyOrderEdit> OrderEdits { get; } = [];
+
     /// <summary>Los trabajos que otra réplica ya terminó: <c>LockIfPendingAsync</c> los ve no pendientes.</summary>
     public HashSet<Guid> CityCorrectionJobsFinishedElsewhere { get; } = [];
 
@@ -219,6 +223,53 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
 
     public Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<ShopifyOrderMirror?> FindByQepOrderIdAsync(Guid tenantId, Guid qepOrderId, CancellationToken cancellationToken) =>
+        Task.FromResult(
+            database.Orders.Values.Concat(database.PendingOrders)
+                .FirstOrDefault(row => row.TenantId == tenantId && row.QepOrderId == qepOrderId));
+}
+
+/// <summary>Los cambios de Shopify (spec 2026-11-14) en la «base»: lo agregado queda pendiente hasta el guardado de
+/// <see cref="FakeUnitOfWork"/>, y las búsquedas ven las dos cosas, como el tracker de EF.</summary>
+internal sealed class FakeOrderEditRepository(FakeShopifyDatabase database) : IShopifyOrderEditRepository
+{
+    private IEnumerable<ShopifyOrderEdit> All => database.OrderEdits.Concat(database.PendingOrderEdits);
+
+    public Task<ShopifyOrderEdit?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        Task.FromResult(All
+            .Where(edit => edit.TenantId == tenantId && edit.MirrorOrderId == mirrorOrderId && edit.IsOpen)
+            .OrderByDescending(edit => edit.CreatedAt)
+            .FirstOrDefault());
+
+    public Task<ShopifyOrderEdit?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult(All.FirstOrDefault(edit => edit.TenantId == tenantId && edit.Id == id));
+
+    public Task<IReadOnlyList<ShopifyOrderEdit>> ListByMirrorAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyOrderEdit>>(
+            [.. All.Where(edit => edit.TenantId == tenantId && edit.MirrorOrderId == mirrorOrderId).OrderByDescending(edit => edit.CreatedAt)]);
+
+    public Task<(IReadOnlyList<ShopifyOrderEdit> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ShopifyOrderEditStatus> statuses,
+        Guid? connectionId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var matching = All
+            .Where(edit => edit.TenantId == tenantId && statuses.Contains(edit.Status))
+            .Where(edit => connectionId is not { } connection || edit.ConnectionId == connection)
+            .OrderByDescending(edit => edit.CreatedAt)
+            .ToList();
+        return Task.FromResult<(IReadOnlyList<ShopifyOrderEdit>, int)>(
+            ([.. matching.Skip((page - 1) * pageSize).Take(pageSize)], matching.Count));
+    }
+
+    public Task<int> CountToReviewAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(All.Count(edit => edit.TenantId == tenantId && edit.IsOpen));
+
+    public void Add(ShopifyOrderEdit edit) => database.PendingOrderEdits.Add(edit);
 }
 
 internal sealed class FakeWebhookDeliveries(FakeShopifyDatabase database) : IShopifyWebhookDeliveries
@@ -269,17 +320,19 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
         }
 
         var written = database.PendingStores.Count + database.PendingOrders.Count + database.PendingAudit.Count
-            + database.PendingCityCorrections.Count + database.PendingCityCorrectionJobs.Count;
+            + database.PendingCityCorrections.Count + database.PendingCityCorrectionJobs.Count + database.PendingOrderEdits.Count;
         database.PendingStores.ForEach(store => database.Stores[store.ConnectionId] = store);
         database.PendingOrders.ForEach(row => database.Orders[(row.ConnectionId, row.ShopifyOrderId)] = row);
         database.Audit.AddRange(database.PendingAudit);
         database.CityCorrections.AddRange(database.PendingCityCorrections);
         database.CityCorrectionJobs.AddRange(database.PendingCityCorrectionJobs);
+        database.OrderEdits.AddRange(database.PendingOrderEdits);
         database.PendingStores.Clear();
         database.PendingOrders.Clear();
         database.PendingAudit.Clear();
         database.PendingCityCorrections.Clear();
         database.PendingCityCorrectionJobs.Clear();
+        database.PendingOrderEdits.Clear();
         return written;
     }
 
@@ -305,6 +358,7 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
         database.PendingAudit.Clear();
         database.PendingCityCorrections.Clear();
         database.PendingCityCorrectionJobs.Clear();
+        database.PendingOrderEdits.Clear();
     }
 }
 

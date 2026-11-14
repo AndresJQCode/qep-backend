@@ -58,6 +58,8 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
 
     public DbSet<ShopifyCustomLineMapping> CustomLineMappings => Set<ShopifyCustomLineMapping>();
 
+    public DbSet<ShopifyOrderEdit> OrderEdits => Set<ShopifyOrderEdit>();
+
     internal DbSet<ShopifyInboxMessage> Inbox => Set<ShopifyInboxMessage>();
 
     internal DbSet<ShopifyOutboxRecord> Outbox => Set<ShopifyOutboxRecord>();
@@ -76,6 +78,7 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     {
         ConfigureStore(modelBuilder);
         ConfigureOrder(modelBuilder);
+        ConfigureOrderEdit(modelBuilder);
         ConfigureDelivery(modelBuilder);
         ConfigureCityCorrection(modelBuilder);
         ConfigureCityCorrectionJob(modelBuilder);
@@ -312,6 +315,10 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         order.Property(value => value.QepCustomerId).HasColumnName("qep_customer_id");
         order.Property(value => value.QepOrderId).HasColumnName("qep_order_id");
         order.Property(value => value.TotalDifference).HasColumnName("total_difference").HasPrecision(14, 2);
+        // Spec 2026-11-14 §2 y §5: la versión aplicada, la proyección y los atributos de QEP. Nulas en las filas de antes (sin backfill).
+        order.Property(value => value.AppliedPayload).HasColumnName("applied_payload").HasColumnType("jsonb");
+        order.Property(value => value.AppliedProjection).HasColumnName("applied_projection").HasColumnType("jsonb");
+        order.Property(value => value.QepAttributes).HasColumnName("qep_attributes").HasColumnType("jsonb");
         // Webhook, conciliación y reintento manual escriben la misma fila; sin token, el último en guardar pisaría al otro.
         order.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
 
@@ -323,6 +330,41 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         order.HasIndex(value => new { value.TenantId, value.QepOrderId }).HasDatabaseName("IX_shopify_orders_tenant_qep_order");
         // §6.2.1: el comprador ya visto en esta tienda.
         order.HasIndex(value => new { value.ConnectionId, value.ShopifyCustomerId }).HasDatabaseName("IX_shopify_orders_connection_customer");
+    }
+
+    // Spec 2026-11-14 §3 (el spec la llama order_changes; plan D1). Sin índice único: la concurrencia entre cambios la da la
+    // versión de la fila del espejo, que crear o reemplazar un cambio siempre toca (D10).
+    private static void ConfigureOrderEdit(ModelBuilder modelBuilder)
+    {
+        var edit = modelBuilder.Entity<ShopifyOrderEdit>();
+        edit.ToTable("order_edits", Schema, table =>
+            table.HasCheckConstraint("CK_order_edits_status", NamesCheck<ShopifyOrderEditStatus>("status")));
+        edit.HasKey(value => value.Id);
+        edit.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        edit.Property(value => value.TenantId).HasColumnName("tenant_id");
+        edit.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        edit.Property(value => value.MirrorOrderId).HasColumnName("mirror_order_id");
+        // Referencia blanda a quotations.orders: otro módulo, sin FK.
+        edit.Property(value => value.QepOrderId).HasColumnName("qep_order_id");
+        edit.Property(value => value.BaseUpdatedAt).HasColumnName("base_updated_at");
+        edit.Property(value => value.SnapshotUpdatedAt).HasColumnName("snapshot_updated_at");
+        edit.Property(value => value.Payload).HasColumnName("payload").HasColumnType("jsonb");
+        edit.Property(value => value.Groups).HasColumnName("groups").HasColumnType("jsonb");
+        edit.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(EnumNameMaxLength);
+        edit.Property(value => value.StatusReason).HasColumnName("status_reason").HasMaxLength(ShopifyOrderEdit.StatusReasonMaxLength);
+        edit.Property(value => value.CreatedAt).HasColumnName("created_at");
+        edit.Property(value => value.DecidedAt).HasColumnName("decided_at");
+        edit.Property(value => value.DecidedBy).HasColumnName("decided_by");
+        edit.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        edit.Ignore(value => value.IsOpen);
+
+        // Borrar la fila del espejo (shop/redact, borrar la tienda) se lleva sus cambios.
+        edit.HasOne<ShopifyOrderMirror>()
+            .WithMany()
+            .HasForeignKey(value => value.MirrorOrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+        edit.HasIndex(value => new { value.MirrorOrderId, value.Status }).HasDatabaseName("IX_order_edits_mirror_status");
+        edit.HasIndex(value => new { value.TenantId, value.Status, value.CreatedAt }).HasDatabaseName("IX_order_edits_tenant_status_created");
     }
 
     private static void ConfigureDelivery(ModelBuilder modelBuilder)
