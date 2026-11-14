@@ -25,7 +25,8 @@ public sealed record ShopifyGroupDiff(ShopifyEditGroupKind Kind, IReadOnlyList<S
 /// Spec 2026-11-14 §3: el diff por grupo entre la versión de Shopify aplicada y una nueva. Compara Shopify contra Shopify (enfoque
 /// A1): lo que el asesor cambió en QEP no aparece acá; eso lo decide el planificador contra la proyección.
 /// <list type="bullet">
-/// <item>Líneas: por id de línea de Shopify; una línea sin id (payload anterior al spec) por su posición. Cuenta la cantidad vigente,
+/// <item>Líneas: por id de línea de Shopify; si a alguna línea de cualquiera de los dos lados le falta el id (payload anterior al
+/// spec), las de los dos lados por su posición. Cuenta la cantidad vigente,
 /// el precio, el descuento, el SKU y el título. Una línea quitada (<see cref="ShopifyLine.IsRemoved"/>) o ausente tiene
 /// <c>after</c> nulo; una nueva, <c>before</c> nulo.</item>
 /// <item>Envío: título de la transportadora, valor, recogida y contraentrega, con las mismas reglas del importador.</item>
@@ -75,8 +76,11 @@ public static class ShopifyOrderDiff
 
     private static List<ShopifyEditRow> LineRows(ShopifyOrderSnapshot before, ShopifyOrderSnapshot after)
     {
-        var previous = Keyed(before.Lines);
-        var current = Keyed(after.Lines);
+        // Review I-1: si a una línea de cualquiera de los dos lados le falta el id (un payload guardado antes del spec contra uno
+        // nuevo), los dos lados van por posición; si no, el primer webhook después del despliegue quitaría y agregaría cada línea.
+        var byPosition = before.Lines.Concat(after.Lines).Any(line => line.Id is null);
+        var previous = Keyed(before.Lines, byPosition);
+        var current = Keyed(after.Lines, byPosition);
         var rows = new List<ShopifyEditRow>();
         foreach (var key in previous.Keys.Concat(current.Keys.Where(key => !previous.ContainsKey(key))))
         {
@@ -92,8 +96,8 @@ public static class ShopifyOrderDiff
         return rows;
     }
 
-    // Una línea quitada cuenta como ausente. La clave es el id de Shopify o, sin él, la posición en el pedido.
-    private static Dictionary<string, ShopifyLine> Keyed(IReadOnlyList<ShopifyLine> lines)
+    // Una línea quitada cuenta como ausente. La clave es el id de Shopify o, por posición, el lugar en el pedido.
+    private static Dictionary<string, ShopifyLine> Keyed(IReadOnlyList<ShopifyLine> lines, bool byPosition)
     {
         var keyed = new Dictionary<string, ShopifyLine>(StringComparer.Ordinal);
         for (var index = 0; index < lines.Count; index++)
@@ -101,7 +105,7 @@ public static class ShopifyOrderDiff
             var line = lines[index];
             if (!line.IsRemoved)
             {
-                keyed[line.Id is { } id ? id.ToString(System.Globalization.CultureInfo.InvariantCulture) : $"#{index}"] = line;
+                keyed[!byPosition && line.Id is { } id ? id.ToString(System.Globalization.CultureInfo.InvariantCulture) : $"#{index}"] = line;
             }
         }
 

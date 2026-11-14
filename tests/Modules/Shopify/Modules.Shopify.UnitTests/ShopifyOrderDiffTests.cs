@@ -130,6 +130,16 @@ public sealed class ShopifyOrderDiffTests
     }
 
     [Fact]
+    public void ALegacyPayloadWithoutLineIdsAgainstANewSnapshotHasNoLinesDiff()
+    {
+        // Un payload guardado antes del spec no trae el id de la línea; el siguiente webhook sí. Las mismas líneas no son un cambio.
+        var before = Snapshot(lines: [Shirt(id: null), new ShopifyLine("GOR-001", 1m, 30_000m, 0m, "Gorra")]);
+        var after = Snapshot(lines: [Shirt(), new ShopifyLine("GOR-001", 1m, 30_000m, 0m, "Gorra", false, 9002, 1m)]);
+
+        Assert.Empty(ShopifyOrderDiff.Compute(before, after, Store()));
+    }
+
+    [Fact]
     public void AShippingAmountChangeIsAShippingRow()
     {
         var after = Snapshot(shippingLines: [new ShopifyShippingLine("standard", "Envío estándar", 18_000m, 0m, false)]);
