@@ -88,10 +88,29 @@ internal static class CustomerMapping
             Company: company,
             ContactCount: contactCount,
             Contacts: contacts,
-            WithholdingTaxRates: withholdingTaxRates);
+            WithholdingTaxRates: withholdingTaxRates,
+            WithholdingAgentCities: ToAgentCityDtos(customer, citiesById));
     }
 
     private const string RetefuenteType = "Retefuente";
+
+    // Spec ReteICA por empresa §9.3: los municipios salen del mismo lote de ciudades que la ficha ya resolvió
+    // (ToDtoAsync los suma). El listado no los pide: ahí citiesById no los trae y la lista queda vacía, que nadie lee. La FK
+    // a geography.cities garantiza que existan; un miss se omite en vez de tirar la ficha. Orden estable: departamento,
+    // municipio, tipo.
+    private static CustomerWithholdingAgentCityDto[] ToAgentCityDtos(
+        Customer customer, IReadOnlyDictionary<Guid, CustomerCityRef> citiesById) =>
+        [.. customer.WithholdingAgentCities
+            .Where(agent => citiesById.ContainsKey(agent.CityId))
+            .Select(agent => (Agent: agent, City: citiesById[agent.CityId]))
+            .OrderBy(pair => pair.City.DepartmentName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.City.CityName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Agent.Type, StringComparer.Ordinal)
+            .Select(pair => new CustomerWithholdingAgentCityDto(
+                pair.Agent.Type,
+                pair.Agent.Country,
+                new CustomerMunicipalityDto(
+                    pair.City.CityId, pair.City.CityName, pair.City.DepartmentId, pair.City.DepartmentName)))];
 
     // Del id guardado a lo que la ficha pinta. Un id que el catálogo ya no devuelve no puede pasar (la tasa «en uso» no se
     // desactiva ni se borra), pero si pasara, se prefiere omitirlo a tirar la ficha entera. Orden estable: país, tipo, nombre.
@@ -183,6 +202,7 @@ internal static class CustomerMapping
         var citiesById = await geographyLookup.FindCitiesAsync(
             CustomerCityIds.OfAddresses(customer)
                 .Concat(CustomerCityIds.OfDomicile(customer))
+                .Concat(customer.WithholdingAgentCities.Select(agent => agent.CityId))
                 .Distinct()
                 .ToArray(),
             cancellationToken);

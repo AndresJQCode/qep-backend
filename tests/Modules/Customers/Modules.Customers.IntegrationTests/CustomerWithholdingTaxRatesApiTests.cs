@@ -79,35 +79,31 @@ public sealed class CustomerWithholdingTaxRatesApiTests
         [.. customer.GetProperty("withholdingTaxRates").EnumerateArray().Select(rate => rate.GetProperty("id").GetGuid())];
 
     [Fact]
-    public async Task CreateWithRetefuenteAndReteIcaReturnsBoth()
+    public async Task CreateWithRetefuenteReturnsIt()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
         var city = await EnsureCityAsync(client);
         var retefuente = await InsertRateAsync(database.GetConnectionString(), TenantId, "Retefuente servicios", "Retefuente", 4m);
-        var reteIca = await InsertRateAsync(database.GetConnectionString(), TenantId, "ReteICA Bogota", "ReteICA", 0.966m);
         var body = Body(city.CityId);
-        body["withholdingTaxRateIds"] = new[] { retefuente, reteIca };
+        body["withholdingTaxRateIds"] = new[] { retefuente };
 
         var customer = await CreateAsync(client, body);
 
-        var rates = customer.GetProperty("withholdingTaxRates").EnumerateArray().ToArray();
-        Assert.Equal(2, rates.Length);
-        var first = rates.Single(rate => rate.GetProperty("id").GetGuid() == retefuente);
+        var first = Assert.Single(customer.GetProperty("withholdingTaxRates").EnumerateArray());
+        Assert.Equal(retefuente, first.GetProperty("id").GetGuid());
         Assert.Equal("Retefuente servicios", first.GetProperty("name").GetString());
         Assert.Equal("Retefuente", first.GetProperty("type").GetString());
         Assert.Equal("CO", first.GetProperty("country").GetString());
         Assert.Equal(4m, first.GetProperty("percentage").GetDecimal());
         Assert.True(first.GetProperty("isActive").GetBoolean());
-        var second = rates.Single(rate => rate.GetProperty("id").GetGuid() == reteIca);
-        Assert.Equal(0.966m, second.GetProperty("percentage").GetDecimal());
         Assert.True(customer.GetProperty("withRetention").GetBoolean());
 
         var read = await ReadAsync(
             await client.GetAsync($"{CustomersUrl()}/{customer.GetProperty("id").GetGuid()}", TestContext.Current.CancellationToken),
             HttpStatusCode.OK);
-        Assert.Equivalent(new[] { retefuente, reteIca }, RateIds(read));
+        Assert.Equal([retefuente], RateIds(read));
     }
 
     [Fact]
@@ -259,8 +255,9 @@ public sealed class CustomerWithholdingTaxRatesApiTests
         Assert.False(customer.GetProperty("withRetention").GetBoolean());
     }
 
+    // Spec ReteICA por empresa §7.4 (A15): la ReteICA es de la empresa facturadora y del municipio, no del cliente.
     [Fact]
-    public async Task OnlyReteIcaDerivesWithRetentionFalse()
+    public async Task AssigningAReteIcaRateIs422()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -270,9 +267,112 @@ public sealed class CustomerWithholdingTaxRatesApiTests
         var body = Body(city.CityId);
         body["withholdingTaxRateIds"] = new[] { reteIca };
 
-        var customer = await CreateAsync(client, body);
+        var response = await client.PostAsJsonAsync(CustomersUrl(), body, TestContext.Current.CancellationToken);
 
-        Assert.Equal([reteIca], RateIds(customer));
-        Assert.False(customer.GetProperty("withRetention").GetBoolean());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("customers.customer.withholding_tax_rate_municipal", await ProblemCodeAsync(response));
+    }
+
+    [Fact]
+    public async Task AgentWithRetefuenteTypeIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var body = Body(city.CityId);
+        body["withholdingAgentCities"] = new[] { new { type = "Retefuente", country = "CO", cityId = city.CityId } };
+
+        var response = await client.PostAsJsonAsync(CustomersUrl(), body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("customers.customer.withholding_agent_type_invalid", await ProblemCodeAsync(response));
+    }
+
+    [Fact]
+    public async Task AgentWithUnknownCityIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var body = Body(city.CityId);
+        body["withholdingAgentCities"] = new[] { new { type = "ReteICA", country = "CO", cityId = Guid.CreateVersion7() } };
+
+        var response = await client.PostAsJsonAsync(CustomersUrl(), body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("customers.customer.withholding_agent_city_invalid", await ProblemCodeAsync(response));
+    }
+
+    // §9.3: la ficha devuelve cada municipio con la referencia completa, para pintarlo sin preguntarle a Geography.
+    [Fact]
+    public async Task AgentCitiesRoundTrip()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cities = await EnsureCitiesAsync(client, 2);
+        var body = Body(cities[0].CityId);
+        body["withholdingAgentCities"] = cities
+            .Select(city => new { type = "ReteICA", country = "CO", cityId = city.CityId })
+            .ToArray();
+
+        var created = await CreateAsync(client, body);
+        var read = await ReadAsync(
+            await client.GetAsync($"{CustomersUrl()}/{created.GetProperty("id").GetGuid()}", TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+
+        foreach (var customer in new[] { created, read })
+        {
+            var agents = customer.GetProperty("withholdingAgentCities").EnumerateArray().ToArray();
+            Assert.Equal(2, agents.Length);
+            foreach (var fixture in cities)
+            {
+                var agent = agents.Single(value => value.GetProperty("city").GetProperty("id").GetGuid() == fixture.CityId);
+                Assert.Equal("ReteICA", agent.GetProperty("type").GetString());
+                Assert.Equal("CO", agent.GetProperty("country").GetString());
+                Assert.Equal(fixture.CityName, agent.GetProperty("city").GetProperty("name").GetString());
+                Assert.Equal(fixture.DepartmentId, agent.GetProperty("city").GetProperty("departmentId").GetGuid());
+                Assert.Equal(fixture.DepartmentName, agent.GetProperty("city").GetProperty("departmentName").GetString());
+            }
+        }
+    }
+
+    // El frontend viejo no manda el campo: el PUT no puede borrar lo que no conoce.
+    [Fact]
+    public async Task EditWithoutAgentCitiesKeepsThem()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var body = Body(city.CityId);
+        body["withholdingAgentCities"] = new[] { new { type = "ReteICA", country = "CO", cityId = city.CityId } };
+        var created = await CreateAsync(client, body);
+
+        var edit = Body(city.CityId);
+        edit["name"] = "Verde Esencial Editada";
+        var updated = await UpdateAsync(client, created.GetProperty("id").GetGuid(), edit);
+
+        Assert.Single(updated.GetProperty("withholdingAgentCities").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task EmptyListClearsThem()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var body = Body(city.CityId);
+        body["withholdingAgentCities"] = new[] { new { type = "ReteICA", country = "CO", cityId = city.CityId } };
+        var created = await CreateAsync(client, body);
+
+        var edit = Body(city.CityId);
+        edit["withholdingAgentCities"] = Array.Empty<object>();
+        var updated = await UpdateAsync(client, created.GetProperty("id").GetGuid(), edit);
+
+        Assert.Empty(updated.GetProperty("withholdingAgentCities").EnumerateArray());
     }
 }

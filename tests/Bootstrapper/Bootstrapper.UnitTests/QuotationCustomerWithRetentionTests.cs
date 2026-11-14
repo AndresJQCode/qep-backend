@@ -16,23 +16,15 @@ public sealed class QuotationCustomerWithRetentionTests
     private static readonly CustomerTaxRateRef RetefuenteSpain =
         new(Guid.Parse("01900000-0000-7000-8000-000000001102"), "Retención IRPF 15 %", "Retefuente", "ES", 15m, true, true);
 
-    private static readonly CustomerTaxRateRef ReteIca =
-        new(Guid.Parse("01900000-0000-7000-8000-000000001103"), "ReteICA 0,966 %", "ReteICA", "CO", 0.966m, true, true);
-
     private static readonly Guid CityId = Guid.Parse("01900000-0000-7000-8000-000000001110");
 
     private static readonly Guid DeletedRetefuenteId = Guid.Parse("01900000-0000-7000-8000-000000001104");
 
+    // Desde el spec ReteICA por empresa (A15) el cliente sólo tiene tasas nacionales: el caso «sólo ReteICA» ya no existe.
     [Fact]
     public async Task ACustomerWithARetefuenteOfAnyCountryWithholds()
     {
-        Assert.True(await WithRetentionAsync(RetefuenteSpain.Id, ReteIca.Id));
-    }
-
-    [Fact]
-    public async Task AReteIcaOnlyCustomerDoesNotWithhold()
-    {
-        Assert.False(await WithRetentionAsync(ReteIca.Id));
+        Assert.True(await WithRetentionAsync(RetefuenteSpain.Id));
     }
 
     // La tasa se borró del catálogo después de asignarla: ya no hay de dónde saber su tipo, y no cuenta.
@@ -59,7 +51,7 @@ public sealed class QuotationCustomerWithRetentionTests
         var lookup = new QuotationCustomerLookup(
             new FakeCustomerRepository(customer),
             new EmptyGeography(),
-            new CatalogRates(RetefuenteSpain, ReteIca),
+            new CatalogRates(RetefuenteSpain),
             companies: null!);
 
         var found = await lookup.FindAsync(TenantId, customer.Id.Value, TestContext.Current.CancellationToken);

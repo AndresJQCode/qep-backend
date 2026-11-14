@@ -18,8 +18,10 @@ public sealed class QuotationWithholdingLookupTests
     private static readonly TaxRate Retefuente = TaxRate.Create(
         TaxRateId.New(), TenantId, "Retefuente 2,5 %", 2.5m, "Retefuente", "CO", null, null, Now);
 
-    private static readonly TaxRate ReteIca = TaxRate.Create(
-        TaxRateId.New(), TenantId, "ReteICA Bogotá", 0.966m, "ReteICA", "CO", 4m, Guid.CreateVersion7(), Now);
+    // Nacional y con base mínima: desde el spec ReteICA por empresa (A15) el cliente no puede tener una ReteICA, y la
+    // unidad tributaria se congela igual en cualquier tasa con base.
+    private static readonly TaxRate WithBase = TaxRate.Create(
+        TaxRateId.New(), TenantId, "Retefuente servicios 4 %", 4m, "Retefuente", "CO", 4m, null, Now);
 
     [Theory]
     [InlineData(2026, 49_799)]
@@ -29,8 +31,8 @@ public sealed class QuotationWithholdingLookupTests
     {
         var rates = await ForCustomerAsync(country: null, new DateOnly(documentYear, 6, 1), Uvt(2025, 47_065m), Uvt(2026, 49_799m));
 
-        var reteIca = Assert.Single(rates, rate => rate.TaxRateId == ReteIca.Id.Value);
-        Assert.Equal((4m, "UVT", (decimal?)expectedUvt), (reteIca.MinimumBase, reteIca.MinimumBaseUnit, reteIca.TaxUnitValue));
+        var withBase = Assert.Single(rates, rate => rate.TaxRateId == WithBase.Id.Value);
+        Assert.Equal((4m, "UVT", (decimal?)expectedUvt), (withBase.MinimumBase, withBase.MinimumBaseUnit, withBase.TaxUnitValue));
         // Sin base mínima no hay unidad que congelar.
         var retefuente = Assert.Single(rates, rate => rate.TaxRateId == Retefuente.Id.Value);
         Assert.Equal((null, null, null), (retefuente.MinimumBase, retefuente.MinimumBaseUnit, retefuente.TaxUnitValue));
@@ -41,7 +43,7 @@ public sealed class QuotationWithholdingLookupTests
     {
         var rates = await ForCustomerAsync(country: null, new DateOnly(2024, 6, 1), Uvt(2025, 47_065m));
 
-        Assert.Null(Assert.Single(rates, rate => rate.TaxRateId == ReteIca.Id.Value).TaxUnitValue);
+        Assert.Null(Assert.Single(rates, rate => rate.TaxRateId == WithBase.Id.Value).TaxUnitValue);
     }
 
     [Theory]
@@ -62,7 +64,7 @@ public sealed class QuotationWithholdingLookupTests
         var rates = await ForCustomerAsync(country: null, new DateOnly(2026, 6, 1), Uvt(2026, 49_799m));
 
         Assert.Equal(
-            [(Retefuente.Id.Value, "Retefuente 2,5 %", "Retefuente", "CO", 2.5m), (ReteIca.Id.Value, "ReteICA Bogotá", "ReteICA", "CO", 0.966m)],
+            [(Retefuente.Id.Value, "Retefuente 2,5 %", "Retefuente", "CO", 2.5m), (WithBase.Id.Value, "Retefuente servicios 4 %", "Retefuente", "CO", 4m)],
             rates.Select(rate => (rate.TaxRateId, rate.Name, rate.Type, rate.Country, rate.Percentage)).ToArray());
     }
 
@@ -72,14 +74,14 @@ public sealed class QuotationWithholdingLookupTests
         var inactive = TaxRate.Create(TaxRateId.New(), TenantId, "Retefuente vieja", 3.5m, "Retefuente", "CO", null, null, Now);
         inactive.Deactivate(Now);
         var vat = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19 %", 19m, "IVA", "CO", null, null, Now);
-        var lookup = Lookup(new FakeCustomerRepository(), [ReteIca, inactive, vat], Uvt(2026, 49_799m));
+        var lookup = Lookup(new FakeCustomerRepository(), [WithBase, inactive, vat], Uvt(2026, 49_799m));
 
         var candidates = await lookup.ForRatesAsync(
-            TenantId, [ReteIca.Id.Value, inactive.Id.Value, vat.Id.Value, Guid.NewGuid()], new DateOnly(2026, 6, 1),
+            TenantId, [WithBase.Id.Value, inactive.Id.Value, vat.Id.Value, Guid.NewGuid()], new DateOnly(2026, 6, 1),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(3, candidates.Count);
-        Assert.Equal((true, true, (decimal?)49_799m), (candidates[ReteIca.Id.Value].IsActive, candidates[ReteIca.Id.Value].Withholds, candidates[ReteIca.Id.Value].Rate.TaxUnitValue));
+        Assert.Equal((true, true, (decimal?)49_799m), (candidates[WithBase.Id.Value].IsActive, candidates[WithBase.Id.Value].Withholds, candidates[WithBase.Id.Value].Rate.TaxUnitValue));
         Assert.False(candidates[inactive.Id.Value].IsActive);
         Assert.False(candidates[vat.Id.Value].Withholds);
     }
@@ -122,8 +124,8 @@ public sealed class QuotationWithholdingLookupTests
         string? country, DateOnly documentDate, params TaxUnitValue[] uvts)
     {
         var customer = NewCustomer();
-        customer.SetWithholdingTaxRates([Retefuente.Id.Value, ReteIca.Id.Value], Now);
-        var lookup = Lookup(new FakeCustomerRepository(customer), [Retefuente, ReteIca], uvts);
+        customer.SetWithholdingTaxRates([Retefuente.Id.Value, WithBase.Id.Value], Now);
+        var lookup = Lookup(new FakeCustomerRepository(customer), [Retefuente, WithBase], uvts);
 
         return await lookup.ForCustomerAsync(
             TenantId, customer.Id.Value, country, documentDate, TestContext.Current.CancellationToken);

@@ -25,19 +25,20 @@ public sealed class OrderWithholdingsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var setup = await SetUpAsync(factory);
         var retefuente = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
-        var reteIca = await InsertWithholdingRateAsync(factory, setup.TenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m);
+        // Spec ReteICA por empresa (A15): el cliente ya no puede tener una ReteICA; la del pedido sale de la empresa y del
+        // municipio (Bloque C).
         var clientId = await CreateActiveCustomerAsync(
-            setup.Client, setup.TenantId, withholdingTaxRateIds: [retefuente, reteIca]);
+            setup.Client, setup.TenantId, withholdingTaxRateIds: [retefuente]);
         var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
 
         var order = await ConvertAsync(setup, quotation.Id);
 
-        // La misma foto, también la que no aplica (100.000 no llega a 4 UVT): la edición la prellena (D21).
+        // La misma foto: la edición la prellena (D21).
         Assert.Equal(
             quotation.Withholdings.Select(row => (row.TaxRateId, row.Base, row.Amount, row.TaxUnitValue)).ToArray(),
             order.Withholdings.Select(row => (row.TaxRateId, row.Base, row.Amount, row.TaxUnitValue)).ToArray());
         Assert.Equal((retefuente, 2_500m), (Assert.Single(order.Withholdings).TaxRateId, order.RetentionAmount));
-        Assert.Equal(new[] { retefuente, reteIca }, order.BillingWithholdingTaxRates.Select(rate => rate.Id).ToArray());
+        Assert.Equal(new[] { retefuente }, order.BillingWithholdingTaxRates.Select(rate => rate.Id).ToArray());
         Assert.Empty(order.CustomerWithholdingTaxRates);
         Assert.Equal(quotation.NetTotal, order.NetTotal);
         // Con los datos del cliente no hay parte propia.

@@ -1369,6 +1369,58 @@ public sealed class CustomerTests
         Assert.Equal(1, customer.Version);
     }
 
+    // Spec ReteICA por empresa §7.4: los municipios donde el cliente es agente retenedor, por (país, tipo).
+    [Fact]
+    public void AgentCitiesCollapseDuplicates()
+    {
+        var customer = Create();
+
+        Assert.True(customer.SetWithholdingAgentCities(
+            [new("co", "ReteICA", CityId), new("CO", "ReteICA", CityId), new("CO", "ReteICA", OtherCityId)], Later));
+
+        Assert.Equal(2, customer.WithholdingAgentCities.Count);
+        Assert.All(customer.WithholdingAgentCities, city => Assert.Equal("CO", city.Country));
+        Assert.Equal(2, customer.Version);
+    }
+
+    [Fact]
+    public void SameAgentSetDoesNotBumpVersion()
+    {
+        var customer = Create();
+        customer.SetWithholdingAgentCities([new("CO", "ReteICA", CityId), new("CO", "ReteICA", OtherCityId)], Later);
+
+        var changed = customer.SetWithholdingAgentCities(
+            [new("CO", "ReteICA", OtherCityId), new("co", "ReteICA", CityId)], Later.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(2, customer.Version);
+        Assert.Equal(Later, customer.UpdatedAt);
+    }
+
+    [Fact]
+    public void IsWithholdingAgentMatchesCountryTypeAndCity()
+    {
+        var customer = Create();
+        customer.SetWithholdingAgentCities([new("CO", "ReteICA", CityId)], Later);
+
+        Assert.True(customer.IsWithholdingAgent("CO", "ReteICA", CityId));
+        Assert.True(customer.IsWithholdingAgent(" co ", "ReteICA", CityId));
+        Assert.False(customer.IsWithholdingAgent("CO", "ReteICA", OtherCityId));
+        Assert.False(customer.IsWithholdingAgent("CO", "Retefuente", CityId));
+        Assert.False(customer.IsWithholdingAgent("ES", "ReteICA", CityId));
+    }
+
+    [Fact]
+    public void EmptyAgentListClearsThem()
+    {
+        var customer = Create();
+        customer.SetWithholdingAgentCities([new("CO", "ReteICA", CityId)], Later);
+
+        Assert.True(customer.SetWithholdingAgentCities([], Later.AddHours(1)));
+
+        Assert.Empty(customer.WithholdingAgentCities);
+    }
+
     private static readonly Guid RateA = Guid.Parse("01900000-0000-7000-8000-0000000000a1");
     private static readonly Guid RateB = Guid.Parse("01900000-0000-7000-8000-0000000000a2");
 

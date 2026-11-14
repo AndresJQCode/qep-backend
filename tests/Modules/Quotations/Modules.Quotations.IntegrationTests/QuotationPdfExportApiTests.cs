@@ -89,14 +89,14 @@ public sealed class QuotationPdfExportApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        // Una UVT redonda: la ReteICA (4 UVT = 200.000) aplica sobre una base de 300.000.
+        // Una UVT redonda: la Retefuente (4 UVT = 200.000) aplica sobre una base de 300.000. Desde el spec ReteICA por
+        // empresa (A15) el cliente no puede tener una ReteICA: la fila municipal del PDF la cubre el Bloque C.
         await InsertTaxUnitValueAsync(factory, "CO", TodayInBogota().Year, 50_000m);
         var company = await CreateCompanyWithBankAccountAsync(client, tenantId);
         var vat = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
         var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 119_000m, taxRateId: vat);
-        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
-        var reteIca = await InsertWithholdingRateAsync(factory, tenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m);
-        var customerId = await CreateActiveCustomerAsync(client, tenantId, withholdingTaxRateIds: [retefuente, reteIca]);
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m, minimumBase: 4m);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId, withholdingTaxRateIds: [retefuente]);
         var quotation = await CreateQuotationAsync(
             client, tenantId, customerId,
             billingAccount: new QuotationBillingAccountRequest(
@@ -112,9 +112,9 @@ public sealed class QuotationPdfExportApiTests
         var document = factory.PdfRenderer.LastDocument;
         Assert.NotNull(document);
         Assert.Equal(
-            new[] { new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m), new QuotationPdfWithholding("ReteICA Bogotá", 2_898m) },
+            new[] { new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m) },
             document.Withholdings);
-        Assert.Equal(10_398m, document.RetentionAmount);
+        Assert.Equal(7_500m, document.RetentionAmount);
     }
 
     [Fact]

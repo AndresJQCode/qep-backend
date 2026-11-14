@@ -21,7 +21,9 @@ public sealed record CreateCustomerCommand(
     bool VatSurplus,
     string? PersonType = null,
     // Spec impuestos por tipo §9.2: null no asigna ninguna. El WithRetention del cuerpo viejo ya no entra al comando.
-    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    // Spec ReteICA por empresa §9.3: null no registra ningún municipio.
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
@@ -60,6 +62,8 @@ public sealed class CreateCustomerHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         await CustomerWithholdingRules.ValidateAsync(
             taxRateLookup, command.TenantId, command.WithholdingTaxRateIds ?? [], cancellationToken);
+        var agentCities = await CustomerWithholdingAgentRules.ValidateAsync(
+            geographyLookup, command.WithholdingAgentCities ?? [], cancellationToken);
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
         await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
@@ -133,6 +137,11 @@ public sealed class CreateCustomerHandler(
         if (command.WithholdingTaxRateIds is { Count: > 0 } taxRateIds)
         {
             customer.SetWithholdingTaxRates(taxRateIds, now);
+        }
+
+        if (agentCities.Count > 0)
+        {
+            customer.SetWithholdingAgentCities(agentCities, now);
         }
 
         repository.Add(customer);
