@@ -269,4 +269,92 @@ public sealed class TemplateCatalogTests
 
         Assert.Equal("Hola Ana, tienes 12 puntos", TemplateCatalog.Render(template, new Dictionary<string, string> { ["1"] = "Ana", ["2"] = "12" }));
     }
+
+    [Theory]
+    [InlineData("IMAGE", "Image")]
+    [InlineData("VIDEO", "Video")]
+    [InlineData("DOCUMENT", "Document")]
+    public void AMediaHeaderKeepsItsReasonAndIsSendableWithTheHeader(string format, string expected)
+    {
+        var template = Single($$"""
+            { "name": "aviso_logo", "language": "es", "status": "APPROVED", "category": "UTILITY",
+              "components": [ { "type": "HEADER", "format": "{{format}}" }, { "type": "BODY", "text": "Tu guía {{1}}" } ] }
+            """);
+
+        Assert.False(template.Sendable);
+        Assert.Equal("media_header", template.UnsupportedReason);
+        Assert.Equal(expected, template.HeaderMedia);
+        Assert.True(template.SendableWithHeaderMedia);
+        Assert.Null(template.Header);
+    }
+
+    [Fact]
+    public void AMediaHeaderWithAFlowButtonIsNotSendableEvenWithTheHeader()
+    {
+        var template = Single("""
+            { "name": "promo_flujo", "language": "es", "status": "APPROVED", "category": "MARKETING",
+              "components": [ { "type": "HEADER", "format": "IMAGE" }, { "type": "BODY", "text": "Mira" },
+                              { "type": "BUTTONS", "buttons": [ { "type": "FLOW", "text": "Abrir" } ] } ] }
+            """);
+
+        Assert.Equal("flow", template.UnsupportedReason);
+        Assert.Equal("Image", template.HeaderMedia);
+        Assert.False(template.SendableWithHeaderMedia);
+    }
+
+    [Theory]
+    [InlineData("LOCATION")]
+    [InlineData("GIF")]
+    public void ALocationOrUnknownHeaderIsNotSendableEvenWithAHeader(string format)
+    {
+        var template = Single($$"""
+            { "name": "x", "language": "es", "status": "APPROVED", "category": "UTILITY",
+              "components": [ { "type": "HEADER", "format": "{{format}}" }, { "type": "BODY", "text": "Hola" } ] }
+            """);
+
+        Assert.False(template.Sendable);
+        Assert.Equal("media_header", template.UnsupportedReason);
+        Assert.Null(template.HeaderMedia);
+        Assert.False(template.SendableWithHeaderMedia);
+    }
+
+    [Fact]
+    public void AnAuthenticationTemplateWithAnImageIsNotSendableWithTheHeader()
+    {
+        var template = Single("""
+            { "name": "otp", "language": "es", "status": "APPROVED", "category": "AUTHENTICATION",
+              "components": [ { "type": "HEADER", "format": "IMAGE" }, { "type": "BODY", "text": "Código {{1}}" } ] }
+            """);
+
+        Assert.Equal("authentication", template.UnsupportedReason);
+        Assert.Equal("Image", template.HeaderMedia);
+        Assert.False(template.SendableWithHeaderMedia);
+    }
+
+    [Fact]
+    public void ATextHeaderTemplateHasNoHeaderMediaAndStaysSendable()
+    {
+        var template = Single(NamedUtility);
+
+        Assert.True(template.Sendable);
+        Assert.Null(template.HeaderMedia);
+        Assert.True(template.SendableWithHeaderMedia);
+    }
+
+    [Fact]
+    public void BuildSendCarriesTheHeaderToMetaAndToTheDetail()
+    {
+        var template = Single(NamedUtility);
+        var values = new Dictionary<string, string> { ["first_name"] = "Ana", ["order_id"] = "A-1" };
+        var header = TemplateHeader.ByLink("image", "https://cdn.example.com/logo.png", null);
+
+        var built = TemplateCatalog.BuildSend(template, values, header);
+
+        Assert.Equal(header, built.Send.Header);
+        Assert.Equal(header, TemplateDetailsJson.ParseSend(built.DetailsJson)!.Header);
+
+        var plain = TemplateCatalog.BuildSend(template, values);
+        Assert.Null(plain.Send.Header);
+        Assert.Null(TemplateDetailsJson.ParseSend(plain.DetailsJson)!.Header);
+    }
 }

@@ -14,7 +14,9 @@ public sealed record TemplateButtonDto(string Type, string Text, string? Url, st
 /// Spec 2026-10-11 §5.1. BFF: <c>parameters</c> son las claves en orden de aparición (<c>"1"</c>, <c>"first_name"</c>) y
 /// <c>sendable</c> con <c>unsupportedReason</c> viajan resueltos, para que la pantalla pinte las plantillas que v1 no sabe
 /// enviar en gris y diga por qué, sin conocer el formato de componentes de Meta. <c>parameterFormat</c> es <c>Named</c> o
-/// <c>Positional</c>.
+/// <c>Positional</c>. Spec 2026-11-13: <c>HeaderMedia</c> es el formato del encabezado multimedia (<see cref="TemplateHeaderMedia"/>) y
+/// <c>SendableWithHeaderMedia</c> dice si la plantilla se podría enviar con ese encabezado (sólo la API externa lo manda). No cambian
+/// <c>Sendable</c> ni <c>UnsupportedReason</c>.
 /// </summary>
 public sealed record MessageTemplateDto(
     string Name,
@@ -27,17 +29,22 @@ public sealed record MessageTemplateDto(
     IReadOnlyList<TemplateButtonDto> Buttons,
     IReadOnlyList<string> Parameters,
     bool Sendable,
-    string? UnsupportedReason);
+    string? UnsupportedReason,
+    string? HeaderMedia = null,
+    bool SendableWithHeaderMedia = false);
 
 /// <summary>Lo que <see cref="TemplateDetailsJson.Serialize"/> guardó de un envío de plantilla: nombre, idioma y valores. Spec 2026-10-30 §6.3:
-/// un reintento con el mismo <c>clientId</c> compara contra esto.</summary>
-public sealed record StoredTemplateSend(string Name, string Language, IReadOnlyDictionary<string, string> Parameters);
+/// un reintento con el mismo <c>clientId</c> compara contra esto. Spec 2026-11-13: <c>Header</c> es el encabezado por enlace, si lo hubo.</summary>
+public sealed record StoredTemplateSend(string Name, string Language, IReadOnlyDictionary<string, string> Parameters, TemplateHeader? Header = null);
 
 /// <summary>Spec 2026-10-11 §5.2: el <c>details</c> de un mensaje <c>Template</c>:
 /// <c>{ "template": { "name", "language", "category", "parameters": { clave: valor } } }</c>.</summary>
 public static class TemplateDetailsJson
 {
-    public static string Serialize(string name, string language, string category, IReadOnlyDictionary<string, string> parameters)
+    /// <summary>Spec 2026-11-13 §4.6: <c>header</c> (<c>{ type, link, filename? }</c>) sólo se guarda para un encabezado por enlace; uno por
+    /// <c>id</c> es una media de QEP que nunca llega al hilo.</summary>
+    public static string Serialize(
+        string name, string language, string category, IReadOnlyDictionary<string, string> parameters, TemplateHeader? header = null)
     {
         ArgumentNullException.ThrowIfNull(parameters);
         var values = new JsonObject();
@@ -46,10 +53,19 @@ public static class TemplateDetailsJson
             values[key] = value;
         }
 
-        return new JsonObject
+        var template = new JsonObject { ["name"] = name, ["language"] = language, ["category"] = category, ["parameters"] = values };
+        if (header?.Link is not null)
         {
-            ["template"] = new JsonObject { ["name"] = name, ["language"] = language, ["category"] = category, ["parameters"] = values },
-        }.ToJsonString();
+            var stored = new JsonObject { ["type"] = header.Type, ["link"] = header.Link };
+            if (header.FileName is not null)
+            {
+                stored["filename"] = header.FileName;
+            }
+
+            template["header"] = stored;
+        }
+
+        return new JsonObject { ["template"] = template }.ToJsonString();
     }
 
     /// <summary>Si el detalle falta o no trae nombre e idioma, <c>null</c>: el mensaje sale sin <c>template</c> en vez de romper la página.</summary>
@@ -66,7 +82,7 @@ public static class TemplateDetailsJson
             return document.RootElement.ValueKind == JsonValueKind.Object
                 && document.RootElement.TryGetProperty("template", out var template) && template.ValueKind == JsonValueKind.Object
                 && Text(template, "name") is { Length: > 0 } name && Text(template, "language") is { Length: > 0 } language
-                ? new MessageTemplateRefDto(name, language)
+                ? new MessageTemplateRefDto(name, language, VisibleHeader(template))
                 : null;
         }
         catch (JsonException)
@@ -106,13 +122,27 @@ public static class TemplateDetailsJson
                 }
             }
 
-            return new StoredTemplateSend(name, language, parameters);
+            return new StoredTemplateSend(name, language, parameters, StoredHeader(template));
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    /// <summary>El <c>header</c> guardado tal cual, si es un objeto con <c>type</c> y <c>link</c> de texto; si no, <c>null</c>.</summary>
+    private static TemplateHeader? StoredHeader(JsonElement template) =>
+        template.TryGetProperty("header", out var header) && header.ValueKind == JsonValueKind.Object
+        && Text(header, "type") is { } type && Text(header, "link") is { } link
+            ? new TemplateHeader(type, link, null, Text(header, "filename"))
+            : null;
+
+    /// <summary>Lo que sale al hilo: sólo un tipo conocido con un enlace que cumple el contrato; el resto se oculta en vez de romper la página.</summary>
+    private static MessageTemplateHeaderDto? VisibleHeader(JsonElement template) =>
+        StoredHeader(template) is { Link: { } link } header
+        && TemplateHeaderMedia.FromMetaType(header.Type) is { } media && ExternalMediaLink.IsValidLink(link)
+            ? new MessageTemplateHeaderDto(TemplateHeaderMedia.ToMetaType(media), link, header.FileName)
+            : null;
 
     private static string? Text(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
@@ -136,17 +166,28 @@ public sealed record TemplateUrlButton(int Index, string Value);
 /// Spec 2026-10-11 §5.1: lo que viaja a Meta para enviar una plantilla. <c>Parameters</c> van en el orden de la plantilla;
 /// con <c>Named</c> cada uno lleva su <c>parameter_name</c> y con posicionales sólo el orden. Sin parámetros no viaja
 /// <c>components</c>. Lo reutiliza el worker de campañas. <c>UrlButtons</c> son los sufijos de los enlaces variables, que viajan
-/// en un componente <c>button</c> por botón. <c>HeaderDocument</c> es el PDF del encabezado de una plantilla con encabezado de
-/// documento (la de cotización): viaja como el primer componente.
+/// en un componente <c>button</c> por botón. <c>Header</c> es el encabezado multimedia de una plantilla con encabezado de imagen,
+/// video o documento (la de cotización lleva el PDF): viaja como el primer componente.
 /// </summary>
 public sealed record TemplateSend(
     string Name, string Language, bool Named, IReadOnlyList<TemplateParameter> Parameters, IReadOnlyList<TemplateUrlButton>? UrlButtons = null,
-    TemplateHeaderDocument? HeaderDocument = null);
+    TemplateHeader? Header = null);
 
-/// <summary>El documento del encabezado de una plantilla: el id de la media ya subida a Meta y el nombre con que lo ve el cliente.</summary>
-public sealed record TemplateHeaderDocument(string MediaId, string FileName);
+/// <summary>Spec 2026-11-13: el encabezado multimedia de una plantilla. <c>Type</c> es el de Meta en minúscula (<c>image</c>,
+/// <c>video</c>, <c>document</c>); viaja exactamente uno de <c>Link</c> (la URL pública que Meta descarga) o <c>MediaId</c> (media ya
+/// subida a Meta). <c>FileName</c> sólo aplica a un documento.</summary>
+public sealed record TemplateHeader(string Type, string? Link, string? MediaId, string? FileName)
+{
+    public static TemplateHeader ByLink(string type, string link, string? fileName) => new(type, link, null, fileName);
+
+    /// <summary>Spec 2026-11-13: el enlace lo manda un integrador y puede traer un token; nunca sale en un registro.</summary>
+    public override string ToString() => $"TemplateHeader {{ Type = {Type}, Link = *** }}";
+
+    public static TemplateHeader DocumentById(string mediaId, string fileName) => new("document", null, mediaId, fileName);
+}
 
 /// <summary>R10: lo que sale de armar una plantilla con sus valores, igual para el envío humano y para el worker.</summary>
+// Ojo: Send y DetailsJson pueden llevar el enlace del encabezado multimedia; nunca se loguean.
 public sealed record BuiltTemplate(TemplateSend Send, string Text, string DetailsJson);
 
 /// <summary>Spec 2026-10-11 §5.2: <c>GET /connections</c>. <c>displayPhoneNumber</c> es <c>null</c> si la conexión no lo guardó.</summary>
@@ -175,6 +216,34 @@ public static class TemplateUnsupportedReasons
     public const string Carousel = "carousel";
     public const string Flow = "flow";
     public const string Other = "other";
+}
+
+/// <summary>Spec 2026-11-13: el formato del encabezado multimedia de una plantilla. <c>FromComponentFormat</c> lee el <c>format</c> del
+/// componente <c>HEADER</c> de Meta (<c>IMAGE</c>); <c>FromMetaType</c> y <c>ToMetaType</c> van y vuelven del tipo del parámetro de
+/// envío (<c>image</c>).</summary>
+public static class TemplateHeaderMedia
+{
+    public const string Image = "Image";
+    public const string Video = "Video";
+    public const string Document = "Document";
+
+    public static string? FromComponentFormat(string? format) => FromName(format);
+
+    public static string? FromMetaType(string? type) => FromName(type);
+
+    public static string ToMetaType(string headerMedia)
+    {
+        ArgumentNullException.ThrowIfNull(headerMedia);
+        return headerMedia.ToLowerInvariant();
+    }
+
+    private static string? FromName(string? value) => value?.ToUpperInvariant() switch
+    {
+        "IMAGE" => Image,
+        "VIDEO" => Video,
+        "DOCUMENT" => Document,
+        _ => null,
+    };
 }
 
 /// <summary>
@@ -261,12 +330,56 @@ public static partial class TemplateCatalog
             throw new MessagingDomainException(MessagingErrorCodes.TemplateNotAvailable, "The template is not an approved, sendable template of this connection.");
         }
 
+        RequireParameters(template, parameterKeys);
+        return template;
+    }
+
+    /// <summary>Spec 2026-11-13 §4.2: enviable por la API externa si lo es del todo, o si sólo le falta un encabezado de imagen, video o
+    /// documento (el integrador lo manda por enlace).</summary>
+    public static bool IsExternallySendable(MessageTemplateDto template)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        return template.Sendable || (template.SendableWithHeaderMedia && template.HeaderMedia is not null);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-13 §4.2: como <see cref="RequireSendable"/> pero para la API externa, que además manda el encabezado multimedia.
+    /// <paramref name="headerMedia"/> es una constante de <see cref="TemplateHeaderMedia"/>, o <c>null</c> si no mandó encabezado. Orden:
+    /// <c>not_available</c>, <c>header_mismatch</c>, <c>parameters_mismatch</c>.
+    /// </summary>
+    public static MessageTemplateDto RequireExternallySendable(
+        IReadOnlyList<MessageTemplateDto> catalog, string name, string language, string? headerMedia, IEnumerable<string> parameterKeys)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
+        ArgumentNullException.ThrowIfNull(parameterKeys);
+        var template = catalog.FirstOrDefault(
+            candidate => string.Equals(candidate.Name, name, StringComparison.Ordinal) && string.Equals(candidate.Language, language, StringComparison.Ordinal));
+        if (template is null || !IsExternallySendable(template))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateNotAvailable, "The template is not an approved, sendable template of this connection.");
+        }
+
+        if (!string.Equals(template.HeaderMedia, headerMedia, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateHeaderMismatch, template.HeaderMedia switch
+            {
+                TemplateHeaderMedia.Image => "La plantilla requiere un encabezado de imagen.",
+                TemplateHeaderMedia.Video => "La plantilla requiere un encabezado de video.",
+                TemplateHeaderMedia.Document => "La plantilla requiere un encabezado de documento.",
+                _ => "La plantilla no tiene encabezado multimedia.",
+            });
+        }
+
+        RequireParameters(template, parameterKeys);
+        return template;
+    }
+
+    private static void RequireParameters(MessageTemplateDto template, IEnumerable<string> parameterKeys)
+    {
         if (!template.Parameters.ToHashSet(StringComparer.Ordinal).SetEquals(parameterKeys))
         {
             throw new MessagingDomainException(MessagingErrorCodes.TemplateParametersMismatch, "The parameters do not match the template's variables.");
         }
-
-        return template;
     }
 
     /// <summary>
@@ -274,7 +387,7 @@ public static partial class TemplateCatalog
     /// que verá la persona y el <c>details</c> del mensaje. El envío humano y el worker de campañas arman lo mismo por acá: dos copias se
     /// separarían la primera vez que alguien tocara una.
     /// </summary>
-    public static BuiltTemplate BuildSend(MessageTemplateDto template, IReadOnlyDictionary<string, string> values)
+    public static BuiltTemplate BuildSend(MessageTemplateDto template, IReadOnlyDictionary<string, string> values, TemplateHeader? header = null)
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(values);
@@ -284,9 +397,10 @@ public static partial class TemplateCatalog
             template.ParameterFormat == Named,
             [.. template.Parameters.Where(key => !IsButtonParameter(key)).Select(key => new TemplateParameter(key, values[key]))],
             [.. template.Parameters.Where(IsButtonParameter).Select(key => new TemplateUrlButton(
-                int.Parse(key.AsSpan(ButtonParameterPrefix.Length), System.Globalization.CultureInfo.InvariantCulture), values[key]))]);
+                int.Parse(key.AsSpan(ButtonParameterPrefix.Length), System.Globalization.CultureInfo.InvariantCulture), values[key]))],
+            header);
         return new BuiltTemplate(
-            send, Render(template, values), TemplateDetailsJson.Serialize(template.Name, template.Language, template.Category, values));
+            send, Render(template, values), TemplateDetailsJson.Serialize(template.Name, template.Language, template.Category, values, header));
     }
 
     /// <summary>Lo que verá la persona: encabezado, cuerpo con las variables sustituidas y pie, separados por una línea en
@@ -317,6 +431,16 @@ public static partial class TemplateCatalog
         var buttons = new List<TemplateButtonDto>();
         string? reason = string.Equals(category, "AUTHENTICATION", StringComparison.OrdinalIgnoreCase) ? TemplateUnsupportedReasons.Authentication : null;
 
+        // Spec 2026-11-13: lo que impediría el envío aun con un encabezado multimedia; el motivo del propio encabezado no cuenta.
+        var otherReason = reason;
+        string? headerMedia = null;
+
+        void Note(string? candidate)
+        {
+            reason = Worst(reason, candidate);
+            otherReason = Worst(otherReason, candidate);
+        }
+
         if (raw.TryGetProperty("components", out var components) && components.ValueKind == JsonValueKind.Array)
         {
             foreach (var component in components.EnumerateArray().Where(component => component.ValueKind == JsonValueKind.Object))
@@ -328,11 +452,16 @@ public static partial class TemplateCatalog
                         {
                             header = Text(component, "text");
                             // Decisión 7: el encabezado de texto es sin variables.
-                            reason = Worst(reason, header is not null && header.Contains("{{", StringComparison.Ordinal) ? TemplateUnsupportedReasons.Other : null);
+                            Note(header is not null && header.Contains("{{", StringComparison.Ordinal) ? TemplateUnsupportedReasons.Other : null);
                         }
                         else
                         {
                             reason = Worst(reason, TemplateUnsupportedReasons.MediaHeader);
+                            headerMedia = TemplateHeaderMedia.FromComponentFormat(Text(component, "format"));
+                            if (headerMedia is null)
+                            {
+                                otherReason = Worst(otherReason, TemplateUnsupportedReasons.Other);
+                            }
                         }
 
                         break;
@@ -346,15 +475,15 @@ public static partial class TemplateCatalog
                         foreach (var (dto, buttonReason) in ButtonsOf(component))
                         {
                             buttons.Add(dto);
-                            reason = Worst(reason, buttonReason);
+                            Note(buttonReason);
                         }
 
                         break;
                     case "CAROUSEL":
-                        reason = Worst(reason, TemplateUnsupportedReasons.Carousel);
+                        Note(TemplateUnsupportedReasons.Carousel);
                         break;
                     default:
-                        reason = Worst(reason, TemplateUnsupportedReasons.Other);
+                        Note(TemplateUnsupportedReasons.Other);
                         break;
                 }
             }
@@ -365,7 +494,7 @@ public static partial class TemplateCatalog
             .Concat(buttons.Select(button => button.Parameter).OfType<string>())
             .ToArray();
         var format = string.Equals(Text(raw, "parameter_format"), "NAMED", StringComparison.OrdinalIgnoreCase) ? Named : Positional;
-        return new MessageTemplateDto(name, language, category, format, header, body, footer, buttons, parameters, reason is null, reason);
+        return new MessageTemplateDto(name, language, category, format, header, body, footer, buttons, parameters, reason is null, reason, headerMedia, otherReason is null);
     }
 
     private static IEnumerable<(TemplateButtonDto Dto, string? Reason)> ButtonsOf(JsonElement component)

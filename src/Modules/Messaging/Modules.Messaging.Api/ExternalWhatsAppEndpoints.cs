@@ -77,7 +77,8 @@ public static class ExternalWhatsAppEndpoints
         var body = await ReadBodyAsync(request, cancellationToken);
         var template = body.Template;
         var result = await dispatcher.SendAsync(
-            new SendExternalTemplateCommand(body.IdempotencyKey, body.ConnectionId, body.To, template?.Name, template?.Language, template?.Parameters),
+            new SendExternalTemplateCommand(body.IdempotencyKey, body.ConnectionId, body.To, template?.Name, template?.Language, template?.Parameters,
+                template?.Header is { } header ? new ExternalTemplateHeader(header.Type, header.Link, header.Filename) : null),
             cancellationToken);
         var response = new ExternalSendMessageResponse(result.MessageId, result.ConversationId, result.Status);
         return result.Replayed ? Results.Ok(response) : Results.Json(response, statusCode: StatusCodes.Status201Created);
@@ -97,13 +98,17 @@ public static class ExternalWhatsAppEndpoints
             body = null;
         }
 
-        return body ?? throw new ValidationException([new ValidationFailure("body", "El cuerpo debe ser JSON válido, con parameters como texto.")]);
+        return body ?? throw new ValidationException([new ValidationFailure("body", "El cuerpo debe ser JSON válido, con parameters como objeto de textos y header como objeto.")]);
     }
 }
 
 /// <summary>Spec 2026-10-30 §5.2. Todo es nullable y texto: el validador responde campo por campo.</summary>
 public sealed record ExternalSendMessageRequest(string? IdempotencyKey, string? ConnectionId, string? To, ExternalTemplateRequest? Template);
 
-public sealed record ExternalTemplateRequest(string? Name, string? Language, IReadOnlyDictionary<string, string?>? Parameters);
+public sealed record ExternalTemplateRequest(
+    string? Name, string? Language, ExternalTemplateHeaderRequest? Header, IReadOnlyDictionary<string, string?>? Parameters);
+
+/// <summary>Spec 2026-11-13: el encabezado multimedia de la plantilla, por enlace. Todo es texto: el validador responde campo por campo.</summary>
+public sealed record ExternalTemplateHeaderRequest(string? Type, string? Link, string? Filename);
 
 public sealed record ExternalSendMessageResponse(Guid MessageId, Guid ConversationId, string Status);

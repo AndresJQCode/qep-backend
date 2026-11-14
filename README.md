@@ -4652,7 +4652,7 @@ misma respuesta: `401 external.auth.invalid_key`.
 | Método y ruta | Devuelve |
 | --- | --- |
 | `GET /connections` | Los números que la clave puede usar: `id`, nombre y teléfono |
-| `GET /connections/{connectionId}/templates` | Las plantillas enviables: nombre, idioma, categoría y parámetros |
+| `GET /connections/{connectionId}/templates` | Las plantillas enviables: nombre, idioma, categoría, `header` (`null` o `{ "type": "image" \| "video" \| "document" }`) y parámetros |
 | `POST /messages` | `201` al enviar, `200` si es un reintento de un envío ya hecho |
 
 Cuerpo de `POST /messages`, en un archivo, porque PowerShell rompe las comillas dobles al pasarlas a un `.exe`:
@@ -4673,9 +4673,44 @@ curl.exe -s https://<host>/api/v1/external/whatsapp/connections/<connectionId>/t
 curl.exe -s -X POST https://<host>/api/v1/external/whatsapp/messages -H "X-Api-Key: $env:QEP_API_KEY" -H "Content-Type: application/json" -d "@cuerpo.json"
 ```
 
+**Encabezado multimedia.** Una plantilla aprobada con encabezado de imagen, video o documento (`header` distinto de `null` en el listado)
+exige que el envío lo lleve, por enlace: QEP **no descarga** el archivo, le entrega el enlace a Meta tal cual.
+
+```powershell
+@'
+{
+  "idempotencyKey": "0192f3a4-7b1c-7e2a-9d4f-3a5b6c7d8e9f",
+  "connectionId": "0192f3a4-7b1c-7e2a-9d4f-000000000001",
+  "to": "573001234567",
+  "template": {
+    "name": "aviso_logo",
+    "language": "es_CO",
+    "header": { "type": "image", "link": "https://cdn.example.com/logo.png" },
+    "parameters": { "1": "1014853", "2": "Pendiente" }
+  }
+}
+'@ | Set-Content -Encoding utf8 cuerpo-imagen.json
+```
+
+Reglas de `template.header` (el `422 validation.failed` marca `template.header.type`, `.link` o `.filename`):
+
+- `type`: `image`, `video` o `document` (en minúsculas; al leer no distingue mayúsculas).
+- `link`: obligatorio. URL absoluta `https`, de máximo 2048 caracteres, sin espacios ni caracteres de control y sin credenciales
+  (`https://usuario:clave@host` se rechaza). `http` se rechaza. Si el enlace lleva un token en la query, QEP no lo escribe en logs ni en el
+  registro de llamadas; sí queda en el mensaje y el hilo lo muestra.
+- `filename`: opcional y solo con `document`; es el nombre que ve quien recibe el archivo. Máximo 240 caracteres, no puede ser solo
+  espacios ni llevar `/`, `\` ni caracteres de control. Con `image` o `video` es error.
+- El `header` debe coincidir con la plantilla: si la plantilla lo pide y falta, si sobra, o si es de otro tipo (un `video` para una
+  plantilla de imagen), responde `422 messaging.template.header_mismatch` y el `detail` dice qué pide la plantilla.
+
+Un enlace que Meta no puede bajar (404, un tipo o tamaño que no acepta) **no** da error en el `POST`: Meta acepta el envío y el mensaje
+queda `Failed` después, por webhook. Se ve en `GET /messages/{id}` con `failureCode` y `failureReason`.
+
 Respuesta de envío: `{ "messageId": "…", "conversationId": "…", "status": "Sent" }`; en un reintento, `status` trae el estado actual del mensaje, que puede ser posterior a `Sent` (por ejemplo `Read`). El `idempotencyKey` es obligatorio, lo genera el sistema
-externo y es la llave de idempotencia **por tenant**: repetirlo con el mismo destino, plantilla, idioma y parámetros devuelve `200` con lo
-guardado, sin volver a enviar; con otra cosa, `409`. `to` lleva indicativo de país (se aceptan `+`, espacios y guiones); sin él responde
+externo y es la llave de idempotencia **por tenant**: repetirlo con el mismo destino, plantilla, idioma, parámetros y `header` (tipo, enlace
+y `filename`) devuelve `200` con lo guardado, sin volver a enviar; con otra cosa, `409`, y mandar un `header` donde el primer envío no lo
+llevaba (o al revés) también es otra cosa. La excepción es un mensaje que quedó `Failed`: repetir su `idempotencyKey` lo reenvía con el cuerpo
+nuevo, así que si Meta no pudo bajar el enlace, corrígelo y reintenta con la misma clave. Esa excepción no cubre al `Failed` cuyo fallo es `Unconfirmed` (el `502 external.send_unconfirmed`): ahí Meta pudo haber aceptado el mensaje, así que repetir la clave devuelve el estado guardado y no reenvía. `to` lleva indicativo de país (se aceptan `+`, espacios y guiones); sin él responde
 `422`, porque no se adivina el país. Solo las plantillas `MARKETING` heredan las reglas de campañas (opt-out del cliente, cliente inactivo);
 una conversación bloqueada rechaza cualquier categoría.
 
@@ -4689,10 +4724,11 @@ viene por campo en `errors`.
 | 403 | `external.auth.scope_missing` | La clave no tiene el scope |
 | 403 | `external.connection_not_allowed` | Número fuera de la clave o de otro tenant |
 | 403 | `tenancy.module_not_enabled` | `developer` o `messaging` apagados |
-| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro destino o plantilla |
+| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro cuerpo (destino, plantilla, idioma, parámetros o `header`) |
 | 422 | `validation.failed` | Con el mapa `errors` |
 | 422 | `messaging.template.not_available` | Plantilla inexistente, no aprobada o no enviable |
 | 422 | `messaging.template.parameters_mismatch` | Parámetros que no coinciden |
+| 422 | `messaging.template.header_mismatch` | Falta el encabezado, sobra o es de otro tipo; `detail` dice cuál pide la plantilla |
 | 422 | `messaging.connection_unavailable` | La conexión está pausada, necesita atención o Meta rechazó sus credenciales |
 | 422 | `messaging.templates.unavailable` | Meta no contestó la lista de plantillas; reintentar es seguro |
 | 422 | `messaging.channel_unsupported` | La conexión es de Instagram: no tiene plantillas |

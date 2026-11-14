@@ -57,4 +57,25 @@ public sealed class TemplateMessageMappingTests
 
         Assert.Null(Map(Row(MessageKind.Text, json)).Template);
     }
+
+    [Fact]
+    public void ATemplateMessageExposesItsLinkHeader()
+    {
+        var json = TemplateDetailsJson.Serialize(
+            "aviso_logo", "es", "UTILITY", new Dictionary<string, string>(),
+            TemplateHeader.ByLink("image", "https://cdn.example.com/logo.png", null));
+
+        Assert.Equal(
+            new MessageTemplateRefDto("aviso_logo", "es", new MessageTemplateHeaderDto("image", "https://cdn.example.com/logo.png", null)),
+            Map(Row(MessageKind.Template, json)).Template);
+    }
+
+    [Theory]
+    [InlineData("""{"template":{"name":"x","language":"es","header":{"type":"image","link":"http://cdn.example.com/logo.png"}}}""")]
+    [InlineData("""{"template":{"name":"x","language":"es","header":{"type":"image","link":"/logo.png"}}}""")]
+    [InlineData("""{"template":{"name":"x","language":"es","header":{"type":"location","link":"https://cdn.example.com/a"}}}""")]
+    [InlineData("""{"template":{"name":"x","language":"es","header":{"type":"image"}}}""")]
+    [InlineData("""{"template":{"name":"x","language":"es","header":"x"}}""")]
+    public void AStoredHeaderOutsideTheContractIsHidden(string details) =>
+        Assert.Equal(new MessageTemplateRefDto("x", "es"), Map(Row(MessageKind.Template, details)).Template);
 }
