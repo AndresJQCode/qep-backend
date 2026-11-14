@@ -1283,6 +1283,8 @@ public static class QepServiceCollectionExtensions
         services.AddShopifyCustomLineMappings();
         // Spec 2026-11-14 §6: la bandeja de cambios de Shopify (consultas, aceptar, rechazar y revisar).
         services.AddShopifyOrderEditDecisions();
+        // Spec 2026-11-14 §5: el worker que manda a Shopify las correcciones (orderUpdate).
+        services.AddShopifyOrderPushes();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

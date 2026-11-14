@@ -158,7 +158,8 @@ internal static class ShopifyApiHarness
                         && (descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker)
                             || descriptor.ImplementationType == typeof(ShopifyReconcileWorker)
                             || descriptor.ImplementationType == typeof(CitySynonymEventsWorker)
-                            || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)))
+                            || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)
+                            || descriptor.ImplementationType == typeof(ShopifyOrderPushWorker)))
                     .ToArray())
                 {
                     services.Remove(worker);

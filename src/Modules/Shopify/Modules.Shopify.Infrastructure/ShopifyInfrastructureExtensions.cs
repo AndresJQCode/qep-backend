@@ -110,6 +110,22 @@ public static class ShopifyInfrastructureExtensions
         return services;
     }
 
+    /// <summary>
+    /// Spec 2026-11-14 §5: el envío a Shopify de las correcciones (<c>orderUpdate</c>) y su worker. El cliente usa el mismo
+    /// <c>shopify.admin</c> (sin redirecciones, sin loggers de headers) que registra <see cref="AddShopifyInfrastructure"/>. El
+    /// procesador depende de <see cref="IShopifyConnectionDirectory"/>, <see cref="IShopifyOrderWriter"/> e
+    /// <see cref="IShopifyGeographyLookup"/>, que registra Bootstrapper. Las pruebas quitan el worker y lo corren a mano
+    /// (<c>DrainAsync</c>).
+    /// </summary>
+    public static IServiceCollection AddShopifyOrderPushes(this IServiceCollection services)
+    {
+        services.AddScoped<IShopifyOrderUpdater, ShopifyOrderUpdateClient>();
+        services.AddScoped<IShopifyOrderPushQueue, ShopifyOrderPushQueue>();
+        services.AddScoped<ShopifyOrderPushProcessor>();
+        services.AddHostedService<ShopifyOrderPushWorker>();
+        return services;
+    }
+
     /// <summary>§5.3: el cron de la conciliación. Requiere <see cref="AddShopifyWebhookProcessing"/>; las pruebas lo quitan y lo
     /// corren a mano.</summary>
     public static IServiceCollection AddShopifyReconcileWorker(this IServiceCollection services)

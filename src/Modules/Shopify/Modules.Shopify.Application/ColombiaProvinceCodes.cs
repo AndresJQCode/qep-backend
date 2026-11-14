@@ -49,6 +49,18 @@ public static class ColombiaProvinceCodes
 
     private const string CountryPrefix = "CO-";
 
+    private static readonly IReadOnlyDictionary<string, string> CodesByName =
+        All.ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.Ordinal);
+
+    /// <summary>Spec 2026-11-14 §5: el inverso de <see cref="DepartmentNameFor"/>: el código ISO del departamento de Geography
+    /// (<c>ANTIOQUIA</c> → <c>ANT</c>) para el <c>provinceCode</c> de <c>orderUpdate</c>. Acepta minúsculas y espacios; <c>null</c> si
+    /// no es un departamento de la tabla.</summary>
+    public static string? CodeFor(string departmentName)
+    {
+        var normalized = departmentName?.Trim().ToUpperInvariant();
+        return string.IsNullOrEmpty(normalized) ? null : CodesByName.GetValueOrDefault(normalized);
+    }
+
     /// <summary>El nombre del departamento en Geography, o <c>null</c> si el código no es de Colombia. Acepta minúsculas,
     /// espacios y el código completo con <c>CO-</c>.</summary>
     public static string? DepartmentNameFor(string code)

@@ -260,6 +260,58 @@ public interface IShopifyGeographyLookup
 {
     /// <summary>El nombre real, el DIVIPOLA y, si ninguno casa, un sinónimo del departamento (§4.1).</summary>
     Task<ShopifyCityLookup> LookupCityAsync(string departmentName, string cityName, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14 §5: los nombres de QEP (DIVIPOLA) de una ciudad y su departamento, para mandarlos a Shopify; <c>null</c>
+    /// si alguno no existe.</summary>
+    Task<ShopifyCityName?> DescribeCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+}
+
+/// <summary>Una ciudad de Geography por sus nombres, como los guarda la semilla (mayúsculas y con tildes).</summary>
+public sealed record ShopifyCityName(string City, string Department);
+
+/// <summary>Spec 2026-11-14 §5 y plan D12: la dirección de envío de <c>orderUpdate</c> (<c>MailingAddressInput</c>, que no tiene
+/// <c>name</c>): el nombre de QEP en <see cref="FirstName"/> y la dirección en <see cref="Address1"/>, con <see cref="LastName"/> y
+/// <see cref="Address2"/> vacíos. <c>orderUpdate</c> reemplaza la dirección entera, así que <see cref="Company"/> y
+/// <see cref="CountryCode"/> salen del último snapshot (Review Focus 3).</summary>
+public sealed record ShopifyAddressUpdate(
+    string FirstName,
+    string LastName,
+    string Address1,
+    string Address2,
+    string City,
+    string? ProvinceCode,
+    string CountryCode,
+    string Phone,
+    string? Company);
+
+/// <summary>Lo que viaja en un <c>orderUpdate</c>: cada grupo en <c>null</c> (la nota, con <see cref="SetNote"/> en
+/// <c>false</c>) no se manda, y Shopify lo conserva.</summary>
+public sealed record ShopifyOrderUpdate(
+    long ShopifyOrderId,
+    ShopifyAddressUpdate? ShippingAddress,
+    bool SetNote,
+    string? Note,
+    IReadOnlyDictionary<string, string>? Attributes);
+
+public enum ShopifyOrderUpdateKind
+{
+    Updated,
+    Retry,
+    Failed,
+}
+
+/// <summary><see cref="FailureCode"/> viene con <see cref="ShopifyOrderUpdateKind.Failed"/> (<c>access_denied</c>,
+/// <c>user_error</c>, <c>order_not_found</c>, <c>rejected</c>); <see cref="RetryAfter"/>, a veces, con
+/// <see cref="ShopifyOrderUpdateKind.Retry"/>.</summary>
+public sealed record ShopifyOrderUpdateResult(ShopifyOrderUpdateKind Kind, string? FailureCode, TimeSpan? RetryAfter);
+
+/// <summary>Spec 2026-11-14 §5: la mutación <c>orderUpdate</c> de la Admin API GraphQL. Adaptador en Infrastructure
+/// (<c>ShopifyOrderUpdateClient</c>).</summary>
+public interface IShopifyOrderUpdater
+{
+    /// <summary>Sólo manda los campos no nulos (<see cref="ShopifyOrderUpdate.SetNote"/> para la nota). Nunca registra el token, el
+    /// cuerpo ni el mensaje de los <c>userErrors</c>, que puede traer datos del comprador.</summary>
+    Task<ShopifyOrderUpdateResult> UpdateAsync(ShopifyConnectionRef connection, ShopifyOrderUpdate update, CancellationToken cancellationToken);
 }
 
 /// <summary>

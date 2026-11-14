@@ -128,6 +128,30 @@ public interface IShopifyOrderPushRepository
     void Add(ShopifyOrderPush push);
 }
 
+/// <summary>
+/// Spec 2026-11-14 §5: la cola del worker de envíos, por SQL. Como <see cref="IShopifyCityCorrectionJobQueue"/>, cada método es una
+/// sentencia que se confirma en el acto, <b>fuera</b> del tracker, y ninguno sube la versión del envío: el reclamo no puede esperar
+/// al guardado (otra réplica lo tomaría a la vez), y una corrección que se fusiona con el pendiente mientras se manda no tiene que
+/// chocar con él.
+/// </summary>
+#pragma warning disable CA1711
+public interface IShopifyOrderPushQueue
+#pragma warning restore CA1711
+{
+    /// <summary>Los <c>Pending</c> sin lease o con el lease vencido, los más viejos primero, hasta <paramref name="limit"/>.</summary>
+    Task<IReadOnlyList<Guid>> ListPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
+
+    /// <summary>Toma el envío (un solo ganador entre réplicas): suma un intento, le pone el lease de ese intento y marca
+    /// <c>updated_at</c>. Devuelve el número de intento, o <c>null</c> si ya no está <c>Pending</c> o alguien tiene el lease.</summary>
+    Task<int?> TryClaimAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>Corre el lease hasta <paramref name="until"/> si es más tarde (el <c>Retry-After</c> de Shopify).</summary>
+    Task PostponeAsync(Guid id, DateTimeOffset until, CancellationToken cancellationToken);
+
+    /// <summary>Lo cierra <c>Failed</c> con <paramref name="code"/>, si sigue <c>Pending</c>.</summary>
+    Task MarkFailedAsync(Guid id, DateTimeOffset now, string code, CancellationToken cancellationToken);
+}
+
 /// <summary>Spec 2026-10-26 §5: las huellas de los sinónimos (<c>shopify.city_corrections</c>). Con tracking; lo agregado commitea
 /// con <see cref="IShopifyUnitOfWork"/>, que traduce el índice único <c>(sinónimo, destino, id)</c> a <c>concurrency.conflict</c>.</summary>
 public interface IShopifyCityCorrectionRepository
