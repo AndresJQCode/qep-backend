@@ -191,8 +191,9 @@ Estado del cambio al crearse:
   ciudad buena. Si el asesor ya editó la parte de envío, el trabajo de sinónimos la salta como hoy
   (`Order.SameExceptCity` → `shipping_party_changed`): gana lo del asesor.
 - **Al guardar**, en la misma transacción, se encola un envío en `shopify.order_pushes` (por Bootstrapper, como el resto
-  de los puertos): pedido, fila del espejo, qué grupos, `pending`. La proyección se actualiza con el valor de QEP, para
-  que una edición posterior de Shopify sobre ese grupo cuente como conflicto (gana QEP).
+  de los puertos): pedido, fila del espejo, qué grupos, `pending`. La proyección **no** cambia: el pedido queda distinto
+  de ella, y así una edición posterior de Shopify sobre ese grupo cuenta como conflicto (gana QEP). Las correcciones del
+  sistema (ciudad) sí la actualizan, porque no son del asesor.
 - **`ShopifyOrderPushWorker`** manda `orderUpdate` (GraphQL) con `shippingAddress`, `note` y `customAttributes` del
   pedido; la ciudad va con el nombre de QEP y el departamento con `provinceCode` (`ColombiaProvinceCodes`). Reintenta con
   espera ante 429, 5xx y token vencido (`AccessToken = null`); un 4xx definitivo (por ejemplo `ACCESS_DENIED` por falta
