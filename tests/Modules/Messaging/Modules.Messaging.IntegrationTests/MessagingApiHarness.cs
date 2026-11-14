@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
+using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,6 +13,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Messaging.Application;
@@ -897,13 +900,43 @@ internal static class MessagingApiHarness
         return client;
     }
 
+    /// <summary>El emisor que valida el host cuando no se fija <c>Authentication:Authority</c>.</summary>
+    public const string GoogleIssuer = "https://accounts.google.com";
+
+    /// <summary>
+    /// Un id token con forma de Google firmado con <paramref name="signingKey"/>, la clave que el host recibe por
+    /// <c>Authentication:TestSigningKey</c>. Copia de <c>RealAuthenticationApiTests.IssueGoogleIdToken</c>: cada ensamblado
+    /// de pruebas tiene la suya.
+    /// </summary>
+    public static string IssueGoogleIdToken(byte[] signingKey, string audience, string subject, string email)
+    {
+        var credentials = new SigningCredentials(new SymmetricSecurityKey(signingKey), SecurityAlgorithms.HmacSha256);
+        var now = DateTime.UtcNow;
+        var token = new JwtSecurityToken(
+            issuer: GoogleIssuer,
+            audience: audience,
+            claims:
+            [
+                new Claim("sub", subject),
+                new Claim("email", email),
+                new Claim("email_verified", "true"),
+            ],
+            notBefore: now.AddMinutes(-1),
+            expires: now.AddMinutes(30),
+            signingCredentials: credentials);
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
     /// <summary>Auth real con el stub apagado, como corre producción (copia de <c>ShopifyApiHarness.WithRealAuthentication</c>).</summary>
     public static WebApplicationFactory<Program> WithRealAuthentication(this WebApplicationFactory<Program> factory) =>
         factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Authentication:UseDevelopmentStub", "false");
-            builder.UseSetting("Authentication:Audience", "qep-messaging-tests");
+            builder.UseSetting("Authentication:Audience", RealAuthenticationAudience);
         });
+
+    /// <summary>La audiencia que fija <see cref="WithRealAuthentication"/>; un id token de prueba la tiene que llevar.</summary>
+    public const string RealAuthenticationAudience = "qep-messaging-tests";
 
     private sealed record RegisterTenantResponseDto(Guid TenantId, Guid OwnerUserId);
 }
