@@ -23,6 +23,19 @@ public sealed class ShopifyOrderPushTests
         Assert.Equal(ImporterWorld.Now.AddMinutes(1), push.UpdatedAt);
     }
 
+    // Review Important 1: una corrección del mismo grupo mientras el worker manda tiene que invalidar su MarkSent (la versión es el
+    // token de concurrencia); si no, Shopify se queda con el valor viejo y el envío dice Sent.
+    [Fact]
+    public void MergeWithTheSameGroupsStillBumpsTheVersion()
+    {
+        var push = ShopifyOrderPush.Create(ImportedRow(), [ShopifyPushGroup.Note], ImporterWorld.Now);
+
+        push.Merge([ShopifyPushGroup.Note], ImporterWorld.Now.AddMinutes(1));
+
+        Assert.Equal([ShopifyPushGroup.Note], push.Groups);
+        Assert.Equal((2L, ImporterWorld.Now.AddMinutes(1)), (push.Version, push.UpdatedAt));
+    }
+
     [Fact]
     public void ASentPushDoesNotMerge()
     {

@@ -81,7 +81,9 @@ public sealed class ShopifyOrderPush
         };
     }
 
-    /// <summary>Suma los grupos a los que ya esperan. Sólo sobre uno pendiente: uno enviado o fallido ya no vuelve a salir.</summary>
+    /// <summary>Suma los grupos a los que ya esperan. Sólo sobre uno pendiente: uno enviado o fallido ya no vuelve a salir. Sube la
+    /// versión <b>siempre</b>, también con los mismos grupos (review Important 1): el valor cambió aunque el grupo no, y un worker
+    /// que ya leyó el valor viejo y está llamando a Shopify tiene que chocar al marcarlo <c>Sent</c> y volver a mandarlo.</summary>
     public void Merge(IReadOnlyCollection<ShopifyPushGroup> more, DateTimeOffset now)
     {
         if (Status != ShopifyOrderPushStatus.Pending)
@@ -89,13 +91,7 @@ public sealed class ShopifyOrderPush
             throw new InvalidOperationException($"Only a pending Shopify push takes more groups; this one is {Status}.");
         }
 
-        var merged = Normalize([.. Groups, .. Normalize(more)]);
-        if (merged.SequenceEqual(Groups))
-        {
-            return;
-        }
-
-        Groups = merged;
+        Groups = Normalize([.. Groups, .. Normalize(more)]);
         UpdatedAt = now;
         Version++;
     }

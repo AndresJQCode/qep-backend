@@ -4511,7 +4511,11 @@ atributos) viaja a Shopify.
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
   `Failed` con `access_denied` (403 o `ACCESS_DENIED`, por ejemplo sin `write_orders`), `user_error` (`userErrors`; al log sólo
   van los campos, nunca el mensaje), `order_not_found`, `connection_missing`, `rejected` (otro 4xx) o `retries_exhausted`.
-  Shopify devuelve el `orders/updated` con el valor de QEP: es eco y se adopta sin crear cambio.
+  Shopify devuelve el `orders/updated` con el valor de QEP: es eco y se adopta sin crear cambio. Mientras manda, el envío queda
+  tomado 2 minutos (holgado frente a los 10 s del timeout más las lecturas), para que otra réplica no lo mande dos veces. Toda
+  corrección que se encola mientras el envío está pendiente le sube la versión, también con los mismos grupos: si el worker
+  ya leyó el valor viejo, su `Sent` choca y el envío vuelve a salir con el último. Por la misma carrera, una corrección puede
+  recibir un 412 si el worker cerró el envío entre la lectura y el guardado; reintentar funciona.
 
 | Ruta (`/api/v1/tenants/{tenantId}/shopify`) | Permiso | Qué |
 | --- | --- | --- |

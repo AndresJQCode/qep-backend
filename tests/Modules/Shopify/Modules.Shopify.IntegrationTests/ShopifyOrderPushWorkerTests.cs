@@ -103,12 +103,109 @@ public sealed class ShopifyOrderPushWorkerTests
             await flow.ScalarAsync("SELECT status || '|' || failure_code || '|' || attempts FROM shopify.order_pushes"));
     }
 
-    /// <summary>Anota lo que se mandaría a Shopify y responde <see cref="Result"/>.</summary>
+    /// <summary>El asesor guarda sólo otra nota del cliente (la dirección no viaja; los atributos son los del fixture).</summary>
+    internal static async Task CorrectTheNoteAsync(Flow flow, string note)
+    {
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var mirrorId = await flow.ScalarAsync("SELECT id::text FROM shopify.orders");
+        var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/tenants/{flow.World.TenantId}/shopify/orders/{mirrorId}/corrections")
+        {
+            Content = JsonContent.Create(new JsonObject
+            {
+                ["shippingParty"] = null,
+                ["buyerNotes"] = note,
+                ["attributes"] = new JsonArray(
+                    new JsonObject { ["key"] = "documento", ["value"] = "1036000111" },
+                    new JsonObject { ["key"] = "tipo_documento", ["value"] = "CC" }),
+            }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{await flow.ScalarAsync("SELECT version::text FROM quotations.orders")}\"");
+        var response = await client.SendAsync(request, Ct);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // Review Important 1: el worker leyó la nota «A» y está llamando a Shopify cuando el asesor guarda «B» (el mismo grupo, así que
+    // se fusiona con el envío pendiente). El MarkSent del worker tiene que chocar y el envío salir otra vez con «B»; si no, Shopify
+    // se queda con «A» y el envío dice Sent.
+    [Fact]
+    public async Task ASameGroupCorrectionDuringTheSendIsSentAgain()
+    {
+        Flow? current = null;
+        var shopify = new RecordingUpdater
+        {
+            OnUpdate = async calls =>
+            {
+                if (calls == 1)
+                {
+                    await CorrectTheNoteAsync(current!, "B");
+                }
+            },
+        };
+        await using var flow = await Flow.StartAsync(services =>
+        {
+            services.RemoveAll<IShopifyOrderUpdater>();
+            services.AddSingleton<IShopifyOrderUpdater>(shopify);
+        });
+        current = flow;
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await CorrectTheNoteAsync(flow, "A");
+
+        await DrainAsync(flow);
+
+        Assert.Equal("Pending|{Note}", await flow.ScalarAsync("SELECT status || '|' || groups::text FROM shopify.order_pushes"));
+        await ExecuteAsync(flow.ConnectionString, "UPDATE shopify.order_pushes SET lease_until = NULL");
+        await DrainAsync(flow);
+
+        Assert.Equal("A,B", string.Join(',', shopify.Updates.Select(update => update.Note)));
+        Assert.Equal("Sent|2", await flow.ScalarAsync("SELECT status || '|' || attempts FROM shopify.order_pushes"));
+    }
+
+    // Review Minor 2: mientras se manda, el envío queda tomado por más que el timeout de shopify.admin (10 s) más las lecturas, así
+    // otra réplica no lo vuelve a reclamar en vuelo; al terminar con Retry, la espera es la de la escalera (10 s el primero).
+    [Fact]
+    public async Task TheClaimOutlastsTheSendAndARetryFollowsTheLadder()
+    {
+        var shopify = new RecordingUpdater { Result = new ShopifyOrderUpdateResult(ShopifyOrderUpdateKind.Retry, null, null) };
+        await using var flow = await Flow.StartAsync(services =>
+        {
+            services.RemoveAll<IShopifyOrderUpdater>();
+            services.AddSingleton<IShopifyOrderUpdater>(shopify);
+        });
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await CorrectTheNoteAsync(flow, "A");
+        var pushId = Guid.Parse(await flow.ScalarAsync("SELECT id::text FROM shopify.order_pushes"));
+        var now = new DateTimeOffset(2026, 11, 14, 12, 0, 0, TimeSpan.Zero);
+
+        await using (var scope = flow.Factory.Services.CreateAsyncScope())
+        {
+            Assert.Equal(1, await scope.ServiceProvider.GetRequiredService<IShopifyOrderPushQueue>().TryClaimAsync(pushId, now, Ct));
+        }
+
+        Assert.True(ShopifyOrderPushWorker.InFlightLease >= TimeSpan.FromMinutes(1));
+        Assert.Equal(
+            ((int)ShopifyOrderPushWorker.InFlightLease.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            await ScalarAsync<string>(
+                flow.ConnectionString,
+                "SELECT round(extract(epoch FROM lease_until - @now))::int::text FROM shopify.order_pushes",
+                ("now", now)));
+
+        await ExecuteAsync(flow.ConnectionString, "UPDATE shopify.order_pushes SET lease_until = NULL, attempts = 0");
+        await DrainAsync(flow);
+
+        var ladder = await ScalarAsync<int>(
+            flow.ConnectionString, "SELECT round(extract(epoch FROM lease_until - updated_at))::int FROM shopify.order_pushes");
+        Assert.InRange(ladder, 9, 15);
+    }
+
+    /// <summary>Anota lo que se mandaría a Shopify y responde <see cref="Result"/>. <see cref="OnUpdate"/> corre en cada llamada
+    /// (con su número) antes de responder: es lo que pasa mientras la llamada está en vuelo.</summary>
     internal sealed class RecordingUpdater : IShopifyOrderUpdater
     {
         private readonly List<ShopifyOrderUpdate> updates = [];
 
         public ShopifyOrderUpdateResult Result { get; init; } = new(ShopifyOrderUpdateKind.Updated, null, null);
+
+        public Func<int, Task>? OnUpdate { get; init; }
 
         public IReadOnlyList<ShopifyOrderUpdate> Updates
         {
@@ -121,14 +218,22 @@ public sealed class ShopifyOrderPushWorkerTests
             }
         }
 
-        public Task<ShopifyOrderUpdateResult> UpdateAsync(ShopifyConnectionRef connection, ShopifyOrderUpdate update, CancellationToken cancellationToken)
+        public async Task<ShopifyOrderUpdateResult> UpdateAsync(
+            ShopifyConnectionRef connection, ShopifyOrderUpdate update, CancellationToken cancellationToken)
         {
+            int calls;
             lock (updates)
             {
                 updates.Add(update);
+                calls = updates.Count;
             }
 
-            return Task.FromResult(Result);
+            if (OnUpdate is { } hook)
+            {
+                await hook(calls);
+            }
+
+            return Result;
         }
     }
 }

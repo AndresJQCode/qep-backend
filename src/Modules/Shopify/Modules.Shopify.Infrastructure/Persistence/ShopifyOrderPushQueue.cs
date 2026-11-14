@@ -10,9 +10,6 @@ namespace Modules.Shopify.Infrastructure.Persistence;
 /// reclamo.</summary>
 internal sealed class ShopifyOrderPushQueue(ShopifyDbContext dbContext) : IShopifyOrderPushQueue
 {
-    // Un solo arreglo para el parámetro del reclamo (CA1861).
-    private static readonly TimeSpan[] LeaseArray = [.. ShopifyOrderPushWorker.Leases];
-
     private static readonly string Pending = nameof(ShopifyOrderPushStatus.Pending);
 
     private static readonly string Failed = nameof(ShopifyOrderPushStatus.Failed);
@@ -25,10 +22,11 @@ internal sealed class ShopifyOrderPushQueue(ShopifyDbContext dbContext) : IShopi
             .Take(limit)
             .ToListAsync(cancellationToken);
 
-    // SKIP LOCKED: una réplica que está cerrando el envío tiene su fila tomada por el UPDATE de su guardado; esperarla no sirve.
+    // SKIP LOCKED: una réplica que está cerrando el envío tiene su fila tomada por el UPDATE de su guardado; esperarla no sirve. El
+    // lease es el de envío en vuelo (review Minor 2); la espera de la escalera la escribe ScheduleRetryAsync al terminar el intento.
     public async Task<int?> TryClaimAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var leases = LeaseArray;
+        var leaseUntil = now + ShopifyOrderPushWorker.InFlightLease;
         var rows = await dbContext.Database.SqlQuery<ClaimRow>(
             $"""
             WITH claimable AS (
@@ -36,7 +34,7 @@ internal sealed class ShopifyOrderPushQueue(ShopifyDbContext dbContext) : IShopi
                  WHERE id = {id} AND status = {Pending} AND (lease_until IS NULL OR lease_until < {now})
                    FOR UPDATE SKIP LOCKED)
             UPDATE shopify.order_pushes push
-               SET lease_until = {now} + ({leases})[LEAST(push.attempts + 1, cardinality({leases}))],
+               SET lease_until = {leaseUntil},
                    attempts = push.attempts + 1,
                    updated_at = {now}
               FROM claimable
@@ -46,11 +44,11 @@ internal sealed class ShopifyOrderPushQueue(ShopifyDbContext dbContext) : IShopi
         return rows.Count == 1 ? rows[0].Attempts : null;
     }
 
-    public Task PostponeAsync(Guid id, DateTimeOffset until, CancellationToken cancellationToken) =>
+    public Task ScheduleRetryAsync(Guid id, DateTimeOffset until, CancellationToken cancellationToken) =>
         dbContext.Database.ExecuteSqlAsync(
             $"""
             UPDATE shopify.order_pushes
-               SET lease_until = GREATEST(lease_until, {until})
+               SET lease_until = {until}
              WHERE id = {id} AND status = {Pending}
             """,
             cancellationToken);

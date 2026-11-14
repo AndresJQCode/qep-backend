@@ -141,12 +141,14 @@ public interface IShopifyOrderPushQueue
     /// <summary>Los <c>Pending</c> sin lease o con el lease vencido, los más viejos primero, hasta <paramref name="limit"/>.</summary>
     Task<IReadOnlyList<Guid>> ListPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
 
-    /// <summary>Toma el envío (un solo ganador entre réplicas): suma un intento, le pone el lease de ese intento y marca
-    /// <c>updated_at</c>. Devuelve el número de intento, o <c>null</c> si ya no está <c>Pending</c> o alguien tiene el lease.</summary>
+    /// <summary>Toma el envío (un solo ganador entre réplicas): suma un intento, le pone el lease de envío en vuelo (holgado frente
+    /// a una llamada a Shopify, para que otra réplica no lo reclame a mitad) y marca <c>updated_at</c>. Devuelve el número de
+    /// intento, o <c>null</c> si ya no está <c>Pending</c> o alguien tiene el lease.</summary>
     Task<int?> TryClaimAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken);
 
-    /// <summary>Corre el lease hasta <paramref name="until"/> si es más tarde (el <c>Retry-After</c> de Shopify).</summary>
-    Task PostponeAsync(Guid id, DateTimeOffset until, CancellationToken cancellationToken);
+    /// <summary>Después de un intento que hay que repetir, el envío vuelve a estar disponible en <paramref name="until"/> (la
+    /// espera de la escalera o el <c>Retry-After</c> de Shopify), si sigue <c>Pending</c>.</summary>
+    Task ScheduleRetryAsync(Guid id, DateTimeOffset until, CancellationToken cancellationToken);
 
     /// <summary>Lo cierra <c>Failed</c> con <paramref name="code"/>, si sigue <c>Pending</c>.</summary>
     Task MarkFailedAsync(Guid id, DateTimeOffset now, string code, CancellationToken cancellationToken);
