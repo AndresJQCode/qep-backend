@@ -48,7 +48,7 @@ public sealed class QuotationWithholdingsPersistenceTests
     [Fact]
     public async Task PhotoRoundTripsWithBothSources()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 
@@ -82,7 +82,7 @@ public sealed class QuotationWithholdingsPersistenceTests
     [Fact]
     public async Task WithholdingsCanBeAddedChangedAndRemovedOnAnExistingQuotation()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 
@@ -136,7 +136,7 @@ public sealed class QuotationWithholdingsPersistenceTests
     [Fact]
     public async Task BillingCompanyCountryIsBackfilledFromCompanies()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 
@@ -177,7 +177,7 @@ public sealed class QuotationWithholdingsPersistenceTests
     [Fact]
     public async Task BillingCompanyCountryFallsBackToColombiaWithoutTheCompaniesSchema()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 

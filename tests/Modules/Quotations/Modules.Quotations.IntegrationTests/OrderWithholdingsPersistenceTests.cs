@@ -38,7 +38,7 @@ public sealed class OrderWithholdingsPersistenceTests
     [Fact]
     public async Task PhotoRoundTrips()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 
@@ -62,7 +62,7 @@ public sealed class OrderWithholdingsPersistenceTests
     [Fact]
     public async Task WithholdingsCanBeAddedChangedAndRemovedOnAnExistingOrder()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 
@@ -109,7 +109,7 @@ public sealed class OrderWithholdingsPersistenceTests
     [Fact]
     public async Task ChangingTheBillingAccountPersistsItsCountry()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 

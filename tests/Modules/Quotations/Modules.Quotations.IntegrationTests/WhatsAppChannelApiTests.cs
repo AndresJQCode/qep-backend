@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Quotations.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -547,7 +546,7 @@ public sealed class WhatsAppChannelApiTests
     // Otro miembro activo del mismo tenant: se invita con el set por defecto del stub (que trae los permisos de Tenancy)
     // y se activa por SQL, que se salta el login de Google que pide aceptar la invitación.
     private static async Task<HttpClient> AddMemberClientAsync(
-        QepApiFactory factory, PostgreSqlContainer database, Guid tenantId, Guid ownerUserId)
+        QepApiFactory factory, TestDatabase database, Guid tenantId, Guid ownerUserId)
     {
         using var admin = CreateClient(factory, ownerUserId.ToString(), tenantId.ToString());
         using var invited = await admin.PostAsJsonAsync(
