@@ -12,12 +12,18 @@ internal sealed class ShopifyCustomLineMappingRepository(ShopifyDbContext dbCont
         Guid tenantId, Guid connectionId, IReadOnlyCollection<string> titles, CancellationToken cancellationToken)
     {
         var map = new Dictionary<string, Guid>(StringComparer.Ordinal);
-        if (titles.Count == 0)
+
+        // La misma regla que la entidad (Trim): quien llama pasa el título crudo de Shopify.
+        var wanted = titles
+            .Select(ShopifyCustomLineMapping.NormalizeTitle)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (wanted.Length == 0)
         {
             return map;
         }
 
-        var wanted = titles.ToArray();
         var rows = await dbContext.CustomLineMappings
             .AsNoTracking()
             .Where(mapping => mapping.TenantId == tenantId && mapping.ConnectionId == connectionId && wanted.Contains(mapping.Title))

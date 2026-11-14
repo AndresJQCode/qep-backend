@@ -439,4 +439,23 @@ public sealed class ShopifyPersistenceTests
         Assert.Equal([KeyValuePair.Create("Garantía🚛", variantA)], found.ToArray());
         Assert.Empty(otherTenant);
     }
+
+    // Minor 3: el repositorio aplica la misma regla de recorte que la entidad; un título crudo de Shopify casa igual.
+    [Fact]
+    public async Task FindVariantIdsByTitlesTrimsTheRequestedTitles()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var variantId = Guid.CreateVersion7();
+        await SaveAsync(factory, NewMapping(tenantId, connectionId, "Garantía🚛", variantId));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IShopifyCustomLineMappingRepository>();
+
+        var found = await repository.FindVariantIdsByTitlesAsync(tenantId, connectionId, ["  Garantía🚛 ", "   "], Ct);
+
+        Assert.Equal([KeyValuePair.Create("Garantía🚛", variantId)], found.ToArray());
+    }
 }
