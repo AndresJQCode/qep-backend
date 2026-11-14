@@ -20,8 +20,8 @@ namespace Bootstrapper;
 /// «transacción» no significaría nada. Sin transacción abierta lanza <see cref="InvalidOperationException"/>.
 ///
 /// El enrolamiento dura lo que el scope: después del commit, ese <see cref="QuotationsDbContext"/> sigue apuntando a una transacción
-/// terminada, así que **nada en el mismo scope debe volver a usarlo**. El handler lee el pedido después por
-/// <see cref="IShopifyOrderWriter.ReadStateAsync"/>, que abre su scope. Un camino nuevo que corrija un pedido de Shopify y encole su
+/// terminada, así que **nada en el mismo scope debe volver a usarlo**. El handler no relee el pedido después del commit: arma la
+/// respuesta con el estado que devuelve <see cref="CorrectAsync"/>. Un camino nuevo que corrija un pedido de Shopify y encole su
 /// envío pasa por acá.
 /// </summary>
 internal sealed class ShopifyOrderCorrectionWriter(

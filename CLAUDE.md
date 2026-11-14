@@ -483,14 +483,18 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `INSERT` a mano en `quotations.orders` con `source = 'Shopify'` necesita una clave que no exista. Precedente (Review
   Focus 1 de `docs/superpowers/plans/2026-10-18-shopify-backend.md`): borrar la fila del espejo y recibir el pedido otra vez deja un pedido, y si llega cancelado lo anula —hasta
   `8b58fe9f` (2026-10-18) la fila nueva cancelada quedaba `Ignored` con el pedido vivo (`ReimportAfterMirrorRowDeleted*`).
-- **Todo cambio de una fila del espejo de Shopify pasa por `ShopifyOrderIngestion.ApplyAsync`.** El webhook, la
+- **Todo snapshot nuevo de una fila del espejo de Shopify pasa por `ShopifyOrderIngestion.ApplyAsync`.** El webhook, la
   conciliación, «Sincronizar ahora» y el reintento manual llaman al mismo método, que captura el estado anterior antes de
   `ApplySnapshot` y corre la reacción de pago y cancelación (§6.3) antes del guardado (2026-10-18, `82c4b2d9..f9b98fd1`, `WorkerFailedReactionIsSeenAgainOnRetry`). Llamar al importador o
   a `ApplySnapshot` directo compila y pasa las pruebas del importador, y pierde en silencio el pago o la cancelación.
   Desde el spec 2026-11-14 también detecta las ediciones: `IShopifyOrderEditDetector.DetectAsync` corre ahí, después del espejo
   y antes de la reacción, y sólo crea el cambio (no escribe en Quotations); `ApplyPendingAsync` aplica el pendiente de una tienda
-  `Automatic` **después** del guardado y atrapa el `concurrency.conflict` de Quotations (el cambio queda `Pending`). Un camino
-  nuevo que dispare ediciones fuera de la ingesta rompe la regla del único camino y deja cambios sin espejo que los explique.
+  `Automatic` **después** del guardado y atrapa el `concurrency.conflict` de Quotations (el cambio queda `Pending`). Un cambio
+  con algún grupo en conflicto no se aplica solo ni en `Automatic`: queda `Pending` para «Cambios por revisar» (spec §3). Un
+  camino nuevo que dispare ediciones fuera de la ingesta rompe la regla del único camino y deja cambios sin espejo que los
+  explique. Hay otros que escriben la fila **sin** traer un snapshot, y no son un bug: las decisiones sobre un cambio
+  (`RecordApplied` al aceptar, `AdoptPayload` al rechazar o revisar), el trabajo de corrección de ciudad (`RecordProjection`) y
+  la corrección del asesor (`SetQepAttributes`). Ninguno llama a `ApplySnapshot`.
 - **La corrección del asesor no mueve `applied_projection`; la corrección de ciudad del sistema sí** (plan D3, spec
   2026-11-14 §5). La proyección es lo que QEP escribió desde Shopify: si la corrección del asesor la moviera, la siguiente edición
   de Shopify sobre ese grupo dejaría de ser conflicto y pisaría lo del asesor, también después del eco. Lo amarran
@@ -511,8 +515,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El `PUT …/shopify/orders/{id}/corrections` enrola el `QuotationsDbContext` del request en la transacción de Shopify**
   (`ShopifyOrderCorrectionWriter`, como `CatalogProductDeletionCleanup`): el pedido, `qep_attributes` y el envío encolado
   quedan juntos o no quedan (`AShopifyFailureAfterTheOrderWriteRollsBackBoth`). Después del commit ese contexto apunta a una
-  transacción terminada: nada en el scope vuelve a usarlo (el handler relee el pedido por `IShopifyOrderWriter`, que abre su
-  scope). Un camino nuevo que corrija un pedido de Shopify y encole su envío pasa por ahí, nunca por `IShopifyOrderWriter`.
+  transacción terminada: nada en el scope vuelve a usarlo (el handler arma la respuesta con el estado que devolvió
+  `CorrectAsync`, sin releer el pedido). Un camino nuevo que corrija un pedido de Shopify y encole su envío pasa por ahí, nunca por `IShopifyOrderWriter`.
 - **Límite conocido de la detección de ediciones** (spec 2026-11-14): dos snapshots del mismo pedido que tocan el mismo grupo,
   intercalados por milisegundos (B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A
   falla), pueden dejar la proyección vieja y un `qep_changed` falso en la edición siguiente. No se cerró; la alternativa es un

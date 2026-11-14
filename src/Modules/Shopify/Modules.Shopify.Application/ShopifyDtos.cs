@@ -144,7 +144,9 @@ public sealed record ShopifyOrdersSummaryDto(int Waiting, int WithWarnings, int 
 /// <para>BFF: <see cref="Groups"/> viaja armado (grupo, decisión, motivo y filas de antes y después con textos, números crudos y
 /// booleanos), porque el frontend no conoce el diff de Shopify ni los enums de QEP; sólo los pinta. Los enums (<see cref="Status"/>,
 /// <c>kind</c>, <c>outcome</c>) van por nombre y los motivos (<see cref="StatusReason"/>, <c>reason</c>) en <c>snake_case</c>, que el
-/// frontend traduce con su diccionario. Los montos van como número crudo en <see cref="Currency"/> (plan D19): el frontend ya
+/// frontend traduce con su diccionario. La excepción es un <c>Pending</c> que la aplicación automática no pudo aplicar por una regla
+/// del pedido (review M-2): su <see cref="StatusReason"/> es el código de Quotations tal cual (por ejemplo
+/// <c>order.order.store_pickup</c>), el mismo que respondería aceptarlo. Los montos van como número crudo en <see cref="Currency"/> (plan D19): el frontend ya
 /// formatea por moneda, y un texto armado acá fijaría el formato regional en dos lugares.</para>
 /// <para><see cref="Currency"/> es la del pedido de QEP: sale de <c>shopify.orders.currency</c>, que la importación exige igual a la
 /// de la cuenta de cobro (<c>currency_mismatch</c>); siempre presente. <see cref="DecidedByName"/> es el nombre de quien aceptó,
