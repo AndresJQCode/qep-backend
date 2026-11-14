@@ -16,6 +16,22 @@ public sealed record TicketRequester(
 {
     public const string NitDocumentType = "NIT";
 
+    // Los mismos topes que la ficha del cliente (Customer.NameMaxLength, CustomerIdentification, CustomerContactInfo), para que
+    // vincular el ticket a un cliente no tenga que recortar nada. El celular va en E.164: como mucho «+» y 15 dígitos.
+    public const int NameMaxLength = 160;
+
+    public const int DocumentTypeMaxLength = 16;
+
+    public const int DocumentNumberMaxLength = 32;
+
+    public const int EmailMaxLength = 254;
+
+    public const int MobilePhoneMaxLength = 16;
+
+    public const int LandlinePhoneMaxLength = 32;
+
+    public const int AddressMaxLength = 200;
+
     /// <summary>Plan D6: hay nombre si vienen los nombres, o la razón social con NIT (spec §9.3: sólo el NIT cambia los nombres
     /// por la razón social).</summary>
     public bool HasName =>

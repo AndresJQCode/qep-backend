@@ -51,6 +51,7 @@ using Modules.Storage.Infrastructure;
 using Modules.Loans.Api;
 using Modules.Loans.Infrastructure;
 using Modules.Support.Api;
+using Modules.Support.Infrastructure;
 using Modules.ServiceContracts.Api;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
@@ -423,6 +424,11 @@ await app.Services.InitializeServiceContractsDatabaseAsync(
 // Loans (spec 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
 // referencias blandas.
 await app.Services.InitializeLoansDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Support (spec 2026-11-14): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
+// referencias blandas.
+await app.Services.InitializeSupportDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Store (spec 2026-11-03): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant, empresa, categorías,
