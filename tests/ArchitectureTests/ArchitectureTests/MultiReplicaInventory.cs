@@ -120,6 +120,8 @@ public static class MultiReplicaInventory
         // --- AdvisoryLock. ---
         new("Modules.Integrations.Infrastructure.Shopify.ShopifyTokenRefreshWorker", WorkerClassification.AdvisoryLock,
             "Modules/Integrations/Modules.Integrations.Infrastructure/Persistence/IntegrationsUnitOfWork.cs:33 — pg_try_advisory_xact_lock(ShopifyTokenLock.Namespace, hashtext(id)) por conexión"),
+        new("Modules.Integrations.Infrastructure.Meta.InstagramTokenRefreshWorker", WorkerClassification.AdvisoryLock,
+            "Modules/Integrations/Modules.Integrations.Infrastructure/Persistence/IntegrationsUnitOfWork.cs:43 — pg_try_advisory_xact_lock(InstagramTokenLock.Namespace, hashtext(id)) por conexión (owner, 2026-11-14)"),
 
         // --- Idempotent: el segundo pod no encuentra nada que hacer. ---
         new("Modules.Integrations.Infrastructure.SecretProtection.ConnectionSecretRekeyWorker", WorkerClassification.Idempotent,
@@ -146,8 +148,6 @@ public static class MultiReplicaInventory
             "Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveProcessor.cs:19 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
         new("Modules.Storage.Infrastructure.ProductImages.ProductImageReleaseWorker", WorkerClassification.Noisy,
             "Modules/Storage/Modules.Storage.Infrastructure/ProductImages/ProductImageReleaseProcessor.cs:19 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
-        new("Modules.Integrations.Infrastructure.Meta.InstagramTokenRefreshWorker", WorkerClassification.Noisy,
-            "Modules/Integrations/Modules.Integrations.Infrastructure/Meta/InstagramTokenRefreshWorker.cs:204 — sin candado: dos llamadas a Meta y el perdedor choca por Version (spec, «Fuera de alcance»)"),
         new("Modules.Quotations.Infrastructure.Expiration.QuotationExpirationWorker", WorkerClassification.Noisy,
             "Modules/Quotations/Modules.Quotations.Infrastructure/Expiration/QuotationExpirationProcessor.cs:56-88 — barrido en los dos pods; Version es token de concurrencia y el segundo choca sin duplicar historial"),
 

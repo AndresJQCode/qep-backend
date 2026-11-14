@@ -36,6 +36,11 @@ internal sealed record InstagramRefreshRunResult(int Refreshed, int Rejected, in
 /// <item>Timeout, red o 5xx se registran y esperan a la próxima corrida.</item>
 /// <item>El token nuevo entra por <see cref="IntegrationConnection.Update"/>, que lo cifra y marca la verificación; un
 /// <c>PUT</c> en el medio choca por versión y la conexión vuelve en la próxima corrida.</item>
+/// <item>Un solo refresco por conexión (owner, 2026-11-14, réplicas múltiples): todo va bajo
+/// <c>pg_try_advisory_xact_lock(InstagramTokenLock.Namespace, hashtext(id))</c>, tomado antes de leer la conexión y de llamar
+/// a Meta. Si Meta invalida el token viejo al refrescar, el perdedor guardaría uno muerto o recibiría un 4xx y marcaría la
+/// conexión sin motivo, y ese camino no pasa por el <c>Version</c>. Ocupado, se difiere y vuelve en la próxima corrida. El
+/// guardado del token o del rechazo confirma la transacción con el candado tomado; cualquier otra salida la deshace.</item>
 /// </list>
 /// <see cref="FirstRunCompletion"/> se completa siempre tras la primera corrida: las pruebas la esperan.
 /// </summary>
@@ -63,6 +68,9 @@ internal sealed partial class InstagramTokenRefreshWorker(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Instagram connection {ConnectionId}: the token refresh could not reach Meta ({Reason}); it is retried on the next run.")]
     private static partial void LogDeferred(ILogger logger, Guid connectionId, string reason);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Instagram connection {ConnectionId}: another process holds its token lock; it is retried on the next run.")]
+    private static partial void LogLocked(ILogger logger, Guid connectionId);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Instagram token refresh failed; it runs again on the next interval.")]
     private static partial void LogFailed(ILogger logger, Exception exception);
@@ -154,6 +162,16 @@ internal sealed partial class InstagramTokenRefreshWorker(
         var dbContext = scope.ServiceProvider.GetRequiredService<IntegrationsDbContext>();
         var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
         var gateway = scope.ServiceProvider.GetRequiredService<IInstagramLoginGateway>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+        // Disponer la transacción sin guardar la deshace y suelta el candado: así salen los retornos tempranos.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (!await unitOfWork.TryLockInstagramTokenAsync(connectionId, cancellationToken))
+        {
+            // Otra réplica o una corrida solapada la está refrescando.
+            LogLocked(logger, connectionId);
+            return Outcome.Deferred;
+        }
+
         var connection = await dbContext.Connections.SingleOrDefaultAsync(connection => connection.Id == connectionId, cancellationToken);
         if (connection is not { Status: ConnectionStatus.Active })
         {
@@ -184,6 +202,7 @@ internal sealed partial class InstagramTokenRefreshWorker(
             }
 
             LogRejected(logger, connection.Id, failure.HttpStatus, failure.Code);
+            // El guardado del reporte confirma la transacción, con el candado todavía tomado.
             await scope.ServiceProvider.GetRequiredService<IConnectionHealthReporter>()
                 .ReportCredentialsRejectedAsync(connection.TenantId, connection.Id, ConnectionFailureCodes.TokenExpired, cancellationToken);
             return Outcome.Rejected;
@@ -198,7 +217,7 @@ internal sealed partial class InstagramTokenRefreshWorker(
         connection.Update(provider, connection.Name, fields, secrets, protector.Protect, now, verified: true);
         try
         {
-            await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
             return Outcome.Refreshed;
         }
         catch (RequestConcurrencyException)

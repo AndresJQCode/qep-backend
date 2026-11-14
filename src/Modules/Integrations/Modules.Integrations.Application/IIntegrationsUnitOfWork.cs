@@ -23,4 +23,10 @@ public interface IIntegrationsUnitOfWork
     /// <summary>Como <see cref="LockShopifyTokenAsync"/>, sin esperar: <c>false</c> si otro proceso lo tiene. Lo usa el worker,
     /// que salta la conexión y vuelve en la próxima vuelta.</summary>
     Task<bool> TryLockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken);
+
+    /// <summary>Owner, 2026-11-14 (réplicas múltiples): el candado del token de Instagram de una conexión, sin esperar:
+    /// <c>false</c> si otro proceso lo tiene. Lo usa sólo <c>InstagramTokenRefreshWorker</c>, para que dos réplicas no
+    /// refresquen el mismo token a la vez. Es otro espacio que el de Shopify. Exige la transacción de
+    /// <see cref="BeginTransactionAsync"/>.</summary>
+    Task<bool> TryLockInstagramTokenAsync(Guid connectionId, CancellationToken cancellationToken);
 }

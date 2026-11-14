@@ -10,7 +10,7 @@ namespace Modules.Automations.Infrastructure.Persistence;
 public static class AutomationsConversationLock
 {
     /// <summary>Primera clave del lock de dos claves: la fecha del plan. Cualquier constante sirve mientras ningún otro lock de dos
-    /// claves la use. Los demás son <c>TenantChangeLock.Namespace</c> = 20261008, <c>ShopifyTokenLock.Namespace</c> = 20261112
-    /// y <c>StartupLock.Namespace</c> = 20261113 (Bootstrapper).</summary>
+    /// claves la use. Los demás son <c>TenantChangeLock.Namespace</c> = 20261008, <c>ShopifyTokenLock.Namespace</c> = 20261112,
+    /// <c>StartupLock.Namespace</c> = 20261113 (Bootstrapper) e <c>InstagramTokenLock.Namespace</c> = 20261114.</summary>
     public const int Namespace = 20261022;
 }

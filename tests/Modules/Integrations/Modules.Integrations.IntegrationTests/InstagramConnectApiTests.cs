@@ -320,4 +320,44 @@ public sealed class InstagramConnectApiTests
         Assert.Equal("NeedsAttention", back!.Status);
         Assert.Equal("token_expired", back.LastFailureCode);
     }
+
+    // Owner, 2026-11-14 (réplicas múltiples): un solo refresco por conexión. Con el candado del token de Instagram tomado
+    // por otra réplica, el worker no llama a Meta y la difiere; suelto, la refresca. El candado no es el de Shopify.
+    [Fact]
+    public async Task TheWorkerDefersAConnectionWhoseInstagramTokenLockIsHeld()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ScriptHappyConnect(factory.InstagramHandler);
+        var (tenant, client) = await TenantWithMessagingAsync(factory, connectionString);
+        using var _ = client;
+        var created = await (await SendAsync(client, HttpMethod.Post, InstagramConnectUrl(tenant.TenantId), ConnectBody())).Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+        var worker = factory.Services.GetServices<IHostedService>().OfType<InstagramTokenRefreshWorker>().Single();
+        await worker.FirstRunCompletion;
+        await ExecuteAsync(connectionString,
+            "UPDATE integrations.connections SET fields = jsonb_set(fields, '{tokenExpiresAt}', to_jsonb((now() + interval '10 days')::text)) WHERE id = @id",
+            ("id", created!.Id));
+        await ExecuteAsync(connectionString, "UPDATE integrations.connection_secrets SET updated_at = now() - interval '2 days' WHERE connection_id = @id", ("id", created.Id));
+        factory.InstagramHandler.Requests.Clear();
+
+        using (var otherReplica = factory.Services.CreateScope())
+        {
+            var theirs = otherReplica.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+            await using (await theirs.BeginTransactionAsync(Ct))
+            {
+                Assert.True(await theirs.TryLockInstagramTokenAsync(created.Id, Ct));
+                // Otro espacio: tomar el de Instagram no toma el de Shopify del mismo id.
+                Assert.True(await theirs.TryLockShopifyTokenAsync(created.Id, Ct));
+
+                var locked = await worker.RunOnceAsync(Ct);
+                Assert.Equal((0, 0, 1), (locked.Refreshed, locked.Rejected, locked.Deferred));
+                Assert.Empty(factory.InstagramHandler.Requests);
+            }
+        }
+
+        var released = await worker.RunOnceAsync(Ct);
+        Assert.Equal((1, 0, 0), (released.Refreshed, released.Rejected, released.Deferred));
+        Assert.Equal("/refresh_access_token", Assert.Single(factory.InstagramHandler.Requests).Uri!.AbsolutePath);
+    }
 }

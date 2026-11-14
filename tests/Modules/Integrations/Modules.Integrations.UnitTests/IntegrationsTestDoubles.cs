@@ -191,6 +191,13 @@ internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
         return Task.FromResult(LockTaken);
     }
 
+    public Task<bool> TryLockInstagramTokenAsync(Guid connectionId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction();
+        TryLocks.Add(connectionId);
+        return Task.FromResult(LockTaken);
+    }
+
     private void EnsureTransaction()
     {
         if (_open == 0)
