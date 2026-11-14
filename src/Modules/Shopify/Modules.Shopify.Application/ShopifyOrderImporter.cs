@@ -32,6 +32,7 @@ public sealed class ShopifyOrderImporter(
     IShopifyBillingAccounts billingAccounts,
     ShopifyCustomerResolver customers,
     IShopifyProductLookup products,
+    IShopifyCustomLineMappingRepository customLines,
     IShopifyShippingLookup shipping,
     IShopifyOrderWriter orders,
     IShopifyOrderChangeReaction changes,
@@ -135,10 +136,11 @@ public sealed class ShopifyOrderImporter(
             return Wait(row, ShopifyWaitReasons.CustomerInactive, new { customerId = found.Id }, now);
         }
 
-        var (lines, unmatched) = await ResolveLinesAsync(tenantId, snapshot, orderCurrency, cancellationToken);
-        if (unmatched.Count > 0)
+        var (lines, unmatchedSkus, unmatchedTitles) = await ResolveLinesAsync(tenantId, row.ConnectionId, snapshot, orderCurrency, cancellationToken);
+        if (unmatchedSkus.Count > 0 || unmatchedTitles.Count > 0)
         {
-            return Wait(row, ShopifyWaitReasons.ProductUnmatched, new { skus = unmatched }, now);
+            // Las dos llaves siempre, en este orden: la bandeja lee las dos (spec 2026-11-13).
+            return Wait(row, ShopifyWaitReasons.ProductUnmatched, new { skus = unmatchedSkus, customTitles = unmatchedTitles }, now);
         }
 
         var shippingResult = await ShippingAsync(tenantId, snapshot, orderCurrency, cancellationToken);
@@ -235,14 +237,24 @@ public sealed class ShopifyOrderImporter(
 
     /// <summary>
     /// §6.2.2: cada SKU contra el <c>Code</c> de una variante activa del tenant (y de un producto activo). Se resuelven <b>todas</b> las líneas antes de decidir,
-    /// para que <c>wait_detail.skus</c> traiga la lista completa. Una línea sin SKU entra a la lista como <c>null</c>: es lo que
+    /// para que <c>wait_detail</c> traiga la lista completa. Una línea sin SKU entra a <c>skus</c> como <c>null</c>: es lo que
     /// trajo, y el frontend la muestra como «línea sin SKU». El SKU se compara recortado (los espacios de la tienda no son parte
     /// del código).
+    /// <para>Spec 2026-11-13: una línea <b>personalizada</b> (<see cref="ShopifyLine.IsCustom"/>: Shopify manda <c>variant</c> y
+    /// <c>product</c> en <c>null</c> explícito, D1) con título casa por ese nombre recortado y exacto (ordinal) contra las
+    /// asociaciones <b>de la conexión</b>, y por el id de la variante asociada contra Catalog. Sin asociación, o con una variante
+    /// inexistente o inactiva, su título va a <c>customTitles</c> (sin repetir, en orden de aparición). Una personalizada sin
+    /// título cae al camino del SKU (<c>null</c>). Una línea que no es personalizada <b>nunca</b> mira las asociaciones. El
+    /// <c>wait_detail</c> es <c>{"skus":[…],"customTitles":[…]}</c>.</para>
     /// </summary>
-    private async Task<(IReadOnlyList<ShopifyOrderLineDraft> Lines, IReadOnlyList<string?> Unmatched)> ResolveLinesAsync(
-        Guid tenantId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken)
+    private async Task<(IReadOnlyList<ShopifyOrderLineDraft> Lines, IReadOnlyList<string?> UnmatchedSkus, IReadOnlyList<string> UnmatchedTitles)> ResolveLinesAsync(
+        Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken)
     {
+        // Personalizada con nombre: el título normalizado, o null si la línea va por SKU.
+        static string? CustomTitleOf(ShopifyLine line) => line.IsCustom ? ShopifyCustomLineMapping.NormalizeTitle(line.Title) : null;
+
         var skus = snapshot.Lines
+            .Where(line => CustomTitleOf(line) is null)
             .Select(line => line.Sku?.Trim())
             .Where(sku => !string.IsNullOrEmpty(sku))
             .Cast<string>()
@@ -252,20 +264,53 @@ public sealed class ShopifyOrderImporter(
             ? new Dictionary<string, ShopifyProductRef>(StringComparer.Ordinal)
             : await products.FindByCodesAsync(tenantId, skus, cancellationToken);
 
-        var unmatched = new List<string?>();
+        var customTitles = snapshot.Lines
+            .Select(CustomTitleOf)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var mappedVariants = customTitles.Length == 0
+            ? new Dictionary<string, Guid>(StringComparer.Ordinal)
+            : await customLines.FindVariantIdsByTitlesAsync(tenantId, connectionId, customTitles, cancellationToken);
+        var variantIds = mappedVariants.Values.Distinct().ToArray();
+        var variants = variantIds.Length == 0
+            ? new Dictionary<Guid, ShopifyProductRef>()
+            : await products.FindByVariantIdsAsync(tenantId, variantIds, cancellationToken);
+
+        var unmatchedSkus = new List<string?>();
+        var unmatchedTitles = new List<string>();
         var lines = new List<ShopifyOrderLineDraft>(snapshot.Lines.Count);
         foreach (var line in snapshot.Lines)
         {
-            var sku = line.Sku?.Trim();
-            if (string.IsNullOrEmpty(sku) || !found.TryGetValue(sku, out var product) || !product.IsActive)
+            ShopifyProductRef? product;
+            if (CustomTitleOf(line) is { } title)
             {
-                var listed = string.IsNullOrEmpty(sku) ? null : sku;
-                if (!unmatched.Contains(listed))
+                product = mappedVariants.TryGetValue(title, out var variantId) && variants.TryGetValue(variantId, out var mapped) && mapped.IsActive
+                    ? mapped
+                    : null;
+                if (product is null)
                 {
-                    unmatched.Add(listed);
-                }
+                    if (!unmatchedTitles.Contains(title, StringComparer.Ordinal))
+                    {
+                        unmatchedTitles.Add(title);
+                    }
 
-                continue;
+                    continue;
+                }
+            }
+            else
+            {
+                var sku = line.Sku?.Trim();
+                if (string.IsNullOrEmpty(sku) || !found.TryGetValue(sku, out product) || !product.IsActive)
+                {
+                    var listed = string.IsNullOrEmpty(sku) ? null : sku;
+                    if (!unmatchedSkus.Contains(listed))
+                    {
+                        unmatchedSkus.Add(listed);
+                    }
+
+                    continue;
+                }
             }
 
             lines.Add(new ShopifyOrderLineDraft(
@@ -277,7 +322,7 @@ public sealed class ShopifyOrderImporter(
                 product.TaxPercentage));
         }
 
-        return (lines, unmatched);
+        return (lines, unmatchedSkus, unmatchedTitles);
     }
 
     /// <summary>D-S23: la clave externa del pedido, <c>"{shopId}:{shopifyOrderId}"</c>. Con el shopId y no con la conexión, para

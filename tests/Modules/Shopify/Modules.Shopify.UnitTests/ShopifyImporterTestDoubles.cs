@@ -236,6 +236,42 @@ internal sealed class FakeCityCorrectionJobRepository(FakeShopifyDatabase databa
     }
 }
 
+/// <summary>Las asociaciones de líneas personalizadas por <c>(conexión, título)</c>; anota qué se le preguntó. La regla de recorte
+/// y el aislamiento por tienda del repositorio real se prueban contra Postgres (<c>ShopifyPersistenceTests</c>); acá el doble sólo
+/// casa por conexión y título exactos. Las escrituras no las usa el importador.</summary>
+internal sealed class FakeCustomLineMappings : IShopifyCustomLineMappingRepository
+{
+    private readonly Dictionary<(Guid ConnectionId, string Title), Guid> rows = [];
+
+    public List<(Guid ConnectionId, string[] Titles)> Requests { get; } = [];
+
+    public FakeCustomLineMappings Map(Guid connectionId, string title, Guid variantId)
+    {
+        rows[(connectionId, title)] = variantId;
+        return this;
+    }
+
+    public Task<IReadOnlyDictionary<string, Guid>> FindVariantIdsByTitlesAsync(
+        Guid tenantId, Guid connectionId, IReadOnlyCollection<string> titles, CancellationToken cancellationToken)
+    {
+        Requests.Add((connectionId, [.. titles]));
+        return Task.FromResult<IReadOnlyDictionary<string, Guid>>(titles
+            .Where(title => rows.ContainsKey((connectionId, title)))
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(title => title, title => rows[(connectionId, title)], StringComparer.Ordinal));
+    }
+
+    public Task<IReadOnlyList<ShopifyCustomLineMapping>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ShopifyCustomLineMapping?> FindAsync(Guid tenantId, Guid connectionId, Guid id, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public void Add(ShopifyCustomLineMapping mapping) => throw new NotSupportedException();
+
+    public void Remove(ShopifyCustomLineMapping mapping) => throw new NotSupportedException();
+}
+
 /// <summary>Transportadoras por título exacto y la tasa del envío del tenant; anota qué se le preguntó. La normalización del
 /// título es del adaptador (<c>ShopifyAdaptersTests</c>).</summary>
 internal sealed class FakeShippingLookup : IShopifyShippingLookup
@@ -394,6 +430,8 @@ internal sealed class ImporterWorld
 
     public FakeProductLookup Products { get; } = new();
 
+    public FakeCustomLineMappings CustomLines { get; } = new();
+
     public FakeGeographyLookup Geography { get; } = new();
 
     public FakeShippingLookup Shipping { get; } = new();
@@ -418,7 +456,7 @@ internal sealed class ImporterWorld
 
     public ShopifyOrderImporter Importer =>
         new(
-            Members, Billing, Resolver, Products, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
+            Members, Billing, Resolver, Products, CustomLines, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
             CityCorrections, CityCorrectionJobs, UnresolvedCities, Synonyms, UnitOfWork, new FakeClock(Now));
 
     /// <summary>La tienda con clasificación por defecto: con documento y dirección, el comprador puede nacer completo.</summary>
