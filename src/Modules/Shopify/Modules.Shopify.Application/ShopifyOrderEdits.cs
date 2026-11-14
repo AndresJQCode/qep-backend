@@ -16,11 +16,17 @@ namespace Modules.Shopify.Application;
 /// <item>La base es la versión aplicada; en una fila importada antes de este cambio, el payload que la fila tenía (plan D6), y la
 /// proyección sale del pedido de ahora: nada cuenta como «lo tocó QEP».</item>
 /// <item>Sin grupos (nada cambió o todo es eco): reemplaza el abierto y adopta el snapshot como versión aplicada.</item>
-/// <item>Con grupos: reemplaza el abierto y crea el cambio <c>Blocked</c> (con su motivo), <c>Pending</c> o, con la tienda
-/// automática, lo aplica en el mismo procesamiento.</item>
+/// <item>Con grupos: reemplaza el abierto y crea el cambio <c>Blocked</c> (con su motivo) o <c>Pending</c>.</item>
 /// </list>
-/// El pedido cambia en Quotations, que confirma por su cuenta; la fila y el cambio entran en el guardado de la ingesta. Si ésta no
-/// guarda y reintenta, el pedido ya cambiado es eco del snapshot y no se aplica dos veces.
+/// Con la tienda automática, el pendiente se aplica en el mismo procesamiento pero <b>después</b> del guardado de la ingesta
+/// (<see cref="ApplyPendingAsync"/>). El pedido cambia en Quotations, que confirma por su cuenta (review I-1):
+/// <list type="bullet">
+/// <item>Si algo falla antes de ese guardado (la reacción de §6.3, la fila del espejo), el pedido no se tocó y el reintento vuelve a
+/// detectar desde el mismo estado.</item>
+/// <item>Si falla el guardado que marca el cambio aplicado, el cambio ya está guardado como pendiente con sus grupos. El reintento lo
+/// vuelve a planear: lo que ya quedó en el pedido sale como eco, y como ese grupo era uno que este cambio aplicaba, la proyección
+/// toma el valor del pedido (<see cref="ApplyAsync"/>). No se aplica dos veces y la edición siguiente no es un conflicto falso.</item>
+/// </list>
 /// </summary>
 public sealed class ShopifyOrderEdits(
     ShopifyEditPlanner planner, IShopifyOrderWriter orders, IShopifyOrderEditRepository edits, IClock clock) : IShopifyOrderEditDetector
@@ -96,14 +102,50 @@ public sealed class ShopifyOrderEdits(
             plan.BlockReason,
             now);
         edits.Add(edit);
-        if (plan.BlockReason is not null || store.EditSync != ShopifyEditSync.Automatic)
+    }
+
+    /// <summary>
+    /// Con la tienda automática, aplica el cambio pendiente del snapshot vigente de la fila. La ingesta lo llama después de guardar
+    /// el cambio, así que el pedido de QEP nunca cambia sin un cambio guardado que lo explique. Vuelve a planear contra el pedido de
+    /// ahora: la reacción de §6.3 pudo haberlo movido, o es el reintento de una aplicación cuyo guardado cayó (review I-1).
+    /// </summary>
+    public async Task<bool> ApplyPendingAsync(ShopifyStore store, ShopifyOrderMirror row, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(row);
+        if (store.EditSync != ShopifyEditSync.Automatic
+            || row.ImportState != ShopifyImportState.Imported
+            || row.QepOrderId is not { } orderId
+            || row.AppliedPayload is null)
         {
-            return;
+            return false;
+        }
+
+        var edit = await edits.FindOpenAsync(row.TenantId, row.Id, cancellationToken);
+        if (edit is not { Status: ShopifyOrderEditStatus.Pending } || edit.SnapshotUpdatedAt != row.ShopifyUpdatedAt)
+        {
+            return false;
+        }
+
+        if (await orders.ReadStateAsync(row.TenantId, orderId, cancellationToken) is not { } order)
+        {
+            return false;
+        }
+
+        var applied = ShopifyOrderIngestion.ReadPayload(row.AppliedPayload);
+        var incoming = ShopifyOrderIngestion.ReadPayload(edit.Payload);
+        var projection = ProjectionOf(row, store, applied, order);
+        var plan = await planner.PlanAsync(store, row, applied, projection, incoming, order, row.QepAttributes, cancellationToken);
+        var now = clock.UtcNow;
+        if (plan.BlockReason is { } reason)
+        {
+            edit.Block(reason, plan.IsEmpty ? edit.Groups : WriteGroups(plan.Groups), now);
+            return true;
         }
 
         try
         {
-            if (await ApplyAsync(store, row, edit, plan, projection, snapshot, null, cancellationToken) is { } rejected
+            if (await ApplyAsync(store, row, edit, plan, projection, incoming, order, null, cancellationToken) is { } rejected
                 && string.Equals(rejected, OrderNotEditableCode, StringComparison.Ordinal))
             {
                 edit.Block(ShopifyEditReasons.OrderNotEditable, edit.Groups, now);
@@ -114,6 +156,8 @@ public sealed class ShopifyOrderEdits(
             // El pedido cambió entre el plan y la escritura (lo editó el asesor): el cambio queda pendiente y no sube al bucle de la
             // ingesta, que reintentaría la fila del espejo por un conflicto que no es suyo.
         }
+
+        return true;
     }
 
     /// <summary>
@@ -130,7 +174,16 @@ public sealed class ShopifyOrderEdits(
 
     /// <summary>
     /// Escribe los grupos que se aplican y, si Quotations los acepta, marca el cambio aplicado y mueve la versión aplicada y la
-    /// proyección: de los grupos aplicados, lo que quedó guardado en el pedido; de los demás (conflicto, eco), lo que ya había (§4).
+    /// proyección (§4):
+    /// <list type="bullet">
+    /// <item>De los grupos aplicados, lo que quedó guardado en el pedido.</item>
+    /// <item>De los que este mismo cambio aplicaba (<c>Apply</c> en sus grupos guardados) y ahora son eco, el valor del pedido
+    /// (<paramref name="order"/>): ya está en el pedido porque una aplicación anterior de este cambio confirmó en Quotations y su
+    /// guardado cayó, o porque el asesor hizo a mano lo mismo que Shopify pedía. Sin esto la proyección quedaría vieja y cada edición
+    /// siguiente de ese grupo sería un <c>qep_changed</c> falso (review I-1). Un eco que el cambio no aplicaba (la corrección del
+    /// asesor que vuelve de Shopify, Review Focus 5) no mueve la proyección.</item>
+    /// <item>De los demás (conflicto, eco ajeno), lo que ya había.</item>
+    /// </list>
     /// Devuelve el código con que Quotations lo rechazó, o <c>null</c> si se aplicó. <c>concurrency.conflict</c> se propaga.
     /// </summary>
     public async Task<string?> ApplyAsync(
@@ -140,12 +193,14 @@ public sealed class ShopifyOrderEdits(
         ShopifyEditPlan plan,
         ShopifyOrderProjection projection,
         ShopifyOrderSnapshot incoming,
+        ShopifyOrderState order,
         Guid? decidedBy,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(edit);
         ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(order);
         ShopifyOrderState? state = null;
         if (plan.Draft is { } draft)
         {
@@ -158,25 +213,48 @@ public sealed class ShopifyOrderEdits(
             state = outcome.State;
         }
 
-        // Al aceptar, todo puede haber quedado como eco (el asesor ya lo había hecho a mano): el cambio conserva lo que mostraba.
-        edit.MarkApplied(plan.IsEmpty ? edit.Groups : WriteGroups(plan.Groups), decidedBy, clock.UtcNow);
+        var proposed = ReadGroups(edit.Groups).Where(group => group.Outcome == ShopifyEditGroupOutcome.Apply).ToArray();
+        var settled = proposed.Where(group => plan.Echoes.Contains(group.Kind)).ToArray();
+        edit.MarkApplied(GroupsOnceApplied(edit, plan, settled), decidedBy, clock.UtcNow);
         row.RecordApplied(
             ShopifyOrderIngestion.WritePayload(incoming),
-            ShopifyOrderProjection.Write(Merge(projection, state, plan, incoming, store)));
+            ShopifyOrderProjection.Write(Merge(projection, state ?? order, plan, [.. settled.Select(group => group.Kind)], incoming, store)));
         return null;
     }
 
+    private static List<ShopifyEditGroup> ReadGroups(string groupsJson) =>
+        JsonSerializer.Deserialize<List<ShopifyEditGroup>>(groupsJson, GroupsJson) ?? [];
+
+    // Lo que el cambio muestra ya aplicado: los grupos del plan y, de los que ya estaban en el pedido, los que el cambio aplicaba. Si
+    // todo quedó como eco y nada lo aplicaba (el asesor ya lo había hecho a mano), conserva lo que mostraba.
+    private static string GroupsOnceApplied(ShopifyOrderEdit edit, ShopifyEditPlan plan, ShopifyEditGroup[] settled)
+    {
+        if (settled.Length == 0)
+        {
+            return plan.IsEmpty ? edit.Groups : WriteGroups(plan.Groups);
+        }
+
+        return WriteGroups([.. plan.Groups.Concat(settled).OrderBy(group => group.Kind)]);
+    }
+
     private static ShopifyOrderProjection Merge(
-        ShopifyOrderProjection projection, ShopifyOrderState? state, ShopifyEditPlan plan, ShopifyOrderSnapshot incoming, ShopifyStore store)
+        ShopifyOrderProjection projection,
+        ShopifyOrderState current,
+        ShopifyEditPlan plan,
+        IReadOnlyCollection<ShopifyEditGroupKind> settled,
+        ShopifyOrderSnapshot incoming,
+        ShopifyStore store)
     {
         bool Applied(ShopifyEditGroupKind kind) =>
-            plan.Groups.Any(group => group.Kind == kind && group.Outcome == ShopifyEditGroupOutcome.Apply);
+            settled.Contains(kind)
+            || plan.Groups.Any(group => group.Kind == kind && group.Outcome == ShopifyEditGroupOutcome.Apply);
 
+        // Un grupo sólo sale Apply en el plan si su escritura entró en el pedido (con borrador) o no toca el pedido (atributos).
         return new ShopifyOrderProjection(
-            state is not null && Applied(ShopifyEditGroupKind.Lines) ? state.Lines : projection.Lines,
-            state is not null && Applied(ShopifyEditGroupKind.Shipping) ? state.Shipping : projection.Shipping,
-            state is not null && Applied(ShopifyEditGroupKind.ShippingAddress) ? state.ShippingParty : projection.ShippingParty,
-            state is not null && Applied(ShopifyEditGroupKind.Note) ? state.BuyerNotes : projection.BuyerNotes,
+            Applied(ShopifyEditGroupKind.Lines) ? current.Lines : projection.Lines,
+            Applied(ShopifyEditGroupKind.Shipping) ? current.Shipping : projection.Shipping,
+            Applied(ShopifyEditGroupKind.ShippingAddress) ? current.ShippingParty : projection.ShippingParty,
+            Applied(ShopifyEditGroupKind.Note) ? current.BuyerNotes : projection.BuyerNotes,
             ShopifyCustomerResolver.DocumentOf(store, incoming),
             Applied(ShopifyEditGroupKind.Attributes) ? incoming.Attributes : projection.Attributes);
     }

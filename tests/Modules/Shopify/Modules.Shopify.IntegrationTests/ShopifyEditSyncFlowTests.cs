@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Quotations.Application;
+using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure.Workers;
 using Modules.Storage.Application;
 using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
@@ -99,6 +100,94 @@ public sealed class ShopifyEditSyncFlowTests
         Assert.Equal("0", await flow.ScalarAsync(
             "SELECT count(*)::text FROM shopify.order_edits, jsonb_array_elements(groups) AS g WHERE g ->> 'outcome' = 'Conflict'"));
         Assert.Equal("Llamar antes", await flow.ScalarAsync("SELECT buyer_notes FROM quotations.orders"));
+    }
+
+    /// <summary>La misma orden con otra cantidad vigente, más tarde: la edición siguiente del mismo grupo.</summary>
+    private static JsonObject QuantityEditedAgain() =>
+        Fixture(order =>
+        {
+            order["updated_at"] = "2026-10-01T11:00:00-05:00";
+            order["line_items"]![0]!["current_quantity"] = 3;
+        });
+
+    // Review I-1: el pedido cambia en Quotations, que confirma por su cuenta. Si lo que viene después falla (aquí, la reacción de
+    // §6.3), el reintento no puede dejar la proyección vieja: la edición siguiente de Shopify sería un conflicto falso.
+    [Fact]
+    public async Task AnAutomaticApplyWhoseProcessingFailsEndsAppliedOnRetry()
+    {
+        var reactionFailures = new ReactionFailures();
+        await using var flow = await Flow.StartAsync(services =>
+        {
+            services.AddSingleton(reactionFailures);
+            services.AddScoped<ShopifyOrderChanges>();
+            services.RemoveAll<IShopifyOrderChangeReaction>();
+            services.AddScoped<IShopifyOrderChangeReaction>(provider =>
+                new FailingOrderChangeReaction(provider.GetRequiredService<ShopifyOrderChanges>(), reactionFailures));
+        });
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.SetEditSyncAsync("Automatic");
+        reactionFailures.Remaining = 1;
+
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+        await flow.DeliverAsync("orders/updated", "wh-3", QuantityEdited());
+
+        Assert.Equal("Applied", await flow.ScalarAsync("SELECT coalesce(string_agg(status, ','), '(none)') FROM shopify.order_edits"));
+        Assert.Equal("1", await flow.ScalarAsync(
+            "SELECT trim_scale((applied_projection -> 'lines' -> 0 ->> 'quantity')::numeric)::text FROM shopify.orders"));
+        await AssertTheNextQuantityEditAppliesAsync(flow);
+    }
+
+    // Review I-1: el guardado que marca el cambio aplicado falla después de que Quotations confirmó el pedido.
+    [Fact]
+    public async Task AnAutomaticApplyWhoseFinalSaveFailsEndsAppliedOnRetry()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.SetEditSyncAsync("Automatic");
+        await flow.FailTheNextAppliedChangeAsync();
+
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+        Assert.Equal("1", await flow.ScalarAsync("SELECT trim_scale(quantity)::text FROM quotations.order_items"));
+        await flow.DeliverAsync("orders/updated", "wh-3", QuantityEdited());
+
+        Assert.Equal("Applied", await flow.ScalarAsync("SELECT coalesce(string_agg(status, ','), '(none)') FROM shopify.order_edits"));
+        Assert.Equal("1", await flow.ScalarAsync(
+            "SELECT trim_scale((applied_projection -> 'lines' -> 0 ->> 'quantity')::numeric)::text FROM shopify.orders"));
+        await AssertTheNextQuantityEditAppliesAsync(flow);
+    }
+
+    // Review I-1, al aceptar: Quotations confirma, el guardado del cambio falla y la persona vuelve a aceptar.
+    [Fact]
+    public async Task AnAcceptWhoseFinalSaveFailsEndsAppliedWhenAcceptedAgain()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.DeliverAsync("orders/updated", "wh-2", QuantityEdited());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var accept = $"{ChangesRoute(flow.World.TenantId)}/{await flow.ScalarAsync("SELECT id::text FROM shopify.order_edits")}/accept";
+        await flow.FailTheNextAppliedChangeAsync();
+
+        var failed = await client.PostAsync(accept, content: null, Ct);
+        Assert.False(failed.IsSuccessStatusCode);
+        Assert.Equal("1", await flow.ScalarAsync("SELECT trim_scale(quantity)::text FROM quotations.order_items"));
+        var accepted = await client.PostAsync(accept, content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        Assert.Equal("Applied", await flow.ScalarAsync("SELECT coalesce(string_agg(status, ','), '(none)') FROM shopify.order_edits"));
+        Assert.Equal("1", await flow.ScalarAsync(
+            "SELECT trim_scale((applied_projection -> 'lines' -> 0 ->> 'quantity')::numeric)::text FROM shopify.orders"));
+        await flow.SetEditSyncAsync("Automatic");
+        await AssertTheNextQuantityEditAppliesAsync(flow);
+    }
+
+    // La edición siguiente de Shopify sobre las líneas se aplica: el asesor no las tocó, así que no es conflicto qep_changed.
+    private static async Task AssertTheNextQuantityEditAppliesAsync(Flow flow)
+    {
+        await flow.DeliverAsync("orders/updated", "wh-next", QuantityEditedAgain());
+
+        Assert.Equal("0", await flow.ScalarAsync(
+            "SELECT count(*)::text FROM shopify.order_edits, jsonb_array_elements(groups) AS g WHERE g ->> 'outcome' = 'Conflict'"));
+        Assert.Equal("3", await flow.ScalarAsync("SELECT trim_scale(quantity)::text FROM quotations.order_items"));
     }
 
     private static void Renumber(JsonObject order, long id, string name)
@@ -237,7 +326,7 @@ public sealed class ShopifyEditSyncFlowTests
 
         public string ConnectionString => database.GetConnectionString();
 
-        public static async Task<Flow> StartAsync()
+        public static async Task<Flow> StartAsync(Action<IServiceCollection>? configureServices = null)
         {
             var database = await StartDatabaseAsync();
             var factory = new QepApiFactory(database.GetConnectionString())
@@ -246,6 +335,7 @@ public sealed class ShopifyEditSyncFlowTests
                 {
                     services.RemoveAll<IObjectStorage>();
                     services.AddSingleton<IObjectStorage>(new InMemoryObjectStorage());
+                    configureServices?.Invoke(services);
                 },
             };
             var world = await ShopifyWorld.ArrangeAsync(factory, database.GetConnectionString());
@@ -271,16 +361,23 @@ public sealed class ShopifyEditSyncFlowTests
 
         public Task<string> ScalarAsync(string sql) => ScalarAsync<string>(ConnectionString, sql);
 
-        public async Task<string?> MirrorAsync(string expression)
-        {
-            await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
-            await connection.OpenAsync(Ct);
-            await using var command = new Npgsql.NpgsqlCommand(
-                $"SELECT ({expression})::text FROM shopify.orders WHERE shopify_order_id = @id", connection);
-            command.Parameters.AddWithValue("id", OrderId);
-            var value = await command.ExecuteScalarAsync(Ct);
-            return value is null or DBNull ? null : (string)value;
-        }
+        /// <summary>La próxima escritura de un cambio <c>Applied</c> falla en la base, una sola vez: es el guardado de Shopify que
+        /// cae después de que Quotations ya confirmó el pedido. La secuencia no vuelve atrás con el rollback, así que no se rearma.</summary>
+        public Task FailTheNextAppliedChangeAsync() =>
+            ExecuteAsync(
+                ConnectionString,
+                """
+                CREATE SEQUENCE public.fail_applied_change;
+                CREATE FUNCTION public.fail_applied_change() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.status = 'Applied' AND nextval('public.fail_applied_change') = 1 THEN
+                        RAISE EXCEPTION 'Simulated failure after the order was written.';
+                    END IF;
+                    RETURN NEW;
+                END $$;
+                CREATE TRIGGER fail_applied_change BEFORE INSERT OR UPDATE ON shopify.order_edits
+                    FOR EACH ROW EXECUTE FUNCTION public.fail_applied_change();
+                """);
 
         public async ValueTask DisposeAsync()
         {
@@ -289,5 +386,21 @@ public sealed class ShopifyEditSyncFlowTests
             await Factory.DisposeAsync();
             await database.DisposeAsync();
         }
+    }
+
+    /// <summary>Cuántas veces más falla la reacción de §6.3 antes de delegar en la real.</summary>
+    internal sealed class ReactionFailures
+    {
+        public int Remaining;
+    }
+
+    /// <summary>La reacción real de §6.3, que falla las veces que diga <see cref="ReactionFailures"/>: corre después del detector
+    /// y antes del guardado de la ingesta.</summary>
+    internal sealed class FailingOrderChangeReaction(ShopifyOrderChanges inner, ReactionFailures failures) : IShopifyOrderChangeReaction
+    {
+        public Task ReactAsync(ShopifyOrderChange change, CancellationToken cancellationToken) =>
+            Interlocked.Decrement(ref failures.Remaining) >= 0
+                ? throw new InvalidOperationException("Simulated failure of the payment and cancellation reaction.")
+                : inner.ReactAsync(change, cancellationToken);
     }
 }

@@ -222,7 +222,9 @@ public sealed class ShopifyChangeDecider(
             throw await BlockAsync(edit, reason, ShopifyOrderEdits.WriteGroups(plan.Groups), now, cancellationToken);
         }
 
-        if (await applier.ApplyAsync(store, row, edit, plan, projection, incoming, decidedBy, cancellationToken) is { } rejected)
+        // Si un aceptar anterior confirmó en Quotations y su guardado cayó, lo aplicado sale ahora como eco y ApplyAsync lleva la
+        // proyección al pedido (review I-1).
+        if (await applier.ApplyAsync(store, row, edit, plan, projection, incoming, order, decidedBy, cancellationToken) is { } rejected)
         {
             if (string.Equals(rejected, ShopifyOrderEdits.OrderNotEditableCode, StringComparison.Ordinal))
             {

@@ -112,7 +112,7 @@ public sealed class ShopifyOrderIngestion(
 
         // La detección de ediciones (spec 2026-11-14 §3) y la reacción de §6.3 van antes del guardado, en la misma unidad de
         // trabajo y con el mismo cambio. Si fallan no se guarda el snapshot, la entrega vuelve con su lease y el reintento ve el
-        // mismo estado anterior: el cambio no se pierde.
+        // mismo estado anterior: el cambio no se pierde. El detector no escribe en el pedido de QEP: eso va después del guardado.
         if (applied && previous is not null)
         {
             var change = new ShopifyOrderChange(connection, store, row, previous, snapshot);
@@ -121,6 +121,13 @@ public sealed class ShopifyOrderIngestion(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Con el cambio ya guardado, la tienda automática lo aplica. Corre también cuando el snapshot no es nuevo: si el guardado de
+        // un intento anterior cayó después de que Quotations confirmó el pedido, el reintento termina ese cambio (review I-1).
+        if (previous is not null && await editDetector.ApplyPendingAsync(store, row, cancellationToken))
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         if (applied && connection.IsOperational && row.ImportState == ShopifyImportState.Waiting)
         {

@@ -124,7 +124,8 @@ internal sealed class ShopifyEditTestWorld
         return row;
     }
 
-    /// <summary>Lo que hace la ingesta antes de llamar al detector: guarda el payload anterior y aplica el snapshot a la fila.</summary>
+    /// <summary>Lo que hace la ingesta con una fila que ya existía: guarda el payload anterior, aplica el snapshot, llama al
+    /// detector, guarda y, con la tienda automática, aplica el cambio pendiente y vuelve a guardar.</summary>
     public async Task DeliverAsync(ShopifyOrderMirror row, ShopifyOrderSnapshot incoming)
     {
         var previous = ShopifyMirrorState.Of(row);
@@ -133,6 +134,10 @@ internal sealed class ShopifyEditTestWorld
         await Detector.DetectAsync(
             new ShopifyOrderChange(World.Connection, World.Store, row, previous, incoming), previousPayload, TestContext.Current.CancellationToken);
         await World.UnitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+        if (await Detector.ApplyPendingAsync(World.Store, row, TestContext.Current.CancellationToken))
+        {
+            await World.UnitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
     }
 
     public IReadOnlyList<ShopifyOrderEdit> AllEdits => [.. World.Database.OrderEdits, .. World.Database.PendingOrderEdits];

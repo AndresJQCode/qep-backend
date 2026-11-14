@@ -116,15 +116,24 @@ public sealed class NoShopifyOrderChangeReaction : IShopifyOrderChangeReaction
 /// <summary>
 /// Spec 2026-11-14 §3: la detección de ediciones sobre un pedido ya importado. La implementa <c>ShopifyOrderEdits</c>, que
 /// Bootstrapper registra antes de <c>AddShopifyWebhookProcessing</c> (que sólo deja <see cref="NoShopifyOrderEditDetector"/> si nadie
-/// registró otro). La ingesta la llama después del espejo y antes de la reacción de §6.3, en la misma unidad de trabajo: lo que
-/// escribe en la fila y en <c>order_edits</c> entra en el mismo commit que el snapshot. Lo que aplica en el pedido de QEP lo confirma
-/// Quotations por su cuenta (otro scope), así que un reintento ve el pedido ya cambiado y lo toma como eco.
+/// registró otro). La ingesta la llama en dos pasos:
+/// <list type="number">
+/// <item><see cref="DetectAsync"/>, después del espejo y antes de la reacción de §6.3, en la misma unidad de trabajo: el cambio y la
+/// fila entran en el mismo commit que el snapshot. No escribe en el pedido de QEP.</item>
+/// <item><see cref="ApplyPendingAsync"/>, después de ese guardado: con la tienda automática aplica el cambio pendiente. El pedido lo
+/// confirma Quotations por su cuenta (otro scope), así que si el guardado que sigue falla, el cambio ya guardado queda pendiente y el
+/// reintento lo termina (review I-1).</item>
+/// </list>
 /// </summary>
 public interface IShopifyOrderEditDetector
 {
     /// <summary><paramref name="previousPayload"/> es el payload de la fila antes de <c>ApplySnapshot</c>: la base de una fila
     /// importada antes de la sincronización (sin versión aplicada, plan D6).</summary>
     Task DetectAsync(ShopifyOrderChange change, string previousPayload, CancellationToken cancellationToken);
+
+    /// <summary>Aplica el cambio pendiente del snapshot vigente de <paramref name="row"/> si la tienda es automática. Devuelve si
+    /// tocó algo que la ingesta tiene que guardar.</summary>
+    Task<bool> ApplyPendingAsync(ShopifyStore store, ShopifyOrderMirror row, CancellationToken cancellationToken);
 }
 
 /// <summary>La detección vacía, el registro por defecto de <c>AddShopifyWebhookProcessing</c>. En el host la reemplaza
@@ -132,6 +141,9 @@ public interface IShopifyOrderEditDetector
 public sealed class NoShopifyOrderEditDetector : IShopifyOrderEditDetector
 {
     public Task DetectAsync(ShopifyOrderChange change, string previousPayload, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task<bool> ApplyPendingAsync(ShopifyStore store, ShopifyOrderMirror row, CancellationToken cancellationToken) =>
+        Task.FromResult(false);
 }
 
 /// <summary>Un cliente de QEP como lo necesita el importador (§6.2.1): si existe, si está completo y si está activo. Un cliente
