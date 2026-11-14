@@ -11,11 +11,11 @@ using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
-public sealed class ProductWriteApiTests
+public sealed class ProductWriteApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] ManagePermissions =
@@ -25,8 +25,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task CreateReturnsCreatedAndTheProductIsReadableAfterwards()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
@@ -73,8 +72,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task CreateWithABlankNameReturnsUnprocessableWithTheFieldMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, "   ", "VS-001");
@@ -91,8 +89,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task CreateWithOnlyTheReadPermissionIsForbiddenAndPersistsNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var reader = CreateClient(
             factory, SubjectId, TenantId, [CatalogPermissions.ProductRead]);
 
@@ -113,8 +110,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task CreatingTheSameCodeTwiceInATenantReturnsCodeTaken()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var first = await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
@@ -132,8 +128,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task TheSameCodeIsAcceptedInADifferentTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -151,8 +146,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task ListReturnsOnlyTheProductsOfTheAuthenticatedTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -175,8 +169,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task SearchMatchesNameAndCodeIgnoringCase()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
@@ -193,8 +186,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task GetUpdateAndDeactivateReturnNotFoundForAnUnknownId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var missing = Guid.CreateVersion7();
 
@@ -280,8 +272,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task CatalogPermissionsArePublishedInTheAuthorizationCatalog()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         // El endpoint del catálogo está protegido por advisorship.read, cuya definición
         // dice "consultar membresías y catálogo de roles/permisos". Tener los permisos de catalog
         // no alcanza para leer el catálogo que los publica.
@@ -316,8 +307,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task CreateForAnotherTenantIsForbiddenBeforeTheBodyIsValidated()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         // Autenticado en OtherTenant y con el permiso de gestión: la política del endpoint pasa.
         using var intruder = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -338,8 +328,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task SearchTreatsLikeWildcardsAsLiteralCharacters()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
@@ -362,8 +351,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task SearchAlsoFindsByTheBarcodeOfAVariant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         (await client.PostAsJsonAsync(
@@ -388,8 +376,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task ListCombinesNameAndCodeWithAnd()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
@@ -488,8 +475,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task ListPaginatesAndCountsEveryMatch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         for (var index = 1; index <= 5; index++)
@@ -512,8 +498,7 @@ public sealed class ProductWriteApiTests
     [Fact]
     public async Task ListFiltersByIsActiveOnTheServer()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var toDeactivate = await ReadProductAsync(

@@ -17,9 +17,9 @@ namespace Modules.Catalog.IntegrationTests;
 /// instante correctos, y que lo haga en la misma transacción que el producto — un `PUT` que
 /// falla al commitear no puede dejar histórico de un cambio que no ocurrió.
 /// </summary>
-public sealed class ProductPriceHistoryApiTests
+public sealed class ProductPriceHistoryApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000091";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000092";
 
     private static readonly string[] ManagePermissions =
@@ -30,8 +30,8 @@ public sealed class ProductPriceHistoryApiTests
     [Fact]
     public async Task UpdatingThePriceWritesTheHistoryRowsWithTheAuthorAndTheInstant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(await CreateProductAsync(client, "VS-001", new
@@ -120,8 +120,8 @@ public sealed class ProductPriceHistoryApiTests
     [Fact]
     public async Task AFailedUpdateLeavesNoHistoryBehind()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         await ReadProductAsync(await CreateProductAsync(client, "VS-001", new { prices = new Dictionary<string, decimal> { ["USD"] = 100m } }));
@@ -146,8 +146,8 @@ public sealed class ProductPriceHistoryApiTests
     [Fact]
     public async Task UpdatingOneVariantWritesHistoryOnlyForThatVariant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var talla = await CreateTallaAsync(client);
@@ -181,8 +181,8 @@ public sealed class ProductPriceHistoryApiTests
     [Fact]
     public async Task CopyingScalesWritesHistoryPerTargetVariant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var scales = new object[]
@@ -217,7 +217,7 @@ public sealed class ProductPriceHistoryApiTests
 
     private static readonly string[] TallaValues = ["S", "M"];
 
-    private static async Task<OptionResponse> CreateTallaAsync(HttpClient client)
+    private async Task<OptionResponse> CreateTallaAsync(HttpClient client)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/options",
@@ -232,7 +232,7 @@ public sealed class ProductPriceHistoryApiTests
         return option;
     }
 
-    private static async Task<ProductResponse> CreateShirtAsync(HttpClient client, OptionResponse talla)
+    private async Task<ProductResponse> CreateShirtAsync(HttpClient client, OptionResponse talla)
     {
         object VariantOf(string code, string size, decimal usd) => new
         {
@@ -252,7 +252,7 @@ public sealed class ProductPriceHistoryApiTests
             TestContext.Current.CancellationToken));
     }
 
-    private static Task<HttpResponseMessage> CreateProductAsync(
+    private Task<HttpResponseMessage> CreateProductAsync(
         HttpClient client,
         string code,
         object pricing) =>

@@ -15,11 +15,11 @@ using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
-public sealed class TaxRateApiTests
+public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] ManagePermissions =
@@ -29,8 +29,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task ListReturnsAnEmptyCatalogForANewTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory, SubjectId, TenantId, CatalogPermissions.TaxRateRead);
 
@@ -44,8 +43,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task ListReturnsOnlyTheTaxRatesOfTheAuthenticatedTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -67,8 +65,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task GetForAnotherTenantIsForbiddenAndNotNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var intruder = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -87,8 +84,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task CreateWithOnlyTheReadPermissionIsForbiddenAndPersistsNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var reader = CreateClient(
             factory, SubjectId, TenantId, CatalogPermissions.TaxRateRead);
 
@@ -102,8 +98,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task CreateReturnsCreatedAndTheTaxRateIsReadableAfterwards()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
@@ -150,8 +145,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task CreateWithABlankNameReturnsUnprocessableWithTheFieldMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "   ", 19);
@@ -171,8 +165,7 @@ public sealed class TaxRateApiTests
     [InlineData(101)]
     public async Task CreateWithAPercentageOutOfRangeIsUnprocessable(int percentage)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "IVA raro", percentage);
@@ -191,8 +184,7 @@ public sealed class TaxRateApiTests
     [InlineData(100)]
     public async Task CreateAcceptsTheBoundaryPercentages(int percentage)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, $"Tasa {percentage}", percentage);
@@ -205,8 +197,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task GetUpdateAndDeactivateReturnNotFoundForAnUnknownId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var missing = Guid.CreateVersion7();
 
@@ -267,8 +258,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task DeactivateRejectsATaxRateInUseByAProductAndLeavesItActive()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         // Unica prueba del archivo que ademas crea un producto —es como se pone la tasa "en uso"—,
         // asi que suma ProductManage a los permisos de tasas. Sin el, el POST de producto responde
         // 403 y el 422 que se esta buscando nunca llega a evaluarse.
@@ -338,8 +328,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task TaxRatePermissionsArePublishedAndTheirPoliciesResolve()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         // El catálogo de autorización está protegido por advisorship.read: tener los
         // permisos de catalog no alcanza para leer el catálogo que los publica.
         using var client = CreateClient(
@@ -373,8 +362,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task CreatingTheSameNameTwiceInATenantReturnsNameTaken()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var first = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
@@ -392,8 +380,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task TheSameNameIsAcceptedInADifferentTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -420,8 +407,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task TheTwoUniqueIndexesOfTheSchemaReturnTheirOwnDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory,
             SubjectId,
@@ -519,8 +505,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task LegacyCreateWithoutTypeOrCountryIsIvaColombia()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
@@ -647,8 +632,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task UpdateWithANonNumericMinimumBaseIsValidationFailed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var created = await ReadTaxRateAsync(await CreateTaxRateAsync(client, TenantId, "IVA general", 19));
 
@@ -692,8 +676,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task ValidationErrorsCarryTheField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "IVA general", 101);
@@ -702,11 +685,11 @@ public sealed class TaxRateApiTests
         Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Percentage", out _));
     }
 
-    private static Task<HttpResponseMessage> PostTaxRateAsync(HttpClient client, object body) =>
+    private Task<HttpResponseMessage> PostTaxRateAsync(HttpClient client, object body) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates", body, TestContext.Current.CancellationToken);
 
-    private static Task<HttpResponseMessage> PutTaxRateAsync(HttpClient client, Guid id, object body) =>
+    private Task<HttpResponseMessage> PutTaxRateAsync(HttpClient client, Guid id, object body) =>
         client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{id}", body, TestContext.Current.CancellationToken);
 

@@ -8,11 +8,11 @@ using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
-public sealed class CategoryApiTests
+public sealed class CategoryApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] ManagePermissions =
@@ -21,8 +21,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task ListReturnsAnEmptyListForANewTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, CatalogPermissions.ProductRead);
 
         Assert.Empty(await ListAsync(client, TenantId));
@@ -31,8 +30,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task CreateARootReturnsCreatedWithLocationAndListsItWithZeroProducts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateCategoryAsync(client, TenantId, "  Bebidas ", null);
@@ -56,8 +54,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task CreateAChildCarriesItsParentAndTheListIsFlatSortedByName()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         await CreateCategoryAsync(client, TenantId, "Zapatos", null);
@@ -74,8 +71,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task AnUnknownOrForeignParentIsParentNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
 
@@ -92,8 +88,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task SiblingNamesClashIgnoringCaseAndEdgeSpaces()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var bebidas = await ReadCategoryAsync(await CreateCategoryAsync(client, TenantId, "Bebidas", null));
@@ -112,8 +107,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task TheSameNameUnderAnotherParentIsAccepted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var calzado = await ReadCategoryAsync(await CreateCategoryAsync(client, TenantId, "Calzado", null));
@@ -130,8 +124,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task TheTenthLevelIsAllowedAndTheEleventhIsTooDeep()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         Guid? parentId = null;
@@ -151,8 +144,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task CreateWithABlankOrLongNameReturnsTheFieldMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         foreach (var name in new[] { "   ", new string('a', 81) })
@@ -170,8 +162,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task CreateForAnotherTenantIsForbiddenAndNotNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var intruder = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
 
         var response = await CreateCategoryAsync(intruder, TenantId, "Bebidas", null);
@@ -182,8 +173,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task ListForAnotherTenantIsForbiddenAndNotNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var intruder = CreateClient(factory, OtherSubjectId, OtherTenantId, CatalogPermissions.ProductRead);
 
         var response = await intruder.GetAsync(
@@ -196,8 +186,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task ListWithoutTheReadPermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, CatalogPermissions.TaxRateRead);
 
         var response = await client.GetAsync(
@@ -210,8 +199,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task CreateWithOnlyTheReadPermissionIsForbiddenAndPersistsNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var reader = CreateClient(factory, SubjectId, TenantId, CatalogPermissions.ProductRead);
 
         var response = await CreateCategoryAsync(reader, TenantId, "Bebidas", null);
@@ -242,8 +230,7 @@ public sealed class CategoryApiTests
     [Fact]
     public async Task ProductCountCountsDirectProductsActiveAndInactive()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var bebidas = await ReadCategoryAsync(await CreateCategoryAsync(client, TenantId, "Bebidas", null));

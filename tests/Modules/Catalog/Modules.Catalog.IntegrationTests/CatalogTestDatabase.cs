@@ -84,6 +84,11 @@ internal static class CatalogTestDatabase
         // Una conexión viva a la plantilla haría fallar todos los clones.
         NpgsqlConnection.ClearAllPools();
         await ExecuteAdminAsync(server, $"ALTER DATABASE \"{TemplateDatabase}\" WITH ALLOW_CONNECTIONS false");
+        // ALLOW_CONNECTIONS no corta las sesiones abiertas, y un worker del host que se está apagando todavía puede
+        // tener una: con ella, el primer clon falla con «source database is being accessed by other users».
+        await ExecuteAdminAsync(
+            server,
+            $"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{TemplateDatabase}' AND pid <> pg_backend_pid()");
         return server;
     }
 

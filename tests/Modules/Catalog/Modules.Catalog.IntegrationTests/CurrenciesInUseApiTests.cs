@@ -8,10 +8,10 @@ namespace Modules.Catalog.IntegrationTests;
 
 /// <summary>Spec D10: a currency is "in use" when at least one product of the tenant has a price
 /// in it. Reports, Excel columns and the settings/bank-account selectors show only those.</summary>
-public sealed class CurrenciesInUseApiTests
+public sealed class CurrenciesInUseApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-0000000000e1";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000e2";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-0000000000e3";
 
     private static readonly string[] ManagePermissions =
@@ -22,8 +22,7 @@ public sealed class CurrenciesInUseApiTests
     [Fact]
     public async Task ATenantWithoutProductsUsesNoCurrency()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var inUse = await client.GetFromJsonAsync<string[]>(Url(TenantId), TestContext.Current.CancellationToken);
@@ -36,8 +35,7 @@ public sealed class CurrenciesInUseApiTests
     [Fact]
     public async Task CurrenciesComeInCatalogueOrderAndOnlyFromThisTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(factory, SubjectId, OtherTenantId, ManagePermissions);
         await CreateAsync(client, TenantId, "A-1", new() { ["USD"] = 10m });

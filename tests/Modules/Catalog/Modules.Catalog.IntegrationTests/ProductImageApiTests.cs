@@ -18,11 +18,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// otra cosa: **que el cableado exista**. Un resolver perfecto que nadie llama pasa todas las
 /// unitarias.
 /// </summary>
-public sealed class ProductImageApiTests
+public sealed class ProductImageApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000011";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000012";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ee";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000ed";
 
     // Sin bucket público configurado, IsConfigured es false y no habría URL que verificar:
@@ -48,8 +48,8 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task AnImageFromAnotherTenantIsRejectedAndNothingIsPersisted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var owner = CreateClient(factory, SubjectId, TenantId, All);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
 
@@ -71,8 +71,7 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task AnUnknownImageIsRejectedWithTheSameCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", imageFileId: Guid.CreateVersion7()));
@@ -89,8 +88,7 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task AnImageThatHasNotFinishedUploadingIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var pending = await CreateUploadSessionAsync(client, TenantId, "pendiente.png", "image/png");
@@ -109,8 +107,8 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task AFileThatIsNotAnImageIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var pdf = await UploadFileAsync(
@@ -130,8 +128,8 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task AnAvailableImageFromTheSameTenantIsAcceptedAndPersisted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var image = await UploadImageAsync(client, TenantId, database, "portada.png");
@@ -153,8 +151,8 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task ANullImageIsStillAcceptedAndThePutCanClearIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var image = await UploadImageAsync(client, TenantId, database, "portada.png");
@@ -181,8 +179,8 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task AFileCanDeclareThatItBelongsToAProduct()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var response = await client.PostAsJsonAsync(
@@ -221,8 +219,7 @@ public sealed class ProductImageApiTests
     [InlineData("4")]
     public async Task AnUnknownOwnerTypeIsRejectedInsteadOfFallingBackToUser(string ownerType)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var response = await client.PostAsJsonAsync(
@@ -251,8 +248,8 @@ public sealed class ProductImageApiTests
     [InlineData(false)]
     public async Task TheProductExposesTheImageUrlOnlyWhenTheImageIsPublished(bool published)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var image = await UploadImageAsync(client, TenantId, database, "portada.png");
@@ -291,8 +288,8 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task TheListResolvesTheImageUrlOfEveryProduct()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var first = await UploadImageAsync(client, TenantId, database, "una.png");
@@ -337,8 +334,8 @@ public sealed class ProductImageApiTests
     [Fact]
     public async Task ALegacyProductPointingAtAnotherTenantsFileDoesNotLeakItsUrl()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var owner = CreateClient(factory, SubjectId, TenantId, All);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
 

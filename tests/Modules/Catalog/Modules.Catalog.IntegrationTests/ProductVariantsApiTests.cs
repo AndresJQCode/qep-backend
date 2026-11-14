@@ -16,11 +16,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// tienen sus unitarias; acá se verifica el cableado: la biblioteca del tenant, Storage, la
 /// versión y la forma BFF de la respuesta.
 /// </summary>
-public sealed class ProductVariantsApiTests
+public sealed class ProductVariantsApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000051";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000052";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000dd";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000dc";
     private const string PublicBaseUrl = "https://cdn.qep.test";
 
@@ -38,8 +38,7 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task CreateWithoutOptionsReturnsSingleVariantLikeToday()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var created = await ReadProductAsync(await PostProductAsync(
@@ -66,8 +65,7 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task CreateThreeOptionsReturnsVisibleNamesInOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M", "L");
@@ -107,8 +105,8 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task AddingOptionsToAMigratedProductKeepsItsVariantPricesAndHistory()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var created = await ReadProductAsync(await PostProductAsync(
@@ -156,8 +154,8 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task PutStaleVersionReturns412Concurrency()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var created = await ReadProductAsync(await PostProductAsync(
@@ -186,8 +184,8 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task PutGalleryFileOfOtherTenantRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var owner = CreateClient(factory, SubjectId, TenantId, All);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
 
@@ -215,8 +213,8 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task GetReturnsGalleryAndVariantImage()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var main = await UploadImageAsync(client, TenantId, database, "principal.png");
@@ -268,8 +266,7 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task AnOptionOfAnotherTenantIsRejectedWithTheFieldMarked()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, All);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
 
@@ -293,8 +290,7 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task AValueOfAnotherOptionIsRejectedOnItsPosition()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S");
@@ -318,8 +314,7 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task ACodeTakenByAnotherProductIsMarkedOnTheVariant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         await PostProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001"));
@@ -343,8 +338,7 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task ListShowsTheVariantCountAndThePriceRangeOfActiveVariants()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M", "L");
@@ -379,8 +373,7 @@ public sealed class ProductVariantsApiTests
     [Fact]
     public async Task ListShowsTheActiveCodeOfAProductWhoseOptionsWereRemoved()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M");

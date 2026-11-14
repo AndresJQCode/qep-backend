@@ -17,11 +17,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// un <c>UPDATE</c> por SQL. Por eso CA-CAT-07-03 no se conforma con el 200 de la activación y
 /// sigue con un <c>PUT</c>.
 /// </summary>
-public sealed class ProductActivationApiTests
+public sealed class ProductActivationApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000031";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000032";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000cc";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000cb";
 
     private static readonly string[] ManagePermissions =
@@ -34,8 +34,8 @@ public sealed class ProductActivationApiTests
     [Fact]
     public async Task ActivateBringsAnInactiveProductBackAndPersistsIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(
@@ -58,8 +58,7 @@ public sealed class ProductActivationApiTests
     [Fact]
     public async Task ActivateRejectsAProductThatIsAlreadyActive()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(
@@ -78,8 +77,7 @@ public sealed class ProductActivationApiTests
     [Fact]
     public async Task ActivateReopensEditingEndToEnd()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(
@@ -114,8 +112,8 @@ public sealed class ProductActivationApiTests
     [Fact]
     public async Task ActivateDoesNotReachAcrossTenants()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var owner = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
         using var intruder = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
@@ -136,8 +134,7 @@ public sealed class ProductActivationApiTests
     [Fact]
     public async Task ActivateReturnsNotFoundForAnUnknownId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await ActivateAsync(client, TenantId, Guid.CreateVersion7());
@@ -150,8 +147,8 @@ public sealed class ProductActivationApiTests
     [Fact]
     public async Task ActivateRequiresTheManagePermission()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var manager = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var reader = CreateClient(factory, SubjectId, TenantId, ReadOnlyPermissions);
 
@@ -196,8 +193,8 @@ public sealed class ProductActivationApiTests
     [Fact]
     public async Task ActivateAdvancesVersionAndUpdatedAt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(
@@ -220,8 +217,7 @@ public sealed class ProductActivationApiTests
     [Fact]
     public async Task AnInactiveProductNeverReleasedItsCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(

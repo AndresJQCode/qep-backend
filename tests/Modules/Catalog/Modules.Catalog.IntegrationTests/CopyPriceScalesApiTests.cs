@@ -18,11 +18,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// commitee de una sola vez contra Postgres, que las escalas viejas del destino desaparezcan de
 /// verdad en vez de quedar huérfanas, y que un destino inválido no deje media copia escrita.
 /// </summary>
-public sealed class CopyPriceScalesApiTests
+public sealed class CopyPriceScalesApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000061";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000062";
-    private const string OtherTenantId = "01900000-0000-7000-8000-000000000063";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-000000000064";
 
     private static readonly string[] ManagePermissions =
@@ -35,8 +35,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task CopiesTheScalesToEveryTargetInOneCall()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
@@ -78,8 +77,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task CopiesTheScalesWithoutTheirRestriction()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
@@ -105,8 +103,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task ReplacesTheScalesTheTargetAlreadyHad()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
@@ -127,8 +124,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task WritesNothingWhenOneTargetDoesNotExist()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
@@ -146,8 +142,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task RejectsASourceWithoutScales()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m);
@@ -168,8 +163,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task RejectsAnInactiveTarget()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
@@ -191,8 +185,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task RejectsTheSourceAsItsOwnTarget()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
@@ -207,8 +200,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task RejectsAnEmptyTargetList()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(client, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
@@ -227,8 +219,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task CopyFromVariantToVariantsOfSeveralProducts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var talla = await CreateOptionAsync(client, TenantId, "Talla", "S", "M", "L");
@@ -274,8 +265,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task CopyRejects201Targets()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var targets = Enumerable.Range(0, PriceScaleCopyLimits.MaxTargets + 1).Select(_ => Guid.NewGuid()).ToArray();
@@ -293,8 +283,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task CopyAccepts200TargetsAtTheValidator()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var targets = Enumerable.Range(0, PriceScaleCopyLimits.MaxTargets).Select(_ => Guid.NewGuid()).ToArray();
@@ -309,8 +298,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task CopyFromAMissingSourceVariantIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var target = await CreateProductAsync(client, "Vela de cera", "VC-001", 100m, OneScale());
@@ -326,8 +314,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task CopyRejectsACallerFromAnotherTenantWith403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var outsider = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
 
@@ -345,8 +332,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task CopyNeverReachesAVariantOfAnotherTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var outsider = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
 
@@ -367,8 +353,7 @@ public sealed class CopyPriceScalesApiTests
     [Fact]
     public async Task RejectsACallerWithoutTheManagePermission()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var source = await CreateProductAsync(manager, "Vela de soja", "VS-001", 100m, TwoScales(), TwelvePack);
@@ -417,17 +402,17 @@ public sealed class CopyPriceScalesApiTests
         }
     ];
 
-    private static async Task<ProductResponse> CreateProductAsync(
+    private async Task<ProductResponse> CreateProductAsync(
         HttpClient client,
         string name,
         string code,
         decimal baseUsd,
         object[]? scales = null,
         int[]? packagingUnits = null,
-        string tenantId = TenantId)
+        string? tenantId = null)
     {
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/catalog/products",
+            $"/api/v1/tenants/{tenantId ?? TenantId}/catalog/products",
             ProductBodies.Create(
                 name,
                 code,
@@ -447,7 +432,7 @@ public sealed class CopyPriceScalesApiTests
 
     // «Camiseta» con Talla S / M / L: tres variantes de un mismo producto, cada una con su precio y
     // sus escalas. Vuelven en el orden en que se mandaron.
-    private static async Task<ProductResponse> CreateShirtAsync(
+    private async Task<ProductResponse> CreateShirtAsync(
         HttpClient client,
         OptionResponse talla,
         (decimal Usd, object[]? Scales) small,
@@ -503,13 +488,13 @@ public sealed class CopyPriceScalesApiTests
         return option;
     }
 
-    private static Task<HttpResponseMessage> CopyAsync(
+    private Task<HttpResponseMessage> CopyAsync(
         HttpClient client,
         Guid sourceVariantId,
         Guid[] targetVariantIds,
-        string tenantId = TenantId) =>
+        string? tenantId = null) =>
         client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/catalog/products/price-scales/copy",
+            $"/api/v1/tenants/{tenantId ?? TenantId}/catalog/products/price-scales/copy",
             new { sourceVariantId, targetVariantIds },
             TestContext.Current.CancellationToken);
 
@@ -521,7 +506,7 @@ public sealed class CopyPriceScalesApiTests
         return payload;
     }
 
-    private static async Task<ProductResponse> GetProductAsync(HttpClient client, Guid productId)
+    private async Task<ProductResponse> GetProductAsync(HttpClient client, Guid productId)
     {
         var product = await client.GetFromJsonAsync<ProductResponse>(
             $"/api/v1/tenants/{TenantId}/catalog/products/{productId}",
