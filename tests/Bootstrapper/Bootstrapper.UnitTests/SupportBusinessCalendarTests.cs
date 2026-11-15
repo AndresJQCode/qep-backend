@@ -18,6 +18,7 @@ public sealed class SupportBusinessCalendarTests
     [Theory]
     [InlineData("CO")]
     [InlineData("ES")]
+    [InlineData("")]
     public void MondayToFridayAreBusinessDaysAndTheWeekendIsNot(string country)
     {
         var calendar = SupportBusinessCalendar.From(country);
