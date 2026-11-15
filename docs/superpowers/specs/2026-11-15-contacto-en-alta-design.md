@@ -26,8 +26,11 @@ del frontend: el contrato se arregla acá.
      activa (`company_inactive`), no es contacto de otra (`company_is_contact`).
 - Los códigos y el status HTTP son los mismos que ya responde `PUT …/company`. El frontend los mapea al campo `companyId`.
 - La respuesta del `POST` ya trae `company` (el DTO del cliente); con vínculo, llega resuelta.
-- Auditoría (decisión mía, corregible): un solo evento, el del alta, y su payload incluye `CompanyId`. No se emite un
-  `CompanyChanged` aparte: no hubo un cambio, el cliente nació así.
+- Auditoría (decisión mía, corregible): un solo evento, `customers.customer.created`, como hoy (`ICustomersAuditPublisher`
+  no lleva payload). No se emite un `CompanyChanged` aparte: no hubo un cambio, el cliente nació así.
+- La transacción explícita se abre **sólo** con `CompanyId` (el bloqueo la exige). Ante `identification_taken` se deshace
+  antes de `CustomerIdentificationTaken.ResolveAsync`, que relee al dueño: en una transacción abortada de Postgres esa
+  lectura fallaría.
 
 ## 3. Lo que no cambia
 
