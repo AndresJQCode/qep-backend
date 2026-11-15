@@ -156,8 +156,8 @@ Validación: 422 `validation.failed` con estas claves exactas de `errors` (camel
 | `shippingParty.phone` | vacío o más de 32 |
 | `shippingParty.email` | vacío, más de 254 o sin forma de correo |
 | `shippingParty.address` | vacío o más de 255 |
-| `shippingParty.departmentId` | ausente o `Guid.Empty` |
-| `shippingParty.cityId` | ausente o `Guid.Empty` |
+| `shippingParty.departmentId` | ausente o `Guid.Empty`; o (segundo 422, sólo con la forma válida) el departamento no existe |
+| `shippingParty.cityId` | ausente o `Guid.Empty`; o (segundo 422, sólo con la forma válida y el departamento existente) la ciudad no existe o no es de ese departamento (owner 2026-11-15) |
 | `buyerNotes` | más de 2000 tras recortar |
 | `attributes` | ausente (`null`), más de 50, o dos claves iguales (ordinal, tras recortar) |
 | `attributes[i]` | el elemento `i` es `null` |
