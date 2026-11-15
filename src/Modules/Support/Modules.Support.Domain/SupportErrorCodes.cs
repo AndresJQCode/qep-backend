@@ -54,4 +54,12 @@ public static class SupportErrorCodes
     public const string ReplyConnectionRequired = "support.reply.connection_required";
 
     public const string ReplyAttachmentUnavailable = "support.reply.attachment_unavailable";
+
+    // Los tres únicos de la fase 2, traducidos por nombre de índice en SupportUnitOfWork (plan E3 y E16). El seguimiento del hilo y
+    // el envío los atrapan: no llegan a la pantalla salvo en una carrera.
+    public const string MessageAlreadyLinked = "support.message.already_linked";
+
+    public const string UnclassifiedAlreadyRecorded = "support.unclassified.already_recorded";
+
+    public const string ReplyDuplicateClientId = "support.reply.duplicate_client_id";
 }

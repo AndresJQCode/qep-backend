@@ -51,6 +51,29 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "The ticket trace changed while the update was being committed.",
                 exception);
         }
+        // Los tres únicos de la fase 2 (plan E3 y E16): dos réplicas del seguimiento sobre el mismo entrante, o un reintento con el
+        // mismo clientId. Quien guarda los atrapa por código: el que perdió no tiene nada que hacer.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketMessageIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.MessageAlreadyLinked,
+                "The message is already linked to this ticket.",
+                exception);
+        }
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.UnclassifiedMessageKey))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.UnclassifiedAlreadyRecorded,
+                "The message is already recorded as unclassified.",
+                exception);
+        }
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketReplyClientIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.ReplyDuplicateClientId,
+                "A reply with this client id already exists for the ticket.",
+                exception);
+        }
     }
 
     // Copia de CustomersUnitOfWork.BeginTransactionAsync. Los SaveChanges que corran dentro siguen pasando por la traducción de

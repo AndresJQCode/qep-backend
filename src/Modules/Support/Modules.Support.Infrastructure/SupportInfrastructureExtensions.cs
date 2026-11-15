@@ -29,6 +29,9 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<ISupportSettingsRepository, SupportSettingsRepository>();
         services.AddScoped<ISupportTicketTypeRepository, SupportTicketTypeRepository>();
         services.AddScoped<ISupportTicketRepository, SupportTicketRepository>();
+        services.AddScoped<ISupportTicketMessageRepository, SupportTicketMessageRepository>();
+        services.AddScoped<ISupportUnclassifiedRepository, SupportUnclassifiedRepository>();
+        services.AddScoped<ISupportReplyRepository, SupportReplyRepository>();
         services.AddScoped<ISupportAuditPublisher, SupportAuditPublisher>();
 
         return services;

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
 using Modules.Support.Domain;
@@ -25,9 +26,24 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
 
     public DbSet<SupportTicketEvent> TicketEvents => Set<SupportTicketEvent>();
 
+    /// <summary>Único del mensaje por ticket (plan E3): dos réplicas del seguimiento sobre el mismo entrante chocan acá.</summary>
+    public const string TicketMessageIndex = "IX_ticket_messages_ticket_message";
+
+    /// <summary>La PK de los entrantes sin clasificar: un mensaje se registra una sola vez (plan E3).</summary>
+    public const string UnclassifiedMessageKey = "PK_unclassified_messages";
+
+    /// <summary>Único del <c>clientId</c> por ticket (plan E16): un reintento de la misma respuesta choca acá.</summary>
+    public const string TicketReplyClientIndex = "IX_ticket_replies_ticket_client";
+
     public DbSet<SupportTicketType> TicketTypes => Set<SupportTicketType>();
 
     public DbSet<SupportTenantSettings> TenantSettings => Set<SupportTenantSettings>();
+
+    public DbSet<SupportTicketMessage> TicketMessages => Set<SupportTicketMessage>();
+
+    public DbSet<SupportUnclassifiedMessage> UnclassifiedMessages => Set<SupportUnclassifiedMessage>();
+
+    public DbSet<SupportTicketReply> TicketReplies => Set<SupportTicketReply>();
 
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
@@ -39,6 +55,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureTicketType(modelBuilder);
         ConfigureTicket(modelBuilder);
         ConfigureTicketEvent(modelBuilder);
+        ConfigureTicketMessage(modelBuilder);
+        ConfigureUnclassifiedMessage(modelBuilder);
+        ConfigureTicketReply(modelBuilder);
     }
 
     // La fila la inserta SupportProvisioner con SQL crudo; EF sólo la lee y actualiza el umbral. El contador y created_at son
@@ -109,6 +128,11 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             table.HasCheckConstraint("CK_tickets_reply_channel", InList("reply_channel", Enum.GetNames<SupportReplyChannel>()));
             // Nullable: un NULL pasa el IN (da desconocido, no falso), que es lo que quieren las entradas sin medio manual.
             table.HasCheckConstraint("CK_tickets_manual_medium", InList("manual_medium", Enum.GetNames<ManualIntakeMedium>()));
+            // Fase 2 (plan E4): el canal viaja por nombre, y seguir el hilo exige conversación y ventana.
+            table.HasCheckConstraint(
+                "CK_tickets_conversation_channel", InList("conversation_channel", SupportConversationRef.Channels));
+            table.HasCheckConstraint(
+                "CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
         });
         ticket.HasKey(value => value.Id);
         ticket.Property(value => value.Id)
@@ -169,6 +193,14 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.Property(value => value.ResolutionCount).HasColumnName("resolution_count").HasDefaultValue(0);
         ticket.Property(value => value.ResolvedAt).HasColumnName("resolved_at");
         ticket.Property(value => value.ClosedAt).HasColumnName("closed_at");
+        // La conversación es una referencia blanda a messaging.conversations: otro esquema, sin FK.
+        ticket.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        ticket.Property(value => value.ConversationChannel)
+            .HasColumnName("conversation_channel")
+            .HasMaxLength(SupportConversationRef.ChannelMaxLength);
+        ticket.Property(value => value.FollowThread).HasColumnName("follow_thread").HasDefaultValue(false);
+        ticket.Property(value => value.FollowSince).HasColumnName("follow_since");
+        ticket.Property(value => value.FollowOffAt).HasColumnName("follow_off_at");
         ticket.Property(value => value.LastEventOrdinal).HasColumnName("last_event_ordinal");
         ticket.Property(value => value.CreatedAt).HasColumnName("created_at");
         ticket.Property(value => value.UpdatedAt).HasColumnName("updated_at");
@@ -190,6 +222,106 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.HasIndex(value => new { value.TenantId, value.CustomerId }).HasDatabaseName("IX_tickets_tenant_customer");
         // Para SupportUserReferenceProbe, que busca por membresía sola, sin tenant: un usuario se borra en todos sus tenants.
         ticket.HasIndex(value => value.AssigneeMemberId).HasDatabaseName("IX_tickets_assignee");
+        // Los tickets de una conversación: los candidatos de cada entrante y la pestaña de Soporte de la ficha.
+        ticket.HasIndex(value => new { value.TenantId, value.ConversationId })
+            .HasFilter("conversation_id IS NOT NULL")
+            .HasDatabaseName("IX_tickets_tenant_conversation");
+    }
+
+    private static void ConfigureTicketMessage(ModelBuilder modelBuilder)
+    {
+        var link = modelBuilder.Entity<SupportTicketMessage>();
+        link.ToTable("ticket_messages", Schema, table =>
+            table.HasCheckConstraint("CK_ticket_messages_state", InList("state", Enum.GetNames<SupportTicketMessageState>())));
+        link.HasKey(value => value.Id);
+        link.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        link.Property(value => value.TenantId).HasColumnName("tenant_id");
+        link.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        // Conversación y mensaje son referencias blandas a messaging: otro esquema, sin FK.
+        link.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        link.Property(value => value.MessageId).HasColumnName("message_id");
+        link.Property(value => value.State).HasColumnName("state").HasConversion<string>().HasMaxLength(16);
+        link.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        link.Property(value => value.CreatedAt).HasColumnName("created_at");
+        link.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        link.HasOne<SupportTicket>()
+            .WithMany()
+            .HasForeignKey(value => value.TicketId)
+            .OnDelete(DeleteBehavior.Cascade);
+        link.HasIndex(value => new { value.TicketId, value.MessageId }).IsUnique().HasDatabaseName(TicketMessageIndex);
+        // El expediente: del más nuevo al más viejo, sin los soltados.
+        link.HasIndex(value => new { value.TicketId, value.OccurredAt, value.MessageId })
+            .IsDescending(false, true, true)
+            .HasFilter("state <> 'Released'")
+            .HasDatabaseName("IX_ticket_messages_ticket_visible");
+        // Para el borrado de clientes, que limpia los vínculos de las conversaciones que se borran (plan E18).
+        link.HasIndex(value => new { value.TenantId, value.ConversationId }).HasDatabaseName("IX_ticket_messages_conversation");
+    }
+
+    private static void ConfigureUnclassifiedMessage(ModelBuilder modelBuilder)
+    {
+        var item = modelBuilder.Entity<SupportUnclassifiedMessage>();
+        // Nullable: un NULL pasa el IN, que es lo que quiere una fila pendiente.
+        item.ToTable("unclassified_messages", Schema, table =>
+            table.HasCheckConstraint(
+                "CK_unclassified_messages_resolution", InList("resolution", Enum.GetNames<SupportUnclassifiedResolution>())));
+        item.HasKey(value => value.MessageId).HasName(UnclassifiedMessageKey);
+        item.Property(value => value.MessageId).HasColumnName("message_id").ValueGeneratedNever();
+        item.Property(value => value.TenantId).HasColumnName("tenant_id");
+        item.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        item.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        item.Property(value => value.CreatedAt).HasColumnName("created_at");
+        item.Property(value => value.Resolution).HasColumnName("resolution").HasConversion<string>().HasMaxLength(16);
+        item.Property(value => value.ResolvedAt).HasColumnName("resolved_at");
+        item.Property(value => value.ResolvedByMemberId).HasColumnName("resolved_by_member_id");
+        // Sin FK al ticket: la fila es del mensaje, y un ticket nunca se borra.
+        item.Property(value => value.AssignedTicketId)
+            .HasColumnName("assigned_ticket_id")
+            .HasConversion(new ValueConverter<SupportTicketId, Guid>(id => id.Value, value => new SupportTicketId(value)));
+        item.Ignore(value => value.IsPending);
+        item.HasIndex(value => new { value.TenantId, value.ConversationId })
+            .HasFilter("resolution IS NULL")
+            .HasDatabaseName("IX_unclassified_pending");
+        // Para SupportUserReferenceProbe, que busca por membresía sola.
+        item.HasIndex(value => value.ResolvedByMemberId).HasDatabaseName("IX_unclassified_resolved_by");
+    }
+
+    private static void ConfigureTicketReply(ModelBuilder modelBuilder)
+    {
+        var reply = modelBuilder.Entity<SupportTicketReply>();
+        reply.ToTable("ticket_replies", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_ticket_replies_channel", InList("channel", Enum.GetNames<SupportReplyChannel>()));
+            table.HasCheckConstraint("CK_ticket_replies_delivery", InList("delivery", Enum.GetNames<SupportReplyDelivery>()));
+            table.HasCheckConstraint("CK_ticket_replies_status", InList("status", Enum.GetNames<SupportReplyStatus>()));
+        });
+        reply.HasKey(value => value.Id);
+        reply.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        reply.Property(value => value.TenantId).HasColumnName("tenant_id");
+        reply.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        reply.Property(value => value.ClientId).HasColumnName("client_id");
+        reply.Property(value => value.Channel).HasColumnName("channel").HasConversion<string>().HasMaxLength(24);
+        reply.Property(value => value.Delivery).HasColumnName("delivery").HasConversion<string>().HasMaxLength(16);
+        reply.Property(value => value.Text).HasColumnName("text").HasMaxLength(SupportTicketReply.TextMaxLength);
+        reply.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        reply.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(SupportTicketReply.FailureCodeMaxLength);
+        // Mensaje y conexión son referencias blandas a messaging e integrations.
+        reply.Property(value => value.MessageId).HasColumnName("message_id");
+        reply.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        reply.Property(value => value.AuthorMemberId).HasColumnName("author_member_id");
+        reply.Property(value => value.CreatedAt).HasColumnName("created_at");
+        reply.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        reply.HasOne<SupportTicket>()
+            .WithMany()
+            .HasForeignKey(value => value.TicketId)
+            .OnDelete(DeleteBehavior.Cascade);
+        reply.HasIndex(value => new { value.TicketId, value.ClientId }).IsUnique().HasDatabaseName(TicketReplyClientIndex);
+        // Para SupportUserReferenceProbe, que busca por membresía sola.
+        reply.HasIndex(value => value.AuthorMemberId).HasDatabaseName("IX_ticket_replies_author");
     }
 
     private static void ConfigureTicketEvent(ModelBuilder modelBuilder)

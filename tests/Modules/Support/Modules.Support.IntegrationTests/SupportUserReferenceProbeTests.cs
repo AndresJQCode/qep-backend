@@ -63,6 +63,47 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         Assert.False(await RetainsAsync(factory, bystanderUser));
     }
 
+    // La respuesta se guarda sin RecordReply: así sólo la fila de ticket_replies referencia al autor, y la traza no lo retiene.
+    [Fact]
+    public async Task ARepliedMemberIsReferenced()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var actor = await SeedMemberAsync(factory, $"actor-{Guid.CreateVersion7():N}@example.com", "Beto", "admin", tenantId: tenant.ToString());
+        var author = await SeedMemberAsync(factory, $"author-{Guid.CreateVersion7():N}@example.com", "Dani", "admin", tenantId: tenant.ToString());
+        var authorUser = await UserOfAsync(factory, author);
+        var ticketId = await SaveTicketAsync(factory, tenant, assignee: null, actor);
+        Assert.False(await RetainsAsync(factory, authorUser));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>().Add(SupportTicketReply.Start(
+                tenant, ticketId, Guid.CreateVersion7(), SupportReplyChannel.Email, SupportReplyDelivery.Email, "Ya revisamos tu caso.",
+                null, author, Now.AddMinutes(5)));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        Assert.True(await RetainsAsync(factory, authorUser));
+    }
+
+    [Fact]
+    public async Task AMemberWhoDismissedAMessageIsReferenced()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var member = await SeedMemberAsync(factory, $"dismiss-{Guid.CreateVersion7():N}@example.com", "Eva", "admin", tenantId: tenant.ToString());
+        var memberUser = await UserOfAsync(factory, member);
+        Assert.False(await RetainsAsync(factory, memberUser));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var unclassified = SupportUnclassifiedMessage.Create(tenant, Guid.CreateVersion7(), Guid.CreateVersion7(), Now, Now);
+            unclassified.Dismiss(member, Now.AddMinutes(1));
+            scope.ServiceProvider.GetRequiredService<ISupportUnclassifiedRepository>().Add(unclassified);
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        Assert.True(await RetainsAsync(factory, memberUser));
+    }
+
     private async Task<(QepApiFactory Factory, Guid Tenant)> NewTenantAsync()
     {
         var factory = await sharedHost.StartTestAsync();
@@ -71,7 +112,7 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         return (factory, Guid.Parse(tenantId));
     }
 
-    private static async Task SaveTicketAsync(QepApiFactory factory, Guid tenant, Guid? assignee, Guid actor)
+    private static async Task<SupportTicketId> SaveTicketAsync(QepApiFactory factory, Guid tenant, Guid? assignee, Guid actor)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(tenant, Ct);
@@ -82,6 +123,7 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
             assignee, actor, Now, Clock);
         scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().Add(ticket);
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        return ticket.Id;
     }
 
     private static async Task<Guid> UserOfAsync(QepApiFactory factory, Guid membershipId)
