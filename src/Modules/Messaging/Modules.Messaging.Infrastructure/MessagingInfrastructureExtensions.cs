@@ -41,6 +41,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingAuditRecorder, MessagingAuditRecorder>();
         // Spec 2026-10-10 §8.7: los eventos que escriben los handlers, en el mismo SaveChanges que el agregado.
         services.AddScoped<IConversationEvents, ConversationEvents>();
+        // Soporte fase 2 (plan E11): los eventos de ticket del hilo, en la transacción de quien llama.
+        services.AddScoped<IConversationEventAppender, ConversationEventAppender>();
         services.AddScoped<IAutomationInbox, AutomationInbox>();
         // §7.6 y §8.7: las lecturas de la bandeja y el armado de ConversationSummary por página.
         services.AddScoped<IConversationQueries, ConversationQueries>();

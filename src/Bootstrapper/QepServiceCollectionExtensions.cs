@@ -1371,6 +1371,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
+        // Soporte fase 2: el número de los tickets que nombran los eventos del hilo, leído de Soporte.
+        services.AddScoped<IMessagingTicketNames, MessagingTicketNames>();
         // Spec 2026-10-31: iniciar el asistente desde el hilo; la decisión es de Automations (ManualRunStarter).
         services.AddScoped<IAutomationManualStart, AutomationManualStart>();
         // Spec 2026-10-21 §5.5: «Datos capturados» del asesor, leído de la corrida más reciente de Automations.
