@@ -24,6 +24,15 @@ public sealed class BuyerOrderLinkerTests
             Links.Add((tenantId, orderId, buyerAccountId));
             return Task.FromResult(true);
         }
+
+        public List<(Guid TenantId, Guid AccountId, string Email)> EmailLinks { get; } = [];
+
+        public Task<int> LinkByEmailAsync(
+            Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken)
+        {
+            EmailLinks.Add((tenantId, buyerAccountId, normalizedEmail));
+            return Task.FromResult(3);
+        }
     }
 
     [Fact]
@@ -46,5 +55,29 @@ public sealed class BuyerOrderLinkerTests
 
         Assert.Equal(2, gateways.Count);
         Assert.All(gateways, gateway => Assert.Equal((tenant, order, account), Assert.Single(gateway.Links)));
+    }
+
+    // Spec 2026-11-15 §3.2: el enlace por correo del inicio de sesión, también en un scope propio y con el conteo del gateway.
+    [Fact]
+    public async Task LinkByEmailResolvesTheGatewayInItsOwnScope()
+    {
+        var gateways = new List<RecordingGateway>();
+        var services = new ServiceCollection()
+            .AddScoped<IBuyerOrderGateway>(_ =>
+            {
+                var gateway = new RecordingGateway();
+                gateways.Add(gateway);
+                return gateway;
+            })
+            .BuildServiceProvider();
+        var linker = new BuyerOrderLinker(services.GetRequiredService<IServiceScopeFactory>());
+        var (tenant, account) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+
+        var first = await linker.LinkByEmailAsync(tenant, account, "ana@test.co", TestContext.Current.CancellationToken);
+        await linker.LinkByEmailAsync(tenant, account, "ana@test.co", TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, first);
+        Assert.Equal(2, gateways.Count);
+        Assert.All(gateways, gateway => Assert.Equal((tenant, account, "ana@test.co"), Assert.Single(gateway.EmailLinks)));
     }
 }

@@ -138,6 +138,11 @@ public sealed class Order
     /// <summary>La cuenta de comprador de la tienda que hizo el pedido; null en los pedidos que no vienen de una cuenta.</summary>
     public Guid? BuyerAccountId { get; private set; }
 
+    /// <summary>Spec 2026-11-15 §3.3: <c>true</c> cuando un asesor quitó o cambió la cuenta del pedido. Desde ahí ningún
+    /// enlace automático (checkout, inicio de sesión ni alta diferida) vuelve a tocarla: si no, quitar la cuenta de un
+    /// pedido con el correo mal escrito no serviría, porque el dueño de ese correo lo recuperaría al iniciar sesión.</summary>
+    public bool BuyerAccountSetByMember { get; private set; }
+
     /// <summary>El comprador sólo anula lo que nadie ha tocado (spec 2026-11-10 §3.7): abierto, con el pago en
     /// PaymentPending, sin ningún comprobante registrado (un asesor puede dejar un comprobante con el pago aún en
     /// PaymentPending), sin preparar y sin facturar.</summary>
@@ -1320,15 +1325,39 @@ public sealed class Order
 
     /// <summary>Enlaza el pedido a una cuenta de comprador sólo si todavía no tiene una. Devuelve <c>false</c> sin
     /// cambiar nada cuando ya estaba enlazado. No toca el estado ni la versión: el enlace no es una edición del
-    /// pedido.</summary>
+    /// pedido. Tampoco enlaza si un asesor ya decidió la cuenta (<see cref="BuyerAccountSetByMember"/>).</summary>
     public bool LinkBuyerAccount(Guid buyerAccountId)
     {
-        if (BuyerAccountId is not null)
+        if (BuyerAccountId is not null || BuyerAccountSetByMember)
         {
             return false;
         }
 
         BuyerAccountId = buyerAccountId;
+        return true;
+    }
+
+    /// <summary>Spec 2026-11-15 §4: el asesor cambia o quita (<c>null</c>) la cuenta de comprador de un pedido de la
+    /// tienda, y su decisión queda marcada para que ningún enlace automático la deshaga. Es una edición del pedido: sube
+    /// la versión. Devuelve <c>false</c> sin cambiar nada sólo si ya tenía esa misma cuenta por decisión de un asesor;
+    /// quitar sobre un pedido sin cuenta sí marca, porque significa «no lo enlaces solo».</summary>
+    public bool SetBuyerAccountByMember(Guid? buyerAccountId, DateTimeOffset occurredAt)
+    {
+        if (Source != OrderSource.Store)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only a store order has a buyer account.");
+        }
+
+        if (BuyerAccountSetByMember && BuyerAccountId == buyerAccountId)
+        {
+            return false;
+        }
+
+        BuyerAccountId = buyerAccountId;
+        BuyerAccountSetByMember = true;
+        UpdatedAt = occurredAt;
+        Version++;
         return true;
     }
 

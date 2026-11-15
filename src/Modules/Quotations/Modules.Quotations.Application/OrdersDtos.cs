@@ -97,7 +97,10 @@ public sealed record OrderDto(
     Guid? OperationCityId = null,
     /// <summary>La nota del comprador (tienda pública o Shopify), aparte de <see cref="Notes"/>, que es del asesor
     /// (spec 2026-11-14).</summary>
-    string? BuyerNotes = null);
+    string? BuyerNotes = null,
+    /// <summary>La cuenta de comprador de un pedido de la tienda (spec 2026-11-15 §4). No viaja en <c>OrderResponse</c>: el
+    /// compositor del detalle la resuelve a correo en la raíz de <see cref="OrderDetailResponse"/>.</summary>
+    Guid? BuyerAccountId = null);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
@@ -149,6 +152,9 @@ public sealed record AddOrderPaymentProofsRequest(
 public sealed record OrderItemAdditionRequest(Guid VariantId, decimal Quantity);
 
 public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest> ToAdd);
+
+/// <summary>Cuerpo de <c>PUT …/orders/{id}/buyer-account</c> (spec 2026-11-15 §4): el correo de la cuenta verificada.</summary>
+public sealed record OrderBuyerAccountRequest(string? Email);
 
 public sealed record CancelOrderRequest(string? Reason);
 
@@ -391,7 +397,13 @@ public sealed record OrderDetailResponse(
     // /approve, /cancel… sin compositor). Misma forma y misma regla que en QuotationResponse.
     QuotationCityResponse? OperationCity,
     QuotationCityResponse? BillingCompanyCity,
-    IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings);
+    IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings,
+    // Spec 2026-11-15 §4: la cuenta de comprador del pedido de la tienda con su correo, para que la pantalla no consulte a
+    // Buyers. Sólo en el detalle: el listado no hace la búsqueda cruzada. Null sin cuenta o con la cuenta ya borrada.
+    BuyerAccountResponse? BuyerAccount);
+
+/// <summary>La cuenta de comprador de un pedido, como la muestra el detalle (spec 2026-11-15 §4).</summary>
+public sealed record BuyerAccountResponse(Guid Id, string Email);
 
 public sealed record OrdersPageResponse(
     IReadOnlyCollection<OrderListItemResponse> Items,

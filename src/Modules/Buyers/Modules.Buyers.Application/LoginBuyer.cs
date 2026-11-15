@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Buyers.Domain;
 
 namespace Modules.Buyers.Application;
@@ -26,9 +27,10 @@ public sealed record LoginBuyerCommand(string Host, string? VisitorIp, LoginBuye
 
 /// <summary>
 /// Ingreso. Email inexistente (o mal formado) y contraseña mala son el mismo 401, y en ambos corre el hash (contra uno ficticio si
-/// no hay cuenta). Contraseña correcta sin email verificado es 403 y no reenvía nada (D9).
+/// no hay cuenta). Contraseña correcta sin email verificado es 403 y no reenvía nada (D9). Ya con la sesión guardada, enlaza a la
+/// cuenta los pedidos de la tienda de ese tenant hechos con su correo (spec 2026-11-15 §3.2).
 /// </summary>
-public sealed class LoginBuyerHandler(
+public sealed partial class LoginBuyerHandler(
     IBuyerStorefronts storefronts,
     IBuyerAccountRepository accounts,
     IBuyerProfileRepository profiles,
@@ -36,7 +38,9 @@ public sealed class LoginBuyerHandler(
     BuyerSessions sessions,
     IBuyersUnitOfWork unitOfWork,
     IValidator<LoginBuyerBody> validator,
-    IClock clock)
+    IClock clock,
+    IBuyerOrderLinker orderLinker,
+    ILogger<LoginBuyerHandler> logger)
     : ICommandHandler<LoginBuyerCommand, BuyerSessionDto>
 {
     public async Task<BuyerSessionDto> HandleAsync(LoginBuyerCommand command, CancellationToken cancellationToken)
@@ -48,11 +52,32 @@ public sealed class LoginBuyerHandler(
 
         // Sólo el re-hash escribe la cuenta. Si choca (un restablecimiento o un cambio de contraseña confirmó en el medio), la sesión
         // y el re-hash se descartan juntos y el ingreso se intenta de nuevo contra el hash actual: con la contraseña vieja es 401.
-        return await BuyerConcurrency.RetryOnceAsync(
+        var login = await BuyerConcurrency.RetryOnceAsync(
             unitOfWork, () => AttemptAsync(command, storefront, cancellationToken));
+
+        await LinkStoreOrdersAsync(storefront.TenantId, login.AccountId, login.Email);
+        return login.Session;
     }
 
-    private async Task<BuyerSessionDto> AttemptAsync(
+    // Después del commit de la sesión y fuera de su transacción: el enlace nunca hace fallar el ingreso. Va sin el token del request,
+    // como ProfileUpdateRejectedAsync del checkout: con la sesión ya confirmada, un cliente que cierra la conexión no puede convertir
+    // el ingreso en un error. Atrapa todo, también la cancelación. Se registra sólo el id de la cuenta y el tipo de la excepción,
+    // nunca el correo.
+    private async Task LinkStoreOrdersAsync(Guid tenantId, Guid accountId, string email)
+    {
+        try
+        {
+            await orderLinker.LinkByEmailAsync(tenantId, accountId, email, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            LogOrderLinkFailed(logger, accountId, exception.GetType().Name);
+        }
+    }
+
+    private sealed record LoginResult(BuyerSessionDto Session, Guid AccountId, string Email);
+
+    private async Task<LoginResult> AttemptAsync(
         LoginBuyerCommand command, BuyerStorefront storefront, CancellationToken cancellationToken)
     {
         var account = BuyerEmail.TryNormalize(command.Body.Email.Trim(), out var email)
@@ -76,8 +101,13 @@ public sealed class LoginBuyerHandler(
         }
 
         var (token, expiresAt) = await sessions.IssueAsync(account.Id, storefront.Host, command.VisitorIp, cancellationToken);
-        return new BuyerSessionDto(token, expiresAt, await BuyerViews.LoadAsync(account, profiles, cancellationToken));
+        var session = new BuyerSessionDto(token, expiresAt, await BuyerViews.LoadAsync(account, profiles, cancellationToken));
+        return new LoginResult(session, account.Id, account.Email);
     }
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Linking the store orders of buyer account {AccountId} on login failed with {ExceptionType}; the login stands.")]
+    private static partial void LogOrderLinkFailed(ILogger logger, Guid accountId, string exceptionType);
 }
 
 internal static class BuyerViews

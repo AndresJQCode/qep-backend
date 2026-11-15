@@ -187,6 +187,23 @@ public static class OrderChangeSummary
             $"el neto pasó de {format.Number(change.PreviousNetTotal)} a {format.Number(change.NetTotal)}.");
     }
 
+    /// <summary>Spec 2026-11-15 §4: la decisión del asesor sobre la cuenta de comprador. Lleva los correos (lo que ya ve en el
+    /// detalle) para que la entrada se siga entendiendo si la cuenta se borra después; los ids van en la auditoría. Una cuenta
+    /// anterior que ya no existe se nombra como eliminada.</summary>
+    public static string BuyerAccountChanged(OrderBuyerAccountSnapshot? previous, OrderBuyerAccountSnapshot? current)
+    {
+        var before = previous is null ? null : previous.Email ?? "una cuenta ya eliminada";
+        return (before, current?.Email) switch
+        {
+            (null, null) => "Quitó la cuenta de comprador: el pedido no tenía y ya no se enlazará solo.",
+            (null, { } email) => Trim($"Enlazó el pedido a la cuenta de comprador {email}."),
+            ({ } old, null) => Trim($"Quitó la cuenta de comprador {old}: el pedido ya no se enlazará solo."),
+            ({ } old, { } email) when previous!.Id == current!.Id =>
+                Trim($"Confirmó la cuenta de comprador {email}: el pedido ya no se enlazará solo a otra."),
+            ({ } old, { } email) => Trim($"Cambió la cuenta de comprador de {old} a {email}."),
+        };
+    }
+
     private static string Trim(string summary) =>
         summary.Length <= OrderHistoryEntry.DetailsMaxLength
             ? summary

@@ -585,6 +585,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new QuotationId(value.Value) : null);
         order.Property(value => value.BuyerAccountId).HasColumnName("buyer_account_id");
+        // Spec 2026-11-15 §3.3: el enlace por correo al iniciar sesión la lee por nombre en SQL crudo.
+        order.Property(value => value.BuyerAccountSetByMember).HasColumnName("buyer_account_set_by_member");
         order.Property(value => value.Source)
             .HasColumnName("source")
             .HasConversion<string>()

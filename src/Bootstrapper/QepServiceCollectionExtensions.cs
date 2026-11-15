@@ -879,6 +879,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
         services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
         services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
+        // Spec 2026-11-15 §4: el asesor cambia o quita la cuenta de comprador del pedido de la tienda. El validador entra con
+        // AddValidatorsFromAssemblyContaining del módulo.
+        services.AddScoped<
+            ICommandHandler<SetOrderBuyerAccountCommand, OrderDetailDto>,
+            SetOrderBuyerAccountHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveOrderBuyerAccountCommand, OrderDetailDto>,
+            RemoveOrderBuyerAccountHandler>();
         // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
         services.AddScoped<
             ICommandHandler<SendOrderCommand, OrderDetailDto>,
@@ -1768,6 +1776,8 @@ public static class QepServiceCollectionExtensions
         // Mismo patron (CAT-05) entre `quotations` y `geography`: resuelve la ciudad de una parte
         // con datos propios para el Excel de pedidos.
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();
+        // Spec 2026-11-15 §4: el correo de la cuenta de comprador del pedido, sobre el repositorio de Buyers.
+        services.AddScoped<IQuotationBuyerAccountLookup, QuotationBuyerAccountLookup>();
         // Plan 2026-10-21: la cotización y el pedido salen por la conexión de Zenvia del tenant, que vive en Integrations.
         services.AddScoped<IWhatsAppChannelDirectory, QuotationsWhatsAppChannelDirectory>();
         // Spec 2026-10-21 D16/D17: la cotización por la conexión de Meta cruza a Mensajería; scoped por su DbContext.

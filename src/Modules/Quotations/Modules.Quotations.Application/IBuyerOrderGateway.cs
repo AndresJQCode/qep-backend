@@ -99,6 +99,12 @@ public interface IBuyerOrderGateway
     /// carrera contra otra edición relee y lo intenta una vez más; la segunda <see cref="RequestConcurrencyException"/>
     /// sale tal cual.</summary>
     Task<bool> LinkAsync(Guid tenantId, Guid orderId, Guid buyerAccountId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-15 §3.2: enlaza al comprador los pedidos de la tienda del tenant sin cuenta, sin decisión de un
+    /// asesor y con el correo de facturación <paramref name="normalizedEmail"/>. No sube la versión. Devuelve cuántos
+    /// enlazó.</summary>
+    Task<int> LinkByEmailAsync(
+        Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken);
 }
 
 public sealed class BuyerOrderGateway(
@@ -192,6 +198,10 @@ public sealed class BuyerOrderGateway(
             throw;
         }
     }
+
+    public Task<int> LinkByEmailAsync(
+        Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken) =>
+        orders.LinkStoreOrdersByBillingEmailAsync(tenantId, buyerAccountId, normalizedEmail, cancellationToken);
 
     private async Task<bool> LinkAndSaveAsync(
         Guid tenantId, Guid orderId, Guid buyerAccountId, CancellationToken cancellationToken)

@@ -128,12 +128,57 @@ public sealed class OrderResponseComposerTests
             TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
     }
 
-    private static OrderResponseComposer Composer(StubQuotationCustomerLookup? customers = null) =>
+    // Spec 2026-11-15 §4: el detalle trae la cuenta de comprador con su correo; una cuenta borrada sale null aunque quede
+    // el id, y un pedido sin cuenta no consulta a Buyers.
+    [Fact]
+    public async Task TheDetailCarriesTheBuyerAccountWithItsEmail()
+    {
+        var accountId = Guid.CreateVersion7();
+        var buyers = new StubQuotationBuyerAccountLookup(new QuotationBuyerAccountRef(accountId, "ana@example.com"));
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto()
+            with { Source = "Store", BuyerAccountId = accountId };
+
+        var response = await Composer(buyers: buyers).ComposeAsync(
+            TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new BuyerAccountResponse(accountId, "ana@example.com"), response.BuyerAccount);
+    }
+
+    [Fact]
+    public async Task ADeletedBuyerAccountComposesAsNoAccount()
+    {
+        var buyers = new StubQuotationBuyerAccountLookup();
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto()
+            with { Source = "Store", BuyerAccountId = Guid.CreateVersion7() };
+
+        var response = await Composer(buyers: buyers).ComposeAsync(
+            TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
+
+        Assert.Null(response.BuyerAccount);
+        Assert.Equal(1, buyers.FindCalls);
+    }
+
+    [Fact]
+    public async Task AnOrderWithoutBuyerAccountDoesNotAskBuyers()
+    {
+        var buyers = new StubQuotationBuyerAccountLookup();
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto();
+
+        var response = await Composer(buyers: buyers).ComposeAsync(
+            TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
+
+        Assert.Null(response.BuyerAccount);
+        Assert.Equal(0, buyers.FindCalls);
+    }
+
+    private static OrderResponseComposer Composer(
+        StubQuotationCustomerLookup? customers = null, StubQuotationBuyerAccountLookup? buyers = null) =>
         new(
             customers ?? new StubQuotationCustomerLookup(Customer),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             new StubQuotationWithholdingLookup(),
-            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            buyers ?? new StubQuotationBuyerAccountLookup());
 }

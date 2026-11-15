@@ -290,7 +290,7 @@ public sealed class SubmitOrderRequestHandlerTests
         Assert.Equal(
             [
                 "orders.find", "captcha", "orders.count", "orders.quote", "customers.find", "customers.create", "customers.addresses",
-                "orders.create", "consents.add", "audit.anonymous", "outbox.add", "uow.save",
+                "buyers.find-verified", "orders.create", "consents.add", "audit.anonymous", "outbox.add", "uow.save",
             ],
             rig.Log.Entries);
     }
@@ -380,5 +380,64 @@ public sealed class SubmitOrderRequestHandlerTests
         var warning = Assert.Single(rig.Logger.At(LogLevel.Warning));
         Assert.Contains(nameof(InvalidOperationException), warning, StringComparison.Ordinal);
         Assert.DoesNotContain("token-de-sesion", warning, StringComparison.Ordinal);
+    }
+
+    // ---- La cuenta verificada del correo de facturación (spec 2026-11-15 §3.1) ----------------------------------------------
+
+    [Fact]
+    public async Task WithoutASessionTheVerifiedAccountOfTheBillingEmailIsStamped()
+    {
+        var rig = new CheckoutRig();
+        var account = Guid.Parse("b0000000-0000-0000-0000-00000000000b");
+        rig.Buyers.VerifiedAccountId = account;
+
+        await rig.SubmitAsync(CheckoutRig.Body());
+
+        Assert.Equal(account, Assert.Single(rig.Orders.Drafts).BuyerAccountId);
+        Assert.Equal("ana@test.co", Assert.Single(rig.Buyers.FindVerifiedCalls));
+        Assert.True(
+            rig.Log.Entries.IndexOf("buyers.find-verified") < rig.Log.Entries.IndexOf("orders.create"),
+            "The billing email is looked up before the order is created.");
+    }
+
+    [Fact]
+    public async Task ASessionAccountWinsOverTheBillingEmail()
+    {
+        var rig = new CheckoutRig();
+        var sessionAccount = Guid.Parse("a0000000-0000-0000-0000-00000000000a");
+        rig.Buyers.ResolvedAccountId = sessionAccount;
+        rig.Buyers.VerifiedAccountId = Guid.CreateVersion7();
+
+        await rig.SubmitAsync(CheckoutRig.Body(), session: "token-de-sesion");
+
+        Assert.Equal(sessionAccount, Assert.Single(rig.Orders.Drafts).BuyerAccountId);
+        Assert.Empty(rig.Buyers.FindVerifiedCalls);
+    }
+
+    [Fact]
+    public async Task ASessionThatDoesNotResolveFallsBackToTheBillingEmail()
+    {
+        var rig = new CheckoutRig();
+        var account = Guid.CreateVersion7();
+        rig.Buyers.VerifiedAccountId = account;
+
+        await rig.SubmitAsync(CheckoutRig.Body(), session: "token-vencido");
+
+        Assert.Equal(account, Assert.Single(rig.Orders.Drafts).BuyerAccountId);
+    }
+
+    [Fact]
+    public async Task AFailingEmailLookupLogsAWarningWithoutTheEmailAndTheOrderIsStillCreated()
+    {
+        var rig = new CheckoutRig();
+        rig.Buyers.FindVerifiedThrows = new InvalidOperationException("buyers down: ana@test.co");
+
+        var (_, created) = await rig.SubmitAsync(CheckoutRig.Body());
+
+        Assert.True(created);
+        Assert.Null(Assert.Single(rig.Orders.Drafts).BuyerAccountId);
+        var warning = Assert.Single(rig.Logger.At(LogLevel.Warning));
+        Assert.Contains(nameof(InvalidOperationException), warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("ana@test.co", warning, StringComparison.Ordinal);
     }
 }

@@ -27,6 +27,12 @@ public interface IBuyerAccountRepository
 public interface IBuyerOrderLinker
 {
     Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-15 §3.2: al iniciar sesión, enlaza a la cuenta los pedidos de la tienda de ese tenant que siguen sin cuenta, sin
+    /// decisión de un asesor y con el correo de facturación igual a <paramref name="normalizedEmail"/>. Devuelve cuántos enlazó.
+    /// </summary>
+    Task<int> LinkByEmailAsync(Guid tenantId, Guid accountId, string normalizedEmail, CancellationToken cancellationToken);
 }
 
 public interface IBuyerProfileRepository

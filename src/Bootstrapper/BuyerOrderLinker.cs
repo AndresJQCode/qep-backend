@@ -17,4 +17,12 @@ internal sealed class BuyerOrderLinker(IServiceScopeFactory scopes) : IBuyerOrde
         await scope.ServiceProvider.GetRequiredService<IBuyerOrderGateway>()
             .LinkAsync(tenantId, orderId, accountId, cancellationToken);
     }
+
+    public async Task<int> LinkByEmailAsync(
+        Guid tenantId, Guid accountId, string normalizedEmail, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IBuyerOrderGateway>()
+            .LinkByEmailAsync(tenantId, accountId, normalizedEmail, cancellationToken);
+    }
 }

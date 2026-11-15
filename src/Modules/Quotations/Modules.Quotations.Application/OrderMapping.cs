@@ -71,7 +71,8 @@ internal static class OrderMapping
         order.ArchivedBy?.Value,
         order.Balance,
         order.OperationCityId,
-        order.BuyerNotes);
+        order.BuyerNotes,
+        order.BuyerAccountId);
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>

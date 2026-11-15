@@ -26,4 +26,11 @@ public interface IStoreBuyerAccounts
     /// </summary>
     /// <param name="host">El host de la tienda ya normalizado.</param>
     Task<Guid?> ResolveAccountIdAsync(string host, string? sessionToken, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-15 §3.1: la cuenta <b>verificada</b> cuyo correo es el de facturación del pedido, normalizado con la regla de la
+    /// cuenta. <c>null</c> si el correo no normaliza, si no hay cuenta o si está sin verificar: una cuenta sin verificar no prueba que
+    /// el correo sea de quien la creó.
+    /// </summary>
+    Task<Guid?> FindVerifiedAccountIdAsync(string email, CancellationToken cancellationToken);
 }

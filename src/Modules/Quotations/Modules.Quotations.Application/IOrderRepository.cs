@@ -78,6 +78,24 @@ public interface IOrderRepository
     Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Spec 2026-11-15 §3.2: en una sola sentencia, pone <paramref name="buyerAccountId"/> en los pedidos del tenant de origen
+    /// tienda que no tienen cuenta ni decisión de un asesor y cuyo correo de facturación, recortado y en minúsculas, es
+    /// <paramref name="normalizedEmail"/>. Las condiciones van en el <c>WHERE</c> para no pisar una escritura concurrente del
+    /// asesor. No sube la versión (como <see cref="Order.LinkBuyerAccount"/>). Devuelve las filas enlazadas.
+    /// </summary>
+    Task<int> LinkStoreOrdersByBillingEmailAsync(
+        Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Obliga a que el siguiente guardado escriba <c>buyer_account_id</c> aunque el valor no haya cambiado respecto a lo
+    /// leído. Lo necesita la decisión del asesor (spec 2026-11-15 §4): los enlaces automáticos (<see cref="Order.LinkBuyerAccount"/>
+    /// y <see cref="LinkStoreOrdersByBillingEmailAsync"/>) no suben la versión, así que uno que confirme entre la carga y el
+    /// guardado pasa el <c>WHERE version = …</c>; si quitar sobre un pedido cargado sin cuenta no escribiera la columna, la
+    /// fila quedaría con la cuenta automática y la marca del asesor a la vez.
+    /// </summary>
+    void ForceBuyerAccountWrite(Order order);
+
     /// <summary>Un pedido del comprador, con tracking y con sus comprobantes, para poder cancelarlo.</summary>
     Task<Order?> FindByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken);

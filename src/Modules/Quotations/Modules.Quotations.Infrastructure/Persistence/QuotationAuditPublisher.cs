@@ -13,18 +13,24 @@ internal sealed class QuotationAuditPublisher(QuotationsDbContext dbContext) : I
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt) =>
-        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt);
+        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt, []);
+
+    public void PublishWithDetails(
+        Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details) =>
+        // La proyección sólo guarda changedFields si es un arreglo: el detalle va como su único elemento.
+        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt, [details]);
 
     public void PublishByIntegration(
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
-        Add(tenantId, Guid.Empty, "Integration", action, resourceId, outcome, occurredAt);
+        Add(tenantId, Guid.Empty, "Integration", action, resourceId, outcome, occurredAt, []);
 
     private void Add(
         Guid tenantId, Guid actorId, string actorType, string action, string resourceId,
-        string outcome, DateTimeOffset occurredAt)
+        string outcome, DateTimeOffset occurredAt, IReadOnlyCollection<object> changedFields)
     {
         var payload = JsonSerializer.Serialize(new AuditEventPayload(
-            tenantId, actorId, actorType, action, "quotation", resourceId, outcome, [], "quotations", occurredAt));
+            tenantId, actorId, actorType, action, "quotation", resourceId, outcome, changedFields, "quotations", occurredAt));
         dbContext.Outbox.Add(new QuotationsOutboxMessage
         {
             Id = Guid.CreateVersion7(),
@@ -37,6 +43,6 @@ internal sealed class QuotationAuditPublisher(QuotationsDbContext dbContext) : I
 
     private sealed record AuditEventPayload(
         Guid tenantId, Guid actorId, string actorType, string action, string resourceType,
-        string resourceId, string outcome, IReadOnlyCollection<string> changedFields,
+        string resourceId, string outcome, IReadOnlyCollection<object> changedFields,
         string source, DateTimeOffset occurredAt);
 }
