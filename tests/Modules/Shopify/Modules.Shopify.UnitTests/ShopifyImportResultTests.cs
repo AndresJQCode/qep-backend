@@ -282,7 +282,7 @@ public sealed class ShopifyImportResultTests
         Assert.Equal(
             new ShopifyPartyDraft("Laura Gómez", "+573001112233", "laura@verde.co", "Calle 10 # 43-20 Apto 301", AntioquiaId, MedellinId),
             draft.ShippingParty);
-        Assert.Equal("Shopify #1001\nDejar en portería", draft.Notes);
+        Assert.Equal(("Shopify #1001", "Dejar en portería"), (draft.Notes, draft.BuyerNotes));
         Assert.DoesNotContain("shipping_address_unresolved", row.Warnings ?? string.Empty, StringComparison.Ordinal);
     }
 
@@ -314,8 +314,9 @@ public sealed class ShopifyImportResultTests
         var draft = Assert.Single(world.Writer.Creates).Draft;
         Assert.Null(draft.ShippingParty);
         Assert.Equal(
-            "Shopify #1001\nDejar en portería\nDirección de envío de Shopify: Laura Gómez, Calle 10 # 43-20, Apto 301, Pueblo Perdido, Antioquia, CO, +573001112233",
+            "Shopify #1001\nDirección de envío de Shopify: Laura Gómez, Calle 10 # 43-20, Apto 301, Pueblo Perdido, Antioquia, CO, +573001112233",
             draft.Notes);
+        Assert.Equal("Dejar en portería", draft.BuyerNotes);
         Assert.Equal("""[{"code":"shipping_address_unresolved","detail":null}]""", row.Warnings);
     }
 
@@ -336,7 +337,7 @@ public sealed class ShopifyImportResultTests
         var draft = Assert.Single(world.Writer.Creates).Draft;
         Assert.Equal((true, false), (draft.Shipping!.IsStorePickup, draft.Shipping.CashOnDelivery));
         Assert.Null(draft.ShippingParty);
-        Assert.Equal("Shopify #1001\nDejar en portería", draft.Notes);
+        Assert.Equal(("Shopify #1001", "Dejar en portería"), (draft.Notes, draft.BuyerNotes));
         Assert.Null(row.Warnings);
         Assert.Empty(world.Shipping.CarrierRequests);
     }

@@ -19,7 +19,9 @@ public sealed record GetShopifyDocumentSourcesQuery(Guid TenantId, Guid Connecti
 
 /// <summary>Spec 2026-10-15 §6.1 y §7 <c>PUT /stores/{connectionId}</c> (<c>integrations.connection.manage</c>).
 /// <paramref name="ExpectedVersion"/> llega por <c>If-Match</c>. <paramref name="HistoryDays"/> (spec 2026-10-21) es nulo o de 1 a
-/// <see cref="ShopifyStore.HistoryDaysMax"/>; como el resto del <c>PUT</c>, reemplaza: ausente apaga el historial.</summary>
+/// <see cref="ShopifyStore.HistoryDaysMax"/>; como el resto del <c>PUT</c>, reemplaza: ausente apaga el historial.
+/// <paramref name="EditSync"/> y <paramref name="EditPaymentStatuses"/> (spec 2026-11-14, D15) son la excepción: <c>null</c>
+/// conserva lo guardado, para que un frontend viejo siga guardando la tienda sin borrar la configuración nueva.</summary>
 public sealed record UpdateShopifyStoreCommand(
     Guid TenantId,
     Guid ConnectionId,
@@ -33,6 +35,8 @@ public sealed record UpdateShopifyStoreCommand(
     string? DocumentTypeAttributeKey,
     string? DefaultIdentificationType,
     int? HistoryDays,
+    string? EditSync,
+    IReadOnlyList<string>? EditPaymentStatuses,
     long ExpectedVersion) : ICommand<ShopifyStoreDto>;
 
 /// <summary>
@@ -70,8 +74,32 @@ public sealed class UpdateShopifyStoreValidator : AbstractValidator<UpdateShopif
             .InclusiveBetween(1, ShopifyStore.HistoryDaysMax)
             .When(command => command.HistoryDays is not null)
             .OverridePropertyName("historyDays");
+        // Spec 2026-11-14 (D15): null conserva lo guardado; con valor, un nombre exacto (ordinal) y nunca un número.
+        RuleFor(command => command.EditSync)
+            .Must(value => ParseEditSync(value) is not null)
+            .When(command => command.EditSync is not null)
+            .WithMessage("The edit sync mode must be Manual or Automatic.")
+            .OverridePropertyName("editSync");
+        RuleFor(command => command.EditPaymentStatuses)
+            .NotEmpty()
+            .Must(statuses => statuses!.Distinct(StringComparer.Ordinal).Count() == statuses!.Count)
+            .WithMessage("The payment statuses cannot repeat.")
+            .When(command => command.EditPaymentStatuses is not null)
+            .OverridePropertyName("editPaymentStatuses");
+        RuleForEach(command => command.EditPaymentStatuses)
+            .Must(status => status is not null && ShopifyPaymentStatuses.IsKnown(status))
+            .WithMessage($"Each payment status must be one of {string.Join(", ", ShopifyPaymentStatuses.All)}.")
+            .When(command => command.EditPaymentStatuses is not null)
+            .OverridePropertyName("editPaymentStatuses");
         RuleFor(command => command.ExpectedVersion).GreaterThan(0).OverridePropertyName("expectedVersion");
     }
+
+    /// <summary>El modo por su nombre exacto. <see cref="Enum.TryParse{TEnum}(string, bool, out TEnum)"/> aceptaría «1» y
+    /// «automatic»; acá no.</summary>
+    internal static ShopifyEditSync? ParseEditSync(string? value) =>
+        Enum.GetValues<ShopifyEditSync>()
+            .Select(mode => (ShopifyEditSync?)mode)
+            .FirstOrDefault(mode => string.Equals(mode.ToString(), value, StringComparison.Ordinal));
 
     private void RequiredText(System.Linq.Expressions.Expression<Func<UpdateShopifyStoreCommand, string?>> field, int maxLength, string name) =>
         RuleFor(field)
@@ -89,7 +117,8 @@ public sealed class ListShopifyStoresHandler(
     ITenantModules tenantModules,
     IShopifyTenantConnections connections,
     IShopifyStoreRepository stores,
-    IShopifyOrderMirrorRepository mirrors) : IQueryHandler<ListShopifyStoresQuery, IReadOnlyList<ShopifyStoreSummaryDto>>
+    IShopifyOrderMirrorRepository mirrors,
+    IShopifyOrderPushRepository pushes) : IQueryHandler<ListShopifyStoresQuery, IReadOnlyList<ShopifyStoreSummaryDto>>
 {
     public async Task<IReadOnlyList<ShopifyStoreSummaryDto>> HandleAsync(ListShopifyStoresQuery query, CancellationToken cancellationToken)
     {
@@ -99,6 +128,7 @@ public sealed class ListShopifyStoresHandler(
         var linked = await connections.ListAsync(query.TenantId, cancellationToken);
         var byConnection = (await stores.ListAsync(query.TenantId, cancellationToken)).ToDictionary(store => store.ConnectionId);
         var waiting = await mirrors.CountWaitingByConnectionAsync(query.TenantId, cancellationToken);
+        var held = await pushes.CountHeldByConnectionAsync(query.TenantId, cancellationToken);
         return
         [
             .. linked.Select(connection =>
@@ -111,7 +141,8 @@ public sealed class ListShopifyStoresHandler(
                     connection.Status,
                     store?.IsConfigured ?? false,
                     waiting.GetValueOrDefault(connection.ConnectionId),
-                    store?.LastReconciledAt);
+                    store?.LastReconciledAt,
+                    held.GetValueOrDefault(connection.ConnectionId));
             }),
         ];
     }
@@ -250,6 +281,9 @@ public sealed class UpdateShopifyStoreHandler(
             command.DocumentTypeAttributeKey!,
             ShopifyDocumentTypes.Normalize(command.DefaultIdentificationType)!,
             command.HistoryDays,
+            // D15: null conserva lo guardado.
+            command.EditSync is null ? store.EditSync : UpdateShopifyStoreValidator.ParseEditSync(command.EditSync)!.Value,
+            command.EditPaymentStatuses ?? store.EditPaymentStatuses,
             updatedBy,
             clock.UtcNow);
         if (isNew)
@@ -285,6 +319,8 @@ public sealed class UpdateShopifyStoreHandler(
         ["documentTypeAttributeKey"] = store.DocumentTypeAttributeKey,
         ["defaultIdentificationType"] = store.DefaultIdentificationType,
         ["historyDays"] = store.HistoryDays?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        ["editSync"] = store.EditSync.ToString(),
+        ["editPaymentStatuses"] = string.Join(',', store.EditPaymentStatuses),
     };
 
     /// <summary>El detalle de <c>shopify.store.updated</c>, con la misma forma que <c>tenancy.settings.updated</c>: un arreglo JSON
@@ -406,6 +442,8 @@ internal static class ShopifyStoreSupport
             store.DocumentTypeAttributeKey,
             store.DefaultIdentificationType,
             store.HistoryDays,
+            store.EditSync.ToString(),
+            store.EditPaymentStatuses,
             store.LastReconciledAt,
             store.UpdatedAt,
             store.Version);

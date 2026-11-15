@@ -548,6 +548,31 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
     }
 
+    // Spec 2026-11-14: «Notas del cliente» es la nota del comprador (Order.BuyerNotes); «Observaciones» sigue con Order.Notes.
+    [Fact]
+    public async Task BuyerNotesColumnReadsBuyerNotesAndObservacionesKeepsNotes()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(ClientId, AdvisorId, "COP", null, IsRetail: false, null, false, TestWithholdings.Customer(false)),
+            QuotationParties.Empty, DefaultBillingAccount,
+            [.. DefaultItems.Select(item => new OrderLineInput(
+                item.ProductId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))],
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", AdvisorId, [], Now, OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null, OrderLineCosts.None, buyerNotes: "Sin cebolla");
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("notes", "Observaciones", visible: true),
+            OrdersExportColumnSetting.Catalog("buyer_notes", "Notas del cliente", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Observaciones", "Notas del cliente"], writer.Columns.Take(2).Select(column => column.Header));
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(("Shopify #1001", "Sin cebolla"), (row[0].Text, row[1].Text));
+    }
+
     [Fact]
     public async Task DocumentoIsTheCustomersCuc()
     {

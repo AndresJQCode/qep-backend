@@ -155,6 +155,7 @@ public static class OrderResponses
             order.PreparedBy,
             order.ArchivedAt,
             order.ArchivedBy,
-            order.Balance);
+            order.Balance,
+            order.BuyerNotes);
     }
 }

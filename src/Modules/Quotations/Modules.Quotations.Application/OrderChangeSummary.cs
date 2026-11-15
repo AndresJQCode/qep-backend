@@ -14,6 +14,17 @@ public static class OrderChangeSummary
     public static string CreatedFromExternal(OrderSource source, string reference) =>
         Trim($"Creado desde {source} ({reference}).");
 
+    /// <summary>Spec 2026-11-14 §4: una edición que llegó de la plataforma, una entrada por grupo aplicado. Sin autor: la hizo
+    /// la plataforma, no una persona de QEP.</summary>
+    public static string EditedFromExternal(OrderSource source, ExternalOrderEditGroup group) => group switch
+    {
+        ExternalOrderEditGroup.Lines => Trim($"{source} editó los productos."),
+        ExternalOrderEditGroup.Shipping => Trim($"{source} editó el envío."),
+        ExternalOrderEditGroup.Party => Trim($"{source} editó la dirección de envío."),
+        ExternalOrderEditGroup.BuyerNotes => Trim($"{source} editó la nota del cliente."),
+        _ => throw new ArgumentOutOfRangeException(nameof(group), group, "Unknown external edit group."),
+    };
+
     // El pedido de la tienda sale directo del checkout: no hay solicitud que nombrar.
     public static string CreatedFromStore() => "Creado desde la tienda.";
 
@@ -33,6 +44,12 @@ public static class OrderChangeSummary
         QuotationChangeSummary.GlobalScaleFloorChanged(floor, format);
 
     public static string NotesChanged() => "Editó las notas.";
+
+    /// <summary>Spec 2026-11-14 §5: el asesor corrigió la parte de envío de un pedido de Shopify (viaja a Shopify).</summary>
+    public static string ShippingPartyEdited() => "Editó la dirección de envío.";
+
+    /// <summary>Spec 2026-11-14 §5: el asesor corrigió la nota del cliente de un pedido de Shopify (viaja a Shopify).</summary>
+    public static string BuyerNotesEdited() => "Editó la nota del cliente.";
 
     /// <summary>El cambio de envío de un pedido pendiente (spec 2026-10-17 §5.4), con los textos de la
     /// cotización. <c>null</c> si nada de lo que se cuenta cambió.</summary>

@@ -60,6 +60,7 @@
   "lineItems": {
     "nodes": [
       {
+        "id": "gid://shopify/LineItem/9000",
         "sku": "CAM-001",
         "quantity": 1,
         "originalUnitPriceSet": {

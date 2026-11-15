@@ -2157,6 +2157,12 @@ no del catálogo de hoy: renombrar o recodificar la variante después no cambia 
 configuración; su encabezado cae bajo la regla de choque de arriba. El PDF de la cotización no cambió de
 plantilla: `productName` ya es ese nombre visible.
 
+**Notas del cliente** (2026-11-14): el catálogo gana una columna más al final, `Notas del cliente`
+(`buyer_notes`), que sale de `Order.BuyerNotes`: la nota que el comprador escribió en la tienda pública o en
+Shopify. `Observaciones` (`notes`) sigue saliendo de `Notes`, que es del asesor (en un pedido de Shopify,
+«Shopify #N» y, si aplica, la dirección cruda). **Nace oculta**, también sin layout guardado: un tenant sin
+layout puede tener un ERP leyendo la hoja por defecto. Su encabezado no choca con ninguno de «MIGRACION 1».
+
 **Aviso para operadores:** la hoja sembrada «MIGRACION 1» conserva su columna fija `valor flete`, vacía, y
 por eso `Valor Flete` del catálogo queda oculta en ella. Para que el ERP reciba el valor real, en
 Configuración › Excel de pedidos cambia la fija por la columna del catálogo «Valor Flete».
@@ -2190,8 +2196,8 @@ y ETag `"1"`. Cada columna viaja con `kind` (`Catalog` | `Fixed`), `key` y
 `defaultHeader`/`defaultPosition`/`defaultVisible` (sólo las del catálogo; `null` en las fijas),
 `header`, `value` (sólo las fijas) y `visible`. `defaultVisible` es `true` en todas menos en
 `coordinadora_city` (2026-10-02), las `payment_method_N` (2026-10-03), `carrier` (2026-10-05),
-`freight_without_tax`, `freight_tax`, `freight_charge_mode` y `cash_on_delivery` (2026-10-17) y
-`variant` (2026-10-20).
+`freight_without_tax`, `freight_tax`, `freight_charge_mode` y `cash_on_delivery` (2026-10-17),
+`variant` (2026-10-20) y `buyer_notes` (2026-11-14).
 
 El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
 vieja, incluido el choque de dos primeros guardados). No exige el catálogo entero: lo que no
@@ -4418,7 +4424,8 @@ prendido, al importador:
   cae entre crear el pedido y guardar la fila) deje un solo pedido. Lo que entra con algo que revisar lleva `warnings`
   (`customer_incomplete`, `shipping_address_unresolved`, `total_difference`, `carrier_unrecognized`,
   `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
-- Después de importado, sólo se sincronizan el pago (un pedido sin comprobantes, también preparado o archivado: un
+- Después de importado, el resto de las ediciones de Shopify (líneas, envío, dirección, nota, atributos) llegan como
+  **cambios** (ver «Ediciones del pedido» abajo), y además se sincronizan el pago (un pedido sin comprobantes, también preparado o archivado: un
   contraentrega se prepara y se cobra después; con comprobantes, o anulado o facturado, el rechazo queda en `last_error`;
   con `autoArchive`, un pedido que queda pagado y ya estaba preparado se archiva) y la cancelación (se anula en QEP a
   nombre del asesor, aunque esté preparado o archivado, y el historial avisa que hay un paquete que recuperar; uno ya
@@ -4441,6 +4448,104 @@ prendido, al importador:
   snapshot igual y `IX_orders_tenant_external_key` deja un solo pedido). El cron no lo usa, y `last_reconciled_at` se
   mueve igual que siempre. Sin fecha de enlace, el historial se ignora.
 
+**Ediciones del pedido** (spec `2026-11-14-shopify-sincronizar-ediciones-design.md`, plan
+`2026-11-14-shopify-sincronizar-ediciones-backend.md`, decisiones D1–D22). Lo que se edita en Shopify sobre un pedido ya
+importado llega a QEP como un **cambio**, y lo que el asesor corrige en QEP (dirección de envío, ciudad, nota del cliente y
+atributos) viaja a Shopify.
+
+- **Qué se lee.** La cantidad **vigente** de cada línea (`current_quantity` en REST, `currentQuantity` en GraphQL; si la llave
+  falta, `quantity`, D2). Una línea con vigente 0 es una línea quitada y la importación la salta; el descuento en porcentaje
+  se calcula sobre la cantidad **original**, porque `discount_allocations` reparte el de la línea original. También
+  `billing_address`, cuya `company` es una fuente más del documento.
+- **Versión aplicada y proyección.** `shopify.orders` guarda `applied_payload` (el snapshot con el que QEP creó o actualizó el
+  pedido por última vez, o el que adoptó) y `applied_projection` (lo que QEP escribió en el pedido a partir de él, **leído del
+  pedido después de escribir**, D4). Un snapshot nuevo se compara grupo por grupo contra la versión aplicada (Líneas, Envío,
+  Dirección, Comprador, Nota, Atributos); para cada grupo que cambió en Shopify:
+  - si el valor nuevo ya es el del pedido, es **eco** (típicamente la corrección que QEP mandó) y no es cambio;
+  - si el pedido ya no es la proyección, lo tocó QEP: **conflicto** `qep_changed`, gana QEP;
+  - si no, se aplica.
+
+  Otros motivos de conflicto: `customer_changed` (el documento nuevo es de otro cliente; el pedido no cambia de cliente),
+  `city_unresolved` (la ciudad va a la bandeja de ciudades, como al importar), `party_incomplete`, `store_pickup` y
+  `store_pickup_changed` (D8: un pedido no cambia de recogida), y los motivos de envío del importador
+  (`freight_tax_rate_missing`, …). El grupo Comprador es **informativo**: nunca toca el pedido ni el cliente (D17). Una fila
+  importada antes de este cambio, sin versión aplicada, toma como base el `payload` que tenía y la proyección del pedido de
+  ahora (D6): para esos pedidos nada cuenta como «lo tocó QEP», y una nota nueva de Shopify se aplica sin conflicto.
+- **El cambio** (`shopify.order_edits`; el spec dice `order_changes` y la API, «changes», D1) se crea en
+  `ShopifyOrderIngestion.ApplyAsync`, después del espejo y antes de la reacción de pago y cancelación (§6.3), y un snapshot con
+  `cancelled_at` no calcula cambio: manda la cancelación (D7). Un pedido tiene a lo sumo un cambio abierto; el siguiente
+  snapshot lo reemplaza (`Superseded`). Estados:
+
+  | Estado | Cuándo |
+  | --- | --- |
+  | `Blocked` | el pedido no es editable (`order_not_editable`), su estado de pago no está en `editPaymentStatuses` (`payment_status_not_allowed`) o una línea no empareja con una variante (`product_unmatched`, D5: nunca se aplica a medias) |
+  | `Pending` | se puede aplicar y la tienda está en `editSync = Manual`; o la tienda es `Automatic` y el cambio tiene algún grupo en conflicto (spec §3: el conflicto se ve en la bandeja y lo decide una persona); o Quotations rechazó la aplicación automática con otra regla, que queda en `statusReason` (por ejemplo `order.order.store_pickup`) |
+  | `Applied` | se aplicó: solo (`Automatic`, sólo si todos sus grupos son `Apply` o `Informative`) o porque alguien lo aceptó |
+  | `Rejected` / `Reviewed` | alguien lo rechazó, o marcó como revisado uno bloqueado; los dos adoptan el snapshot como versión aplicada sin tocar el pedido (D9), así que el siguiente diff no vuelve a proponerlo |
+  | `Superseded` | llegó otro snapshot del mismo pedido |
+
+  Aplicar baja por `IShopifyOrderWriter.ApplyEditAsync` → `IExternalOrderWriter.ApplyEditAsync` → `Order.ApplyExternalEdit`, con
+  los precios de Shopify (`ShopifyPricing`, sin descuentos de catálogo), historial sin autor (una entrada por grupo) y auditoría
+  `quotation.order.external_edit_applied` firmada por la integración; no recalcula el estado de pago (D18). En `Automatic`, el
+  cambio se aplica en el mismo procesamiento, **después** del guardado de la ingesta, siempre que no tenga ningún grupo en
+  conflicto: uno con conflicto queda `Pending` entero (tampoco se aplican sus grupos `Apply`) para que aparezca en «Cambios por
+  revisar», porque es justo donde Shopify y el asesor no están de acuerdo. Si Quotations rechaza la aplicación automática, «no
+  editable» lo deja `Blocked` y otra regla lo deja `Pending` con el código en `statusReason`. Un `Pending` que quedó de `Manual`
+  (o de un 412) se aplica sólo cuando ese mismo snapshot vuelve a llegar (webhook o conciliación): pasar la tienda a
+  `Automatic` no aplica los pendientes que ya había.
+- **Lo que corrige el asesor viaja a Shopify.** `PUT …/shopify/orders/{id}/corrections` escribe el pedido de QEP con el
+  `QuotationsDbContext` **enrolado en la transacción de Shopify** (`ShopifyOrderCorrectionWriter`) y, en la misma transacción,
+  encola el envío en `shopify.order_pushes` con sólo los grupos que cambiaron (`ShippingAddress`, `Note`, `Attributes`). Un
+  pedido tiene un solo envío `Pending` (`IX_order_pushes_mirror_pending`); encolar otro grupo mientras espera lo suma al mismo.
+  La corrección **no** mueve la proyección (D3): el pedido queda distinto de ella, así que una edición posterior de Shopify sobre
+  ese grupo es conflicto también después del eco, y gana lo del asesor. Los atributos viven en la fila del espejo
+  (`qep_attributes`), no en el pedido. La nota del cliente es `Order.BuyerNotes` (`Notes` sigue con «Shopify #N» y la
+  dirección cruda, y no viaja); `""` o sólo espacios es `null` (D22). La parte de envío sólo se corrige en Colombia (D21).
+- **Las correcciones de ciudad del sistema también viajan.** Cuando un sinónimo corrige la ciudad de un pedido
+  (`ShopifyCityCorrectionProcessor`, `Applied` o `AlreadyApplied`), la parte escrita pasa a la proyección (no la tocó el
+  asesor) y se encola `[ShippingAddress]` en el mismo guardado de la huella. Si el asesor ya había editado la parte, el trabajo
+  sale `Skipped` con `shipping_changed` y nada viaja: gana el asesor.
+- **El envío.** `ShopifyOrderPushWorker` corre cada 10 s, en lotes de 50, y manda `orderUpdate` (GraphQL, `shopify.admin`) con
+  los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
+  (`lastName` y `address2` vacíos, D12), la ciudad y el departamento con sus nombres de QEP y el `provinceCode` de
+  `ColombiaProvinceCodes`, y la `company` y el `countryCode` del **último** snapshot, porque `orderUpdate` reemplaza la
+  dirección entera; la nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
+  del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
+  mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
+  `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro
+  4xx) o `retries_exhausted`.
+- **Una corrección no se pierde por la conexión** (owner, 2026-11-14). El envío queda **retenido** (`Held`, el motivo en
+  `failure_code`) en tres casos: la corrección se guardó con la conexión no operativa (no `Active` o el módulo apagado, la misma
+  regla del worker) → `connection_inactive`; la conexión cayó después de encolar → `connection_missing`; Shopify respondió
+  `access_denied` (403 o `ACCESS_DENIED`, por ejemplo sin `write_orders`) → `access_denied`, que también se arregla del lado de la
+  conexión (el comercio vuelve a abrir la app). La corrección se guarda en QEP igual, y la respuesta del `PUT …/corrections` trae
+  `shopifySync`: `Queued`, `Held` o `NothingToSend`; con `Held` la pantalla avisa que el cambio queda marcado para sincronizar
+  cuando se active la conexión. Un retenido se comporta como un pendiente al fusionar (`IX_order_pushes_mirror_pending` cubre
+  `Pending` y `Held`: un solo envío abierto por pedido) y sigue retenido. **El worker nunca reclama uno retenido**: lo sueltan sólo
+  `POST …/orders/{id}/push` (un pedido) y `POST …/stores/{connectionId}/pushes/release` (todos los de la tienda, una sentencia por
+  tenant y conexión), que exigen la conexión operativa y lo dejan `Pending` sin intentos ni lease. `GET …/stores` trae
+  `heldPushCount` por tienda para el aviso «N pedidos pendientes de sincronizar».
+  Shopify devuelve el `orders/updated` con el valor de QEP: es eco y se adopta sin crear cambio. Mientras manda, el envío queda
+  tomado 2 minutos (holgado frente a los 10 s del timeout más las lecturas), para que otra réplica no lo mande dos veces. Toda
+  corrección que se encola mientras el envío está pendiente le sube la versión, también con los mismos grupos: si el worker
+  ya leyó el valor viejo, su `Sent` choca y el envío vuelve a salir con el último. Por la misma carrera, una corrección puede
+  recibir un 412 si el worker cerró el envío entre la lectura y el guardado; reintentar funciona.
+
+| Ruta (`/api/v1/tenants/{tenantId}/shopify`) | Permiso | Qué |
+| --- | --- | --- |
+| `GET /changes?status=&connectionId=&page=&pageSize=` | `quotations.order.read` | «Cambios por revisar», más nuevos primero; sin `status`, `Pending` y `Blocked`; `pageSize` ≤ 50 |
+| `GET /orders/{id}/changes` | `quotations.order.read` | los cambios de una fila del espejo, todos los estados (404 `shopify.order.not_found`) |
+| `POST /changes/{changeId}/accept` \| `/reject` \| `/review` | `quotations.order.manage` | 404 `shopify.edit.not_found`; 409 `shopify.edit.not_open`; `review` de un `Pending` 422 `shopify.edit.not_blocked`; `accept` que ya no se puede aplicar deja el cambio `Blocked` y responde 422 `shopify.edit.order_not_editable` \| `payment_status_not_allowed` \| `product_unmatched` (D16); otra regla del pedido responde 422 con el código de Quotations y el cambio sigue abierto; pedido inexistente 404 `shopify.order.not_found`; tienda borrada 422 `shopify.store.not_operational`; el pedido cambió entre el cálculo y la escritura, 412 `concurrency.conflict`. Un 409 sobre un cambio que un webhook acaba de reemplazar es «recarga el cambio» |
+| `GET /qep-orders/{qepOrderId}` | `quotations.order.read` | el panel de Shopify del detalle del pedido: `canEdit`, `editBlockedReason` (`NotImported`, `Cancelled`, `Archived`, `Invoiced`, `Prepared`, D20), `shippingAddressSupported`, los atributos, el último envío y el cambio abierto (404 `shopify.order.not_found` si el pedido no vino de Shopify) |
+| `PUT /orders/{id}/corrections` | `quotations.order.manage` | `If-Match` con la versión del **pedido de QEP**; sin él 428 `precondition.if_match_required`, versión vieja 412, fila no importada 422 `shopify.order.not_imported`, pedido no editable 422 `order.order.not_editable`, recogida con dirección 422 `order.order.store_pickup`, dirección fuera de Colombia 422 `shopify.order.address_not_supported`, cuerpo inválido 422 `validation.failed` con `errors`; la respuesta trae `shopifySync` (`Queued` \| `Held` \| `NothingToSend`) |
+| `POST /orders/{id}/push` | `quotations.order.manage` | suelta el envío retenido del pedido (`Held` → `Pending`) y responde el panel; conexión aún no operativa 422 `shopify.store.not_operational`; sin envío retenido 409 `shopify.push.nothing_held`; fila o pedido inexistente 404 `shopify.order.not_found`; una corrección a la vez 412 |
+| `POST /stores/{connectionId}/pushes/release` | `quotations.order.manage` | suelta todos los envíos retenidos de la tienda y responde `{ "released": n }`; conexión de otro tenant o inexistente 403 `authorization.denied`; no operativa 422 `shopify.store.not_operational`. Mismo permiso que «Sincronizar ahora» de la tienda: lo hace quien corrige pedidos |
+
+**Límite conocido** (sin resolver a propósito). Dos snapshots del mismo pedido que tocan el mismo grupo y llegan intercalados
+por milisegundos —B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A falla—
+pueden dejar la proyección vieja, y la edición siguiente de ese grupo sale como un `qep_changed` falso que el asesor resuelve a
+mano. La alternativa es un candado advisory por fila del espejo alrededor de la detección y la aplicación.
+
 **La bandeja.** `GET /tenants/{tenantId}/shopify/orders` pagina el espejo (tope 50, más recientes primero) con
 `state` (repetible o separado por comas; sin él, `Waiting`), `connectionId`, `withWarnings=true` (avisos sin revisar;
 sin `state` no filtra por estado) y `cancelledAfterInvoice=true`: sólo las `Cancelled` cuyo `wait_detail` es
@@ -4449,6 +4554,9 @@ sin `state` no filtra por estado) y `cancelledAfterInvoice=true`: sólo las `Can
 `cancelledAfterInvoice=true` son iguales a los contadores de `GET …/shopify/orders/summary`, así que la sección pagina
 en el servidor y nunca filtra en el navegador. `cancelledAfterInvoice=true` junto con `withWarnings=true` suma los dos
 filtros (AND): los cancelados después de facturar que todavía tienen avisos sin revisar.
+
+La sección **«Cambios por revisar»** es `GET …/shopify/changes` (ver «Ediciones del pedido»): los cambios `Pending` y
+`Blocked`, y `GET …/shopify/orders/summary` trae `changesToReview` (los mismos, siempre presente) para su contador.
 
 Cada fila trae `lastError` —texto libre para soporte y logs, que la pantalla no muestra— y `lastErrorCodes`, siempre
 presente (`[]` sin error): los códigos de `lastError` partidos por `"; "`, en orden y sin repetir. Un código de
@@ -4485,7 +4593,7 @@ sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`
 | `Shopify:App:ClientId` | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID` | Client ID de la app en el Dev Dashboard |
 | `Shopify:App:ClientSecret` | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET` | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code` |
 | `Shopify:App:ApiVersion` | ConfigMap, `2026-10` | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`) |
-| `Shopify:App:Scopes` | ConfigMap, `read_orders,read_customers` | Lo que pide la autorización |
+| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers` | Lo que pide la autorización (`write_orders` desde el 2026-11-14) |
 | `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
 | `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
 | `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
@@ -4495,6 +4603,18 @@ En `Production`, `ShopifyAppOptionsValidator` exige con `ValidateOnStart` `Clien
 `WebhookCallbackUrl` (https) y al menos un origen; un `ClientId` o `ClientSecret` que llega como `#{…}#` (la variable
 no está en `Backend-prod`) cuenta como ausente. Sin ellas el pod entra en crash-loop, a propósito. Fuera de
 `Production`, sin `ClientId` y `ClientSecret` el proveedor sale del catálogo y el módulo arranca igual.
+
+**`write_orders` (spec 2026-11-14).** La corrección del asesor (dirección de envío, nota del cliente y atributos) viaja a
+Shopify con `orderUpdate`, que exige `write_orders`. Según el owner, los comercios ya enlazados lo tienen concedido; sumarlo a
+`Shopify:App:Scopes` es para que una instalación nueva lo pida, y un canje nuevo sin él falla con `scopes_missing`. Falta
+verificarlo (V-13): si una tienda no lo tuviera, sus envíos quedan retenidos (`Held`) con `access_denied`; el comercio tiene que
+volver a abrir la app desde su Shopify para concederlo, y después alguien los suelta con `POST …/stores/{connectionId}/pushes/release`.
+
+**Ediciones en la tienda.** `GET|PUT …/shopify/stores/{connectionId}` llevan además `editSync` (`Manual`, por defecto, o
+`Automatic`) y `editPaymentStatuses` (los estados de pago de QEP en que un cambio de Shopify se aplica; por defecto los cuatro:
+`FullPaymentReceived`, `PartialPaymentReceived`, `PaymentPending`, `PendingVerification`). En el `PUT` los dos son opcionales y
+`null` conserva lo guardado (D15), para que un frontend viejo no borre la configuración; `editPaymentStatuses` no puede venir
+vacío ni repetido. Errores: `errors.editSync`, `errors.editPaymentStatuses` y `errors.editPaymentStatuses[i]`.
 
 En local, los dos van por user-secrets. `set` imprime el valor, así que va con `| Out-Null`; el secreto se pide con
 `Read-Host -MaskInput` para que no quede en el historial de PSReadLine, y la verificación cuenta. `-MaskInput` exige
@@ -4542,6 +4662,23 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 3. La app en el Dev Dashboard de Shopify, la verificación con una tienda de desarrollo y el primer tenant piloto: los
    pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
    `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.
+4. **Ediciones del pedido (spec 2026-11-14).** Las migraciones `AddStoreEditSync`, `AddOrderEdits` y `AddOrderPushes`
+   (Shopify) corren con el backend, sin backfill: las filas importadas antes toman su base en la primera edición (D6). El
+   worker de envíos (`ShopifyOrderPushWorker`) entra con el backend, y `Shopify:App:Scopes` pasa a
+   `read_orders,write_orders,read_customers` en el ConfigMap.
+
+   **Antes del ConfigMap, la app.** En el Dev Dashboard de Shopify, publica (*release*) una versión de la app cuyos scopes
+   pidan `write_orders`. `CompleteShopifyInstall` exige ahora `write_orders` en lo que Shopify concede: si la versión
+   publicada de la app no lo pide, toda instalación nueva o reenlace falla con `integrations.shopify.scopes_missing` en
+   cuanto el ConfigMap llega a producción. El orden es: versión de la app con `write_orders`, después el ConfigMap.
+
+   Quedan por verificar contra Shopify real:
+
+   | # | Qué | Cómo se cierra |
+   | --- | --- | --- |
+   | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada, y que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo y mirar `shopify.orders.payload` y `shopify.order_edits` |
+   | V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes`, y que el `orders/updated` de vuelta salga como eco. Además: (a) el teléfono de ida y vuelta: si Shopify guarda en E.164 el teléfono nacional que QEP mandó, el eco tiene que salir igual (QEP compara sin el indicativo de país, `ShopifyOrderProjection.SamePhone`); (b) que `note: null` borre la nota en Shopify y no se ignore (si la ignora, mandar `""`) | Corregir una ciudad en QEP, ver el envío `Sent` y la dirección en Shopify, y que no aparezca un cambio; mirar el teléfono que quedó en Shopify; borrar la nota del cliente en QEP y verla vacía en Shopify |
+   | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` de cada tienda; un envío `Held` con `access_denied` también lo delata |
 
 ### Contratos de servicio (cobros recurrentes)
 

@@ -150,7 +150,9 @@ public sealed class ShopifyPersistenceTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
         var (advisor, classification, company) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
-        store.Configure(advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), classification, "Cédula", "Tipo", "NIT", 14, advisor, Now);
+        store.Configure(
+            advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), classification, "Cédula", "Tipo", "NIT", 14,
+            ShopifyEditSync.Automatic, ["PendingVerification", "PaymentPending"], advisor, Now);
 
         using (var scope = factory.Services.CreateScope())
         {
@@ -169,6 +171,44 @@ public sealed class ShopifyPersistenceTests
         Assert.Equal(14, saved.HistoryDays);
         Assert.Equal(14, await ScalarAsync<int>(
             database.GetConnectionString(), "SELECT history_days FROM shopify.stores WHERE connection_id = @c", ("c", store.ConnectionId)));
+        // Spec 2026-11-14: el modo va por nombre y los estados como text[], en el orden guardado.
+        Assert.Equal(ShopifyEditSync.Automatic, saved.EditSync);
+        Assert.Equal(["PendingVerification", "PaymentPending"], saved.EditPaymentStatuses);
+        Assert.Equal("Automatic|PendingVerification,PaymentPending", await ScalarAsync<string>(
+            database.GetConnectionString(),
+            "SELECT edit_sync || '|' || array_to_string(edit_payment_statuses, ',') FROM shopify.stores WHERE connection_id = @c",
+            ("c", store.ConnectionId)));
+    }
+
+    // Spec 2026-11-14: una fila que existía antes de la migración nace Manual y con los cuatro estados (default de la columna).
+    [Fact]
+    public async Task AStoreRowWithoutEditFieldsGetsTheColumnDefaults()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().Add(store);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await ScalarAsync<int>(
+            connectionString,
+            """
+            WITH reset AS (
+                UPDATE shopify.stores SET edit_sync = DEFAULT, edit_payment_statuses = DEFAULT WHERE connection_id = @c RETURNING 1)
+            SELECT count(*)::int FROM reset
+            """,
+            ("c", store.ConnectionId));
+
+        Assert.Equal(
+            "Manual|FullPaymentReceived,PartialPaymentReceived,PaymentPending,PendingVerification",
+            await ScalarAsync<string>(
+                connectionString,
+                "SELECT edit_sync || '|' || array_to_string(edit_payment_statuses, ',') FROM shopify.stores WHERE connection_id = @c",
+                ("c", store.ConnectionId)));
     }
 
     // Spec 2026-10-21: el CHECK de la columna repite el rango del dominio; un UPDATE a mano fuera de 1..30 no entra.
@@ -401,6 +441,90 @@ public sealed class ShopifyPersistenceTests
         }
 
         await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
+    // Spec 2026-11-14 §2 y §3: la versión aplicada y la proyección en la fila, y el cambio con las columnas del contrato.
+    private static async Task<ShopifyOrderEdit> SaveEditAsync(QepApiFactory factory, ShopifyOrderMirror row)
+    {
+        var edit = ShopifyOrderEdit.Create(
+            row.TenantId, row.ConnectionId, row.Id, row.QepOrderId!.Value, Now.AddHours(-1), Now, """{"name":"#1001"}""",
+            """[{"kind":"Note","outcome":"Apply","reason":null,"rows":[]}]""", ShopifyOrderEditStatus.Blocked,
+            ShopifyEditReasons.OrderNotEditable, Now);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ShopifyDbContext>();
+        row.RecordApplied("""{"name":"#1001"}""", """{"buyerNotes":"A"}""");
+        db.Orders.Add(row);
+        scope.ServiceProvider.GetRequiredService<IShopifyOrderEditRepository>().Add(edit);
+        await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        return edit;
+    }
+
+    [Fact]
+    public async Task OrderEditRoundTripsWithTheContractColumns()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var row = NewRow(Guid.CreateVersion7(), Guid.CreateVersion7());
+        row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, Now);
+        var edit = await SaveEditAsync(factory, row);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var edits = scope.ServiceProvider.GetRequiredService<IShopifyOrderEditRepository>();
+            var open = await edits.FindOpenAsync(row.TenantId, row.Id, Ct);
+            Assert.NotNull(open);
+            Assert.Equal(
+                (edit.Id, ShopifyOrderEditStatus.Blocked, "order_not_editable", row.QepOrderId, (DateTimeOffset?)Now.AddHours(-1), Now),
+                (open.Id, open.Status, open.StatusReason, (Guid?)open.QepOrderId, open.BaseUpdatedAt, open.SnapshotUpdatedAt));
+            Assert.Equal(1, await edits.CountToReviewAsync(row.TenantId, Ct));
+            Assert.Null(await edits.FindOpenAsync(Guid.CreateVersion7(), row.Id, Ct));
+            var mirror = await scope.ServiceProvider.GetRequiredService<IShopifyOrderMirrorRepository>()
+                .FindByQepOrderIdAsync(row.TenantId, row.QepOrderId!.Value, Ct);
+            Assert.Equal(("""{"name": "#1001"}""", """{"buyerNotes": "A"}"""), (mirror?.AppliedPayload, mirror?.AppliedProjection));
+        }
+
+        Assert.Equal(
+            "id:uuid,tenant_id:uuid,connection_id:uuid,mirror_order_id:uuid,qep_order_id:uuid,base_updated_at:timestamp with time zone,"
+            + "snapshot_updated_at:timestamp with time zone,payload:jsonb,groups:jsonb,status:character varying(16),"
+            + "status_reason:character varying(64),created_at:timestamp with time zone,decided_at:timestamp with time zone,"
+            + "decided_by:uuid,version:bigint",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum)
+                FROM pg_attribute a
+                WHERE a.attrelid = 'shopify.order_edits'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+                """));
+        Assert.Contains("(mirror_order_id, status)", await IndexDefinitionAsync(connectionString, "IX_order_edits_mirror_status"), StringComparison.Ordinal);
+        Assert.Contains(
+            "(tenant_id, status, created_at)",
+            await IndexDefinitionAsync(connectionString, "IX_order_edits_tenant_status_created"),
+            StringComparison.Ordinal);
+        Assert.Equal(
+            "applied_payload:jsonb,applied_projection:jsonb,qep_attributes:jsonb",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attname)
+                FROM pg_attribute a
+                WHERE a.attrelid = 'shopify.orders'::regclass AND a.attname IN ('applied_payload', 'applied_projection', 'qep_attributes')
+                """));
+    }
+
+    [Fact]
+    public async Task DeletingTheMirrorRowDeletesItsEdits()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var row = NewRow(Guid.CreateVersion7(), Guid.CreateVersion7());
+        row.MarkImported(Guid.CreateVersion7(), Guid.CreateVersion7(), 0m, null, Now);
+        await SaveEditAsync(factory, row);
+
+        await ExecuteAsync(connectionString, "DELETE FROM shopify.orders WHERE id = @id", ("id", row.Id));
+
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.order_edits"));
     }
 
     // Contrato con lulo-crm-migrator, que siembra esta tabla por SQL: los nombres y los tipos no se tocan.

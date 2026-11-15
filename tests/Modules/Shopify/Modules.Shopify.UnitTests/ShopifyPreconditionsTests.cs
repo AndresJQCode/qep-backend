@@ -402,19 +402,21 @@ public sealed class ShopifyPreconditionsTests
         Assert.Null(Assert.Single(world.Writer.Creates).Draft.PaymentMethod);
     }
 
-    // §6.2.3 paso 2: «Shopify #1001» y, en otra línea, la nota del comprador.
+    // §6.2.3 paso 2 (spec 2026-11-14): las notas llevan «Shopify #1001»; la nota del comprador va aparte, recortada, en
+    // BuyerNotes.
     [Theory]
-    [InlineData("  Dejar en portería  ", "Shopify #1001\nDejar en portería")]
-    [InlineData(null, "Shopify #1001")]
-    [InlineData("   ", "Shopify #1001")]
-    public async Task NotesCarryTheOrderNameAndTheBuyerNote(string? note, string expected)
+    [InlineData("  Dejar en portería  ", "Dejar en portería")]
+    [InlineData(null, null)]
+    [InlineData("   ", null)]
+    public async Task NotesCarryTheOrderNameAndBuyerNotesTheBuyerNote(string? note, string? expected)
     {
         var world = new ImporterWorld();
         var snapshot = Order(note: note);
 
         await world.ImportAsync(world.RowFor(snapshot), snapshot);
 
-        Assert.Equal(expected, Assert.Single(world.Writer.Creates).Draft.Notes);
+        var draft = Assert.Single(world.Writer.Creates).Draft;
+        Assert.Equal(("Shopify #1001", expected), (draft.Notes, draft.BuyerNotes));
     }
 
     [Fact]

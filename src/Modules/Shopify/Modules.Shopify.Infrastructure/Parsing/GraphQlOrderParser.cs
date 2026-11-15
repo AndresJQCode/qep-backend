@@ -36,10 +36,11 @@ public static class GraphQlOrderParser
             OptionalString(node, "note", "note"),
             Strings(node, "paymentGatewayNames", "paymentGatewayNames"),
             Buyer(node, customer),
-            Find(node, "shippingAddress") is { } address ? Address(address) : null,
+            Find(node, "shippingAddress") is { } address ? Address(address, "shippingAddress") : null,
             Attributes(node, "customAttributes", "key", "customAttributes"),
             Lines(node),
-            ShippingLines(node));
+            ShippingLines(node),
+            Find(node, "billingAddress") is { } billing ? Address(billing, "billingAddress") : null);
     }
 
     // Customer.email y Customer.phone están deprecados en la 2026-10 (D-S29): el contacto del cliente viene en
@@ -53,16 +54,16 @@ public static class GraphQlOrderParser
     private static string? CustomerContact(JsonElement? customer, string objectName, string name) =>
         customer is { } c && Find(c, objectName) is { } contact ? OptionalString(contact, name, $"customer.{objectName}.{name}") : null;
 
-    private static ShopifyAddress Address(JsonElement address) => new(
-        OptionalString(address, "name", "shippingAddress.name"),
-        OptionalString(address, "address1", "shippingAddress.address1"),
-        OptionalString(address, "address2", "shippingAddress.address2"),
-        OptionalString(address, "city", "shippingAddress.city"),
-        OptionalString(address, "province", "shippingAddress.province"),
-        OptionalString(address, "provinceCode", "shippingAddress.provinceCode"),
-        OptionalString(address, "countryCodeV2", "shippingAddress.countryCodeV2"),
-        OptionalString(address, "phone", "shippingAddress.phone"),
-        OptionalString(address, "company", "shippingAddress.company"));
+    private static ShopifyAddress Address(JsonElement address, string field) => new(
+        OptionalString(address, "name", $"{field}.name"),
+        OptionalString(address, "address1", $"{field}.address1"),
+        OptionalString(address, "address2", $"{field}.address2"),
+        OptionalString(address, "city", $"{field}.city"),
+        OptionalString(address, "province", $"{field}.province"),
+        OptionalString(address, "provinceCode", $"{field}.provinceCode"),
+        OptionalString(address, "countryCodeV2", $"{field}.countryCodeV2"),
+        OptionalString(address, "phone", $"{field}.phone"),
+        OptionalString(address, "company", $"{field}.company"));
 
     private static ShopifyLine[] Lines(JsonElement order) =>
         Items(order, "lineItems", "lineItems", connection: true)
@@ -70,16 +71,20 @@ public static class GraphQlOrderParser
             {
                 var field = $"lineItems[{index}]";
                 var sku = OptionalString(line, "sku", $"{field}.sku");
+                var original = Find(line, "quantity") is { } quantity ? Decimal(quantity, $"{field}.quantity") : 0m;
                 return new ShopifyLine(
                     sku,
-                    Find(line, "quantity") is { } quantity ? Decimal(quantity, $"{field}.quantity") : 0m,
+                    // D2: la vigente; sin la llave, la original.
+                    Find(line, "currentQuantity") is { } current ? Decimal(current, $"{field}.currentQuantity") : original,
                     OptionalAmount(line, $"{field}.originalUnitPriceSet.shopMoney.amount", "originalUnitPriceSet.shopMoney.amount") ?? 0m,
                     Items(line, "discountAllocations", $"{field}.discountAllocations")
                         .Select((allocation, i) => OptionalAmount(allocation, $"{field}.discountAllocations[{i}].allocatedAmountSet.shopMoney.amount", "allocatedAmountSet.shopMoney.amount") ?? 0m)
                         .Sum(),
                     OptionalString(line, "title", $"{field}.title"),
                     // Una variante borrada deja variant y product en null, pero la línea conserva su SKU: una custom nunca lo tiene.
-                    IsExplicitNull(line, "variant") && IsExplicitNull(line, "product") && string.IsNullOrWhiteSpace(sku));
+                    IsExplicitNull(line, "variant") && IsExplicitNull(line, "product") && string.IsNullOrWhiteSpace(sku),
+                    OptionalId(line, "id", $"{field}.id", "LineItem"),
+                    original);
             })
             .ToArray();
 

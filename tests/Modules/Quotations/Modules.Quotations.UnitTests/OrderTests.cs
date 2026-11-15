@@ -1284,6 +1284,77 @@ public sealed class OrderTests
             OrderPaymentStatus.PaymentPending, notes, ConvertedBy, [], Now, OrderSource.Shopify, "#1001",
             ShippingDetails.None, null, null, OrderLineCosts.None);
 
+    // Spec 2026-11-14: la nota del comprador de Shopify va aparte de las notas del asesor, como la de la tienda pública.
+    [Fact]
+    public void CreateExternalKeepsTheBuyerNotesApartFromNotes()
+    {
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0003", Header(), QuotationParties.Empty, Account, [Line()],
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", ConvertedBy, [], Now, OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null, OrderLineCosts.None, buyerNotes: "  Dejar en portería ");
+
+        Assert.Equal(("Shopify #1001", "Dejar en portería"), (order.Notes, order.BuyerNotes));
+    }
+
+    [Fact]
+    public void UpdateExternalBuyerNotesChangesOnlyBuyerNotesAndBumpsVersion()
+    {
+        var order = NewShopifyOrder("Shopify #1001");
+        var later = Now.AddHours(1);
+
+        var changed = order.UpdateExternalBuyerNotes("  Sin cebolla ", later);
+
+        Assert.True(changed);
+        Assert.Equal(("Sin cebolla", "Shopify #1001"), (order.BuyerNotes, order.Notes));
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    [Fact]
+    public void UpdateExternalBuyerNotesWithTheSameTextChangesNothing()
+    {
+        var order = NewShopifyOrder("Shopify #1001");
+        order.UpdateExternalBuyerNotes("Sin cebolla", Now.AddHours(1));
+
+        var changed = order.UpdateExternalBuyerNotes(" Sin cebolla  ", Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal((Now.AddHours(1), 2), (order.UpdatedAt, order.Version));
+    }
+
+    // D22: vacío o sólo espacios es lo mismo que null.
+    [Fact]
+    public void UpdateExternalBuyerNotesWithBlankOnANullNoteChangesNothing()
+    {
+        var order = NewShopifyOrder("Shopify #1001");
+
+        Assert.False(order.UpdateExternalBuyerNotes("   ", Now.AddHours(1)));
+        Assert.Null(order.BuyerNotes);
+        Assert.Equal(1, order.Version);
+    }
+
+    // La nota del comprador de la tienda pública es lo que él escribió: el asesor no la cambia.
+    [Fact]
+    public void UpdateExternalBuyerNotesOnAStoreOrderIsSourceInvalid()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7(), notes: "Entregar en portería");
+
+        var error = Assert.Throws<QuotationsDomainException>(() => order.UpdateExternalBuyerNotes("Otra", Now.AddHours(1)));
+
+        Assert.Equal("order.order.source_invalid", error.Code);
+        Assert.Equal("Entregar en portería", order.BuyerNotes);
+    }
+
+    [Fact]
+    public void UpdateExternalBuyerNotesOnAPreparedOrderIsNotEditable()
+    {
+        var order = NewShopifyOrder("Shopify #1001");
+        order.Prepare(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() => order.UpdateExternalBuyerNotes("Otra", Now.AddHours(1)));
+
+        Assert.Equal("order.order.not_editable", error.Code);
+    }
+
     [Fact]
     public void AttachExternalShippingAddsThePartyAndDropsTheRawAddressLine()
     {
@@ -1363,6 +1434,173 @@ public sealed class OrderTests
         Assert.Equal("order.shipping.party_incomplete", error.Code);
         Assert.Null(order.Shipping);
         Assert.Equal(1, order.Version);
+    }
+
+    // Spec 2026-11-14 §5: el asesor corrige la parte de envío de un pedido de Shopify. Si no la tenía, se crea y la línea cruda
+    // de la dirección sale de las notas.
+    [Fact]
+    public void EditExternalShippingPartyCreatesItAndDropsTheRawAddressLine()
+    {
+        var order = NewShopifyOrder("Shopify #1001\nDirección de envío de Shopify: Cra 5, CALLI");
+        var later = Now.AddHours(1);
+
+        var changed = order.EditExternalShippingParty(ShippingParty(), RawAddressPrefix, later);
+
+        Assert.True(changed);
+        Assert.Equal("Shopify #1001", order.Notes);
+        Assert.Equal(ShippingParty(), order.Shipping!.ToDetails());
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    [Fact]
+    public void EditExternalShippingPartyReplacesTheExistingOne()
+    {
+        var order = NewShopifyOrder("Shopify #1001", parties: new QuotationParties(null, ShippingParty()));
+        var corrected = ShippingParty(CityB) with { Address = "Calle 9 # 8-7" };
+
+        var changed = order.EditExternalShippingParty(corrected, RawAddressPrefix, Now.AddHours(1));
+
+        Assert.True(changed);
+        Assert.Equal(corrected, order.Shipping!.ToDetails());
+        Assert.Equal(2, order.Version);
+        Assert.False(order.EditExternalShippingParty(corrected, RawAddressPrefix, Now.AddHours(2)));
+        Assert.Equal(2, order.Version);
+    }
+
+    // La parte de un pedido de la tienda pública es la que el comprador escribió: el asesor no la corrige por este camino.
+    [Fact]
+    public void EditExternalShippingPartyOnAStoreOrderIsSourceInvalid()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7());
+        var before = order.Shipping?.ToDetails();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.EditExternalShippingParty(ShippingParty(CityB), RawAddressPrefix, Now.AddHours(1)));
+
+        Assert.Equal("order.order.source_invalid", error.Code);
+        Assert.Equal(before, order.Shipping?.ToDetails());
+    }
+
+    // Spec 2026-11-14 §4: una edición de Shopify que se aplica al pedido. Las líneas llegan preciadas por la plataforma.
+    private static ExternalOrderEdit Edit(
+        IReadOnlyCollection<OrderLineInput>? lines = null,
+        ShippingDetails? shipping = null,
+        QuotationPartyDetails? party = null,
+        bool replaceBuyerNotes = false,
+        string? buyerNotes = null) =>
+        new(lines, shipping, party, replaceBuyerNotes, buyerNotes, RawAddressPrefix);
+
+    private static OrderLineInput SameLine(OrderItem item, decimal? quantity = null) =>
+        new(item.VariantId, item.ProductId, quantity ?? item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage);
+
+    [Fact]
+    public void ApplyExternalEditReplacesTheLinesAndBumpsVersionOnce()
+    {
+        var first = Line();
+        var second = Line(quantity: 1m, unitPrice: 23_800m);
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0003", Header(), QuotationParties.Empty, Account, [first, second],
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", ConvertedBy, [], Now, OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null, OrderLineCosts.None);
+        var later = Now.AddHours(1);
+
+        var result = order.ApplyExternalEdit(
+            Edit(lines: [first with { Quantity = 1m }]), OrderLineCosts.None, later);
+
+        Assert.Equal(new ExternalOrderEditResult(true, false, false, false), result);
+        var item = Assert.Single(order.Items);
+        Assert.Equal((first.VariantId, 1m), (item.VariantId, item.Quantity));
+        Assert.Equal(11_900m, order.Total);
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    [Fact]
+    public void ApplyExternalEditWithTheSameValuesChangesNothing()
+    {
+        var order = NewShopifyOrder("Shopify #1001", parties: new QuotationParties(null, ShippingParty()));
+        order.UpdateExternalBuyerNotes("Sin cebolla", Now);
+        var version = order.Version;
+
+        var result = order.ApplyExternalEdit(
+            Edit(
+                lines: [SameLine(order.Items.Single())], shipping: ShippingDetails.None, party: ShippingParty(),
+                replaceBuyerNotes: true, buyerNotes: " Sin cebolla "),
+            OrderLineCosts.None,
+            Now.AddHours(1));
+
+        Assert.False(result.Any);
+        Assert.Equal((version, Now), (order.Version, order.UpdatedAt));
+    }
+
+    [Fact]
+    public void ApplyExternalEditCreatesThePartyAndDropsTheRawAddressLine()
+    {
+        var order = NewShopifyOrder("Shopify #1001\nDirección de envío de Shopify: Calle 1");
+
+        var result = order.ApplyExternalEdit(Edit(party: ShippingParty()), OrderLineCosts.None, Now.AddHours(1));
+
+        Assert.Equal(new ExternalOrderEditResult(false, false, true, false), result);
+        Assert.Equal("Shopify #1001", order.Notes);
+        Assert.NotNull(order.Shipping);
+        Assert.True(order.Shipping!.IsComplete);
+        Assert.Equal(ShippingParty(), order.Shipping.ToDetails());
+        Assert.Equal(2, order.Version);
+    }
+
+    // Spec 2026-11-14 §4: los precios son los de la plataforma, sin repreciar contra el catálogo.
+    [Fact]
+    public void ApplyExternalEditKeepsThePlatformUnitPrice()
+    {
+        var usd = new OrderHeader(ClientId, Advisor, "USD", null, false, null, false, []);
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0003", usd, QuotationParties.Empty, Account with { Currency = "USD" },
+            [Line(unitPrice: 30m)], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify,
+            "#1001", ShippingDetails.None, null, null, OrderLineCosts.None);
+        var variant = order.Items.Single();
+
+        order.ApplyExternalEdit(
+            Edit(lines: [new OrderLineInput(variant.VariantId, variant.ProductId, 1m, 47_619.05m, 10m, 0)]),
+            OrderLineCosts.None,
+            Now.AddHours(1));
+
+        var item = Assert.Single(order.Items);
+        Assert.Equal((47_619.05m, 10m), (item.UnitPrice, item.DiscountPercentage));
+    }
+
+    [Fact]
+    public void ApplyExternalEditOnAPreparedOrderIsNotEditable()
+    {
+        var order = NewShopifyOrder();
+        order.Prepare(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.ApplyExternalEdit(Edit(replaceBuyerNotes: true, buyerNotes: "Otra"), OrderLineCosts.None, Now.AddHours(1)));
+
+        Assert.Equal("order.order.not_editable", error.Code);
+        Assert.Null(order.BuyerNotes);
+    }
+
+    [Fact]
+    public void ApplyExternalEditOnAManualOrderIsSourceInvalid()
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.ApplyExternalEdit(Edit(replaceBuyerNotes: true, buyerNotes: "Otra"), OrderLineCosts.None, Now.AddHours(1)));
+
+        Assert.Equal("order.order.source_invalid", error.Code);
+    }
+
+    [Fact]
+    public void ApplyExternalEditWithAPartyOnAPickupOrderIsStorePickup()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, null, IsStorePickup: true));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.ApplyExternalEdit(Edit(party: ShippingParty()), OrderLineCosts.None, Now.AddHours(1)));
+
+        Assert.Equal("order.order.store_pickup", error.Code);
+        Assert.Null(order.Shipping);
     }
 
     [Fact]

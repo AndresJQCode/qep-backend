@@ -13,7 +13,10 @@ public sealed class ShopifyAppOptions
     /// <summary>D-S29: la estable del trimestre en que se implementó (2026-10-18).</summary>
     public const string DefaultApiVersion = "2026-10";
 
-    public const string DefaultScopes = "read_orders,read_customers";
+    /// <summary><c>write_orders</c> desde el spec 2026-11-14: la corrección del asesor viaja a Shopify con <c>orderUpdate</c>. Según
+    /// el owner, las tiendas ya enlazadas lo tienen concedido (V-13, por verificar con <c>currentAppInstallation.accessScopes</c>);
+    /// sumarlo acá es para que una instalación nueva lo pida. Un canje nuevo sin él falla con <c>scopes_missing</c>.</summary>
+    public const string DefaultScopes = "read_orders,write_orders,read_customers";
 
     public string? ClientId { get; set; }
 

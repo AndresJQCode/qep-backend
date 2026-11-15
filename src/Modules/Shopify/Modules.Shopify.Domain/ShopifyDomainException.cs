@@ -63,4 +63,33 @@ public static class ShopifyErrorCodes
 
     /// <summary>Spec 2026-11-13: la variante existe pero está inactiva. 422.</summary>
     public const string CustomLineVariantInactive = "shopify.custom_line.variant_inactive";
+
+    /// <summary>Spec 2026-11-14 §6: el cambio de Shopify no existe en el tenant. 404.</summary>
+    public const string EditNotFound = "shopify.edit.not_found";
+
+    /// <summary>Spec 2026-11-14 §4: el cambio ya no está pendiente ni bloqueado (se aplicó, se rechazó, se revisó o lo reemplazó
+    /// otro). 409.</summary>
+    public const string EditNotOpen = "shopify.edit.not_open";
+
+    /// <summary>Plan 2026-11-14 D9: «revisado» es sólo para un cambio bloqueado. 422.</summary>
+    public const string EditNotBlocked = "shopify.edit.not_blocked";
+
+    /// <summary>Spec 2026-11-14 §4: aceptar con el pedido sin poder editarse (preparado, facturado, anulado). 422.</summary>
+    public const string EditOrderNotEditable = "shopify.edit.order_not_editable";
+
+    /// <summary>Spec 2026-11-14 §4: aceptar con el pago del pedido fuera de los estados que la tienda admite. 422.</summary>
+    public const string EditPaymentStatusNotAllowed = "shopify.edit.payment_status_not_allowed";
+
+    /// <summary>Spec 2026-11-14 §4: aceptar con una línea que no empareja con una variante. 422.</summary>
+    public const string EditProductUnmatched = "shopify.edit.product_unmatched";
+
+    /// <summary>Spec 2026-11-14 §5: corregir un pedido cuya fila del espejo no está importada. 422.</summary>
+    public const string OrderNotImported = "shopify.order.not_imported";
+
+    /// <summary>Plan 2026-11-14 D21: la parte de envío sólo se corrige en Colombia. 422.</summary>
+    public const string OrderAddressNotSupported = "shopify.order.address_not_supported";
+
+    /// <summary>Owner 2026-11-14: «Sincronizar con Shopify» de un pedido que no tiene un envío retenido (nunca lo tuvo, ya salió o
+    /// ya se soltó). 409: el estado cambió, la pantalla recarga el panel.</summary>
+    public const string PushNothingHeld = "shopify.push.nothing_held";
 }

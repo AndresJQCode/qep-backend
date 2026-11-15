@@ -1,4 +1,5 @@
 using Modules.Geography.Application;
+using Modules.Geography.Domain;
 using Modules.Shopify.Application;
 
 namespace Bootstrapper;
@@ -29,5 +30,13 @@ internal sealed class ShopifyGeographyLookup(IDepartmentRepository departments, 
         return new ShopifyCityLookup(
             department.Id.Value,
             match is null ? null : new ShopifyCityRef(department.Id.Value, match.City.Id.Value, match.SynonymId?.Value));
+    }
+
+    /// <summary>Spec 2026-11-14 §5: los nombres DIVIPOLA de la ciudad y su departamento, para el <c>orderUpdate</c>.</summary>
+    public async Task<ShopifyCityName?> DescribeCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+    {
+        var department = await departments.FindAsync(new DepartmentId(departmentId), cancellationToken);
+        var city = await cities.FindAsync(new CityId(cityId), cancellationToken);
+        return department is null || city is null ? null : new ShopifyCityName(city.Name, department.Name);
     }
 }

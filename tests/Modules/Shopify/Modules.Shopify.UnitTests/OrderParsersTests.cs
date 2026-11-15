@@ -45,7 +45,7 @@ public sealed class OrderParsersTests
             new ShopifyBuyer("Laura", "Gómez", "laura.gomez@example.com", "+573001112233"),
             new ShopifyAddress("Laura Gómez", "Calle 10 # 43-20", "Apto 301", "Medellín", "Antioquia", "ANT", "CO", "+573001112233", "1036000111"),
             new Dictionary<string, string> { ["documento"] = "1036000111", ["tipo_documento"] = "CC" },
-            [new ShopifyLine("CAM-001", 2m, 50_000m, 0m)],
+            [new ShopifyLine("CAM-001", 2m, 50_000m, 0m, Id: 9000, OriginalQuantity: 2m)],
             [new ShopifyShippingLine("standard", "Servientrega", 19_000m, 3_033.61m, false)]);
         AssertSameSnapshot(expected, snapshot);
         Assert.Equal(TimeSpan.Zero, snapshot.CreatedAt.Offset);
@@ -89,7 +89,7 @@ public sealed class OrderParsersTests
 
         Assert.Equal((42L, (long?)null, (ShopifyAddress?)null), (snapshot.OrderId, snapshot.CustomerId, snapshot.ShippingAddress));
         Assert.Equal(new ShopifyBuyer(null, null, null, null), snapshot.Buyer);
-        Assert.Equal([new ShopifyLine(null, 1m, 50_000m, 0m), new ShopifyLine(null, 1m, 0m, 0m)], snapshot.Lines);
+        Assert.Equal([new ShopifyLine(null, 1m, 50_000m, 0m, OriginalQuantity: 1m), new ShopifyLine(null, 1m, 0m, 0m, OriginalQuantity: 1m)], snapshot.Lines);
         Assert.Empty(snapshot.ShippingLines);
         Assert.Empty(snapshot.PaymentGateways);
         Assert.Empty(snapshot.Attributes);
@@ -198,7 +198,12 @@ public sealed class OrderParsersTests
             case "discounts":
                 // shop_money, no presentment_money: el comprador pagó en USD pero la tienda cuenta en COP.
                 Assert.Equal(96_000m, snapshot.TotalPrice);
-                Assert.Equal([new ShopifyLine("CAM-001", 2m, 50_000m, 10_000m), new ShopifyLine("GOR-002", 1m, 20_000m, 4_000m)], snapshot.Lines);
+                Assert.Equal(
+                    [
+                        new ShopifyLine("CAM-001", 2m, 50_000m, 10_000m, Id: 9000, OriginalQuantity: 2m),
+                        new ShopifyLine("GOR-002", 1m, 20_000m, 4_000m, Id: 9001, OriginalQuantity: 1m),
+                    ],
+                    snapshot.Lines);
                 break;
             case "pickup":
                 Assert.Equal([new ShopifyShippingLine("pickup", "Recogida en tienda", 0m, 0m, false)], snapshot.ShippingLines);
@@ -256,7 +261,7 @@ public sealed class OrderParsersTests
               "product_exists": false, "sku": null, "quantity": 1, "price": "5000.00", "discount_allocations": []}]}
             """));
 
-        Assert.Equal(new ShopifyLine(null, 1m, 5_000m, 0m, CustomTitle, true), Assert.Single(snapshot.Lines));
+        Assert.Equal(new ShopifyLine(null, 1m, 5_000m, 0m, CustomTitle, true, OriginalQuantity: 1m), Assert.Single(snapshot.Lines));
     }
 
     [Fact]
@@ -267,7 +272,7 @@ public sealed class OrderParsersTests
               "sku": null, "quantity": 1, "originalUnitPriceSet": {"shopMoney": {"amount": "5000.0"}}, "discountAllocations": []}]}}
             """));
 
-        Assert.Equal(new ShopifyLine(null, 1m, 5_000m, 0m, CustomTitle, true), Assert.Single(snapshot.Lines));
+        Assert.Equal(new ShopifyLine(null, 1m, 5_000m, 0m, CustomTitle, true, OriginalQuantity: 1m), Assert.Single(snapshot.Lines));
     }
 
     [Theory]
@@ -340,8 +345,118 @@ public sealed class OrderParsersTests
 
         var read = ShopifyOrderIngestion.ReadPayload(node.ToJsonString());
 
-        Assert.Equal(new ShopifyLine("CAM-001", 2m, 50_000m, 0m), Assert.Single(read.Lines));
+        Assert.Equal(new ShopifyLine("CAM-001", 2m, 50_000m, 0m, Id: 9000, OriginalQuantity: 2m), Assert.Single(read.Lines));
     }
+
+    // D2: la cantidad de la línea es la vigente (current_quantity / currentQuantity); la original queda aparte.
+    [Theory]
+    [InlineData("rest")]
+    [InlineData("graphql")]
+    public void ACurrentQuantityIsTheLineQuantity(string format)
+    {
+        var line = Assert.Single(Parse(format, LineJson(format, quantity: 3, currentQuantity: 1)).Lines);
+
+        Assert.Equal((9001L, 1m, 3m), (line.Id, line.Quantity, line.OriginalQuantity));
+        Assert.False(line.IsRemoved);
+    }
+
+    [Theory]
+    [InlineData("rest")]
+    [InlineData("graphql")]
+    public void ALineWithCurrentQuantityZeroIsRemoved(string format)
+    {
+        var line = Assert.Single(Parse(format, LineJson(format, quantity: 2, currentQuantity: 0)).Lines);
+
+        Assert.Equal((0m, 2m), (line.Quantity, line.OriginalQuantity));
+        Assert.True(line.IsRemoved);
+    }
+
+    // Review Focus 1: las fixtures no traen current_quantity; sin la llave la cantidad vigente es la original, no 0.
+    [Theory]
+    [InlineData("rest")]
+    [InlineData("graphql")]
+    public void ALineWithoutCurrentQuantityKeepsItsQuantity(string format)
+    {
+        var json = Fixture(format, "taxes-included");
+        var snapshot = format == "rest" ? RestOrderParser.Parse(json) : GraphQlOrderParser.Parse(json);
+
+        Assert.NotEmpty(snapshot.Lines);
+        Assert.All(snapshot.Lines, line =>
+        {
+            Assert.Equal(line.OriginalQuantity, line.Quantity);
+            Assert.NotEqual(0m, line.Quantity);
+            Assert.False(line.IsRemoved);
+        });
+    }
+
+    [Theory]
+    [InlineData("rest")]
+    [InlineData("graphql")]
+    public void BillingAddressIsRead(string format)
+    {
+        var json = format == "rest"
+            ? RestOrderHead + """
+                "billing_address": {"name": "Laura Gómez", "address1": "Calle 10", "address2": null, "city": "Medellín",
+                  "province": "Antioquia", "province_code": "ANT", "country_code": "CO", "phone": "+573001112233", "company": "1036000111"}}
+                """
+            : GraphQlOrderHead + """
+                "billingAddress": {"name": "Laura Gómez", "address1": "Calle 10", "address2": null, "city": "Medellín",
+                  "province": "Antioquia", "provinceCode": "ANT", "countryCodeV2": "CO", "phone": "+573001112233", "company": "1036000111"}}
+                """;
+
+        var snapshot = Parse(format, json);
+
+        Assert.Equal(
+            new ShopifyAddress("Laura Gómez", "Calle 10", null, "Medellín", "Antioquia", "ANT", "CO", "+573001112233", "1036000111"),
+            snapshot.BillingAddress);
+        Assert.Null(snapshot.ShippingAddress);
+    }
+
+    // Un payload guardado antes de este cambio no trae id, originalQuantity ni billingAddress: se lee con sus defaults.
+    [Fact]
+    public void AnOldPayloadWithoutTheNewFieldsReadsDefaults()
+    {
+        var snapshot = RestOrderParser.Parse(Fixture("rest", "taxes-included")) with
+        {
+            BillingAddress = new ShopifyAddress(null, null, null, null, null, null, "CO", null, "1036000111"),
+        };
+        var node = System.Text.Json.Nodes.JsonNode.Parse(ShopifyOrderIngestion.WritePayload(snapshot))!;
+        node.AsObject().Remove("billingAddress");
+        foreach (var line in node["lines"]!.AsArray())
+        {
+            line!.AsObject().Remove("id");
+            line.AsObject().Remove("originalQuantity");
+        }
+
+        var read = ShopifyOrderIngestion.ReadPayload(node.ToJsonString());
+
+        var only = Assert.Single(read.Lines);
+        Assert.Equal(((long?)null, (decimal?)null, 2m, false), (only.Id, only.OriginalQuantity, only.Quantity, only.IsRemoved));
+        Assert.Null(read.BillingAddress);
+    }
+
+    // El derivado no se guarda en el payload: se recalcula al leer.
+    [Fact]
+    public void ThePayloadDoesNotStoreIsRemoved()
+    {
+        var snapshot = Parse("rest", LineJson("rest", quantity: 2, currentQuantity: 0));
+        var node = System.Text.Json.Nodes.JsonNode.Parse(ShopifyOrderIngestion.WritePayload(snapshot))!;
+
+        var line = node["lines"]![0]!.AsObject();
+        Assert.False(line.ContainsKey("isRemoved"));
+        Assert.True(Assert.Single(ShopifyOrderIngestion.ReadPayload(node.ToJsonString()).Lines).IsRemoved);
+    }
+
+    private static string LineJson(string format, int quantity, int currentQuantity) =>
+        format == "rest"
+            ? RestOrderHead + $$$"""
+                "line_items": [{"id": 9001, "title": "Camiseta", "sku": "CAM-001", "quantity": {{{quantity}}}, "current_quantity": {{{currentQuantity}}},
+                  "price": "5000.00", "discount_allocations": []}]}
+                """
+            : GraphQlOrderHead + $$$"""
+                "lineItems": {"nodes": [{"id": "gid://shopify/LineItem/9001", "title": "Camiseta", "sku": "CAM-001", "quantity": {{{quantity}}},
+                  "currentQuantity": {{{currentQuantity}}}, "originalUnitPriceSet": {"shopMoney": {"amount": "5000.0"}}, "discountAllocations": []}]}}
+                """;
 
     // El record compara sus colecciones por referencia: se comparan aparte, en orden, y el resto con ellas neutralizadas.
     private static void AssertSameSnapshot(ShopifyOrderSnapshot expected, ShopifyOrderSnapshot actual)

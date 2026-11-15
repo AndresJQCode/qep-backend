@@ -99,7 +99,7 @@ public sealed class ShopifyInstallApiTests
         var authorize = await response.Content.ReadFromJsonAsync<ShopifyAuthorizeResponse>(Ct);
         Assert.NotNull(authorize);
         Assert.StartsWith(
-            $"https://mi-tienda.myshopify.com/admin/oauth/authorize?client_id={ShopifyClientId}&scope=read_orders%2Cread_customers&redirect_uri={Uri.EscapeDataString(ShopifyRedirectUri)}&state=",
+            $"https://mi-tienda.myshopify.com/admin/oauth/authorize?client_id={ShopifyClientId}&scope=read_orders%2Cwrite_orders%2Cread_customers&redirect_uri={Uri.EscapeDataString(ShopifyRedirectUri)}&state=",
             authorize.AuthorizeUrl,
             StringComparison.Ordinal);
         Assert.DoesNotContain("grant_options", authorize.AuthorizeUrl, StringComparison.Ordinal);
@@ -272,7 +272,7 @@ public sealed class ShopifyInstallApiTests
             connectionString,
             """
             SELECT count(*) FROM integrations.shopify_installs
-            WHERE id = @id AND shop_id = '12345678' AND shop_name = 'Mi Tienda' AND scopes = 'read_orders,read_customers'
+            WHERE id = @id AND shop_id = '12345678' AND shop_name = 'Mi Tienda' AND scopes = 'read_orders,write_orders,read_customers'
               AND access_token_protected IS NOT NULL AND key_id = 'test'
               AND expires_at >= @earliest AND expires_at <= @latest
               AND position(convert_to(@token, 'UTF8') in access_token_protected) = 0
@@ -472,7 +472,7 @@ public sealed class ShopifyInstallApiTests
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
         factory.ShopifyHandler.Respond(
-            "/admin/oauth/access_token$", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelShopifyAccessToken}}","scope":"read_orders,read_customers"}""");
+            "/admin/oauth/access_token$", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelShopifyAccessToken}}","scope":"read_orders,write_orders,read_customers"}""");
         var tenant = await RegisterTenantAsync(factory);
         using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         var state = await StartFromTenantAsync(owner, tenant.TenantId);

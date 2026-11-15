@@ -158,7 +158,8 @@ internal static class ShopifyApiHarness
                         && (descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker)
                             || descriptor.ImplementationType == typeof(ShopifyReconcileWorker)
                             || descriptor.ImplementationType == typeof(CitySynonymEventsWorker)
-                            || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)))
+                            || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)
+                            || descriptor.ImplementationType == typeof(ShopifyOrderPushWorker)))
                     .ToArray())
                 {
                     services.Remove(worker);
@@ -579,6 +580,8 @@ internal sealed record ShopifyWorld(
             Modules.Shopify.Domain.ShopifyStore.DefaultDocumentTypeAttributeKey,
             Modules.Shopify.Domain.ShopifyStore.DefaultIdentificationTypeCode,
             historyDays,
+            Modules.Shopify.Domain.ShopifyEditSync.Manual,
+            Modules.Shopify.Domain.ShopifyPaymentStatuses.All,
             AdvisorMembershipId,
             DateTimeOffset.UtcNow);
         scope.ServiceProvider.GetRequiredService<Modules.Shopify.Application.IShopifyStoreRepository>().Add(store);

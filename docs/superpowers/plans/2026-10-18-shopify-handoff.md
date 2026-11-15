@@ -19,8 +19,10 @@ cuentan o describen, nunca listan valores (CLAUDE.md, reglas duras).
 3. **Allowed redirection URLs**, las dos:
    - `https://qep.qcode.co/shopify/callback`
    - `http://localhost:3002/shopify/callback`
-4. **Scopes:** `read_orders,read_customers` (los mismos de `Shopify:App:Scopes`; si Shopify concede menos, el canje
-   responde `integrations.shopify.scopes_missing`).
+4. **Scopes:** `read_orders,write_orders,read_customers` (los mismos de `Shopify:App:Scopes`; si Shopify concede menos, el
+   canje responde `integrations.shopify.scopes_missing`). `write_orders` entró con la sincronización de ediciones (spec
+   2026-11-14): publica (*release*) la versión de la app que lo pide **antes** de desplegar el ConfigMap que lo suma a
+   `Shopify:App:Scopes`; al revés, toda instalación nueva o reenlace falla con `scopes_missing`.
 5. **Webhooks de cumplimiento**, los tres a `https://qep-api.qcode.co/api/webhooks/shopify`: `customers/data_request`,
    `customers/redact` y `shop/redact`. El host es el del ingress (`k8s/prod-ingress.yaml:24`) y la URL es la misma de
    `Shopify:App:WebhookCallbackUrl`. Shopify no deja registrarlos por API: si faltan, la app no pasa la revisión.

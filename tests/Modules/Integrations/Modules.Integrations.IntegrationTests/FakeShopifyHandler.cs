@@ -77,7 +77,7 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
             {
                 return Json(
                     status,
-                    $$"""{"access_token":"{{accessToken}}","scope":"read_orders,read_customers","expires_in":3600,"refresh_token":"{{refreshToken}}","refresh_token_expires_in":7776000}""");
+                    $$"""{"access_token":"{{accessToken}}","scope":"read_orders,write_orders,read_customers","expires_in":3600,"refresh_token":"{{refreshToken}}","refresh_token_expires_in":7776000}""");
             }
 
             var sent = Regex.Match(body ?? string.Empty, "refresh_token=([^&]*)", RegexOptions.CultureInvariant).Groups[1].Value;
@@ -108,7 +108,7 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
     public void ScriptHappyInstall(
         string shop,
         string accessToken,
-        string scopes = "read_orders,read_customers",
+        string scopes = "read_orders,write_orders,read_customers",
         string name = "Mi Tienda",
         TimeSpan exchangeDelay = default,
         string refreshToken = "shprt_install-refresh-SENTINEL")

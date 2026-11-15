@@ -10,6 +10,9 @@ namespace Modules.Shopify.Application;
 /// estado de la conexión (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>); el texto lo tiene el frontend.
 /// <see cref="WaitingCount"/> va en cero, nunca ausente. <see cref="LastReconciledAt"/> es <c>null</c> mientras la tienda no
 /// exista en el módulo. <see cref="ShopDomain"/> es <c>null</c> si no se conoce, igual que en <see cref="ShopifyStoreDto"/>.
+/// <see cref="HeldPushCount"/> (owner 2026-11-14) son los pedidos de la tienda con correcciones retenidas (envío <c>Held</c>), en cero
+/// si no hay. BFF: la pantalla pinta «N pedidos pendientes de sincronizar» junto al botón que los suelta
+/// (<c>POST …/stores/{connectionId}/pushes/release</c>) sin pedir la lista de envíos.
 /// </summary>
 public sealed record ShopifyStoreSummaryDto(
     Guid ConnectionId,
@@ -18,7 +21,8 @@ public sealed record ShopifyStoreSummaryDto(
     string Status,
     bool IsConfigured,
     int WaitingCount,
-    DateTimeOffset? LastReconciledAt);
+    DateTimeOffset? LastReconciledAt,
+    int HeldPushCount);
 
 /// <summary>
 /// Spec 2026-10-15 §6.1 y §7 <c>GET|PUT /stores/{connectionId}</c>: la configuración de la tienda. BFF: el formulario muestra el
@@ -29,6 +33,9 @@ public sealed record ShopifyStoreSummaryDto(
 /// (<c>Documento</c>, <c>Tipo de documento</c>, <c>CC</c>), que es lo que el formulario pinta de entrada.
 /// <see cref="HistoryDays"/> (spec 2026-10-21) son los días antes del enlace que trae «Sincronizar ahora»; <c>null</c> es sin
 /// historial, y viaja siempre, también en <c>null</c>, para que el campo del formulario arranque vacío.
+/// <see cref="EditSync"/> (<c>Manual</c> | <c>Automatic</c>) y <see cref="EditPaymentStatuses"/> (nombres de los estados de pago
+/// del pedido de QEP con los que se admite un cambio de Shopify) son del spec 2026-11-14 y viajan siempre, con sus valores por
+/// defecto en una tienda sin configurar, para que el formulario no tenga que conocerlos.
 /// </summary>
 public sealed record ShopifyStoreDto(
     Guid ConnectionId,
@@ -47,6 +54,8 @@ public sealed record ShopifyStoreDto(
     string DocumentTypeAttributeKey,
     string DefaultIdentificationType,
     int? HistoryDays,
+    string EditSync,
+    IReadOnlyList<string> EditPaymentStatuses,
     DateTimeOffset? LastReconciledAt,
     DateTimeOffset UpdatedAt,
     long Version);
@@ -55,9 +64,9 @@ public sealed record ShopifyStoreDto(
 /// <c>GET /stores/{connectionId}/document-sources</c>: las opciones del select «Atributo del documento», en el orden en que se
 /// dibujan. BFF: el select no puede saber qué atributos manda el checkout de la tienda (eso sólo lo ve el espejo de pedidos) ni
 /// cómo los resuelve el importador, así que cada valor ya es una clave que el <c>PUT</c> de la tienda acepta y
-/// <see cref="ShopifyDocumentSources.Read"/> resuelve, tal cual va en <c>documentAttributeKey</c>: primero la ruta
-/// <c>shipping_address.company</c> (siempre, aunque la tienda no tenga pedidos) y después los nombres de atributo, sin repetir y
-/// ordenados. El texto de cada opción lo pone el frontend: la ruta tiene su etiqueta en el diccionario y un atributo se muestra por
+/// <see cref="ShopifyDocumentSources.Read"/> resuelve, tal cual va en <c>documentAttributeKey</c>: primero las rutas
+/// <c>shipping_address.company</c> y <c>billing_address.company</c> (siempre, aunque la tienda no tenga pedidos; la de facturación
+/// desde el spec 2026-11-14) y después los nombres de atributo, sin repetir y ordenados. El texto de cada opción lo pone el frontend: la ruta tiene su etiqueta en el diccionario y un atributo se muestra por
 /// su nombre. Va envuelto en un objeto y no como arreglo suelto para poder sumar campos sin romper el contrato. La clave guardada
 /// en la tienda no se agrega si ya no aparece en los pedidos: la trae <c>GET /stores/{connectionId}</c>.
 /// </summary>
@@ -129,6 +138,88 @@ public sealed record ShopifyOrderPageDto(IReadOnlyList<ShopifyOrderRowDto> Items
 /// Es un endpoint y no una suma del cliente porque la lista está paginada (tope 50). <see cref="WithWarnings"/> cuenta sólo los
 /// avisos sin revisar; <see cref="CancelledAfterInvoice"/>, las filas <c>Cancelled</c> con <c>invoiced_before_cancel</c> (hay
 /// que revertir la factura a mano); <see cref="ImportedToday"/>, las filas importadas desde la medianoche en el huso del tenant,
-/// en cualquier estado posterior.
+/// en cualquier estado posterior; <see cref="ChangesToReview"/>, los cambios de Shopify <c>Pending</c> y <c>Blocked</c> (spec
+/// 2026-11-14 §6, la sección «Cambios por revisar»).
 /// </summary>
-public sealed record ShopifyOrdersSummaryDto(int Waiting, int WithWarnings, int CancelledAfterInvoice, int ImportedToday);
+public sealed record ShopifyOrdersSummaryDto(int Waiting, int WithWarnings, int CancelledAfterInvoice, int ImportedToday, int ChangesToReview);
+
+/// <summary>
+/// Spec 2026-11-14 §6: un cambio de Shopify como lo pinta la bandeja («Cambios por revisar») y el detalle del pedido.
+/// <para>BFF: <see cref="Groups"/> viaja armado (grupo, decisión, motivo y filas de antes y después con textos, números crudos y
+/// booleanos), porque el frontend no conoce el diff de Shopify ni los enums de QEP; sólo los pinta. Los enums (<see cref="Status"/>,
+/// <c>kind</c>, <c>outcome</c>) van por nombre y los motivos (<see cref="StatusReason"/>, <c>reason</c>) en <c>snake_case</c>, que el
+/// frontend traduce con su diccionario. La excepción es un <c>Pending</c> que la aplicación automática no pudo aplicar por una regla
+/// del pedido (review M-2): su <see cref="StatusReason"/> es el código de Quotations tal cual (por ejemplo
+/// <c>order.order.store_pickup</c>), el mismo que respondería aceptarlo. Los montos van como número crudo en <see cref="Currency"/> (plan D19): el frontend ya
+/// formatea por moneda, y un texto armado acá fijaría el formato regional en dos lugares.</para>
+/// <para><see cref="Currency"/> es la del pedido de QEP: sale de <c>shopify.orders.currency</c>, que la importación exige igual a la
+/// de la cuenta de cobro (<c>currency_mismatch</c>); siempre presente. <see cref="DecidedByName"/> es el nombre de quien aceptó,
+/// rechazó o revisó; <c>null</c> si lo decidió el sistema.</para>
+/// </summary>
+public sealed record ShopifyOrderChangeDto(
+    Guid Id,
+    Guid MirrorOrderId,
+    Guid ConnectionId,
+    string? StoreName,
+    string OrderName,
+    Guid? QepOrderId,
+    string? QepOrderNumber,
+    string Currency,
+    string Status,
+    string? StatusReason,
+    DateTimeOffset? BaseUpdatedAt,
+    DateTimeOffset SnapshotUpdatedAt,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? DecidedAt,
+    string? DecidedByName,
+    JsonElement Groups);
+
+/// <summary>Spec 2026-11-14 §6 <c>GET /changes</c>: la página y el total del filtro, como <see cref="ShopifyOrderPageDto"/>.</summary>
+public sealed record ShopifyOrderChangePageDto(IReadOnlyList<ShopifyOrderChangeDto> Items, int Total, int Page, int PageSize);
+
+/// <summary>Spec 2026-11-14 §5: un atributo de Shopify (<c>note_attributes</c>) como lo edita el detalle del pedido.</summary>
+public sealed record ShopifyAttributeDto(string Key, string Value);
+
+/// <summary>Spec 2026-11-14 §5: el último envío a Shopify del pedido. <see cref="Status"/> (<c>Pending</c>, <c>Sent</c>,
+/// <c>Failed</c>, <c>Held</c>) y <see cref="Groups"/> (<c>ShippingAddress</c>, <c>Note</c>, <c>Attributes</c>) por nombre;
+/// <see cref="FailureCode"/> en <c>snake_case</c>, que el frontend traduce: en <c>Failed</c>, <c>user_error</c>,
+/// <c>order_not_found</c>, <c>rejected</c> o <c>retries_exhausted</c>; en <c>Held</c> (owner 2026-11-14, retenido hasta que alguien
+/// lo sincronice), el motivo: <c>connection_inactive</c>, <c>connection_missing</c> o <c>access_denied</c>. <see cref="LastAttemptAt"/> es la
+/// última vez que el worker lo tocó, <c>null</c> si todavía no lo intentó.</summary>
+public sealed record ShopifyOrderPushDto(
+    string Status, IReadOnlyList<string> Groups, string? FailureCode, int Attempts, DateTimeOffset? LastAttemptAt, DateTimeOffset? SentAt);
+
+/// <summary>
+/// Spec 2026-11-14 §5 y §6: el panel de Shopify en el detalle del pedido de QEP (plan D11). BFF: la pantalla no conoce la regla de
+/// edición de Quotations ni la fila del espejo, así que todo lo que decide qué se muestra y qué se deja editar viene armado acá.
+/// <para><see cref="CanEdit"/>: la fila está <c>Imported</c> y el pedido es editable. <see cref="EditBlockedReason"/> (plan D20) es
+/// <c>null</c> si y sólo si <see cref="CanEdit"/>; si no, el primero que aplique en este orden: <c>NotImported</c> (la fila no está
+/// importada o no tiene pedido), <c>Cancelled</c>, <c>Archived</c>, <c>Invoiced</c>, <c>Prepared</c>, que son los estados que el dominio
+/// distingue en <c>Order.IsEditable</c>. Así la pantalla dice por qué no se puede editar sin repetir la regla.</para>
+/// <para><see cref="ShippingAddressSupported"/> es <c>false</c> con recogida en tienda o con una dirección fuera de Colombia (plan
+/// D21): la pantalla manda entonces <c>shippingParty: null</c>, y nota y atributos siguen editables.</para>
+/// <para><see cref="Attributes"/> son los de QEP si el asesor los corrigió (<see cref="AttributesEditedInQep"/>); si no, los del
+/// último Shopify aplicado. <see cref="OrderVersion"/> es el <c>If-Match</c> del <c>PUT …/corrections</c>. <see cref="Push"/> es el
+/// último envío (<c>null</c> si nunca hubo) y <see cref="OpenChange"/>, el cambio <c>Pending</c> o <c>Blocked</c> de Shopify.</para>
+/// <para><see cref="ShopifySync"/> (owner 2026-11-14) sólo viene en la respuesta del <c>PUT …/corrections</c>; en el <c>GET</c> y en
+/// <c>POST …/push</c> es <c>null</c>. Dice qué pasó con la corrección del lado de Shopify: <c>Queued</c> (encolada, sale sola),
+/// <c>Held</c> (guardada en QEP pero retenida: la conexión no está activa, o ya había un envío retenido de este pedido) o
+/// <c>NothingToSend</c> (no cambió nada). BFF: con <c>Held</c> la pantalla avisa «la conexión no está activa; el cambio queda
+/// marcado y lo podrás sincronizar cuando la actives» sin tener que cruzar el estado de la conexión con el del envío.</para>
+/// </summary>
+public sealed record ShopifyOrderSyncDto(
+    Guid MirrorOrderId,
+    Guid ConnectionId,
+    string OrderName,
+    long OrderVersion,
+    bool CanEdit,
+    string? EditBlockedReason,
+    bool ShippingAddressSupported,
+    IReadOnlyList<ShopifyAttributeDto> Attributes,
+    bool AttributesEditedInQep,
+    ShopifyOrderPushDto? Push,
+    ShopifyOrderChangeDto? OpenChange,
+    string? ShopifySync = null);
+
+/// <summary>Owner 2026-11-14: lo que respondió soltar los envíos retenidos de una tienda: cuántos quedaron pendientes.</summary>
+public sealed record ShopifyPushReleaseResult(int Released);

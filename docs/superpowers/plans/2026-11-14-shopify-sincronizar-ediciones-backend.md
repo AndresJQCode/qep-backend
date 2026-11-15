@@ -31,10 +31,10 @@
 
 - Columnas nuevas de `shopify.orders`: `applied_payload jsonb NULL`, `applied_projection jsonb NULL`, `qep_attributes jsonb NULL`. Ninguna con backfill.
 - Tabla `shopify.order_edits` (spec: «order_changes», ver D1): `id uuid PK` (GUID v7), `tenant_id uuid`, `connection_id uuid`, `mirror_order_id uuid FK → shopify.orders(id) ON DELETE CASCADE`, `qep_order_id uuid`, `base_updated_at timestamptz NULL`, `snapshot_updated_at timestamptz`, `payload jsonb`, `groups jsonb`, `status varchar(16)`, `status_reason varchar(64) NULL`, `created_at timestamptz`, `decided_at timestamptz NULL`, `decided_by uuid NULL`, `version bigint` (token de concurrencia). Índices `IX_order_edits_mirror_status (mirror_order_id, status)` y `IX_order_edits_tenant_status_created (tenant_id, status, created_at)`.
-- Tabla `shopify.order_pushes`: `id uuid PK`, `tenant_id`, `connection_id`, `mirror_order_id uuid FK → shopify.orders(id) ON DELETE CASCADE`, `qep_order_id`, `groups text[]`, `status varchar(16)`, `attempts int`, `lease_until timestamptz NULL`, `failure_code varchar(64) NULL`, `created_at`, `updated_at`, `sent_at timestamptz NULL`, `version bigint`. Índice único parcial `IX_order_pushes_mirror_pending (mirror_order_id) WHERE status = 'Pending'`, traducido **por nombre** en `ShopifyUnitOfWork` a `RequestConcurrencyException("concurrency.conflict")`.
+- Tabla `shopify.order_pushes`: `id uuid PK`, `tenant_id`, `connection_id`, `mirror_order_id uuid FK → shopify.orders(id) ON DELETE CASCADE`, `qep_order_id`, `groups text[]`, `status varchar(16)`, `attempts int`, `lease_until timestamptz NULL`, `failure_code varchar(64) NULL`, `created_at`, `updated_at`, `sent_at timestamptz NULL`, `version bigint`. Índice único parcial `IX_order_pushes_mirror_pending (mirror_order_id) WHERE status IN ('Pending','Held')` (desde `AddHeldOrderPushes`, owner 2026-11-14; antes sólo `Pending`), traducido **por nombre** en `ShopifyUnitOfWork` a `RequestConcurrencyException("concurrency.conflict")`.
 - `shopify.stores`: `edit_sync varchar(16) NOT NULL DEFAULT 'Manual'`, `edit_payment_statuses text[] NOT NULL DEFAULT '{FullPaymentReceived,PartialPaymentReceived,PaymentPending,PendingVerification}'`.
-- Enums por nombre en la API: estado del cambio `Pending | Applied | Blocked | Rejected | Reviewed | Superseded`; grupo `Lines | Shipping | ShippingAddress | Buyer | Note | Attributes`; resultado del grupo `Apply | Conflict | Informative`; envío `Pending | Sent | Failed`; grupos de envío `ShippingAddress | Note | Attributes`; `editSync` `Manual | Automatic`; estados de pago `FullPaymentReceived | PartialPaymentReceived | PaymentPending | PendingVerification`.
-- Motivos (snake_case, contrato con el diccionario del frontend): bloqueo `order_not_editable`, `payment_status_not_allowed`, `product_unmatched`; conflicto de grupo `qep_changed`, `customer_changed`, `city_unresolved`, `party_incomplete`, `store_pickup`, `store_pickup_changed`, más los motivos de envío del importador (`freight_tax_rate_missing`, …) tal cual; fallo de envío `access_denied`, `user_error`, `order_not_found`, `connection_missing`, `rejected`, `retries_exhausted`.
+- Enums por nombre en la API: estado del cambio `Pending | Applied | Blocked | Rejected | Reviewed | Superseded`; grupo `Lines | Shipping | ShippingAddress | Buyer | Note | Attributes`; resultado del grupo `Apply | Conflict | Informative`; envío `Pending | Sent | Failed | Held`; grupos de envío `ShippingAddress | Note | Attributes`; `editSync` `Manual | Automatic`; estados de pago `FullPaymentReceived | PartialPaymentReceived | PaymentPending | PendingVerification`.
+- Motivos (snake_case, contrato con el diccionario del frontend): bloqueo `order_not_editable`, `payment_status_not_allowed`, `product_unmatched`; conflicto de grupo `qep_changed`, `customer_changed`, `city_unresolved`, `party_incomplete`, `store_pickup`, `store_pickup_changed`, más los motivos de envío del importador (`freight_tax_rate_missing`, …) tal cual; fallo de envío (`Failed`) `user_error`, `order_not_found`, `rejected`, `retries_exhausted`; envío retenido (`Held`, owner 2026-11-14) `connection_inactive`, `connection_missing`, `access_denied`.
 - Códigos de error nuevos: `shopify.edit.not_found` (404), `shopify.edit.not_open` (409), `shopify.edit.not_blocked` (422), `shopify.edit.order_not_editable` (422), `shopify.edit.payment_status_not_allowed` (422), `shopify.edit.product_unmatched` (422), `shopify.order.not_imported` (422), `shopify.order.address_not_supported` (422). `shopify.order.not_found` (404) ya existe.
 - Permisos (todos existen, con política; no se registra ninguna nueva): leer cambios y el panel del pedido `quotations.order.read` (`ShopifyPermissions.OrderRead`); aceptar, rechazar, revisar y corregir `quotations.order.manage` (`ShopifyPermissions.OrderManage`); configurar la tienda `integrations.connection.manage` (`ShopifyPermissions.ConnectionManage`). El handler revalida con `ShopifyAuthorization.EnsureAsync`: 403, nunca 404 por tenant.
 - `Shopify:App:Scopes` = `read_orders,write_orders,read_customers` en `ShopifyAppOptions.DefaultScopes`, `src/Api/appsettings.json`, `src/Api/appsettings.example.json`, `k8s/prod-configMap.yaml` y el README.
@@ -92,10 +92,27 @@ Base `/api/v1/tenants/{tenantId:guid}/shopify`. JSON camelCase; enums por nombre
 
 **Resumen** (cambia): `GET /orders/summary` → suma `"changesToReview": 3` (filas `Pending` + `Blocked`), siempre presente.
 
+**Lista de tiendas** (cambia, owner 2026-11-14): `GET /stores` → cada `ShopifyStoreSummaryDto` suma `"heldPushCount": 2`, los pedidos de esa tienda con un envío retenido (`Held`), en `0` si no hay, siempre presente. Es el «N pedidos pendientes de sincronizar» junto al botón global.
+
+**Correcciones retenidas** (nuevas, owner 2026-11-14). Una corrección nunca se pierde por la conexión: el envío queda `Held` con su motivo en `push.failureCode` y el worker no lo reclama hasta que alguien lo suelte con uno de estos dos endpoints. Los dos exigen la conexión operativa.
+- `POST /orders/{id}/push` (`id` = fila del espejo, como `corrections`) → `ShopifyOrderSyncDto`, con el envío ya `Pending`. `quotations.order.manage`. Errores: conexión aún no operativa 422 `shopify.store.not_operational` (el envío sigue `Held`); sin envío retenido 409 `shopify.push.nothing_held` (recargar el panel); fila o pedido inexistente 404 `shopify.order.not_found`; una corrección que se fusiona a la vez 412 `concurrency.conflict`. Audita `shopify.order.push_released`.
+- `POST /stores/{connectionId}/pushes/release` → `{ "released": 3 }`. `quotations.order.manage`, el mismo permiso que `POST /stores/{connectionId}/sync` («Sincronizar ahora»): lo hace quien corrige pedidos, no quien configura la conexión. Conexión de otro tenant, inexistente o que no es de Shopify 403 `authorization.denied`; no operativa 422 `shopify.store.not_operational`. Una sola sentencia, por tenant y conexión. Audita `shopify.store.pushes_released` si soltó alguno.
+
 **Cambios** (nuevas):
-- `GET /changes?status=Pending&status=Blocked&connectionId={guid}&page=1&pageSize=50` → `{ "items": [ShopifyOrderChangeDto], "total": 1, "page": 1, "pageSize": 50 }`. `status` repetido o separado por comas; por defecto `Pending,Blocked`; `pageSize` ≤ 50. Más nuevos primero. `quotations.order.read`.
+- `GET /changes?status=Pending&status=Blocked&connectionId={guid}&page=1&pageSize=50` → `{ "items": [ShopifyOrderChangeDto], "total": 1, "page": 1, "pageSize": 50 }`. `status` repetido o separado por comas, sin distinguir mayúsculas (`pending` vale); por defecto `Pending,Blocked`; `page` ≥ 1 y `pageSize` de 1 a 50. Más nuevos primero. Un `status` que no existe, o `page`/`pageSize` fuera de rango → 422 `validation.failed` con `errors.status`, `errors.page` o `errors.pageSize`. `quotations.order.read`.
 - `GET /orders/{id}/changes` (`id` = fila del espejo) → `[ShopifyOrderChangeDto]`, más nuevos primero, todos los estados. 404 `shopify.order.not_found`. `quotations.order.read`.
-- `POST /changes/{changeId}/accept` | `/reject` | `/review` → `ShopifyOrderChangeDto`. `quotations.order.manage`. Errores: 404 `shopify.edit.not_found`; 409 `shopify.edit.not_open` (ya no es `Pending` ni `Blocked`); `review` sobre `Pending` → 422 `shopify.edit.not_blocked`; `accept` sin poder aplicar → 422 `shopify.edit.order_not_editable` | `shopify.edit.payment_status_not_allowed` | `shopify.edit.product_unmatched` (y la fila queda `Blocked`, D16); el pedido cambió entre el cálculo y la escritura → 412 `concurrency.conflict` (la fila no cambia).
+- `POST /changes/{changeId}/accept` | `/reject` | `/review` → `ShopifyOrderChangeDto`. `quotations.order.manage`. Errores:
+  - 404 `shopify.edit.not_found`.
+  - 409 `shopify.edit.not_open`: ya no es `Pending` ni `Blocked`. Pasa también cuando un webhook de pago o de despacho acaba de reemplazar el cambio (`Superseded`) por uno idéntico con **otro id**: el frontend lo trata como «recarga el cambio» (vuelve a pedir `GET /orders/{id}/changes` o la bandeja) y no como un error de la persona.
+  - `review` sobre `Pending` → 422 `shopify.edit.not_blocked`.
+  - `accept` sin poder aplicar → 422 `shopify.edit.order_not_editable` | `shopify.edit.payment_status_not_allowed` | `shopify.edit.product_unmatched`, y la fila queda `Blocked` (D16).
+  - `accept` que otra regla del pedido rechaza → 422 con el **código de Quotations tal cual**, y el cambio sigue abierto sin cambiar. Los posibles hoy (`Order.ApplyExternalEdit`): `order.order.items_required` (Shopify dejó el pedido sin líneas), `order.item.duplicate_product` (dos líneas a la misma variante), `order.order.store_pickup` (dirección en un pedido de recogida), `order.shipping.party_incomplete`, `order.order.shipping_not_allowed_on_pickup`, `order.order.freight_amount_invalid`, `order.order.freight_amount_required`, `order.order.freight_amount_not_allowed`, `order.order.cash_on_delivery_pending_only`, `order.order.source_invalid`, y los de validación de línea y de parte del dominio de pedidos. Uno que el frontend no conozca se muestra con un mensaje genérico.
+  - `accept` sobre un pedido que ya no existe → 404 `shopify.order.not_found`; sobre una tienda cuya fila ya no existe → 422 `shopify.store.not_operational`.
+  - El pedido cambió entre el cálculo y la escritura → 412 `concurrency.conflict` (la fila no cambia).
+
+`statusReason`: en `Blocked`, el motivo en `snake_case` (`order_not_editable`, `payment_status_not_allowed`, `product_unmatched`). En `Pending` es `null`, salvo que la aplicación automática (tienda `Automatic`) la haya rechazado una regla del pedido: entonces es el código de Quotations (por ejemplo `order.order.store_pickup`), el mismo que respondería aceptarlo.
+
+Tienda `Automatic` (revisión final, I-2): un cambio con algún grupo `Conflict` **no** se aplica solo, ni siquiera sus grupos `Apply`; queda `Pending` y sale en «Cambios por revisar» y en `changesToReview`. Sólo se aplica solo (`Applied`) un cambio cuyos grupos son todos `Apply` o `Informative`.
 
 `ShopifyOrderChangeDto`:
 ```json
@@ -129,7 +146,7 @@ Tipos exactos de `before`/`after` (D19):
 
 **Panel del pedido de QEP** (nuevas):
 - `GET /qep-orders/{qepOrderId}` → `ShopifyOrderSyncDto`; 404 `shopify.order.not_found` si el pedido no tiene fila del espejo. `quotations.order.read`.
-- `PUT /orders/{id}/corrections` con `If-Match: "<versión del pedido de QEP>"` (la del `OrderDto.version`) → `ShopifyOrderSyncDto`. Sin `If-Match` 428 `precondition.if_match_required`; versión vieja 412 `concurrency.conflict`; fila no importada 422 `shopify.order.not_imported`; pedido no editable 422 `order.order.not_editable`; recogida con dirección 422 `order.order.store_pickup`; dirección fuera de Colombia 422 `shopify.order.address_not_supported` (D21). `quotations.order.manage`.
+- `PUT /orders/{id}/corrections` con `If-Match: "<versión del pedido de QEP>"` (la del `OrderDto.version`) → `ShopifyOrderSyncDto`. Sin `If-Match` 428 `precondition.if_match_required`; 412 `concurrency.conflict` por una versión vieja **o** por una carrera que no es de la persona: el worker cerró el envío pendiente entre la lectura y el guardado, o un webhook escribió la fila del espejo mientras se guardaban los atributos (en los dos casos, recargar y reintentar funciona); fila del espejo inexistente en el tenant o pedido de QEP que ya no existe 404 `shopify.order.not_found`; fila no importada 422 `shopify.order.not_imported`; pedido no editable 422 `order.order.not_editable`; recogida con dirección 422 `order.order.store_pickup`; dirección fuera de Colombia 422 `shopify.order.address_not_supported` (D21). `quotations.order.manage`. La respuesta trae además `"shopifySync"`: `Queued` (el envío quedó pendiente y sale solo), `Held` (la corrección se guardó en QEP, pero el envío quedó retenido: la conexión no está activa, o el pedido ya tenía un envío retenido; la pantalla avisa «la conexión no está activa; el cambio queda marcado y lo podrás sincronizar cuando la actives») o `NothingToSend` (no cambió nada). En `GET /qep-orders/{id}` y en `POST /orders/{id}/push` es `null`.
 
 Validación: 422 `validation.failed` con estas claves exactas de `errors` (camelCase con `OverridePropertyName`; `i` base 0):
 
@@ -143,6 +160,7 @@ Validación: 422 `validation.failed` con estas claves exactas de `errors` (camel
 | `shippingParty.cityId` | ausente o `Guid.Empty` |
 | `buyerNotes` | más de 2000 tras recortar |
 | `attributes` | ausente (`null`), más de 50, o dos claves iguales (ordinal, tras recortar) |
+| `attributes[i]` | el elemento `i` es `null` |
 | `attributes[i].key` | vacía o más de 255 |
 | `attributes[i].value` | más de 1000 (`null` vale `""`) |
 
@@ -162,10 +180,11 @@ Cuerpo:
 { "mirrorOrderId": "…", "connectionId": "…", "orderName": "#1001", "orderVersion": 7, "canEdit": true,
   "editBlockedReason": null, "shippingAddressSupported": true,
   "attributes": [ { "key": "Documento", "value": "1036000111" } ], "attributesEditedInQep": false,
-  "push": { "status": "Failed", "groups": ["ShippingAddress"], "failureCode": "access_denied",
-            "attempts": 8, "lastAttemptAt": "…", "sentAt": null },
-  "openChange": null }
+  "push": { "status": "Held", "groups": ["ShippingAddress"], "failureCode": "connection_inactive",
+            "attempts": 0, "lastAttemptAt": null, "sentAt": null },
+  "openChange": null, "shopifySync": "Held" }
 ```
+`push.status`: `Pending`, `Sent`, `Failed` o `Held`. `push.failureCode`: en `Failed`, `user_error`, `order_not_found`, `rejected` o `retries_exhausted`; en `Held`, el motivo de la retención (`connection_inactive`: se corrigió con la conexión inactiva; `connection_missing`: la conexión cayó antes de mandar; `access_denied`: Shopify negó el permiso, que se arregla cuando el comercio vuelve a abrir la app).
 `canEdit` = fila `Imported` y pedido editable.
 
 `editBlockedReason` (D20) es `null` si y sólo si `canEdit` es `true`. Si no, es el primer motivo que aplique, en este orden: `NotImported` (la fila no está `Imported` o no tiene pedido), `Cancelled`, `Archived`, `Invoiced`, `Prepared`. Son los estados que el dominio distingue en `Order.IsEditable` (`Status` `Open|Archived|Cancelled`, `IsInvoiced`, `IsPrepared`). La recogida no bloquea: nota y atributos siguen editables. BFF: la pantalla dice por qué no se puede editar sin conocer la regla de Quotations; el motivo va escrito en el comentario del DTO.
@@ -176,9 +195,9 @@ Cuerpo:
 
 Con `false`, la pantalla manda `shippingParty: null`.
 
-`attributes` = los de QEP si se corrigieron, si no los del último Shopify aplicado. `push` = el último envío (`null` si nunca hubo). `openChange` = el cambio `Pending` o `Blocked` (mismo `ShopifyOrderChangeDto`) o `null`.
+`attributes` = los de QEP si se corrigieron, si no los del último Shopify aplicado. `push` = el último envío (`null` si nunca hubo). `push.lastAttemptAt` es aproximado: es el `updated_at` del envío cuando `attempts > 0` (y `null` con `attempts = 0`), así que una corrección que se fusiona con el envío pendiente también lo mueve; no es la hora exacta del último intento. `openChange` = el cambio `Pending` o `Blocked` (mismo `ShopifyOrderChangeDto`) o `null`.
 
-**Pedido de QEP** (cambia): `OrderDto` suma `"buyerNotes": "…"` (o `null`) al final; lo leen el detalle y la lista.
+**Pedido de QEP** (cambia): `OrderDto` suma `"buyerNotes": "…"` (o `null`) al final; lo lee sólo el detalle. La lista de pedidos no trae `buyerNotes`.
 
 **Excel de pedidos** (cambia): columna de catálogo `buyer_notes`, encabezado «Notas del cliente», oculta por defecto (D13).
 

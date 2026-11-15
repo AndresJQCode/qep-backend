@@ -382,6 +382,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(shippingContact.Email),
                 WithholdingCell(order, TaxCountries.RetefuenteType),
                 WithholdingCell(order, TaxCountries.ReteIcaType),
+                ExportCell.OfText(order.BuyerNotes ?? string.Empty),
             ];
         }
     }

@@ -113,6 +113,39 @@ public sealed class NoShopifyOrderChangeReaction : IShopifyOrderChangeReaction
     public Task ReactAsync(ShopifyOrderChange change, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
+/// <summary>
+/// Spec 2026-11-14 §3: la detección de ediciones sobre un pedido ya importado. La implementa <c>ShopifyOrderEdits</c>, que
+/// Bootstrapper registra antes de <c>AddShopifyWebhookProcessing</c> (que sólo deja <see cref="NoShopifyOrderEditDetector"/> si nadie
+/// registró otro). La ingesta la llama en dos pasos:
+/// <list type="number">
+/// <item><see cref="DetectAsync"/>, después del espejo y antes de la reacción de §6.3, en la misma unidad de trabajo: el cambio y la
+/// fila entran en el mismo commit que el snapshot. No escribe en el pedido de QEP.</item>
+/// <item><see cref="ApplyPendingAsync"/>, después de ese guardado: con la tienda automática aplica el cambio pendiente. El pedido lo
+/// confirma Quotations por su cuenta (otro scope), así que si el guardado que sigue falla, el cambio ya guardado queda pendiente y el
+/// reintento lo termina (review I-1).</item>
+/// </list>
+/// </summary>
+public interface IShopifyOrderEditDetector
+{
+    /// <summary><paramref name="previousPayload"/> es el payload de la fila antes de <c>ApplySnapshot</c>: la base de una fila
+    /// importada antes de la sincronización (sin versión aplicada, plan D6).</summary>
+    Task DetectAsync(ShopifyOrderChange change, string previousPayload, CancellationToken cancellationToken);
+
+    /// <summary>Aplica el cambio pendiente del snapshot vigente de <paramref name="row"/> si la tienda es automática. Devuelve si
+    /// tocó algo que la ingesta tiene que guardar.</summary>
+    Task<bool> ApplyPendingAsync(ShopifyStore store, ShopifyOrderMirror row, CancellationToken cancellationToken);
+}
+
+/// <summary>La detección vacía, el registro por defecto de <c>AddShopifyWebhookProcessing</c>. En el host la reemplaza
+/// <c>ShopifyOrderEdits</c>.</summary>
+public sealed class NoShopifyOrderEditDetector : IShopifyOrderEditDetector
+{
+    public Task DetectAsync(ShopifyOrderChange change, string previousPayload, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task<bool> ApplyPendingAsync(ShopifyStore store, ShopifyOrderMirror row, CancellationToken cancellationToken) =>
+        Task.FromResult(false);
+}
+
 /// <summary>Un cliente de QEP como lo necesita el importador (§6.2.1): si existe, si está completo y si está activo. Un cliente
 /// encontrado inactivo deja el pedido en espera con <c>customer_inactive</c>.
 /// <para>Spec 2026-10-26: <see cref="Created"/> dice que el alta lo creó (no es el dueño del documento que ya existía, H8) y
@@ -227,6 +260,58 @@ public interface IShopifyGeographyLookup
 {
     /// <summary>El nombre real, el DIVIPOLA y, si ninguno casa, un sinónimo del departamento (§4.1).</summary>
     Task<ShopifyCityLookup> LookupCityAsync(string departmentName, string cityName, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14 §5: los nombres de QEP (DIVIPOLA) de una ciudad y su departamento, para mandarlos a Shopify; <c>null</c>
+    /// si alguno no existe.</summary>
+    Task<ShopifyCityName?> DescribeCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+}
+
+/// <summary>Una ciudad de Geography por sus nombres, como los guarda la semilla (mayúsculas y con tildes).</summary>
+public sealed record ShopifyCityName(string City, string Department);
+
+/// <summary>Spec 2026-11-14 §5 y plan D12: la dirección de envío de <c>orderUpdate</c> (<c>MailingAddressInput</c>, que no tiene
+/// <c>name</c>): el nombre de QEP en <see cref="FirstName"/> y la dirección en <see cref="Address1"/>, con <see cref="LastName"/> y
+/// <see cref="Address2"/> vacíos. <c>orderUpdate</c> reemplaza la dirección entera, así que <see cref="Company"/> y
+/// <see cref="CountryCode"/> salen del último snapshot (Review Focus 3).</summary>
+public sealed record ShopifyAddressUpdate(
+    string FirstName,
+    string LastName,
+    string Address1,
+    string Address2,
+    string City,
+    string? ProvinceCode,
+    string CountryCode,
+    string Phone,
+    string? Company);
+
+/// <summary>Lo que viaja en un <c>orderUpdate</c>: cada grupo en <c>null</c> (la nota, con <see cref="SetNote"/> en
+/// <c>false</c>) no se manda, y Shopify lo conserva.</summary>
+public sealed record ShopifyOrderUpdate(
+    long ShopifyOrderId,
+    ShopifyAddressUpdate? ShippingAddress,
+    bool SetNote,
+    string? Note,
+    IReadOnlyDictionary<string, string>? Attributes);
+
+public enum ShopifyOrderUpdateKind
+{
+    Updated,
+    Retry,
+    Failed,
+}
+
+/// <summary><see cref="FailureCode"/> viene con <see cref="ShopifyOrderUpdateKind.Failed"/> (<c>access_denied</c>,
+/// <c>user_error</c>, <c>order_not_found</c>, <c>rejected</c>); <see cref="RetryAfter"/>, a veces, con
+/// <see cref="ShopifyOrderUpdateKind.Retry"/>.</summary>
+public sealed record ShopifyOrderUpdateResult(ShopifyOrderUpdateKind Kind, string? FailureCode, TimeSpan? RetryAfter);
+
+/// <summary>Spec 2026-11-14 §5: la mutación <c>orderUpdate</c> de la Admin API GraphQL. Adaptador en Infrastructure
+/// (<c>ShopifyOrderUpdateClient</c>).</summary>
+public interface IShopifyOrderUpdater
+{
+    /// <summary>Sólo manda los campos no nulos (<see cref="ShopifyOrderUpdate.SetNote"/> para la nota). Nunca registra el token, el
+    /// cuerpo ni el mensaje de los <c>userErrors</c>, que puede traer datos del comprador.</summary>
+    Task<ShopifyOrderUpdateResult> UpdateAsync(ShopifyConnectionRef connection, ShopifyOrderUpdate update, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -335,7 +420,8 @@ public sealed record ShopifyOrderDraft(
     DateTimeOffset OccurredAt,
     ShopifyShippingDraft? Shipping,
     string ExternalKey,
-    string? ExternalShippingTitle);
+    string? ExternalShippingTitle,
+    string? BuyerNotes = null);
 
 /// <summary>Lo que devolvió el alta: el pedido (nuevo o el que ya existía con esa clave, <see cref="AlreadyExisted"/>) o el
 /// código con que una regla del pedido lo rechazó (<c>order_rejected</c>, §6.2.3 paso 5). <see cref="ClientId"/> es el cliente
@@ -424,6 +510,53 @@ public sealed record ShopifyOrderOutcome(ShopifyOrderOutcomeKind Kind, string? C
     public static ShopifyOrderOutcome Ignored(string code) => new(ShopifyOrderOutcomeKind.Ignored, code);
 }
 
+/// <summary>Spec 2026-11-14: una línea del pedido de QEP como la guardó Quotations (precio con IVA, descuento en porcentaje).</summary>
+public sealed record ShopifyOrderLineState(
+    Guid VariantId, Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
+
+/// <summary>
+/// Spec 2026-11-14 §3 y §4: el pedido de QEP como lo compara la sincronización de ediciones, con tipos propios.
+/// <see cref="Status"/> y <see cref="PaymentStatus"/> viajan por nombre (<c>Open</c>, <c>Archived</c>, <c>Cancelled</c>;
+/// <c>PaymentPending</c>…): con <see cref="IsPrepared"/> e <see cref="IsInvoiced"/> arman el motivo por el que no se edita (plan
+/// D20). <see cref="Shipping"/> es el envío como el borrador del importador, y <see cref="ShippingParty"/> la parte como quedó
+/// guardada (<c>null</c> sin parte). <see cref="ShippingCountry"/> es el país de la parte; <c>null</c> es Colombia (D21).
+/// </summary>
+public sealed record ShopifyOrderState(
+    Guid OrderId,
+    long Version,
+    string Status,
+    bool IsEditable,
+    bool IsPrepared,
+    bool IsInvoiced,
+    string PaymentStatus,
+    Guid ClientId,
+    string Currency,
+    bool IsStorePickup,
+    IReadOnlyList<ShopifyOrderLineState> Lines,
+    ShopifyShippingDraft Shipping,
+    ShopifyShippingFingerprint? ShippingParty,
+    string? ShippingCountry,
+    string? BuyerNotes);
+
+/// <summary>Spec 2026-11-14 §4: los grupos de un cambio que se aplican al pedido; cada uno en <c>null</c> no se toca.
+/// <see cref="BuyerNotes"/> sólo cuenta con <see cref="ReplaceBuyerNotes"/>. <see cref="ExpectedVersion"/> es la versión del
+/// pedido con la que se planeó.</summary>
+public sealed record ShopifyOrderEditDraft(
+    Guid TenantId,
+    Guid OrderId,
+    long ExpectedVersion,
+    IReadOnlyList<ShopifyOrderLineDraft>? Lines,
+    ShopifyShippingDraft? Shipping,
+    ShopifyPartyDraft? ShippingParty,
+    bool ReplaceBuyerNotes,
+    string? BuyerNotes,
+    DateTimeOffset OccurredAt);
+
+/// <summary><see cref="State"/> es el pedido después de escribir (la proyección sale de acá, nunca del borrador);
+/// <see cref="RejectedCode"/> es la regla del pedido que lo rechazó (<c>order.order.not_editable</c>,
+/// <c>order.order.store_pickup</c>, <c>order.order.items_required</c>…).</summary>
+public sealed record ShopifyOrderEditOutcome(ShopifyOrderState? State, string? RejectedCode);
+
 /// <summary>
 /// Spec 2026-10-15 §6.2 y §6.3: el único camino de Shopify a los pedidos de Quotations. Adaptador en Bootstrapper
 /// (<c>ShopifyOrderWriter</c>) sobre <c>IExternalOrderWriter</c>; ningún consumidor referencia Quotations.Application.
@@ -456,6 +589,41 @@ public interface IShopifyOrderWriter
     /// con <c>AlreadyExisted</c>, o <c>null</c>. Sólo lee. Lo usa §6.3 antes de ignorar una fila en espera que se canceló: si el
     /// worker cayó entre crear el pedido y marcar la fila, el pedido de QEP existe y hay que anularlo, no ignorarlo.</summary>
     Task<ShopifyOrderWriteResult?> FindByExternalKeyAsync(Guid tenantId, string externalKey, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14: el pedido de QEP como lo compara la sincronización de ediciones, o <c>null</c> si no existe en
+    /// ese tenant. Sólo lee.</summary>
+    Task<ShopifyOrderState?> ReadStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-14 §4: aplica los grupos de un cambio. Las reglas del pedido vuelven en
+    /// <see cref="ShopifyOrderEditOutcome.RejectedCode"/>; <c>concurrency.conflict</c> (el pedido cambió desde que se planeó) se
+    /// propaga.</summary>
+    Task<ShopifyOrderEditOutcome> ApplyEditAsync(ShopifyOrderEditDraft draft, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-14 §5: lo que el asesor corrige en el pedido de QEP de una fila del espejo. <see cref="ShippingParty"/> en
+/// <c>null</c> no toca la parte; <see cref="BuyerNotes"/> sólo cuenta con <see cref="ReplaceBuyerNotes"/>. <see cref="MemberId"/>
+/// firma el historial y <see cref="SubjectId"/> la auditoría; <see cref="ExpectedVersion"/> es el <c>If-Match</c> del pedido.</summary>
+public sealed record ShopifyOrderCorrection(
+    Guid TenantId,
+    Guid OrderId,
+    long ExpectedVersion,
+    ShopifyPartyDraft? ShippingParty,
+    bool ReplaceBuyerNotes,
+    string? BuyerNotes,
+    Guid MemberId,
+    Guid SubjectId);
+
+/// <summary>
+/// Spec 2026-11-14 §5: la corrección del asesor escribe el pedido de QEP <b>dentro de la transacción de Shopify</b>, para que el
+/// pedido, los atributos de la fila del espejo y el envío encolado queden juntos o no queden. Adaptador en Bootstrapper
+/// (<c>ShopifyOrderCorrectionWriter</c>), scoped y <b>sin scope propio</b> (al revés que <see cref="IShopifyOrderWriter"/>): enrola el
+/// <c>QuotationsDbContext</c> del request en la transacción abierta del <c>ShopifyDbContext</c>, como <c>CatalogProductDeletionCleanup</c>;
+/// sin transacción abierta lanza <see cref="InvalidOperationException"/>. Las reglas del pedido (<c>QuotationsDomainException</c>, 422)
+/// y <c>RequestConcurrencyException</c> (412) se propagan.
+/// </summary>
+public interface IShopifyOrderCorrectionWriter
+{
+    Task<ShopifyOrderState> CorrectAsync(ShopifyOrderCorrection correction, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-15 §6.1 y §6.2: el asesor de la tienda es una membresía del tenant. Adaptador sobre Tenancy e

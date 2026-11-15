@@ -483,10 +483,52 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `INSERT` a mano en `quotations.orders` con `source = 'Shopify'` necesita una clave que no exista. Precedente (Review
   Focus 1 de `docs/superpowers/plans/2026-10-18-shopify-backend.md`): borrar la fila del espejo y recibir el pedido otra vez deja un pedido, y si llega cancelado lo anula —hasta
   `8b58fe9f` (2026-10-18) la fila nueva cancelada quedaba `Ignored` con el pedido vivo (`ReimportAfterMirrorRowDeleted*`).
-- **Todo cambio de una fila del espejo de Shopify pasa por `ShopifyOrderIngestion.ApplyAsync`.** El webhook, la
+- **Todo snapshot nuevo de una fila del espejo de Shopify pasa por `ShopifyOrderIngestion.ApplyAsync`.** El webhook, la
   conciliación, «Sincronizar ahora» y el reintento manual llaman al mismo método, que captura el estado anterior antes de
   `ApplySnapshot` y corre la reacción de pago y cancelación (§6.3) antes del guardado (2026-10-18, `82c4b2d9..f9b98fd1`, `WorkerFailedReactionIsSeenAgainOnRetry`). Llamar al importador o
   a `ApplySnapshot` directo compila y pasa las pruebas del importador, y pierde en silencio el pago o la cancelación.
+  Desde el spec 2026-11-14 también detecta las ediciones: `IShopifyOrderEditDetector.DetectAsync` corre ahí, después del espejo
+  y antes de la reacción, y sólo crea el cambio (no escribe en Quotations); `ApplyPendingAsync` aplica el pendiente de una tienda
+  `Automatic` **después** del guardado y atrapa el `concurrency.conflict` de Quotations (el cambio queda `Pending`). Un cambio
+  con algún grupo en conflicto no se aplica solo ni en `Automatic`: queda `Pending` para «Cambios por revisar» (spec §3). Un
+  camino nuevo que dispare ediciones fuera de la ingesta rompe la regla del único camino y deja cambios sin espejo que los
+  explique. Hay otros que escriben la fila **sin** traer un snapshot, y no son un bug: las decisiones sobre un cambio
+  (`RecordApplied` al aceptar, `AdoptPayload` al rechazar o revisar), el trabajo de corrección de ciudad (`RecordProjection`) y
+  la corrección del asesor (`SetQepAttributes`). Ninguno llama a `ApplySnapshot`.
+- **La corrección del asesor no mueve `applied_projection`; la corrección de ciudad del sistema sí** (plan D3, spec
+  2026-11-14 §5). La proyección es lo que QEP escribió desde Shopify: si la corrección del asesor la moviera, la siguiente edición
+  de Shopify sobre ese grupo dejaría de ser conflicto y pisaría lo del asesor, también después del eco. Lo amarran
+  `ACorrectionDoesNotMoveTheProjection`, `AfterAnEchoALaterShopifyEditOfThatGroupIsStillAConflict` y
+  `TheEchoOfAPushedCorrectionCreatesNoChange`; el trabajo de sinónimos la mueve (`AnAppliedOrderCorrectionMovesTheProjectionAndEnqueuesAPush`).
+  Una fila sin `applied_projection` (importada antes) toma la del pedido actual (D6, `AnOrderImportedBeforeTheSyncTakesAShopifyNoteEditWithoutConflict`).
+  Y un eco que el cambio no aplicaba nunca mueve la proyección: sólo `SettleAsync`/`ApplyAsync` la mueven para los grupos que el
+  propio cambio aplicaba.
+- **`orderUpdate` reemplaza la dirección entera, y un envío sólo manda los grupos que se encolaron** (spec 2026-11-14, plan D12).
+  `company` (donde muchas tiendas guardan el documento) y `countryCode` salen del **último** snapshot; sin ellos, corregir la
+  ciudad borra la «Empresa» en Shopify. Mandar un grupo no encolado pisa la nota de Shopify con el `BuyerNotes` vacío de un pedido
+  importado antes (sin backfill). Lo amarran `PushKeepsCompanyAndCountryFromTheLatestSnapshot` y
+  `APushOnlySendsTheGroupsItWasEnqueuedFor`. Del `userError` de Shopify sólo se loguean los campos: el mensaje puede traer datos
+  del comprador (`ThePushNeverLogsTheTokenOrTheUserErrorMessage`).
+- **`current_quantity` ausente es `quantity`, y el descuento va sobre la cantidad original** (plan D2). Leer sólo la vigente deja
+  en 0 toda línea de un payload que no la trae (las fixtures no la traen); calcular el porcentaje sobre la vigente cambia el precio
+  neto de una línea a la que le quitaron unidades (`discount_allocations` reparte el descuento de la original).
+- **El `PUT …/shopify/orders/{id}/corrections` enrola el `QuotationsDbContext` del request en la transacción de Shopify**
+  (`ShopifyOrderCorrectionWriter`, como `CatalogProductDeletionCleanup`): el pedido, `qep_attributes` y el envío encolado
+  quedan juntos o no quedan (`AShopifyFailureAfterTheOrderWriteRollsBackBoth`). Después del commit ese contexto apunta a una
+  transacción terminada: nada en el scope vuelve a usarlo (el handler arma la respuesta con el estado que devolvió
+  `CorrectAsync`, sin releer el pedido). Un camino nuevo que corrija un pedido de Shopify y encole su envío pasa por ahí, nunca por `IShopifyOrderWriter`.
+- **Un envío a Shopify `Held` nunca lo reclama el worker; sólo lo mueven los dos endpoints de sincronización** (owner,
+  2026-11-14). Una corrección no se pierde por la conexión: guardada con la conexión no operativa (`connection_inactive`), con la
+  conexión caída al mandar (`connection_missing`) o con `access_denied`, el envío queda retenido con el motivo en `failure_code`.
+  `ListPendingAsync` y `TryClaimAsync` filtran `status = 'Pending'`, así que reactivar la conexión no lo manda: lo sueltan
+  `POST …/orders/{id}/push` y `POST …/stores/{connectionId}/pushes/release`. `IX_order_pushes_mirror_pending` cubre `Pending` y
+  `Held` (un solo envío abierto por pedido) y se fusiona igual en los dos; si cambias el filtro, cambia también `FindOpenAsync`. Un
+  motivo nuevo de la conexión va a `HoldAsync` del procesador, no a `FailAsync`: un `Failed` no se puede volver a mandar.
+- **Límite conocido de la detección de ediciones** (spec 2026-11-14): dos snapshots del mismo pedido que tocan el mismo grupo,
+  intercalados por milisegundos (B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A
+  falla), pueden dejar la proyección vieja y un `qep_changed` falso en la edición siguiente. No se cerró; la alternativa es un
+  candado advisory por fila del espejo alrededor de la detección y la aplicación. No lo «arregles» moviendo la proyección con
+  la corrección del asesor.
 - **`ShopifyLayerTests` prohíbe que el módulo Shopify referencie módulos de negocio:** Application sólo ve Tenancy y Audit.
   La conexión (Integrations), el pedido (Quotations), el cliente (Customers), el producto (Catalog) y la ciudad
   (Geography) entran por los puertos de `ShopifyPorts.cs`, con adaptador en `src/Bootstrapper/Shopify*.cs`. El costo son
@@ -830,7 +872,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   sesión válida (por eso la contraseña actual mala es `422 store.buyer.password_incorrect`).
 - **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Open && PaymentStatus == PaymentPending && PaymentProofs.Count == 0 && !IsPrepared && !IsInvoiced` (D5 y spec 2026-11-10, `Order.CanBeCancelledByBuyer`: un pedido con cualquier comprobante, preparado o facturado ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
 - **`Order.LinkBuyerAccount` no sube `Version`, pero `Version` es token de concurrencia.** El enlace del alta diferida es invisible para el `If-Match` de la consola, y aun así su `UPDATE` lleva `WHERE version = …`: si otra escritura ganó, `BuyerOrderGateway.LinkAsync` relee y reintenta una vez (sólo si sigue vacío). El checkout resuelve la sesión del comprador siempre que llega el header, no sólo con `updateProfile`; `ScalarTextAsync` de las pruebas de Store devuelve `""` para un `NULL`.
-- **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`. `BuyerNotes` la escribe sólo `CreateFromStore` y nada más la toca; un método nuevo que la edite le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill).
+- **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9; Shopify desde el spec 2026-11-14). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`, y en un pedido de Shopify lleva «Shopify #N» y la dirección cruda, nunca la nota del comprador, y no viaja a Shopify. `BuyerNotes` la escriben `CreateFromStore`, la importación de Shopify (`CreateExternal`) y la sincronización de Shopify, y el asesor **sólo** en pedidos de Shopify (`UpdateExternalBuyerNotes`, que responde `order.order.source_invalid` en cualquier otro origen; `EditExternalShippingParty` no la toca). En un pedido de la tienda pública sigue intocable: un método nuevo que la edite ahí le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill), y los de Shopify importados antes del spec 2026-11-14 también: su nota sigue dentro de `Notes`.
 - **`support.ticket.view` es una política, no un permiso: exige `support.ticket.read` o `support.ticket.manage`** (plan de soporte
   fase 1, D5; el owner fijó que quien tenga cualquiera de los dos ve todos los tickets del tenant). Vive en `SupportPolicies.TicketView`,
   fuera de `SupportPermissions`, para que no se cuente ni se asigne como permiso, y se registra con `AddAnyPermissionRequirement`

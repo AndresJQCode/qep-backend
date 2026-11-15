@@ -170,6 +170,40 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
             ?? new ExternalShippingOutcome(
                 ExternalShippingOutcomeKind.Applied, expected with { DepartmentId = departmentId, CityId = cityId }, null));
     }
+
+    /// <summary>Lo que lee el detector de ediciones de Shopify, por pedido; el que no está no existe (<c>null</c>).</summary>
+    public Dictionary<(Guid TenantId, Guid OrderId), ExternalOrderEditState> EditStates { get; } = [];
+
+    public Func<ExternalOrderEditDraft, ExternalOrderEditState>? OnApplyEdit { get; init; }
+
+    public List<ExternalOrderEditDraft> Edits { get; } = [];
+
+    public Task<ExternalOrderEditState?> FindEditStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(EditStates.TryGetValue((tenantId, orderId), out var state) ? state : null);
+    }
+
+    public Task<ExternalOrderEditState> ApplyEditAsync(ExternalOrderEditDraft draft, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Edits.Add(draft);
+        return Task.FromResult(
+            OnApplyEdit?.Invoke(draft)
+            ?? EditStates.GetValueOrDefault((draft.TenantId, draft.OrderId))
+            ?? throw new InvalidOperationException("No edit state seeded for the order."));
+    }
+
+    public List<ExternalOrderCorrection> Corrections { get; } = [];
+
+    public Task<ExternalOrderEditState> CorrectByMemberAsync(ExternalOrderCorrection correction, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Corrections.Add(correction);
+        return Task.FromResult(
+            EditStates.GetValueOrDefault((correction.TenantId, correction.OrderId))
+            ?? throw new InvalidOperationException("No edit state seeded for the order."));
+    }
 }
 
 internal sealed class PassThroughPhones : IPhoneNumberNormalizer

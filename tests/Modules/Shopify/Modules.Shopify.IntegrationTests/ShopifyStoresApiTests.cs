@@ -352,6 +352,56 @@ public sealed class ShopifyStoresApiTests
                 ("t", world.TenantId)));
     }
 
+    // Spec 2026-11-14: editSync y editPaymentStatuses viajan por nombre, se guardan con el PUT y vuelven en el GET.
+    [Fact]
+    public async Task PutAndGetRoundTripEditSyncAndPaymentStatuses()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage);
+        var empty = await client.GetFromJsonAsync<JsonObject>(StoreRoute(world.TenantId, world.ConnectionId), Ct);
+        var body = Body(world);
+        body["editSync"] = "Automatic";
+        body["editPaymentStatuses"] = new JsonArray("PaymentPending", "PendingVerification");
+
+        var saved = await PutAsync(client, world.TenantId, world.ConnectionId, body, "\"1\"");
+        var read = await client.GetFromJsonAsync<JsonObject>(StoreRoute(world.TenantId, world.ConnectionId), Ct);
+
+        Assert.Equal(
+            ("Manual", "FullPaymentReceived,PartialPaymentReceived,PaymentPending,PendingVerification"),
+            (Str(empty!, "editSync"), Statuses(empty!)));
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.Equal(("Automatic", "PaymentPending,PendingVerification"), (Str(read!, "editSync"), Statuses(read!)));
+        Assert.Equal("Automatic", await ScalarAsync<string>(
+            connectionString, "SELECT edit_sync FROM shopify.stores WHERE connection_id = @c", ("c", world.ConnectionId)));
+    }
+
+    [Fact]
+    public async Task PutWithAnUnknownPaymentStatusReturns422WithItsIndex()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionManage);
+        var body = Body(world);
+        body["editSync"] = "Automatic";
+        body["editPaymentStatuses"] = new JsonArray("PaymentPending", "Paid");
+
+        var response = await PutAsync(client, world.TenantId, world.ConnectionId, body, "\"1\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("validation.failed", Str(problem!, "code"));
+        Assert.Equal(["editPaymentStatuses[1]"], problem!["errors"]!.AsObject().Select(pair => pair.Key));
+    }
+
+    private static string Statuses(JsonObject store) =>
+        string.Join(',', store["editPaymentStatuses"]!.AsArray().Select(status => status!.GetValue<string>()));
+
     [Theory]
     [InlineData(0)]
     [InlineData(31)]

@@ -847,6 +847,137 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         }
     }
 
+    // Spec 2026-11-14 §4: aplicar una edición de Shopify compara la versión que se leyó al planear (412 si cambió).
+    [Fact]
+    public async Task ApplyEditWithAStaleVersionIsConcurrencyConflict()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3101", notes: "Shopify #3101"));
+        var state = await FindEditStateAsync(factory, setup.TenantId, order.OrderId);
+
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() => ApplyEditAsync(
+            factory,
+            EditDraft(setup, order.OrderId, state!.Version - 1) with { ReplaceBuyerNotes = true, BuyerNotes = "Otra nota" }));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+        var after = await FindEditStateAsync(factory, setup.TenantId, order.OrderId);
+        Assert.Equal((state!.Version, (string?)null), (after!.Version, after.BuyerNotes));
+    }
+
+    [Fact]
+    public async Task ApplyEditWritesOneHistoryEntryPerGroupWithoutAuthorAndAudits()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3102", notes: "Shopify #3102"));
+        var state = await FindEditStateAsync(factory, setup.TenantId, order.OrderId);
+
+        var applied = await ApplyEditAsync(
+            factory,
+            EditDraft(setup, order.OrderId, state!.Version) with
+            {
+                Lines = [new ExternalOrderLine(setup.ProductId, setup.ProductId, 1m, 11_900m, 0m, 19)],
+                ReplaceBuyerNotes = true,
+                BuyerNotes = "Dejar en portería",
+            });
+
+        Assert.Equal(state.Version + 1, applied.Version);
+        Assert.Equal((1m, "Dejar en portería"), (Assert.Single(applied.Lines).Quantity, applied.BuyerNotes));
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{order.OrderId}", TestContext.Current.CancellationToken);
+        var edits = detail!.History.Where(entry => entry.EventType != "Created").ToArray();
+        Assert.Equal(
+            [("ItemsChanged", "Shopify editó los productos."), ("NotesChanged", "Shopify editó la nota del cliente.")],
+            edits.Select(entry => (entry.EventType, entry.Details!)).OrderBy(entry => entry.EventType).ToArray());
+        Assert.All(edits, entry => Assert.Null(entry.MemberId));
+        var audit = Assert.Single(
+            await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"),
+            message => message.PayloadJson.Contains("quotation.order.external_edit_applied", StringComparison.Ordinal));
+        using var auditPayload = JsonDocument.Parse(audit.PayloadJson);
+        Assert.Equal("Integration", auditPayload.RootElement.GetProperty("actorType").GetString());
+    }
+
+    // Spec 2026-11-14 §5: la corrección del asesor en un pedido de Shopify deja historial con su membresía y auditoría con su sujeto.
+    [Fact]
+    public async Task CorrectByMemberWritesHistoryWithTheMemberAndAudits()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3104", notes: "Shopify #3104", parties: PartiesRequest(Party())));
+        var state = await FindEditStateAsync(factory, setup.TenantId, order.OrderId);
+        var subjectId = Guid.CreateVersion7();
+
+        ExternalOrderEditState corrected;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            corrected = await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CorrectByMemberAsync(
+                new ExternalOrderCorrection(
+                    setup.TenantId, order.OrderId, state!.Version, Party(CityB), ReplaceBuyerNotes: true, "Dejar en portería",
+                    setup.AdvisorId, subjectId, RawAddressPrefix, DateTimeOffset.UtcNow),
+                TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal((CityB, "Dejar en portería"), (corrected.ShippingParty!.CityId!.Value, corrected.BuyerNotes));
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{order.OrderId}", TestContext.Current.CancellationToken);
+        var edits = detail!.History.Where(entry => entry.EventType != "Created").ToArray();
+        Assert.Equal(
+            [("NotesChanged", "Editó la nota del cliente."), ("PartiesChanged", "Editó la dirección de envío.")],
+            edits.Select(entry => (entry.EventType, entry.Details!)).OrderBy(entry => entry.EventType).ToArray());
+        Assert.All(edits, entry => Assert.Equal(setup.AdvisorId, entry.MemberId));
+        var actions = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"))
+            .Where(message => message.PayloadJson.Contains(subjectId.ToString(), StringComparison.Ordinal))
+            .Select(message => JsonDocument.Parse(message.PayloadJson).RootElement.GetProperty("action").GetString()!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(["quotation.order.buyer_notes_changed", "quotation.order.shipping_party_changed"], actions);
+    }
+
+    [Fact]
+    public async Task FindEditStateReturnsLinesShippingPartyAndBuyerNotes()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(
+            factory,
+            Draft(setup, "#3103", notes: "Shopify #3103", parties: PartiesRequest(Party())) with { BuyerNotes = "Sin cebolla" });
+
+        var state = await FindEditStateAsync(factory, setup.TenantId, order.OrderId);
+
+        Assert.NotNull(state);
+        Assert.Equal((order.OrderId, OrderStatus.Open, true, false, false), (state.OrderId, state.Status, state.IsEditable, state.IsPrepared, state.IsInvoiced));
+        Assert.Equal((OrderPaymentStatus.PaymentPending, setup.ClientId, "COP", false), (state.PaymentStatus, state.ClientId, state.Currency, state.IsStorePickup));
+        Assert.Equal(new ExternalOrderLineState(setup.ProductId, setup.ProductId, 2m, 11_900m, 0m, 19), Assert.Single(state.Lines));
+        Assert.Equal(ShippingDetails.None, state.Shipping);
+        Assert.Equal(Party(), state.ShippingParty);
+        Assert.Null(state.ShippingCountry);
+        Assert.Equal(("Sin cebolla", "Shopify #3103"), (state.BuyerNotes, state.Notes));
+        Assert.Null(await FindEditStateAsync(factory, Guid.CreateVersion7(), order.OrderId));
+    }
+
+    private static ExternalOrderEditDraft EditDraft(ExternalSetup setup, Guid orderId, long expectedVersion) =>
+        new(setup.TenantId, orderId, expectedVersion, OrderSource.Shopify, null, null, null, false, null, RawAddressPrefix,
+            DateTimeOffset.UtcNow);
+
+    private static async Task<ExternalOrderEditState?> FindEditStateAsync(WebApplicationFactory<Program> factory, Guid tenantId, Guid orderId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>()
+            .FindEditStateAsync(tenantId, orderId, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<ExternalOrderEditState> ApplyEditAsync(WebApplicationFactory<Program> factory, ExternalOrderEditDraft draft)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>()
+            .ApplyEditAsync(draft, TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task CreateAsyncReturnsTheShippingPartyAsPersisted()
     {

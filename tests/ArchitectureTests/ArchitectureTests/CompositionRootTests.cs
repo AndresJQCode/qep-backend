@@ -806,6 +806,22 @@ public sealed class CompositionRootTests
         }
     }
 
+    /// <summary>Spec 2026-11-14 §3: la detección de ediciones de Shopify reemplaza la vacía. Sin ella, una edición en Shopify se
+    /// guarda en el espejo y nunca llega a la bandeja ni al pedido, sin error.</summary>
+    [Fact]
+    public void TheEditDetectorIsTheRealOne()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<ShopifyOrderEdits>(scope.ServiceProvider.GetRequiredService<IShopifyOrderEditDetector>());
+    }
+
     /// <summary>
     /// Spec de Shopify §5.2: el webhook de Shopify encola y el worker procesa. Sin el worker registrado, o con un
     /// puerto del importador sin adaptador, el webhook responde 200 y nadie procesa nunca, sin error en ningún lado. Esto arma
