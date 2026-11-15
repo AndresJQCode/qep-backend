@@ -1,5 +1,5 @@
-using BuildingBlocks.Application;
 using System.Text.RegularExpressions;
+using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Support.Domain;
@@ -117,7 +117,10 @@ public sealed class CreateTicketValidator : AbstractValidator<CreateTicketComman
     }
 
     private static string CountryOf(CreateTicketCommand command) =>
-        TicketRequesterNormalizer.CountryOf(command.Requester, command.TenantCountry);
+        TicketRequesterNormalizer.CountryOf(
+            command.Requester,
+            command.TenantCountry
+                ?? throw new InvalidOperationException("CreateTicketCommand.TenantCountry must be set by the handler before validating."));
 
     private static bool HasValidCountry(CreateTicketCommand command) => IsAlpha2OrEmpty(command.Requester?.CountryCode);
 
@@ -133,14 +136,13 @@ internal static class TicketRequesterNormalizer
     /// <summary>E.164: «+», un dígito de 1 a 9 y de 7 a 14 más (plan D7).</summary>
     public const string MobilePattern = @"^\+[1-9][0-9]{7,14}$";
 
-    /// <summary>El país por defecto cuando el tenant no se pudo leer: el mismo default de <see cref="TenantRegionalSettings"/>.</summary>
-    private const string FallbackCountry = "CO";
-
-    public static string CountryOf(TicketRequesterRequest? requester, string? tenantCountry) =>
-        (Clean(requester?.CountryCode) ?? Clean(tenantCountry) ?? FallbackCountry).ToUpperInvariant();
+    /// <summary>El país del solicitante o, sin él, el del tenant (<paramref name="tenantCountry"/>, que el alta lee de sus ajustes
+    /// regionales: el mismo origen que el calendario de plazos).</summary>
+    public static string CountryOf(TicketRequesterRequest? requester, string tenantCountry) =>
+        (Clean(requester?.CountryCode) ?? tenantCountry.Trim()).ToUpperInvariant();
 
     /// <summary>Sin ningún dato, no hay solicitante.</summary>
-    public static TicketRequester? Normalize(TicketRequesterRequest? requester, string? tenantCountry)
+    public static TicketRequester? Normalize(TicketRequesterRequest? requester, string tenantCountry)
     {
         if (requester is null)
         {
@@ -174,7 +176,7 @@ internal static class TicketRequesterNormalizer
     /// foto. Un valor del cliente que no cabe en la foto (correo de más de <see cref="TicketRequester.EmailMaxLength"/>, celular que
     /// no es E.164) no se copia: recortarlo daría un contacto que no existe.
     /// </summary>
-    public static TicketRequester? WithCustomerContact(TicketRequester? requester, SupportCustomerRef customer, string country)
+    public static TicketRequester? WithCustomerContact(TicketRequester? requester, SupportCustomerContact customer, string country)
     {
         var email = Clean(customer.Email) is { Length: <= TicketRequester.EmailMaxLength } fittingEmail ? fittingEmail : null;
         var mobile = Clean(customer.MobilePhone) is { } phone && Regex.IsMatch(phone, MobilePattern) ? phone : null;
@@ -203,7 +205,8 @@ internal static class SupportTextRules
 
 /// <summary>
 /// El alta manual (spec §8.3, plan D6–D8 y D14). Orden: autorización → membresía de quien actúa → validador → solicitante →
-/// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → transacción → radicado → ticket → auditoría → guardar → confirmar.
+/// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → contexto (reloj leído una vez) →
+/// transacción → radicado → ticket → auditoría → guardar → confirmar.
 /// Todo lo que puede responder 422 va antes de la transacción, así un rechazo no gasta un radicado. La provisión abre su propia
 /// transacción, así que va antes de <see cref="ISupportUnitOfWork.BeginTransactionAsync"/>.
 /// </summary>
@@ -211,7 +214,6 @@ public sealed class CreateTicketHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ITenantDirectory tenantDirectory,
-    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     ISupportProvisioner provisioner,
     ISupportTicketTypeRepository types,
@@ -234,7 +236,10 @@ public sealed class CreateTicketHandler(
             executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
         var actor = await membershipDirectory.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
             ?? throw SupportAuthorization.Denied();
-        var tenantCountry = (await tenantDirectory.GetRegionalSettingsAsync(new TenantId(command.TenantId), cancellationToken))?.Country;
+        // El mismo origen y la misma regla que SupportBusinessCalendarSource (revisión final, B6/m6): sin ajustes regionales, lanza.
+        // No pasa: quien llega acá tiene membresía activa, y una membresía es de un tenant con su fila.
+        var tenantCountry = (await tenantDirectory.GetRegionalSettingsAsync(new TenantId(command.TenantId), cancellationToken)
+            ?? throw new InvalidOperationException($"Tenant '{command.TenantId}' has no regional settings.")).Country;
         var validated = command with { TenantCountry = tenantCountry };
         await validator.ValidateAndThrowAsync(validated, cancellationToken);
         if (!SupportTicketRules.TryParseExact<ManualIntakeMedium>(validated.ManualMedium, out var medium) ||
@@ -260,7 +265,7 @@ public sealed class CreateTicketHandler(
         SupportTicketRules.EnsureReplyChannel(channel, requester);
 
         var context = await composer.ReadContextAsync(validated.TenantId, cancellationToken);
-        var now = (await tenantClock.GetAsync(validated.TenantId, cancellationToken)).UtcNow;
+        var now = context.Now;
         SupportTicket ticket;
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {

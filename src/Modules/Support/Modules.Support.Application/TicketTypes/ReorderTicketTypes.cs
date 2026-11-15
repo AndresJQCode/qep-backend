@@ -22,7 +22,7 @@ public sealed record ReorderTicketTypesCommand(Guid TenantId, IReadOnlyList<Guid
 public sealed class ReorderTicketTypesHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    IClock clock,
+    ITenantClock tenantClock,
     ISupportProvisioner provisioner,
     ISupportTicketTypeRepository types,
     ISupportUnitOfWork unitOfWork,
@@ -46,7 +46,7 @@ public sealed class ReorderTicketTypesHandler(
                 SupportErrorCodes.TicketTypeOrderIncomplete, "The new order must list every ticket type of the tenant exactly once.");
         }
 
-        var now = clock.UtcNow;
+        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         var changed = false;
         for (var index = 0; index < command.TypeIds.Count; index++)
         {

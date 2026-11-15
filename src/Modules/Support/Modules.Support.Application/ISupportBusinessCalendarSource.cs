@@ -6,5 +6,7 @@ namespace Modules.Support.Application;
 /// arma el calendario con el horario predeterminado de Mensajería y el país del tenant, y Soporte nunca referencia Mensajería.</summary>
 public interface ISupportBusinessCalendarSource
 {
-    Task<SupportClockContext> GetAsync(Guid tenantId, CancellationToken cancellationToken);
+    /// <summary><paramref name="timeZone"/> es la del reloj del tenant que quien llama ya leyó: así el reloj se pide una sola vez por
+    /// petición (revisión final, B5).</summary>
+    Task<SupportClockContext> GetAsync(Guid tenantId, TimeZoneInfo timeZone, CancellationToken cancellationToken);
 }

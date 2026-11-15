@@ -9,7 +9,7 @@ public sealed class TicketRequesterCustomerContactTests
 {
     private static readonly TicketRequester Ana = new("Ana", "Gómez", null, null, null, null, null, null, "CO", null);
 
-    private static SupportCustomerRef Customer(string? email, string? mobilePhone) =>
+    private static SupportCustomerContact Customer(string? email, string? mobilePhone) =>
         new(Guid.CreateVersion7(), "Novasteel SAS", true, email, mobilePhone);
 
     [Fact]

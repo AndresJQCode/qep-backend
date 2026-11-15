@@ -31,7 +31,6 @@ public sealed class ChangeTicketStatusValidator : AbstractValidator<ChangeTicket
 public sealed class ChangeTicketStatusHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     ISupportTicketRepository tickets,
     ISupportUnitOfWork unitOfWork,
@@ -55,7 +54,7 @@ public sealed class ChangeTicketStatusHandler(
         var (ticket, actor) = await SupportTicketActions.LoadAsync(
             executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
-        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        var now = context.Now;
         var version = ticket.Version;
         ticket.ChangeStatus(status, actor, now, context.Clock);
         await SupportTicketActions.SaveIfChangedAsync(

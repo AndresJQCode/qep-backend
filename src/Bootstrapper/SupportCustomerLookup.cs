@@ -10,21 +10,22 @@ namespace Bootstrapper;
 /// Vive acá y no en ninguno de los dos módulos: Soporte guarda el cliente como id suelto y el composition root es el único lugar
 /// donde ese cruce es legítimo.
 ///
-/// Proyecta sólo las columnas que Soporte usa: la bandeja resuelve decenas de clientes por página. El contacto es <c>email</c> y
-/// <c>phone_e164</c>, nunca el <c>phone</c> crudo: la foto del solicitante guarda el celular en E.164.
+/// Proyecta sólo las columnas que cada llamada usa: la bandeja resuelve decenas de clientes por página y no lee el contacto; sólo
+/// <see cref="FindAsync"/> (alta y vinculación) lo trae. El contacto es <c>email</c> y <c>phone_e164</c>, nunca el <c>phone</c>
+/// crudo: la foto del solicitante guarda el celular en E.164.
 /// </summary>
 internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISupportCustomerLookup
 {
     private const string LikeEscapeCharacter = "\\";
 
-    public async Task<SupportCustomerRef?> FindAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+    public async Task<SupportCustomerContact?> FindAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
     {
         var id = new CustomerId(customerId);
         var row = await customers.Customers.AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && customer.Id == id)
-            .Select(customer => new Row(customer.Id, customer.Name, customer.IsActive, customer.Email, customer.PhoneE164))
+            .Select(customer => new ContactRow(customer.Id, customer.Name, customer.IsActive, customer.Email, customer.PhoneE164))
             .SingleOrDefaultAsync(cancellationToken);
-        return row?.ToRef();
+        return row?.ToContact();
     }
 
     public async Task<IReadOnlyList<SupportCustomerRef>> FindManyAsync(
@@ -38,7 +39,7 @@ internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISup
         var ids = customerIds.Distinct().Select(id => new CustomerId(id)).ToArray();
         var rows = await customers.Customers.AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && ids.Contains(customer.Id))
-            .Select(customer => new Row(customer.Id, customer.Name, customer.IsActive, customer.Email, customer.PhoneE164))
+            .Select(customer => new RefRow(customer.Id, customer.Name, customer.IsActive))
             .ToListAsync(cancellationToken);
         return rows.Select(row => row.ToRef()).ToArray();
     }
@@ -69,8 +70,13 @@ internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISup
         return ids.Select(id => id.Value).ToArray();
     }
 
-    private sealed record Row(CustomerId Id, string Name, bool IsActive, string? Email, string? PhoneE164)
+    private sealed record RefRow(CustomerId Id, string Name, bool IsActive)
     {
-        public SupportCustomerRef ToRef() => new(Id.Value, Name, IsActive, Email, PhoneE164);
+        public SupportCustomerRef ToRef() => new(Id.Value, Name, IsActive);
+    }
+
+    private sealed record ContactRow(CustomerId Id, string Name, bool IsActive, string? Email, string? PhoneE164)
+    {
+        public SupportCustomerContact ToContact() => new(Id.Value, Name, IsActive, Email, PhoneE164);
     }
 }

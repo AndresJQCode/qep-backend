@@ -4,9 +4,10 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Support.Application;
 
-/// <summary>Lo que una petición necesita para evaluar plazos: el calendario y la zona del tenant, su «hoy» local y su umbral de «por
-/// vencer». Se lee una vez por petición.</summary>
-public sealed record SupportReadContext(SupportClockContext Clock, DateOnly Today, int DueSoonBusinessDays);
+/// <summary>Lo que una petición necesita para evaluar plazos y fechar lo que escribe: el calendario y la zona del tenant, el instante
+/// <paramref name="Now"/> y su «hoy» local, y el umbral de «por vencer». Se lee una vez por petición: el reloj del tenant no se vuelve a
+/// pedir para fechar el cambio (revisión final, B5).</summary>
+public sealed record SupportReadContext(SupportClockContext Clock, DateTimeOffset Now, DateOnly Today, int DueSoonBusinessDays);
 
 /// <summary>
 /// Arma las respuestas de ticket del contrato: el <see cref="SupportTicketDetailDto"/> de leer, crear y operar, y las filas de la
@@ -27,10 +28,12 @@ public sealed class SupportTicketDtoComposer(
     /// <summary>Exige la fila de ajustes del tenant: quien llama ya pasó por <see cref="ISupportProvisioner.EnsureAsync"/>.</summary>
     public async Task<SupportReadContext> ReadContextAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        var clock = await calendars.GetAsync(tenantId, cancellationToken);
-        var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
+        // El reloj primero: un tenant que no existe falla con tenancy.tenant.not_found antes de leer nada más.
+        var tenantCalendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        var clock = await calendars.GetAsync(tenantId, tenantCalendar.TimeZone, cancellationToken);
         var tenantSettings = await settings.GetAsync(tenantId, cancellationToken);
-        return new SupportReadContext(clock, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays);
+        var now = tenantCalendar.UtcNow;
+        return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays);
     }
 
     public async Task<SupportTicketDetailDto> ComposeDetailAsync(SupportTicket ticket, CancellationToken cancellationToken) =>
@@ -121,13 +124,14 @@ public sealed class SupportTicketDtoComposer(
         return string.IsNullOrEmpty(display) ? UnknownName : display;
     }
 
-    private async Task<IReadOnlyDictionary<Guid, SupportMemberRef>> FindMembersAsync(
+    // Sólo nombres: el detalle y la bandeja no necesitan saber quién puede gestionar (revisión final, B4).
+    private async Task<IReadOnlyDictionary<Guid, string>> FindMembersAsync(
         Guid tenantId, IEnumerable<Guid> memberIds, CancellationToken cancellationToken)
     {
         var ids = memberIds.Distinct().ToArray();
         return ids.Length == 0
-            ? new Dictionary<Guid, SupportMemberRef>()
-            : (await members.FindAsync(tenantId, ids, cancellationToken)).ToDictionary(member => member.MemberId);
+            ? new Dictionary<Guid, string>()
+            : await members.NamesAsync(tenantId, ids, cancellationToken);
     }
 
     private async Task<IReadOnlyDictionary<Guid, SupportCustomerRef>> FindCustomersAsync(
@@ -139,8 +143,8 @@ public sealed class SupportTicketDtoComposer(
             : (await customers.FindManyAsync(tenantId, ids, cancellationToken)).ToDictionary(customer => customer.Id);
     }
 
-    private static SupportMemberDto ToMemberDto(Guid memberId, IReadOnlyDictionary<Guid, SupportMemberRef> membersById) =>
-        new(memberId, membersById.TryGetValue(memberId, out var member) ? member.DisplayName : UnknownName);
+    private static SupportMemberDto ToMemberDto(Guid memberId, IReadOnlyDictionary<Guid, string> membersById) =>
+        new(memberId, membersById.TryGetValue(memberId, out var name) ? name : UnknownName);
 
     private static SupportCustomerRefDto ToCustomerDto(Guid customerId, IReadOnlyDictionary<Guid, SupportCustomerRef> customersById) =>
         customersById.TryGetValue(customerId, out var customer)
@@ -162,7 +166,7 @@ public sealed class SupportTicketDtoComposer(
     private static SupportTicketEventDto ToEventDto(
         SupportTicketEvent item,
         EventDetails details,
-        IReadOnlyDictionary<Guid, SupportMemberRef> membersById,
+        IReadOnlyDictionary<Guid, string> membersById,
         IReadOnlyDictionary<Guid, SupportCustomerRef> customersById) =>
         new(
             item.Ordinal,

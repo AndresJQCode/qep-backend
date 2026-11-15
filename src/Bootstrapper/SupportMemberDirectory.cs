@@ -43,6 +43,25 @@ internal sealed class SupportMemberDirectory(
         return result;
     }
 
+    public async Task<IReadOnlyDictionary<Guid, string>> NamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken)
+    {
+        if (memberIds.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var ids = memberIds.Distinct().Select(id => new MembershipId(id)).ToArray();
+        var tenant = new TenantId(tenantId);
+        var memberships = await tenancy.Memberships.AsNoTracking()
+            .Where(membership => membership.TenantId == tenant && ids.Contains(membership.Id))
+            .Select(membership => new { membership.Id, membership.DisplayName })
+            .ToListAsync(cancellationToken);
+        return memberships.ToDictionary(
+            membership => membership.Id.Value,
+            membership => DisplayNameOf(membership.DisplayName));
+    }
+
     public async Task<IReadOnlyList<SupportMemberRef>> ListManagersAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         var tenant = new TenantId(tenantId);
@@ -60,11 +79,8 @@ internal sealed class SupportMemberDirectory(
             }
         }
 
-        // Orden estable: es la lista de GET /assignees.
-        return managers
-            .OrderBy(member => member.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-            .ThenBy(member => member.MemberId)
-            .ToArray();
+        // Sin ordenar: el orden de GET /assignees lo da ListSupportAssigneesHandler, una sola vez (revisión final, B3).
+        return managers;
     }
 
     private async Task<SupportMemberRef> ToRefAsync(TenantId tenant, Membership membership, CancellationToken cancellationToken)
@@ -74,7 +90,9 @@ internal sealed class SupportMemberDirectory(
         // aunque su rol lo conceda.
         var canManage = isActive
             && await permissions.AnyGrantsAsync(tenant, membership.Roles, SupportPermissions.Manage, cancellationToken);
-        var displayName = string.IsNullOrWhiteSpace(membership.DisplayName) ? NoName : membership.DisplayName;
-        return new SupportMemberRef(membership.Id.Value, displayName, isActive, canManage);
+        return new SupportMemberRef(membership.Id.Value, DisplayNameOf(membership.DisplayName), isActive, canManage);
     }
+
+    private static string DisplayNameOf(string? displayName) =>
+        string.IsNullOrWhiteSpace(displayName) ? NoName : displayName;
 }

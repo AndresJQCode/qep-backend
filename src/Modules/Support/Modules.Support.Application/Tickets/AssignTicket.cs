@@ -29,7 +29,6 @@ public sealed class AssignTicketValidator : AbstractValidator<AssignTicketComman
 public sealed class AssignTicketHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     ISupportTicketRepository tickets,
     ISupportMemberDirectory members,
@@ -50,13 +49,14 @@ public sealed class AssignTicketHandler(
         var (ticket, actor) = await SupportTicketActions.LoadAsync(
             executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
         await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, command.AssigneeMemberId, cancellationToken);
-        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
+        var now = context.Now;
         var version = ticket.Version;
         ticket.Assign(command.AssigneeMemberId, actor, now);
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketAssigned, ChangedFields, now,
             cancellationToken);
 
-        return await composer.ComposeDetailAsync(ticket, cancellationToken);
+        return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }
 }

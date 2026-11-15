@@ -19,7 +19,8 @@ public sealed class ListSupportAssigneesHandler(
 
         var managers = await members.ListManagersAsync(query.TenantId, cancellationToken);
 
-        // Invariante y con el id de desempate: el orden no depende de la cultura del servidor ni de la base.
+        // El único orden de la lista (revisión final, B3): invariante y con el id de desempate, para que no dependa de la cultura del
+        // servidor ni de la base. Es el mismo comparador de ListLoanAssignees y del ListAssignees de ServiceContracts.
         return new SupportAssigneesDto(managers
             .OrderBy(member => member.DisplayName, StringComparer.InvariantCultureIgnoreCase)
             .ThenBy(member => member.MemberId)

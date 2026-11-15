@@ -51,7 +51,7 @@ public sealed class UpdateTicketTypeValidator : AbstractValidator<UpdateTicketTy
 public sealed class UpdateTicketTypeHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    IClock clock,
+    ITenantClock tenantClock,
     ISupportProvisioner provisioner,
     ISupportTicketTypeRepository types,
     ISupportUnitOfWork unitOfWork,
@@ -74,7 +74,7 @@ public sealed class UpdateTicketTypeHandler(
         }
 
         var before = SupportDtoMapping.ToDto(type);
-        var now = clock.UtcNow;
+        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         type.Update(
             command.Name,
             command.TermBusinessDays,

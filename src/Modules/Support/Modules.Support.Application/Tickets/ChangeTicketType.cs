@@ -28,7 +28,6 @@ public sealed class ChangeTicketTypeValidator : AbstractValidator<ChangeTicketTy
 public sealed class ChangeTicketTypeHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     ISupportTicketRepository tickets,
     ISupportTicketTypeRepository types,
@@ -51,7 +50,7 @@ public sealed class ChangeTicketTypeHandler(
         // Acotado al tenant: así el dominio nunca recibe un tipo de otro tenant (su guarda lanzaría ArgumentException).
         var type = await SupportTicketRules.EnsureTypeAsync(types, command.TenantId, command.TicketTypeId, cancellationToken);
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
-        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        var now = context.Now;
         var version = ticket.Version;
         ticket.ChangeType(type, actor, now, context.Clock);
         await SupportTicketActions.SaveIfChangedAsync(

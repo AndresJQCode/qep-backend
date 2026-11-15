@@ -31,7 +31,7 @@ public sealed class UpdateSupportSettingsValidator : AbstractValidator<UpdateSup
 public sealed class UpdateSupportSettingsHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    IClock clock,
+    ITenantClock tenantClock,
     ISupportProvisioner provisioner,
     ISupportSettingsRepository settingsRepository,
     ISupportUnitOfWork unitOfWork,
@@ -55,7 +55,7 @@ public sealed class UpdateSupportSettingsHandler(
         }
 
         var version = settings.Version;
-        var now = clock.UtcNow;
+        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         settings.ChangeDueSoon(command.DueSoonBusinessDays, now);
         if (settings.Version != version)
         {

@@ -32,7 +32,6 @@ public sealed class LinkTicketCustomerValidator : AbstractValidator<LinkTicketCu
 public sealed class LinkTicketCustomerHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     ISupportTicketRepository tickets,
     ISupportCustomerLookup customers,
@@ -57,13 +56,14 @@ public sealed class LinkTicketCustomerHandler(
             await SupportTicketRules.EnsureCustomerAsync(tenantModules, customers, command.TenantId, customerId, cancellationToken);
         }
 
-        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
+        var now = context.Now;
         var version = ticket.Version;
         ticket.LinkCustomer(command.CustomerId, actor, now);
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketCustomerChanged, ChangedFields, now,
             cancellationToken);
 
-        return await composer.ComposeDetailAsync(ticket, cancellationToken);
+        return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }
 }

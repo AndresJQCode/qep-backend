@@ -61,21 +61,19 @@ internal sealed class SupportBusinessCalendar(
 
 /// <summary>
 /// Arma el <see cref="SupportClockContext"/> de un tenant: el horario predeterminado de Mensajería (se lee aunque el módulo
-/// <c>messaging</c> esté apagado: es dato del tenant, plan D13), su país y su zona horaria.
+/// <c>messaging</c> esté apagado: es dato del tenant, plan D13), su país y la zona horaria que ya leyó quien llama del reloj del
+/// tenant (que es también quien falla primero con <c>tenancy.tenant.not_found</c>).
 /// </summary>
 internal sealed class SupportBusinessCalendarSource(
     IBusinessHoursRepository schedules,
-    ITenantDirectory tenants,
-    ITenantClock clock) : ISupportBusinessCalendarSource
+    ITenantDirectory tenants) : ISupportBusinessCalendarSource
 {
-    public async Task<SupportClockContext> GetAsync(Guid tenantId, CancellationToken cancellationToken)
+    public async Task<SupportClockContext> GetAsync(Guid tenantId, TimeZoneInfo timeZone, CancellationToken cancellationToken)
     {
-        // El reloj primero: un tenant que no existe falla con tenancy.tenant.not_found antes de leer nada más.
-        var calendar = await clock.GetAsync(tenantId, cancellationToken);
         var regional = await tenants.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken)
             ?? throw new InvalidOperationException($"Tenant '{tenantId}' has no regional settings.");
         var schedule = await schedules.FindDefaultAsync(tenantId, cancellationToken);
 
-        return new SupportClockContext(SupportBusinessCalendar.From(schedule, regional.Country), calendar.TimeZone);
+        return new SupportClockContext(SupportBusinessCalendar.From(schedule, regional.Country), timeZone);
     }
 }

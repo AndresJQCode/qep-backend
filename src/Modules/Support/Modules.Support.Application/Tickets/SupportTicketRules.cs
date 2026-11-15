@@ -38,7 +38,7 @@ internal static class SupportTicketRules
     /// comprobar al guardar, con el candado del cliente (<c>CustomerReferenceWrites</c>): un borrado que gane la carrera sale como
     /// <c>customer_not_found</c>. Devuelve el cliente: el alta toma de ahí el contacto de respaldo.
     /// </summary>
-    public static async Task<SupportCustomerRef> EnsureCustomerAsync(
+    public static async Task<SupportCustomerContact> EnsureCustomerAsync(
         ITenantModules tenantModules, ISupportCustomerLookup customers, Guid tenantId, Guid customerId, CancellationToken cancellationToken)
     {
         await TenantModuleGuard.EnsureEnabledAsync(tenantModules, tenantId, TenantModuleKeys.Customers, cancellationToken);
