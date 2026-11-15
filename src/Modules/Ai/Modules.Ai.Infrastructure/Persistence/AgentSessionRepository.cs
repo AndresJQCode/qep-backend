@@ -39,8 +39,17 @@ internal sealed class AgentSessionRepository(AiDbContext dbContext) : IAgentSess
         dbContext.Turns.AsNoTracking().AnyAsync(
             turn => turn.SessionId == sessionId && turn.Seq > seq && turn.Role == AgentTurnRoleKind.Customer, cancellationToken);
 
-    public Task<ModelJob?> FindPendingJobAsync(Guid sessionId, CancellationToken cancellationToken) =>
-        dbContext.ModelJobs.SingleOrDefaultAsync(job => job.SessionId == sessionId && job.Status == ModelJobStatus.Pending, cancellationToken);
+    // Revisión final, hallazgo 3: FOR UPDATE. El reclamo del worker no toma el candado de la conversación; sin el candado de fila, el worker
+    // podía reclamar el trabajo (y leer los turnos hasta el up_to_seq viejo) mientras esta unidad le subía up_to_seq, y el turno nuevo del
+    // cliente quedaba sin trabajo que lo respondiera. Con la fila tomada, el reclamo (SKIP LOCKED) la salta hasta el commit; si el reclamo
+    // ganó, la fila ya no es Pending al releerla y la unidad crea un trabajo nuevo.
+    public async Task<ModelJob?> FindPendingJobAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.ModelJobs
+            .FromSql($"""SELECT * FROM ai.model_jobs WHERE session_id = {sessionId} AND status = 'Pending' FOR UPDATE""")
+            .ToListAsync(cancellationToken);
+        return rows.Count == 0 ? null : rows[0];
+    }
 
     public async Task<IReadOnlyList<AgentSessionRef>> ListIdleAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) =>
         await dbContext.Sessions.AsNoTracking()
