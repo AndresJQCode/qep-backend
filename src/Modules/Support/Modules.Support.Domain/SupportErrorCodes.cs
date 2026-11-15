@@ -93,6 +93,10 @@ public static class SupportErrorCodes
 
     public const string PublicConsentRequired = "support.public.consent_required";
 
+    /// <summary>Triage #2 del Bloque F: el ticket ya tiene su consentimiento (<c>IX_consents_ticket</c>, traducido por nombre, 409). Hoy no
+    /// se alcanza: el consentimiento se escribe sólo con un ticket recién creado, en la misma transacción.</summary>
+    public const string PublicConsentDuplicate = "support.public.consent_duplicate";
+
     public const string PublicDepartmentNotFound = "support.public.department_not_found";
 
     public const string PublicBodyTooLarge = "support.public.body_too_large";

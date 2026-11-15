@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using Modules.Support.Infrastructure.Persistence;
+using Npgsql;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 using static Modules.Support.IntegrationTests.SupportMessagingSeed;
 
@@ -135,6 +136,68 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         Assert.Null(found.Requester);
         Assert.Null(found.CustomerId);
         Assert.Equal(SupportReplyChannel.Portal, found.ReplyChannel);
+    }
+
+    // Triage #1 (Bloque F): la base respalda la regla del anónimo con CK_tickets_anonymous. Un UPDATE crudo que le ponga cliente o
+    // cualquier dato del solicitante a un anónimo falla, venga de donde venga (una fusión, una siembra, un SQL a mano).
+    [Theory]
+    [InlineData("customer_id = gen_random_uuid()")]
+    [InlineData("requester_first_names = 'Ana'")]
+    [InlineData("requester_email = 'ana@example.com'")]
+    [InlineData("requester_document_number = '1020304050'")]
+    [InlineData("requester_mobile_phone = '+573001234567'")]
+    [InlineData("requester_country_code = 'CO'")]
+    [InlineData("requester_city_name = 'Valencia'")]
+    public async Task TheAnonymousCheckRejectsACustomerOrARequesterOnAnAnonymousRow(string assignment)
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var form = await SaveFormAsync(factory, tenant, 1);
+        var ticket = await FromFormAsync(factory, tenant, 1, requester: null, form.Id);
+
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            factory, $"UPDATE support.tickets SET {assignment} WHERE id = @id", ("id", ticket.Id.Value)));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal(SupportDbContext.TicketAnonymousCheck, exception.ConstraintName);
+    }
+
+    // El mismo CHECK no estorba a un ticket con solicitante: ponerle cliente sigue valiendo.
+    [Fact]
+    public async Task TheAnonymousCheckLetsANamedTicketTakeACustomer()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var form = await SaveFormAsync(factory, tenant, 1);
+        var ticket = await FromFormAsync(
+            factory, tenant, 1,
+            new TicketRequester("Ana", "Gómez", null, "CC", "1020304050", "ana@example.com", "+573001234567", null, "CO", null, Guid.CreateVersion7(), null),
+            form.Id);
+
+        await ExecuteAsync(factory, "UPDATE support.tickets SET customer_id = gen_random_uuid() WHERE id = @id", ("id", ticket.Id.Value));
+
+        Assert.Equal(1L, await ScalarAsync(
+            factory, "SELECT count(*) FROM support.tickets WHERE id = @id AND customer_id IS NOT NULL", ("id", ticket.Id.Value)));
+    }
+
+    // Triage #2 (Bloque F): IX_consents_ticket se traduce por nombre, como los demás únicos del módulo. Hoy no se alcanza (el
+    // consentimiento se escribe sólo con un ticket recién creado), pero un camino nuevo que lo duplique recibe un 409 con código y no un
+    // 500.
+    [Fact]
+    public async Task ASecondConsentForTheSameTicketIs409()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var form = await SaveFormAsync(factory, tenant, 1);
+        var text = await SaveLegalTextAsync(factory, tenant, 1);
+        var ticket = await FromFormAsync(
+            factory, tenant, 1,
+            new TicketRequester("Ana", "Gómez", null, "CC", "1020304050", "ana@example.com", "+573001234567", null, "CO", null, Guid.CreateVersion7(), null),
+            form.Id);
+        await AddConsentAsync(factory, tenant, ticket, text);
+
+        var exception = await Assert.ThrowsAsync<ResourceConflictException>(() => AddConsentAsync(factory, tenant, ticket, text));
+
+        Assert.Equal(SupportErrorCodes.PublicConsentDuplicate, exception.Code);
+        Assert.Equal(1L, await ScalarAsync(
+            factory, "SELECT count(*) FROM support.consents WHERE ticket_id = @ticket", ("ticket", ticket.Id.Value)));
     }
 
     [Fact]
@@ -318,6 +381,14 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().Add(ticket);
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         return ticket;
+    }
+
+    private static async Task AddConsentAsync(QepApiFactory factory, Guid tenant, SupportTicket ticket, SupportLegalTextVersion text)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<ISupportConsentRepository>()
+            .Add(SupportConsent.Record(Guid.CreateVersion7(), tenant, ticket.Id, text, "203.0.113.7", Now));
+        await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
     }
 
     private static async Task<List<string>> TablesAsync(SupportDbContext context, string[] names)

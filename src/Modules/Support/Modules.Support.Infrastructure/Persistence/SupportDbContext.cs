@@ -54,6 +54,23 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
     /// <summary>Único de la versión de los textos legales por tenant (plan F16).</summary>
     public const string LegalTextVersionIndex = "IX_legal_text_versions_tenant_version";
 
+    /// <summary>Único del consentimiento por ticket (plan F17): una fila por radicado. Se traduce por nombre (triage #2 del Bloque F).</summary>
+    public const string ConsentTicketIndex = "IX_consents_ticket";
+
+    /// <summary>
+    /// Triage #1 del Bloque F: un anónimo no tiene cliente ni ninguna columna del solicitante. El dominio ya lo exige
+    /// (<c>CreateFromPublicForm</c> y <c>LinkCustomer</c>); el CHECK lo respalda contra el SQL crudo (fusión, siembras, un arreglo a mano).
+    /// </summary>
+    public const string TicketAnonymousCheck = "CK_tickets_anonymous";
+
+    // Las columnas de la foto del solicitante (ConfigureTicket): una nueva entra acá, o el CHECK deja de cubrirla.
+    private static readonly string[] RequesterColumns =
+    [
+        "requester_first_names", "requester_last_names", "requester_business_name", "requester_document_type",
+        "requester_document_number", "requester_email", "requester_mobile_phone", "requester_landline_phone", "requester_country_code",
+        "requester_address", "requester_city_id", "requester_city_name",
+    ];
+
     public DbSet<SupportTicketAccess> TicketAccess => Set<SupportTicketAccess>();
 
     public DbSet<SupportFormVersion> FormVersions => Set<SupportFormVersion>();
@@ -226,7 +243,7 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         consent.Property(value => value.TermsText).HasColumnName("terms_text").HasMaxLength(SupportLegalTextVersion.TextMaxLength);
         consent.Property(value => value.VisitorIp).HasColumnName("visitor_ip").HasMaxLength(SupportConsent.VisitorIpMaxLength);
         // Una fila por ticket.
-        consent.HasIndex(value => value.TicketId).IsUnique().HasDatabaseName("IX_consents_ticket");
+        consent.HasIndex(value => value.TicketId).IsUnique().HasDatabaseName(ConsentTicketIndex);
     }
 
     // La fila la inserta SupportProvisioner con SQL crudo; EF sólo la lee y actualiza el umbral. El contador y created_at son
@@ -302,6 +319,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
                 "CK_tickets_conversation_channel", InList("conversation_channel", SupportConversationRef.Channels));
             table.HasCheckConstraint(
                 "CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
+            table.HasCheckConstraint(
+                TicketAnonymousCheck,
+                $"NOT is_anonymous OR (customer_id IS NULL AND {string.Join(" AND ", RequesterColumns.Select(column => $"{column} IS NULL"))})");
         });
         ticket.HasKey(value => value.Id);
         ticket.Property(value => value.Id)

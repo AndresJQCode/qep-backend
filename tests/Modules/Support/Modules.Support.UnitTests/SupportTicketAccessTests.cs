@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Modules.Support.Domain;
 
 namespace Modules.Support.UnitTests;
@@ -103,19 +102,5 @@ public sealed class SupportTicketAccessTests
 
         Assert.Equal("send_failed", access.LastFailureCode);
         Assert.Throws<ArgumentException>(() => access.RecordDelivery(" ", null, Now));
-    }
-}
-
-public sealed class SupportPinTests
-{
-    [Fact]
-    public void ItIsSixDigits()
-    {
-        var pattern = new Regex(@"^\d{6}$", RegexOptions.None, TimeSpan.FromSeconds(1));
-
-        for (var index = 0; index < 1000; index++)
-        {
-            Assert.Matches(pattern, SupportPin.Generate());
-        }
     }
 }

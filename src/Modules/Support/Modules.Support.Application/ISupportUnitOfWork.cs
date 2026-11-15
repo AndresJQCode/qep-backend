@@ -20,6 +20,13 @@ public interface ISupportUnitOfWork
     /// </summary>
     Task HoldCustomerReferenceAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Block E (E-4): toma, dentro de la transacción abierta, el candado del tenant para abrir subidas anónimas del formulario público.
+    /// Contar las abiertas y abrir la nueva con él tomado hace exacto el tope; se suelta con el commit o el rollback. Sin transacción
+    /// abierta lanza <see cref="InvalidOperationException"/>.
+    /// </summary>
+    Task LockPublicAttachmentsAsync(Guid tenantId, CancellationToken cancellationToken);
+
     /// <summary>Olvida todo lo cargado y lo pendiente de guardar. Lo usa el seguimiento del hilo entre un entrante y el siguiente: un
     /// guardado que choca (otra réplica ganó) deja sus cambios en el contexto, y sin esto el siguiente guardado los volvería a mandar.</summary>
     void DiscardChanges();

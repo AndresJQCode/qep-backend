@@ -90,6 +90,15 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "This version of the legal texts already exists.",
                 exception);
         }
+        // Triage #2 del Bloque F: una fila de consentimiento por ticket. Inalcanzable hoy; traducido igual para que un camino nuevo que
+        // lo duplique reciba un 409 con código y no un 500.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.ConsentTicketIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.PublicConsentDuplicate,
+                "The ticket already has its consent.",
+                exception);
+        }
         // Plan F35: otra radicación ya reclamó el archivo. El 422 de siempre de un adjunto inválido, no un 409: la página no distingue
         // un archivo ajeno de uno que no existe, y la transacción del radicado se deshace entera.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketAttachmentFileIndex))
@@ -111,6 +120,19 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
         {
             throw CustomerNotFound(new CustomerReferenceToHold(tenantId, customerId, TicketCustomer.NotFoundCode));
         }
+    }
+
+    // Sin transacción abierta el candado se soltaría al terminar la sentencia y no serializaría nada: se exige, como LockByNumberAsync.
+    public async Task LockPublicAttachmentsAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("The public attachments lock needs an open transaction.");
+        }
+
+        await dbContext.Database.ExecuteSqlAsync(
+            $"SELECT pg_advisory_xact_lock({SupportPublicAttachmentsLock.Namespace}, hashtext({tenantId.ToString()}))",
+            cancellationToken);
     }
 
     public void DiscardChanges() => dbContext.ChangeTracker.Clear();
