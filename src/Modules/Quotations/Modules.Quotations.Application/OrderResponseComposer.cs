@@ -16,7 +16,8 @@ public sealed class OrderResponseComposer(
     IQuotationProductLookup productLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationWithholdingLookup withholdingLookup,
-    IQuotationGeographyLookup geographyLookup)
+    IQuotationGeographyLookup geographyLookup,
+    IQuotationBuyerAccountLookup buyerAccountLookup)
     : IOrderResponseComposer
 {
     public async Task<OrderDetailResponse> ComposeAsync(
@@ -54,6 +55,10 @@ public sealed class OrderResponseComposer(
             order.BillingWithholdingTaxRates,
             MunicipalWithholdingExplanation.DateOf(order.CreatedAt),
             cancellationToken);
+        // Spec 2026-11-15 §4: una cuenta borrada deja el id en el pedido; el detalle la muestra como «sin cuenta».
+        var buyerAccount = order.BuyerAccountId is { } buyerAccountId
+            ? await buyerAccountLookup.FindAsync(buyerAccountId, cancellationToken)
+            : null;
 
         return new OrderDetailResponse(
             OrderResponses.ToResponse(order),
@@ -80,7 +85,8 @@ public sealed class OrderResponseComposer(
             clientContacts,
             municipal.OperationCity,
             municipal.BillingCompanyCity,
-            municipal.Entries);
+            municipal.Entries,
+            buyerAccount is null ? null : new BuyerAccountResponse(buyerAccount.Id, buyerAccount.Email));
     }
 }
 

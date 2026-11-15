@@ -253,6 +253,6 @@ public sealed class OrderPdfDocumentMapperTests
             15m, 64620m, 30515m, 307714.29m, 19, 58465.71m, 1, nameof(QuotationDiscountOrigin.Own));
 
         return new OrderDetailResponse(
-            order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], [], [], null, null, []);
+            order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], [], [], null, null, [], null);
     }
 }

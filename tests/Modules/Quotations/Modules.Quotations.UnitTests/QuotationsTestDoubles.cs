@@ -446,6 +446,10 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt) => Actions.Add(action);
 
+    public void PublishWithDetails(
+        Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details) => Actions.Add(action);
+
     public void PublishByIntegration(
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
         Actions.Add(action);
@@ -456,6 +460,12 @@ internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt)
+    {
+    }
+
+    public void PublishWithDetails(
+        Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details)
     {
     }
 
@@ -1288,6 +1298,23 @@ internal sealed class StubQuotationCompanyLookup(
     public Task<QuotationCompanyRef?> FindAsync(
         Guid tenantId, Guid companyId, CancellationToken cancellationToken) =>
         Task.FromResult(companies.GetValueOrDefault(companyId));
+}
+
+/// <summary>Las cuentas de comprador que existen (spec 2026-11-15 §4); cualquier otra se responde como borrada. Cuenta
+/// las búsquedas por id para que una prueba afirme que un pedido sin cuenta no consulta a Buyers.</summary>
+internal sealed class StubQuotationBuyerAccountLookup(params QuotationBuyerAccountRef[] accounts) : IQuotationBuyerAccountLookup
+{
+    public int FindCalls { get; private set; }
+
+    public Task<QuotationBuyerAccountRef?> FindAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(accounts.FirstOrDefault(account => account.Id == accountId));
+    }
+
+    public Task<QuotationBuyerAccountRef?> FindVerifiedByEmailAsync(string email, CancellationToken cancellationToken) =>
+        Task.FromResult(accounts.FirstOrDefault(
+            account => string.Equals(account.Email, email.Trim(), StringComparison.OrdinalIgnoreCase)));
 }
 
 /// <summary>Los nombres del DANE en <paramref name="cityNames"/> y los de Coordinadora en
