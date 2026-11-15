@@ -672,4 +672,43 @@ public sealed class AutomationInboxTests
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
         Assert.Equal(0L, await InboxCountAsync(f));
     }
+
+    // Revisión final de agentes de IA, hallazgo 6 (D-M1): dos DM de la misma entrega de Instagram para un agente se encolan con su posición,
+    // un microsegundo aparte y en el orden de la entrega, como en WhatsApp. Con el reloj quieto, sin la posición empataban en created_at.
+    [Fact]
+    public async Task TwoInstagramMessagesOfOneDeliveryAreEnqueuedInOrderOneMicrosecondApart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var clock = new TestClock { UtcNow = DateTimeOffset.UtcNow };
+        using var factory = new QepApiFactory(connectionString, true);
+        using var host = factory.WithTestClock(clock);
+        var tenant = await RegisterTenantAsync(host);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedInstagramConnectionAsync(host, tenant.TenantId, "Instagram Ventas", InstagramPayloads.DefaultAccountId);
+        await ExecuteAsync(
+            connectionString,
+            "INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at) VALUES (@c, @t, 2, gen_random_uuid(), 'Agente', now())",
+            ("c", connectionId), ("t", tenant.TenantId));
+        factory.MetaHandler.Respond($@"^/v24\.0/{InstagramPayloads.DefaultUserId}\?", System.Net.HttpStatusCode.OK, """{"name":"Laura","username":"laura","id":"1234567890123456"}""");
+        var sent = clock.UtcNow.ToUnixTimeSeconds() - 600;
+        using var client = host.CreateClient();
+
+        await PostInstagramWebhookAsync(client, InstagramPayloads.Many(
+            InstagramPayloads.DefaultAccountId,
+            InstagramPayloads.Event(InstagramPayloads.DefaultUserId, InstagramPayloads.DefaultAccountId, sent, "message",
+                new System.Text.Json.Nodes.JsonObject { ["mid"] = "m1", ["text"] = "hola" }),
+            InstagramPayloads.Event(InstagramPayloads.DefaultUserId, InstagramPayloads.DefaultAccountId, sent + 1, "message",
+                new System.Text.Json.Nodes.JsonObject { ["mid"] = "m2", ["text"] = "¿precio?" })));
+        await DrainDeliveriesAsync(host);
+
+        Assert.Equal("hola,¿precio?", await ScalarAsync<string>(connectionString,
+            """
+            SELECT string_agg(message.text, ',' ORDER BY inbox.created_at, inbox.message_id)
+              FROM messaging.automation_inbox AS inbox JOIN messaging.messages AS message ON message.id = inbox.message_id
+             WHERE inbox.bot_kind = 2
+            """));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT round(extract(epoch FROM max(created_at) - min(created_at)) * 1000000)::bigint FROM messaging.automation_inbox WHERE bot_kind = 2"));
+    }
 }
