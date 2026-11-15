@@ -1451,11 +1451,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
         services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, LoansUserReferenceProbe>();
+        services.AddScoped<IUserReferenceProbe, SupportUserReferenceProbe>();
 
         // Mismo patrón para `loans` (spec de préstamos 2026-10-31): clientes y encargados son ids sueltos y el composition root cablea sus
         // puertos contra Customers, Tenancy y Authorization. Con ruta completa por el mismo choque de nombres.
         services.AddScoped<Modules.Loans.Application.ILoansCustomerLookup, LoansCustomerLookup>();
         services.AddScoped<Modules.Loans.Application.ILoansMemberDirectory, LoansMemberDirectory>();
+
+        // `support` (spec 2026-11-14): clientes, responsables y el calendario son de otros módulos y Soporte sólo declara puertos. El
+        // calendario sale del horario predeterminado de Mensajería sin que Soporte la referencie.
+        services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
+        services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno
