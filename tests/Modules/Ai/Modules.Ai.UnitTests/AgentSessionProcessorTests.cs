@@ -561,6 +561,46 @@ public sealed class AgentSessionProcessorTests
         Assert.Equal((HandoffCauseKind.ModuleDisabled, "openai"), (handoff.Cause.Kind, handoff.Cause.Provider));
     }
 
+    // Revisión final, hallazgo 5: la señal ReleaseRun de una conversación de un agente (una persona la tomó) cierra la sesión y descarta su
+    // trabajo pendiente, que si no el worker igual reclamaría.
+    [Fact]
+    public async Task AReleaseRunEndsTheAgentSessionAndDiscardsItsPendingJob()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Paused", "Agent", agent.Id);
+        var pending = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, 1, Now, Now);
+        world.Sessions.Pending = pending;
+
+        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false) with { ReleaseRun = true }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(AiInboxOutcomes.Interrupted, outcome);
+        Assert.Equal(AgentSessionStatus.Interrupted, session.Status);
+        Assert.Equal(ModelJobStatus.Discarded, pending.Status);
+        Assert.Empty(world.Jobs.Added);
+        Assert.Empty(world.Conversations.Handoffs);
+    }
+
+    // Revisión final, hallazgo 5: el worker mira que la conversación siga siendo del agente antes de llamar al modelo. Si una persona la tomó
+    // mientras el trabajo esperaba, se descarta sin pagar la llamada.
+    [Fact]
+    public async Task AJobIsDiscardedBeforeCallingTheModelWhenAPersonTookTheConversation()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Paused", "Agent", agent.Id);
+        world.Credentials.Available.Add("anthropic");
+        var job = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, session.NextSeq - 1, Now, Now);
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Empty(world.Model.Requests);
+        Assert.Empty(world.Outbound.Sends);
+        Assert.Equal(ModelJobStatus.Discarded, job.Status);
+    }
+
     private static AiModelResponse DraftCall() =>
         new(
             null,

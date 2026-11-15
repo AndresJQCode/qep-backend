@@ -120,8 +120,9 @@ public sealed class TakeConversationHandler(ConversationAssignmentSteps steps, I
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
         var before = conversation.AutomationStatus;
+        var beforeBot = conversation.AutomationBotKind;
         var changes = conversation.Take(member, now);
-        inbox.EnqueueIfAssisted(conversation, before, changes.Count, now);
+        inbox.EnqueueIfAssisted(conversation, before, beforeBot, changes.Count, now);
         return await steps.CommitAsync(command.TenantId, conversation, changes, now, cancellationToken);
     }
 }
@@ -145,8 +146,9 @@ public sealed class TransferConversationHandler(
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
         var before = conversation.AutomationStatus;
+        var beforeBot = conversation.AutomationBotKind;
         var changes = conversation.TransferTo(member, target, now);
-        inbox.EnqueueIfAssisted(conversation, before, changes.Count, now);
+        inbox.EnqueueIfAssisted(conversation, before, beforeBot, changes.Count, now);
         return await steps.CommitAsync(command.TenantId, conversation, changes, now, cancellationToken);
     }
 }

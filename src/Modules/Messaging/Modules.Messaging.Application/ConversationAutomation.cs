@@ -90,9 +90,10 @@ public sealed class ResumeAutomationHandler(ConversationAssignmentSteps steps, I
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
         var before = conversation.AutomationStatus;
+        var beforeBot = conversation.AutomationBotKind;
         var changes = conversation.ResumeAutomation(member, now);
         // D-6: la corrida vieja se cierra con la señal; el asistente arranca de nuevo con el siguiente entrante.
-        inbox.EnqueueIfAssisted(conversation, before, changes.Count, now);
+        inbox.EnqueueIfAssisted(conversation, before, beforeBot, changes.Count, now);
         return await steps.CommitAsync(command.TenantId, conversation, changes, now, cancellationToken);
     }
 }

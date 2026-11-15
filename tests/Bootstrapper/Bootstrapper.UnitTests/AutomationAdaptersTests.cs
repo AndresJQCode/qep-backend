@@ -451,7 +451,7 @@ public sealed class AutomationAdaptersTests
         {
         }
 
-        public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now)
+        public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, Modules.Messaging.Domain.BotKind botKind, DateTimeOffset now)
         {
         }
 

@@ -132,9 +132,14 @@ public sealed partial class AiInboxProcessor(
         var interrupted = false;
         if (session is not null && (conversation is null || AgentAttendance.HumanTookOver(conversation, session)))
         {
-            // D-A15: una persona intervino; el entrante ya no es del agente.
+            // D-A15: una persona intervino; el entrante ya no es del agente. Es también lo que hace la señal ReleaseRun (tomar, transferir,
+            // resolver, devolver): el trabajo pendiente se descarta aquí, sin esperar a que el worker lo reclame.
             session.Finish(AgentSessionStatus.Interrupted, AgentSessionEndReasons.HumanTookOver, null, now);
             session.MarkInbound(item.MessageId);
+            if (await sessions.FindPendingJobAsync(session.Id, cancellationToken) is { } pending)
+            {
+                pending.Complete(ModelJobStatus.Discarded, AgentSessionEndReasons.HumanTookOver, null, now);
+            }
             session = null;
             interrupted = true;
         }

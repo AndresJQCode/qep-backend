@@ -135,12 +135,14 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             Kind = AutomationInboxKinds.Engine,
         });
 
-    public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now) =>
-        dbContext.AutomationInbox.Add(NewReleaseRun(tenantId, connectionId, conversationId, now));
+    public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, BotKind botKind, DateTimeOffset now) =>
+        dbContext.AutomationInbox.Add(NewReleaseRun(tenantId, connectionId, conversationId, botKind, now));
 
     /// <summary>La fila de la señal de soltar, armada en un solo lugar para quien la agregue sin pasar por el puerto (el repositorio de
-    /// conversaciones). Id propio: no respalda a ningún mensaje.</summary>
-    internal static AutomationInboxRecord NewReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now) => new()
+    /// conversaciones). Id propio: no respalda a ningún mensaje. Lleva el <c>bot_kind</c> del bot que tenía la conversación: sin él, la de
+    /// un agente la reclamaba el motor de chatbots y la sesión del agente no se cerraba.</summary>
+    internal static AutomationInboxRecord NewReleaseRun(
+        Guid tenantId, Guid connectionId, Guid conversationId, BotKind botKind, DateTimeOffset now) => new()
     {
         MessageId = Guid.CreateVersion7(),
         TenantId = tenantId,
@@ -150,6 +152,7 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
         CreatedAt = now,
         NextAttemptAt = now,
         Kind = AutomationInboxKinds.ReleaseRun,
+        BotKind = (short)botKind,
     };
 
     // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Lo que distingue a la manual es que es Engine y su id no está en messages.

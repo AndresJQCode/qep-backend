@@ -306,6 +306,47 @@ public sealed class ConversationAutomationApiTests
             """));
     }
 
+    // Revisión final de agentes de IA, hallazgo 5: la señal de una conversación de un agente va a la cola de los agentes (bot_kind = 2), que
+    // es la que cierra su sesión; con el default la reclamaba el motor de chatbots. Resolver borra el bot, así que se lee antes del cambio.
+    private static async Task HandToAnAgentAsync(Fixture f) =>
+        Assert.Equal(1, await ExecuteAsync(
+            f.ConnectionString,
+            "UPDATE messaging.conversations SET automation_chatbot_id = NULL, automation_bot_kind = 2, automation_agent_id = @agent, version = version + 1 WHERE id = @id",
+            ("id", f.ConversationId), ("agent", Guid.CreateVersion7())));
+
+    private static Task<string> ReleaseBotKindsAsync(Fixture f) =>
+        ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(bot_kind::text, ',') FROM messaging.automation_inbox WHERE kind = 'ReleaseRun' AND conversation_id = @id",
+            ("id", f.ConversationId));
+
+    [Theory]
+    [InlineData("take")]
+    [InlineData("resolve")]
+    public async Task TheSignalOfAnAgentConversationGoesToTheAgentQueue(string action)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await HandToAnAgentAsync(f);
+
+        var response = await ActAsync(f, f.Client, action, await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("2", await ReleaseBotKindsAsync(f));
+    }
+
+    [Fact]
+    public async Task TheSignalOfAChatbotConversationStaysInTheChatbotQueue()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+
+        Assert.Equal("1", await ReleaseBotKindsAsync(f));
+    }
+
     [Fact]
     public async Task TakingQueuesTheSignalAndTakingAgainDoesNot()
     {

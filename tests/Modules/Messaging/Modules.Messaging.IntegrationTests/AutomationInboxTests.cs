@@ -395,10 +395,11 @@ public sealed class AutomationInboxTests
         Assert.Equal("23514", error.SqlState);
     }
 
-    private static async Task EnqueueReleaseRunAsync(Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now)
+    private static async Task EnqueueReleaseRunAsync(
+        Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now, BotKind botKind = BotKind.Chatbot)
     {
         using var scope = f.Host.Services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<IAutomationInbox>().EnqueueReleaseRun(f.Tenant.TenantId, connectionId, conversationId, now);
+        scope.ServiceProvider.GetRequiredService<IAutomationInbox>().EnqueueReleaseRun(f.Tenant.TenantId, connectionId, conversationId, botKind, now);
         await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
     }
 

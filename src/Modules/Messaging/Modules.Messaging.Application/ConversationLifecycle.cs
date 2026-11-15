@@ -162,8 +162,9 @@ public sealed class ResolveConversationHandler(
         var hadUnread = conversation.UnreadCount > 0;
         // D-6: Resolve deja el asistente en None, así que se lee antes. EnsureCanResolve ya lanzó si no había cambio.
         var before = conversation.AutomationStatus;
+        var beforeBot = conversation.AutomationBotKind;
         conversation.Resolve(now, reason?.Id);
-        inbox.EnqueueIfAssisted(conversation, before, changes: 1, now);
+        inbox.EnqueueIfAssisted(conversation, before, beforeBot, changes: 1, now);
         if (reason is { IsNew: true })
         {
             ResolutionReason.EnsureTenantCapacity(await reasons.CountActiveAsync(command.TenantId, cancellationToken));

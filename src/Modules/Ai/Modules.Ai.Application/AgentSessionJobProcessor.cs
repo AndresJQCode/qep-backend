@@ -157,7 +157,8 @@ public sealed partial class AgentSessionJobProcessor(
         await CloseAsync(job, ModelJobStatus.Failed, "agent_failed", cause.Code);
     }
 
-    /// <summary>La etapa larga: sin transacción ni candado. <c>null</c> si el trabajo quedó reprogramado.</summary>
+    /// <summary>La etapa larga: sin transacción ni candado. <c>null</c> si el trabajo quedó reprogramado, o descartado porque la conversación
+    /// ya no es del agente.</summary>
     private async Task<AgentTurnOutcome?> RunAsync(
         ModelJob job, AgentSession session, AgentVersion version, AgentConfig config, CancellationToken cancellationToken)
     {
@@ -173,6 +174,14 @@ public sealed partial class AgentSessionJobProcessor(
         }
 
         var conversation = await conversations.GetAsync(job.TenantId, session.ConversationId, cancellationToken);
+        if (conversation is null || AgentAttendance.HumanTookOver(conversation, session))
+        {
+            // Revisión final, hallazgo 5: la conversación ya no es del agente (una persona la tomó, la resolvió o la devolvió). Se descarta antes
+            // de pagar el modelo; la sesión la cierra la señal ReleaseRun o el siguiente entrante, con el candado.
+            await CloseAsync(job, ModelJobStatus.Discarded, AgentSessionEndReasons.HumanTookOver, null);
+            return null;
+        }
+
         var turns = await sessions.ListTurnsAsync(session.Id, job.UpToSeq, cancellationToken);
         var messages = await conversations.ReadMessagesAsync(
             job.TenantId, [.. turns.Select(turn => turn.MessageId).OfType<Guid>()], cancellationToken);

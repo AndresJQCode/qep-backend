@@ -74,6 +74,7 @@ public interface IAutomationInbox
 
     /// <summary>Spec 2026-11-03: encola la señal de soltar la conversación (una persona la tomó y el bot debe cerrar su corrida viva). Igual
     /// que <see cref="EnqueueManualStart"/>: fila sin mensaje, <c>opened = false</c>, sólo agrega al contexto y viaja en el
-    /// <c>SaveChanges</c> del cambio que la pidió. Se reclama en el orden de su conversación, detrás de lo anterior.</summary>
-    void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now);
+    /// <c>SaveChanges</c> del cambio que la pidió. Se reclama en el orden de su conversación, detrás de lo anterior.
+    /// <paramref name="botKind"/> es el bot que tenía la conversación: la reclama su procesador (spec 2026-10-29 §6.1).</summary>
+    void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, BotKind botKind, DateTimeOffset now);
 }
