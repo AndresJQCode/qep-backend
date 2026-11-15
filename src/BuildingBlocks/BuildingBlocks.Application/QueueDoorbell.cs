@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace BuildingBlocks.Application;
 
 /// <summary>
@@ -63,11 +65,35 @@ public static class DoorbellPolling
     /// haber más) lo repite sin esperar; si no, espera con el oyente. Sale sin lanzar cuando se cancela
     /// <paramref name="stoppingToken"/>. El tick maneja sus propios errores: una excepción que no sea el apagado sube.
     /// </summary>
-    public static async Task RunAsync(
+    public static Task RunAsync(
         IDoorbellListener listener,
         TimeSpan poll,
         TimeSpan safetyNet,
         Func<CancellationToken, Task<bool>> tick,
+        CancellationToken stoppingToken)
+    {
+        ArgumentNullException.ThrowIfNull(tick);
+        return RunAsync(
+            listener,
+            poll,
+            safetyNet,
+            async cancellationToken => await tick(cancellationToken).ConfigureAwait(false) ? TimeSpan.Zero : (TimeSpan?)null,
+            stoppingToken);
+    }
+
+    /// <summary>
+    /// El bucle con un próximo vencimiento conocido (plan P11): el tick devuelve <c>null</c> si no conoce ninguno, <c>TimeSpan.Zero</c>
+    /// si hay más trabajo ya, o cuánto falta para el próximo. La espera con el oyente usa <c>min(safetyNet, vencimiento)</c> como red; el
+    /// intervalo de hoy (<paramref name="poll"/>, el camino sin timbres) no cambia por el vencimiento.
+    ///
+    /// Al <paramref name="poll"/> se le descuenta lo que tardó el tick (nunca menos de cero): sin timbres, la cadencia es la del
+    /// <c>PeriodicTimer</c> de antes, que contaba desde el comienzo del tick anterior y no desde su final.
+    /// </summary>
+    public static async Task RunAsync(
+        IDoorbellListener listener,
+        TimeSpan poll,
+        TimeSpan safetyNet,
+        Func<CancellationToken, Task<TimeSpan?>> tick,
         CancellationToken stoppingToken)
     {
         ArgumentNullException.ThrowIfNull(listener);
@@ -77,12 +103,18 @@ public static class DoorbellPolling
         {
             try
             {
-                if (await tick(stoppingToken).ConfigureAwait(false))
+                var started = Stopwatch.GetTimestamp();
+                var due = await tick(stoppingToken).ConfigureAwait(false);
+                if (due is { } next && next <= TimeSpan.Zero)
                 {
                     continue;
                 }
 
-                await listener.WaitAsync(poll, safetyNet, stoppingToken).ConfigureAwait(false);
+                var remainingPoll = poll - Stopwatch.GetElapsedTime(started);
+                var net = due is { } known && known < safetyNet ? known : safetyNet;
+                await listener
+                    .WaitAsync(remainingPoll > TimeSpan.Zero ? remainingPoll : TimeSpan.Zero, net, stoppingToken)
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

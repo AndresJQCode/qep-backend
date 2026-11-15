@@ -66,7 +66,7 @@ internal sealed partial class ScheduledMessageWorker(
             {
                 try
                 {
-                    await DrainAsync(stoppingToken);
+                    return await DrainAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -83,7 +83,7 @@ internal sealed partial class ScheduledMessageWorker(
     }
 
     /// <summary>Una pasada: internal para las pruebas (P10). Sólo la cancelación del host sube; cualquier otra falla se anota por fase.</summary>
-    internal async Task DrainAsync(CancellationToken cancellationToken)
+    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
         // Antes del reclamo: un lease vencido que esta pasada cierra no compite con los vencidos nuevos por el lote.
         await RunPhaseAsync(dispatcher => dispatcher.RecoverExpiredAsync(cancellationToken), LogRecoveryFailed, cancellationToken);
@@ -104,6 +104,8 @@ internal sealed partial class ScheduledMessageWorker(
         {
             await RunPhaseAsync(dispatcher => PurgeAllAsync(dispatcher, cancellationToken), LogPurgeFailed, cancellationToken);
         }
+
+        return claimed.Count == ScheduledMessageDispatcher.BatchSize;
     }
 
     /// <summary>Página tras página mientras la anterior salió llena: con un barrido diario, una sola página de

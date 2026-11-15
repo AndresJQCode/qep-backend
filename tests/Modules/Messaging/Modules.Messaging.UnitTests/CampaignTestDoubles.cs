@@ -258,7 +258,7 @@ internal sealed class CampaignBed
         new(Repository, Queries, Audit, Mapper, Bed.TenantModules, Context, Clock, new CancelCampaignValidator());
 
     public RetryCampaignHandler RetryHandler() =>
-        new(Repository, Queries, Audit, Bed.Templates, Mapper, Bed.TenantModules, Context, Clock, new RetryCampaignValidator());
+        new(Repository, Queries, Audit, Bed.Templates, Mapper, Bed.TenantModules, Context, Clock, new RetryCampaignValidator(), Doorbell);
 
     public ListCampaignsHandler ListHandler() => new(Queries, Mapper, Bed.TenantModules, Context, new ListCampaignsValidator());
 

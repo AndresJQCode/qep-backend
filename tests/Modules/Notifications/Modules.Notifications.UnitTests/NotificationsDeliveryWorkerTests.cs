@@ -42,6 +42,29 @@ public sealed class NotificationsDeliveryWorkerTests
         Assert.Equal(1, last.Drains);
     }
 
+    // Review de bloque B: un consumidor que trajo un lote lleno puede tener más; el bucle repite sin esperar la red de seguridad.
+    [Fact]
+    public async Task ATickReportsMoreWhenAnyDefinitionFilledItsBatch()
+    {
+        var worker = new NotificationsDeliveryWorker(
+            new PollingDoorbell(),
+            [new FakeDefinition("test.empty"), new FakeDefinition("test.full", full: true)],
+            NullLogger<NotificationsDeliveryWorker>.Instance);
+
+        Assert.True(await worker.TickAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ATickWithoutAFullBatchReportsNoMore()
+    {
+        var worker = new NotificationsDeliveryWorker(
+            new PollingDoorbell(),
+            [new FakeDefinition("test.empty"), new FakeDefinition("test.failing", new InvalidOperationException("boom"))],
+            NullLogger<NotificationsDeliveryWorker>.Instance);
+
+        Assert.False(await worker.TickAsync(TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public void OnlyOneNotificationsHostedServiceIsRegistered()
     {
@@ -78,7 +101,7 @@ public sealed class NotificationsDeliveryWorkerTests
         }
     }
 
-    private sealed class FakeDefinition(string consumer, Exception? failure = null)
+    private sealed class FakeDefinition(string consumer, Exception? failure = null, bool full = false)
         : OutboxDeliveryWorker(null!, NullLogger.Instance)
     {
         public int Drains { get; private set; }
@@ -89,10 +112,10 @@ public sealed class NotificationsDeliveryWorkerTests
 
         protected override string TemplateRef => "test-template";
 
-        internal override Task DrainAsync(CancellationToken stoppingToken)
+        internal override Task<bool> DrainAsync(CancellationToken stoppingToken)
         {
             Drains++;
-            return failure is null ? Task.CompletedTask : Task.FromException(failure);
+            return failure is null ? Task.FromResult(full) : Task.FromException<bool>(failure);
         }
 
         protected override Task<Notification> DeliverAsync(

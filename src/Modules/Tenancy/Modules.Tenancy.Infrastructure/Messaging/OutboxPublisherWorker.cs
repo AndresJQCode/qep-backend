@@ -33,7 +33,7 @@ internal sealed partial class OutboxPublisherWorker(
                 {
                     await using var scope = scopeFactory.CreateAsyncScope();
                     var processor = scope.ServiceProvider.GetRequiredService<IOutboxProcessor>();
-                    await processor.ProcessPendingAsync(stoppingToken);
+                    return await processor.ProcessPendingAsync(stoppingToken) == OutboxProcessor.BatchSize;
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {

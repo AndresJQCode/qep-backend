@@ -199,9 +199,113 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
         Assert.Equal(1, listener.Waits);
     }
 
+    // Review de bloque B (P11): un tick que conoce su próximo vencimiento espera min(red de seguridad, vencimiento); el intervalo de
+    // hoy (área apagada) no cambia.
+    [Fact]
+    public async Task AKnownNextDueShortensTheSafetyNetButNotThePoll()
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var listener = new RecordingListener(() => stopping.Cancel());
+
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            _ => Task.FromResult<TimeSpan?>(TimeSpan.FromSeconds(12)),
+            stopping.Token);
+
+        var (poll, safetyNet) = Assert.Single(listener.Waits);
+        Assert.Equal(TimeSpan.FromSeconds(12), safetyNet);
+        Assert.InRange(poll, TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task ADueLongerThanTheSafetyNetKeepsTheSafetyNet()
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var listener = new RecordingListener(() => stopping.Cancel());
+
+        await DoorbellPolling.RunAsync(
+            listener, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30), _ => Task.FromResult<TimeSpan?>(TimeSpan.FromMinutes(5)), stopping.Token);
+
+        Assert.Equal(TimeSpan.FromSeconds(30), Assert.Single(listener.Waits).SafetyNet);
+    }
+
+    [Fact]
+    public async Task AZeroDueRepeatsWithoutWaiting()
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var listener = new RecordingListener(() => stopping.Cancel());
+        var dues = new Queue<TimeSpan?>([TimeSpan.Zero, TimeSpan.Zero, null]);
+
+        await DoorbellPolling.RunAsync(
+            listener, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(15), _ => Task.FromResult(dues.Dequeue()), stopping.Token);
+
+        Assert.Empty(dues);
+        Assert.Equal(TimeSpan.FromSeconds(15), Assert.Single(listener.Waits).SafetyNet);
+    }
+
+    // Review de bloque B: con el área apagada la cadencia es la de hoy (PeriodicTimer): lo que tardó el tick se descuenta del intervalo,
+    // y un tick más largo que el intervalo espera cero.
+    [Fact]
+    public async Task ThePollIsShortenedByTheTickDuration()
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var listener = new RecordingListener(() => stopping.Cancel());
+
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromMilliseconds(500),
+            TimeSpan.FromSeconds(15),
+            async _ =>
+            {
+                await Task.Delay(300, Ct);
+                return false;
+            },
+            stopping.Token);
+
+        Assert.InRange(Assert.Single(listener.Waits).Poll, TimeSpan.Zero, TimeSpan.FromMilliseconds(210));
+    }
+
+    [Fact]
+    public async Task ATickLongerThanThePollWaitsZero()
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var listener = new RecordingListener(() => stopping.Cancel());
+
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromSeconds(15),
+            async _ =>
+            {
+                await Task.Delay(250, Ct);
+                return false;
+            },
+            stopping.Token);
+
+        Assert.Equal(TimeSpan.Zero, Assert.Single(listener.Waits).Poll);
+    }
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private string ConnectionString() => ValkeyTestServer.ConnectionString(server.Container, asQep: false);
+
+    private sealed class RecordingListener(Action onWait) : IDoorbellListener
+    {
+        public List<(TimeSpan Poll, TimeSpan SafetyNet)> Waits { get; } = [];
+
+        public Task<bool> WaitAsync(TimeSpan poll, TimeSpan safetyNet, CancellationToken cancellationToken)
+        {
+            Waits.Add((poll, safetyNet));
+            onWait();
+            return Task.FromCanceled<bool>(cancellationToken);
+        }
+
+        public void Dispose()
+        {
+        }
+    }
 
     private sealed class CountingListener(Action onWait) : IDoorbellListener
     {

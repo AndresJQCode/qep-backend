@@ -72,8 +72,8 @@ internal abstract partial class OutboxDeliveryWorker(
 
     // Lo llama el bucle de NotificationsDeliveryWorker, y las pruebas directo (OutboxDeliveryWorkerTests, vía
     // InternalsVisibleTo). Mismo precedente que ExportJobWorker.DrainAsync. Virtual sólo para que las pruebas del
-    // bucle cuenten drenados sin base.
-    internal virtual async Task DrainAsync(CancellationToken stoppingToken)
+    // bucle cuenten drenados sin base. Devuelve true si el lote vino lleno: puede haber más (spec 2026-11-13, D-7).
+    internal virtual async Task<bool> DrainAsync(CancellationToken stoppingToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -122,6 +122,8 @@ internal abstract partial class OutboxDeliveryWorker(
                 dbContext.ChangeTracker.Clear();
             }
         }
+
+        return candidates.Count == BatchSize;
     }
 
     /// <summary>

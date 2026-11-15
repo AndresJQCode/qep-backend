@@ -31,25 +31,23 @@ internal sealed partial class NotificationsDeliveryWorker(
             listener,
             OutboxDeliveryWorker.PollInterval,
             DoorbellQueues.SafetyNet(DoorbellQueues.Outbox),
-            async cancellationToken =>
-            {
-                await TickAsync(cancellationToken);
-                return false;
-            },
+            TickAsync,
             stoppingToken);
     }
 
     /// <summary>
     /// Una vuelta: cada definición una vez, en secuencia. Una que lanza se loguea con su consumidor y sigue la siguiente
-    /// (antes cada worker tenía su propio bucle y una falla no tocaba a los demás). Sólo el apagado sale (A4).
+    /// (antes cada worker tenía su propio bucle y una falla no tocaba a los demás). Sólo el apagado sale (A4). Devuelve
+    /// <c>true</c> si algún consumidor trajo su lote lleno: el bucle repite sin esperar.
     /// </summary>
-    internal async Task TickAsync(CancellationToken cancellationToken)
+    internal async Task<bool> TickAsync(CancellationToken cancellationToken)
     {
+        var more = false;
         foreach (var definition in _definitions)
         {
             try
             {
-                await definition.DrainAsync(cancellationToken);
+                more |= await definition.DrainAsync(cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -60,5 +58,7 @@ internal sealed partial class NotificationsDeliveryWorker(
                 LogTickFailed(logger, definition.ConsumerName, exception);
             }
         }
+
+        return more;
     }
 }

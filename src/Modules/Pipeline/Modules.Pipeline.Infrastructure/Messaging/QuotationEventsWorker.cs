@@ -27,7 +27,7 @@ internal sealed partial class QuotationEventsWorker(IQueueDoorbell doorbell, Quo
             {
                 try
                 {
-                    await processor.ProcessBatchAsync(stoppingToken);
+                    return await processor.ProcessBatchAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {

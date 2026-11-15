@@ -39,8 +39,9 @@ internal sealed partial class CampaignDispatchWorker(
 
     /// <summary>
     /// Spec 2026-11-13 (Valkey), D-7: espera el timbre de <c>campaign</c> (iniciar o reanudar una campaña) hasta su red de seguridad; con el
-    /// área apagada o Valkey caído, <c>CampaignPollSeconds</c> como antes. Una pasada que se cortó por tiempo mientras seguía enviando
-    /// repite sin esperar (plan P11: es su «próximo vencimiento conocido»); una que esperaba presupuesto espera el timbre o la red.
+    /// área apagada o Valkey caído, <c>CampaignPollSeconds</c> como antes (descontando lo que tardó la pasada, como el <c>PeriodicTimer</c>).
+    /// Plan P11: la pasada devuelve su próximo vencimiento conocido. Cortada por tiempo, cero (repite ya, como hoy); cortada esperando
+    /// presupuesto, esa espera, y el bucle espera <c>min(red de seguridad, espera)</c>.
     /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -62,7 +63,7 @@ internal sealed partial class CampaignDispatchWorker(
                 catch (Exception exception)
                 {
                     LogTickFailed(logger, exception);
-                    return false;
+                    return (TimeSpan?)null;
                 }
             },
             stoppingToken);
@@ -71,14 +72,14 @@ internal sealed partial class CampaignDispatchWorker(
     /// <summary>Una pasada: internal para las pruebas (P10). Una falla en un paso la deja subir; la del envío de un destinatario sólo se anota.
     /// Decisión del owner 2026-10-12 (P3): el cubo de la conexión guarda un segundo de ráfaga, así que un tick cada 2 s no alcanzaría el ritmo.
     /// La pasada reclama y envía en rondas, esperando lo que el presupuesto indique, hasta gastar un intervalo del worker; ahí corren la
-    /// recuperación y el cierre y el siguiente tick arranca enseguida: devuelve <c>true</c> si la pasada se cortó por tiempo con destinatarios
-    /// todavía reclamables y sin una espera de presupuesto más larga que un intervalo (spec 2026-11-13, D-7).</summary>
-    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
+    /// recuperación y el cierre y el siguiente tick arranca enseguida. Devuelve el próximo vencimiento conocido (spec 2026-11-13, D-7; plan
+    /// P11): <c>null</c> si no quedó nada reclamable, cero si se cortó por tiempo, o la espera de presupuesto que no cupo en el intervalo.</summary>
+    internal async Task<TimeSpan?> DrainAsync(CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
         var span = TimeSpan.FromSeconds(Math.Max(1, workerOptions.Value.CampaignPollSeconds));
         var first = true;
-        var more = false;
+        TimeSpan? due = null;
         while (true)
         {
             IReadOnlyList<ClaimedRecipient> claimed;
@@ -116,8 +117,8 @@ internal sealed partial class CampaignDispatchWorker(
 
             if (remaining <= TimeSpan.Zero)
             {
-                // Sólo si la última ronda mandó algo: reclamar sin poder admitir a nadie no es «más trabajo» y no puede girar sin pausa.
-                more = admission.Admitted.Count > 0;
+                // Como hoy: el PeriodicTimer ya venció y el siguiente tick arranca enseguida. No gira sin pausa: la pasada duró un intervalo.
+                due = TimeSpan.Zero;
                 break;
             }
 
@@ -126,7 +127,7 @@ internal sealed partial class CampaignDispatchWorker(
                 var pause = wait > MinimumPause ? wait : MinimumPause;
                 if (pause >= remaining)
                 {
-                    more = pause < span;
+                    due = pause;
                     break;
                 }
 
@@ -139,7 +140,7 @@ internal sealed partial class CampaignDispatchWorker(
             await scope.ServiceProvider.GetRequiredService<CampaignDispatcher>().FinishTickAsync(cancellationToken);
         }
 
-        return more;
+        return due;
     }
 
     private async ValueTask SendOneAsync(ClaimedRecipient recipient, CancellationToken cancellationToken)

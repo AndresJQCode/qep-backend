@@ -66,7 +66,7 @@ internal sealed partial class BuyerSignupRequestedWorker(
             {
                 try
                 {
-                    await DrainAsync(stoppingToken);
+                    return await DrainAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -83,7 +83,7 @@ internal sealed partial class BuyerSignupRequestedWorker(
     }
 
     // `internal`: el punto de entrada de las pruebas, sin el PeriodicTimer (precedente OutboxDeliveryWorker.DrainAsync).
-    internal async Task DrainAsync(CancellationToken stoppingToken)
+    internal async Task<bool> DrainAsync(CancellationToken stoppingToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -123,6 +123,8 @@ internal sealed partial class BuyerSignupRequestedWorker(
                 dbContext.ChangeTracker.Clear();
             }
         }
+
+        return candidates.Count == BatchSize;
     }
 
     private async Task ProcessAsync(

@@ -61,7 +61,7 @@ internal sealed partial class ShopifyWebhookDeliveryWorker(
             {
                 try
                 {
-                    await DrainAsync(stoppingToken);
+                    return await DrainAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -78,15 +78,18 @@ internal sealed partial class ShopifyWebhookDeliveryWorker(
     }
 
     /// <summary>Una pasada (internal para las pruebas): mientras el lote vuelve lleno, sigue en el acto.</summary>
-    internal async Task DrainAsync(CancellationToken cancellationToken)
+    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
         for (var batch = 0; batch < MaxFullBatchesPerTick; batch++)
         {
             if (await DrainBatchAsync(cancellationToken) < BatchSize)
             {
-                return;
+                return false;
             }
         }
+
+        // Spec 2026-11-13, D-7: se cortó en el tope con lotes llenos; quedan más y el bucle repite sin esperar.
+        return true;
     }
 
     private async Task<int> DrainBatchAsync(CancellationToken cancellationToken)

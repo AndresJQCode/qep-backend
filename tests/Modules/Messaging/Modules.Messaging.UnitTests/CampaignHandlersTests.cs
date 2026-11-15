@@ -350,6 +350,8 @@ public sealed class CampaignHandlersTests
         Assert.Null(dto.CompletedAt);
         Assert.Equal([campaign], bed.Repository.RetriedSaves);
         Assert.Equal([new CampaignAuditCall(bed.Bed.TenantId, bed.Bed.SubjectId, false, MessagingAuditActions.CampaignRetried, campaign.Id)], bed.Audit.Campaigns);
+        // Review de bloque B: reintentar vuelve a Sending con un UPDATE que el interceptor no ve; el handler timbra tras guardar.
+        Assert.Equal([BuildingBlocks.Application.DoorbellQueues.Campaign], bed.Doorbell.Rings);
     }
 
     [Fact]

@@ -506,7 +506,8 @@ public sealed class RetryCampaignHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<RetryCampaignCommand> validator)
+    IValidator<RetryCampaignCommand> validator,
+    IQueueDoorbell doorbell)
     : ICommandHandler<RetryCampaignCommand, CampaignDetailDto>
 {
     public async Task<CampaignDetailDto> HandleAsync(RetryCampaignCommand command, CancellationToken cancellationToken)
@@ -537,6 +538,9 @@ public sealed class RetryCampaignHandler(
         campaign.Retry(template.Category, now);
         audit.RecordCampaign(command.TenantId, executionContext.SubjectId, bySystem: false, MessagingAuditActions.CampaignRetried, campaign.Id, now);
         await repository.SaveRetriedAsync(campaign, now, cancellationToken);
+        // Spec 2026-11-13 (Valkey), D-7: reintentar vuelve a Sending con un UPDATE que el interceptor no ve. Timbra después del
+        // guardado, que ya confirmó.
+        doorbell.Ring(DoorbellQueues.Campaign);
         return await CampaignSupport.DetailAsync(queries, mapper, command.TenantId, campaign.Id, cancellationToken);
     }
 }

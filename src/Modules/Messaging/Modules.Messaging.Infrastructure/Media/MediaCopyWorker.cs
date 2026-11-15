@@ -49,7 +49,7 @@ internal sealed partial class MediaCopyWorker(
             {
                 try
                 {
-                    await DrainAsync(stoppingToken);
+                    return await DrainAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -66,7 +66,7 @@ internal sealed partial class MediaCopyWorker(
     }
 
     /// <summary>Una pasada: internal para las pruebas (P10).</summary>
-    internal async Task DrainAsync(CancellationToken cancellationToken)
+    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
         List<PendingMedia> claimed;
         await using (var scope = scopeFactory.CreateAsyncScope())
@@ -106,5 +106,7 @@ internal sealed partial class MediaCopyWorker(
                 LogCopyFailed(logger, exception, pending.MessageId);
             }
         }
+
+        return claimed.Count == BatchSize;
     }
 }

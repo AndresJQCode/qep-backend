@@ -114,7 +114,7 @@ internal sealed partial class SessionRevocationWorker(
             {
                 try
                 {
-                    await TickAsync(stoppingToken);
+                    return await TickAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -133,7 +133,7 @@ internal sealed partial class SessionRevocationWorker(
     /// <summary>Un tick: un lote. Interno para que las pruebas lo corran cuando lo necesitan en vez de
     /// esperar el del timer, que tarda <see cref="PollInterval"/>. Correrlo a la vez que el del timer es
     /// seguro: es el mismo caso que dos réplicas, y el reclamo deja procesar a una sola.</summary>
-    internal Task TickAsync(CancellationToken cancellationToken) =>
+    internal Task<bool> TickAsync(CancellationToken cancellationToken) =>
         Claims.ProcessBatchAsync(RevokeAsync, LogFailure, cancellationToken);
 
     // Corre ya reclamado y en su propio scope (ClaimedOutboxConsumer). La hora es la del IClock

@@ -98,11 +98,14 @@ internal sealed partial class ValkeyGateway(
             return false;
         }
 
-        var subscriber = multiplexer.GetSubscriber();
+        // GetSubscriber dentro del try: con un multiplexer que se está disponiendo lanza, y esa excepción no puede subir hasta el
+        // BackgroundService del worker (lo detendría y, con el comportamiento por defecto, tumbaría el host).
+        ISubscriber? subscriber = null;
         Action<RedisChannel, RedisValue> onMessage = (_, _) => handler();
         Task? pending = null;
         try
         {
+            subscriber = multiplexer.GetSubscriber();
             pending = subscriber.SubscribeAsync(channel, onMessage);
             await pending
                 .WaitAsync(TimeSpan.FromMilliseconds(options.Value.OperationTimeoutMs), cancellationToken)
@@ -124,11 +127,11 @@ internal sealed partial class ValkeyGateway(
         }
     }
 
-    private static void Unsubscribe(ISubscriber subscriber, RedisChannel channel, Action<RedisChannel, RedisValue> handler)
+    private static void Unsubscribe(ISubscriber? subscriber, RedisChannel channel, Action<RedisChannel, RedisValue> handler)
     {
         try
         {
-            subscriber.Unsubscribe(channel, handler, CommandFlags.FireAndForget);
+            subscriber?.Unsubscribe(channel, handler, CommandFlags.FireAndForget);
         }
         catch (Exception)
         {

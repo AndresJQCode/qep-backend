@@ -429,6 +429,26 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Single(world.Database.Orders);
     }
 
+    // Review de bloque B (spec 2026-11-13, D-7): la pasada que se cortó en el tope de lotes llenos avisa que quedan más, y el bucle repite
+    // sin esperar la red de seguridad; la que vació la cola, no.
+    [Fact]
+    public async Task ADrainStoppedAtTheCapReportsMoreAndOneThatEmptiedTheQueueDoesNot()
+    {
+        var world = new World();
+        var queue = new FakeDeliveryQueue();
+        var total = (ShopifyWebhookDeliveryWorker.MaxFullBatchesPerTick * ShopifyWebhookDeliveryWorker.BatchSize) + 1;
+        for (var id = 1L; id <= total; id++)
+        {
+            queue.Enqueue(new ShopifyWebhookDelivery(id, "orders/create", Shop, RestFixture("taxes-included")));
+        }
+
+        var worker = world.Worker(queue);
+
+        Assert.True(await worker.DrainAsync(Ct));
+        Assert.False(await worker.DrainAsync(Ct));
+        Assert.Empty(queue.Pending);
+    }
+
     [Fact]
     public async Task WorkerUnknownShopClosesTheDeliveryWithItsReason()
     {

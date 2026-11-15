@@ -29,7 +29,7 @@ internal sealed partial class CitySynonymEventsWorker(IQueueDoorbell doorbell, C
             {
                 try
                 {
-                    await processor.ProcessBatchAsync(stoppingToken);
+                    return await processor.ProcessBatchAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {

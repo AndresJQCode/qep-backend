@@ -26,7 +26,7 @@ internal sealed partial class CoexistenceEventsWorker(IQueueDoorbell doorbell, C
             {
                 try
                 {
-                    await DrainAsync(stoppingToken);
+                    return await DrainAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -43,5 +43,5 @@ internal sealed partial class CoexistenceEventsWorker(IQueueDoorbell doorbell, C
     }
 
     /// <summary>Una pasada: internal para las pruebas.</summary>
-    internal Task DrainAsync(CancellationToken cancellationToken) => processor.ProcessBatchAsync(cancellationToken);
+    internal Task<bool> DrainAsync(CancellationToken cancellationToken) => processor.ProcessBatchAsync(cancellationToken);
 }

@@ -41,7 +41,7 @@ internal sealed partial class AuditProjectionWorker(
             {
                 try
                 {
-                    await ProcessBatchAsync(stoppingToken);
+                    return await ProcessBatchAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -57,7 +57,7 @@ internal sealed partial class AuditProjectionWorker(
             stoppingToken);
     }
 
-    private async Task ProcessBatchAsync(CancellationToken cancellationToken)
+    private async Task<bool> ProcessBatchAsync(CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
@@ -75,6 +75,8 @@ internal sealed partial class AuditProjectionWorker(
         {
             await ProjectAsync(dbContext, clock, record, cancellationToken);
         }
+
+        return pending.Count == BatchSize;
     }
 
     private static async Task ProjectAsync(

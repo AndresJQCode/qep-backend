@@ -80,7 +80,7 @@ internal sealed partial class WebhookDeliveryWorker(
             {
                 try
                 {
-                    await DrainAsync(stoppingToken);
+                    return await DrainAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -103,15 +103,18 @@ internal sealed partial class WebhookDeliveryWorker(
     /// <summary>Una pasada: internal para las pruebas (P10). Mientras el lote vuelve lleno hay más esperando, y
     /// se sigue en el acto: con un lote por tick, una ráfaga de 1000 entregas iría a ≈ 16 por segundo.
     /// Lo reclamado y no procesado queda con su lease vivo y no vuelve a salir en la misma pasada.</summary>
-    internal async Task DrainAsync(CancellationToken cancellationToken)
+    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
         for (var batch = 0; batch < MaxFullBatchesPerTick; batch++)
         {
             if (await DrainBatchAsync(cancellationToken) < BatchSize)
             {
-                return;
+                return false;
             }
         }
+
+        // Spec 2026-11-13, D-7: se cortó en el tope con lotes llenos; quedan más y el bucle repite sin esperar.
+        return true;
     }
 
     /// <summary>Un lote: devuelve cuántas entregas trajo, para saber si quedan más.</summary>
