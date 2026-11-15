@@ -27,6 +27,9 @@ public static class OrderBuyerAccountRules
     public const string AuditAction = "quotation.order.buyer_account_changed";
 }
 
+/// <summary>Una cuenta de comprador como la nombra el historial del pedido: <see cref="Email"/> <c>null</c> si ya no existe.</summary>
+public sealed record OrderBuyerAccountSnapshot(Guid Id, string? Email);
+
 public sealed class SetOrderBuyerAccountValidator : AbstractValidator<SetOrderBuyerAccountCommand>
 {
     public SetOrderBuyerAccountValidator() =>
@@ -50,7 +53,7 @@ public sealed class SetOrderBuyerAccountHandler(
 {
     public async Task<OrderDetailDto> HandleAsync(SetOrderBuyerAccountCommand command, CancellationToken cancellationToken)
     {
-        var (order, _) = await OrderStateAction.LoadAsync(
+        var (order, actor) = await OrderStateAction.LoadAsync(
             orderRepository, membershipDirectory, executionContext, command.TenantId, command.OrderId,
             OrdersPermissions.OrderManage, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
@@ -63,8 +66,8 @@ public sealed class SetOrderBuyerAccountHandler(
                 OrderBuyerAccountRules.NotFound, "There is no verified buyer account with that email.");
 
         return await OrderBuyerAccountChange.ApplyAsync(
-            order, account.Id, command.TenantId, orderRepository, quotationRepository, unitOfWork, auditPublisher,
-            executionContext, clock.UtcNow, cancellationToken);
+            order, new OrderBuyerAccountSnapshot(account.Id, account.Email), actor, command.TenantId, orderRepository,
+            quotationRepository, unitOfWork, auditPublisher, buyerAccounts, executionContext, clock.UtcNow, cancellationToken);
     }
 }
 
@@ -73,6 +76,7 @@ public sealed class RemoveOrderBuyerAccountHandler(
     IQuotationRepository quotationRepository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
+    IQuotationBuyerAccountLookup buyerAccounts,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -80,18 +84,19 @@ public sealed class RemoveOrderBuyerAccountHandler(
 {
     public async Task<OrderDetailDto> HandleAsync(RemoveOrderBuyerAccountCommand command, CancellationToken cancellationToken)
     {
-        var (order, _) = await OrderStateAction.LoadAsync(
+        var (order, actor) = await OrderStateAction.LoadAsync(
             orderRepository, membershipDirectory, executionContext, command.TenantId, command.OrderId,
             OrdersPermissions.OrderManage, cancellationToken);
         OrderBuyerAccountChange.EnsureVersion(order, command.ExpectedVersion);
 
         return await OrderBuyerAccountChange.ApplyAsync(
-            order, null, command.TenantId, orderRepository, quotationRepository, unitOfWork, auditPublisher,
-            executionContext, clock.UtcNow, cancellationToken);
+            order, null, actor, command.TenantId, orderRepository, quotationRepository, unitOfWork, auditPublisher,
+            buyerAccounts, executionContext, clock.UtcNow, cancellationToken);
     }
 }
 
-/// <summary>Lo que comparten cambiar y quitar la cuenta: el <c>If-Match</c>, el origen y el cambio con su auditoría.</summary>
+/// <summary>Lo que comparten cambiar y quitar la cuenta: el <c>If-Match</c>, el origen y el cambio con su historial y su
+/// auditoría.</summary>
 internal static class OrderBuyerAccountChange
 {
     public static void EnsureVersion(Order order, long expectedVersion)
@@ -114,25 +119,33 @@ internal static class OrderBuyerAccountChange
     }
 
     /// <summary>Aplica la decisión del asesor. Si no cambia nada (misma cuenta y la marca ya puesta) responde el pedido
-    /// como está, sin auditar ni guardar. La auditoría lleva sólo los dos ids, nunca correos.</summary>
+    /// como está, sin historial, sin auditar y sin guardar. El historial nombra los correos, con el asesor como autor; la
+    /// auditoría lleva sólo los dos ids, nunca correos. Los dos van en el mismo guardado que el pedido.</summary>
     public static async Task<OrderDetailDto> ApplyAsync(
         Order order,
-        Guid? buyerAccountId,
+        OrderBuyerAccountSnapshot? target,
+        MemberId actor,
         Guid tenantId,
         IOrderRepository orderRepository,
         IQuotationRepository quotationRepository,
         IQuotationsUnitOfWork unitOfWork,
         IQuotationAuditPublisher auditPublisher,
+        IQuotationBuyerAccountLookup buyerAccounts,
         IExecutionContext executionContext,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         var previous = order.BuyerAccountId;
+        var buyerAccountId = target?.Id;
         if (order.SetBuyerAccountByMember(buyerAccountId, now))
         {
             // Un enlace automático pudo confirmar después de la carga sin subir la versión: la decisión del asesor se escribe
             // siempre, aunque EF vea el mismo valor que leyó.
             orderRepository.ForceBuyerAccountWrite(order);
+            var previousAccount = await SnapshotOfAsync(previous, target, buyerAccounts, cancellationToken);
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.BuyerAccountChanged, actor,
+                OrderChangeSummary.BuyerAccountChanged(previousAccount, target), now));
             auditPublisher.PublishWithDetails(
                 tenantId,
                 executionContext.SubjectId,
@@ -149,5 +162,26 @@ internal static class OrderBuyerAccountChange
         }
 
         return await OrderDetails.LoadAsync(orderRepository, quotationRepository, tenantId, order, cancellationToken);
+    }
+
+    // La cuenta anterior con su correo de hoy: la misma que la nueva no se vuelve a buscar, y una borrada sale sin correo.
+    private static async Task<OrderBuyerAccountSnapshot?> SnapshotOfAsync(
+        Guid? previous,
+        OrderBuyerAccountSnapshot? target,
+        IQuotationBuyerAccountLookup buyerAccounts,
+        CancellationToken cancellationToken)
+    {
+        if (previous is not { } previousId)
+        {
+            return null;
+        }
+
+        if (target is not null && target.Id == previousId)
+        {
+            return target;
+        }
+
+        var account = await buyerAccounts.FindAsync(previousId, cancellationToken);
+        return new OrderBuyerAccountSnapshot(previousId, account?.Email);
     }
 }

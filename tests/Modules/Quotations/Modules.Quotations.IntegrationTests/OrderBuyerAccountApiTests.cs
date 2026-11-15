@@ -78,6 +78,31 @@ public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) :
         var audit = Assert.Single(await ChangedAuditsAsync(factory, orderId));
         Assert.Equal((null, accountId), DetailsOf(audit));
         Assert.DoesNotContain(email, audit.PayloadJson, StringComparison.OrdinalIgnoreCase);
+        // El historial sí nombra el correo, con el asesor como autor y en el mismo guardado.
+        var entry = Assert.Single(BuyerAccountHistory(detail));
+        Assert.Equal($"Enlazó el pedido a la cuenta de comprador {email}.", entry.Details);
+        Assert.NotNull(entry.MemberId);
+    }
+
+    // Owner 2026-11-15: el historial nombra la cuenta anterior y la nueva con sus correos.
+    [Fact]
+    public async Task PutChangingTheAccountRecordsBothEmailsInTheHistory()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var connectionString = sharedHost.Database.GetConnectionString();
+        var previousEmail = UniqueEmail();
+        var previousId = await SeedBuyerAccountAsync(connectionString, previousEmail, verified: true);
+        var email = UniqueEmail();
+        await SeedBuyerAccountAsync(connectionString, email, verified: true);
+        var (tenantId, _, client, orderId) = await StoreOrderAsync(factory, previousId);
+        using var _ = client;
+        var before = await GetDetailAsync(client, tenantId, orderId);
+
+        var detail = await ReadDetailAsync(await PutAsync(client, tenantId, orderId, before.Order.Version, email));
+
+        var entry = Assert.Single(BuyerAccountHistory(detail));
+        Assert.Equal($"Cambió la cuenta de comprador de {previousEmail} a {email}.", entry.Details);
+        Assert.NotNull(entry.MemberId);
     }
 
     [Theory]
@@ -104,6 +129,7 @@ public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) :
         Assert.Equal(before.Order.Version, (await GetDetailAsync(client, tenantId, orderId)).Order.Version);
         Assert.False(await StoredSetByMemberAsync(connectionString, orderId));
         Assert.Empty(await ChangedAuditsAsync(factory, orderId));
+        Assert.Empty(BuyerAccountHistory(await GetDetailAsync(client, tenantId, orderId)));
     }
 
     [Fact]
@@ -120,8 +146,10 @@ public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) :
         var second = await PutAsync(client, tenantId, orderId, first.Order.Version, email);
 
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
-        Assert.Equal(first.Order.Version, (await ReadDetailAsync(second)).Order.Version);
+        var secondDetail = await ReadDetailAsync(second);
+        Assert.Equal(first.Order.Version, secondDetail.Order.Version);
         Assert.Single(await ChangedAuditsAsync(factory, orderId));
+        Assert.Single(BuyerAccountHistory(secondDetail));
     }
 
     [Fact]
@@ -129,7 +157,8 @@ public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) :
     {
         var factory = await sharedHost.StartTestAsync();
         var connectionString = sharedHost.Database.GetConnectionString();
-        var accountId = await SeedBuyerAccountAsync(connectionString, UniqueEmail(), verified: true);
+        var email = UniqueEmail();
+        var accountId = await SeedBuyerAccountAsync(connectionString, email, verified: true);
         var (tenantId, _, client, orderId) = await StoreOrderAsync(factory, accountId);
         using var _ = client;
         var before = await GetDetailAsync(client, tenantId, orderId);
@@ -139,6 +168,9 @@ public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) :
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var detail = await ReadDetailAsync(response);
         Assert.Null(detail.BuyerAccount);
+        var entry = Assert.Single(BuyerAccountHistory(detail));
+        Assert.Equal($"Quitó la cuenta de comprador {email}: el pedido ya no se enlazará solo.", entry.Details);
+        Assert.NotNull(entry.MemberId);
         Assert.Equal(before.Order.Version + 1, detail.Order.Version);
         Assert.Null(await StoredBuyerAccountAsync(connectionString, orderId));
         Assert.True(await StoredSetByMemberAsync(connectionString, orderId));
@@ -159,10 +191,14 @@ public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) :
         var response = await DeleteAsync(client, tenantId, orderId, before.Order.Version);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(before.Order.Version + 1, (await ReadDetailAsync(response)).Order.Version);
+        var detail = await ReadDetailAsync(response);
+        Assert.Equal(before.Order.Version + 1, detail.Order.Version);
         Assert.True(await StoredSetByMemberAsync(connectionString, orderId));
         var audit = Assert.Single(await ChangedAuditsAsync(factory, orderId));
         Assert.Equal((null, null), DetailsOf(audit));
+        Assert.Equal(
+            "Quitó la cuenta de comprador: el pedido no tenía y ya no se enlazará solo.",
+            Assert.Single(BuyerAccountHistory(detail)).Details);
     }
 
     [Fact]
@@ -283,6 +319,9 @@ public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) :
         Assert.Null(await StoredBuyerAccountAsync(connectionString, orderId));
         Assert.True(await StoredSetByMemberAsync(connectionString, orderId));
     }
+
+    private static List<OrderHistoryEntryResponse> BuyerAccountHistory(OrderDetailResponse detail) =>
+        detail.History.Where(entry => entry.EventType == nameof(OrderHistoryEventType.BuyerAccountChanged)).ToList();
 
     private static string UniqueEmail() => $"buyer-{Guid.CreateVersion7():N}@example.com";
 

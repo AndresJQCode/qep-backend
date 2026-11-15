@@ -72,4 +72,31 @@ public sealed class OrderChangeSummaryTests
         Assert.Equal(
             "Se quitó la ReteICA al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.",
             OrderChangeSummary.WithholdingRemovedNotAgent("ReteICA"));
+
+    // Spec 2026-11-15 §4 (owner 2026-11-15): la decisión del asesor sobre la cuenta de comprador, con los correos.
+    [Fact]
+    public void TheBuyerAccountChangeNamesBothEmails()
+    {
+        var ana = new OrderBuyerAccountSnapshot(Guid.CreateVersion7(), "ana@correo.com");
+        var luis = new OrderBuyerAccountSnapshot(Guid.CreateVersion7(), "luis@correo.com");
+        var deleted = new OrderBuyerAccountSnapshot(Guid.CreateVersion7(), null);
+
+        Assert.Equal(
+            "Enlazó el pedido a la cuenta de comprador ana@correo.com.", OrderChangeSummary.BuyerAccountChanged(null, ana));
+        Assert.Equal(
+            "Cambió la cuenta de comprador de ana@correo.com a luis@correo.com.",
+            OrderChangeSummary.BuyerAccountChanged(ana, luis));
+        Assert.Equal(
+            "Confirmó la cuenta de comprador ana@correo.com: el pedido ya no se enlazará solo a otra.",
+            OrderChangeSummary.BuyerAccountChanged(ana, ana));
+        Assert.Equal(
+            "Quitó la cuenta de comprador ana@correo.com: el pedido ya no se enlazará solo.",
+            OrderChangeSummary.BuyerAccountChanged(ana, null));
+        Assert.Equal(
+            "Quitó la cuenta de comprador: el pedido no tenía y ya no se enlazará solo.",
+            OrderChangeSummary.BuyerAccountChanged(null, null));
+        Assert.Equal(
+            "Cambió la cuenta de comprador de una cuenta ya eliminada a luis@correo.com.",
+            OrderChangeSummary.BuyerAccountChanged(deleted, luis));
+    }
 }
