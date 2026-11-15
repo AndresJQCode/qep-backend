@@ -11,9 +11,13 @@ namespace Modules.Support.Application;
 /// anota en un segundo guardado que toca sólo <c>ticket_access</c>, nunca el ticket ni su versión (el 201 sigue valiendo para el
 /// siguiente <c>If-Match</c>). Si el envío lanza o la anotación falla, se loguea sin el PIN, el radicado ni el destinatario y la respuesta
 /// sigue: lo único que se pierde es lo que la consola ve en <c>ConsultAccess</c>.
+/// <para>Revisión final, I2: mientras el formulario público del tenant no esté publicado no sale nada —el enlace de consulta respondería
+/// 404 y el PIN no abriría nada— y queda anotado <see cref="SupportChannelReasons.FormUnpublished"/>. El PIN igual se emitió (sólo su
+/// hash): publicado el formulario, «Reenviar PIN» manda uno nuevo.</para>
 /// </summary>
 public sealed partial class SupportOpeningDelivery(
     SupportOpeningSender sender,
+    ISupportFormRepository forms,
     ISupportUnitOfWork unitOfWork,
     ILogger<SupportOpeningDelivery> logger)
 {
@@ -62,14 +66,22 @@ public sealed partial class SupportOpeningDelivery(
             ?? throw new InvalidOperationException($"Tenant '{tenantId}' has no slug.");
     }
 
-    /// <summary><see cref="SupportOpeningSender.SendAsync"/> sin excepciones: una que lance (el canal, la base de Mensajería) es
-    /// <c>send_failed</c> por el canal del ticket. Lo usan la apertura y «Reenviar PIN», que responden igual pase lo que pase.</summary>
+    /// <summary><see cref="SupportOpeningSender.SendAsync"/> sin excepciones: una que lance (el canal, la base de Mensajería, la lectura
+    /// del formulario) es <c>send_failed</c> por el canal del ticket. Lo usan la apertura y «Reenviar PIN», que responden igual pase lo
+    /// que pase. Con el formulario sin publicar no manda nada (<see cref="SupportChannelReasons.FormUnpublished"/>); el reenvío ya lo
+    /// filtra <c>SupportPublicResolver</c>, así que ahí sólo cubre una despublicación en medio del request.</summary>
     public async Task<SupportOpeningOutcome> SendAsync(
         SupportTicket ticket, string pin, DateTimeOffset issuedAt, string consultUrl, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ticket);
         try
         {
+            if (await forms.CurrentAsync(ticket.TenantId, cancellationToken) is not { IsPublished: true })
+            {
+                return new SupportOpeningOutcome(
+                    SupportOpeningSender.ChannelOf(ticket), SupportChannelReasons.FormUnpublished, false);
+            }
+
             return await sender.SendAsync(ticket, pin, issuedAt, consultUrl, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

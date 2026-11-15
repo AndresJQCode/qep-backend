@@ -44,6 +44,8 @@ public sealed class SupportChannelReasonsTests
     {
         Assert.Contains(SupportChannelReasons.NoAuthor, SupportChannelReasons.All);
         Assert.Equal("no_author", SupportChannelReasons.NoAuthor);
+        Assert.Contains(SupportChannelReasons.FormUnpublished, SupportChannelReasons.All);
+        Assert.Equal("form_unpublished", SupportChannelReasons.FormUnpublished);
     }
 
     [Fact]
