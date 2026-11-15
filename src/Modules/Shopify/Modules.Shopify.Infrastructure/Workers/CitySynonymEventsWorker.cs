@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Modules.Shopify.Infrastructure.Messaging;
@@ -8,7 +9,7 @@ namespace Modules.Shopify.Infrastructure.Workers;
 // sondeo es costo en reposo contra una base compartida, pero acá lo espera una persona: la consola del operador pide el primer
 // avance de un sinónimo nuevo cada 60 s, y después de sembrar todavía corre el worker que corrige. No subir de ~15 s sin mirar ese
 // presupuesto. Sólo el apagado del host lo detiene; un tick fallido se registra y el siguiente reintenta.
-internal sealed partial class CitySynonymEventsWorker(CitySynonymEventsProcessor processor, ILogger<CitySynonymEventsWorker> logger) : BackgroundService
+internal sealed partial class CitySynonymEventsWorker(IQueueDoorbell doorbell, CitySynonymEventsProcessor processor, ILogger<CitySynonymEventsWorker> logger) : BackgroundService
 {
     internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
 
@@ -17,22 +18,30 @@ internal sealed partial class CitySynonymEventsWorker(CitySynonymEventsProcessor
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(PollInterval);
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Outbox);
+        await DoorbellPolling.RunAsync(
+            listener,
+            PollInterval,
+            DoorbellQueues.SafetyNet(DoorbellQueues.Outbox),
+            async _ =>
             {
-                await processor.ProcessBatchAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    return await processor.ProcessBatchAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 }

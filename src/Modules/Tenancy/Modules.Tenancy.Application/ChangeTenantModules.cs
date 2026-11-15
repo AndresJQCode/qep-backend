@@ -50,7 +50,8 @@ public sealed class ChangeTenantModulesHandler(
     IOperatorTenant operatorTenant,
     IOperatorTenantReader reader,
     IClock clock,
-    IValidator<ChangeTenantModulesCommand> validator)
+    IValidator<ChangeTenantModulesCommand> validator,
+    ITenantAccessVersion tenantAccessVersion)
     : ICommandHandler<ChangeTenantModulesCommand, OperatorTenantDetailDto>
 {
     public async Task<OperatorTenantDetailDto> HandleAsync(ChangeTenantModulesCommand command, CancellationToken cancellationToken)
@@ -115,9 +116,14 @@ public sealed class ChangeTenantModulesHandler(
                     .ToArray(),
                 now);
 
+            // Spec 2026-11-13, D-5: el enmascarado por módulos cambia; la caché de permisos del destino se invalida antes del
+            // commit y otra vez después.
+            await tenantAccessVersion.BumpAsync(command.TargetTenantId.Value, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await scope.CommitAsync(cancellationToken);
         }
+
+        await tenantAccessVersion.BumpAsync(command.TargetTenantId.Value, cancellationToken);
 
         // Después del commit: el detalle actualizado es la respuesta (la SPA reemplaza su caché con él).
         return await OperatorTenantDetails.LoadAsync(reader, operatorTenant, command.TargetTenantId, cancellationToken);

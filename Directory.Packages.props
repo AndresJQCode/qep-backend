@@ -46,6 +46,8 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.16.0" />
+    <!-- Cliente de Valkey (spec 2026-11-13, D-1). Sólo Bootstrapper lo referencia: EphemeralStoreLayerTests lo amarra. -->
+    <PackageVersion Include="StackExchange.Redis" Version="2.13.23" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />

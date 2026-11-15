@@ -36,7 +36,8 @@ public sealed class MessagingLayerTests
         Assert.DoesNotContain(ReferenceNamesOf(Application), name =>
             name is not null &&
             (name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal) ||
-             name.StartsWith("Npgsql", StringComparison.Ordinal)));
+             name.StartsWith("Npgsql", StringComparison.Ordinal) ||
+             name.StartsWith("StackExchange.Redis", StringComparison.Ordinal)));
 
     // Spec §6.4: Tenancy (ITenantModules, TenantModuleGuard, IExecutionContext) y Audit (AuditActorType).
     [Fact]

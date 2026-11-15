@@ -26,6 +26,7 @@ internal sealed partial class ApiKeyAuthenticationHandler(
     UrlEncoder encoder,
     IApiKeyVerifier verifier,
     IApiKeyRepository keys,
+    IApiKeyTouchGate touchGate,
     IClock clock)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder)
 {
@@ -65,10 +66,14 @@ internal sealed partial class ApiKeyAuthenticationHandler(
 
         note?.Identify(key.Id, key.Name, key.TenantId);
 
-        // Un contador no puede tumbar un envío (spec §6.2): si falla se loguea y se sigue.
+        // Un contador no puede tumbar un envío (spec §6.2): si falla se loguea y se sigue. La compuerta (spec 2026-11-13, D-8) deja ir
+        // a Postgres a un solo request por minuto y clave; apagada o con Valkey caído, a todos, como antes.
         try
         {
-            await keys.TouchLastUsedAsync(new ApiKeyId(key.Id), clock.UtcNow, Context.RequestAborted);
+            if (await touchGate.ShouldTouchAsync(key.Id, Context.RequestAborted))
+            {
+                await keys.TouchLastUsedAsync(new ApiKeyId(key.Id), clock.UtcNow, Context.RequestAborted);
+            }
         }
 #pragma warning disable CA1031 // Cualquier falla del contador se absorbe a propósito.
         catch (Exception exception)

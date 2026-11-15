@@ -2,6 +2,7 @@ using Bootstrapper.Authentication;
 using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
 using Bootstrapper.Seeding;
+using Bootstrapper.Valkey;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
@@ -96,7 +97,11 @@ public static class QepServiceCollectionExtensions
             .Bind(configuration.GetSection(ApiAccessOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<ApiAccessOptions>, ApiAccessOptionsValidator>();
+        // Sus particiones salen de SharedRateLimitPartitions, que registra AddQepValkey: en memoria o en Valkey según
+        // Valkey:Areas:RateLimiting (spec 2026-11-13, D-3).
         services.AddSingleton<ApiKeyRateLimiter>();
+        // Valkey (spec 2026-11-13, D-1): cliente, opciones, métricas, gateway, presencia y fábrica de limitadores.
+        services.AddQepValkey(configuration);
         services.AddScoped<IRequestDispatcher, RequestDispatcher>();
         services.AddScoped<
             IQueryHandler<GetTenantSettingsQuery, TenantSettingsDto>,
@@ -1254,9 +1259,8 @@ public static class QepServiceCollectionExtensions
         // clientes y almacenamiento entran por adaptadores que se registran más abajo.
         services.AddMessagingInfrastructure(configuration);
 
-        // Presencia de la bandeja: quién tiene una conexión abierta. Es por proceso, en memoria, y sólo vale con `replicas: 1`;
-        // con más réplicas cada una vería sólo a sus conectados.
-        services.AddSingleton<IMessagingPresence, MessagingPresence>();
+        // La presencia de la bandeja (IMessagingPresence, IMessagingPresenceReader) la registra AddQepValkey: con
+        // Valkey:Areas:Presence es compartida entre pods, y apagada es el registro local de siempre.
 
         // Pipeline (spec 2026-10-13): el embudo de ventas. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones,
         // clientes y nombres de miembros entran por adaptadores que se registran más abajo.
@@ -1786,6 +1790,8 @@ public static class QepServiceCollectionExtensions
         services.AddQepObservability(configuration, environment, deployment.BuildNumber);
         AddAuthentication(services, configuration, environment);
         AddAuthorization(services);
+        // Último a propósito (spec 2026-11-13, D-7): agrega el interceptor de timbres a cada DbContext ya registrado.
+        Valkey.QueueDoorbellRegistration.AddQueueDoorbellInterceptor(services);
         return services;
     }
 
@@ -1806,9 +1812,8 @@ public static class QepServiceCollectionExtensions
         // por request sea correcto — el scope dura lo que el request.
         services.AddScoped<ITenantRoleCatalog, TenantRoleCatalog>();
         services.AddAuthorizationInfrastructure(configuration);
-        services.AddScoped<
-            Modules.Authorization.Application.IAuthorizationService,
-            AuthorizationService>();
+        // IAuthorizationService lo registra AddQepValkey (spec 2026-11-13, D-5): AuthorizationService tal cual con
+        // Valkey:Areas:Permissions apagado, o decorado por la caché de permisos con el área prendida.
         services.AddScoped<IRolePermissionChecker, RolePermissionChecker>();
         services.AddScoped<IRoleReferenceValidator, RoleReferenceValidator>();
         // Las claves de rol van en inglés y sin prefijo de módulo: a diferencia de un permiso,

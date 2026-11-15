@@ -6,3 +6,5 @@ metadata:
     app.kubernetes.io/name: qep-backend
     app.kubernetes.io/part-of: qep
     app.kubernetes.io/environment: prod
+    # La NetworkPolicy de Valkey sólo admite namespaces con esta etiqueta: sin ella, la conexión da timeout (DP-V4).
+    valkey.platform/access: "true"

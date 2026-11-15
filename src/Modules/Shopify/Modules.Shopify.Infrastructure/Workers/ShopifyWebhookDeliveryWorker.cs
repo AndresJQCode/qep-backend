@@ -15,6 +15,7 @@ namespace Modules.Shopify.Infrastructure.Workers;
 /// crece por intento; a los <see cref="MaxAttempts"/> se cierra con <c>last_error</c>.
 /// </summary>
 internal sealed partial class ShopifyWebhookDeliveryWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     IOptions<ShopifyWebhookOptions> options,
     ILogger<ShopifyWebhookDeliveryWorker> logger) : BackgroundService
@@ -49,35 +50,46 @@ internal sealed partial class ShopifyWebhookDeliveryWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, options.Value.DeliveryPollSeconds)));
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.ShopifyWebhook);
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromSeconds(Math.Max(1, options.Value.DeliveryPollSeconds)),
+            DoorbellQueues.SafetyNet(DoorbellQueues.ShopifyWebhook),
+            async _ =>
             {
-                await DrainAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    return await DrainAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 
     /// <summary>Una pasada (internal para las pruebas): mientras el lote vuelve lleno, sigue en el acto.</summary>
-    internal async Task DrainAsync(CancellationToken cancellationToken)
+    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
         for (var batch = 0; batch < MaxFullBatchesPerTick; batch++)
         {
             if (await DrainBatchAsync(cancellationToken) < BatchSize)
             {
-                return;
+                return false;
             }
         }
+
+        // Spec 2026-11-13, D-7: se cortó en el tope con lotes llenos; quedan más y el bucle repite sin esperar.
+        return true;
     }
 
     private async Task<int> DrainBatchAsync(CancellationToken cancellationToken)

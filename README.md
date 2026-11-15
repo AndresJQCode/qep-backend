@@ -46,6 +46,10 @@ dotnet restore --locked-mode
 # Requerido una sola vez: la cadena de conexión no vive en appsettings.json.
 dotnet user-secrets set "ConnectionStrings:QepDatabase" "Host=localhost;Port=5432;Database=qep;Username=qep;Password=qep_dev" --project src/Api
 
+# Valkey (estado compartido entre pods). Con Valkey:Enabled = false, el default, no conecta nada; si ya tienes
+# otro Valkey en 6379, no levantes el servicio valkey de compose.yaml.
+dotnet user-secrets set "ConnectionStrings:Valkey" "localhost:6379" --project src/Api
+
 dotnet run --project src/Api --launch-profile http
 ```
 
@@ -97,7 +101,7 @@ corren con `ValidateOnStart` (`StorageOptionsValidator`,
 `NotificationsOptionsValidator`, `SessionOptionsValidator`,
 `AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator`,
 `PaymentProofsOptionsValidator`, `ForwardedHeadersSettingsValidator`,
-`CorsSettingsValidator`, `OperatorTenantOptionsValidator` y los dos de Integrations,
+`CorsSettingsValidator`, `OperatorTenantOptionsValidator`, `ValkeyOptionsValidator` y los dos de Integrations,
 `SecretProtectionOptionsValidator` y `ZenviaOptionsValidator`): si algo
 falta o está mal escrito, la API **no arranca**.
 
@@ -111,6 +115,9 @@ local y por variable de entorno en k8s
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                     | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase` |
+| `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                               | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente |
+| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
+| `Valkey:OperationTimeoutMs`                            | `100`                                                                                         | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
 | `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
@@ -489,7 +496,8 @@ Existe para medir en el pod real cuánto cuesta exportar un año (spec
 `docs/superpowers/specs/2026-09-13-ajustes-post-export-design.md`). No depende de `Seed:Enabled`,
 pero también exige `Seed:OwnerEmail`.
 
-- **No corre dentro del arranque.** El `startupProbe` le da al pod 60 s, y sembrar decenas de miles
+- **No corre dentro del arranque.** El `startupProbe` le da al pod 180 s (36 intentos cada 5 s), de
+  los que un segundo pod gasta una parte esperando el candado de arranque, y sembrar decenas de miles
   de filas ahí haría que Kubernetes lo matara. La siembra termina con la línea
   `Export load seed finished: …` en el log.
 - **Va con SQL masivo en una transacción.** No pasa por los handlers, así que la siembra no deja
@@ -901,7 +909,9 @@ pide `operator.usage.read` y sólo responde en el tenant operador (otro tenant r
 los tres), el `period` normalizado y una fila por tenant con sus conversaciones del periodo (`whatsApp`, `instagram`, `total`) y los
 `connected` ahora mismo. Una conversación cuenta una vez por canal si tuvo al menos un mensaje entrante en vivo (no importado) desde el inicio del
 periodo, con la semana desde el lunes y el día y el mes en hora de Bogotá; un tenant sin actividad aparece en cero y el operador no aparece.
-Los conectados salen de la presencia del hub de la bandeja, que es por proceso: sólo vale con una réplica.
+Los conectados salen de la presencia del hub de la bandeja. Con `Valkey:Areas:Presence` prendido es compartida entre
+pods (`ValkeyMessagingPresence`); apagado es por pod, y con más de una réplica el reporte ve sólo a los conectados al pod
+que lo atiende.
 
 ### Tenant operador
 
@@ -2572,6 +2582,34 @@ secuencial en `Program.cs` después de `app.Build()`; el orden importa (por
 ejemplo, Tenancy se inicializa antes que Audit porque
 `DropAuditOwnership` transfiere la propiedad de una tabla entre ambos).
 
+#### Migraciones con pods viejos y nuevos (expand/contract)
+
+Durante un rollout, el pod nuevo migra mientras los viejos siguen atendiendo con el código anterior. Con una réplica
+ya pasa (`maxSurge: 1`); con dos, son dos pods viejos contra el esquema nuevo. Por eso (spec
+`2026-10-29-replicas-multiples-design.md`, D-5):
+
+1. **Toda migración es expand/contract.** Una versión agrega —columna nullable o con default, tabla, índice— y el
+   código viejo la ignora. Quitar, renombrar o volver `NOT NULL` algo que el código viejo escribe va en **otra**
+   versión, cuando ya no queda ningún pod viejo vivo.
+2. **Una migración que rompe al código viejo se despliega con corte:** estrategia `Recreate` o el backend a cero
+   réplicas, como se hizo con las variantes ([Catálogo: opciones, variantes y galería](#catálogo-opciones-variantes-y-galería),
+   «Despliegue»). El PDB no lo impide: sólo frena desalojos, no un `scale` ni un `Recreate`.
+3. **El handoff de cada spec dice si su migración es aditiva.** Si no lo dice, asume que no.
+
+**El candado de arranque.** Las 26 inicializaciones (migraciones de cada módulo y siembras) y `RunQepSeedAsync` corren
+dentro de `RunUnderStartupLockAsync` (`src/Api/Program.cs`, `src/Bootstrapper/Startup/StartupLock.cs`): una
+transacción sobre una conexión propia, directa a Postgres y sin pool, que toma `pg_advisory_xact_lock(20261113, 1)`.
+Así dos pods nunca migran ni siembran a la vez; el segundo espera al primero, y cuando le toca, las migraciones ya
+están aplicadas y no hace nada. El candado es un semáforo, no una unidad de trabajo: las migraciones siguen en sus
+propias conexiones del pool. La conexión se resuelve como la del listener de Mensajería —`QepDatabaseListener` si está,
+no está vacía y no es un `#{…}#` sin resolver; si no, `QepDatabase`—: va directo por preferencia; si cae a
+`QepDatabase` sigue serializando, porque el candado es de transacción y PgBouncer en modo `transaction` sostiene el
+mismo backend mientras la transacción está abierta. Lo que se degrada es el costo: ocupa un backend del pooler durante
+todo el bloque y queda sujeto a los timeouts del pooler, que pueden cortar la conexión a mitad del bloque. Los logs dicen cuánto esperó el pod (`EventId` 4108, con el **nombre** de la clave de
+conexión, nunca su valor) y cuánto tardó el bloque (4109). Un 4110 (`Warning`) avisa que la conexión del candado se
+perdió antes de soltarlo: si pasó a mitad del bloque, otro pod pudo empezar a migrar a la vez, y conviene revisar
+el log de los dos. Una inicialización nueva va **dentro** del lambda de `RunUnderStartupLockAsync`, nunca después.
+
 ### Observabilidad
 
 OpenTelemetry (único estándar, sin SDKs propietarios) para trazas y métricas,
@@ -2655,10 +2693,96 @@ historial y los abandonados. `campaign` no tiene columna de edad, así que sólo
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
 
+El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Platform`. Valkey **no** entra a
+`/health/ready`: si se cae, cada área vuelve a su respaldo local y la caída se ve acá, no sacando pods del Service.
+
+| Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
+| ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
+| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area}` | `area`   | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch` |
+
+La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
+
+**Limitadores compartidos (D-3, `Valkey:Areas:RateLimiting`).** Las siete políticas de ventana fija de `Program.cs` y el
+límite por clave de la API externa pasan por `SharedRateLimitPartitions`. Con el área prendida cuentan en Valkey, en la
+clave `qep:rl:{política}:{partición}:{inicioDeVentana}`. La ventana está alineada a la época Unix, así que todos los pods
+cortan en el mismo segundo. Si Valkey no responde, cada partición vuelve al limitador de memoria de su pod: nunca deja
+pasar sin límite. El limitador de concurrencia del webhook se queda en memoria siempre, porque protege al pod.
+
+- **Claves con IP.** En las políticas sin hash (`public`, `telemetry`, `external`, las de la tienda menos credenciales) la
+  IP del cliente va tal cual en el nombre de la clave. La clave vive como mucho la ventana más 1 s.
+- **Claves con patrón de ruta.** `credentials` y `storefront-credentials` llevan el patrón de ruta, y entran hasheadas
+  (`ShortHash`).
+- **Métricas.** Con el área prendida, la métrica `aspnetcore.rate_limiting` de requests en cola cuenta **todos** los
+  requests como encolados. El middleware los manda a `AcquireAsync`, porque el camino síncrono siempre niega: no es una
+  cola real.
+
+**Prender las áreas en producción (paso 3 del despliegue).** El orden, el criterio entre pasos y el rollback están en
+[spec de Valkey § Despliegue](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#despliegue) y
+[§ Verificación](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#verificación); acá va sólo lo que el código fijó.
+Lo hace el owner, un área por commit
+(`chore(k8s): enable valkey <area> area`, el flag en `"true"` en `k8s/prod-configMap.yaml`). Después de `Presence` y
+`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
+`Valkey__Areas__ApiKeyTouch`. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
+(`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
+
+**El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
+producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
+el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiqueta `area`). En Grafana, durante el día
+que pasa entre un área y la siguiente:
+
+```promql
+increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h])
+```
+
+tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
+secretos; nunca `get secret -o yaml` ni `-o json`):
+
+```powershell
+kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-config -o jsonpath='{.data}' | Select-String -Pattern "Valkey__"
+```
+
+| Área          | Etiqueta `area` | Contador                         | Comportamiento que se verifica                                                                          |
+| ------------- | --------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Sessions`    | `sessions`      | `increase(...[1h])` = 0          | Cierra sesión y repite un request con la cookie vieja: 401 al instante (prueba que el `DEL` corre)      |
+| `Permissions` | `permissions`   | `increase(...[1h])` = 0          | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente     |
+| `Doorbells`   | `doorbells`     | `increase(...[1h])` = 0          | La edad de la cola `automation` baja en el dashboard. Con dos pods, sólo uno publica las métricas de colas por vuelta: el que tiene `qep:leader:queue-sampler`, que también gobierna esta área (plan P14) |
+| `ApiKeyTouch` | `api_key_touch` | `increase(...[1h])` = 0          | Sin comportamiento visible: el contador es la verificación                                               |
+
+Si el contador sube sin que Valkey esté caído (`qep_valkey_connected` en 1), revisa primero la ACL del usuario `qep`:
+el gateway convierte un `NOPERM` en respaldo. `ValkeyAclCompatibilityTests` dice qué comandos usa cada área.
+
+**Flota mezclada (I-3).** Mientras un despliegue prende `Sessions` o `Permissions` (o tras un rollback seguido de volver a
+prenderlas dentro del TTL), los pods con el área apagada no invalidan: usan `NullSessionCache` y `NullTenantAccessVersion`.
+Un cierre de sesión o una suspensión que atendió un pod viejo puede seguir sirviéndose desde caché en un pod nuevo hasta
+~5 min en sesiones (un acierto exige `LastSeenAt` dentro del `TouchThreshold` de 5 min) y hasta 60 s en permisos
+(`EntryTtl`). El cambio no es instantáneo: espera a que termine el rollout y, si en esa ventana una revocación tiene que
+ser inmediata, hazla cuando el rollout ya terminó.
+
+**Antes de prender `Doorbells`** (decisiones del owner, no se resuelven en el código):
+
+- **I-1, carga de despertares.** Cada insert confirmado en el outbox despierta a todos los oyentes del outbox de cada pod
+  (13 definiciones de correo en un solo bucle más 8 consumidores: ~21 consultas de candidatos o reclamo por pod y por
+  commit). Con tráfico sostenido puede superar la carga fija de polling de hoy. Mide primero la tasa de inserts del
+  outbox o agrega un espaciado mínimo entre ticks disparados por timbre.
+- **I-2, filas que vencen por tiempo.** Las filas que se vuelven reclamables por reloj (backoff de reintento, leases
+  vencidos, filas escritas bajo la transacción de otro contexto) no timbran: esperan la red de seguridad en vez del poll
+  de hoy (`automation` 1 s → 15 s, `webhook` 3 s → 15 s, `shopify_webhook` 15 s → 30 s, `media` 5 s → 30 s, `export`
+  5 s → 30 s, `outbox` 15 s → 30 s; `DoorbellQueues.SafetyNet`). Caso concreto: con dos réplicas, un mensaje del bot
+  reprogramado +5 s porque otro pod tiene el candado de la conversación responde entre 5 y 15 s más tarde.
+- **I-4, líder del muestreador.** Sólo el pod que tiene `qep:leader:queue-sampler` publica los gauges de colas; las
+  lecturas de los demás expiran a ~60 s y el liderazgo puede alternar porque su TTL (15 s) es igual al intervalo.
+  Confirma que alertas como `QepQueueMetricsMissing` agregan entre pods (viven en el repo de plataforma) antes de
+  prender `Doorbells` con dos réplicas.
+- **Notifications.** Con `Doorbells` prendido, el drenado hasta vaciar quita el freno de hoy (~20 filas por definición
+  cada 15 s). `SendAsync` marca un envío fallido como `Failed` sin reintento, así que una caída del proveedor quema todo
+  el backlog de correos en segundos. Decide si agregas reintento o backoff antes de prender.
+
 ### Infraestructura local
 
-`compose.yaml` solo levanta PostgreSQL 18 y el `otel-collector`. No hay Redis
-ni broker de mensajería: el patrón Outbox cumple ese rol dentro del monolito.
+`compose.yaml` levanta PostgreSQL 18, Valkey (`valkey/valkey:9.1.3-alpine`, en `6379`) y el `otel-collector`. No hay
+broker de mensajería: el patrón Outbox cumple ese rol dentro del monolito. Si ya tienes otro Valkey en `6379`, no levantes
+el del compose: chocan el puerto.
 
 ### Biblioteca de archivos (Cloudflare R2)
 
@@ -3617,7 +3741,7 @@ avisa, no transporta: la autorización sigue en los `GET`.
 | Hub | `/api/v1/hubs/messaging`, política `messaging.conversation.read`; al conectar revalida módulo `messaging` y membresía activa (`MessagingHub`). |
 | Tenant | `X-Tenant-Id` o, **sólo bajo `/api/v1/hubs/`**, el query `tenantId`: el handshake WebSocket del navegador no lleva headers (`TenantRequestResolver`). |
 | Eventos | `conversationChanged { conversationId }` y `inboundMessage { conversationId, messageId }` al grupo del tenant; `notify { conversationId, reason }` al miembro asignado, o al tenant si nadie la tiene. |
-| Fanout | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Con dos réplicas no hace falta sticky session ni Redis. |
+| Fanout | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Para el reparto de eventos, con dos réplicas no hace falta sticky session ni Valkey. El handshake del hub sí lo necesitaría: `negotiate` crea la conexión en la memoria del pod que lo atiende, así que con más de una réplica el frontend tiene que saltarlo y conectar sólo por WebSocket (`skipNegotiation: true`, spec `2026-10-29-replicas-multiples-design.md`, D-1). |
 | Fallos | Un aviso que falla no reintenta la entrega ni deshace el envío: se registra y el polling relajado del frontend (60/30 s) lo recoge. |
 
 Lo que se publica: asignar, transferir, liberar, resolver, reabrir, leído, no leído, saliente consolidado
@@ -3825,7 +3949,9 @@ corto, lo cambia por el largo (60 días), lee `/me` (tiene que ser cuenta `BUSIN
 cuenta al webhook (`POST /{igUserId}/subscribed_apps`) y guarda la conexión `Active` con `igUserId`, `username`,
 `accountName` y `tokenExpiresAt`, más la ruta `(instagram, igUserId)` que usa el webhook. El `redirectUri` tiene que
 ser de un origen de `Meta:Instagram:AllowedRedirectOrigins`. Un worker diario (`Integrations:Instagram`) refresca el
-token cuando le quedan menos de 15 días; un `190` lo pasa a `NeedsAttention` (`token_expired`).
+token cuando le quedan menos de 15 días; un `190` lo pasa a `NeedsAttention` (`token_expired`). Cada conexión se refresca
+bajo un candado de base por conexión (`InstagramTokenLock`, owner 2026-11-14), así que con varias réplicas un solo pod llama
+a Meta por token; el que no lo consigue la difiere a la siguiente corrida.
 
 **Webhook.** `GET /api/webhooks/instagram` responde el `hub.challenge` con el mismo `Meta:App:WebhookVerifyToken`.
 `POST` valida `X-Hub-Signature-256` con `Meta:Instagram:AppSecret` (y acepta también `Meta:App:AppSecret`, por si Meta
@@ -5116,8 +5242,9 @@ viene por campo en `errors`.
 `idempotencyKey` repite el `502` y **no** reenvía; decidir si se manda otro exige un `idempotencyKey` nuevo, y esa decisión es del sistema externo.
 
 **Límites.** Dos, porque el rate limiter corre antes de autenticar: 600 por minuto por IP (frena a quien prueba claves inventadas,
-`ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Los dos
-viven en memoria:** hoy hay una réplica, y con más el límite efectivo se multiplica por el número de réplicas. Ambos deben ser mayores que 0: un 0 o un negativo tumba el arranque (`ValidateOnStart`), no se interpreta como «sin límite».
+`ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Con
+`Valkey:Areas:RateLimiting` prendido los dos se cuentan en Valkey** y valen para todas las réplicas. Apagado, o con Valkey caído, cada
+réplica lleva su propia cuenta en memoria y el límite efectivo se multiplica por el número de réplicas. Ambos deben ser mayores que 0: un 0 o un negativo tumba el arranque (`ValidateOnStart`), no se interpreta como «sin límite».
 
 **Autoría.** El mensaje queda firmado con la clave (`sent_by_kind = 4`, `sent_by_api_key_id`, `sent_by_api_key_name`) y el hilo lo muestra como
 `sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí

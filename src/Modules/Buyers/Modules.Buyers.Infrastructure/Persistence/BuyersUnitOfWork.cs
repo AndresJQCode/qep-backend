@@ -66,5 +66,19 @@ internal sealed class BuyersUnitOfWork(BuyersDbContext dbContext) : IBuyersUnitO
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task SaveChangesAsync(
+        Func<CancellationToken, Task> beforeSave, Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(beforeSave);
+        ArgumentNullException.ThrowIfNull(afterSave);
+
+        // Si cualquiera de los tres falla, el dispose sin Commit revierte todo y suelta los candados de beforeSave.
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await beforeSave(cancellationToken);
+        await SaveChangesAsync(cancellationToken);
+        await afterSave(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
 }

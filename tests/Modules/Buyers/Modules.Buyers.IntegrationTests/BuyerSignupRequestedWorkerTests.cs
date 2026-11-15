@@ -71,7 +71,7 @@ public sealed class BuyerSignupRequestedWorkerTests
         return id;
     }
 
-    private static Task DrainAsync(BuyersApiHarness.BuyersApi api) =>
+    private static Task<bool> DrainAsync(BuyersApiHarness.BuyersApi api) =>
         ActivatorUtilities.CreateInstance<BuyerSignupRequestedWorker>(api.Factory.Services).DrainAsync(Ct);
 
     private static Task<long> CountAsync(BuyersApiHarness.BuyersApi api, string sql, params object[] args) =>
@@ -354,5 +354,7 @@ public sealed class BuyerSignupRequestedWorkerTests
         public void Add(BuyerAccount account) => inner.Add(account);
 
         public void Remove(BuyerAccount account) => inner.Remove(account);
+
+        public Task LockAsync(Guid id, CancellationToken cancellationToken) => inner.LockAsync(id, cancellationToken);
     }
 }

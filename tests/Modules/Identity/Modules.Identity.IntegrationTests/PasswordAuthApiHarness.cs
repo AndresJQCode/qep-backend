@@ -565,7 +565,8 @@ internal static class PasswordAuthApiHarness
 internal sealed class PasswordAuthApiFactory(
     string connectionString,
     IEmailChannel? emailChannel = null,
-    bool signupEnabled = true) : WebApplicationFactory<Program>
+    bool signupEnabled = true,
+    Action<IWebHostBuilder>? configure = null) : WebApplicationFactory<Program>
 {
     public const string Audience = "test-audience";
 
@@ -606,6 +607,9 @@ internal sealed class PasswordAuthApiFactory(
                 services.AddSingleton(emailChannel);
             });
         }
+
+        // Lo propio de una prueba (Valkey, un interceptor, un reloj), después de lo común para poder pisarlo.
+        configure?.Invoke(builder);
     }
 }
 

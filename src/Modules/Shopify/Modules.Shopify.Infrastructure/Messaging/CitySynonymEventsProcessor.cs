@@ -38,7 +38,7 @@ internal sealed partial class CitySynonymEventsProcessor(IServiceScopeFactory sc
     [LoggerMessage(Level = LogLevel.Error, Message = "Shopify keeps failing to apply outbox message {MessageId} ({EventName}) on attempt {Attempt}; it is retried when its claim expires.")]
     private static partial void LogAttemptFailedRepeatedly(ILogger logger, Exception exception, Guid messageId, string eventName, int attempt);
 
-    public Task ProcessBatchAsync(CancellationToken cancellationToken) =>
+    public Task<bool> ProcessBatchAsync(CancellationToken cancellationToken) =>
         Claims.ProcessBatchAsync(ProcessAsync, LogFailure, cancellationToken);
 
     // En una transacción: el evento corrected lista las huellas bajo el candado del sinónimo, y el candado tiene que durar hasta

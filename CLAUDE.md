@@ -172,6 +172,19 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`Api.exe` corriendo bloquea todo.** `dotnet build`, `dotnet test` y los comandos `ef`
   fallan por archivo bloqueado. Detener el proceso primero. El nombre es `Api.exe` porque
   `src/Api/Api.csproj` no declara `AssemblyName`.
+- **Toda migración es expand/contract: durante el rollout, pods viejos atienden contra el esquema nuevo** (spec
+  2026-10-29, D-5). Agregar va en una versión; quitar, renombrar o volver `NOT NULL` lo que el código viejo escribe, en
+  otra. Una migración que rompe al código viejo se despliega con corte (`Recreate` o el backend a cero réplicas), y el
+  handoff del spec dice si es aditiva; si no lo dice, no lo es. Las reglas completas:
+  [README § Migraciones con pods viejos y nuevos](README.md#migraciones-con-pods-viejos-y-nuevos-expandcontract).
+- **Un hosted service o un singleton con estado nuevo se clasifica en `MultiReplicaInventory`, en el mismo commit**
+  (`tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs`, spec 2026-10-29, D-6). `MultiReplicaInventoryTests`
+  lo detecta en el contenedor real y se pone en rojo si falta, o si queda una entrada que ya no está registrada. La
+  clasificación lleva su evidencia (archivo, línea y mecanismo: `SKIP LOCKED`, lease, advisory lock, `DELETE` por corte…).
+  `Unsafe` se puede listar, pero `MoreThanOneReplicaRequiresNoUnsafeEntry` bloquea `replicas > 1` mientras quede uno.
+- **Una inicialización nueva al arrancar va dentro del lambda de `RunUnderStartupLockAsync` en `Program.cs`, nunca
+  después.** Fuera del candado de arranque (`pg_advisory_xact_lock(20261113, 1)`, `StartupLock.cs`), dos pods la corren a
+  la vez. Lo que dicen los logs 4108, 4109 y 4110 está en el mismo § del README.
 - **Las migraciones se generan con el factory de diseño, no con `--startup-project`.**
   `Api.csproj` no referencia `Microsoft.EntityFrameworkCore.Design`:
 
@@ -187,7 +200,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   allowlist en `.claude/settings.json` llevan comodín a propósito, para que no sean un cuarto
   lugar que se olvida.
 - **Cambiar `Directory.Packages.props` sin regenerar los lock files no rompe tu máquina: rompe
-  el `docker build`.** Los 74 `packages.lock.json` —uno por `.csproj`, activados por
+  el `docker build`.** Los 152 `packages.lock.json` —uno por `.csproj`, activados por
   `RestorePackagesWithLockFile` en `Directory.Build.props`— se regeneran con
   `dotnet restore --force-evaluate` y se commitean **junto** con el props. En local un `restore`
   normal los actualiza solo y no protesta; el `Dockerfile` corre `--locked-mode`, donde NuGet
@@ -449,6 +462,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **En esta máquina las pruebas de integración necesitan `$env:Seed__Enabled = "false"`.** Los user-secrets traen
   `Seed:*` y el host de pruebas falla en el arranque con `Seed:OwnerEmail is required when Seed:Enabled is true`. No es
   del código: es la configuración local del developer (2026-10-21).
+- **No pongas `ConnectionStrings:QepDatabaseListener` en tus user-secrets sin fijarla en el harness** (spec 2026-10-29,
+  D-2). Sólo `SeedStartupTests` la fija vacía; las demás factorías de integración corren en `Development` y cargan los
+  user-secrets, y el candado de arranque (`StartupLockConnectionString`) y el listener de Messaging la usan en **cada** host
+  de prueba. Con un valor inalcanzable, todo host falla al arrancar; con uno alcanzable, todos los hosts de prueba se
+  serializan en un solo advisory lock global (`pg_advisory_xact_lock(20261113, 1)`) de esa base, aunque cada uno tenga su
+  propio contenedor. Si la necesitas en local, fíjala en el harness (vacía o al contenedor de la prueba).
 - **Las pruebas de integración comparten host por clase (`Shared<Modulo>Host`), y no todas pueden** (2026-11-14; Quotations
   bajó de 63 a 16 min). Una prueba nueva usa `sharedHost.StartTestAsync()` sólo si corre con la configuración por defecto y no
   toca nada global: dobles que anotan llamadas, colas o workers que reclaman filas de toda la base, `IClock` o
@@ -843,9 +862,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `NOT imported`) desde el corte, y el canal sale de `conversations.channel`, no de la conexión. Renombrar una de esas columnas compila y deja
   `GET …/operator/usage` en 500 (`42703`); lo amarra `PlatformUsageApiTests`, que corre contra el esquema migrado. Si agregas un tipo de mensaje
   que no deba contar como actividad del cliente, tiene que quedar fuera de `direction = 1` o llevar `imported`, o infla el reporte sin error.
-- **La presencia de la bandeja es por proceso, y es condición para subir `replicas`.** `IMessagingPresence` (singleton, alimentado por
-  `MessagingHub`) vive en memoria: con más de una réplica cada una vería sólo a sus conectados y el reporte de uso mostraría a medias, sin error.
-  Antes de subir `replicas` hay que moverla a algo compartido (Redis o una tabla con latido), o retirar «Conectados» de la pantalla.
+- **La presencia de la bandeja es compartida sólo con `Valkey:Areas:Presence`, y es condición para subir `replicas`** (spec 2026-11-13, D-2).
+  `MessagingHub` escribe en `IMessagingPresence` y el reporte de uso lee por `IMessagingPresenceReader`; los registra `AddQepValkey`. Prendida,
+  cada pod escribe a sus conectados en `qep:presence:{tenantId}` (sorted set, latido de 30 s en `PresenceHeartbeatWorker`, ventana de lectura de
+  90 s, `EXPIRE 120`). Apagada, o con Valkey caído, vuelve a ser por pod: el registro local `MessagingPresence`, y con más de una réplica cada una
+  ve sólo a sus conectados, a medias y sin error (con Valkey caído queda un `Warning` por lectura y `qep_valkey_fallbacks_total{area="presence"}`).
+  Desconectar quita al miembro sólo si el pod no le tiene otra pestaña (`MessagingPresence.HasConnection`); si sigue conectado en otro pod, el
+  latido de ese pod lo vuelve a poner en ≤ 30 s. Un camino nuevo que lea la presencia pasa por el lector, no por `Snapshot()`, que es sólo local.
 - **Las reglas del perfil y de la contraseña del comprador duplican las de Store e Identity, y las amarra `BuyerParityTests`** (`tests/Bootstrapper/Bootstrapper.UnitTests`).
   Buyers no ve a Store ni a Identity, así que `BuyerPasswordRules` y `BuyerProfileValidator` son copias de `PublicOrderRequestBodyValidator`, `StoreRequestBilling`/`StoreRequestShipping`
   y de los límites de contraseña de Identity. Cambiar una sin la otra pone la prueba en rojo; el error es de paridad, no del código que acabas de tocar.
@@ -946,6 +969,45 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El cuerpo de la plantilla `SupportReply` no termina ni empieza con una variable** (Meta rechaza esos cuerpos). El texto base cierra
   con «Si tienes dudas, responde este mensaje.» y `TheBaseBodyNeitherStartsNorEndsWithAVariable` lo amarra. Un texto propio de un tenant
   (cuerpo de `POST …/template-management/support-reply`) tiene la misma restricción en Meta; la aprobación es por conexión.
+- **`ValkeyFixedWindowRateLimiter.AttemptAcquireCore` tiene que seguir negando** (spec 2026-11-13, D-3).
+  - `RateLimitingMiddleware` llama primero `AttemptAcquire` y sólo con un rechazo pasa a `AcquireAsync`. Si el camino
+    síncrono concede, por ejemplo desde el respaldo de memoria, todas las políticas salen de Valkey en silencio y vuelven
+    a contar por pod. Lo amarran `TheSynchronousAttemptDefersToTheAsyncPath` y los `*SharedAcrossTwoHosts` de
+    `ExternalApiSurfaceTests`.
+  - Bajo la ACL de producción (`-@scripting`) no hay Lua. El contador es `MULTI` + `INCR` + `EXPIRE … NX` + `EXEC`.
+  - Una política nueva de ventana fija pasa por `SharedRateLimitPartitions.FixedWindow`, no por
+    `RateLimitPartition.GetFixedWindowLimiter`. Si no, queda por pod y sin error.
+  - Una partición que lleve el patrón de ruta va con `hashPartition: true`.
+- **Todo camino nuevo que revoque o borre sesiones llama `RemoveAsync` de la caché antes y después del guardado** (spec 2026-11-13,
+  D-4). Vale para Identity (`ISessionCache`) y para el comprador (`IBuyerSessionCache`): el `DEL` de antes cubre el request que lee
+  durante la transacción, el de después al que leyó Postgres antes del commit. Si falta, con `Valkey:Areas:Sessions` prendido la sesión
+  revocada se sigue sirviendo hasta 15 min, sin error. Un fallo se loguea en `Error` con el id de la sesión, nunca con el hash. Lo
+  amarran `CachedSessionTests` (Identity) y `CachedBuyerSessionTests` (Buyers); los caminos de hoy son `SessionService`,
+  `SessionRevocationWorker`, `OrphanUserCleanupWorker`, `BuyerSessions` y `DeleteBuyerAccount`.
+- **Una `BuyerSession` que devuelve `BuyerSessions.TryResolveAsync` no se guarda.** Con la caché prendida es una entidad reconstruida
+  (`BuyerSession.Restore`) que EF no sigue: un `Revoke` o un `Touch` sobre ella y un `SaveChanges` no mandan ningún `UPDATE`, y el
+  logout queda «hecho» con la fila viva. Revocar pasa por `BuyerSessions.RevokeCurrentAsync`, que lee la fila. Lo amarra
+  `CachedBuyerSessionTests.LogoutWithACachedSessionRevokesTheRow`.
+- **Todo cambio que altere los permisos efectivos de un tenant llama `ITenantAccessVersion.BumpAsync` antes y después del guardado**
+  (spec 2026-11-13, D-5). Roles, membresías (suspender, reactivar, quitar, activar, aceptar invitación), módulos y estado del tenant ya
+  lo hacen. Si un camino nuevo no lo llama, con `Valkey:Areas:Permissions` prendido la caché sirve los permisos de antes hasta 60 s: un
+  miembro suspendido sigue entrando, sin error. Lo amarra `CachedAuthorizationTests` (Tenancy).
+- **Una tabla de cola nueva entra al mapa de `QueueDoorbellInterceptor`** (`BuildingBlocks.Infrastructure`, `Tables`), con su cola en
+  `DoorbellQueues`, y su worker espera con `doorbell.Listen(...)`. Sin eso el worker sólo se entera en la red de seguridad, no al
+  insertar, y nada falla. El `DbContext` que mapee una de esas tablas lleva el interceptor: lo amarra
+  `CompositionRootTests.EveryDbContextThatMapsADoorbellTableHasTheInterceptor`. Lo que no es un `INSERT` (iniciar o reanudar una
+  campaña es un `UPDATE`) timbra a mano después del commit (`Campaigns.cs`).
+- **Un consumidor nuevo de `platform.outbox_messages` escucha `DoorbellQueues.Outbox`**, con `DoorbellQueues.SafetyNet(DoorbellQueues.Outbox)`,
+  como `OutboxPublisherWorker` o `NotificationsDeliveryWorker`. Un timbre de `outbox` despierta a todos los oyentes del proceso; un
+  consumidor que siga con su `Task.Delay` de antes funciona, pero no se entera del timbre.
+- **Un comando nuevo contra Valkey tiene que pasar la ACL de producción** (`~qep:* &qep:* +@all -@dangerous -@scripting`, DP-V4):
+  sin Lua (`EVAL`, `SCRIPT`), sin `KEYS`, `FLUSH*`, `INFO` ni `CONFIG`, y toda clave o canal con prefijo `qep:`. El gateway traga
+  un `NOPERM` como respaldo del área, así que en producción no se ve como error: se ve como
+  `qep_valkey_fallbacks_total{area=…}` subiendo. Las primitivas de presencia y limitadores las cubre `ValkeyAclTests`; sesiones,
+  permisos, timbres, líder del muestreador y compuerta del toque, `ValkeyAclCompatibilityTests` (las dos en `Bootstrapper.UnitTests`),
+  que exige el efecto en Valkey **y** cero respaldos con los adaptadores reales. Un área nueva suma la suya. Si falla, es un hallazgo: la ACL no se relaja.
+- **El presupuesto de envío de campañas se queda en Postgres** (`messaging.connection_send_budgets`, decisión del owner 2026-11-13).
+  D-6 del spec de Valkey no se construyó: no hay adaptador de Valkey para el cubo.
 
 ## Verificación
 

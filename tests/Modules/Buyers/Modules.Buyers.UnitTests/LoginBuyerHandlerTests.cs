@@ -11,7 +11,7 @@ public sealed class LoginBuyerHandlerTests
         var world = new BuyersWorld();
         var account = world.AddVerifiedAccount("ana@correo.com", "old-hash::una-contrasena-larga");
         var hasher = new RehashingHasher();
-        var sessions = new BuyerSessions(world.Sessions, world.UnitOfWork, world.Clock);
+        var sessions = new BuyerSessions(world.Sessions, world.UnitOfWork, world.Clock, world.SessionCache);
         var handler = new LoginBuyerHandler(
             new FakeStorefronts(), world.Accounts, world.Profiles, hasher, sessions, world.UnitOfWork, new LoginBuyerBodyValidator(), world.Clock);
 

@@ -909,6 +909,45 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec 2026-11-13 (Valkey), D-7; plan P10: los timbres los toca el interceptor de EF al confirmar un <c>INSERT</c> en una tabla de
+    /// cola. Un <c>DbContext</c> sin el interceptor escribiría en su cola sin despertar a nadie hasta la red de seguridad, sin error. Se
+    /// exige en todos los nuestros, no sólo en los que mapean una tabla de cola: el SQL crudo (<c>ExecuteSql</c>) inserta en tablas que el
+    /// modelo no mapea.
+    /// </summary>
+    [Fact]
+    public void EveryDbContextThatMapsADoorbellTableHasTheInterceptor()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        var contextTypes = services
+            .Select(descriptor => descriptor.ServiceType)
+            .Where(type => typeof(Microsoft.EntityFrameworkCore.DbContext).IsAssignableFrom(type)
+                && type.Namespace?.StartsWith("Modules.", StringComparison.Ordinal) == true)
+            .Distinct()
+            .ToList();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotEmpty(contextTypes);
+        var mapsOutbox = false;
+        foreach (var type in contextTypes)
+        {
+            var context = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(type);
+            var options = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+                .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(context);
+            var interceptors = options
+                .FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()?.Interceptors ?? [];
+            Assert.True(
+                interceptors.OfType<BuildingBlocks.Infrastructure.QueueDoorbellInterceptor>().Any(),
+                $"{type.FullName} no tiene QueueDoorbellInterceptor: sus inserciones en una cola no timbran.");
+            mapsOutbox |= context.Model.GetEntityTypes().Any(entity =>
+                Microsoft.EntityFrameworkCore.RelationalEntityTypeExtensions.GetTableName(entity) == "outbox_messages");
+        }
+
+        Assert.True(mapsOutbox, "Ningún DbContext mapea platform.outbox_messages: la prueba no estaría mirando los productores.");
+    }
+
+    /// <summary>
     /// Observabilidad fase 2: sin el muestreador registrado los gauges de cola no publican nada y nadie se entera; y como los gauges
     /// son singleton, ValidateScopes caza que dependan de un servicio scoped (IClock lo es).
     /// </summary>

@@ -235,6 +235,10 @@ public sealed class BuyerSignupTests
 
     private sealed class AlwaysConflicting : IBuyersUnitOfWork
     {
+        public Task SaveChangesAsync(
+            Func<CancellationToken, Task> beforeSave, Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task SaveChangesAsync(CancellationToken cancellationToken) =>
             throw new ResourceConflictException(BuyerErrorCodes.EmailTaken, "taken");
 
