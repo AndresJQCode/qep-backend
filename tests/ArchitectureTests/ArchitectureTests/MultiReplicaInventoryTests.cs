@@ -237,7 +237,7 @@ public sealed class MultiReplicaInventoryTests
     [Fact]
     public void MoreThanOneReplicaRejectsEveryValkeySwitchSetToFalse()
     {
-        var keys = MultiReplicaInventory.SharedStateSwitches.Values.Append("Valkey__Enabled").ToList();
+        var keys = MultiReplicaInventory.SharedStateSwitches.Values.Append("Valkey__Enabled").Distinct(StringComparer.Ordinal).ToList();
         var configMap = "data:\n  Seed__ExportLoad__Quotations: \"0\"\n" + string.Concat(keys.Select(key => $"  {key}: \"false\"\n"));
 
         var violations = ReplicaViolations(Deployment(replicas: 2), configMap);
@@ -305,11 +305,14 @@ public sealed class MultiReplicaInventoryTests
             violations.Add("Valkey__Enabled tiene que ser \"true\" en el ConfigMap: sin eso, todo estado compartido es por pod.");
         }
 
-        foreach (var (type, key) in MultiReplicaInventory.SharedStateSwitches)
+        // Dos estados pueden colgar del mismo interruptor (la presencia de la bandeja y la del hub global): una violación por
+        // interruptor, que nombra todos los estados que deja por pod.
+        foreach (var share in MultiReplicaInventory.SharedStateSwitches.GroupBy(entry => entry.Value, StringComparer.Ordinal))
         {
-            if (!IsSet(configMap, key, "true"))
+            if (!IsSet(configMap, share.Key, "true"))
             {
-                violations.Add($"{key} tiene que ser \"true\" en el ConfigMap: sin eso, {type} es por pod.");
+                violations.Add(
+                    $"{share.Key} tiene que ser \"true\" en el ConfigMap: sin eso, {string.Join(", ", share.Select(entry => entry.Key))} es por pod.");
             }
         }
 

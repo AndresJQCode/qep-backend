@@ -10,6 +10,10 @@ namespace Bootstrapper.Realtime;
 /// member from the active membership, exactly like <c>MessagingHub.OnConnectedAsync</c> but without a module check (each topic
 /// checks its own module). The client chooses topics, never tenants: the group is always <c>{connection tenant}:{topic}</c>. Each
 /// topic is authorized by the <see cref="IRealtimeTopicAuthorizer"/> of its prefix, resolved from the invocation's scope.
+///
+/// Presence (§5.3) is per connection: <c>SetPresence</c> writes <c>{memberId}:{connectionId}</c>, and leaving a topic or disconnecting
+/// clears only that connection's entry, so another tab of the same member keeps it present. Every change is published through
+/// <see cref="IRealtimePublisher"/> so every pod delivers it to its own subscribers.
 /// </summary>
 internal sealed class AppHub : Hub
 {
@@ -24,15 +28,27 @@ internal sealed class AppHub : Hub
     private readonly IMembershipDirectory _memberships;
     private readonly IEnumerable<IRealtimeTopicAuthorizer> _authorizers;
     private readonly AppHubConnections _connections;
+    private readonly AppHubDispatcher _dispatcher;
+    private readonly IRealtimePresence _presence;
+    private readonly IRealtimeMemberNames _names;
+    private readonly IRealtimePublisher _publisher;
 
     public AppHub(
         IMembershipDirectory memberships,
         IEnumerable<IRealtimeTopicAuthorizer> authorizers,
-        AppHubConnections connections)
+        AppHubConnections connections,
+        AppHubDispatcher dispatcher,
+        IRealtimePresence presence,
+        IRealtimeMemberNames names,
+        IRealtimePublisher publisher)
     {
         _memberships = memberships;
         _authorizers = authorizers;
         _connections = connections;
+        _dispatcher = dispatcher;
+        _presence = presence;
+        _names = names;
+        _publisher = publisher;
     }
 
     public override async Task OnConnectedAsync()
@@ -58,23 +74,27 @@ internal sealed class AppHub : Hub
         await base.OnConnectedAsync();
     }
 
+    /// <summary>Spec §5.3: a closed tab clears its own entries, on every topic it had, and the others see it at once.</summary>
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        _connections.Remove(Context.ConnectionId);
+        var topics = _connections.Remove(Context.ConnectionId);
+        if (TryIdentity(out var tenantId, out var memberId))
+        {
+            foreach (var topic in topics.Where(RealtimePresence.Applies))
+            {
+                await ClearAndAnnounceAsync(tenantId, memberId, topic);
+            }
+        }
+
         await base.OnDisconnectedAsync(exception);
     }
 
     /// <summary>Joins the topic's group; repeating it changes nothing. Refused with a <see cref="HubException"/> whose message is the
-    /// authorizer's code.</summary>
+    /// authorizer's code. A presence topic answers at once with its photo, to this connection only (plan N6).</summary>
     public async Task Subscribe(string topic)
     {
         var (tenantId, memberId) = Identity();
-        var authorizer = AuthorizerOf(topic);
-        if (authorizer is null)
-        {
-            throw new HubException(RealtimeTopics.ForbiddenCode);
-        }
-
+        var authorizer = AuthorizerOf(topic) ?? throw new HubException(RealtimeTopics.ForbiddenCode);
         if (!await authorizer.CanSubscribeAsync(tenantId, memberId, topic, Context.ConnectionAborted)
             || !_connections.TryAddTopic(Context.ConnectionId, topic))
         {
@@ -82,26 +102,95 @@ internal sealed class AppHub : Hub
         }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, RealtimeTopics.GroupOf(tenantId, topic), Context.ConnectionAborted);
+        if (RealtimePresence.Applies(topic))
+        {
+            var present = await _presence.ReadAsync(tenantId, topic, Context.ConnectionAborted);
+            var members = await RealtimePresenceNames.ComposeAsync(_names, tenantId, present, Context.ConnectionAborted);
+            await _dispatcher.SendPresenceToAsync(Context.ConnectionId, tenantId, memberId, topic, members, Context.ConnectionAborted);
+        }
     }
 
-    /// <summary>Leaves the topic's group. Never fails, not even for a topic the connection never had.</summary>
+    /// <summary>Leaves the topic's group and clears this connection's presence there. Never fails, not even for a topic the
+    /// connection never had.</summary>
     public async Task Unsubscribe(string topic)
     {
-        if (string.IsNullOrEmpty(topic) || topic.Length > RealtimeTopics.MaxLength)
+        if (string.IsNullOrEmpty(topic) || topic.Length > RealtimeTopics.MaxLength || !TryIdentity(out var tenantId, out var memberId))
         {
             return;
         }
 
-        var (tenantId, _) = Identity();
+        var had = _connections.HasTopic(Context.ConnectionId, topic);
         _connections.RemoveTopic(Context.ConnectionId, topic);
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, RealtimeTopics.GroupOf(tenantId, topic), Context.ConnectionAborted);
+        if (had && RealtimePresence.Applies(topic))
+        {
+            await ClearAndAnnounceAsync(tenantId, memberId, topic);
+        }
+    }
+
+    /// <summary>
+    /// Spec §5.3 and plan N5: <c>composing</c> (valid 45 s, the screen renews it every 20 s) or <c>none</c>, only on a topic this
+    /// connection already subscribed to and that the authorizer lets the member write presence on. Anything else is refused with the
+    /// forbidden code (owner O3: an unknown state too).
+    /// </summary>
+    public async Task SetPresence(string topic, string state)
+    {
+        var (tenantId, memberId) = Identity();
+        var composing = string.Equals(state, RealtimePresence.Composing, StringComparison.Ordinal);
+        if (!composing && !string.Equals(state, RealtimePresence.None, StringComparison.Ordinal))
+        {
+            throw new HubException(RealtimeTopics.ForbiddenCode);
+        }
+
+        var authorizer = AuthorizerOf(topic) ?? throw new HubException(RealtimeTopics.ForbiddenCode);
+        if (!RealtimePresence.Applies(topic)
+            || !_connections.HasTopic(Context.ConnectionId, topic)
+            || !await authorizer.CanSetPresenceAsync(tenantId, memberId, topic, Context.ConnectionAborted))
+        {
+            throw new HubException(authorizer.ForbiddenCode);
+        }
+
+        var present = composing
+            ? await _presence.SetComposingAsync(tenantId, topic, memberId, Context.ConnectionId, Context.ConnectionAborted)
+            : await _presence.ClearAsync(tenantId, topic, memberId, Context.ConnectionId, Context.ConnectionAborted);
+        await AnnounceAsync(tenantId, topic, present, Context.ConnectionAborted);
+    }
+
+    // On disconnect ConnectionAborted is already cancelled: the cleanup must still run to the end.
+    private async Task ClearAndAnnounceAsync(Guid tenantId, Guid memberId, string topic)
+    {
+        var present = await _presence.ClearAsync(tenantId, topic, memberId, Context.ConnectionId, CancellationToken.None);
+        await AnnounceAsync(tenantId, topic, present, CancellationToken.None);
+    }
+
+    // Every pod (this one included) receives it through NOTIFY and delivers it to its own subscribers without their own member.
+    private async Task AnnounceAsync(Guid tenantId, string topic, IReadOnlyList<Guid> present, CancellationToken cancellationToken)
+    {
+        var members = await RealtimePresenceNames.ComposeAsync(_names, tenantId, present, cancellationToken);
+        await _publisher.PublishAsync(
+            tenantId, topic, AppHubEvents.PresenceChanged, new PresencePayload(topic, members), CancellationToken.None);
     }
 
     private (Guid TenantId, Guid MemberId) Identity() =>
-        Context.Items.TryGetValue(TenantItem, out var tenant) && Context.Items.TryGetValue(MemberItem, out var member)
-            ? ((Guid)tenant!, (Guid)member!)
+        TryIdentity(out var tenantId, out var memberId)
+            ? (tenantId, memberId)
             // OnConnectedAsync aborts before any invocation can run without an identity; this only guards a broken invariant.
             : throw new HubException(RealtimeTopics.ForbiddenCode);
+
+    private bool TryIdentity(out Guid tenantId, out Guid memberId)
+    {
+        tenantId = Guid.Empty;
+        memberId = Guid.Empty;
+        if (Context.Items.TryGetValue(TenantItem, out var tenant) && tenant is Guid tenantValue
+            && Context.Items.TryGetValue(MemberItem, out var member) && member is Guid memberValue)
+        {
+            tenantId = tenantValue;
+            memberId = memberValue;
+            return true;
+        }
+
+        return false;
+    }
 
     private IRealtimeTopicAuthorizer? AuthorizerOf(string? topic)
     {

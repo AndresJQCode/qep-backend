@@ -1,7 +1,7 @@
 using System.Net;
+using BuildingBlocks.Application.Realtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using BuildingBlocks.Application.Realtime;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using Testcontainers.PostgreSql;

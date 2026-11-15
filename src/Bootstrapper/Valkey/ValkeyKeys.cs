@@ -14,6 +14,9 @@ internal static class ValkeyKeys
 
     public static RedisKey Presence(Guid tenantId) => $"{Prefix}presence:{tenantId:D}";
 
+    /// <summary>Spec 2026-11-15 §5.3: who is composing on one topic of the app hub (a sorted set per connection).</summary>
+    public static RedisKey RealtimePresence(Guid tenantId, string topic) => $"{Prefix}rt:presence:{tenantId:D}:{topic}";
+
     public static RedisKey RateLimit(string policy, string partition, long windowStartUnixSeconds) =>
         $"{Prefix}rl:{policy}:{partition}:{windowStartUnixSeconds}".ToLowerInvariant();
 

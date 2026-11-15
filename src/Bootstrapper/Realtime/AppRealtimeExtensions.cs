@@ -20,6 +20,10 @@ public static class AppRealtimeExtensions
         services.AddSingleton<AppHubDispatcher>();
         services.AddSingleton<IRealtimePublisher, PgRealtimePublisher>();
         services.AddHostedService<RealtimeEventsListener>();
+        // Presence (spec §5.3): the registry itself is registered by AddQepValkey with the Presence area (local or Valkey); the names
+        // follow the rule MessagingMemberNames owns (plan N12).
+        services.AddScoped<IRealtimeMemberNames, MessagingMemberNames>();
+        services.AddHostedService<RealtimePresenceSweeper>();
         return services;
     }
 

@@ -160,6 +160,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/Presence/PresenceHeartbeatWorker.cs:33-56 — late los conectados a su pod (ZADD idempotente); sólo con Valkey:Areas:Presence"),
         new("Bootstrapper.Realtime.RealtimeEventsListener", WorkerClassification.PerPod,
             "Bootstrapper/Realtime/RealtimeEventsListener.cs:80 — LISTEN qep_realtime por pod para las conexiones del hub global de ese pod (plan 2026-11-15, N7)"),
+        new("Bootstrapper.Realtime.RealtimePresenceSweeper", WorkerClassification.PerPod,
+            "Bootstrapper/Realtime/RealtimePresenceSweeper.cs:23 — relee cada 5 s la presencia de los grupos que este pod entregó y la reentrega sólo a sus conexiones, sin NOTIFY (plan 2026-11-15, N10)"),
 
         // --- OffInProduction. ---
         new("Bootstrapper.Seeding.ExportLoadSeedWorker", WorkerClassification.OffInProduction,
@@ -174,6 +176,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:60-74 — con Valkey:Areas:Presence el hub escribe en qep:presence:{tenantId} y esto queda de respaldo local"),
         new("Bootstrapper.ApiKeys.ApiKeyRateLimiter", StateClassification.SharedWithLocalFallback,
             "Bootstrapper/Valkey/RateLimiting/SharedRateLimitPartitions.cs:33-45 — con Valkey:Areas:RateLimiting la ventana se cuenta en Valkey y cae a memoria si falla"),
+        new("Bootstrapper.Realtime.LocalRealtimePresence", StateClassification.SharedWithLocalFallback,
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:147-165 — con Valkey:Areas:Presence el hub global escribe «está respondiendo» en qep:rt:presence:{tenantId}:{topic} y esto queda de respaldo local"),
 
         new("Bootstrapper.ApiKeys.ExternalApiCallLogChannel", StateClassification.PerPodByDesign,
             "Bootstrapper/ApiKeys/ExternalApiCallLogChannel.cs:21 — Channel.CreateBounded por pod; lo no escrito se pierde con SIGKILL, igual que con un pod"),
@@ -187,6 +191,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/ValkeyQueueDoorbell.cs:21 — los oyentes de los workers de este pod; el aviso viaja entre pods por pub/sub (qep:wake:{cola})"),
         new("Bootstrapper.Realtime.AppHubConnections", StateClassification.PerPodByDesign,
             "Bootstrapper/Realtime/AppHubConnections.cs:12 — las conexiones del hub global de este pod con sus tópicos; cada pod entrega sólo a las suyas y el aviso cruza pods por NOTIFY qep_realtime"),
+        new("Bootstrapper.Realtime.AppHubDispatcher", StateClassification.PerPodByDesign,
+            "Bootstrapper/Realtime/AppHubDispatcher.cs:16 — la última foto de presencia que este pod entregó a sus conexiones, para que su barrido note un vencimiento"),
         new("Modules.Messaging.Infrastructure.Webhook.WebhookRouting", StateClassification.PerPodByDesign,
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookRouting.cs:12 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
         new("Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus", StateClassification.PerPodByDesign,
@@ -218,6 +224,7 @@ public static class MultiReplicaInventory
     {
         ["Modules.Messaging.Application.MessagingPresence"] = "Valkey__Areas__Presence",
         ["Bootstrapper.ApiKeys.ApiKeyRateLimiter"] = "Valkey__Areas__RateLimiting",
+        ["Bootstrapper.Realtime.LocalRealtimePresence"] = "Valkey__Areas__Presence",
     };
 
     /// <summary>
@@ -228,6 +235,8 @@ public static class MultiReplicaInventory
     [
         new("Modules.Messaging.Application.IMessagingPresence", "Modules.Messaging.Application.MessagingPresence",
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:65 — reenvía al singleton MessagingPresence (presencia apagada)"),
+        new("Bootstrapper.Realtime.IRealtimePresence", "Bootstrapper.Realtime.LocalRealtimePresence",
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:157 — reenvía al singleton LocalRealtimePresence (presencia apagada)"),
         new("Modules.Messaging.Infrastructure.CustomerDeletion.ICustomerMediaPurgeProcessor",
             "Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeProcessor",
             "Modules/Messaging/Modules.Messaging.Infrastructure/MessagingInfrastructureExtensions.cs:147 — reenvía al singleton concreto"),
