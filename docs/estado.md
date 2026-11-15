@@ -107,6 +107,7 @@ plantilla `Order` (`qep_pedido`) y usa la misma elección de canal que la cotiza
 
 | Spec | Estado | Notas |
 | --- | --- | --- |
+| 2026-11-15 foto en las líneas del pedido del comprador | Backend construido y mergeado (2026-11-15; `e3131d5d`) | `lines[].imageUrl` (nullable) en `GET /buyer/orders/{id}` y en la respuesta de cancelar: foto **actual** del catálogo vía `IQuotationProductLookup`, sin migración. Falta el storefront (spec propio), que sale después |
 | 2026-11-15 enlace de pedidos de la tienda con la cuenta del comprador | Backend construido y mergeado (2026-11-15; `a4aa88c1`) | Ver «Registro». Falta correr las pruebas, el frontend de la consola («Cambiar cuenta», «Quitar cuenta», etiqueta de `BuyerAccountChanged` en el historial) y la prueba manual |
 | 2026-11-14 Shopify: sincronizar ediciones del pedido | Backend construido y mergeado (2026-11-15; `11e3f26c`) | Ver «Trabajo en curso». Falta integración completa de Shopify y Quotations, el frontend y V-11/V-12/V-13 |
 | 2026-11-12 ReteICA por empresa | Backend construido y mergeado (2026-11-14; `d4e4c39e`) | Ver «Trabajo en curso». Falta integración pre-merge de seis proyectos (diferida por el owner) y el frontend |
@@ -330,6 +331,10 @@ cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
 - Cancelar un pedido del comprador (2026-11-11, merge `dd6ca631`, decisión del owner): `CancelAsync` resuelve los nombres
   de ciudad y departamento **antes** de cancelar, en el primer intento y en el reintento por concurrencia. Si Geography
   falla, el pedido no se cancela y el error se propaga; un pedido que ya no se puede cancelar responde 409 sin consultar Geography.
+- Foto de la línea del pedido del comprador (2026-11-15, merge `e3131d5d`, decisión del owner): es la foto **actual** del
+  catálogo (variante o, sin ella, la principal del producto), no una copia del momento de la compra; si la tienda la cambia
+  o la borra, el pedido lo refleja. Se resuelve con las mismas reglas que Geography: antes de cancelar, y si Catalog falla
+  el detalle falla (no se disfraza de foto nula).
 
 - USD sin IVA (hotfix 2026-10-14): sin backfill; fila de IVA oculta en el frontend; solo COP discrimina IVA. La
   generalización a otras monedas no se le consultó al owner.
@@ -337,6 +342,16 @@ cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
 - Pago parcial con redondeo (hotfix 2026-10-19, `fe3d1fe1`): en `main` y, desde el 2026-10-24, **en `develop`** (rama `fix/pago-parcial-redondeo-develop`, ff): `Order.RecalculatePaymentStatus` compara contra el neto redondeado a lo que la moneda muestra; `OrderTests` cubre 116.529 (completo) y 116.528 (parcial). La adaptación venía del worktree `../qep-backend-merge-pago`, que quedó sin commitear hasta hoy; ese worktree ya se puede borrar. Los otros dos hotfixes del 2026-10-15 (nota al convertir, observaciones en el Excel) están en `develop`, reescritos.
 
 ## Defectos conocidos
+
+- Pruebas en rojo en `develop` desde el merge de Soporte fase 3 (`ea9cbba0`), vistas el 2026-11-15:
+  `SupportReplyParityTests.TheRejectionReasonsMatchMessaging` (Bootstrapper; índice 5: `recipient_invalid` contra
+  `no_permission`) y `ConfigurationExampleTests.EveryBoundConfigurationKeyIsDocumentedInTheExample` (faltan en
+  `appsettings.example.json` `Support:PublicForm:AllowedOrigins|BaseUrl|Hostname` y
+  `Support:Workers:BatchSize|FeedLookbackHours|FollowIntervalSeconds`).
+- Foto en las líneas del pedido del comprador, menores de la revisión final (mergeado 2026-11-15):
+  - La prueba de «una sola consulta con variantes distintas» usa dos variantes diferentes: no prueba la deduplicación.
+  - Ninguna prueba afirma las fotos de la respuesta de cancelar tras un reintento por concurrencia.
+  - Ninguna prueba de integración con un producto que tenga foto (sólo `imageUrl` null).
 
 - Pedidos del comprador, seguimientos sin cerrar (mergeado 2026-11-10, revisiones):
   - Dos clases se llaman `BuyerOrderErrors` (`Modules.Buyers.Application` y `Modules.Quotations.Domain`); compilan por namespace.
@@ -416,6 +431,7 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-15 — Mergeado a `develop` (`e3131d5d`, `--no-ff`, sin push) **la foto en las líneas del pedido del comprador** (`feature/foto-linea-pedido`, hasta `68fa979b`; rama y worktree borrados). `BuyerOrderLine`/`BuyerOrderLineDto` ganan `ImageUrl`; sin migración. Pruebas en la rama: unitarias Quotations 1986/1986, Buyers 91/91, Bootstrapper 735/736 y Architecture 228/229 (las dos en rojo vienen de Soporte, ver «Defectos conocidos»); integración Store completa 214/214. Resultado del merge con `develop` (`a4aa88c1`, que ya traía `feature/store-order-buyer-link` y tocaba el mismo gateway; sin conflictos): Quotations 1995/1995, Buyers 95/95, Bootstrapper 737/738 y Architecture 228/229 (las mismas dos de Soporte), integración `PublicBuyerOrdersApiTests` + `PublicOrderBuyerAccountApiTests` 47/47 (cubre también dos de las pruebas sin correr del enlace). Revisión final: 0 críticos, 0 importantes, 3 menores en «Defectos conocidos». El storefront sale después.
 - 2026-11-15 — Mergeado a `develop` (`a4aa88c1`, `--no-ff`, sin push) **Enlace de pedidos de la tienda con la cuenta del comprador** (`feature/store-order-buyer-link`, 14 commits hasta `42158e8f`; rama y worktree borrados). Decisión del owner: un pedido de la tienda se enlaza a la cuenta **verificada** de su correo de facturación, en el checkout sin sesión (la sesión gana) y al iniciar sesión (sólo pedidos `Store` del tenant de esa tienda, sin cuenta y sin decisión del asesor); los históricos se enlazan en el primer inicio de sesión. Columna nueva `quotations.orders.buyer_account_set_by_member` (migración aditiva `AddOrderBuyerAccountSetByMember`): con la marca, ningún camino automático toca la cuenta. Consola: `buyerAccount` en el detalle, `PUT`/`DELETE …/orders/{orderId}/buyer-account` (`quotations.order.manage`, `If-Match`), auditoría `quotation.order.buyer_account_changed` (sólo ids) y entrada `BuyerAccountChanged` en el historial (con correos). Revisión por bloque y revisión final: 0 críticos, 2 importantes corregidos (prueba del orden de llamadas del checkout; la decisión del asesor ahora se escribe aunque un enlace automático confirme entre la carga y el guardado). Build del merge 0 errores. **Ninguna prueba se corrió** (regla del owner): las de más riesgo son `BuyerLoginOrderLinkApiTests`, `OrderBuyerAccountApiTests`, `PublicOrderBuyerAccountApiTests`, `PublicBuyerOrdersApiTests` y `SubmitOrderRequestHandlerTests`. Pendiente: frontend de la consola y prueba manual (`PED-2026-0005` del local es el caso que lo motivó).
 - 2026-11-15 — Mergeado a `develop` (`ea9cbba0`, `--no-ff`, sin push) **Soporte/PQRSF fase 3 «Formulario público» backend** (`feature/support-public-form`, 29 commits hasta `5fce0c23`; rama y worktree borrados). Un conflicto en `CLAUDE.md` (gotchas de Valkey y de Soporte agregados al mismo final; se conservaron los dos). Build del merge 0 errores, `dotnet restore --locked-mode` limpio. Ninguna prueba corrida por decisión del owner. Incluye las decisiones del owner sobre los pendientes de la fase 2 (FR-I2, R9, P3, P4, P5, `failureCode`). CORS de `qep-private` aplicado con wrangler para `https://soporte.lulocrm.com`.
 - 2026-11-15 — Mergeado a `develop` (`a81b5747`, `--no-ff`, sin push) **réplicas múltiples y Valkey** (`feature/replicas-multiples`, 50 commits hasta `10316a5e`; rama y worktree borrados). Conflictos en `Program.cs` (la inicialización de Support entra al candado de arranque: 26 en total, README actualizado) y `CLAUDE.md` (entradas de Soporte y de Valkey conviven; la nota del comprador queda la de Shopify). Inventario de réplicas ampliado con los dos workers nuevos de `develop`; lock files regenerados. Build 0 errores en un directorio aparte (la API corría en el checkout principal). Ninguna prueba corrida por decisión del owner. Tarea 8 pendiente: ver «Trabajo en curso». El mismo día se mergeó el frontend `feature/signalr-sin-negotiate` en `develop` del frontend (`e2d6155b`, `--no-ff`, sin push; rama y worktree borrados; `tsc -b` sin errores, pruebas sin correr).
