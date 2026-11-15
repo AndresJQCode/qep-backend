@@ -32,6 +32,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
         services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
+        // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
+        services.AddScoped<ISupportReplyOutbound, SupportReplyOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
