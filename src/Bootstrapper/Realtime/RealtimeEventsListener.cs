@@ -61,13 +61,15 @@ internal sealed partial class RealtimeEventsListener(
 
     private async Task ListenWithBackoffAsync(CancellationToken stoppingToken)
     {
-        var (connectionString, keyName) = StartupLockConnectionString.Resolve(configuration);
         var attempt = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await Task.Yield();
+                // Inside the guarded loop: a missing connection string is logged and retried with backoff like any other failure,
+                // instead of escaping ExecuteAsync and stopping the host.
+                var (connectionString, keyName) = StartupLockConnectionString.Resolve(configuration);
                 // ListenAsync only returns on cancellation, so the backoff resets as soon as LISTEN succeeds: a connection that
                 // dropped after hours listening starts again from the shortest delay, not from where the last outage left it.
                 await ListenAsync(connectionString, keyName, () => attempt = 0, stoppingToken);
