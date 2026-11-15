@@ -189,7 +189,7 @@ public sealed class QuotationMunicipalWithholdingsTests
         var discarded = Assert.Single(result.DiscardedOverrides);
         Assert.Equal(0.8m, discarded.Percentage);
         Assert.Equal(0.966m, discarded.CatalogPercentage);
-        Assert.Empty(result.RemovedManual);
+        Assert.Empty(result.RemovedNotAgent);
         Assert.Equal(2_500m, quotation.RetentionAmount);
     }
 

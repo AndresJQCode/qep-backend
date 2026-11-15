@@ -815,7 +815,7 @@ public sealed class Order
     /// es <c>order.billing.currency_change_not_allowed</c>.
     ///
     /// Otra empresa u otro municipio re-resuelven las filas municipales con la regla del cliente (§7.6): una tasa
-    /// aplicada a mano donde el cliente no es agente se quita y vuelve en <see cref="MunicipalReResolution.RemovedManual"/>.
+    /// municipal donde el cliente no es agente se quita y vuelve en <see cref="MunicipalReResolution.RemovedNotAgent"/>.
     /// Reenviar la misma cuenta con el municipio de la empresa que antes no tenía lo completa sin contar como cambio.
     /// Si nada cambió, no toca la versión.
     /// </summary>
@@ -867,7 +867,7 @@ public sealed class Order
         Touch(updatedBy, occurredAt);
         return new OrderBillingContextChange(
             accountChanged,
-            new MunicipalReResolution(true, cityBefore, cityAfter, resolved.Discarded, resolved.RemovedManual));
+            new MunicipalReResolution(true, cityBefore, cityAfter, resolved.Discarded, resolved.RemovedNotAgent));
     }
 
     /// <summary>

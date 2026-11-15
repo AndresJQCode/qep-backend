@@ -371,7 +371,7 @@ internal static class OrderMunicipalHistory
         [
             .. municipal.DiscardedOverrides.Select(rate =>
                 QuotationChangeSummary.WithholdingOverrideDiscarded(rate.Type, rate.Percentage, format)),
-            .. municipal.RemovedManual.Select(rate => OrderChangeSummary.ManualWithholdingRemoved(rate.Type)),
+            .. municipal.RemovedNotAgent.Select(rate => OrderChangeSummary.WithholdingRemovedNotAgent(rate.Type)),
             .. outcome.ClearedOverrides.Select(rate =>
                 QuotationChangeSummary.WithholdingOverrideDiscarded(rate.Type, rate.Percentage, format)),
             .. outcome.PercentageChanges.Select(change => change.Restored

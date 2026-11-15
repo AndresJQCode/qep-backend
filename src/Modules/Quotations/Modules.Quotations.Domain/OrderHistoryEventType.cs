@@ -27,6 +27,6 @@ public enum OrderHistoryEventType
     PaymentStatusRecalculated,
 
     /// <summary>Spec ReteICA por empresa §7.8: cambió el porcentaje de una retención municipal (editado, restablecido o
-    /// descartado por una re-resolución) o se quitó una aplicada a mano. Al final, como los demás.</summary>
+    /// descartado por una re-resolución) o se quitó una porque el cliente no es agente ahí. Al final, como los demás.</summary>
     WithholdingRateEdited,
 }

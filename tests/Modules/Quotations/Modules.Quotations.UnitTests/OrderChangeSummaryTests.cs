@@ -52,7 +52,7 @@ public sealed class OrderChangeSummaryTests
                     OrderPaymentStatus.FullPaymentReceived, OrderPaymentStatus.PartialPaymentReceived, 23_800m, 47_600m),
                 Colombian));
 
-    // Spec ReteICA por empresa §7.8 (R11): la tasa municipal aplicada a mano donde el cliente no es agente lo dice en el
+    // Spec ReteICA por empresa §7.8 (R11): la tasa municipal elegida donde el cliente no es agente lo dice en el
     // resumen de los selectores. El punto doble es lo que da el texto literal del spec (plan, Tarea 13).
     [Fact]
     public void AHandAppliedMunicipalRateSaysTheCustomerIsNotAnAgent()
@@ -65,9 +65,11 @@ public sealed class OrderChangeSummaryTests
             OrderChangeSummary.WithholdingsChanged("ninguna", "Retefuente 2,5 %"));
     }
 
+    // El documento no guarda si la fila salió de la regla del cliente o del selector, así que el texto no dice «a mano»:
+    // sólo lo que siempre es cierto cuando se dispara (owner 2026-11-14, texto neutro).
     [Fact]
-    public void ARemovedHandAppliedRateExplainsWhy() =>
+    public void ARateRemovedBecauseTheCustomerIsNotAnAgentExplainsWhy() =>
         Assert.Equal(
-            "Se quitó la ReteICA aplicada a mano al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.",
-            OrderChangeSummary.ManualWithholdingRemoved("ReteICA"));
+            "Se quitó la ReteICA al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.",
+            OrderChangeSummary.WithholdingRemovedNotAgent("ReteICA"));
 }

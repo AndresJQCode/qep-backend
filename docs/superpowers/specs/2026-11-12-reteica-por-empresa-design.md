@@ -468,8 +468,9 @@ como hoy con D23).
     `OrderChangeSummary.cs:95-96`) suma «; el cliente no está registrado como agente retenedor de ReteICA en {municipio}» cuando
     la tasa municipal elegida es para un municipio donde el cliente no es agente; en la cotización con facturación propia, el
     resumen del `Edited` dice «Aplicó ReteICA {municipio} por facturación propia»;
-  - quitada por re-resolución (R11): «Se quitó la ReteICA aplicada a mano al cambiar la empresa o el municipio: el cliente no es
-    agente retenedor ahí.» (`WithholdingRateEdited`).
+  - quitada por re-resolución (R11): «Se quitó la ReteICA al cambiar la empresa o el municipio: el cliente no es
+    agente retenedor ahí.» (`WithholdingRateEdited`). Sin «a mano» (owner 2026-11-14): el documento no guarda si la fila salió
+    de la regla del cliente o del selector, y el historial no afirma lo que no sabe.
 - Cambiar el municipio de la operación: pedido, `PartiesChanged` con «Cambió el municipio de la operación de Bogotá, D.C. a
   Medellín.»; cotización, el `Edited` del guardado con el mismo texto en su resumen [agente].
 - Auditoría NUEVA: `quotation.quotation.withholding_rate_edited` y `quotation.order.withholding_rate_edited` (prefijo de

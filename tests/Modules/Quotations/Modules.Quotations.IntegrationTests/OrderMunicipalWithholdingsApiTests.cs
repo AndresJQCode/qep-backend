@@ -74,7 +74,7 @@ public sealed class OrderMunicipalWithholdingsApiTests(SharedQuotationsHost shar
         Assert.Equal(fx.Medellin.CityId, moved.OperationCity?.Id);
         Assert.Equal(medellinRate, moved.MunicipalWithholdings[0].CompanyRate?.TaxRateId);
         Assert.Contains(
-            "Se quitó la ReteICA aplicada a mano al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.",
+            "Se quitó la ReteICA al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.",
             RateEdited(moved));
         Assert.Contains(
             moved.History,
