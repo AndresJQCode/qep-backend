@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Bootstrapper.Valkey.Presence;
 using Bootstrapper.Valkey.RateLimiting;
 using Bootstrapper.Valkey.Sessions;
+using Modules.Buyers.Application;
 using Modules.Identity.Application;
 using Modules.Messaging.Application;
 
@@ -55,17 +56,20 @@ public static class ValkeyServiceCollectionExtensions
 
     /// <summary>
     /// La caché de sesión (D-4). Apagada, el nulo: nunca acierta y cada request lee Postgres como antes. Prendida
-    /// (<c>Valkey:Areas:Sessions</c>), la entrada vive en <c>qep:sess:{hash}</c> y toda revocación la saca.
+    /// (<c>Valkey:Areas:Sessions</c>), la entrada vive en <c>qep:sess:{hash}</c> (Identity) o <c>qep:sess:buyer:{hash}</c>
+    /// (comprador) y toda revocación la saca.
     /// </summary>
     private static void AddSessionCaches(IServiceCollection services, bool shared)
     {
         if (!shared)
         {
             services.AddSingleton<ISessionCache, NullSessionCache>();
+            services.AddSingleton<IBuyerSessionCache, NullBuyerSessionCache>();
             return;
         }
 
         services.AddSingleton<ISessionCache, ValkeySessionCache>();
+        services.AddSingleton<IBuyerSessionCache, ValkeyBuyerSessionCache>();
     }
 
     /// <summary>

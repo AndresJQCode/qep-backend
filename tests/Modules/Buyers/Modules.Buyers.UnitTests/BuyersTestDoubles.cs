@@ -37,6 +37,7 @@ internal sealed class BuyersWorld
         Consents = new FakeConsents(this);
         Tokens = new FakeTokens(this);
         Sessions = new FakeSessions(this);
+        SessionCache = new FakeSessionCache(this);
         Outbox = new FakeOutbox(this);
         UnitOfWork = new FakeUnitOfWork(this);
         ProfileWriter = new BuyerProfileWriter(Profiles);
@@ -51,6 +52,10 @@ internal sealed class BuyersWorld
     public FakeConsents Consents { get; }
     public FakeTokens Tokens { get; }
     public FakeSessions Sessions { get; }
+    public FakeSessionCache SessionCache { get; }
+
+    /// <summary>El orden de los efectos que importan a la caché de sesión: <c>remove</c> (la caché) y <c>commit</c> (la unidad de trabajo).</summary>
+    public List<string> Steps { get; } = [];
     public FakeOutbox Outbox { get; }
     public FakeUnitOfWork UnitOfWork { get; }
     public BuyerProfileWriter ProfileWriter { get; }
@@ -154,12 +159,45 @@ internal sealed class BuyersWorld
             Task.FromResult<IReadOnlyList<BuyerSession>>(
                 world.SavedSessions.Where(s => s.AccountId == accountId && s.RevokedAt is null).ToList());
 
-        public Task RevokeActiveAsync(
+        public Task<IReadOnlyList<RevokedBuyerSession>> RevokeActiveAsync(
             Guid accountId, Guid? keepSessionId, DateTimeOffset now, string reason, CancellationToken cancellationToken)
         {
-            foreach (var session in world.SavedSessions.Where(s => s.AccountId == accountId && s.Id != keepSessionId))
+            var revoked = new List<RevokedBuyerSession>();
+            foreach (var session in world.SavedSessions.Where(
+                s => s.AccountId == accountId && s.Id != keepSessionId && s.RevokedAt is null))
             {
                 session.Revoke(now, reason);
+                revoked.Add(new RevokedBuyerSession(session.Id, session.TokenHash));
+            }
+
+            return Task.FromResult<IReadOnlyList<RevokedBuyerSession>>(revoked);
+        }
+    }
+
+    /// <summary>La caché en memoria, con la marca de revocación: un hash removido nunca vuelve a acertar.</summary>
+    internal sealed class FakeSessionCache(BuyersWorld world) : IBuyerSessionCache
+    {
+        public Dictionary<string, CachedBuyerSession> Entries { get; } = [];
+        public HashSet<string> Revoked { get; } = [];
+        public List<string> RemovedHashes { get; } = [];
+
+        public Task<CachedBuyerSession?> GetAsync(string tokenHash, CancellationToken cancellationToken) =>
+            Task.FromResult(Revoked.Contains(tokenHash) ? null : Entries.GetValueOrDefault(tokenHash));
+
+        public Task SetAsync(string tokenHash, CachedBuyerSession session, CancellationToken cancellationToken)
+        {
+            Entries[tokenHash] = session;
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAsync(IReadOnlyCollection<RevokedBuyerSession> sessions, CancellationToken cancellationToken)
+        {
+            world.Steps.Add("remove");
+            foreach (var session in sessions)
+            {
+                Revoked.Add(session.TokenHash);
+                Entries.Remove(session.TokenHash);
+                RemovedHashes.Add(session.TokenHash);
             }
 
             return Task.CompletedTask;
@@ -208,13 +246,17 @@ internal sealed class BuyersWorld
             world.SavedSessions.AddRange(world._pendingSessions);
             world.SavedEvents.AddRange(world._pendingEvents);
             DiscardPendingChanges();
+            world.Steps.Add("commit");
             return Task.CompletedTask;
         }
 
+        // Como la real: el guardado y la sentencia masiva van en la misma transacción, que confirma al final.
         public async Task SaveChangesAsync(Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken)
         {
             await SaveChangesAsync(cancellationToken);
+            world.Steps.RemoveAt(world.Steps.Count - 1);
             await afterSave(cancellationToken);
+            world.Steps.Add("commit");
         }
 
         public void DiscardPendingChanges()

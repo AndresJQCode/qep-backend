@@ -121,7 +121,7 @@ public sealed class BuyerOrdersHandlersTests
     {
         var world = new BuyersWorld();
         var accountId = Guid.NewGuid();
-        var sessions = new BuyerSessions(world.Sessions, world.UnitOfWork, world.Clock);
+        var sessions = new BuyerSessions(world.Sessions, world.UnitOfWork, world.Clock, world.SessionCache);
         var (token, _) = await sessions.IssueAsync(accountId, Host, null, TestContext.Current.CancellationToken);
         var orders = new RecordingBuyerOrders();
         return (new Handlers(sessions, orders), orders, token, accountId);

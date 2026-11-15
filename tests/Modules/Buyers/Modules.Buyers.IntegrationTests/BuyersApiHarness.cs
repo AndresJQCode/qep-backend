@@ -26,7 +26,9 @@ internal static class BuyersApiHarness
     private static int _ipCounter;
 
     public static async Task<BuyersApi> OpenAsync(
-        Action<IServiceCollection>? configure = null, bool runBackgroundServices = false)
+        Action<IServiceCollection>? configure = null,
+        bool runBackgroundServices = false,
+        IReadOnlyDictionary<string, string?>? settings = null)
     {
         var database = new PostgreSqlBuilder("postgres:18-alpine")
             .WithDatabase("qep")
@@ -46,7 +48,8 @@ internal static class BuyersApiHarness
                 services.AddSingleton<IBuyerCaptcha>(captcha);
                 configure?.Invoke(services);
             },
-            runBackgroundServices);
+            runBackgroundServices,
+            settings);
         return new BuyersApi(database, factory, captcha);
     }
 
@@ -241,7 +244,8 @@ internal static class BuyersApiHarness
     internal sealed class QepApiFactory(
         string connectionString,
         Action<IServiceCollection>? configureServices = null,
-        bool runBackgroundServices = false)
+        bool runBackgroundServices = false,
+        IReadOnlyDictionary<string, string?>? settings = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -265,6 +269,11 @@ internal static class BuyersApiHarness
             // Valores de juguete (nunca reales).
             builder.UseSetting("Store:Storefront:SharedSecret", StorefrontKey);
             builder.UseSetting("Store:Turnstile:SecretKey", "integration-tests-turnstile-secret");
+            // Lo propio de una prueba (Valkey, por ejemplo), con UseSetting: AddQepValkey decide qué registra al armar el contenedor.
+            foreach (var (key, value) in settings ?? new Dictionary<string, string?>())
+            {
+                builder.UseSetting(key, value);
+            }
 
             builder.ConfigureServices(services =>
             {

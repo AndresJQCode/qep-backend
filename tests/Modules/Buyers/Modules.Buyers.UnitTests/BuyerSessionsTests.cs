@@ -7,7 +7,94 @@ public sealed class BuyerSessionsTests
 {
     private const string Host = "acme.lulocrm.com";
 
-    private static BuyerSessions Sessions(BuyersWorld world) => new(world.Sessions, world.UnitOfWork, world.Clock);
+    private static BuyerSessions Sessions(BuyersWorld world) =>
+        new(world.Sessions, world.UnitOfWork, world.Clock, world.SessionCache);
+
+    private static CachedBuyerSession CachedFor(Guid accountId, string host, DateTimeOffset lastSeenAt) =>
+        new(Guid.NewGuid(), accountId, host, BuyersWorld.Now.AddDays(-1), lastSeenAt, BuyersWorld.Now.AddDays(20));
+
+    [Fact]
+    public async Task ACachedSessionIsServedWithoutTheRepository()
+    {
+        var world = new BuyersWorld();
+        var token = BuyerTokenCodec.Generate();
+        var accountId = Guid.NewGuid();
+        var cached = CachedFor(accountId, Host, BuyersWorld.Now.AddMinutes(-1));
+        world.SessionCache.Entries[BuyerTokenCodec.Hash(token)] = cached;
+
+        var session = await Sessions(world).TryResolveAsync(Host, token, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(session);
+        Assert.Equal((cached.SessionId, accountId), (session.Id, session.AccountId));
+        Assert.Equal(0, world.Sessions.FindCalls);
+    }
+
+    [Fact]
+    public async Task ACachedSessionOfAnotherHostIsNotServed()
+    {
+        var world = new BuyersWorld();
+        var token = BuyerTokenCodec.Generate();
+        world.SessionCache.Entries[BuyerTokenCodec.Hash(token)] =
+            CachedFor(Guid.NewGuid(), "otra.lulocrm.com", BuyersWorld.Now.AddMinutes(-1));
+
+        Assert.Null(await Sessions(world).TryResolveAsync(Host, token, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ACachedSessionPastTheTouchThresholdGoesToTheDatabase()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var world = new BuyersWorld();
+        var sessions = Sessions(world);
+        var (token, _) = await sessions.IssueAsync(Guid.NewGuid(), Host, null, cancellationToken);
+        var stored = world.SavedSessions.Single();
+        world.SessionCache.Entries[BuyerTokenCodec.Hash(token)] = new CachedBuyerSession(
+            stored.Id, stored.AccountId, Host, stored.CreatedAt, stored.LastSeenAt, stored.ExpiresAt);
+        world.Clock.UtcNow = BuyersWorld.Now.AddMinutes(6);
+
+        Assert.NotNull(await sessions.TryResolveAsync(Host, token, cancellationToken));
+
+        Assert.Equal(1, world.Sessions.FindCalls);
+        Assert.Equal(BuyersWorld.Now.AddMinutes(6), stored.LastSeenAt);
+        Assert.Equal(BuyersWorld.Now.AddMinutes(6), world.SessionCache.Entries[BuyerTokenCodec.Hash(token)].LastSeenAt);
+    }
+
+    [Fact]
+    public async Task RevokeAllRemovesTheReturnedHashesBeforeAndAfterSaving()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var world = new BuyersWorld();
+        var sessions = Sessions(world);
+        var accountId = Guid.NewGuid();
+        await sessions.IssueAsync(accountId, Host, null, cancellationToken);
+        await sessions.IssueAsync(accountId, Host, null, cancellationToken);
+        world.Steps.Clear();
+
+        await sessions.RevokeAllAsync(accountId, BuyerSession.RevokedReasons.PasswordReset, cancellationToken);
+
+        Assert.Equal(["remove", "commit", "remove"], world.Steps);
+        Assert.Equal(
+            world.SavedSessions.Select(session => session.TokenHash).Order(),
+            world.SessionCache.RemovedHashes.Distinct().Order());
+    }
+
+    // P3: el logout ya no revoca la entidad que devolvió TryResolveAsync (podría venir de la caché, sin seguimiento de EF).
+    [Fact]
+    public async Task RevokeCurrentReadsTheDatabaseAndRemovesTheEntryAroundTheSave()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var world = new BuyersWorld();
+        var sessions = Sessions(world);
+        var (token, _) = await sessions.IssueAsync(Guid.NewGuid(), Host, null, cancellationToken);
+        Assert.NotNull(await sessions.TryResolveAsync(Host, token, cancellationToken));
+        world.Steps.Clear();
+
+        Assert.True(await sessions.RevokeCurrentAsync(Host, token, BuyerSession.RevokedReasons.Logout, cancellationToken));
+
+        Assert.Equal(["remove", "commit", "remove"], world.Steps);
+        Assert.Equal(BuyerSession.RevokedReasons.Logout, world.SavedSessions.Single().RevokedReason);
+        Assert.Null(await sessions.TryResolveAsync(Host, token, cancellationToken));
+    }
 
     [Fact]
     public async Task AnOversizedTokenIsRejectedWithoutALookup()

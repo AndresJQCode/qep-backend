@@ -31,6 +31,8 @@ public sealed class DeleteBuyerAccountHandler(
     IBuyerAccountRepository accounts,
     IBuyerPasswordHasher hasher,
     BuyerSessions sessions,
+    IBuyerSessionRepository sessionRepository,
+    IBuyerSessionCache sessionCache,
     IBuyerOutbox outbox,
     IBuyersUnitOfWork unitOfWork,
     IValidator<DeleteBuyerAccountBody> validator,
@@ -56,10 +58,17 @@ public sealed class DeleteBuyerAccountHandler(
             BuyerIntegrationEvents.AccountDeleted,
             new BuyerEmailPayload(account.Id, account.Email, storefront.Host, storefront.Name, null),
             clock.UtcNow);
+        // La cascada se lleva las sesiones sin que nadie las nombre: la caché (spec 2026-11-13, D-4) las lista antes y saca sus
+        // entradas antes del guardado y otra vez después.
+        var activeSessions = (await sessionRepository.ListActiveAsync(account.Id, cancellationToken))
+            .Select(active => new RevokedBuyerSession(active.Id, active.TokenHash))
+            .ToArray();
         accounts.Remove(account);
         var accountId = account.Id;
+        await sessionCache.RemoveAsync(activeSessions, cancellationToken);
         await unitOfWork.SaveChangesAsync(
             token => outbox.RemoveAccountEmailsAsync(accountId, token), cancellationToken);
+        await sessionCache.RemoveAsync(activeSessions, cancellationToken);
         return true;
     }
 }

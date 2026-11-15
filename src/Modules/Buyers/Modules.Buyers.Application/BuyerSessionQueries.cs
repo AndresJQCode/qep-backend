@@ -27,12 +27,14 @@ public sealed class GetBuyerSessionHandler(
 
 public sealed record LogoutBuyerCommand(string Host, string? Token) : ICommand<bool>;
 
-/// <summary>Cierra la sesión. Idempotente: sin una sesión válida en ese host no hace nada y termina igual.</summary>
+/// <summary>
+/// Cierra la sesión. Idempotente: sin una sesión válida en ese host no hace nada y termina igual. Revoca la fila leída de la base
+/// (<see cref="BuyerSessions.RevokeCurrentAsync"/>), no la entidad de <see cref="BuyerSessions.TryResolveAsync"/>: con la caché
+/// de sesión esa entidad no tiene seguimiento de EF y el <c>UPDATE</c> no saldría (plan P3).
+/// </summary>
 public sealed class LogoutBuyerHandler(
     IBuyerStorefronts storefronts,
-    BuyerSessions sessions,
-    IBuyersUnitOfWork unitOfWork,
-    IClock clock)
+    BuyerSessions sessions)
     : ICommandHandler<LogoutBuyerCommand, bool>
 {
     public async Task<bool> HandleAsync(LogoutBuyerCommand command, CancellationToken cancellationToken)
@@ -40,14 +42,8 @@ public sealed class LogoutBuyerHandler(
         ArgumentNullException.ThrowIfNull(command);
 
         var storefront = await storefronts.ResolveAsync(command.Host, cancellationToken);
-        var session = await sessions.TryResolveAsync(storefront.Host, command.Token, cancellationToken);
-        if (session is null)
-        {
-            return true;
-        }
-
-        session.Revoke(clock.UtcNow, BuyerSession.RevokedReasons.Logout);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await sessions.RevokeCurrentAsync(
+            storefront.Host, command.Token, BuyerSession.RevokedReasons.Logout, cancellationToken);
         return true;
     }
 }
