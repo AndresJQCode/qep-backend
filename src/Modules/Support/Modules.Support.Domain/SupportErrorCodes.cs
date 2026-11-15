@@ -58,6 +58,12 @@ public static class SupportErrorCodes
 
     public const string ReplyAttachmentUnavailable = "support.reply.attachment_unavailable";
 
+    /// <summary>El nombre del destinatario o el radicado no cumplen las reglas de un parámetro de plantilla de Meta.</summary>
+    public const string ReplyRecipientInvalid = "support.reply.recipient_invalid";
+
+    /// <summary>La conversación es de un canal sin plantillas (Instagram).</summary>
+    public const string ReplyChannelUnsupported = "support.reply.channel_unsupported";
+
     // Los tres únicos de la fase 2, traducidos por nombre de índice en SupportUnitOfWork (plan E3 y E16). El seguimiento del hilo y
     // el envío los atrapan: no llegan a la pantalla salvo en una carrera.
     public const string MessageAlreadyLinked = "support.message.already_linked";

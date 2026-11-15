@@ -8,6 +8,8 @@ internal sealed class SupportReplyRepository(SupportDbContext dbContext) : ISupp
 {
     public void Add(SupportTicketReply reply) => dbContext.TicketReplies.Add(reply);
 
+    public void Remove(SupportTicketReply reply) => dbContext.TicketReplies.Remove(reply);
+
     public Task<SupportTicketReply?> FindByClientIdAsync(
         Guid tenantId, SupportTicketId ticketId, Guid clientId, CancellationToken cancellationToken) =>
         dbContext.TicketReplies.FirstOrDefaultAsync(

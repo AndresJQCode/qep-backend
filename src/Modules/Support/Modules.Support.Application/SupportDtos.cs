@@ -193,6 +193,30 @@ public sealed record SupportUnclassifiedMessageDto(SupportThreadMessageDto Messa
 
 public sealed record SupportTicketRefDto(Guid Id, string Number, string Subject, long Version);
 
+/// <summary>Qué canal puede usar el asesor para responder y qué va a pasar (plan E17b): la pantalla no conoce la ventana de 24 h ni la
+/// aprobación de plantillas. <c>DefaultChannel</c> es el canal de respuesta del ticket si está disponible; si no, el primero que lo
+/// esté (hilo, plantilla, correo).</summary>
+public sealed record SupportReplyOptionsDto(
+    SupportThreadOptionDto Thread, SupportChannelOptionDto WhatsAppTemplate, SupportChannelOptionDto Email, string DefaultChannel);
+
+/// <summary>El hilo de la conversación del ticket. <c>Delivery</c> ∈ <c>Text</c> (dentro de la ventana) o <c>Template</c> (fuera, en
+/// WhatsApp: sale «Aviso de respuesta»), para que la pantalla avise antes de enviar. <c>Reason</c> cuando no está disponible:
+/// <c>no_conversation</c>, <c>messaging_disabled</c>, <c>contact_blocked</c>, <c>window_closed</c> (Instagram) o
+/// <c>template_not_approved</c>. <c>CanAttach</c> enciende el adjunto; en esta fase es siempre falso (Tarea 11).</summary>
+public sealed record SupportThreadOptionDto(
+    bool Available, string? Reason, string? Delivery, DateTimeOffset? WindowClosesAt, bool CanAttach);
+
+/// <summary>La plantilla o el correo. <c>Reason</c>: <c>messaging_disabled</c>, <c>no_mobile</c>, <c>template_not_approved</c> (no hay
+/// conexión con la plantilla aprobada) o <c>no_email</c>, y los del hilo cuando la plantilla va a la conversación del ticket.
+/// <c>Connections</c> sólo trae algo para la plantilla sin conversación: el selector de conexión.</summary>
+public sealed record SupportChannelOptionDto(bool Available, string? Reason, IReadOnlyList<SupportConnectionOptionDto> Connections);
+
+public sealed record SupportConnectionOptionDto(Guid Id, string Name);
+
+/// <summary>La respuesta recién creada (o la que ya existía con ese <c>clientId</c>) y el detalle del ticket con su traza y su estado
+/// nuevos: la pantalla repinta las dos cosas con una sola llamada.</summary>
+public sealed record SupportReplyResultDto(SupportReplyDto Reply, SupportTicketDetailDto Ticket);
+
 internal static class SupportDtoMapping
 {
     public static SupportTicketTypeDto ToDto(SupportTicketType type) => new(

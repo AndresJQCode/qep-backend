@@ -31,6 +31,10 @@ public static class SupportAuditActions
 
     public const string UnclassifiedDismissed = "support.unclassified.dismissed";
 
+    public const string TicketReplySent = "support.ticket.reply_sent";
+
+    public const string TicketReplyFailed = "support.ticket.reply_failed";
+
     public static class Resources
     {
         public const string Ticket = "ticket";

@@ -21,8 +21,46 @@ public static class SupportEndpoints
         MapSettings(group);
         MapConversations(group);
         MapThread(group);
+        MapReplies(group);
 
         return endpoints;
+    }
+
+    // Fase 2: responder desde el ticket. Una respuesta que Meta o el correo rechazan también es 201, con la fila en Failed (plan E17).
+    private static void MapReplies(RouteGroupBuilder group)
+    {
+        group.MapGet("/tickets/{ticketId:guid}/reply-options", GetReplyOptionsAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportReplyOptionsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/tickets/{ticketId:guid}/replies", SendReplyAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Accepts<SupportReplyRequest>("application/json")
+            .Produces<SupportReplyResultDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+    }
+
+    private static async Task<IResult> GetReplyOptionsAsync(
+        Guid tenantId, Guid ticketId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetReplyOptionsQuery(tenantId, ticketId), cancellationToken));
+
+    private static async Task<IResult> SendReplyAsync(
+        Guid tenantId,
+        Guid ticketId,
+        SupportReplyRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync(
+            SendTicketReplyCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticketId}", result);
     }
 
     // Fase 2: el expediente del ticket, «Seguir el hilo» y «¿De qué ticket es?». Fijar, soltar y seguir llevan If-Match (428/412,
