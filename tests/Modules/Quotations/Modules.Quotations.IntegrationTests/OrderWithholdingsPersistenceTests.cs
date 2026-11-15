@@ -119,8 +119,9 @@ public sealed class OrderWithholdingsPersistenceTests
         await using (var edit = NewContext(connectionString))
         {
             var tracked = await FindAsync(edit, order.Id);
-            Assert.True(tracked.SetBillingAccount(
-                ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, Advisor, Now));
+            Assert.True(tracked.ApplyBillingContext(
+                ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, MunicipalContext.None, Advisor, Now)
+                .AccountChanged);
             await CustomerReferenceReplica.SaveAsync(edit);
         }
 

@@ -18,6 +18,10 @@ public sealed record MunicipalReResolution(
     public static MunicipalReResolution None { get; } = new(false, null, null, [], []);
 }
 
+/// <summary>Lo que cambió al aplicar la empresa y el municipio a un pedido: si cambió la cuenta (para el resumen del
+/// historial; completar el municipio de la empresa no cuenta) y la re-resolución municipal.</summary>
+public sealed record OrderBillingContextChange(bool AccountChanged, MunicipalReResolution Municipal);
+
 /// <summary>Un cambio del porcentaje efectivo de una retención municipal (spec §7.7), para el historial.</summary>
 /// <param name="Name">El nombre de la tasa congelada.</param>
 /// <param name="From">El porcentaje efectivo de antes.</param>

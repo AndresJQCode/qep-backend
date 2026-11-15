@@ -134,7 +134,10 @@ internal static class OrderWithholdingEdits
                 context.CompanyLookup, context.TenantId, edits.BillingAccount, cancellationToken) is { } account)
         {
             var before = OrderChangeSummary.BillingAccountLabel(order.BillingAccount);
-            if (order.SetBillingAccount(account, updatedBy, now))
+            // Provisional hasta que la aplicación arme el contexto municipal (plan, Tarea 13): conserva el municipio, así
+            // reenviar la misma cuenta no re-resuelve.
+            var municipal = new MunicipalContext(order.OperationCityFor(account, OperationCityChoice.Keep), []);
+            if (order.ApplyBillingContext(account, municipal, updatedBy, now).AccountChanged)
             {
                 accountSummary = OrderChangeSummary.BillingAccountChanged(
                     before, OrderChangeSummary.BillingAccountLabel(order.BillingAccount)!);

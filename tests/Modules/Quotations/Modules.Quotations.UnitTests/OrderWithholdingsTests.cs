@@ -260,7 +260,7 @@ public sealed class OrderWithholdingsTests
         Assert.Equal(0m, order.RetentionAmount);
         var version = order.Version;
 
-        var changed = order.SetBillingAccount(ColombianAccount, AdvisorId, Now);
+        var changed = order.ApplyBillingContext(ColombianAccount, MunicipalContext.None, AdvisorId, Now).AccountChanged;
 
         Assert.True(changed);
         Assert.Equal(ColombianAccount, order.BillingAccount);
@@ -274,7 +274,7 @@ public sealed class OrderWithholdingsTests
         var order = NewOrder();
         var version = order.Version;
 
-        Assert.False(order.SetBillingAccount(ColombianAccount, AdvisorId, Now));
+        Assert.False(order.ApplyBillingContext(ColombianAccount, MunicipalContext.None, AdvisorId, Now).AccountChanged);
 
         Assert.Equal(version, order.Version);
     }
@@ -287,7 +287,8 @@ public sealed class OrderWithholdingsTests
         var order = NewOrder(Header(Retefuente));
         Assert.Equal(2_500m, order.RetentionAmount);
 
-        order.SetBillingAccount(ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, AdvisorId, Now);
+        order.ApplyBillingContext(
+            ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, MunicipalContext.None, AdvisorId, Now);
 
         Assert.Empty(order.AppliedWithholdings);
         Assert.Equal((0m, order.Total), (order.RetentionAmount, order.NetTotal));
@@ -303,7 +304,7 @@ public sealed class OrderWithholdingsTests
         var version = order.Version;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.SetBillingAccount(ColombianAccount with { Currency = "USD" }, AdvisorId, Now));
+            order.ApplyBillingContext(ColombianAccount with { Currency = "USD" }, MunicipalContext.None, AdvisorId, Now));
 
         Assert.Equal("order.billing.currency_change_not_allowed", error.Code);
         Assert.Equal(("COP", ColombianAccount, version), (order.Currency, order.BillingAccount, order.Version));
@@ -317,7 +318,8 @@ public sealed class OrderWithholdingsTests
         var (version, account) = (order.Version, order.BillingAccount);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.SetBillingAccount(ColombianAccount with { CompanyId = Guid.CreateVersion7() }, AdvisorId, Now));
+            order.ApplyBillingContext(
+                ColombianAccount with { CompanyId = Guid.CreateVersion7() }, MunicipalContext.None, AdvisorId, Now));
 
         Assert.Equal("order.order.not_editable", error.Code);
         Assert.Equal((version, account), (order.Version, order.BillingAccount));
@@ -330,7 +332,7 @@ public sealed class OrderWithholdingsTests
         var version = order.Version;
         var other = ColombianAccount with { CompanyId = Guid.CreateVersion7() };
 
-        Assert.True(order.SetBillingAccount(other, AdvisorId, Now));
+        Assert.True(order.ApplyBillingContext(other, MunicipalContext.None, AdvisorId, Now).AccountChanged);
 
         Assert.Equal((other, version + 1), (order.BillingAccount, order.Version));
     }
