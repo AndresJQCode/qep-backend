@@ -2692,6 +2692,12 @@ el `FileResource` como `Purged`, auditado como `storage.file.purged` / `product_
 la copia pública reutiliza la despublicación, así que una foto publicada pierde `PublicStorageKey` y
 `PublishedAt`; es a propósito.
 
+**Archivos de dueño de sistema.** Los tipos de `SystemOwnedFiles` (Storage.Domain; hoy `SupportTicket`, los adjuntos del formulario
+público de Soporte) no existen para la consola: `GET /files` no los lista ni filtrando por ese dueño, toda ruta por id responde `404
+storage.file.not_found` (el mismo de otro tenant) y `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`. Se crean,
+completan y bajan sólo por `IStorageSystemUploads`, desde el módulo dueño. Ver [Formulario público de
+Soporte](#formulario-público-de-soporte-fase-3).
+
 ### Reportes exportados (`exports/`)
 
 La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) y las de los
@@ -5078,6 +5084,11 @@ si sale `available`, mandar el par al radicar.
   `GET /api/v1/tenants/{tenantId}/support/tickets/{ticketId}/attachments/{attachmentId}/download` (`support.ticket.view`) responde `{ url }`
   firmada de 5 minutos, sin pedir `storage.file.read`; audita `support.ticket.attachment_downloaded`. Otro tenant es 403; un adjunto que
   no es del ticket, `404 support.attachment.not_found`.
+- **Los archivos `SupportTicket` no se ven desde la consola de Storage.** Son dueño de sistema (`SystemOwnedFiles`): `GET /files` no
+  los lista, cada ruta por id de `/files/{fileId}` (descarga, publicación, metadatos, completar, cancelar, borrar) responde `404
+  storage.file.not_found` aunque el miembro tenga todo `storage.file.*`, y `POST /files` con `ownerType: SupportTicket` es `422
+  storage.file.owner_type_invalid`. Tampoco los ven Catalog (foto de producto) ni Quotations (adjunto de pedido). Sólo llegan por las
+  rutas de Soporte.
 
 **Rutas de la consola** (fase 3), bajo `/api/v1/tenants/{tenantId}/support`:
 

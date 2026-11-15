@@ -973,6 +973,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `CompleteUploadHandler` de la consola sigue exigiendo `storage.file.upload` y comparte con ella sólo el núcleo (`UploadCompletion`);
   un cambio en el núcleo vale para los dos caminos, y la autorización se queda en el handler
   (`TheMemberCompletionStillRequiresThePermission`).
+- **Los archivos `SupportTicket` no se ven desde la consola de Storage** (fix round 1 del Bloque D). `storage.file.*` no es permiso
+  de Soporte: sin la pared, quien tiene `storage.file.read` vería las PQRSF y su `uploadKey` (el `OwnerId`), con `publish` las sacaría al
+  bucket público y con `delete` borraría un adjunto reclamado. La regla vive en un solo lugar, `SystemOwnedFiles` (al lado de
+  `FileOwnerType`): `ListFilesHandler` los excluye, cada handler que carga por id llama `SystemOwnedFileGuard.EnsureVisibleToMembers`
+  (404 `storage.file.not_found`, el mismo de otro tenant), `CreateUploadSessionHandler` responde `422 storage.file.owner_type_invalid`, y
+  los adaptadores que leen el repositorio de archivos para otro módulo (`ProductImageLookup`, `QuotationFileLookup`) los tratan como
+  inexistentes. **Un handler nuevo de Storage que cargue un archivo por id, o un adaptador nuevo sobre `IFileResourceRepository`, aplica
+  la misma regla**; un dueño de sistema nuevo se suma al conjunto y no a cada handler. Lo amarran
+  `ASystemOwnedFileIsNotFoundWithoutAnyEffect` y `SystemOwnedFilesApiTests`.
 - **El `PUT` de un adjunto del formulario público sale del navegador al bucket privado de R2**, así que ese bucket necesita CORS para
   el origen de la página (`https://soporte.lulocrm.com`, y `http://localhost:3002` para probar en local) con `PUT` y los headers
   `Content-Type` e `If-None-Match`. Sin eso el navegador corta el `PUT`, completar responde `428 support.public.attachment_not_uploaded`

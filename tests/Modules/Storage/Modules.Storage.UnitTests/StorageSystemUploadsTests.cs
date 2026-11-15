@@ -204,10 +204,12 @@ public sealed class StorageSystemUploadsTests
         Assert.Equal(FileResourceStatus.PendingUpload, Assert.Single(fixture.Repository.Items).Status);
         Assert.Empty(fixture.Audit.Entries);
 
-        var completed = await fixture.MemberHandler(new PermissionContext(TenantId, granted: true))
-            .HandleAsync(new CompleteUploadCommand(TenantId, session.FileId), Ct);
-        Assert.Equal("Available", completed.Status);
-        Assert.False(Assert.Single(fixture.Audit.Entries).System);
+        // Fix round 1 del Bloque D: con el permiso tampoco lo completa. Un archivo SupportTicket no existe para la consola.
+        var withPermission = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            fixture.MemberHandler(new PermissionContext(TenantId, granted: true))
+                .HandleAsync(new CompleteUploadCommand(TenantId, session.FileId), Ct));
+        Assert.Equal("storage.file.not_found", withPermission.Code);
+        Assert.Equal(FileResourceStatus.PendingUpload, Assert.Single(fixture.Repository.Items).Status);
     }
 
     private sealed class Fixture

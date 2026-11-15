@@ -44,28 +44,31 @@ public sealed class PaymentProofPublicUrlTests
 
         await ListAsync(repository, FixedTenantModules.AllBut(TenantModuleKeys.Orders));
 
-        // store depende de orders, así que apagar orders también deja fuera el banner de la tienda.
-        Assert.Equal([FileOwnerType.PaymentProof, FileOwnerType.Store], repository.LastExcludedOwnerTypes!.Order());
+        // store depende de orders, así que apagar orders también deja fuera el banner de la tienda. Los adjuntos de Soporte (dueño de
+        // sistema) quedan fuera siempre (fix round 1 del Bloque D).
+        Assert.Equal(
+            [FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.SupportTicket],
+            repository.LastExcludedOwnerTypes!.Order());
     }
 
     [Fact]
-    public async Task WithEverythingOnNothingIsExcluded()
+    public async Task WithEverythingOnOnlyTheSystemOwnersAreExcluded()
     {
         var repository = new InMemoryFileResourceRepository(MovedPaymentProof());
 
         await ListAsync(repository, FixedTenantModules.AllBut());
 
-        Assert.Empty(repository.LastExcludedOwnerTypes!);
+        Assert.Equal([FileOwnerType.SupportTicket], repository.LastExcludedOwnerTypes!);
     }
 
     [Fact]
-    public async Task ASimulatedTenantExcludesNothing()
+    public async Task ASimulatedTenantExcludesOnlyTheSystemOwners()
     {
         var repository = new InMemoryFileResourceRepository(MovedPaymentProof());
 
         await ListAsync(repository, FixedTenantModules.Simulated);
 
-        Assert.Empty(repository.LastExcludedOwnerTypes!);
+        Assert.Equal([FileOwnerType.SupportTicket], repository.LastExcludedOwnerTypes!);
     }
 
     private static Task<PagedFilesDto> ListAsync(FileResource resource) =>

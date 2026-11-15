@@ -46,3 +46,18 @@ public enum FileOwnerType
     // ticket vive en support.ticket_attachments. Se persiste por nombre, así que no hay migración.
     SupportTicket = 8
 }
+
+/// <summary>
+/// Los dueños de sistema: archivos que sólo llegan por el camino del módulo que los creó, nunca por la consola de Storage (fix round 1
+/// del Bloque D, Soporte fase 3). Para un miembro, con cualquier permiso <c>storage.file.*</c>, no existen: el listado los deja fuera,
+/// cada ruta por id responde el mismo 404 que a un id de otro tenant (<c>SystemOwnedFileGuard</c>), <c>POST /files</c> no los crea y los
+/// adaptadores de otros módulos (Catalog, Quotations) no los ven. Así no se filtra su <c>OwnerId</c>, que en un adjunto de Soporte es el
+/// <c>uploadKey</c>. Un dueño de sistema nuevo entra acá y queda tapiado igual.
+/// </summary>
+public static class SystemOwnedFiles
+{
+    public static IReadOnlySet<FileOwnerType> OwnerTypes { get; } =
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { FileOwnerType.SupportTicket });
+
+    public static bool Includes(FileOwnerType ownerType) => OwnerTypes.Contains(ownerType);
+}

@@ -67,6 +67,8 @@ public sealed class CompleteUploadHandler(
                 "storage.file.not_found", "The file resource was not found.");
         }
 
+        // Un adjunto de Soporte (dueño de sistema) lo completa sólo la subida sin miembro.
+        SystemOwnedFileGuard.EnsureVisibleToMembers(resource);
         return resource;
     }
 }
