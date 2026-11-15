@@ -861,6 +861,36 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   - Una política nueva de ventana fija pasa por `SharedRateLimitPartitions.FixedWindow`, no por
     `RateLimitPartition.GetFixedWindowLimiter`. Si no, queda por pod y sin error.
   - Una partición que lleve el patrón de ruta va con `hashPartition: true`.
+- **Todo camino nuevo que revoque o borre sesiones llama `RemoveAsync` de la caché antes y después del guardado** (spec 2026-11-13,
+  D-4). Vale para Identity (`ISessionCache`) y para el comprador (`IBuyerSessionCache`): el `DEL` de antes cubre el request que lee
+  durante la transacción, el de después al que leyó Postgres antes del commit. Si falta, con `Valkey:Areas:Sessions` prendido la sesión
+  revocada se sigue sirviendo hasta 15 min, sin error. Un fallo se loguea en `Error` con el id de la sesión, nunca con el hash. Lo
+  amarran `CachedSessionTests` (Identity) y `CachedBuyerSessionTests` (Buyers); los caminos de hoy son `SessionService`,
+  `SessionRevocationWorker`, `OrphanUserCleanupWorker`, `BuyerSessions` y `DeleteBuyerAccount`.
+- **Una `BuyerSession` que devuelve `BuyerSessions.TryResolveAsync` no se guarda.** Con la caché prendida es una entidad reconstruida
+  (`BuyerSession.Restore`) que EF no sigue: un `Revoke` o un `Touch` sobre ella y un `SaveChanges` no mandan ningún `UPDATE`, y el
+  logout queda «hecho» con la fila viva. Revocar pasa por `BuyerSessions.RevokeCurrentAsync`, que lee la fila. Lo amarra
+  `CachedBuyerSessionTests.LogoutWithACachedSessionRevokesTheRow`.
+- **Todo cambio que altere los permisos efectivos de un tenant llama `ITenantAccessVersion.BumpAsync` antes y después del guardado**
+  (spec 2026-11-13, D-5). Roles, membresías (suspender, reactivar, quitar, activar, aceptar invitación), módulos y estado del tenant ya
+  lo hacen. Si un camino nuevo no lo llama, con `Valkey:Areas:Permissions` prendido la caché sirve los permisos de antes hasta 60 s: un
+  miembro suspendido sigue entrando, sin error. Lo amarra `CachedAuthorizationTests` (Tenancy).
+- **Una tabla de cola nueva entra al mapa de `QueueDoorbellInterceptor`** (`BuildingBlocks.Infrastructure`, `Tables`), con su cola en
+  `DoorbellQueues`, y su worker espera con `doorbell.Listen(...)`. Sin eso el worker sólo se entera en la red de seguridad, no al
+  insertar, y nada falla. El `DbContext` que mapee una de esas tablas lleva el interceptor: lo amarra
+  `CompositionRootTests.EveryDbContextThatMapsADoorbellTableHasTheInterceptor`. Lo que no es un `INSERT` (iniciar o reanudar una
+  campaña es un `UPDATE`) timbra a mano después del commit (`Campaigns.cs`).
+- **Un consumidor nuevo de `platform.outbox_messages` escucha `DoorbellQueues.Outbox`**, con `DoorbellQueues.SafetyNet(DoorbellQueues.Outbox)`,
+  como `OutboxPublisherWorker` o `NotificationsDeliveryWorker`. Un timbre de `outbox` despierta a todos los oyentes del proceso; un
+  consumidor que siga con su `Task.Delay` de antes funciona, pero no se entera del timbre.
+- **Un comando nuevo contra Valkey tiene que pasar la ACL de producción** (`~qep:* &qep:* +@all -@dangerous -@scripting`, DP-V4):
+  sin Lua (`EVAL`, `SCRIPT`), sin `KEYS`, `FLUSH*`, `INFO` ni `CONFIG`, y toda clave o canal con prefijo `qep:`. El gateway traga
+  un `NOPERM` como respaldo del área, así que en producción no se ve como error: se ve como
+  `qep_valkey_fallbacks_total{area=…}` subiendo. Las primitivas de presencia y limitadores las cubre `ValkeyAclTests`; sesiones,
+  permisos, timbres, líder del muestreador y compuerta del toque, `ValkeyAclCompatibilityTests` (las dos en `Bootstrapper.UnitTests`),
+  que exige el efecto en Valkey **y** cero respaldos con los adaptadores reales. Un área nueva suma la suya. Si falla, es un hallazgo: la ACL no se relaja.
+- **El presupuesto de envío de campañas se queda en Postgres** (`messaging.connection_send_budgets`, decisión del owner 2026-11-13).
+  D-6 del spec de Valkey no se construyó: no hay adaptador de Valkey para el cubo.
 
 ## Verificación
 
