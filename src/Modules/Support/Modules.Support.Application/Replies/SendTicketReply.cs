@@ -198,7 +198,10 @@ public sealed class SendTicketReplyHandler(
             }
         }
 
-        var outcome = await SendAsync(ticket, route, reply, actor, command.UploadId, command.FileName?.Trim(), cancellationToken);
+        // La fila no guarda adjunto: un retomado sale tal como quedó guardado, como texto, aunque el reintento traiga uno.
+        var outcome = existing is null
+            ? await SendAsync(ticket, route, reply, actor, command.UploadId, command.FileName?.Trim(), cancellationToken)
+            : await SendAsync(ticket, route, reply, actor, uploadId: null, fileName: null, cancellationToken);
         if (outcome is SupportChannelSendResult.Rejected rejected)
         {
             if (existing is not null)
@@ -254,6 +257,13 @@ public sealed class SendTicketReplyHandler(
                     SupportErrorCodes.ReplyTemplateTextInvalid,
                     "A template reply cannot have line breaks, tabs or more than four spaces in a row, nor exceed 1024 characters.");
             }
+        }
+
+        // Ruling del controlador (revisión del bloque D): un adjunto de Instagram no lleva pie y el texto de la respuesta se perdería.
+        if (command.UploadId is not null && ticket.ConversationChannel != SupportConversationRef.WhatsApp)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.ReplyAttachmentUnavailable, "An attachment only goes through a WhatsApp conversation.");
         }
 
         if (route.Delivery is SupportReplyDelivery.Text

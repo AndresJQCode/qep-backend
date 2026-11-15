@@ -41,7 +41,9 @@ public sealed class GetReplyOptionsHandler(
             var availability = await SupportReplyRules.ThreadAsync(channels, ticket, now, cancellationToken);
             // Plan E19: un adjunto sólo sale como texto en el hilo (la plantilla no lo lleva), y se sube por la sesión de subida de
             // Mensajería, que exige su permiso: sin él, la pantalla no ofrece adjuntar. Responder además exige gestionar tickets.
+            // Instagram no lleva pie en un adjunto (el texto de la respuesta se perdería): sólo WhatsApp.
             var canAttach = availability.Route is { Delivery: SupportReplyDelivery.Text }
+                && ticket.ConversationChannel == SupportConversationRef.WhatsApp
                 && executionContext.HasPermission(SupportPermissions.Manage)
                 && executionContext.HasPermission(SupportReplyAttachmentRules.UploadPermission);
             thread = new SupportThreadOptionDto(

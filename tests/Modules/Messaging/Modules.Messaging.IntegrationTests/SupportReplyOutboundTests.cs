@@ -628,10 +628,11 @@ public sealed class SupportReplyOutboundTests
     }
 
     /// <summary>Deja el archivo en el staging de quien lo subió para esa conversación, con la clave que arma la sesión de subida.</summary>
-    private static Guid Stage(MediaFixture f, Guid conversationId, string fileName, byte[] bytes)
+    private static Guid Stage(MediaFixture f, Guid conversationId, string fileName, byte[] bytes, Guid? uploadedBy = null)
     {
         var uploadId = Guid.CreateVersion7();
-        f.Bucket.Objects[MessagingMediaKeys.Staging(f.Tenant.TenantId, conversationId, f.MemberId, uploadId, Path.GetExtension(fileName))] =
+        f.Bucket.Objects[MessagingMediaKeys.Staging(
+            f.Tenant.TenantId, conversationId, uploadedBy ?? f.MemberId, uploadId, Path.GetExtension(fileName))] =
             (bytes, "application/octet-stream");
         return uploadId;
     }
@@ -672,6 +673,14 @@ public sealed class SupportReplyOutboundTests
         Assert.DoesNotContain(f.Bucket.Objects.Keys, key => key.StartsWith("messaging/staging/", StringComparison.Ordinal));
     }
 
+    private static async Task AssertNothingWentOutAsync(MediaFixture f)
+    {
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.DoesNotContain(
+            f.Factory.MetaHandler.Requests,
+            request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal) && !IsReadReceipt(request));
+    }
+
     // La clave del staging lleva la conversación: un uploadId de otra conversación (o vencido) no existe para esta.
     [Fact]
     public async Task AnUploadOfAnotherConversationIsRejected()
@@ -685,12 +694,78 @@ public sealed class SupportReplyOutboundTests
 
         var result = await SendThreadAsync(f, new SupportThreadReplySend(
             f.Tenant.TenantId, f.ConversationId, Guid.CreateVersion7(), f.MemberId, "Te adjunto el contrato", uploadId, FileName: "contrato.pdf"));
-        var withoutName = await SendThreadAsync(f, new SupportThreadReplySend(
-            f.Tenant.TenantId, other, Guid.CreateVersion7(), f.MemberId, "Te adjunto el contrato", uploadId, FileName: null));
 
         Assert.Equal(new SupportReplySendResult.Rejected("attachment_unavailable"), result);
-        Assert.Equal(new SupportReplySendResult.Rejected("attachment_unavailable"), withoutName);
-        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
-        Assert.DoesNotContain(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal) && !IsReadReceipt(request));
+        await AssertNothingWentOutAsync(f);
+    }
+
+    // La clave también lleva la membresía de quien subió: el archivo que subió otro asesor a la misma conversación no existe para quien
+    // responde.
+    [Fact]
+    public async Task AnUploadOfAnotherMemberIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var uploadId = Stage(f, f.ConversationId, "contrato.pdf", Pdf(), uploadedBy: Guid.CreateVersion7());
+
+        var result = await SendThreadAsync(f, new SupportThreadReplySend(
+            f.Tenant.TenantId, f.ConversationId, Guid.CreateVersion7(), f.MemberId, "Te adjunto el contrato", uploadId, FileName: "contrato.pdf"));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("attachment_unavailable"), result);
+        await AssertNothingWentOutAsync(f);
+    }
+
+    // Sin nombre no hay extensión con qué rearmar la clave del staging.
+    [Fact]
+    public async Task AnUploadWithoutItsFileNameIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var uploadId = Stage(f, f.ConversationId, "contrato.pdf", Pdf());
+
+        var result = await SendThreadAsync(f, new SupportThreadReplySend(
+            f.Tenant.TenantId, f.ConversationId, Guid.CreateVersion7(), f.MemberId, "Te adjunto el contrato", uploadId, FileName: null));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("attachment_unavailable"), result);
+        await AssertNothingWentOutAsync(f);
+    }
+
+    // Ruling del controlador (revisión del bloque D): Instagram no lleva pie en un adjunto, así que la respuesta del asesor se perdería.
+    // Se rechaza antes de mirar el staging, sin fila ni llamada.
+    [Fact]
+    public async Task AnUploadToAnInstagramConversationIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        await SeedInstagramConnectionAsync(factory, tenant.TenantId, "Instagram Ventas", InstagramPayloads.DefaultAccountId);
+        factory.MetaHandler.Respond($@"^/v24\.0/{InstagramPayloads.DefaultUserId}\?", HttpStatusCode.OK,
+            """{"name":"Laura Pérez","username":"laura.perez","id":"1234567890123456"}""");
+        using (var anonymous = factory.CreateClient())
+        {
+            await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Text("m1", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, "hola"));
+            await DrainDeliveriesAsync(factory);
+        }
+
+        var conversationId = await ScalarAsync<Guid>(connectionString, "SELECT id FROM messaging.conversations");
+        var memberId = await OwnerMembershipIdAsync(connectionString, tenant);
+        using var scope = factory.Services.CreateScope();
+
+        var result = await scope.ServiceProvider.GetRequiredService<ISupportReplyOutbound>().SendThreadAsync(
+            new SupportThreadReplySend(
+                tenant.TenantId, conversationId, Guid.CreateVersion7(), memberId, "Te adjunto el contrato", Guid.CreateVersion7(), FileName: "contrato.pdf"),
+            Ct);
+
+        Assert.Equal(new SupportReplySendResult.Rejected("attachment_unavailable"), result);
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.DoesNotContain(
+            factory.MetaHandler.Requests,
+            request => request.Uri!.AbsolutePath.EndsWith("/messages", StringComparison.Ordinal) && request.Method == HttpMethod.Post);
     }
 }

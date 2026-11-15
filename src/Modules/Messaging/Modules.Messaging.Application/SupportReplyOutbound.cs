@@ -5,7 +5,8 @@ namespace Modules.Messaging.Application;
 
 /// <summary>Soporte fase 2 (plan E13 y E19): una respuesta de un ticket en el hilo de su conversación, dentro de la ventana de 24 h.
 /// <c>ClientId</c> es el id de la fila de respuesta de Soporte: un reintento con el mismo no vuelve a mandar nada. Con <c>UploadId</c>
-/// sale el adjunto que el asesor subió por la sesión de subida de Mensajería para esa conversación, y <c>Text</c> va como su pie;
+/// sale el adjunto que el asesor subió por la sesión de subida de Mensajería para esa conversación (sólo WhatsApp), y <c>Text</c> va
+/// como su pie;
 /// <c>FileName</c> es el nombre que vio al elegir el archivo, del que sale la extensión de la clave del staging.</summary>
 public sealed record SupportThreadReplySend(
     Guid TenantId, Guid ConversationId, Guid ClientId, Guid AuthorMemberId, string Text, Guid? UploadId, string? FileName = null);
@@ -55,7 +56,8 @@ public static class SupportReplyReasons
     public const string ConversationNotFound = "conversation_not_found";
 
     /// <summary>El adjunto no existe en el staging de quien responde para esa conversación (de otra conversación, vencido o ya usado),
-    /// falta su nombre, el canal no acepta ese tipo o ese tamaño, su contenido no es el que dice ser, es un audio (no lleva pie y la
+    /// falta su nombre, la conversación es de Instagram (no lleva pie: el texto de la respuesta se perdería), el canal no acepta ese
+    /// tipo o ese tamaño, su contenido no es el que dice ser, es un audio (no lleva pie y la
     /// respuesta siempre tiene texto) o no se pudo guardar.</summary>
     public const string AttachmentUnavailable = "attachment_unavailable";
 
@@ -334,7 +336,9 @@ public sealed class SupportReplyOutbound(
     private async Task<SupportReplySendResult> SendThreadMediaAsync(
         SupportThreadReplySend send, ConversationRow conversation, Guid uploadId, DateTimeOffset now, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(send.FileName))
+        // Ruling del controlador (revisión del bloque D): Instagram no lleva pie en un adjunto, así que el texto de la respuesta, que es
+        // lo que el ticket registra, nunca le llegaría al contacto. Sólo WhatsApp.
+        if (conversation.Channel != ConversationChannel.WhatsApp || string.IsNullOrWhiteSpace(send.FileName))
         {
             return Rejected(SupportReplyReasons.AttachmentUnavailable);
         }
@@ -364,19 +368,7 @@ public sealed class SupportReplyOutbound(
             return Rejected(SupportReplyReasons.AttachmentUnavailable);
         }
 
-        var isInstagram = channel == ConversationChannel.Instagram;
-        MessagingSender? sender = null;
-        InstagramSender? igSender = null;
-        if (isInstagram)
-        {
-            igSender = await connections.ResolveInstagramSenderAsync(send.TenantId, conversation.ConnectionId, ct);
-        }
-        else
-        {
-            sender = (await connections.ResolveSenderWithReasonAsync(send.TenantId, conversation.ConnectionId, ct)).Sender;
-        }
-
-        if (sender is null && igSender is null)
+        if ((await connections.ResolveSenderWithReasonAsync(send.TenantId, conversation.ConnectionId, ct)).Sender is not { } sender)
         {
             return Rejected(SupportReplyReasons.ConnectionUnavailable);
         }
@@ -426,52 +418,38 @@ public sealed class SupportReplyOutbound(
         }
 
         // Desde acá todo va con CancellationToken.None: si Meta ya aceptó, cortar borraría la fila y el reintento mandaría dos veces.
-        string? mediaId = null;
-        SendResult result;
-        if (isInstagram)
+        SupportReplySendResult settled;
+        try
         {
-            // Instagram baja el adjunto desde una URL firmada de R2 y no lleva pie: el texto queda guardado y se ve en QEP.
-            result = await SendInstagramAttachmentAsync(
-                igSender!, conversation.UserId!, finalKey, OutboundMediaPolicy.InstagramAttachmentType(declared));
-        }
-        else
-        {
-            mediaId = prepared.Upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
+            var mediaId = prepared.Upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
             var callback = SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D");
             var recipient = SendTarget.For(conversation.UserId, conversation.WaId);
-            result = mediaId is null
+            var result = mediaId is null
                 ? SendAudioMessageHandler.FromUploadFailure(prepared.Upload?.Failure)
                 : kind switch
                 {
-                    MessageKind.Image => await meta.SendImageAsync(sender!, recipient, mediaId, caption, callback, null, CancellationToken.None),
-                    MessageKind.Video => await meta.SendVideoAsync(sender!, recipient, mediaId, caption, callback, null, CancellationToken.None),
-                    _ => await meta.SendDocumentAsync(sender!, recipient, mediaId, prepared.FileName, caption, callback, null, CancellationToken.None),
+                    MessageKind.Image => await meta.SendImageAsync(sender, recipient, mediaId, caption, callback, null, CancellationToken.None),
+                    MessageKind.Video => await meta.SendVideoAsync(sender, recipient, mediaId, caption, callback, null, CancellationToken.None),
+                    _ => await meta.SendDocumentAsync(sender, recipient, mediaId, prepared.FileName, caption, callback, null, CancellationToken.None),
                 };
+
+            settled = await SettleAsync(
+                send.TenantId, conversation, claim, result, mediaId, claim.Inserted ? () => DiscardAsync(finalKey) : null);
+        }
+        // Como en el adjunto del asesor (SendMediaMessageHandler): una falla inesperada con una fila nueva deja en R2 un objeto que ninguna
+        // fila sirve; se borra y la excepción sigue. En el reintento de un Failed el objeto es el que esa fila ya sirve, y se queda.
+        catch (Exception exception) when (claim.Inserted && exception is not MessagingDomainException)
+        {
+            await DiscardAsync(finalKey);
+            throw;
         }
 
-        var settled = await SettleAsync(
-            send.TenantId, conversation, claim, result, mediaId, claim.Inserted ? () => DiscardAsync(finalKey) : null);
         if (settled is SupportReplySendResult.Sent)
         {
             await DiscardAsync(stagingKey);
         }
 
         return settled;
-    }
-
-    private async Task<SendResult> SendInstagramAttachmentAsync(InstagramSender sender, string recipientId, string key, string attachmentType)
-    {
-        Uri url;
-        try
-        {
-            url = await store.CreateDownloadUrlAsync(key, SendMediaMessageHandler.InstagramDownloadLifetime, CancellationToken.None);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            return new SendResult(SendOutcome.NotSent, null, null, null);
-        }
-
-        return await instagram.SendAttachmentAsync(sender, recipientId, attachmentType, url, CancellationToken.None);
     }
 
     // Best effort, como en el adjunto del asesor: lo que no se borre lo limpia el lifecycle del bucket.

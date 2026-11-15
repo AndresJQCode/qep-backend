@@ -385,7 +385,9 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
     public async Task APendingReplyIsResumedThroughItsStoredChannelNotTheRetryOne()
     {
         var scenario = await StartAsync(Factory);
-        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        // Ticket manual con la solicitante por defecto (Ana, con correo): la fila guardada es de correo y el reintento pide el hilo.
+        // Uno desde una conversación sin cliente no tiene correo en la foto y el retomado quedaría Failed por eso, no por el canal.
+        var ticket = await scenario.CreateAsync();
         var emailClient = Guid.CreateVersion7();
         var emailRow = await SeedPendingReplyAsync(
             scenario, Id(ticket), emailClient, DateTimeOffset.UtcNow.AddMinutes(-2),
@@ -473,6 +475,45 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
 
         Assert.Equal(rowId, Assert.Single(_channels.ThreadSends).ClientId);
         Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+    }
+
+    // Revisión del bloque D: la fila no guarda adjunto, así que el retomado de una Pending sale como texto, tal como quedó guardada,
+    // aunque el reintento traiga un uploadId y un nombre.
+    [Fact]
+    public async Task AResumedPendingReplyIgnoresTheRetryAttachment()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var clientId = Guid.CreateVersion7();
+        var rowId = await SeedPendingReplyAsync(scenario, Id(ticket), clientId, DateTimeOffset.UtcNow.AddMinutes(-2));
+
+        await ReplyCreatedAsync(
+            scenario, ticket, new { clientId, channel = "Thread", text = "Hola", uploadId = Guid.CreateVersion7(), fileName = "factura.pdf" });
+
+        var send = Assert.Single(_channels.ThreadSends);
+        Assert.Equal((rowId, (Guid?)null, (string?)null, "Hola"), (send.ClientId, send.UploadId, send.FileName, send.Text));
+    }
+
+    // Ruling del controlador (revisión del bloque D): Instagram no lleva pie en un adjunto, así que el texto de la respuesta se perdería.
+    // Un adjunto a una conversación de Instagram es 422 antes de crear la fila, y reply-options no lo ofrece.
+    [Fact]
+    public async Task AnInstagramThreadDoesNotTakeAttachments()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5), channel: "Instagram");
+        var withMessaging = CreateClient(
+            Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read, SupportPermissions.Manage, SupportReplyAttachmentRules.UploadPermission);
+
+        var options = await OptionsAsync(withMessaging, scenario, Id(ticket));
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = "Te adjunto la factura", uploadId = Guid.CreateVersion7(), fileName = "factura.pdf" });
+
+        Assert.True(Available(options, "thread"));
+        Assert.False(options.GetProperty("thread").GetProperty("canAttach").GetBoolean());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.attachment_unavailable", await CodeOfAsync(response));
+        Assert.Empty(_channels.ThreadSends);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
     }
 
     // Tarea 11 (E19): el adjunto viaja con su nombre hasta el canal, y el texto de la respuesta es su pie.

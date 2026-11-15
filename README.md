@@ -4828,14 +4828,23 @@ conversación manda la plantilla al celular de la foto por la conexión elegida,
 respuesta es una fila de `support.ticket_replies` que se confirma `Pending` **antes** de llamar afuera; su `id` es el `clientId` que viaja
 a Mensajería, idempotente por él. Un reintento con el mismo `clientId` devuelve la fila guardada sin mirar el `If-Match`; una `Pending` de
 menos de 60 s se devuelve sin enviar (la está mandando otro request) y una más vieja se retoma por el canal, la entrega y la conexión que
-guardó su fila: si el canal la rechaza o ya no tiene ruta, queda `Failed` con el motivo. **El correo no es idempotente**: una `Pending`
-de correo de más de 60 s se vuelve a mandar al retomarla, y el solicitante puede recibirlo dos veces.
+guardó su fila (sin adjunto: la fila no lo guarda, y un retomado sale como texto aunque el reintento traiga uno): si el canal la
+rechaza o ya no tiene ruta, queda `Failed` con el motivo. **El correo no es idempotente**: una `Pending` de correo de más de 60 s se
+vuelve a mandar al retomarla, y el solicitante puede recibirlo dos veces.
 
-**Adjuntos.** Una respuesta por el hilo dentro de la ventana puede llevar un archivo: la pantalla lo sube con la sesión de subida de
-Mensajería (`POST /api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages/media/upload-session`, que exige
-`messaging.conversation.manage`) y manda `uploadId` y `fileName` en la respuesta. El texto de la respuesta va como pie (hasta 1024). Sin
-el permiso de Mensajería, `reply-options` responde `canAttach = false`. Un `uploadId` de otra conversación, vencido o ya usado, un tipo que
-el canal no acepta o un audio (no lleva pie) es `422 support.reply.attachment_unavailable`.
+**`failureCode` de una respuesta `Failed`** tiene dos orígenes, y la pantalla tiene que traducir los dos: un motivo de Mensajería o del
+correo cuando el canal la rechazó o falló (`send_failed`, `window_closed`, `contact_blocked`, `connection_unavailable`,
+`attachment_unavailable`…), o un código de error de Soporte cuando un retomado ya no tenía ruta (`support.ticket.no_conversation`,
+`support.ticket.reply_channel_unavailable`, `support.reply.template_not_approved`, `support.reply.connection_required`…).
+
+**Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
+la pantalla lo sube con la sesión de subida de Mensajería
+(`POST /api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages/media/upload-session`, que exige
+`messaging.conversation.manage`) y manda `uploadId` y `fileName` en la respuesta. En WhatsApp el texto de la respuesta va como pie (hasta
+1024). Instagram no lleva pie en un adjunto y el texto se perdería, así que ahí no se adjunta: `canAttach = false` y un `uploadId` es
+`422 support.reply.attachment_unavailable`. Sin el permiso de Mensajería, `reply-options` también responde `canAttach = false`. Un
+`uploadId` de otra conversación o que subió otro asesor, vencido o ya usado, sin `fileName`, un tipo que el canal no acepta o un audio
+(no lleva pie) es `422 support.reply.attachment_unavailable`.
 
 **Plantilla «Aviso de respuesta».** `MessageTemplateKind.SupportReply`, nombre `qep_soporte_respuesta` (versiones `_v2`…, prefijo
 reservado), idioma `es`, `UTILITY`, sólo cuerpo, con las variables fijas más `radicado` y `respuesta`. Se aprovisiona **por conexión**:
