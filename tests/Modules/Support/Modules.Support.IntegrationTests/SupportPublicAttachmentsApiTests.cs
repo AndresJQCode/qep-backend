@@ -1,0 +1,526 @@
+using System.Collections.Concurrent;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text.Json;
+using BuildingBlocks.Application;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Modules.Storage.Application;
+using Modules.Support.Application;
+using Modules.Support.Domain;
+using static Modules.Support.IntegrationTests.SupportApiHarness;
+using static Modules.Support.IntegrationTests.SupportMessagingSeed;
+using static Modules.Support.IntegrationTests.SupportPublicHarness;
+
+namespace Modules.Support.IntegrationTests;
+
+/// <summary>
+/// Los adjuntos del formulario público (plan fase 3, Task 10; F30 a F37). El visitante abre una sesión, sube por la URL firmada,
+/// completa con el <c>uploadKey</c> y radica con los pares <c>(fileId, uploadKey)</c>; la consola los ve en el detalle y los baja con
+/// una URL firmada. Host propio por clase: el bucket privado es un doble en memoria, además de los dobles de <see cref="SupportPublicHost"/>.
+/// </summary>
+public sealed class SupportPublicAttachmentsApiTests(SupportPublicAttachmentsHost host) : IClassFixture<SupportPublicAttachmentsHost>
+{
+    private static readonly byte[] PdfBytes = "%PDF-1.7\nacta de entrega"u8.ToArray();
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task AFiledTicketKeepsItsAttachments()
+    {
+        var rig = await RigAsync();
+        var first = await UploadAsync(rig, "acta.pdf");
+        var second = await UploadAsync(rig, "foto.pdf");
+
+        var response = await PostJsonAsync(
+            rig.Client, rig.TicketsUrl, WithAttachments(NamedBody(rig.TypeId, rig.CityId, Email()), first, second));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var detail = await JsonAsync(await CreateReader(rig.Factory, rig.TenantId.ToString())
+            .GetAsync($"{SupportUrl(rig.TenantId.ToString())}/tickets/{await TicketIdAsync(rig)}", Ct));
+        var attachments = detail.GetProperty("attachments").EnumerateArray().ToList();
+        Assert.Equal(["acta.pdf", "foto.pdf"], attachments.Select(item => item.GetProperty("fileName").GetString()).Order());
+        Assert.All(attachments, item =>
+        {
+            Assert.Equal("application/pdf", item.GetProperty("mimeType").GetString());
+            Assert.Equal((long)PdfBytes.Length, item.GetProperty("sizeBytes").GetInt64());
+        });
+    }
+
+    [Fact]
+    public async Task AnAnonymousTicketCanAttach()
+    {
+        var rig = await RigAsync();
+        var file = await UploadAsync(rig, "denuncia.pdf");
+
+        var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), file));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(1L, await ScalarAsync(
+            rig.Factory,
+            "SELECT count(*) FROM support.ticket_attachments a JOIN support.tickets t ON t.id = a.ticket_id WHERE t.tenant_id = @tenant AND t.is_anonymous",
+            ("tenant", rig.TenantId)));
+    }
+
+    // Plan F32: el uploadKey es el único vínculo entre la subida anónima y quien la abrió. Uno ajeno responde igual que un id que no
+    // existe, al completar y al radicar.
+    [Fact]
+    public async Task AnAttachmentWithAnotherUploadKeyIsRejectedLikeAnUnknownOne()
+    {
+        var rig = await RigAsync();
+        var file = await UploadAsync(rig, "acta.pdf");
+        var stolen = file with { UploadKey = Guid.NewGuid() };
+        var unknown = new Attachment(Guid.CreateVersion7(), file.UploadKey);
+
+        var complete = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, $"/attachments/{file.FileId}/complete"), new { uploadKey = stolen.UploadKey });
+        var withStolen = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), stolen));
+        var withUnknown = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), unknown));
+
+        foreach (var response in new[] { complete, withStolen, withUnknown })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("support.public.attachment_invalid", await CodeOfAsync(response));
+        }
+
+        Assert.Equal(
+            WithoutTraceId(await JsonAsync(withStolen)), WithoutTraceId(await JsonAsync(withUnknown)));
+        Assert.Equal(0L, await TicketCountAsync(rig));
+    }
+
+    // Plan F35: el índice único sobre file_id es lo que impide que dos radicaciones reclamen el mismo archivo, y se traduce por
+    // nombre al mismo 422. La segunda no gasta radicado.
+    [Fact]
+    public async Task TheSameFileCannotBeClaimedByTwoTickets()
+    {
+        var rig = await RigAsync();
+        var file = await UploadAsync(rig, "acta.pdf");
+
+        var first = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), file));
+        var second = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), file));
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
+        Assert.Equal("support.public.attachment_invalid", await CodeOfAsync(second));
+        Assert.Equal(1L, await TicketCountAsync(rig));
+        Assert.Equal("SOP-000002", (await JsonAsync(await PostJsonAsync(rig.Client, rig.TicketsUrl, AnonymousBody(rig.TypeId))))
+            .GetProperty("number").GetString());
+    }
+
+    [Fact]
+    public async Task APendingOrQuarantinedFileIsRejected()
+    {
+        var rig = await RigAsync();
+        var pending = await OpenAsync(rig, "acta.pdf", PdfBytes.Length);
+        var quarantined = await OpenAsync(rig, "falso.pdf", 4);
+        host.Storage.Put(await StagingKeyAsync(rig, quarantined.FileId), "MZ\0\0"u8.ToArray());
+
+        var completed = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, $"/attachments/{quarantined.FileId}/complete"), new { uploadKey = quarantined.UploadKey });
+        var notUploaded = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, $"/attachments/{pending.FileId}/complete"), new { uploadKey = pending.UploadKey });
+        var withPending = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), pending));
+        var withQuarantined = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), quarantined));
+
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        Assert.Equal("rejected", (await JsonAsync(completed)).GetProperty("status").GetString());
+        Assert.Equal(HttpStatusCode.PreconditionRequired, notUploaded.StatusCode);
+        foreach (var response in new[] { withPending, withQuarantined })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("support.public.attachment_invalid", await CodeOfAsync(response));
+        }
+
+        Assert.Equal(0L, await TicketCountAsync(rig));
+    }
+
+    // Owner, 2026-11-15: hasta tres archivos por ticket; el cuarto es el mismo 422 de siempre en Attachments.
+    [Fact]
+    public async Task FourFilesAreRejected()
+    {
+        var rig = await RigAsync();
+        var files = Enumerable.Range(0, 4).Select(_ => new Attachment(Guid.CreateVersion7(), Guid.NewGuid())).ToArray();
+
+        var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), files));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Contains("Attachments", await ErrorKeysAsync(response));
+    }
+
+    [Fact]
+    public async Task AFileOverTenMegabytesIsRejectedAtOpen()
+    {
+        var rig = await RigAsync();
+
+        var tooLarge = await PostJsonAsync(
+            rig.Client,
+            PublicUrl(rig.Slug, "/attachments"),
+            new { name = "video.pdf", mimeType = "application/pdf", sizeBytes = (10 * 1024 * 1024) + 1 });
+        var wrongType = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, "/attachments"), new { name = "virus.exe", mimeType = "application/pdf", sizeBytes = 10 });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, tooLarge.StatusCode);
+        Assert.Equal(["SizeBytes"], await ErrorKeysAsync(tooLarge));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, wrongType.StatusCode);
+        Assert.Contains("Name", await ErrorKeysAsync(wrongType));
+        Assert.Equal(0L, await ScalarAsync(
+            rig.Factory, "SELECT count(*) FROM storage.file_resources WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+    }
+
+    // Owner, 2026-11-15: sólo PDF, JPEG, PNG y WebP. Word y Excel se rechazan al abrir (ClamAV está apagado en producción), sin tocar
+    // Storage.
+    [Theory]
+    [InlineData("carta.doc", "application/msword")]
+    [InlineData("carta.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")]
+    [InlineData("hoja.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
+    [InlineData("hoja.xls", "application/vnd.ms-excel")]
+    public async Task OfficeFilesAreRejectedAtOpen(string name, string mimeType)
+    {
+        var rig = await RigAsync();
+
+        var response = await PostJsonAsync(rig.Client, PublicUrl(rig.Slug, "/attachments"), new { name, mimeType, sizeBytes = 10 });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Contains("Name", await ErrorKeysAsync(response));
+        Assert.Equal(0L, await ScalarAsync(
+            rig.Factory, "SELECT count(*) FROM storage.file_resources WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+    }
+
+    // image/jpg no es un tipo registrado, pero el accept de la página lo usa: se abre como image/jpeg, que es lo que Storage acepta y
+    // lo que va firmado en el PUT.
+    [Fact]
+    public async Task ImageJpgOpensAsImageJpeg()
+    {
+        var rig = await RigAsync();
+
+        var response = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, "/attachments"), new { name = "foto.jpg", mimeType = "image/jpg", sizeBytes = 10 });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var session = await JsonAsync(response);
+        Assert.Equal("image/jpeg", session.GetProperty("headers").GetProperty("Content-Type").GetString());
+        Assert.Equal("image/jpeg", await TextAsync(
+            rig.Factory, "SELECT mime_type FROM storage.file_resources WHERE id = @id", ("id", session.GetProperty("fileId").GetGuid())));
+    }
+
+    // Plan F37: el asesor de Soporte no necesariamente tiene storage.file.read. La descarga pide support.ticket.read o manage
+    // (revalidado en el handler) y un miembro de otro tenant recibe 403, nunca 404.
+    [Fact]
+    public async Task TheDownloadNeedsTicketViewAndAnotherTenantGets403()
+    {
+        var rig = await RigAsync();
+        var file = await UploadAsync(rig, "acta.pdf");
+        await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), file));
+        var tenant = rig.TenantId.ToString();
+        var ticketId = await TicketIdAsync(rig);
+        var detail = await JsonAsync(await CreateReader(rig.Factory, tenant).GetAsync($"{SupportUrl(tenant)}/tickets/{ticketId}", Ct));
+        var attachmentId = detail.GetProperty("attachments")[0].GetProperty("id").GetGuid();
+        var url = $"{SupportUrl(tenant)}/tickets/{ticketId}/attachments/{attachmentId}/download";
+
+        var reader = await CreateReader(rig.Factory, tenant).GetAsync(url, Ct);
+        var manager = await CreateClient(rig.Factory, SubjectId, tenant, SupportPermissions.Manage).GetAsync(url, Ct);
+        var storageOnly = await CreateClient(rig.Factory, SubjectId, tenant, StoragePermissions.FileRead).GetAsync(url, Ct);
+        var otherTenant = await CreateClient(rig.Factory, SubjectId, NewTenantId(), SupportPermissions.Read).GetAsync(url, Ct);
+        var unknown = await CreateReader(rig.Factory, tenant)
+            .GetAsync($"{SupportUrl(tenant)}/tickets/{ticketId}/attachments/{Guid.CreateVersion7()}/download", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, reader.StatusCode);
+        Assert.StartsWith("https://r2.test/files/", (await JsonAsync(reader)).GetProperty("url").GetString(), StringComparison.Ordinal);
+        Assert.Equal(TimeSpan.FromMinutes(5), host.Storage.LastDownloadExpiry);
+        Assert.Equal(HttpStatusCode.OK, manager.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, storageOnly.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, otherTenant.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.Equal("support.attachment.not_found", await CodeOfAsync(unknown));
+    }
+
+    // Plan F36: la sonda de Soporte retiene el archivo reclamado para que el barrido de Storage no lo borre; el que nadie reclamó, no.
+    [Fact]
+    public async Task TheReferenceProbeKeepsAClaimedFile()
+    {
+        var rig = await RigAsync();
+        var claimed = await UploadAsync(rig, "acta.pdf");
+        var unclaimed = await UploadAsync(rig, "suelto.pdf");
+        await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), claimed));
+
+        await using var scope = rig.Factory.Services.CreateAsyncScope();
+        var probe = Assert.Single(
+            scope.ServiceProvider.GetServices<IFileReferenceProbe>(), candidate => candidate.Source == "support");
+
+        Assert.True(await probe.HasReferencesAsync(claimed.FileId, Ct));
+        Assert.False(await probe.HasReferencesAsync(unclaimed.FileId, Ct));
+    }
+
+    [Fact]
+    public async Task TheUploadRoutesAreNoStoreAndRateLimited()
+    {
+        var rig = await RigAsync();
+        var body = new { name = "acta.pdf", mimeType = "application/pdf", sizeBytes = PdfBytes.Length };
+
+        var responses = new List<HttpResponseMessage>();
+        for (var i = 0; i < 21; i++)
+        {
+            responses.Add(await PostJsonAsync(rig.Client, PublicUrl(rig.Slug, "/attachments"), body));
+        }
+
+        Assert.All(responses.Take(20), response => Assert.Equal(HttpStatusCode.Created, response.StatusCode));
+        Assert.Equal(HttpStatusCode.TooManyRequests, responses[^1].StatusCode);
+        Assert.All(responses, response => Assert.Equal("no-store", response.Headers.CacheControl?.ToString()));
+        // El limitador es propio: subir no gasta la cubeta de radicar.
+        Assert.Equal(HttpStatusCode.Created, (await PostJsonAsync(rig.Client, rig.TicketsUrl, AnonymousBody(rig.TypeId))).StatusCode);
+    }
+
+    // Spec §9.3 «Adjuntos: el tenant los permite o no». La página lo lee del formulario para esconder el control, y el backend lo exige
+    // igual: abrir, completar y radicar con adjuntos responden 422 support.public.attachments_disabled. Sin adjuntos se radica normal.
+    [Fact]
+    public async Task WithAttachmentsOffTheFormSaysSoAndEveryAttachmentPathIs422()
+    {
+        var rig = await RigAsync(allowAttachments: false);
+
+        var form = await JsonAsync(await rig.Client.GetAsync(PublicUrl(rig.Slug, "/form"), Ct));
+        var open = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, "/attachments"), new { name = "acta.pdf", mimeType = "application/pdf", sizeBytes = 10 });
+        var complete = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, $"/attachments/{Guid.CreateVersion7()}/complete"), new { uploadKey = Guid.NewGuid() });
+        var filed = await PostJsonAsync(
+            rig.Client, rig.TicketsUrl,
+            WithAttachments(AnonymousBody(rig.TypeId), new Attachment(Guid.CreateVersion7(), Guid.NewGuid())));
+
+        Assert.False(form.GetProperty("attachments").GetProperty("allowed").GetBoolean());
+        foreach (var response in new[] { open, complete, filed })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("support.public.attachments_disabled", await CodeOfAsync(response));
+        }
+
+        Assert.Equal(0L, await TicketCountAsync(rig));
+        Assert.Equal(0L, await ScalarAsync(
+            rig.Factory, "SELECT count(*) FROM storage.file_resources WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+        Assert.Equal(HttpStatusCode.Created, (await PostJsonAsync(rig.Client, rig.TicketsUrl, AnonymousBody(rig.TypeId))).StatusCode);
+    }
+
+    [Fact]
+    public async Task WithAttachmentsOnTheFormSaysSo()
+    {
+        var rig = await RigAsync();
+
+        var form = await JsonAsync(await rig.Client.GetAsync(PublicUrl(rig.Slug, "/form"), Ct));
+
+        // Owner, 2026-11-15: la página arma su accept y su tope con esto, no con una lista propia.
+        var attachments = form.GetProperty("attachments");
+        Assert.True(attachments.GetProperty("allowed").GetBoolean());
+        Assert.Equal(3, attachments.GetProperty("maxFiles").GetInt32());
+        Assert.Equal(10L * 1024 * 1024, attachments.GetProperty("maxSizeBytes").GetInt64());
+        Assert.Equal(
+            ["application/pdf", "image/jpeg", "image/png", "image/webp"],
+            attachments.GetProperty("mimeTypes").EnumerateArray().Select(item => item.GetString()!).Order(StringComparer.Ordinal));
+    }
+
+    // Owner, 2026-11-15 (E2): el limitador por IP no frena a muchas IPs a la vez llenando el bucket. Un tenant tiene a lo sumo 200
+    // subidas abiertas en las últimas 24 h sin reclamar por un ticket; la 201 es 422 support.public.attachments_busy, sin tocar Storage.
+    // Un archivo ya reclamado y uno de hace más de 24 h no cuentan, y otro tenant sigue con su cupo entero.
+    [Fact]
+    public async Task TheTwoHundredAndFirstOpenUploadOfADayIs422AndOnlyForThatTenant()
+    {
+        var rig = await RigAsync();
+        var claimed = await UploadAsync(rig, "reclamado.pdf");
+        Assert.Equal(
+            HttpStatusCode.Created,
+            (await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), claimed))).StatusCode);
+        // 199 abiertas hoy más una de ayer: con la reclamada, 201 filas del tenant, de las que cuentan 199.
+        await CopyFileAsync(rig, claimed.FileId, count: SupportPublicAttachmentRules.MaxPendingPerTenantPerDay - 1, hoursAgo: 0);
+        await CopyFileAsync(rig, claimed.FileId, count: 1, hoursAgo: 25);
+
+        var twoHundredth = await OpenFromNewIpAsync(rig.Factory, rig.Slug);
+        var filesBefore = await FileCountAsync(rig.Factory, rig.TenantId);
+        var twoHundredAndFirst = await OpenFromNewIpAsync(rig.Factory, rig.Slug);
+        var other = await RigAsync();
+        var otherTenant = await OpenFromNewIpAsync(other.Factory, other.Slug);
+
+        Assert.Equal(HttpStatusCode.Created, twoHundredth.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, twoHundredAndFirst.StatusCode);
+        Assert.Equal("support.public.attachments_busy", await CodeOfAsync(twoHundredAndFirst));
+        Assert.Equal(filesBefore, await FileCountAsync(rig.Factory, rig.TenantId));
+        Assert.Equal(HttpStatusCode.Created, otherTenant.StatusCode);
+    }
+
+    // Block E (E-3): el conteo del tope filtra por tenant, dueño y hora de creación; el índice lo sirve sin recorrer todos los adjuntos
+    // que el tenant tuvo alguna vez.
+    [Fact]
+    public async Task TheCapCountHasAnIndexByTenantOwnerAndCreation()
+    {
+        var factory = await host.StartTestAsync();
+
+        Assert.Equal(
+            "CREATE INDEX \"IX_file_resources_tenant_owner_created\" ON storage.file_resources USING btree (tenant_id, owner_type, created_at)",
+            await TextAsync(
+                factory,
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'storage' AND indexname = 'IX_file_resources_tenant_owner_created'"));
+    }
+
+    // Cada apertura desde su propia IP: el limitador de subidas es de 20 cada 10 minutos por IP.
+    private static async Task<HttpResponseMessage> OpenFromNewIpAsync(SupportApiHarness.QepApiFactory factory, string slug)
+    {
+        using var client = VisitorClient(factory, NextIp());
+        return await PostJsonAsync(
+            client, PublicUrl(slug, "/attachments"), new { name = "acta.pdf", mimeType = "application/pdf", sizeBytes = 10 });
+    }
+
+    private static Task<long> FileCountAsync(SupportApiHarness.QepApiFactory factory, Guid tenantId) =>
+        ScalarAsync(factory, "SELECT count(*) FROM storage.file_resources WHERE tenant_id = @tenant", ("tenant", tenantId));
+
+    // Copias sin reclamar de un archivo del tenant, abiertas hace hoursAgo horas: lo que dejarían muchas IPs abriendo sin radicar.
+    private static Task CopyFileAsync(Rig rig, Guid sourceId, int count, int hoursAgo) =>
+        ExecuteAsync(
+            rig.Factory,
+            """
+            INSERT INTO storage.file_resources (id, tenant_id, owner_id, owner_type, name, mime_type, size_bytes, storage_key, checksum,
+                category, tags, public_storage_key, published_at, status, created_at, updated_at, deleted_at)
+            SELECT gen_random_uuid(), tenant_id, gen_random_uuid(), owner_type, name, mime_type, size_bytes, storage_key || '-' || n,
+                checksum, category, tags, NULL, NULL, 'PendingUpload', now() - make_interval(hours => @hoursAgo), now(), NULL
+            FROM storage.file_resources, generate_series(1, @count) AS n
+            WHERE id = @source
+            """,
+            ("source", sourceId), ("count", count), ("hoursAgo", hoursAgo));
+
+    // Las demás pruebas de la clase usan un formulario que permite adjuntos: el que no los permite lo prueba la de arriba.
+    private async Task<Rig> RigAsync(bool allowAttachments = true)
+    {
+        var factory = await host.StartTestAsync();
+        var tenantId = NewTenantId();
+        var slug = await SeedPublishedTenantAsync(factory, tenantId, allowAttachments: allowAttachments);
+        return new Rig(
+            factory,
+            Guid.Parse(tenantId),
+            slug,
+            VisitorClient(factory),
+            await FirstTypeIdAsync(factory, tenantId),
+            await AnyCityIdAsync(factory));
+    }
+
+    private static async Task<Attachment> OpenAsync(Rig rig, string name, long sizeBytes)
+    {
+        var response = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, "/attachments"), new { name, mimeType = "application/pdf", sizeBytes });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var session = await JsonAsync(response);
+        Assert.Equal("application/pdf", session.GetProperty("headers").GetProperty("Content-Type").GetString());
+        Assert.StartsWith("https://r2.test/", session.GetProperty("uploadUrl").GetString(), StringComparison.Ordinal);
+        return new Attachment(session.GetProperty("fileId").GetGuid(), session.GetProperty("uploadKey").GetGuid());
+    }
+
+    /// <summary>Abre, «sube» al bucket en memoria (lo que haría el PUT del navegador) y completa: el archivo queda disponible.</summary>
+    private async Task<Attachment> UploadAsync(Rig rig, string name)
+    {
+        var attachment = await OpenAsync(rig, name, PdfBytes.Length);
+        host.Storage.Put(await StagingKeyAsync(rig, attachment.FileId), PdfBytes);
+        var completed = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, $"/attachments/{attachment.FileId}/complete"), new { uploadKey = attachment.UploadKey });
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        Assert.Equal("available", (await JsonAsync(completed)).GetProperty("status").GetString());
+        return attachment;
+    }
+
+    private static async Task<string> StagingKeyAsync(Rig rig, Guid fileId) =>
+        (await TextAsync(rig.Factory, "SELECT storage_key FROM storage.file_resources WHERE id = @id", ("id", fileId)))!;
+
+    private static async Task<Guid> TicketIdAsync(Rig rig) =>
+        Guid.Parse((await TextAsync(
+            rig.Factory, "SELECT id::text FROM support.tickets WHERE tenant_id = @tenant ORDER BY number LIMIT 1", ("tenant", rig.TenantId)))!);
+
+    private static Task<long> TicketCountAsync(Rig rig) =>
+        ScalarAsync(rig.Factory, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant", ("tenant", rig.TenantId));
+
+    /// <summary>El mismo cuerpo de radicado con <c>attachments</c>: se pasa por JSON para no tocar los cuerpos del harness.</summary>
+    private static Dictionary<string, object?> WithAttachments(object body, params Attachment[] attachments)
+    {
+        var copy = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(body))!;
+        copy["attachments"] = attachments.Select(item => new { fileId = item.FileId, uploadKey = item.UploadKey }).ToArray();
+        return copy;
+    }
+
+    private static string WithoutTraceId(JsonElement problem) =>
+        JsonSerializer.Serialize(problem.EnumerateObject()
+            .Where(property => property.Name != "traceId")
+            .ToDictionary(property => property.Name, property => property.Value.ToString()));
+
+    private static string Email() => $"adjuntos-{Guid.NewGuid():N}@example.com";
+
+    private sealed record Rig(
+        SupportApiHarness.QepApiFactory Factory, Guid TenantId, string Slug, HttpClient Client, Guid TypeId, Guid CityId)
+    {
+        public string TicketsUrl => PublicUrl(Slug, "/tickets");
+    }
+
+    private sealed record Attachment(Guid FileId, Guid UploadKey);
+}
+
+/// <summary><see cref="SupportPublicHost"/> con el bucket privado de Storage en memoria: la URL firmada no sale a R2 y la prueba
+/// «sube» el objeto escribiéndolo ahí.</summary>
+public sealed class SupportPublicAttachmentsHost : SupportPublicHost
+{
+    internal InMemorySupportObjectStorage Storage { get; } = new();
+
+    protected override void ConfigureServices(IServiceCollection services)
+    {
+        services.RemoveAll<IObjectStorage>();
+        services.AddSingleton<IObjectStorage>(Storage);
+    }
+}
+
+/// <summary>El bucket privado en memoria, con la vida de la última descarga firmada.</summary>
+internal sealed class InMemorySupportObjectStorage : IObjectStorage
+{
+    private readonly ConcurrentDictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
+
+    public TimeSpan? LastDownloadExpiry { get; private set; }
+
+    public void Put(string key, byte[] content) => _objects[key] = content.ToArray();
+
+    public Task<Uri> CreatePresignedUploadUrlAsync(string key, string contentType, CancellationToken cancellationToken) =>
+        Task.FromResult(new Uri($"https://r2.test/{key}"));
+
+    public Task<Uri> CreatePresignedDownloadUrlAsync(string key, string? downloadFileName, CancellationToken cancellationToken) =>
+        Task.FromResult(new Uri($"https://r2.test/{key}"));
+
+    public Task<Uri> CreatePresignedDownloadUrlAsync(
+        string key, TimeSpan expiry, string? downloadFileName, CancellationToken cancellationToken)
+    {
+        LastDownloadExpiry = expiry;
+        return Task.FromResult(new Uri($"https://r2.test/{key}"));
+    }
+
+    public Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken) =>
+        Task.FromResult<StoredObject?>(_objects.TryGetValue(key, out var content)
+            ? new StoredObject(content.LongLength, Convert.ToHexStringLower(SHA256.HashData(content)))
+            : null);
+
+    public Task DeleteAsync(string key, CancellationToken cancellationToken)
+    {
+        _objects.TryRemove(key, out _);
+        return Task.CompletedTask;
+    }
+
+    public Task PromoteAsync(string sourceKey, string destinationKey, string expectedChecksum, CancellationToken cancellationToken)
+    {
+        _objects[destinationKey] = _objects[sourceKey].ToArray();
+        return Task.CompletedTask;
+    }
+
+    public Task<byte[]> DownloadAsync(string key, CancellationToken cancellationToken) => Task.FromResult(_objects[key].ToArray());
+
+    public Task UploadAsync(string key, byte[] content, string contentType, CancellationToken cancellationToken)
+    {
+        _objects[key] = content.ToArray();
+        return Task.CompletedTask;
+    }
+
+    public Task UploadAsync(
+        string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+}

@@ -42,10 +42,13 @@ public sealed class CreateTicketFromConversationValidator : AbstractValidator<Cr
 /// <summary>
 /// Abrir un ticket desde una conversación (spec §8.1, plan E10 y E11). Orden: autorización → membresía → validador → módulo
 /// <c>messaging</c> (403) → conversación del tenant (404) → foto del solicitante → provisión → tipo activo → cliente → responsable →
-/// transacción → candado del cliente → radicado → contexto → ticket → auditoría → <c>TicketOpened</c> en el hilo → guardar → confirmar →
-/// aviso al tiempo real. Como el alta manual, todo lo que puede responder 422 va antes de la transacción.
+/// transacción → candado del cliente → radicado → contexto → ticket → clave de consulta (sólo el hash del PIN) → auditoría →
+/// <c>TicketOpened</c> en el hilo → guardar → confirmar → aviso al tiempo real → información con el PIN por el hilo. Como el alta manual,
+/// todo lo que puede responder 422 va antes de la transacción.
 /// El cliente es el de la conversación sólo si <c>customers</c> está prendido y el cliente está activo; si no, el ticket nace sin cliente
-/// y con la foto que da la conversación. Todavía no se le manda al contacto el mensaje con el radicado (plan E1: fase 3).
+/// y con la foto que da la conversación. Fase 3 (plan F25): después de confirmar se le manda al contacto, por el hilo y como texto, el
+/// radicado con el PIN si la ventana de 24 h está abierta; si no, nada (<c>window_closed</c> en <c>ConsultAccess</c>). El ticket queda
+/// creado pase lo que pase con el envío, y el envío no le sube la versión (<see cref="SupportOpeningDelivery"/>).
 /// </summary>
 public sealed class CreateTicketFromConversationHandler(
     IExecutionContext executionContext,
@@ -56,6 +59,8 @@ public sealed class CreateTicketFromConversationHandler(
     ISupportProvisioner provisioner,
     ISupportTicketTypeRepository types,
     ISupportTicketRepository tickets,
+    ISupportTicketAccessRepository accesses,
+    ISupportPinHasher pinHasher,
     ISupportCustomerLookup customers,
     ISupportMemberDirectory members,
     ISupportTicketNumberGenerator numbers,
@@ -63,6 +68,8 @@ public sealed class CreateTicketFromConversationHandler(
     ISupportAuditPublisher auditPublisher,
     ISupportConversationEvents conversationEvents,
     SupportTicketDtoComposer composer,
+    SupportOpeningDelivery openingDelivery,
+    ISupportPublicOptions publicOptions,
     IValidator<CreateTicketFromConversationCommand> validator)
     : ICommandHandler<CreateTicketFromConversationCommand, SupportTicketDetailDto>
 {
@@ -89,9 +96,12 @@ public sealed class CreateTicketFromConversationHandler(
         await provisioner.EnsureAsync(command.TenantId, cancellationToken);
         var type = await SupportTicketRules.EnsureTypeAsync(types, command.TenantId, command.TicketTypeId, cancellationToken);
         await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, command.AssigneeMemberId, cancellationToken);
+        var slug = await SupportOpeningDelivery.SlugAsync(tenantDirectory, command.TenantId, cancellationToken);
 
+        var pin = SupportPin.Generate();
         SupportReadContext context;
         SupportTicket ticket;
+        SupportTicketAccess access;
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
             // El mismo orden de candados que el alta manual: el del cliente antes que la fila del radicado.
@@ -118,6 +128,10 @@ public sealed class CreateTicketFromConversationHandler(
                 now,
                 context.Clock);
             tickets.Add(ticket);
+            // Plan F25: la clave de consulta nace con el ticket. Sólo su hash: el PIN viaja una vez, por el hilo, y no va a la
+            // auditoría ni a la traza.
+            access = SupportTicketAccess.Issue(ticket.Id, command.TenantId, pinHasher.Hash(pin), now);
+            accesses.Add(access);
             auditPublisher.Publish(
                 command.TenantId,
                 executionContext.SubjectId,
@@ -134,6 +148,9 @@ public sealed class CreateTicketFromConversationHandler(
         }
 
         await conversationEvents.NotifyChangedAsync(command.TenantId, conversation.Id, cancellationToken);
+        await openingDelivery.DeliverAsync(
+            ticket, access, pin, SupportOpeningSender.ConsultUrl(publicOptions, slug, ticket.DisplayNumber), context.Now,
+            cancellationToken);
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }
 

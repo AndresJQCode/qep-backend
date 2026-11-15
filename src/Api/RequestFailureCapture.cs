@@ -45,7 +45,10 @@ internal static class RequestFailureCapture
         // La tienda pública es igual: un 401 (clave inventada) o un 429 es ruido anónimo que escribiría una fila gratis. La fila
         // nunca lleva headers, así que la clave presentada no se guarda en ningún caso.
         && !(StorefrontPaths.IsStorefront(httpContext.Request.Path)
-            && statusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status429TooManyRequests);
+            && statusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status429TooManyRequests)
+        // El formulario público de Soporte (plan fase 3) también: es anónimo, y su 429 es el mismo ruido gratis.
+        && !(SupportPublicPaths.IsSupportPublic(httpContext.Request.Path)
+            && statusCode is StatusCodes.Status429TooManyRequests);
 
     /// <summary>
     /// Arma la fila. No la guarda: quien llama decide cuándo, y el puerto es el que se traga sus

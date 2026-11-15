@@ -74,6 +74,37 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "A reply with this client id already exists for the ticket.",
                 exception);
         }
+        // Fase 3 (plan F14 y F16): dos guardados que crean la misma versión del formulario o de los textos legales. El If-Match ya
+        // filtró la mayoría; esto es la carrera entre dos que leyeron la misma versión vigente.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.FormVersionIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.FormVersionTaken,
+                "This version of the public form already exists.",
+                exception);
+        }
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.LegalTextVersionIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.LegalTextsVersionTaken,
+                "This version of the legal texts already exists.",
+                exception);
+        }
+        // Triage #2 del Bloque F: una fila de consentimiento por ticket. Inalcanzable hoy; traducido igual para que un camino nuevo que
+        // lo duplique reciba un 409 con código y no un 500.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.ConsentTicketIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.PublicConsentDuplicate,
+                "The ticket already has its consent.",
+                exception);
+        }
+        // Plan F35: otra radicación ya reclamó el archivo. El 422 de siempre de un adjunto inválido, no un 409: la página no distingue
+        // un archivo ajeno de uno que no existe, y la transacción del radicado se deshace entera.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketAttachmentFileIndex))
+        {
+            throw new SupportDomainException(SupportErrorCodes.PublicAttachmentInvalid, "The attachment is not valid.");
+        }
     }
 
     // Copia de CustomersUnitOfWork.BeginTransactionAsync. Los SaveChanges que corran dentro siguen pasando por la traducción de

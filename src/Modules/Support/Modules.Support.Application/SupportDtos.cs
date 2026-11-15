@@ -22,6 +22,41 @@ public sealed record SupportTicketTypeDto(
 /// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3.</summary>
 public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonBusinessDays, int MaxDueSoonBusinessDays, long Version);
 
+/// <summary>
+/// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
+/// formulario por defecto, sin publicar) y va en el <c>If-Match</c> del <c>PUT</c>. <c>PublishBlockers</c> dice por qué no se puede
+/// publicar (<c>legal_texts_required</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
+/// <c>PublicUrl</c> es el enlace que el tenant comparte. <c>AllowAttachments</c> dice si la página ofrece adjuntos (spec §9.3; apagado
+/// por defecto).
+/// </summary>
+public sealed record SupportFormSettingsDto(
+    int Version,
+    bool IsPublished,
+    bool ShowDocument,
+    bool ShowAddress,
+    bool ShowLandline,
+    bool BusinessNameRequired,
+    bool AllowAttachments,
+    string? AccentColor,
+    string? IntroText,
+    string? SuccessMessage,
+    string PublicUrl,
+    IReadOnlyList<string> PublishBlockers);
+
+/// <summary>
+/// La versión vigente de los textos legales (fase 3, plan F16). Sin ninguna publicada, el texto base de QEP con <c>IsExample</c> en
+/// verdadero, <c>Version</c> 0 y sin autor: la pantalla lo marca como ejemplo y nada se guarda hasta publicar.
+/// </summary>
+public sealed record SupportLegalTextsDto(
+    int Version,
+    bool IsExample,
+    string AuthorizationText,
+    string? PolicyText,
+    string? PolicyUrl,
+    string? TermsText,
+    DateTimeOffset? CreatedAt,
+    SupportMemberDto? CreatedBy);
+
 /// <summary>Una página de la bandeja. <c>Summary</c> es del tenant entero, no de la página ni del filtro: las pestañas cuentan siempre
 /// lo mismo, filtres lo que filtres.</summary>
 public sealed record SupportTicketPageDto(
@@ -74,14 +109,38 @@ public sealed record SupportTicketDetailDto(
     bool FollowsThread,
     DateTimeOffset? FollowOffAt,
     int UnclassifiedCount,
-    IReadOnlyList<SupportReplyDto> Replies);
+    IReadOnlyList<SupportReplyDto> Replies,
+    bool IsAnonymous,
+    IReadOnlyList<SupportCustomerCandidateDto> CustomerCandidates,
+    SupportConsultAccessDto? ConsultAccess,
+    IReadOnlyList<SupportAttachmentDto> Attachments);
+
+/// <summary>Un adjunto del formulario público (plan F37), en el orden en que se adjuntó. El archivo se baja con
+/// <c>GET …/tickets/{id}/attachments/{attachmentId}/download</c>: la pantalla no necesita <c>storage.file.read</c>. Una lista vacía
+/// si no tiene, nunca <c>null</c>.</summary>
+public sealed record SupportAttachmentDto(Guid Id, string FileName, string MimeType, long SizeBytes);
+
+/// <summary>La URL firmada de un adjunto: vive 5 minutos y baja el archivo con su nombre.</summary>
+public sealed record SupportAttachmentDownloadDto(string Url);
+
+// Fase 3 (formulario público): IsAnonymous apaga en la pantalla todo lo que pide un solicitante (sólo se responde por la página), y el
+// backend rechaza vincularle cliente (support.ticket.anonymous_has_no_customer);
+// CustomerCandidates son los clientes con el documento de la foto cuando el ticket no tiene cliente (cero o varios al radicar, plan
+// F21), para vincular uno sin buscarlo, y siempre vacía en un anónimo; ConsultAccess dice si la información con el PIN salió, por dónde y por qué no.
+
+/// <summary>Un cliente con el mismo documento que el solicitante. <c>IsActive</c> como en <see cref="SupportCustomerRefDto"/>.</summary>
+public sealed record SupportCustomerCandidateDto(Guid Id, string Name, bool IsActive);
+
+/// <summary>El último envío de la información con el PIN. <c>Channel</c> ∈ <c>Email</c>, <c>Thread</c>, <c>None</c>;
+/// <c>FailureCode</c> si no salió (<c>send_failed</c>, <c>window_closed</c>…). Nunca trae el PIN.</summary>
+public sealed record SupportConsultAccessDto(DateTimeOffset? LastSentAt, string? Channel, string? FailureCode);
 
 // Fase 2 (Mensajería): el detalle suma la conversación del ticket. FollowOffAt dibuja la franja «Este ticket no sigue el hilo desde …»
 // sin que la pantalla lea la traza; UnclassifiedCount es el aviso «hay mensajes sin clasificar» de esa conversación; Replies trae las
 // respuestas con su estado, porque una fallida se muestra igual que en el hilo.
 
-/// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>;
-/// <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
+/// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>, <c>Portal</c>
+/// (fase 3, F12: publicada en la página de consulta); <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c>, <c>Portal</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
 /// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló. <c>ClientId</c> es el que mandó la
 /// pantalla: con él retoma una respuesta que quedó <c>Pending</c> (revisión final, I3). <c>MessageId</c> también viene en una fallida si
 /// Mensajería registró el mensaje.</summary>
@@ -199,8 +258,15 @@ public sealed record SupportTicketRefDto(Guid Id, string Number, string Subject,
 /// <summary>Qué canal puede usar el asesor para responder y qué va a pasar (plan E17b): la pantalla no conoce la ventana de 24 h ni la
 /// aprobación de plantillas. <c>DefaultChannel</c> es el canal de respuesta del ticket si está disponible; si no, el primero que lo
 /// esté (hilo, plantilla, correo).</summary>
+/// <remarks>Fase 3 (plan F12): <c>Portal</c> es la página de consulta, disponible sólo para un ticket anónimo, que no tiene ningún otro
+/// canal; los demás vienen no disponibles con <c>portal_only</c>, y en uno con solicitante <c>Portal</c> viene con
+/// <c>portal_unavailable</c>.</remarks>
 public sealed record SupportReplyOptionsDto(
-    SupportThreadOptionDto Thread, SupportChannelOptionDto WhatsAppTemplate, SupportChannelOptionDto Email, string DefaultChannel);
+    SupportThreadOptionDto Thread,
+    SupportChannelOptionDto WhatsAppTemplate,
+    SupportChannelOptionDto Email,
+    string DefaultChannel,
+    SupportChannelOptionDto Portal);
 
 /// <summary>El hilo de la conversación del ticket. <c>Delivery</c> ∈ <c>Text</c> (dentro de la ventana) o <c>Template</c> (fuera, en
 /// WhatsApp: sale «Aviso de respuesta»), para que la pantalla avise antes de enviar. <c>Reason</c> cuando no está disponible:

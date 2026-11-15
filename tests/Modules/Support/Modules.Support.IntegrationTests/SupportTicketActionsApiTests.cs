@@ -282,6 +282,29 @@ public sealed class SupportTicketActionsApiTests(ClockedSupportHost host) : ICla
         Assert.Equal(JsonValueKind.Null, (await scenario.DetailAsync(Id(ticket))).GetProperty("customer").ValueKind);
     }
 
+    // Revisión final, I1: a un ticket anónimo no se le vincula cliente, aunque el documento coincida. El 422 no cambia nada: ni el
+    // cliente, ni la versión, ni la traza, y el detalle no ofrece candidatos.
+    [Fact]
+    public async Task LinkingACustomerToAnAnonymousTicketIs422AndChangesNothing()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS");
+        var anonymous = await SupportTicketSeed.SaveAnonymousTicketAsync(scenario.Factory, scenario.TenantId);
+
+        var response = await scenario.ActAsync(anonymous.Id.Value, "customer", new LinkTicketCustomerRequest(customer), version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket.anonymous_has_no_customer", await CodeOfAsync(response));
+        var detail = await scenario.DetailAsync(anonymous.Id.Value);
+        Assert.True(detail.GetProperty("isAnonymous").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, detail.GetProperty("customer").ValueKind);
+        Assert.Equal(1L, detail.GetProperty("version").GetInt64());
+        Assert.Single(detail.GetProperty("events").EnumerateArray());
+        Assert.Empty(detail.GetProperty("customerCandidates").EnumerateArray());
+        Assert.Equal(0, await CountAuditEntriesAsync(
+            scenario.Factory, SupportAuditActions.TicketCustomerChanged, anonymous.Id.Value.ToString()));
+    }
+
     [Fact]
     public async Task UnlinkingTheOnlyNameIs422()
     {

@@ -48,6 +48,42 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
 
     public DbSet<SupportTicketReply> TicketReplies => Set<SupportTicketReply>();
 
+    /// <summary>Único de la versión del formulario por tenant (plan F14): dos guardados de la misma versión chocan acá.</summary>
+    public const string FormVersionIndex = "IX_form_versions_tenant_version";
+
+    /// <summary>Único de la versión de los textos legales por tenant (plan F16).</summary>
+    public const string LegalTextVersionIndex = "IX_legal_text_versions_tenant_version";
+
+    /// <summary>Único del consentimiento por ticket (plan F17): una fila por radicado. Se traduce por nombre (triage #2 del Bloque F).</summary>
+    public const string ConsentTicketIndex = "IX_consents_ticket";
+
+    /// <summary>
+    /// Triage #1 del Bloque F: un anónimo no tiene cliente ni ninguna columna del solicitante. El dominio ya lo exige
+    /// (<c>CreateFromPublicForm</c> y <c>LinkCustomer</c>); el CHECK lo respalda contra el SQL crudo (fusión, siembras, un arreglo a mano).
+    /// </summary>
+    public const string TicketAnonymousCheck = "CK_tickets_anonymous";
+
+    // Las columnas de la foto del solicitante (ConfigureTicket): una nueva entra acá, o el CHECK deja de cubrirla.
+    private static readonly string[] RequesterColumns =
+    [
+        "requester_first_names", "requester_last_names", "requester_business_name", "requester_document_type",
+        "requester_document_number", "requester_email", "requester_mobile_phone", "requester_landline_phone", "requester_country_code",
+        "requester_address", "requester_city_id", "requester_city_name",
+    ];
+
+    public DbSet<SupportTicketAccess> TicketAccess => Set<SupportTicketAccess>();
+
+    public DbSet<SupportFormVersion> FormVersions => Set<SupportFormVersion>();
+
+    public DbSet<SupportLegalTextVersion> LegalTextVersions => Set<SupportLegalTextVersion>();
+
+    public DbSet<SupportConsent> Consents => Set<SupportConsent>();
+
+    /// <summary>Único del archivo de Storage (plan F35): dos radicaciones que reclaman el mismo archivo chocan acá.</summary>
+    public const string TicketAttachmentFileIndex = "IX_ticket_attachments_file";
+
+    public DbSet<SupportTicketAttachment> TicketAttachments => Set<SupportTicketAttachment>();
+
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -61,6 +97,153 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureTicketMessage(modelBuilder);
         ConfigureUnclassifiedMessage(modelBuilder);
         ConfigureTicketReply(modelBuilder);
+        ConfigureTicketAccess(modelBuilder);
+        ConfigureFormVersion(modelBuilder);
+        ConfigureLegalTextVersion(modelBuilder);
+        ConfigureConsent(modelBuilder);
+        ConfigureTicketAttachment(modelBuilder);
+    }
+
+    // Plan F35: el archivo es una referencia blanda a storage.file_resources (otro esquema, sin FK); el ticket sí, con cascada. El
+    // único sobre file_id lo usan la radicación (traducido por nombre) y la sonda de Storage (SupportAttachmentReferenceProbe).
+    private static void ConfigureTicketAttachment(ModelBuilder modelBuilder)
+    {
+        var attachment = modelBuilder.Entity<SupportTicketAttachment>();
+        attachment.ToTable("ticket_attachments", Schema, table =>
+            table.HasCheckConstraint("CK_ticket_attachments_size", "size_bytes > 0"));
+        attachment.HasKey(value => value.Id);
+        attachment.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        attachment.Property(value => value.TenantId).HasColumnName("tenant_id");
+        attachment.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        attachment.Property(value => value.FileId).HasColumnName("file_id");
+        attachment.Property(value => value.FileName)
+            .HasColumnName("file_name")
+            .HasMaxLength(SupportPublicAttachmentRules.NameMaxLength);
+        attachment.Property(value => value.MimeType)
+            .HasColumnName("mime_type")
+            .HasMaxLength(SupportPublicAttachmentRules.MimeTypeMaxLength);
+        attachment.Property(value => value.SizeBytes).HasColumnName("size_bytes");
+        attachment.Property(value => value.CreatedAt).HasColumnName("created_at");
+        attachment.HasOne<SupportTicket>()
+            .WithMany()
+            .HasForeignKey(value => value.TicketId)
+            .OnDelete(DeleteBehavior.Cascade);
+        attachment.HasIndex(value => value.FileId).IsUnique().HasDatabaseName(TicketAttachmentFileIndex);
+        attachment.HasIndex(value => new { value.TenantId, value.TicketId }).HasDatabaseName("IX_ticket_attachments_tenant_ticket");
+    }
+
+    // Fase 3 (plan F7): la clave de consulta vive aparte del ticket para que un intento fallido no le suba la versión.
+    private static void ConfigureTicketAccess(ModelBuilder modelBuilder)
+    {
+        var access = modelBuilder.Entity<SupportTicketAccess>();
+        access.ToTable("ticket_access", Schema, table =>
+            table.HasCheckConstraint("CK_ticket_access_failed_attempts", "failed_attempts >= 0"));
+        access.HasKey(value => value.TicketId);
+        access.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value))
+            .ValueGeneratedNever();
+        access.Property(value => value.TenantId).HasColumnName("tenant_id");
+        access.Property(value => value.PinHash).HasColumnName("pin_hash").HasMaxLength(SupportTicketAccess.PinHashMaxLength);
+        access.Property(value => value.FailedAttempts).HasColumnName("failed_attempts");
+        access.Property(value => value.LockedUntil).HasColumnName("locked_until");
+        access.Property(value => value.PinIssuedAt).HasColumnName("pin_issued_at");
+        access.Property(value => value.LastSentAt).HasColumnName("last_sent_at");
+        access.Property(value => value.LastSentChannel)
+            .HasColumnName("last_sent_channel")
+            .HasMaxLength(SupportTicketAccess.ChannelMaxLength);
+        access.Property(value => value.LastFailureCode)
+            .HasColumnName("last_failure_code")
+            .HasMaxLength(SupportTicketAccess.FailureCodeMaxLength);
+        access.HasOne<SupportTicket>()
+            .WithOne()
+            .HasForeignKey<SupportTicketAccess>(value => value.TicketId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Insert-only (plan F14): ninguna versión se edita. created_by es una membresía y entra en SupportUserReferenceProbe.
+    private static void ConfigureFormVersion(ModelBuilder modelBuilder)
+    {
+        var form = modelBuilder.Entity<SupportFormVersion>();
+        form.ToTable("form_versions", Schema, table =>
+            table.HasCheckConstraint("CK_form_versions_version", "version >= 1"));
+        form.HasKey(value => value.Id);
+        form.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        form.Property(value => value.TenantId).HasColumnName("tenant_id");
+        form.Property(value => value.Version).HasColumnName("version");
+        form.Property(value => value.IsPublished).HasColumnName("is_published");
+        form.Property(value => value.ShowDocument).HasColumnName("show_document");
+        form.Property(value => value.ShowAddress).HasColumnName("show_address");
+        form.Property(value => value.ShowLandline).HasColumnName("show_landline");
+        form.Property(value => value.BusinessNameRequired).HasColumnName("business_name_required");
+        // Owner, 2026-11-15 (E2): prendido por defecto. El sentinel en true (precedente: Store, show_prices) hace que EF mande siempre un
+        // false: sin él, un bool con default true se omite del INSERT cuando vale false y la base lo dejaría en true.
+        form.Property(value => value.AllowAttachments).HasColumnName("allow_attachments").HasDefaultValue(true).HasSentinel(true);
+        form.Property(value => value.AccentColor).HasColumnName("accent_color").HasMaxLength(SupportFormVersion.AccentColorLength);
+        form.Property(value => value.IntroText).HasColumnName("intro_text").HasMaxLength(SupportFormVersion.IntroTextMaxLength);
+        form.Property(value => value.SuccessMessage)
+            .HasColumnName("success_message")
+            .HasMaxLength(SupportFormVersion.SuccessMessageMaxLength);
+        form.Property(value => value.CreatedAt).HasColumnName("created_at");
+        form.Property(value => value.CreatedBy).HasColumnName("created_by");
+        form.HasIndex(value => new { value.TenantId, value.Version }).IsUnique().HasDatabaseName(FormVersionIndex);
+        // Para SupportUserReferenceProbe, que busca por membresía sola.
+        form.HasIndex(value => value.CreatedBy).HasDatabaseName("IX_form_versions_created_by");
+    }
+
+    // Prueba legal, insert-only (plan F16, spec §9.5): ninguna versión se edita ni se borra, y el Down de la migración no la toca.
+    private static void ConfigureLegalTextVersion(ModelBuilder modelBuilder)
+    {
+        var text = modelBuilder.Entity<SupportLegalTextVersion>();
+        text.ToTable("legal_text_versions", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_legal_text_versions_version", "version >= 1");
+            table.HasCheckConstraint("CK_legal_text_versions_policy", "policy_text IS NOT NULL OR policy_url IS NOT NULL");
+        });
+        text.HasKey(value => value.Id);
+        text.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        text.Property(value => value.TenantId).HasColumnName("tenant_id");
+        text.Property(value => value.Version).HasColumnName("version");
+        text.Property(value => value.AuthorizationText)
+            .HasColumnName("authorization_text")
+            .HasMaxLength(SupportLegalTextVersion.TextMaxLength);
+        text.Property(value => value.PolicyText).HasColumnName("policy_text").HasMaxLength(SupportLegalTextVersion.TextMaxLength);
+        text.Property(value => value.PolicyUrl).HasColumnName("policy_url").HasMaxLength(SupportLegalTextVersion.PolicyUrlMaxLength);
+        text.Property(value => value.TermsText).HasColumnName("terms_text").HasMaxLength(SupportLegalTextVersion.TextMaxLength);
+        text.Property(value => value.CreatedAt).HasColumnName("created_at");
+        text.Property(value => value.CreatedBy).HasColumnName("created_by");
+        text.Ignore(value => value.IsExample);
+        text.HasIndex(value => new { value.TenantId, value.Version }).IsUnique().HasDatabaseName(LegalTextVersionIndex);
+        // Para SupportUserReferenceProbe, que busca por membresía sola.
+        text.HasIndex(value => value.CreatedBy).HasDatabaseName("IX_legal_text_versions_created_by");
+    }
+
+    // Prueba legal, insert-only (plan F17): sin FK a propósito, ni al ticket ni a la versión, para que nada la arrastre al borrar; la
+    // fila guarda su propia foto del texto. El Down de la migración no la borra (precedente customers.data_consents).
+    private static void ConfigureConsent(ModelBuilder modelBuilder)
+    {
+        var consent = modelBuilder.Entity<SupportConsent>();
+        consent.ToTable("consents", Schema);
+        consent.HasKey(value => value.Id);
+        consent.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        consent.Property(value => value.TenantId).HasColumnName("tenant_id");
+        consent.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        consent.Property(value => value.LegalTextVersionId).HasColumnName("legal_text_version_id");
+        consent.Property(value => value.LegalTextVersion).HasColumnName("legal_text_version");
+        consent.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
+        consent.Property(value => value.AuthorizationText)
+            .HasColumnName("authorization_text")
+            .HasMaxLength(SupportLegalTextVersion.TextMaxLength);
+        consent.Property(value => value.PolicyText).HasColumnName("policy_text").HasMaxLength(SupportLegalTextVersion.TextMaxLength);
+        consent.Property(value => value.PolicyUrl).HasColumnName("policy_url").HasMaxLength(SupportLegalTextVersion.PolicyUrlMaxLength);
+        consent.Property(value => value.TermsText).HasColumnName("terms_text").HasMaxLength(SupportLegalTextVersion.TextMaxLength);
+        consent.Property(value => value.VisitorIp).HasColumnName("visitor_ip").HasMaxLength(SupportConsent.VisitorIpMaxLength);
+        // Una fila por ticket.
+        consent.HasIndex(value => value.TicketId).IsUnique().HasDatabaseName(ConsentTicketIndex);
     }
 
     // La fila la inserta SupportProvisioner con SQL crudo; EF sólo la lee y actualiza el umbral. El contador y created_at son
@@ -136,6 +319,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
                 "CK_tickets_conversation_channel", InList("conversation_channel", SupportConversationRef.Channels));
             table.HasCheckConstraint(
                 "CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
+            table.HasCheckConstraint(
+                TicketAnonymousCheck,
+                $"NOT is_anonymous OR (customer_id IS NULL AND {string.Join(" AND ", RequesterColumns.Select(column => $"{column} IS NULL"))})");
         });
         ticket.HasKey(value => value.Id);
         ticket.Property(value => value.Id)
@@ -187,7 +373,16 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
                 .HasMaxLength(2)
                 .IsRequired(false);
             requester.Property(value => value.Address).HasColumnName("requester_address").HasMaxLength(TicketRequester.AddressMaxLength);
+            // Fase 3 (plan F19): la ciudad de Geography con país CO (referencia blanda, otro esquema) o el nombre libre fuera.
+            requester.Property(value => value.CityId).HasColumnName("requester_city_id");
+            requester.Property(value => value.CityName)
+                .HasColumnName("requester_city_name")
+                .HasMaxLength(TicketRequester.CityNameMaxLength);
         });
+        // Fase 3 (plan F22): el anónimo del formulario público y la versión del formulario con que se radicó (sin FK: las versiones
+        // nunca se borran).
+        ticket.Property(value => value.IsAnonymous).HasColumnName("is_anonymous").HasDefaultValue(false);
+        ticket.Property(value => value.FormVersionId).HasColumnName("form_version_id");
         ticket.Property(value => value.ReceivedAt).HasColumnName("received_at");
         ticket.Property(value => value.ReceivedOn).HasColumnName("received_on");
         ticket.Property(value => value.DueOn).HasColumnName("due_on");

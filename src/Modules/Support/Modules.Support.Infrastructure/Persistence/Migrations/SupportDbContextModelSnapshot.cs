@@ -91,6 +91,206 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportConsent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("accepted_at");
+
+                    b.Property<string>("AuthorizationText")
+                        .IsRequired()
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)")
+                        .HasColumnName("authorization_text");
+
+                    b.Property<int>("LegalTextVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("legal_text_version");
+
+                    b.Property<Guid>("LegalTextVersionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("legal_text_version_id");
+
+                    b.Property<string>("PolicyText")
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)")
+                        .HasColumnName("policy_text");
+
+                    b.Property<string>("PolicyUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("policy_url");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("TermsText")
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)")
+                        .HasColumnName("terms_text");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.Property<string>("VisitorIp")
+                        .IsRequired()
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)")
+                        .HasColumnName("visitor_ip");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TicketId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_consents_ticket");
+
+                    b.ToTable("consents", "support");
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportFormVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccentColor")
+                        .HasMaxLength(7)
+                        .HasColumnType("character varying(7)")
+                        .HasColumnName("accent_color");
+
+                    b.Property<bool>("AllowAttachments")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("allow_attachments");
+
+                    b.Property<bool>("BusinessNameRequired")
+                        .HasColumnType("boolean")
+                        .HasColumnName("business_name_required");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("IntroText")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("intro_text");
+
+                    b.Property<bool>("IsPublished")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_published");
+
+                    b.Property<bool>("ShowAddress")
+                        .HasColumnType("boolean")
+                        .HasColumnName("show_address");
+
+                    b.Property<bool>("ShowDocument")
+                        .HasColumnType("boolean")
+                        .HasColumnName("show_document");
+
+                    b.Property<bool>("ShowLandline")
+                        .HasColumnType("boolean")
+                        .HasColumnName("show_landline");
+
+                    b.Property<string>("SuccessMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("success_message");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedBy")
+                        .HasDatabaseName("IX_form_versions_created_by");
+
+                    b.HasIndex("TenantId", "Version")
+                        .IsUnique()
+                        .HasDatabaseName("IX_form_versions_tenant_version");
+
+                    b.ToTable("form_versions", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_form_versions_version", "version >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportLegalTextVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AuthorizationText")
+                        .IsRequired()
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)")
+                        .HasColumnName("authorization_text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("PolicyText")
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)")
+                        .HasColumnName("policy_text");
+
+                    b.Property<string>("PolicyUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("policy_url");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("TermsText")
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)")
+                        .HasColumnName("terms_text");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedBy")
+                        .HasDatabaseName("IX_legal_text_versions_created_by");
+
+                    b.HasIndex("TenantId", "Version")
+                        .IsUnique()
+                        .HasDatabaseName("IX_legal_text_versions_tenant_version");
+
+                    b.ToTable("legal_text_versions", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_legal_text_versions_policy", "policy_text IS NOT NULL OR policy_url IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_legal_text_versions_version", "version >= 1");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTenantSettings", b =>
                 {
                     b.Property<Guid>("TenantId")
@@ -185,11 +385,21 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("follow_thread");
 
+                    b.Property<Guid?>("FormVersionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("form_version_id");
+
                     b.Property<string>("Intake")
                         .IsRequired()
                         .HasMaxLength(24)
                         .HasColumnType("character varying(24)")
                         .HasColumnName("intake");
+
+                    b.Property<bool>("IsAnonymous")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_anonymous");
 
                     b.Property<int>("LastEventOrdinal")
                         .HasColumnType("integer")
@@ -310,6 +520,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tickets", "support", t =>
                         {
+                            t.HasCheckConstraint("CK_tickets_anonymous", "NOT is_anonymous OR (customer_id IS NULL AND requester_first_names IS NULL AND requester_last_names IS NULL AND requester_business_name IS NULL AND requester_document_type IS NULL AND requester_document_number IS NULL AND requester_email IS NULL AND requester_mobile_phone IS NULL AND requester_landline_phone IS NULL AND requester_country_code IS NULL AND requester_address IS NULL AND requester_city_id IS NULL AND requester_city_name IS NULL)");
+
                             t.HasCheckConstraint("CK_tickets_conversation_channel", "conversation_channel IN ('WhatsApp','Instagram')");
 
                             t.HasCheckConstraint("CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
@@ -318,9 +530,114 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_tickets_manual_medium", "manual_medium IN ('Phone','InPerson','Email','Letter','Other')");
 
-                            t.HasCheckConstraint("CK_tickets_reply_channel", "reply_channel IN ('Thread','WhatsAppTemplate','Email')");
+                            t.HasCheckConstraint("CK_tickets_reply_channel", "reply_channel IN ('Thread','WhatsAppTemplate','Email','Portal')");
 
                             t.HasCheckConstraint("CK_tickets_status", "status IN ('New','Open','WaitingOnCustomer','WaitingInternal','Resolved','Closed')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketAccess", b =>
+                {
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.Property<int>("FailedAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("failed_attempts");
+
+                    b.Property<string>("LastFailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("last_failure_code");
+
+                    b.Property<DateTimeOffset?>("LastSentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_sent_at");
+
+                    b.Property<string>("LastSentChannel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("last_sent_channel");
+
+                    b.Property<DateTimeOffset?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<string>("PinHash")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("pin_hash");
+
+                    b.Property<DateTimeOffset>("PinIssuedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("pin_issued_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("TicketId");
+
+                    b.ToTable("ticket_access", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_access_failed_attempts", "failed_attempts >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("FileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("file_id");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("character varying(260)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("mime_type");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FileId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ticket_attachments_file");
+
+                    b.HasIndex("TicketId");
+
+                    b.HasIndex("TenantId", "TicketId")
+                        .HasDatabaseName("IX_ticket_attachments_tenant_ticket");
+
+                    b.ToTable("ticket_attachments", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_attachments_size", "size_bytes > 0");
                         });
                 });
 
@@ -528,9 +845,9 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("ticket_replies", "support", t =>
                         {
-                            t.HasCheckConstraint("CK_ticket_replies_channel", "channel IN ('Thread','WhatsAppTemplate','Email')");
+                            t.HasCheckConstraint("CK_ticket_replies_channel", "channel IN ('Thread','WhatsAppTemplate','Email','Portal')");
 
-                            t.HasCheckConstraint("CK_ticket_replies_delivery", "delivery IN ('Text','Template','Email')");
+                            t.HasCheckConstraint("CK_ticket_replies_delivery", "delivery IN ('Text','Template','Email','Portal')");
 
                             t.HasCheckConstraint("CK_ticket_replies_status", "status IN ('Pending','Sent','Failed')");
                         });
@@ -671,6 +988,15 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                                 .HasColumnType("character varying(160)")
                                 .HasColumnName("requester_business_name");
 
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("requester_city_id");
+
+                            b1.Property<string>("CityName")
+                                .HasMaxLength(100)
+                                .HasColumnType("character varying(100)")
+                                .HasColumnName("requester_city_name");
+
                             b1.Property<string>("CountryCode")
                                 .HasMaxLength(2)
                                 .HasColumnType("character varying(2)")
@@ -720,6 +1046,24 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         });
 
                     b.Navigation("Requester");
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketAccess", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicket", null)
+                        .WithOne()
+                        .HasForeignKey("Modules.Support.Domain.SupportTicketAccess", "TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketAttachment", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketEvent", b =>

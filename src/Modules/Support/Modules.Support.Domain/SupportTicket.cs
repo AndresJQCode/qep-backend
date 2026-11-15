@@ -17,7 +17,8 @@ public sealed class SupportTicket
 
     private readonly List<SupportTicketEvent> events = [];
 
-    // EF Core materializa por acá; CreateManual y CreateFromConversation son los únicos puntos de entrada de código.
+    // EF Core materializa por acá; CreateManual, CreateFromConversation y CreateFromPublicForm son los únicos puntos de entrada de
+    // código.
     private SupportTicket()
     {
         TypeName = string.Empty;
@@ -99,6 +100,13 @@ public sealed class SupportTicket
     /// <summary>Cuándo dejó de seguirlo: al apagar o al cerrar. Null mientras lo sigue.</summary>
     public DateTimeOffset? FollowOffAt { get; private set; }
 
+    /// <summary>Fase 3 (spec §9.4): radicado desde el formulario público sin datos personales. No tiene cliente, ni foto del
+    /// solicitante, ni consentimiento, y se responde sólo por <see cref="SupportReplyChannel.Portal"/>.</summary>
+    public bool IsAnonymous { get; private set; }
+
+    /// <summary>Fase 3 (plan F14): la versión del formulario con que se radicó. Sólo la tienen los tickets del formulario público.</summary>
+    public Guid? FormVersionId { get; private set; }
+
     public int LastEventOrdinal { get; private set; }
 
     /// <summary>Los eventos de esta instancia: al crear, el <see cref="SupportTicketEventKind.Created"/>; cargado de la base, sólo
@@ -155,8 +163,53 @@ public sealed class SupportTicket
             SupportReplyChannel.Thread, conversation, customerId, requester, assigneeMemberId, actorMemberId, now, clock);
     }
 
-    // El alta común de las dos entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
-    // constructor vacío.
+    /// <summary>
+    /// Fase 3 (spec §9.3 y §9.4, plan F22): el ticket que radica un solicitante en el formulario público. No tiene actor (el evento
+    /// <see cref="SupportTicketEventKind.Created"/> va con actor null, el sistema) ni responsable. Con <paramref name="requester"/>
+    /// null es anónimo: sin cliente ni foto, y se responde por <see cref="SupportReplyChannel.Portal"/>; si no, por correo. La regla
+    /// del nombre de las otras entradas (plan D6) no aplica: los campos los exige el validador según <see cref="SupportFormFields"/>,
+    /// y un NIT sin razón social se muestra como «NIT &lt;número&gt;».
+    /// </summary>
+    public static SupportTicket CreateFromPublicForm(
+        SupportTicketId id,
+        Guid tenantId,
+        long number,
+        SupportTicketType type,
+        string subject,
+        string description,
+        TicketRequester? requester,
+        Guid? customerId,
+        Guid formVersionId,
+        DateTimeOffset now,
+        SupportClockContext clock)
+    {
+        if (formVersionId == Guid.Empty)
+        {
+            throw new ArgumentException("A ticket from the public form needs its form version.", nameof(formVersionId));
+        }
+
+        var anonymous = requester is null;
+        if (anonymous && customerId is not null)
+        {
+            throw new ArgumentException("An anonymous ticket cannot be linked to a customer.", nameof(customerId));
+        }
+
+        if (!anonymous && string.IsNullOrWhiteSpace(requester!.Email))
+        {
+            throw new ArgumentException("A named ticket from the public form needs an email to reply to.", nameof(requester));
+        }
+
+        var ticket = Start(
+            id, tenantId, number, type, subject, description, SupportTicketIntake.PublicForm, medium: null,
+            anonymous ? SupportReplyChannel.Portal : SupportReplyChannel.Email, conversation: null, customerId, requester,
+            assigneeMemberId: null, actorMemberId: null, now, clock);
+        ticket.IsAnonymous = anonymous;
+        ticket.FormVersionId = formVersionId;
+        return ticket;
+    }
+
+    // El alta común de las tres entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
+    // constructor vacío. Sin actor sólo entra el formulario público.
     private static SupportTicket Start(
         SupportTicketId id,
         Guid tenantId,
@@ -171,7 +224,7 @@ public sealed class SupportTicket
         Guid? customerId,
         TicketRequester? requester,
         Guid? assigneeMemberId,
-        Guid actorMemberId,
+        Guid? actorMemberId,
         DateTimeOffset now,
         SupportClockContext clock)
     {
@@ -180,7 +233,7 @@ public sealed class SupportTicket
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
         EnsureSameTenant(tenantId, type);
         conversation?.EnsureValid();
-        if (customerId is null && requester is not { HasName: true })
+        if (intake is not SupportTicketIntake.PublicForm && customerId is null && requester is not { HasName: true })
         {
             throw RequesterRequired();
         }
@@ -295,10 +348,17 @@ public sealed class SupportTicket
 
     /// <summary>Desvincular deja la foto del solicitante; si no hay foto con nombre, el ticket quedaría sin nadie y se rechaza
     /// (pre-flight R11). Resuelto o cerrado se rechaza (R9); la fusión de clientes mueve tickets en cualquier estado, pero por SQL y
-    /// sin pasar por acá (<c>CustomerMergeReferences</c>).</summary>
+    /// sin pasar por acá (<c>CustomerMergeReferences</c>). Un anónimo no recibe cliente (spec §9.4): quien radicó sin datos no aparece
+    /// en la ficha de nadie.</summary>
     public void LinkCustomer(Guid? customerId, Guid actorMemberId, DateTimeOffset now)
     {
         EnsureEditable();
+        if (IsAnonymous && customerId is not null)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.AnonymousHasNoCustomer, "An anonymous ticket cannot be linked to a customer.");
+        }
+
         if (customerId == CustomerId)
         {
             return;
@@ -316,9 +376,10 @@ public sealed class SupportTicket
 
     /// <summary>«Seguir el hilo» (spec §8.2). Apagar sella <see cref="FollowOffAt"/>; prender abre una ventana nueva desde ahora,
     /// así lo que llegó con el interruptor apagado no se vincula (plan E4). El mismo valor no hace nada. Sin conversación no hay
-    /// hilo que seguir.</summary>
+    /// hilo que seguir. Cerrado, 422 <c>support.ticket.not_editable</c> aunque el valor sea el mismo (R9 extendida); resuelto, sí.</summary>
     public void SetFollowThread(bool follow, Guid actorMemberId, DateTimeOffset now)
     {
+        EnsureNotClosed();
         if (follow == FollowThread)
         {
             return;
@@ -377,7 +438,9 @@ public sealed class SupportTicket
         && since <= occurredAt
         && (FollowOffAt is not { } off || occurredAt < off);
 
-    /// <summary>Fijar, soltar, clasificar desde «sin clasificar» o «De ninguno» (plan E7 y E8). Null es el sistema.</summary>
+    /// <summary>Fijar, soltar, clasificar desde «sin clasificar» o «De ninguno» (plan E7 y E8). Null es el sistema. Fijar y soltar en un
+    /// ticket cerrado es 422 <c>support.ticket.not_editable</c> (R9 extendida); resuelto, sí. Es la única entrada de dominio de esas dos
+    /// acciones: el handler cambia el vínculo y llama acá antes de guardar, así un rechazo no deja nada escrito.</summary>
     public void RecordMessageEvent(SupportTicketEventKind kind, Guid messageId, Guid? actorMemberId, DateTimeOffset now)
     {
         if (kind is not (SupportTicketEventKind.MessagePinned or SupportTicketEventKind.MessageReleased
@@ -386,8 +449,18 @@ public sealed class SupportTicket
             throw new ArgumentException($"'{kind}' is not a message event.", nameof(kind));
         }
 
+        if (kind is SupportTicketEventKind.MessagePinned or SupportTicketEventKind.MessageReleased)
+        {
+            EnsureNotClosed();
+        }
+
         AddEvent(kind, actorMemberId, now, new { messageId });
     }
+
+    /// <summary>Block E (E-2): la guarda de fijar y soltar, para que el handler la pida <b>antes</b> de su no-op (fijar lo ya fijado,
+    /// soltar lo ya soltado). Cerrado responde 422 <c>support.ticket.not_editable</c> aunque nada fuera a cambiar, igual que
+    /// <see cref="SetFollowThread"/> con el mismo valor; resuelto, sí.</summary>
+    public void EnsureMessagesCanChange() => EnsureNotClosed();
 
     /// <summary>Anota una respuesta en la traza con su canal, cómo terminó (<c>status</c>, y <c>failureCode</c> si falló) y, si salió
     /// por Mensajería, su mensaje (plan E16). Se llama después de marcarla.</summary>
@@ -447,6 +520,18 @@ public sealed class SupportTicket
         {
             throw new SupportDomainException(
                 SupportErrorCodes.NotEditable, $"A ticket in status '{Status}' cannot be reassigned, retyped or relinked.");
+        }
+    }
+
+    /// <summary>R9 extendida [owner 2026-11-15]: fijar o soltar un mensaje y «Seguir el hilo» se permiten resuelto, no cerrado. Responder
+    /// no pasa por acá (se permite en cualquier estado), ni los caminos del sistema: el worker del hilo vincula con su propio repositorio y
+    /// la fusión y el borrado de clientes son SQL crudo.</summary>
+    private void EnsureNotClosed()
+    {
+        if (Status is SupportTicketStatus.Closed)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.NotEditable, "A closed ticket cannot pin or release messages nor change whether it follows its thread.");
         }
     }
 

@@ -61,11 +61,24 @@ public sealed class SupportReplyParityTests
         Assert.Equal(MessagingPermissions.ConversationManage, SupportReplyAttachmentRules.UploadPermission);
     }
 
-    // CustomerNotFound es sólo de Soporte: lo pone el adaptador cuando abrir la conversación choca con un cliente borrado.
+    // Los códigos que sólo pone Soporte (Tarea 8a): CustomerNotFound lo pone el adaptador cuando abrir la conversación choca con un
+    // cliente borrado; los demás son motivos de reply-options o del envío de apertura. Todo lo demás es copia de Mensajería.
+    private static readonly string[] SupportOnlyCodes =
+    [
+        SupportChannelReasons.CustomerNotFound,
+        SupportChannelReasons.NoConversation,
+        SupportChannelReasons.MessagingDisabled,
+        SupportChannelReasons.NoMobile,
+        SupportChannelReasons.NoEmail,
+        SupportChannelReasons.NoAuthor,
+        SupportChannelReasons.PortalOnly,
+        SupportChannelReasons.PortalUnavailable,
+    ];
+
     [Fact]
     public void TheRejectionReasonsMatchMessaging()
     {
-        var support = ConstantsOf(typeof(SupportChannelReasons)).Where(reason => reason != SupportChannelReasons.CustomerNotFound);
+        var support = ConstantsOf(typeof(SupportChannelReasons)).Where(reason => !SupportOnlyCodes.Contains(reason));
 
         Assert.Equal(ConstantsOf(typeof(SupportReplyReasons)).Order(), support.Order());
     }

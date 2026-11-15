@@ -288,6 +288,23 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
+    // Soporte fase 3 (plan F36): el adjunto del formulario público que ningún ticket reclamó a tiempo se purga. Lo llama el barrido de
+    // staging después de preguntar a las sondas; quien llama borra antes los objetos (el final y sus variantes).
+    public void PurgeUnclaimedSupportAttachment(DateTimeOffset occurredAt)
+    {
+        if (OwnerType is not FileOwnerType.SupportTicket)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                $"Expected a {FileOwnerType.SupportTicket} resource but it was {OwnerType}.");
+        }
+
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
     public void UpdateMetadata(
         string? category,
         IEnumerable<string>? tags,

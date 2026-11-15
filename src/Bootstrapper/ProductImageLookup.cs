@@ -26,7 +26,9 @@ internal sealed class ProductImageLookup(
         CancellationToken cancellationToken)
     {
         var resource = await repository.GetAsync(new FileResourceId(fileId), cancellationToken);
-        return resource is null ? null : ToRef(resource);
+        // Un archivo de dueño de sistema (adjunto de Soporte) no existe para Catalog: no puede ser foto de un producto (fix round 1 del
+        // Bloque D de Soporte fase 3). Es filtrar por tipo, no por tenant: la regla de tenant sigue en ProductImageResolver.
+        return resource is null || SystemOwnedFiles.Includes(resource.OwnerType) ? null : ToRef(resource);
     }
 
     public async Task<IReadOnlyDictionary<Guid, ProductImageRef>> FindManyAsync(
@@ -43,7 +45,9 @@ internal sealed class ProductImageLookup(
         // simplemente no aparece.
         var ids = fileIds.Distinct().Select(fileId => new FileResourceId(fileId)).ToArray();
         var resources = await repository.ListByIdsAsync(ids, cancellationToken);
-        return resources.ToDictionary(resource => resource.Id.Value, ToRef);
+        return resources
+            .Where(resource => !SystemOwnedFiles.Includes(resource.OwnerType))
+            .ToDictionary(resource => resource.Id.Value, ToRef);
     }
 
     private ProductImageRef ToRef(FileResource resource) =>

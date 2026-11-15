@@ -25,6 +25,18 @@ public sealed class GetReplyOptionsHandler(
         await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
         var ticket = await tickets.FindAsync(query.TenantId, new SupportTicketId(query.TicketId), cancellationToken)
             ?? throw SupportNotFound.Ticket(query.TicketId);
+        // Plan F12: un anónimo sólo se responde por la página de consulta; ningún otro canal llega a él.
+        if (ticket.IsAnonymous)
+        {
+            var portalOnly = new SupportChannelOptionDto(false, SupportChannelReasons.PortalOnly, []);
+            return new SupportReplyOptionsDto(
+                new SupportThreadOptionDto(false, SupportChannelReasons.PortalOnly, null, null, false),
+                portalOnly,
+                portalOnly,
+                nameof(SupportReplyChannel.Portal),
+                new SupportChannelOptionDto(true, null, []));
+        }
+
         var now = (await tenantClock.GetAsync(query.TenantId, cancellationToken)).UtcNow;
         var messagingOn = await SupportConversationRules.IsEnabledAsync(
             tenantModules, query.TenantId, TenantModuleKeys.Messaging, cancellationToken);
@@ -33,8 +45,8 @@ public sealed class GetReplyOptionsHandler(
         SupportChannelOptionDto template;
         if (!messagingOn)
         {
-            thread = new SupportThreadOptionDto(false, SupportReplyRules.MessagingDisabled, null, null, false);
-            template = new SupportChannelOptionDto(false, SupportReplyRules.MessagingDisabled, []);
+            thread = new SupportThreadOptionDto(false, SupportChannelReasons.MessagingDisabled, null, null, false);
+            template = new SupportChannelOptionDto(false, SupportChannelReasons.MessagingDisabled, []);
         }
         else
         {
@@ -55,23 +67,28 @@ public sealed class GetReplyOptionsHandler(
         }
 
         var email = string.IsNullOrWhiteSpace(ticket.Requester?.Email)
-            ? new SupportChannelOptionDto(false, SupportReplyRules.NoEmail, [])
+            ? new SupportChannelOptionDto(false, SupportChannelReasons.NoEmail, [])
             : new SupportChannelOptionDto(true, null, []);
 
-        return new SupportReplyOptionsDto(thread, template, email, DefaultChannel(ticket.ReplyChannel, thread, template, email));
+        return new SupportReplyOptionsDto(
+            thread,
+            template,
+            email,
+            DefaultChannel(ticket.ReplyChannel, thread, template, email),
+            new SupportChannelOptionDto(false, SupportChannelReasons.PortalUnavailable, []));
     }
 
     private async Task<SupportChannelOptionDto> TemplateWithoutConversationAsync(SupportTicket ticket, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(ticket.Requester?.MobilePhone))
         {
-            return new SupportChannelOptionDto(false, SupportReplyRules.NoMobile, []);
+            return new SupportChannelOptionDto(false, SupportChannelReasons.NoMobile, []);
         }
 
         var connections = await channels.ListTemplateConnectionsAsync(ticket.TenantId, cancellationToken);
         return new SupportChannelOptionDto(
             connections.Count > 0,
-            connections.Count > 0 ? null : SupportReplyRules.TemplateNotApproved,
+            connections.Count > 0 ? null : SupportChannelReasons.TemplateNotApproved,
             connections.Select(connection => new SupportConnectionOptionDto(connection.Id, connection.Name)).ToList());
     }
 

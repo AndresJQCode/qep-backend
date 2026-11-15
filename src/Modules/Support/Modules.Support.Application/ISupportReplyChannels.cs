@@ -47,34 +47,113 @@ public abstract record SupportChannelSendResult
     public sealed record Failed(Guid? MessageId, string Code) : SupportChannelSendResult;
 }
 
-/// <summary>Los motivos de <see cref="SupportChannelSendResult.Rejected"/>: los de Mensajería, copiados por nombre (son contrato con
-/// <c>SupportReplyReasons</c>), más <see cref="CustomerNotFound"/>, que pone el adaptador cuando abrir la conversación choca con un
-/// cliente borrado.</summary>
+/// <summary>
+/// Tarea 8a: el único vocabulario de los códigos que la pantalla lee de Soporte: el <c>failureCode</c> de una respuesta
+/// (<c>ticket_replies.failure_code</c>), el de la información con el PIN (<c>ticket_access.last_failure_code</c>, en
+/// <c>ConsultAccess.FailureCode</c>), el <c>reason</c> de <c>reply-options</c> y el <c>cannotCreateReason</c> de la pestaña de Soporte de
+/// una conversación (<c>ListConversationTicketsHandler</c>). Los motivos de
+/// <see cref="SupportChannelSendResult.Rejected"/> que vienen de Mensajería son copias por nombre de <c>SupportReplyReasons</c> (Soporte
+/// no ve Mensajería); <c>SupportFailureCodeParityTests</c> los amarra. Un código nuevo va acá, y el frontend lo traduce por esta lista.
+/// </summary>
 public static class SupportChannelReasons
 {
+    /// <summary>La ventana de 24 h de la conversación está cerrada. Falla de respuesta, de la información con el PIN y motivo de
+    /// <c>reply-options</c>.</summary>
     public const string WindowClosed = "window_closed";
 
+    /// <summary>El contacto de la conversación está bloqueado. Falla de respuesta y motivo de <c>reply-options</c>.</summary>
     public const string ContactBlocked = "contact_blocked";
 
+    /// <summary>La conexión no tiene aprobada la plantilla «Aviso de respuesta». Falla de respuesta y motivo de
+    /// <c>reply-options</c>.</summary>
     public const string TemplateNotApproved = "template_not_approved";
 
+    /// <summary>El texto no cumple las reglas de un parámetro de plantilla de Meta. Falla de respuesta.</summary>
     public const string TemplateTextInvalid = "template_text_invalid";
 
+    /// <summary>El nombre del destinatario o el radicado no caben en la plantilla. Falla de respuesta.</summary>
     public const string RecipientInvalid = "recipient_invalid";
 
+    /// <summary>El texto no cumple la regla del canal (por ejemplo, el tope de Instagram). Falla de respuesta y de la información con el
+    /// PIN.</summary>
     public const string TextInvalid = "text_invalid";
 
+    /// <summary>La conexión está pausada, borrada o pide atención. Falla de respuesta, de la información con el PIN y motivo de
+    /// <c>reply-options</c>.</summary>
     public const string ConnectionUnavailable = "connection_unavailable";
 
+    /// <summary>La conversación ya no existe en el tenant. Falla de respuesta y de la información con el PIN.</summary>
     public const string ConversationNotFound = "conversation_not_found";
 
+    /// <summary>El adjunto no está disponible para esa conversación. Falla de respuesta.</summary>
     public const string AttachmentUnavailable = "attachment_unavailable";
 
+    /// <summary>El canal de la conversación no admite el envío (Instagram no tiene plantillas). Falla de respuesta.</summary>
     public const string ChannelUnsupported = "channel_unsupported";
 
+    /// <summary>Abrir la conversación chocó con un cliente borrado; lo pone el adaptador de Soporte. Falla de respuesta.</summary>
     public const string CustomerNotFound = "customer_not_found";
 
+    /// <summary>El canal intentó y no salió (Meta o el correo lo rechazaron). Falla de respuesta y de la información con el PIN.</summary>
     public const string SendFailed = "send_failed";
+
+    /// <summary>El ticket no tiene conversación. Motivo de <c>reply-options</c>.</summary>
+    public const string NoConversation = "no_conversation";
+
+    /// <summary>El módulo de Mensajería está apagado en el tenant. Motivo de <c>reply-options</c> y de la ficha de una conversación.</summary>
+    public const string MessagingDisabled = "messaging_disabled";
+
+    /// <summary>La foto del solicitante no tiene celular para la plantilla. Motivo de <c>reply-options</c>.</summary>
+    public const string NoMobile = "no_mobile";
+
+    /// <summary>La foto del solicitante no tiene correo. Motivo de <c>reply-options</c>.</summary>
+    public const string NoEmail = "no_email";
+
+    /// <summary>Ningún miembro activo puede firmar el envío por Mensajería: ni quien creó el ticket, ni su responsable, ni un gestor
+    /// (plan F11). Falla de la información con el PIN.</summary>
+    public const string NoAuthor = "no_author";
+
+    /// <summary>Un ticket anónimo sólo se responde por la página de consulta (plan F12). Motivo de <c>reply-options</c>.</summary>
+    public const string PortalOnly = "portal_only";
+
+    /// <summary>La página de consulta sólo responde a tickets anónimos: un ticket con solicitante no se responde por ahí (plan F12).
+    /// Motivo de <c>reply-options</c>.</summary>
+    public const string PortalUnavailable = "portal_unavailable";
+
+    /// <summary>Quien mira no tiene <c>support.ticket.manage</c>. Motivo de <c>cannotCreateReason</c> en la pestaña de Soporte de una
+    /// conversación (triage #19 del Bloque F: antes era un literal del handler).</summary>
+    public const string NoPermission = "no_permission";
+
+    /// <summary>«Reenviar PIN» reclamó el envío y todavía no sabe cómo terminó: se anota antes de mandar y el segundo guardado lo reemplaza
+    /// por el resultado real (triage #8 del Bloque F). Si el proceso muere en el medio, queda así: la consola ve que no salió, nunca un
+    /// envío exitoso que no ocurrió. Falla de la información con el PIN.</summary>
+    public const string SendPending = "send_pending";
+
+    /// <summary>Todos los códigos de esta lista.</summary>
+    public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        WindowClosed,
+        ContactBlocked,
+        TemplateNotApproved,
+        TemplateTextInvalid,
+        RecipientInvalid,
+        TextInvalid,
+        ConnectionUnavailable,
+        ConversationNotFound,
+        AttachmentUnavailable,
+        ChannelUnsupported,
+        CustomerNotFound,
+        SendFailed,
+        NoConversation,
+        MessagingDisabled,
+        NoMobile,
+        NoEmail,
+        NoAuthor,
+        PortalOnly,
+        PortalUnavailable,
+        NoPermission,
+        SendPending,
+    };
 }
 
 /// <summary>Las respuestas de Soporte por Mensajería (plan E12 a E14). El adaptador de Bootstrapper traduce

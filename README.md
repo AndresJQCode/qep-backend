@@ -2816,6 +2816,12 @@ el `FileResource` como `Purged`, auditado como `storage.file.purged` / `product_
 la copia pública reutiliza la despublicación, así que una foto publicada pierde `PublicStorageKey` y
 `PublishedAt`; es a propósito.
 
+**Archivos de dueño de sistema.** Los tipos de `SystemOwnedFiles` (Storage.Domain; hoy `SupportTicket`, los adjuntos del formulario
+público de Soporte) no existen para la consola: `GET /files` no los lista ni filtrando por ese dueño, toda ruta por id responde `404
+storage.file.not_found` (el mismo de otro tenant) y `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`. Se crean,
+completan y bajan sólo por `IStorageSystemUploads`, desde el módulo dueño. Ver [Formulario público de
+Soporte](#formulario-público-de-soporte-fase-3).
+
 ### Reportes exportados (`exports/`)
 
 La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) y las de los
@@ -4932,7 +4938,8 @@ fuera de `DefaultForNewTenants`: nace apagado y se prende por tenant). Es la fas
 `docs/superpowers/specs/2026-11-14-support-tickets-pqrs-design.md`: tickets creados a mano, bandeja con plazos en días hábiles,
 estados, responsable, tipo y cliente con traza y auditoría, y los tipos de ticket del tenant. La fase 2 («Mensajería», ver
 [Soporte y Mensajería](#soporte-y-mensajería-fase-2)) suma tickets desde una conversación, el seguimiento del hilo y las respuestas por
-el hilo, la plantilla «Aviso de respuesta» y el correo. El formulario público y la encuesta llegan en las fases siguientes. Soporte no referencia Mensajería ni Customers: el calendario, los clientes y los miembros
+el hilo, la plantilla «Aviso de respuesta» y el correo. La fase 3 suma el formulario público ([Formulario público de
+Soporte](#formulario-público-de-soporte-fase-3)); la encuesta llega después. Soporte no referencia Mensajería ni Customers: el calendario, los clientes y los miembros
 entran por puertos con adaptador en Bootstrapper (`SupportBusinessCalendarSource`, `SupportCustomerLookup`, `SupportMemberDirectory`).
 
 **Permisos y roles.** `support.ticket.read`, `support.ticket.manage` y `support.settings.manage` (`SupportPermissions`, categoría
@@ -4975,7 +4982,12 @@ fuera de la tabla es `422 support.ticket.transition_invalid`. Ningún estado vue
 reabrirse a `Open` (`ResolutionCount` cuenta las resoluciones). **Un ticket `Resolved` o `Closed` no se edita** (owner, 2026-11-15):
 `PUT …/assignee`, `…/type` y `…/customer` responden `422 support.ticket.not_editable`, aunque el valor sea el mismo. Lo guarda el
 agregado (`SupportTicket.Assign`, `ChangeType`, `LinkCustomer`), así que vale para cualquier camino nuevo; para editarlo hay que
-reabrirlo (`Resolved` → `Open`). La fusión de clientes no pasa por ahí: mueve tickets en cualquier estado.
+reabrirlo (`Resolved` → `Open`). La fusión de clientes no pasa por ahí: mueve tickets en cualquier estado. **El expediente se cura
+hasta resolver:** fijar o soltar un mensaje (`POST …/messages/{messageId}/pin` · `/release`) y «Seguir el hilo» (`PUT …/follow-thread`)
+se permiten en `Resolved` y responden el mismo `422 support.ticket.not_editable` en `Closed`, también apagar un hilo que ya estaba
+apagado, fijar uno ya fijado o soltar uno ya suelto (antes era `support.ticket.follow_closed`, que ya no existe). En fijar y soltar la
+guarda va antes que cualquier otra regla: en un cerrado, el 422 sale aunque el ticket no tenga conversación o el mensaje no esté vinculado. Responder se permite en cualquier estado, y el worker del hilo, la
+fusión y el borrado de clientes no pasan por esa guarda.
 
 **Reloj de resolución.** Los términos cuentan **de lunes a viernes** (owner, 2026-11-15, spec §13.4): en un tenant cuyo país (ajustes
 regionales) es `CO` se descuentan además los festivos nacionales de Colombia; en cualquier otro país, sólo lunes a viernes. **No usa
@@ -5008,13 +5020,17 @@ tiene que valer para su país (por defecto, el del tenant). Vincular un cliente,
 `customers` prendido (`403 tenancy.module_not_enabled`) y un cliente activo del tenant (`422 support.ticket.customer_not_found` o
 `support.ticket.customer_inactive`; un fusionado está inactivo). El canal de respuesta `Thread` no está disponible en un alta manual
 (`422 support.ticket.reply_channel_unavailable`), `Email` exige correo y `WhatsAppTemplate` exige celular. **Con un cliente
-vinculado, su contacto es el respaldo** (owner, 2026-11-14): el alta copia en la foto del solicitante el `email` y el `phone_e164`
-del cliente (nunca el `phone` crudo) sólo en los campos que `requester` dejó vacíos, y después valida el canal contra esa foto. Lo
-que trae `requester` siempre gana. Sin `requester`, la foto queda con sólo ese contacto y el país del tenant; un valor del cliente
-que no cabe en la foto (correo de más de 254 o que no cumple el formato de correo que se le exige al de `requester`, celular que
-no es E.164) no se copia. Sin correo ni celular en ninguno de los dos,
-todo canal responde ese 422 (`TicketRequesterNormalizer.WithCustomerContact`, amarrado por
-`ALinkedCustomerEmailIsCopiedIntoAnEmptyRequesterForEmail` y `ALinkedCustomerWithoutContactAndNoRequesterContactIs422ForEmail`).
+vinculado, su contacto es el respaldo** (owner, 2026-11-14): el alta copia en la foto del solicitante el `email` del cliente en el
+correo y su `phone_e164` (nunca el `phone` crudo) en el **fijo** (`landlinePhone`), sólo en los campos que `requester` dejó vacíos, y
+después valida el canal contra esa foto. **El teléfono del cliente nunca va al celular** (owner, 2026-11-15): puede ser fijo, y una
+plantilla de WhatsApp a un fijo la rechaza Meta y la respuesta queda `Failed`. Por eso `WhatsAppTemplate` sale sólo con el
+`mobilePhone` que trae `requester` (o, en un ticket desde una conversación, el `wa_id`); sin él, `reply-options` dice `no_mobile` y el
+asesor elige otro canal. Lo que trae `requester` siempre gana. Sin `requester`, la foto queda con sólo ese contacto y el país del
+tenant; un valor del cliente que no cabe en la foto (correo de más de 254 o que no cumple el formato de correo que se le exige al de
+`requester`, teléfono que no es E.164) no se copia. Sin correo en ninguno de los dos, `Email` responde ese 422; sin celular del
+solicitante, `WhatsAppTemplate` también (`TicketRequesterNormalizer.WithCustomerContact`, amarrado por
+`ALinkedCustomerEmailIsCopiedIntoAnEmptyRequesterForEmail`, `ALinkedCustomerWithoutContactAndNoRequesterContactIs422ForEmail` y
+`ALinkedCustomerPhoneGoesToTheLandlineAndNeverToTheMobile`).
 Vincular el cliente después, con `PUT …/customer`, no toca la foto ni el canal.
 
 **Traza y auditoría.** La traza del ticket son sus eventos (`Created`, `StatusChanged`, `AssigneeChanged`, `TypeChanged`,
@@ -5040,6 +5056,16 @@ sonda de usuarios, y los CHECK `CK_tickets_manual_medium` y `CK_ticket_events_ki
 - **Un `INSERT` a mano en `support.tickets` tiene que llenar todas las columnas `NOT NULL`** (el tipo va copiado en `type_name`,
   `term_is_legal` y `requires_formal_response`; `received_on`, `last_event_ordinal`, `version`) y un `number` libre del tenant: el
   índice único es `(tenant_id, number)` y el contador de `tenant_settings` no se entera.
+- **Slugs reservados (fase 3).** Las rutas fijas del host del formulario público (`soporte.lulocrm.com/{tenantSlug}`, spec §9.2) no
+  pueden ser slug de un tenant nuevo: `TenantSlugReservations.Reserved` (Tenancy.Domain) y `422 tenancy.slug.reserved` al registrar
+  o crear. Un tenant que ya existía con uno de ellos sigue cargando, pero su formulario taparía una ruta del host: **antes de desplegar**
+  se consulta producción y lo que salga se corrige a mano con el tenant:
+
+  ```sql
+  SELECT id, slug FROM tenancy.tenants
+  WHERE slug IN ('api', 'app', 'assets', 'static', 'public', 'consultar', 'calificar', 'admin', 'www', 'soporte',
+                 'support', 'pqrsf', 'qep', 'login', 'cuenta', 'health', 'status', 'robots', 'sitemap');
+  ```
 
 **Retención** (owner, 2026-11-15, spec §13.10; el abogado confirma): los tickets se conservan 10 años desde el cierre (Código de
 Comercio art. 60; Ley 962 de 2005 art. 28); después se anonimizan los datos personales del solicitante y el ticket queda para
@@ -5110,6 +5136,36 @@ correo cuando el canal la rechazó o falló (`send_failed`, `window_closed`, `co
 `attachment_unavailable`…), o un código de error de Soporte cuando un retomado ya no tenía ruta (`support.ticket.no_conversation`,
 `support.ticket.reply_channel_unavailable`).
 
+**Códigos de falla.** Todo código que la pantalla lee de Soporte —el `failureCode` de una respuesta, el `ConsultAccess.FailureCode` de la
+información con el PIN, el `reason` de `reply-options` y el `cannotCreateReason` de la pestaña de Soporte de una conversación— sale de
+una sola lista, `SupportChannelReasons`
+(`Modules.Support.Application/ISupportReplyChannels.cs`). Los que vienen de Mensajería son copia de `SupportReplyReasons`, amarrada por
+`SupportFailureCodeParityTests`. El frontend traduce por esta lista.
+
+| Código | Cuándo | Dónde se ve |
+| --- | --- | --- |
+| `window_closed` | La ventana de 24 h está cerrada | Respuesta, PIN, `reply-options` |
+| `contact_blocked` | El contacto está bloqueado | Respuesta, `reply-options` |
+| `template_not_approved` | La conexión no tiene aprobada «Aviso de respuesta» | Respuesta, `reply-options` |
+| `template_text_invalid` | El texto no cabe en un parámetro de Meta | Respuesta |
+| `recipient_invalid` | El nombre o el radicado no caben en la plantilla | Respuesta |
+| `text_invalid` | El texto no cumple la regla del canal (tope de Instagram) | Respuesta, PIN |
+| `connection_unavailable` | La conexión está pausada, borrada o pide atención | Respuesta, PIN, `reply-options` |
+| `conversation_not_found` | La conversación ya no existe | Respuesta, PIN |
+| `attachment_unavailable` | El adjunto no está disponible para esa conversación | Respuesta |
+| `channel_unsupported` | Instagram no tiene plantillas | Respuesta |
+| `customer_not_found` | Abrir la conversación chocó con un cliente borrado | Respuesta |
+| `send_failed` | El canal intentó y no salió | Respuesta, PIN |
+| `no_conversation` | El ticket no tiene conversación | `reply-options` |
+| `messaging_disabled` | Mensajería está apagada en el tenant | `reply-options`, ficha de la conversación |
+| `no_mobile` | La foto no tiene celular para la plantilla | `reply-options` |
+| `no_email` | La foto no tiene correo | `reply-options` |
+| `no_author` | Ningún miembro activo puede firmar el envío por Mensajería (plan F11) | PIN |
+| `portal_only` | Un anónimo sólo se responde por la página de consulta | `reply-options` |
+| `portal_unavailable` | La página de consulta sólo responde a anónimos | `reply-options` |
+| `no_permission` | Quien mira no tiene `support.ticket.manage` (ya existía como literal; ahora vive en la lista) | Ficha de la conversación |
+| `send_pending` | «Reenviar PIN» reclamó el envío y todavía no sabe cómo terminó; si el proceso muere en el medio, queda así | PIN |
+
 **Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
 la pantalla lo sube con la sesión de subida de Mensajería
 (`POST /api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages/media/upload-session`, que exige
@@ -5129,6 +5185,169 @@ con una variable.
 **Migraciones:** `Support` `AddSupportMessaging` (conversación y ventana de seguimiento en `tickets`, `ticket_messages`,
 `unclassified_messages`, `ticket_replies`) y `Messaging` `AddSupportReplyTemplateKind` (el CHECK de `message_templates.kind` e
 `UX_message_templates_support_reply`).
+
+#### Formulario público de Soporte (fase 3)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-3-public-form-backend.md` (spec §9). La página `soporte.lulocrm.com/{tenantSlug}`
+llama directo desde el navegador, sin BFF, a un grupo **anónimo**: `/api/v1/public/support/{tenantSlug}`. Ningún handler del grupo lee el
+contexto de ejecución ni la cookie de sesión, no hay CSRF (exención por prefijo, `SupportPublicPaths`), toda respuesta —también 404, 413
+y 429— lleva `Cache-Control: no-store` y ningún cuerpo pasa de 64 KB (`413 support.public.body_too_large`; un JSON ilegible es `400
+support.public.body_invalid`). Un slug que no es de nadie, un tenant inactivo y el módulo `support` apagado responden el mismo `404
+support.public.not_found`, con el mismo cuerpo, en todas las rutas. **La página de consulta y la información con el PIN funcionan sin
+publicar el formulario** (owner, 2026-11-15): `GET /consult`, `POST /tickets/lookup` y `POST /tickets/resend-pin` sólo exigen tenant
+activo y módulo prendido (`SupportPublicResolver.ResolveForConsultAsync`), así todo solicitante tiene desde el primer día un enlace de
+consulta que sirve. Publicar sólo abre el formulario: `GET /form`, la geografía, radicar y los adjuntos responden ese mismo 404 mientras
+la versión vigente no esté publicada (`ResolveAsync`).
+
+**Rutas públicas** (relativas al grupo). Los limitadores son por IP del visitante (`RemoteIpAddress`, ya corregida por `X-Real-IP` detrás
+del ingress) y cada uno tiene su propia cubeta.
+
+| Método y ruta | Cuerpo | Éxito | Turnstile | Límite por IP |
+| --- | --- | --- | --- | --- |
+| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país y textos legales vigentes | No | 60 / min |
+| `GET /consult` | — | `{ tenantName, logoUrl, accentColor }` para dibujar la página de consulta; `accentColor` es el de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
+| `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
+| `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
+| `POST /attachments/{fileId}/complete` | `{ uploadKey }` | `200` `{ status }`: `available` o `rejected` | No | 20 / 10 min |
+| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` opcional | `201` `{ number, pin, dueOn, successMessage, pinEmailed, consultUrl }` | Sí | 5 / 10 min |
+| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, plazo y respuestas | Sí | 10 / min |
+| `POST /tickets/resend-pin` | `{ number, turnstileToken }` | `202` vacío, siempre | Sí | 5 / 10 min |
+
+**Radicar.** Con solicitante o anónimo. Los campos que se piden y cuáles son obligatorios los dice la versión vigente del formulario
+(`SupportFormFields`); el tipo de documento sale de `DocumentTypesByCountry`; el celular se guarda en E.164; en Colombia la ciudad es de
+Geography (`cityId`) y fuera, texto libre (`cityName`). `formVersion` y `legalTextVersion` son las que la página cargó: si cambiaron, `422
+support.public.form_outdated` o `support.public.legal_texts_outdated` y la página recarga. Todo lo que puede responder 422 va antes de la
+transacción, así un rechazo no gasta radicado. Con solicitante se guarda el consentimiento (foto del texto aceptado e IP) y, con
+`customers` prendido y un único cliente con ese documento, el ticket queda vinculado; con cero o varios, el detalle los ofrece como
+candidatos. **Un anónimo** no guarda cliente —tampoco se lo vincula la consola: `PUT …/tickets/{id}/customer` responde `422
+support.ticket.anonymous_has_no_customer` y el detalle no ofrece candidatos—, foto del solicitante, documento, IP ni consentimiento, y sólo se responde por la página de
+consulta (canal `Portal`). La base lo respalda con `CK_tickets_anonymous` (migración `AddSupportAnonymousTicketCheck`): un anónimo no
+puede tener `customer_id` ni ninguna columna `requester_*`, tampoco por SQL crudo. Una fila de consentimiento por ticket
+(`IX_consents_ticket`); un segundo consentimiento del mismo ticket es `409 support.public.consent_duplicate`, que hoy ningún camino
+alcanza.
+
+**Turnstile se gasta antes de validar los adjuntos.** El token es de un solo uso y radicar lo verifica primero (anti-abuso: nada más
+corre sin él). Por eso **la página reinicia el widget después de cualquier `422` de `POST /tickets`** —un adjunto inválido, un campo, la
+versión del formulario—, no sólo después de `support.public.captcha_invalid`: reintentar con el mismo token responde
+`captcha_invalid` aunque el resto ya esté bien.
+
+**PIN.** Seis dígitos aleatorios. Todo ticket nace con uno, también el manual y el que se abre desde una conversación, y **sólo se guarda
+su hash** (PBKDF2, `support.ticket_access.pin_hash`). La clave vive en `ticket_access` y no en el ticket, para que un
+intento fallido no le suba la versión. Consultar con radicado y PIN: un radicado que no existe, un PIN errado y un radicado bloqueado
+responden lo mismo, `422 support.public.lookup_failed`, y los tres pagan el mismo PBKDF2 y hacen las mismas lecturas (el contexto de
+plazos y la búsqueda de la clave; un radicado mal escrito busca el 0, que no existe). **Cinco fallos seguidos bloquean ese radicado
+15 minutos**, también para el PIN correcto; un acierto pone el contador en cero. Mirar el bloqueo y anotar el intento ocurren con la fila
+de `ticket_access` tomada (`SELECT … FOR UPDATE`), así N intentos a la vez cuentan N. «Reenviar PIN» responde siempre `202`: si el ticket
+tiene a dónde (ver abajo) y pasaron 10 minutos desde el último envío, genera un PIN nuevo y lo manda **al destino registrado, nunca a uno
+del visitante**; el nuevo reemplaza al viejo sólo si salió, y reenviar no desbloquea. El reenvío reclama el envío antes de mandar
+(enfriamiento y `send_pending`, confirmados) y anota el resultado real después: si el proceso muere entre los dos, la consola ve
+`send_pending`, nunca un envío exitoso que no ocurrió. La consola ve en el detalle (`ConsultAccess`) cuándo y por qué canal salió la
+información y por qué no, nunca el PIN.
+
+**A dónde va la información con el PIN** (`SupportOpeningSender`, plan F10, F11 y F23 a F26). La misma regla al crear el ticket y al
+reenviar el PIN; al crear, sale **después** de confirmar el ticket y anota su resultado en un segundo guardado que toca sólo
+`ticket_access`: el ticket queda creado pase lo que pase con el envío, y la `version` del `201` sigue valiendo para el siguiente
+`If-Match`. Sale aunque el formulario del tenant no esté publicado: la página de consulta no depende de él (owner, 2026-11-15).
+
+| Ticket | Canal (`last_sent_channel`) | Qué sale |
+| --- | --- | --- |
+| Del formulario, con solicitante | `Email` | El correo de apertura al correo de la foto. El PIN además viaja en la respuesta del radicado |
+| Del formulario, anónimo | — | Nada: el PIN sólo se ve en la respuesta del radicado |
+| Manual con canal `Email` | `Email` | El correo de apertura al correo de la foto |
+| Manual con canal `WhatsAppTemplate` o `Thread`, sin conversación | — | **Nada** (owner, 2026-11-15): mandar a un celular nuevo pide elegir conexión y no cabe en el alta. El PIN se emite igual |
+| Desde una conversación, o manual que ya vinculó una (si su canal no es `Email`) | `Thread` | Texto por el hilo, sólo con la ventana de 24 h abierta; cerrada, nada (`window_closed`). No hay plantilla de apertura (F24) |
+
+El texto por el hilo, tuteando: `Registramos tu caso {radicado} ({tipo}). Fecha límite de respuesta: {fecha}. Consulta su estado en
+{enlace} con la clave {pin}.` La fecha va en el formato regional del tenant y, si el tipo no tiene término, dice `sin fecha límite`. El
+enlace de consulta nunca lleva el PIN. Mensajería exige un autor para la fila del mensaje: firma quien creó el ticket si sigue activo; si
+no, su responsable; si tampoco, el primer gestor en el orden de `GET /assignees`. Sin ninguno no sale (`no_author`). El `clientId` del
+mensaje sale del ticket y de la emisión del PIN (`pin_issued_at`): un reintento de la misma emisión no manda dos veces, y un reenvío es
+otro mensaje. El texto queda en el hilo de Mensajería como cualquier mensaje saliente, con el PIN: es el canal que lo entrega.
+
+**Adjuntos** (plan F30 a F37). Pasan por el pipeline de Storage —staging, magic bytes, antivirus, cuarentena, promoción a `files/` y
+barrido— con el dueño `FileOwnerType.SupportTicket`, por la subida sin miembro `IStorageSystemUploads` (Storage.Application, sin endpoint
+propio) y el adaptador `SupportAttachmentStorage` de Bootstrapper. El flujo de la página: abrir (`POST /attachments`), `PUT` del archivo
+directo al bucket privado de R2 con `uploadUrl` y los `headers` tal cual (`Content-Type` e `If-None-Match: *` van firmados), completar y,
+si sale `available`, mandar el par al radicar.
+
+- **El tenant los permite o no** (spec §9.3). `allow_attachments` es de cada versión del formulario (`PUT /settings/public-form`,
+  `allowAttachments`, obligatorio como los demás interruptores) y arranca **prendido** (owner, 2026-11-15; también el default de la
+  columna): el tenant los apaga si no los quiere. `GET /form` lo trae en `attachments` (`{ allowed, maxFiles, maxSizeBytes, mimeTypes }`):
+  la página esconde el control con `allowed` y arma su `accept` y sus avisos con el resto, sin una lista propia. Apagado, abrir,
+  completar y radicar con una lista de adjuntos no vacía responden `422 support.public.attachments_disabled`, antes de tocar Storage;
+  radicar sin adjuntos sigue igual.
+
+- **Límites** (`SupportPublicAttachmentRules`): hasta **3** archivos por ticket, **10 MB** cada uno, nombre simple de hasta 260 y sólo
+  **PDF, JPEG, PNG y WebP** (`.pdf`, `.jpg`, `.jpeg`, `.png`, `.webp`; `application/pdf`, `image/jpeg`, `image/png`, `image/webp`).
+  `image/jpg`, que no es un tipo registrado pero algunos navegadores mandan, se toma como `image/jpeg`. Abrir fuera de eso es `422
+  validation.failed` con el campo (`Name`, `MimeType`, `SizeBytes`); cuatro o un par repetido al radicar, con `Attachments`. La lista es
+  un subconjunto de la de Storage (`SupportAttachmentParityTests`).
+- **Sin Word ni Excel mientras `Storage:ClamAv:Enabled` esté apagado en producción** (owner, 2026-11-15): un adjunto anónimo con macros
+  lo abre un asesor. Sumar un tipo de Office exige prender ClamAV primero.
+- **Tope por tenant** (owner, 2026-11-15): el limitador por IP no frena a muchas IPs a la vez llenando el bucket. Un tenant tiene a lo
+  sumo **200** subidas abiertas en las últimas 24 h que ningún ticket reclamó (`MaxPendingPerTenantPerDay`; las reclamadas no cuentan);
+  pasado eso, abrir responde `422 support.public.attachments_busy`, sin tocar Storage, y la página dice «Estamos recibiendo muchos
+  archivos. Intenta más tarde.». Es un tope blando a propósito: cuenta y después abre, así que entran
+  unas pocas de más bajo ráfaga simultánea; un candado por tenant en un endpoint anónimo expondría el pool de conexiones de toda la API
+  (quien espera retiene una conexión y quien lo tiene necesita otra para Storage). El conteo es SQL crudo en `SupportAttachmentStorage` (Bootstrapper) sobre `storage.file_resources` (servido por
+  `IX_file_resources_tenant_owner_created`) y `support.ticket_attachments`.
+- **`uploadKey`** es un GUID aleatorio (v4) que sólo recibe quien abrió la sesión y que Storage guarda como `OwnerId` del archivo. Completar
+  y radicar exigen el par `(fileId, uploadKey)` del mismo tenant: otra clave, un id que no existe, un archivo sin subir o en cuarentena
+  responden lo mismo, `422 support.public.attachment_invalid`. Completar antes de que termine el `PUT` es `428
+  support.public.attachment_not_uploaded`. Un archivo `rejected` no es un error de la llamada: la página avisa antes de radicar.
+- Los adjuntos se insertan en `support.ticket_attachments` en la misma transacción del ticket. El único `IX_ticket_attachments_file`
+  impide que dos radicaciones reclamen el mismo archivo y se traduce por nombre al mismo 422; la radicación entera se deshace.
+- **Lo que nadie reclama se purga.** El barrido de staging de Storage borra, pasada la retención (`Storage:StagingRetentionHours`, 24
+  h), el adjunto `Available` que ninguna sonda retiene; la de Soporte (`SupportAttachmentReferenceProbe`) retiene los reclamados. Mira
+  sólo los de la última semana pasada la retención: un adjunto sin reclamar más viejo (el worker caído más de siete días) queda sin purgar.
+  La fila se guarda (`Purged`) antes de borrar los objetos: si borrar falla, queda un objeto huérfano en el bucket y un log de error,
+  nunca una fila `Available` que apunta a un objeto borrado. Queda abierta una carrera en el borde de las 24 h: un radicado que reclama
+  el archivo justo después de que la sonda dijo «nadie lo retiene» y antes de que la purga se guarde. Exige que la página espere 24 h
+  entre subir y radicar.
+- **Consola:** el detalle del ticket trae `attachments` (`id`, `fileName`, `mimeType`, `sizeBytes`) y
+  `GET /api/v1/tenants/{tenantId}/support/tickets/{ticketId}/attachments/{attachmentId}/download` (`support.ticket.view`) responde `{ url }`
+  firmada de 5 minutos, sin pedir `storage.file.read`; audita `support.ticket.attachment_downloaded`. Otro tenant es 403; un adjunto que
+  no es del ticket, `404 support.attachment.not_found`.
+- **Los archivos `SupportTicket` no se ven desde la consola de Storage.** Son dueño de sistema (`SystemOwnedFiles`): `GET /files` no
+  los lista, cada ruta por id de `/files/{fileId}` (descarga, publicación, metadatos, completar, cancelar, borrar) responde `404
+  storage.file.not_found` aunque el miembro tenga todo `storage.file.*`, y `POST /files` con `ownerType: SupportTicket` es `422
+  storage.file.owner_type_invalid`. Tampoco los ven Catalog (foto de producto) ni Quotations (adjunto de pedido). Sólo llegan por las
+  rutas de Soporte.
+
+**Rutas de la consola** (fase 3), bajo `/api/v1/tenants/{tenantId}/support`:
+
+| Método y ruta | Política | Qué hace |
+| --- | --- | --- |
+| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión |
+| `GET` · `POST /settings/legal-texts` | `support.settings.view` · `support.settings.manage` | Textos legales; cada publicación es una versión nueva |
+| `GET /tickets/{ticketId}/attachments/{attachmentId}/download` | `support.ticket.view` | URL firmada del adjunto (arriba) |
+
+**Configuración** `Support:PublicForm` (`appsettings.json`, defaults en código):
+
+| Clave | Default | Para qué |
+| --- | --- | --- |
+| `BaseUrl` | `https://soporte.lulocrm.com` | Arma el enlace de consulta (`{BaseUrl}/{slug}/consultar?radicado=SOP-…`, sin PIN) |
+| `Hostname` | `soporte.lulocrm.com` | El hostname que Turnstile tiene que reportar; se exige sólo en `Production` |
+| `AllowedOrigins` | vacía | Orígenes exactos de la página para la política CORS `support-public` (sin credenciales, `GET` y `POST`, sólo `Content-Type`) |
+
+`AllowedOrigins` sigue las reglas de `Cors:AllowedOrigins`: https exacto, sin comodín, ruta ni barra final; `http://localhost[:puerto]`
+sólo en `Development` (`appsettings.Development.json` trae `http://localhost:3002`, el puerto de la página en local). En `Production` es
+obligatoria y no puede traer un `#{…}#` sin resolver: el pod no arranca (`SupportPublicFormOptionsValidator`). Turnstile es el de la tienda
+(`Store:Turnstile:*`, ver [Tienda pública](#secretos)). **El bucket privado de R2 necesita CORS para el origen de la página**, porque el
+`PUT` del adjunto sale del navegador: `PUT` con los headers `Content-Type` e `If-None-Match` desde `https://soporte.lulocrm.com` (y
+`http://localhost:3002` para probar en local).
+
+**Slugs reservados.** Las rutas fijas del host (`consultar`, `calificar`, `api`…) no pueden ser slug de un tenant nuevo (`422
+tenancy.slug.reserved`). Antes de desplegar se corre la consulta de los avisos de [Soporte](#soporte) contra producción.
+
+**Prueba legal.** `support.legal_text_versions` y `support.consents` son insert-only: ningún método edita ni borra, `consents` no tiene FK
+(ni al ticket ni a la versión: guarda su propia foto del texto) y el `Down` de `AddSupportPublicForm` no las borra.
+
+**Migraciones:** `Support` `AddSupportPublicForm` (`form_versions`, `legal_text_versions`, `consents`, `ticket_access` y las columnas del
+formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attachments`), `Support` `AddSupportFormAllowAttachments`
+(`form_versions.allow_attachments`, `true` por defecto), `Support` `AddSupportAnonymousTicketCheck` (`CK_tickets_anonymous`) y `Storage`
+`AddFileResourceTenantOwnerCreatedIndex` (`IX_file_resources_tenant_owner_created`, para el tope de subidas). `SupportTicket` se guarda
+por nombre en `owner_type`, sin migración.
 
 ### API externa
 

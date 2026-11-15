@@ -45,7 +45,7 @@ public sealed class SendTicketReplyValidator : AbstractValidator<SendTicketReply
         RuleFor(command => command.ClientId).NotNull().NotEqual(Guid.Empty);
         RuleFor(command => command.Channel)
             .Must(text => SupportTicketRules.TryParseExact<SupportReplyChannel>(text, out _))
-            .WithMessage("Channel must be Thread, WhatsAppTemplate or Email.");
+            .WithMessage("Channel must be Thread, WhatsAppTemplate, Email or Portal.");
         RuleFor(command => command.Text)
             .Must(SupportTicketReply.IsValidText)
             .WithMessage($"Escribe una respuesta de 1 a {SupportTicketReply.TextMaxLength} caracteres, sin caracteres de control.");
@@ -229,8 +229,22 @@ public sealed class SendTicketReplyHandler(
         SupportTicket ticket, SupportReplyChannel channel, SendTicketReplyCommand command, string text, DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        // Plan F12: un ticket anónimo sólo se responde por la página de consulta, y la página sólo responde a uno anónimo. Va primero:
+        // Portal no pasa por Mensajería ni por el correo, y antes de esto llegaba a la ruta del hilo y reventaba al crear la fila.
+        if (ticket.IsAnonymous != (channel is SupportReplyChannel.Portal))
+        {
+            throw ticket.IsAnonymous
+                ? new SupportDomainException(SupportErrorCodes.ReplyPortalOnly, "An anonymous ticket is answered only on the consult page.")
+                : new SupportDomainException(
+                    SupportErrorCodes.ReplyPortalUnavailable, "The consult page only answers anonymous tickets.");
+        }
+
         SupportReplyRoute route;
-        if (channel is SupportReplyChannel.Email)
+        if (channel is SupportReplyChannel.Portal)
+        {
+            route = new SupportReplyRoute(SupportReplyDelivery.Portal, null, null, null);
+        }
+        else if (channel is SupportReplyChannel.Email)
         {
             route = string.IsNullOrWhiteSpace(ticket.Requester?.Email)
                 ? throw Unavailable(channel)
@@ -290,6 +304,11 @@ public sealed class SendTicketReplyHandler(
     private async Task<SupportReplyRoute> ResumeRouteAsync(
         SupportTicket ticket, SupportTicketReply stored, CancellationToken cancellationToken)
     {
+        if (stored.Delivery is SupportReplyDelivery.Portal)
+        {
+            return new SupportReplyRoute(SupportReplyDelivery.Portal, null, null, null);
+        }
+
         if (stored.Delivery is SupportReplyDelivery.Email)
         {
             return string.IsNullOrWhiteSpace(ticket.Requester?.Email)
@@ -359,6 +378,8 @@ public sealed class SendTicketReplyHandler(
         SupportTicket ticket, SupportReplyRoute route, SupportTicketReply reply, Guid actor, CancellationToken cancellationToken) =>
         route.Delivery switch
         {
+            // Plan F12: la respuesta se publica, no se envía. Queda Sent y la ve quien consulte con el radicado y el PIN.
+            SupportReplyDelivery.Portal => new SupportChannelSendResult.Sent(null, null),
             SupportReplyDelivery.Text => await channels.SendThreadAsync(
                 new SupportChannelThreadSend(
                     ticket.TenantId, route.ConversationId!.Value, reply.Id, actor, reply.Text, reply.UploadId, reply.FileName),

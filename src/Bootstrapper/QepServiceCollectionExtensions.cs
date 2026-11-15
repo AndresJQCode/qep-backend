@@ -181,6 +181,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<CompleteUploadCommand, FileResourceDto>,
             CompleteUploadHandler>();
+        // Soporte fase 3 (plan F31): la subida sin miembro. No es un handler ni tiene endpoint en Storage: la usa sólo el adaptador de
+        // Soporte en Bootstrapper (SupportAttachmentStorage).
+        services.AddScoped<IStorageSystemUploads, StorageSystemUploads>();
         services.AddScoped<
             ICommandHandler<CancelUploadCommand, CancelUploadResult>,
             CancelUploadHandler>();
@@ -490,12 +493,29 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
             Modules.Support.Application.UpdateSupportSettingsHandler>();
+        // Fase 3: el formulario público y los textos legales, versionados (plan F14 a F16).
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetFormSettingsQuery, Modules.Support.Application.SupportFormSettingsDto>,
+            Modules.Support.Application.GetFormSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateFormSettingsCommand, Modules.Support.Application.SupportFormSettingsDto>,
+            Modules.Support.Application.UpdateFormSettingsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetLegalTextsQuery, Modules.Support.Application.SupportLegalTextsDto>,
+            Modules.Support.Application.GetLegalTextsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PublishLegalTextsCommand, Modules.Support.Application.SupportLegalTextsDto>,
+            Modules.Support.Application.PublishLegalTextsHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.CreateTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.CreateTicketHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.GetTicketQuery, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.GetTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.GetTicketAttachmentDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
+            Modules.Support.Application.GetTicketAttachmentDownloadHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListSupportAssigneesQuery, Modules.Support.Application.SupportAssigneesDto>,
             Modules.Support.Application.ListSupportAssigneesHandler>();
@@ -1571,6 +1591,56 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportConversationEvents, SupportConversationEvents>();
         services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
         services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();
+        // Soporte fase 3: el host del formulario público (plan F28 y F29).
+        // Los orígenes del grupo público se validan al arrancar, como Cors:AllowedOrigins (plan F4).
+        services.AddOptions<SupportPublicFormOptions>()
+            .Bind(configuration.GetSection(SupportPublicFormOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<SupportPublicFormOptions>, SupportPublicFormOptionsValidator>();
+        services.AddSingleton<Modules.Support.Application.ISupportPublicOptions, SupportPublicOptions>();
+        // El grupo anónimo: Turnstile de la tienda (F28), países y celular (F19, F20) y la geografía de Colombia (F19).
+        services.AddScoped<Modules.Support.Application.ISupportCaptcha, SupportCaptcha>();
+        services.AddScoped<SupportPhoneNormalizer>();
+        services.AddScoped<Modules.Support.Application.ISupportCountries>(provider => provider.GetRequiredService<SupportPhoneNormalizer>());
+        services.AddScoped<Modules.Support.Application.ISupportPhoneNormalizer>(
+            provider => provider.GetRequiredService<SupportPhoneNormalizer>());
+        services.AddScoped<Modules.Support.Application.ISupportGeography, SupportGeography>();
+        services.AddScoped<Modules.Support.Application.SupportPublicResolver>();
+        services.AddScoped<Modules.Support.Application.ISupportTenantBranding, SupportTenantBranding>();
+        services.AddScoped<Modules.Support.Application.ISupportOpeningEmail, SupportOpeningEmailSender>();
+        services.AddScoped<Modules.Support.Application.SupportOpeningSender>();
+        services.AddScoped<Modules.Support.Application.SupportOpeningDelivery>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.FilePublicTicketCommand, Modules.Support.Application.SupportPublicFiledDto>,
+            Modules.Support.Application.FilePublicTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.LookupPublicTicketCommand, Modules.Support.Application.SupportPublicTicketDto>,
+            Modules.Support.Application.LookupPublicTicketHandler>();
+        // Los adjuntos del formulario (plan F30 a F37): el archivo va por la subida sin miembro de Storage.
+        services.AddScoped<Modules.Support.Application.ISupportAttachmentStorage, SupportAttachmentStorage>();
+        services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.OpenPublicAttachmentCommand, Modules.Support.Application.SupportPublicAttachmentSessionDto>,
+            Modules.Support.Application.OpenPublicAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.CompletePublicAttachmentCommand, Modules.Support.Application.SupportPublicAttachmentStatusDto>,
+            Modules.Support.Application.CompletePublicAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ResendPublicPinCommand, bool>,
+            Modules.Support.Application.ResendPublicPinHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetPublicFormQuery, Modules.Support.Application.SupportPublicFormDto>,
+            Modules.Support.Application.GetPublicFormHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetPublicConsultQuery, Modules.Support.Application.SupportPublicConsultDto>,
+            Modules.Support.Application.GetPublicConsultHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListPublicSupportDepartmentsQuery, Modules.Support.Application.SupportPublicGeoListDto>,
+            Modules.Support.Application.ListPublicSupportDepartmentsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListPublicSupportCitiesQuery, Modules.Support.Application.SupportPublicGeoListDto>,
+            Modules.Support.Application.ListPublicSupportCitiesHandler>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno

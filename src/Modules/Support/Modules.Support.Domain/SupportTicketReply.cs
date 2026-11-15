@@ -87,7 +87,9 @@ public sealed class SupportTicketReply
             throw new ArgumentException("The client id is required.", nameof(clientId));
         }
 
-        if ((channel is SupportReplyChannel.Email) != (delivery is SupportReplyDelivery.Email))
+        // Correo y página de consulta (fase 3, plan F12) van cada uno sólo con su entrega; los canales de Mensajería, con las suyas.
+        if ((channel is SupportReplyChannel.Email) != (delivery is SupportReplyDelivery.Email)
+            || (channel is SupportReplyChannel.Portal) != (delivery is SupportReplyDelivery.Portal))
         {
             throw new ArgumentException($"A '{channel}' reply cannot go out as '{delivery}'.", nameof(delivery));
         }

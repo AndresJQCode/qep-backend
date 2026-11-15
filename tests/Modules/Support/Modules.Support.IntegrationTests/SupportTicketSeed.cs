@@ -44,6 +44,36 @@ internal static class SupportTicketSeed
         return ticket;
     }
 
+    /// <summary>Fase 3: un ticket anónimo del formulario público (sin solicitante ni cliente, se responde por la página). Guarda una
+    /// versión del formulario si el tenant no tiene, para que el ticket apunte a una que existe.</summary>
+    public static async Task<SupportTicket> SaveAnonymousTicketAsync(QepApiFactory factory, Guid tenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        await services.GetRequiredService<ISupportProvisioner>().EnsureAsync(tenantId, Ct);
+        var type = (await services.GetRequiredService<ISupportTicketTypeRepository>().ListAsync(tenantId, Ct))[0];
+        var forms = services.GetRequiredService<ISupportFormRepository>();
+        var current = await forms.CurrentAsync(tenantId, Ct);
+        var form = current ?? SupportFormVersion.Create(
+            Guid.CreateVersion7(), tenantId, 1, isPublished: true, showDocument: true, showAddress: true, showLandline: true,
+            businessNameRequired: true, allowAttachments: false, null, null, null, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        if (current is null)
+        {
+            forms.Add(form);
+        }
+
+        var unitOfWork = services.GetRequiredService<ISupportUnitOfWork>();
+        await using var transaction = await unitOfWork.BeginTransactionAsync(Ct);
+        var number = await services.GetRequiredService<ISupportTicketNumberGenerator>().NextAsync(tenantId, Ct);
+        var ticket = SupportTicket.CreateFromPublicForm(
+            SupportTicketId.New(), tenantId, number, type, "Denuncia anónima", "Quiero reportar algo sin dar mis datos.",
+            requester: null, customerId: null, form.Id, DateTimeOffset.UtcNow, Clock);
+        services.GetRequiredService<ISupportTicketRepository>().Add(ticket);
+        await unitOfWork.SaveChangesAsync(Ct);
+        await transaction.CommitAsync(Ct);
+        return ticket;
+    }
+
     /// <summary>Carga el ticket con tracking, le aplica <paramref name="change"/> y lo guarda.</summary>
     public static async Task<SupportTicket> UpdateTicketAsync(
         QepApiFactory factory, Guid tenantId, SupportTicketId ticketId, Action<SupportTicket> change)

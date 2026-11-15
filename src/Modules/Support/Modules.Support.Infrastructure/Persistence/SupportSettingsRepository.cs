@@ -10,6 +10,9 @@ internal sealed class SupportSettingsRepository(SupportDbContext dbContext) : IS
         await dbContext.TenantSettings.SingleOrDefaultAsync(settings => settings.TenantId == tenantId, cancellationToken)
         ?? throw MissingRow(tenantId);
 
+    public Task<SupportTenantSettings?> FindAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        dbContext.TenantSettings.AsNoTracking().SingleOrDefaultAsync(settings => settings.TenantId == tenantId, cancellationToken);
+
     public async Task LockAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         // Sin transacción el candado se soltaría al terminar la sentencia y no serializaría nada.

@@ -904,8 +904,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   sólo `manage`, y el handler tiene que revalidar con la misma regla (`SupportAuthorization.EnsureCanViewAsync` /
   `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
 - **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
-  `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id` y
-  `unclassified_messages.resolved_by_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
+  `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id`,
+  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by` y `legal_text_versions.created_by`; una columna nueva que no se sume ahí deja borrar al usuario que
   referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
   `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
   nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
@@ -917,7 +917,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Un ticket `Resolved` o `Closed` no cambia de responsable, tipo ni cliente: `422 support.ticket.not_editable`** (R9, owner
   2026-11-15). La guarda está en el agregado (`SupportTicket.EnsureEditable`), no en los handlers, para que la cumpla todo camino
   nuevo; rechaza aunque el valor sea el mismo. La fusión de clientes (`CustomerMergeReferences`, SQL crudo) sigue moviendo tickets en
-  cualquier estado, a propósito: es el sistema, no un asesor.
+  cualquier estado, a propósito: es el sistema, no un asesor. **Extendida (owner, 2026-11-15):** fijar o soltar un mensaje y «Seguir el
+  hilo» se permiten `Resolved` y dan el mismo `422 support.ticket.not_editable` en `Closed`, también apagar un hilo ya apagado
+  (`SupportTicket.EnsureNotClosed`, desde `RecordMessageEvent` para `MessagePinned`/`MessageReleased` y desde `SetFollowThread`).
+  Reemplazó a `support.ticket.follow_closed`, que ya no existe. Responder se permite en cualquier estado. Los caminos del sistema no pasan
+  por esa guarda: el worker del hilo vincula entrantes (`SupportThreadFollower`), la fusión y el borrado de clientes son SQL crudo, y
+  clasificar desde «sin clasificar» o «De ninguno» (`MessageClassified`, `MessageDismissed`) tampoco la toman.
+- **El teléfono del cliente vinculado va al fijo de la foto del solicitante, nunca al celular** (owner, 2026-11-15, P3;
+  `TicketRequesterNormalizer.WithCustomerContact`). `customers.phone_e164` puede ser fijo, y una plantilla de WhatsApp a un fijo la
+  rechaza Meta: la respuesta queda `Failed` sin que el alta lo advierta. El celular de la foto sale sólo del solicitante o del `wa_id`
+  de la conversación; sin él, `reply-options` dice `no_mobile`. No lo «arregles» copiando el teléfono al celular para habilitar la
+  plantilla.
 - **Las pruebas de plazos de Soporte comparten un host por clase con el reloj movible: `ClockedSupportHost`** (`SupportTicketsApiTests`,
   `SupportTicketActionsApiTests`, `SupportInboxApiTests`). Rompe a propósito la regla de «una prueba que toca el reloj levanta su host»:
   el `ITenantClock` del host es un `MutableTenantClock` y lo comparten sólo las pruebas de esa clase. Hoy es seguro porque xUnit corre
@@ -1008,6 +1018,74 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   que exige el efecto en Valkey **y** cero respaldos con los adaptadores reales. Un área nueva suma la suya. Si falla, es un hallazgo: la ACL no se relaja.
 - **El presupuesto de envío de campañas se queda en Postgres** (`messaging.connection_send_budgets`, decisión del owner 2026-11-13).
   D-6 del spec de Valkey no se construyó: no hay adaptador de Valkey para el cubo.
+- **Un código de falla nuevo de Soporte va a `SupportChannelReasons` y, si sale de Mensajería, también a su copia en
+  `SupportReplyOutbound`; `SupportFailureCodeParityTests` los amarra. El frontend traduce por esta lista** (Tarea 8a, owner 2026-11-15).
+  Es el único vocabulario del `failureCode` de una respuesta, del `ConsultAccess.FailureCode`, del `reason` de `reply-options` y del
+  `cannotCreateReason` de la pestaña de Soporte de una conversación (`no_permission`, `messaging_disabled`): un
+  literal suelto en `Modules.Support.*` es un código que la pantalla no conoce.
+- **El formulario público de Soporte (`/api/v1/public/support/{tenantSlug}`) no se prueba con el stub de auth** (fase 3). En modo stub
+  `RequireCsrfHeaderMiddleware` ni se registra y la cookie no se valida: una prueba con stub pasa aunque la exención por prefijo
+  (`SupportPublicPaths`, duplicado de `PublicSupportEndpoints.GroupPattern` y atado por `SupportPublicPathsTests`) esté rota o un handler
+  lea la sesión. Lo que toca CSRF, cookie o CORS va en `SupportPublicRealAuthHost` (precedente `ShopifyApiHarness.WithRealAuthentication`;
+  lo amarra `ThePublicGroupIgnoresTheSessionCookieWithRealAuth`). Ningún handler del grupo lee `IExecutionContext` ni la cookie: el
+  tenant sale del slug (`SupportPublicResolver`), nunca de la sesión de quien navega.
+- **`support.consents` y `support.legal_text_versions` son prueba legal: sólo se insertan** (spec §9.5, plan F16 y F17). Ningún método de
+  dominio los edita ni los borra, `consents` no tiene FK (ni al ticket ni a la versión: guarda su foto del texto, que es lo que prueba) y
+  el `Down` de `AddSupportPublicForm` no las borra. **Ese `Down` no se corre en producción**: el rollback es revertir el código. Una
+  purga futura de tickets tiene que dejar los consentimientos fuera, y una migración nueva de Support que las toque tampoco puede
+  borrarlas en su `Down`.
+- **El PIN de consulta nunca sale a logs, auditoría, eventos ni trazas: sólo se guarda su hash** (`ticket_access.pin_hash`, PBKDF2).
+  Viaja dos veces y nada más: en la respuesta del radicado y en el envío al destino registrado del ticket. Un log nuevo en el formulario
+  público lleva el id del ticket y el tipo de la excepción, nunca el PIN, el radicado ni el destinatario; lo amarra
+  `ThePinNeverReachesLogsAuditOrEvents`, que corre el host en `Trace`. **El contador de fallos vive en `ticket_access`, no en el ticket**:
+  si un intento fallido tocara el ticket, le subiría la versión y le daría un 412 al asesor que lo tiene abierto. Cinco fallos bloquean
+  ese radicado 15 minutos, y mirar el bloqueo y anotar el intento van con la fila tomada (`LockByNumberAsync`, `SELECT … FOR UPDATE`):
+  sin el candado, intentos a la vez leen el mismo contador, se pisan y el quinto fallo no bloquea (`ConcurrentWrongPinsStillLockTheTicket`). Un camino
+  nuevo que lea o escriba la clave (otra forma de consulta, un reenvío por otro canal) toma la misma fila y nunca desbloquea.
+- **`uploadKey` es el único vínculo entre la subida anónima de un adjunto y quien la abrió** (plan F32). Es un `Guid.NewGuid()` (v4) que
+  Soporte genera, devuelve una vez y Storage guarda como `OwnerId` del archivo `SupportTicket`; completar y radicar exigen el par
+  `(fileId, uploadKey)`. No lo cambies por un v7 (`Guid.CreateVersion7`, el de los ids de Storage): se adivina por la hora y cualquiera
+  reclamaría la subida de otro. Tampoco lo pongas en una URL ni en un log. La subida sin miembro (`IStorageSystemUploads`) no pasa por
+  `StorageAuthorization` y no tiene endpoint en Storage: la usa sólo `SupportAttachmentStorage` (Bootstrapper). El
+  `CompleteUploadHandler` de la consola sigue exigiendo `storage.file.upload` y comparte con ella sólo el núcleo (`UploadCompletion`);
+  un cambio en el núcleo vale para los dos caminos, y la autorización se queda en el handler
+  (`TheMemberCompletionStillRequiresThePermission`).
+- **Los archivos `SupportTicket` no se ven desde la consola de Storage** (fix round 1 del Bloque D). `storage.file.*` no es permiso
+  de Soporte: sin la pared, quien tiene `storage.file.read` vería las PQRSF y su `uploadKey` (el `OwnerId`), con `publish` las sacaría al
+  bucket público y con `delete` borraría un adjunto reclamado. La regla vive en un solo lugar, `SystemOwnedFiles` (al lado de
+  `FileOwnerType`): `ListFilesHandler` los excluye, cada handler que carga por id llama `SystemOwnedFileGuard.EnsureVisibleToMembers`
+  (404 `storage.file.not_found`, el mismo de otro tenant), `CreateUploadSessionHandler` responde `422 storage.file.owner_type_invalid`, y
+  los adaptadores que leen el repositorio de archivos para otro módulo (`ProductImageLookup`, `QuotationFileLookup`) los tratan como
+  inexistentes. **Un handler nuevo de Storage que cargue un archivo por id, o un adaptador nuevo sobre `IFileResourceRepository`, aplica
+  la misma regla**; un dueño de sistema nuevo se suma al conjunto y no a cada handler. Lo amarran
+  `ASystemOwnedFileIsNotFoundWithoutAnyEffect` y `SystemOwnedFilesApiTests`.
+- **El `PUT` de un adjunto del formulario público sale del navegador al bucket privado de R2**, así que ese bucket necesita CORS para
+  el origen de la página (`https://soporte.lulocrm.com`, y `http://localhost:3002` para probar en local) con `PUT` y los headers
+  `Content-Type` e `If-None-Match`. Sin eso el navegador corta el `PUT`, completar responde `428 support.public.attachment_not_uploaded`
+  y en el backend no hay ningún error: `Support:PublicForm:AllowedOrigins` es el CORS de la API, no el del bucket.
+- **Un adjunto del formulario reclamado sigue `Available` para siempre y nada en Storage lo marca**: lo retiene la sonda
+  `SupportAttachmentReferenceProbe` (Support.Infrastructure). Por eso el barrido de staging sólo pregunta por los adjuntos `SupportTicket`
+  de la última semana pasada la retención (`StagingCleanupProcessor.SupportAttachmentLookback`): sin el tope, cada tick le preguntaría a
+  las sondas por todos los adjuntos de la historia. Un camino nuevo que vincule un archivo `SupportTicket` a algo que no sea
+  `support.ticket_attachments` necesita su propia sonda, o el barrido lo borra a las 24 h. **Esa purga guarda la fila antes de borrar
+  los objetos**, al revés que la de comprobantes: un guardado fallido no deja una fila `Available` sin objeto que un radicado podría
+  reclamar; un borrado fallido deja un objeto huérfano y un log (`AFailedObjectDeleteLeavesTheRowPurgedNotAvailable`). No lo «alinees»
+  con el orden de los comprobantes.
+- **El tope de 200 subidas anónimas por tenant es blando a propósito** (`OpenPublicAttachmentHandler`, fix round 1 del Bloque F): cuenta
+  y después abre, así que entran unas pocas de más bajo ráfaga simultánea. No le pongas un candado por tenant: en un endpoint anónimo,
+  quien espera el candado retiene una conexión del pool y quien lo tiene necesita otra para Storage, así que unas pocas IPs vaciarían el
+  pool de toda la API. `lock_timeout` tampoco sirve (sigue reteniendo conexiones) y un try-lock rechazaría las 3 subidas en paralelo de una
+  sola persona.
+- **Un ticket anónimo no tiene cliente ni ninguna columna `requester_*`, y la base lo exige** (`CK_tickets_anonymous`). Una columna nueva
+  de la foto del solicitante entra en `SupportDbContext.RequesterColumns` y en una migración que rehaga el CHECK, o el anónimo puede
+  llevarla sin error.
+- **El formulario público no acepta Word ni Excel mientras `Storage:ClamAv:Enabled` esté apagado en producción** (owner 2026-11-15): un
+  adjunto anónimo con macros lo abre un asesor. Sumar un tipo de Office exige prender ClamAV primero. La lista vive en
+  `SupportPublicAttachmentRules` (PDF, JPEG, PNG, WebP; `image/jpg` se toma como `image/jpeg`) y viaja a la página en
+  `GET /form` → `attachments`; `SupportAttachmentParityTests` sólo exige que sea un subconjunto de la de Storage.
+- **`allow_attachments` tiene default `true` en la base y en el modelo, con `HasSentinel(true)`** (owner 2026-11-15). Sin el sentinel, EF
+  omite un `false` del `INSERT` (es el valor CLR por defecto) y la base lo guarda en `true`: el tenant apaga los adjuntos y siguen
+  prendidos. Precedente: `stores.show_prices`. Lo amarra el guardado `true` → `false` de `SupportFormSettingsApiTests`.
 
 ## Verificación
 

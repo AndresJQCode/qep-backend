@@ -33,6 +33,9 @@ public sealed class SoftDeleteFileHandler(
                 "storage.file.not_found", "The file resource was not found.");
         }
 
+        // Un adjunto reclamado por un ticket es parte de una PQRSF: la consola no lo borra (ni lo ve).
+        SystemOwnedFileGuard.EnsureVisibleToMembers(resource);
+
         // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
         // de cualquier otra regla o efecto.
         await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);

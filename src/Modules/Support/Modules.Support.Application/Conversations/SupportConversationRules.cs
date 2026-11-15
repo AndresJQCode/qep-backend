@@ -21,7 +21,7 @@ internal static class SupportConversationRules
 
     /// <summary>
     /// La foto del solicitante de un ticket que nace de una conversación (plan E10). Con cliente, su contacto (regla F1 de la fase 1,
-    /// <see cref="TicketRequesterNormalizer.WithCustomerContact"/>); sin cliente, el nombre con que se presenta el contacto
+    /// <see cref="TicketRequesterNormalizer.WithCustomerContact"/>: el teléfono del cliente va al fijo, P3); sin cliente, el nombre con que se presenta el contacto
     /// (<c>profile_name</c> y, si no, el usuario de Instagram). En WhatsApp con <c>wa_id</c>, el celular es <c>+{wa_id}</c> si la foto no
     /// trae otro. Sin nada de eso, no hay foto: sin cliente, el alta responde <c>requester_required</c>.
     /// </summary>
@@ -45,7 +45,7 @@ internal static class SupportConversationRules
 
             return fromCustomer is null
                 ? new TicketRequester(null, null, null, null, null, null, mobile, null, country, null)
-                : fromCustomer with { MobilePhone = fromCustomer.MobilePhone ?? mobile };
+                : fromCustomer with { MobilePhone = mobile };
         }
 
         var name = Fit(conversation.ProfileName) ?? Fit(conversation.Username);

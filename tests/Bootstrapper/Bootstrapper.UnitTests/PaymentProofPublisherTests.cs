@@ -87,6 +87,22 @@ public sealed class PaymentProofPublisherTests
         Assert.Empty(storage.Copies);
     }
 
+    // Fix round 1 del Bloque D (triage #12): un adjunto del formulario público de Soporte es dueño de sistema y no existe para
+    // Quotations. Mismo código que «no existe», y nunca se copia al bucket público.
+    [Fact]
+    public async Task ASupportAttachmentIsRejectedAsNotFoundWithoutCopying()
+    {
+        var file = AvailableFile(TenantId, "application/pdf", "acta.pdf", FileOwnerType.SupportTicket);
+        var storage = new RecordingPublicObjectStorage();
+        var publisher = new PublicPaymentProofPublisher(new InMemoryFileResourceRepository(file), storage);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            publisher.PublishAsync(TenantId, file.Id.Value, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.payment_proof.file_not_found", error.Code);
+        Assert.Empty(storage.Copies);
+    }
+
     [Fact]
     public async Task AMissingFileIsRejectedAsNotFound()
     {
@@ -154,10 +170,11 @@ public sealed class PaymentProofPublisherTests
         Assert.Null(publisher.UrlFor("payment-proofs/abc.pdf"));
     }
 
-    private static FileResource AvailableFile(Guid tenantId, string mimeType, string name)
+    private static FileResource AvailableFile(
+        Guid tenantId, string mimeType, string name, FileOwnerType ownerType = FileOwnerType.User)
     {
         var file = FileResource.CreatePendingUpload(
-            FileResourceId.New(), tenantId, Guid.CreateVersion7(), FileOwnerType.User, name, mimeType, 1024,
+            FileResourceId.New(), tenantId, Guid.CreateVersion7(), ownerType, name, mimeType, 1024,
             $"staging/{Guid.CreateVersion7():N}", Now);
         file.CompleteUpload("checksum", 1024, Now);
         file.Promote($"files/tenants/{tenantId:N}/{Guid.CreateVersion7():N}", Now);

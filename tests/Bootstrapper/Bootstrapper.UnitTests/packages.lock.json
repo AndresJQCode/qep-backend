@@ -1336,6 +1336,14 @@
           "libphonenumber-csharp": "[9.0.41, )"
         }
       },
+      "modules.support.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Support.Application": "[1.0.0, )",
+          "Modules.Support.Domain": "[1.0.0, )"
+        }
+      },
       "modules.support.application": {
         "type": "Project",
         "dependencies": {
@@ -1359,6 +1367,7 @@
           "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
+          "Microsoft.Extensions.Identity.Core": "[10.0.13, )",
           "Microsoft.Extensions.Options.ConfigurationExtensions": "[10.0.13, )",
           "Modules.Audit.Domain": "[1.0.0, )",
           "Modules.Audit.Infrastructure": "[1.0.0, )",

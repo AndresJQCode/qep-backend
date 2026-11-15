@@ -130,12 +130,128 @@ public sealed class SupportTicketThreadApiTests(SupportHostWithoutWorkers host) 
         Assert.False(last.GetProperty("follow").GetBoolean());
         Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketFollowChanged, Id(ticket).ToString()));
 
-        // A-c2: un ticket cerrado no vuelve a seguir el hilo.
+        // A-c2 y R9 extendida (owner, 2026-11-15): un ticket cerrado no vuelve a seguir el hilo; es el mismo not_editable de R9.
         var resolved = await scenario.MoveAsync(off, "Resolved");
         var closed = await scenario.MoveAsync(resolved, "Closed");
         var reopenFollow = await scenario.ActAsync(Id(ticket), "follow-thread", new { follow = true }, Version(closed));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, reopenFollow.StatusCode);
-        Assert.Equal("support.ticket.follow_closed", await CodeOfAsync(reopenFollow));
+        Assert.Equal("support.ticket.not_editable", await CodeOfAsync(reopenFollow));
+    }
+
+    // R9 extendida (owner, 2026-11-15, E3): resuelto, fijar, soltar y «Seguir el hilo» siguen; cerrado, 422 not_editable y nada cambia.
+    [Fact]
+    public async Task PinningOnAClosedTicketIs422AndChangesNothing()
+    {
+        var scenario = await StartAsync(host.Factory);
+        var conversation = await SeedConversationAsync(scenario.Factory, scenario.TenantId);
+        var ticket = await scenario.CreateFromConversationAsync(conversation);
+        var older = await SeedMessageAsync(scenario.Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow.AddDays(-2));
+        var closed = await scenario.MoveAsync(await scenario.MoveAsync(ticket, "Resolved"), "Closed");
+
+        var response = await scenario.PostActionAsync($"tickets/{Id(ticket)}/messages/{older}/pin", null, Version(closed));
+
+        await AssertNotEditableAndUnchangedAsync(scenario, response, closed);
+        Assert.Equal(0L, await ScalarAsync(
+            scenario.Factory, "SELECT count(*) FROM support.ticket_messages WHERE message_id = @id", ("id", older)));
+        Assert.Equal(0, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketMessagePinned, Id(ticket).ToString()));
+    }
+
+    [Fact]
+    public async Task ReleasingOnAClosedTicketIs422AndChangesNothing()
+    {
+        var scenario = await StartAsync(host.Factory);
+        var conversation = await SeedConversationAsync(scenario.Factory, scenario.TenantId);
+        var ticket = await scenario.CreateFromConversationAsync(conversation);
+        var older = await SeedMessageAsync(scenario.Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow.AddDays(-2));
+        var pin = await scenario.PostActionAsync($"tickets/{Id(ticket)}/messages/{older}/pin", null, Version(ticket));
+        Assert.True(pin.StatusCode == HttpStatusCode.OK, await BodyAsync(pin));
+        var closed = await scenario.MoveAsync(await scenario.MoveAsync(await JsonAsync(pin), "Resolved"), "Closed");
+
+        var response = await scenario.PostActionAsync($"tickets/{Id(ticket)}/messages/{older}/release", null, Version(closed));
+
+        await AssertNotEditableAndUnchangedAsync(scenario, response, closed);
+        Assert.Equal(
+            "Pinned",
+            await TextAsync(scenario.Factory, "SELECT state FROM support.ticket_messages WHERE message_id = @id", ("id", older)));
+        Assert.Equal(0, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketMessageReleased, Id(ticket).ToString()));
+    }
+
+    // Block E (E-2): fijar lo ya fijado y soltar lo ya soltado en un cerrado también es 422, como «Seguir el hilo» con el mismo valor: la
+    // respuesta no depende de lo que se mande.
+    [Fact]
+    public async Task RepinningOrReleasingAgainOnAClosedTicketIs422()
+    {
+        var scenario = await StartAsync(host.Factory);
+        var conversation = await SeedConversationAsync(scenario.Factory, scenario.TenantId);
+        var ticket = await scenario.CreateFromConversationAsync(conversation);
+        var pinnedMessage = await SeedMessageAsync(scenario.Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow.AddDays(-2));
+        var releasedMessage = await SeedMessageAsync(scenario.Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow.AddDays(-3));
+        var pin = await scenario.PostActionAsync($"tickets/{Id(ticket)}/messages/{pinnedMessage}/pin", null, Version(ticket));
+        Assert.True(pin.StatusCode == HttpStatusCode.OK, await BodyAsync(pin));
+        var pinOther = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/messages/{releasedMessage}/pin", null, Version(await JsonAsync(pin)));
+        Assert.True(pinOther.StatusCode == HttpStatusCode.OK, await BodyAsync(pinOther));
+        var release = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/messages/{releasedMessage}/release", null, Version(await JsonAsync(pinOther)));
+        Assert.True(release.StatusCode == HttpStatusCode.OK, await BodyAsync(release));
+        var closed = await scenario.MoveAsync(await scenario.MoveAsync(await JsonAsync(release), "Resolved"), "Closed");
+
+        var repin = await scenario.PostActionAsync($"tickets/{Id(ticket)}/messages/{pinnedMessage}/pin", null, Version(closed));
+        await AssertNotEditableAndUnchangedAsync(scenario, repin, closed);
+        var rerelease = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/messages/{releasedMessage}/release", null, Version(closed));
+        await AssertNotEditableAndUnchangedAsync(scenario, rerelease, closed);
+    }
+
+    // Apagar en un cerrado ya apagado también es 422: R9 rechaza aunque el valor sea el mismo.
+    [Fact]
+    public async Task FollowThreadOnAClosedTicketIs422AndChangesNothing()
+    {
+        var scenario = await StartAsync(host.Factory);
+        var conversation = await SeedConversationAsync(scenario.Factory, scenario.TenantId);
+        var ticket = await scenario.CreateFromConversationAsync(conversation);
+        var closed = await scenario.MoveAsync(await scenario.MoveAsync(ticket, "Resolved"), "Closed");
+
+        var response = await scenario.ActAsync(Id(ticket), "follow-thread", new { follow = false }, Version(closed));
+
+        await AssertNotEditableAndUnchangedAsync(scenario, response, closed);
+        Assert.Equal(0, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketFollowChanged, Id(ticket).ToString()));
+    }
+
+    // Resuelto todavía se cura el expediente: fijar, soltar y prender o apagar «Seguir el hilo».
+    [Fact]
+    public async Task AResolvedTicketStillPinsReleasesAndFollows()
+    {
+        var scenario = await StartAsync(host.Factory);
+        var conversation = await SeedConversationAsync(scenario.Factory, scenario.TenantId);
+        var ticket = await scenario.CreateFromConversationAsync(conversation);
+        var older = await SeedMessageAsync(scenario.Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow.AddDays(-2));
+        var resolved = await scenario.MoveAsync(ticket, "Resolved");
+
+        var pin = await scenario.PostActionAsync($"tickets/{Id(ticket)}/messages/{older}/pin", null, Version(resolved));
+        Assert.True(pin.StatusCode == HttpStatusCode.OK, await BodyAsync(pin));
+        var release = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/messages/{older}/release", null, Version(await JsonAsync(pin)));
+        Assert.True(release.StatusCode == HttpStatusCode.OK, await BodyAsync(release));
+        var off = await scenario.ActAsync(Id(ticket), "follow-thread", new { follow = false }, Version(await JsonAsync(release)));
+        Assert.True(off.StatusCode == HttpStatusCode.OK, await BodyAsync(off));
+        var on = await scenario.ActAsync(Id(ticket), "follow-thread", new { follow = true }, Version(await JsonAsync(off)));
+
+        Assert.True(on.StatusCode == HttpStatusCode.OK, await BodyAsync(on));
+        var final = await JsonAsync(on);
+        Assert.True(final.GetProperty("followsThread").GetBoolean());
+        Assert.Equal("Resolved", final.GetProperty("status").GetString());
+    }
+
+    private static async Task AssertNotEditableAndUnchangedAsync(
+        SupportTicketScenario scenario, HttpResponseMessage response, JsonElement before)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket.not_editable", await CodeOfAsync(response));
+        var after = await scenario.DetailAsync(Id(before));
+        Assert.Equal(Version(before), Version(after));
+        Assert.Equal(before.GetProperty("events").GetArrayLength(), after.GetProperty("events").GetArrayLength());
+        Assert.Equal(before.GetProperty("followsThread").GetBoolean(), after.GetProperty("followsThread").GetBoolean());
     }
 
     [Fact]

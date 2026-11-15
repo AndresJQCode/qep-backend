@@ -1,0 +1,80 @@
+using System.Reflection;
+using System.Text.RegularExpressions;
+using Modules.Support.Application;
+
+namespace Modules.Support.UnitTests;
+
+/// <summary>
+/// Tarea 8a: <see cref="SupportChannelReasons"/> es el único vocabulario de los códigos que la pantalla lee de Soporte
+/// (<c>ticket_replies.failure_code</c>, <c>ticket_access.last_failure_code</c> y el <c>reason</c> de <c>reply-options</c>). El frontend
+/// traduce por esta lista.
+/// </summary>
+public sealed class SupportChannelReasonsTests
+{
+    // Los motivos que reply-options puede devolver (GetReplyOptionsHandler y SupportReplyRules.ThreadAsync), escritos por su valor en el
+    // cable: si alguno cambia de texto o sale del vocabulario, la pantalla deja de traducirlo.
+    public static TheoryData<string> ReplyOptionsReasons => new()
+    {
+        "no_conversation",
+        "messaging_disabled",
+        "window_closed",
+        "contact_blocked",
+        "template_not_approved",
+        "no_mobile",
+        "no_email",
+        "connection_unavailable",
+        "portal_only",
+        "portal_unavailable",
+    };
+
+    [Fact]
+    public void EveryCodeIsSnakeCaseAscii()
+    {
+        Assert.NotEmpty(SupportChannelReasons.All);
+        Assert.All(SupportChannelReasons.All, code => Assert.Matches(new Regex("^[a-z]+(_[a-z]+)*$"), code));
+    }
+
+    [Theory]
+    [MemberData(nameof(ReplyOptionsReasons))]
+    public void ReplyOptionsReasonsAreInTheVocabulary(string reason) =>
+        Assert.Contains(reason, SupportChannelReasons.All);
+
+    [Fact]
+    public void TheOpeningCodesAreInTheVocabulary()
+    {
+        Assert.Contains(SupportChannelReasons.NoAuthor, SupportChannelReasons.All);
+        Assert.Equal("no_author", SupportChannelReasons.NoAuthor);
+    }
+
+    // Triage #19 (Bloque F): el cannotCreateReason de la pestaña de Soporte de una conversación sale del mismo vocabulario.
+    [Fact]
+    public void TheConversationTabReasonsAreInTheVocabulary()
+    {
+        Assert.Equal("no_permission", SupportChannelReasons.NoPermission);
+        Assert.Equal(SupportChannelReasons.NoPermission, ListConversationTicketsHandler.NoPermission);
+        Assert.Equal(SupportChannelReasons.MessagingDisabled, ListConversationTicketsHandler.MessagingDisabled);
+    }
+
+    // Triage #8 (Bloque F): el reclamo de «Reenviar PIN» se anota como envío en curso hasta que el canal responde.
+    [Fact]
+    public void TheResendClaimCodeIsInTheVocabulary() =>
+        Assert.Equal("send_pending", SupportChannelReasons.SendPending);
+
+    // Owner, 2026-11-15 (E1): la página de consulta funciona sin el formulario publicado, así que la apertura sale siempre que el canal
+    // lo permita y ya no existe el motivo «formulario sin publicar».
+    [Fact]
+    public void ThereIsNoFormUnpublishedReason() =>
+        Assert.DoesNotContain("form_unpublished", SupportChannelReasons.All);
+
+    [Fact]
+    public void AllHoldsEveryConstant()
+    {
+        var constants = typeof(SupportChannelReasons)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field.IsLiteral && field.FieldType == typeof(string))
+            .Select(field => (string)field.GetRawConstantValue()!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.True(constants.SetEquals(SupportChannelReasons.All));
+    }
+}
