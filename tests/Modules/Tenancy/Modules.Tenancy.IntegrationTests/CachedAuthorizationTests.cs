@@ -40,6 +40,10 @@ public sealed class CachedAuthorizationTests(CachedAuthorizationTests.Host host)
     private static readonly string[] AdminRoles = ["admin"];
     private static readonly string[] ReadProducts = ["catalog.product.read"];
     private static readonly string[] ReadAndManageProducts = ["catalog.product.read", "catalog.product.manage"];
+    private static readonly string[] StalePermissions = ["stale.permission"];
+
+    /// <summary>2001-09-09 en milisegundos Unix: cualquier base de tiempo de hoy la supera, y ningún contador desde 1 la alcanza.</summary>
+    private const long TimeBaseFloor = 1_000_000_000_000;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -84,7 +88,47 @@ public sealed class CachedAuthorizationTests(CachedAuthorizationTests.Host host)
 
         Assert.Equal(HttpStatusCode.OK, (await UpdateRoleAsync(owner, tenant.TenantId, role, ReadAndManageProducts)).StatusCode);
 
+        // La entrada sembrada lleva la versión del medio; sólo la descarta que haya habido dos bumps.
+        Assert.Equal(current + 2, await CurrentVersionAsync(tenant.TenantId));
         Assert.Contains("catalog.product.manage", (await ResolveAsync(host.Factory, member.UserId, tenant.TenantId))!);
+    }
+
+    // Con allkeys-lru Valkey puede desalojar qep:tenantver y dejar viva una entrada construida con una versión vieja. Una versión
+    // ausente no puede leerse como 0: una entrada con "v":0 (la de un tenant que nunca subió, o la que el contador vuelva a
+    // alcanzar) se serviría con permisos de antes del desalojo.
+    [Fact]
+    public async Task AnEvictedTenantVersionIsNeverReadAsZero()
+    {
+        var tenant = await RegisterAsync(host.Factory);
+        Assert.NotNull(await ResolveAsync(host.Factory, tenant.OwnerUserId, tenant.TenantId));
+        await host.Database.StringSetAsync(
+            PermissionKey(tenant.OwnerUserId, tenant.TenantId),
+            JsonSerializer.Serialize(new { v = 0, p = StalePermissions }),
+            TimeSpan.FromSeconds(60));
+        await host.Database.KeyDeleteAsync(VersionKey(tenant.TenantId));
+
+        var resolved = await ResolveAsync(host.Factory, tenant.OwnerUserId, tenant.TenantId);
+
+        Assert.DoesNotContain("stale.permission", resolved!);
+        Assert.True(
+            await CurrentVersionAsync(tenant.TenantId) > TimeBaseFloor,
+            "La versión ausente se siembra con una base de tiempo que no se puede volver a alcanzar.");
+    }
+
+    // Un bump sobre una versión desalojada también parte de la base de tiempo, no de 1.
+    [Fact]
+    public async Task ABumpOnAnEvictedVersionStartsFromATimeBase()
+    {
+        var tenant = await RegisterAsync(host.Factory);
+        using var owner = OwnerClient(host.Factory, tenant.TenantId);
+        await host.Database.KeyDeleteAsync(VersionKey(tenant.TenantId));
+
+        await CreateRoleAsync(owner, tenant.TenantId, "ventas", ReadProducts);
+
+        Assert.True(await CurrentVersionAsync(tenant.TenantId) > TimeBaseFloor);
+        var ttl = await host.Database.KeyTimeToLiveAsync(VersionKey(tenant.TenantId));
+        Assert.NotNull(ttl);
+        Assert.InRange(ttl.Value, TimeSpan.FromDays(29), TimeSpan.FromDays(30));
     }
 
     [Fact]
