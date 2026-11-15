@@ -2711,31 +2711,40 @@ pasar sin límite. El limitador de concurrencia del webhook se queda en memoria 
   requests como encolados. El middleware los manda a `AcquireAsync`, porque el camino síncrono siempre niega: no es una
   cola real.
 
-**Prender las áreas en producción (paso 3 del despliegue del spec de Valkey).** Lo hace el owner, de a un área por vez.
-`Valkey__Enabled: "true"` ya lo pone el paso 2, con todas las áreas apagadas. Después de `Presence` y `RateLimiting`, en
-este orden: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
-`Valkey__Areas__ApiKeyTouch`. Cada uno va en `"true"` en `k8s/prod-configMap.yaml`, en su propio commit
-(`chore(k8s): enable valkey <area> area`), y entre un área y la siguiente pasa un día de logs sin fallbacks inesperados.
-El presupuesto de envío de campañas no está en la lista: se queda en Postgres (`messaging.connection_send_budgets`) por
-decisión del owner del 2026-11-13.
+**Prender las áreas en producción (paso 3 del despliegue).** El orden, el criterio entre pasos y el rollback están en
+[spec de Valkey § Despliegue](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#despliegue) y
+[§ Verificación](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#verificación); acá va sólo lo que el código fijó.
+Lo hace el owner, un área por commit
+(`chore(k8s): enable valkey <area> area`, el flag en `"true"` en `k8s/prod-configMap.yaml`). Después de `Presence` y
+`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
+`Valkey__Areas__ApiKeyTouch`. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
+(`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
 
-Después de cada área, en PowerShell, siempre con `--context contabo-prod` y nunca con `get secret -o yaml` ni `-o json`:
+**El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
+producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
+el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiqueta `area`). En Grafana, durante el día
+que pasa entre un área y la siguiente:
+
+```promql
+increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h])
+```
+
+tiene que dar 0 en condiciones normales. Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
+secretos; nunca `get secret -o yaml` ni `-o json`):
 
 ```powershell
 kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-config -o jsonpath='{.data}' | Select-String -Pattern "Valkey__"
-kubectl --context contabo-prod -n prod-qep-backend logs <pod> --since=1h | Select-String -Pattern "fallback"
 ```
 
-| Área          | Qué se verifica                                                                                                    |
-| ------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `Sessions`    | Cierra sesión y repite un request con la cookie vieja: tiene que dar 401 al instante. Prueba que el `DEL` corre     |
-| `Permissions` | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente, no en 60 s     |
-| `Doorbells`   | La edad de la cola `automation` baja en el dashboard                                                               |
-| `ApiKeyTouch` | `qep_valkey_fallbacks_total{area="api_key_touch"}` no sube en condiciones normales                                  |
+| Área          | Etiqueta `area` | Contador                         | Comportamiento que se verifica                                                                          |
+| ------------- | --------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Sessions`    | `sessions`      | `increase(...[1h])` = 0          | Cierra sesión y repite un request con la cookie vieja: 401 al instante (prueba que el `DEL` corre)      |
+| `Permissions` | `permissions`   | `increase(...[1h])` = 0          | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente     |
+| `Doorbells`   | `doorbells`     | `increase(...[1h])` = 0          | La edad de la cola `automation` baja en el dashboard. Con dos pods, sólo uno publica las métricas de colas por vuelta: el que tiene `qep:leader:queue-sampler`, que también gobierna esta área (plan P14) |
+| `ApiKeyTouch` | `api_key_touch` | `increase(...[1h])` = 0          | Sin comportamiento visible: el contador es la verificación                                               |
 
-En las cuatro, `qep_valkey_fallbacks_total` del área queda quieto en condiciones normales. Si sube sin que Valkey esté
-caído, revisa primero la ACL del usuario `qep` (`ValkeyAclCompatibilityTests` dice qué comandos usa cada área). Rollback
-por área: el flag a `"false"` y redeploy; las claves tienen TTL y mueren solas.
+Si el contador sube sin que Valkey esté caído (`qep_valkey_connected` en 1), revisa primero la ACL del usuario `qep`:
+el gateway convierte un `NOPERM` en respaldo. `ValkeyAclCompatibilityTests` dice qué comandos usa cada área.
 
 ### Infraestructura local
 
