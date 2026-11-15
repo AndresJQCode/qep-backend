@@ -36,10 +36,29 @@ public sealed class SupportNoteUploadsTests
         var ticket = new SupportTicketId(Guid.Parse("0193a0b2-0000-7000-8000-000000000001"));
         var member = Guid.Parse("0193a0b2-0000-7000-8000-000000000002");
 
+        var hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes("support-note|0193a0b2-0000-7000-8000-000000000001|0193a0b2-0000-7000-8000-000000000002"));
+        var expected = hash[..16];
+        expected[6] = (byte)((expected[6] & 0x0F) | 0x80);
+        expected[8] = (byte)((expected[8] & 0x3F) | 0x80);
+
         Assert.Equal(SupportNoteUploads.OwnerKey(ticket, member), SupportNoteUploads.OwnerKey(ticket, member));
-        Assert.Equal(
-            new Guid(System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes("support-note|0193a0b2-0000-7000-8000-000000000001|0193a0b2-0000-7000-8000-000000000002"))[..16]),
-            SupportNoteUploads.OwnerKey(ticket, member));
+        Assert.Equal(new Guid(expected, bigEndian: true), SupportNoteUploads.OwnerKey(ticket, member));
+    }
+
+    // Block B review: the public form's attachments_busy cap counts only v4 keys (Guid.NewGuid, the visitor's uploadKey). A note's key
+    // is a v8 UUID with the RFC variant, so Postgres' uuid_extract_version reads 8 and an abandoned note upload never counts.
+    [Fact]
+    public void TheKeyIsAVersion8UuidSoItNeverPassesForAPublicUploadKey()
+    {
+        Assert.Equal(8, SupportNoteUploads.OwnerKeyVersion);
+        for (var i = 0; i < 64; i++)
+        {
+            var key = SupportNoteUploads.OwnerKey(SupportTicketId.New(), Guid.CreateVersion7());
+
+            Assert.Equal(SupportNoteUploads.OwnerKeyVersion, key.Version);
+            Assert.Contains(key.ToString("D")[19], "89ab");
+            Assert.NotEqual(Guid.NewGuid().Version, key.Version);
+        }
     }
 }

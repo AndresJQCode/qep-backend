@@ -239,18 +239,48 @@ public sealed class SupportTicketNoteFilesApiTests(SupportPublicAttachmentsHost 
         Assert.Equal(1, await CountAuditEntriesAsync(rig.Factory, SupportAuditActions.TicketAttachmentDownloaded, rig.TicketId.ToString()));
     }
 
-    // Plan N20 and Review Focus 4: the public form's attachments_busy cap counts uploads no ticket claimed; a note's file is claimed.
+    // Plan N20 and the Block B review: the public form's attachments_busy cap counts only the public form's own uploads. A note upload
+    // never counts, claimed or not: its key is a v8 UUID (SupportNoteUploads.OwnerKeyVersion) and a visitor's is a random v4.
     [Fact]
-    public async Task NoteFilesDoNotCountAsPendingPublicUploads()
+    public async Task NoteUploadsNeverCountAsPendingPublicUploads()
     {
         var rig = await RigAsync();
         var first = await UploadAsync(rig, rig.Ana, rig.TicketId, "a.pdf");
         var second = await UploadAsync(rig, rig.Ana, rig.TicketId, "b.pdf");
-        Assert.Equal(2, await CountPendingAsync(rig));
+        await OpenAsync(rig, rig.Bruno, rig.TicketId, "abierto.pdf", PdfBytes.Length);
+        Assert.Equal(0, await CountPendingAsync(rig));
+
+        await UploadPublicAsync(rig, "del-visitante.pdf");
+        Assert.Equal(1, await CountPendingAsync(rig));
 
         Assert.Equal(HttpStatusCode.Created, (await PostNoteAsync(rig.Ana, rig, rig.TicketId, [first, second])).StatusCode);
 
-        Assert.Equal(0, await CountPendingAsync(rig));
+        Assert.Equal(1, await CountPendingAsync(rig));
+    }
+
+    // Block B review: a member who opens note uploads and never attaches them cannot starve the public form into attachments_busy.
+    [Fact]
+    public async Task AbandonedNoteUploadsDoNotMakeThePublicFormBusy()
+    {
+        var rig = await RigAsync();
+        var abandoned = await OpenAsync(rig, rig.Ana, rig.TicketId, "suelto.pdf", PdfBytes.Length);
+        await ExecuteAsync(
+            rig.Factory,
+            """
+            INSERT INTO storage.file_resources (id, tenant_id, owner_id, owner_type, name, mime_type, size_bytes, storage_key, checksum,
+                category, tags, public_storage_key, published_at, status, created_at, updated_at, deleted_at)
+            SELECT gen_random_uuid(), tenant_id, owner_id, owner_type, name, mime_type, size_bytes, storage_key || '-' || n,
+                checksum, category, tags, NULL, NULL, 'PendingUpload', now(), now(), NULL
+            FROM storage.file_resources, generate_series(1, @count) AS n
+            WHERE id = @source
+            """,
+            ("source", abandoned), ("count", SupportPublicAttachmentRules.MaxPendingPerTenantPerDay));
+        using var visitor = VisitorClient(rig.Factory, NextIp());
+
+        var opened = await PostJsonAsync(
+            visitor, PublicUrl(rig.Slug, "/attachments"), new { name = "acta.pdf", mimeType = "application/pdf", sizeBytes = 10 });
+
+        Assert.True(opened.StatusCode == HttpStatusCode.Created, await BodyAsync(opened));
     }
 
     // Review Focus 4: Storage's staging sweep keeps a file a note claimed, and only that one.

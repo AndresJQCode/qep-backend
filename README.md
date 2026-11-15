@@ -5397,9 +5397,10 @@ antes del `PUT`) y `404 support.attachment.not_found` (la nota no es del ticket 
 `support.ticket.note_added` y avisa por el hub.
 
 Los archivos usan la subida sin miembro de Storage con dueño `SupportTicket` y clave `SupportNoteUploads.OwnerKey(ticket, miembro)`
-(SHA-256 de `support-note|{ticketId}|{memberId}`, plan N18): sólo quien abrió la subida la usa, y sólo en una nota de ese ticket; una
-subida del formulario público no sirve en una nota ni al revés. `ticket_note_files` guarda la foto del archivo (nombre, tipo y tamaño),
-la retiene `SupportAttachmentReferenceProbe` frente al barrido de staging y no cuenta en el tope `attachments_busy` del formulario.
+(SHA-256 de `support-note|{ticketId}|{memberId}` marcado como UUID v8, plan N18): sólo quien abrió la subida la usa, y sólo en una nota
+de ese ticket; una subida del formulario público no sirve en una nota ni al revés. `ticket_note_files` guarda la foto del archivo
+(nombre, tipo y tamaño) y la retiene `SupportAttachmentReferenceProbe` frente al barrido de staging. El tope `attachments_busy` del
+formulario cuenta sólo claves v4 (las suyas), así que una subida de nota, adjunta o abandonada, nunca cuenta.
 
 **Migración:** `Support` `AddSupportTicketNotes` (`ticket_notes`, `ticket_note_files`), aditiva.
 

@@ -15,14 +15,24 @@ public static class SupportNoteUploads
 {
     private const string Purpose = "support-note";
 
-    /// <summary>The first 16 bytes of SHA-256 over <c>support-note|{ticketId:D}|{memberId:D}</c>. Deterministic and stable: it is
-    /// what Storage stored as the owner, so changing it orphans every upload that is not in a note yet.</summary>
+    /// <summary>The UUID version a note's key carries (RFC 9562 v8, "custom"). A public form upload's key is <c>Guid.NewGuid()</c>,
+    /// always v4, so the version alone tells the two apart in <c>storage.file_resources.owner_id</c>: the public form's
+    /// <c>attachments_busy</c> cap counts only v4 keys (<c>SupportAttachmentStorage.CountPendingAsync</c>), and a note upload a member
+    /// opened and never attached does not starve it (Block B review).</summary>
+    public const int OwnerKeyVersion = 8;
+
+    /// <summary>The first 16 bytes of SHA-256 over <c>support-note|{ticketId:D}|{memberId:D}</c>, read in RFC byte order, with the
+    /// version set to <see cref="OwnerKeyVersion"/> and the RFC variant. Deterministic and stable: it is what Storage stored as the
+    /// owner, so changing it orphans every upload that is not in a note yet.</summary>
     public static Guid OwnerKey(SupportTicketId ticketId, Guid memberId)
     {
         var text = string.Create(
             CultureInfo.InvariantCulture, $"{Purpose}|{ticketId.Value:D}|{memberId:D}");
         Span<byte> hash = stackalloc byte[SHA256.HashSizeInBytes];
         SHA256.HashData(Encoding.UTF8.GetBytes(text), hash);
-        return new Guid(hash[..16]);
+        var key = hash[..16];
+        key[6] = (byte)((key[6] & 0x0F) | (OwnerKeyVersion << 4));
+        key[8] = (byte)((key[8] & 0x3F) | 0x80);
+        return new Guid(key, bigEndian: true);
     }
 }

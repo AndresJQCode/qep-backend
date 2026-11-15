@@ -1102,9 +1102,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Una nota interna no pasa por el agregado del ticket** (spec 2026-11-15 §5.4): no sube `version`, no escribe `ticket_events` y nada
   de ella sale por `public/support`. Sus tablas son insert-only. Su `id` es el `clientId` de la pantalla (`PK_ticket_notes`).
 - **Un archivo de nota ya está reclamado**: `ticket_note_files` entra en `SupportAttachmentReferenceProbe` (o el barrido de staging lo
-  borra) y en el `NOT EXISTS` de `SupportAttachmentStorage.CountPendingAsync` (o cada archivo de nota cuenta para siempre en el tope
-  `attachments_busy` del formulario público). Su dueño en Storage es `SupportNoteUploads.OwnerKey(ticket, miembro)`, determinista:
-  cambiar la derivación deja huérfanas las subidas abiertas que todavía no están en una nota.
+  borra). Su dueño en Storage es `SupportNoteUploads.OwnerKey(ticket, miembro)`, determinista: cambiar la derivación deja huérfanas
+  las subidas abiertas que todavía no están en una nota. **La clave es un UUID v8** y la del formulario público (`Guid.NewGuid()`) un
+  v4: `SupportAttachmentStorage.CountPendingAsync` cuenta sólo `uuid_extract_version(owner_id) = 4`, así que ninguna subida de nota,
+  reclamada o abandonada, cuenta en el tope `attachments_busy` del formulario (revisión del Bloque B). Si la clave pierde el v8, un
+  miembro que abre subidas sin adjuntarlas deja al formulario sin adjuntos.
 
 ## Verificación
 
