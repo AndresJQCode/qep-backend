@@ -34,7 +34,8 @@ public interface IStorageSystemUploads
         Guid tenantId, Guid fileId, FileOwnerType ownerType, Guid ownerId, CancellationToken cancellationToken);
 
     /// <summary>Una URL firmada de 5 minutos que baja el archivo con su nombre. Sin auditoría de Storage: la autorización y la
-    /// auditoría son de quien llama. Un archivo de otro tenant o que no está <c>Available</c> es 404.</summary>
+    /// auditoría son de quien llama. Un archivo de otro tenant, que no está <c>Available</c> o cuyo dueño no es del sistema
+    /// (<see cref="Modules.Storage.Domain.SystemOwnedFiles"/>) es 404.</summary>
     Task<Uri> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken);
 }
 

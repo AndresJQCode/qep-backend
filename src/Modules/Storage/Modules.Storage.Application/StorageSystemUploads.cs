@@ -122,10 +122,15 @@ public sealed class StorageSystemUploads(
             : null;
     }
 
+    /// <summary>Sólo firma archivos de un dueño del sistema (<see cref="SystemOwnedFiles"/>): este puerto no tiene miembro, así que un
+    /// archivo de la consola del mismo tenant es el mismo 404 que uno que no existe (revisión final, triage 13).</summary>
     public async Task<Uri> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
     {
         var resource = await repository.GetAsync(new FileResourceId(fileId), cancellationToken);
-        if (resource is null || resource.TenantId != tenantId || resource.Status is not FileResourceStatus.Available)
+        if (resource is null
+            || resource.TenantId != tenantId
+            || !SystemOwnedFiles.Includes(resource.OwnerType)
+            || resource.Status is not FileResourceStatus.Available)
         {
             throw new ResourceNotFoundException("storage.file.not_found", "The file resource was not found.");
         }

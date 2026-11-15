@@ -212,6 +212,40 @@ public sealed class StorageSystemUploadsTests
         Assert.Equal(FileResourceStatus.PendingUpload, Assert.Single(fixture.Repository.Items).Status);
     }
 
+    // Revisión final (triage 11): el núcleo se movió a UploadCompletion con un actor anulable. Un miembro que completa un archivo normal
+    // de la consola queda auditado a su nombre, nunca como el sistema.
+    [Fact]
+    public async Task AMemberCompletionIsAuditedAsTheMemberNotTheSystem()
+    {
+        var fixture = new Fixture();
+        var fileId = fixture.SeedConsoleUpload(PdfBytes);
+
+        await fixture.MemberHandler(new PermissionContext(TenantId, granted: true))
+            .HandleAsync(new CompleteUploadCommand(TenantId, fileId), Ct);
+
+        Assert.Equal(FileResourceStatus.Available, Assert.Single(fixture.Repository.Items).Status);
+        var audit = Assert.Single(fixture.Audit.Entries);
+        Assert.Equal(("storage.file.uploaded", "success", false), (audit.Action, audit.Outcome, audit.System));
+    }
+
+    // Revisión final (triage 13): el puerto sin miembro sólo firma archivos de un dueño del sistema (SystemOwnedFiles). Un archivo
+    // disponible de la consola, del mismo tenant, es 404 como uno que no existe.
+    [Fact]
+    public async Task TheDownloadUrlIsNotForAFileOfTheConsole()
+    {
+        var fixture = new Fixture();
+        var fileId = fixture.SeedConsoleUpload(PdfBytes);
+        await fixture.MemberHandler(new PermissionContext(TenantId, granted: true))
+            .HandleAsync(new CompleteUploadCommand(TenantId, fileId), Ct);
+        Assert.Equal(FileResourceStatus.Available, Assert.Single(fixture.Repository.Items).Status);
+
+        var notFound = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            fixture.Uploads.CreateDownloadUrlAsync(TenantId, fileId, Ct));
+
+        Assert.Equal("storage.file.not_found", notFound.Code);
+        Assert.Null(fixture.Storage.LastDownloadName);
+    }
+
     private sealed class Fixture
     {
         public Fixture(bool contentMatches = true, FileScanResult verdict = FileScanResult.Clean)
@@ -243,6 +277,17 @@ public sealed class StorageSystemUploadsTests
                 TenantId, FileOwnerType.SupportTicket, ownerId, "acta.pdf", "application/pdf", content.Length, 1024, Ct);
             Storage.Put(Repository.Items.Single(item => item.Id.Value == session.FileId).StorageKey, content);
             return session;
+        }
+
+        /// <summary>Un archivo normal de la consola (dueño <c>User</c>), pendiente y ya «subido» al bucket.</summary>
+        public Guid SeedConsoleUpload(byte[] content)
+        {
+            var id = FileResourceId.New();
+            var key = $"staging/tenants/{TenantId:N}/{id.Value:N}";
+            Repository.Add(FileResource.CreatePendingUpload(
+                id, TenantId, Guid.NewGuid(), FileOwnerType.User, "acta.pdf", "application/pdf", content.Length, key, Now));
+            Storage.Put(key, content);
+            return id.Value;
         }
 
         public CompleteUploadHandler MemberHandler(IExecutionContext context) =>
