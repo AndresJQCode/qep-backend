@@ -158,6 +158,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/ValkeyConnection.cs:19-35 — el multiplexer de Valkey de cada pod"),
         new("Bootstrapper.Valkey.Presence.PresenceHeartbeatWorker", WorkerClassification.PerPod,
             "Bootstrapper/Valkey/Presence/PresenceHeartbeatWorker.cs:33-56 — late los conectados a su pod (ZADD idempotente); sólo con Valkey:Areas:Presence"),
+        new("Bootstrapper.Realtime.RealtimeEventsListener", WorkerClassification.PerPod,
+            "Bootstrapper/Realtime/RealtimeEventsListener.cs:80 — LISTEN qep_realtime por pod para las conexiones del hub global de ese pod (plan 2026-11-15, N7)"),
 
         // --- OffInProduction. ---
         new("Bootstrapper.Seeding.ExportLoadSeedWorker", WorkerClassification.OffInProduction,
@@ -183,6 +185,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/ValkeyConnection.cs:31 — el multiplexer de cada pod"),
         new("Bootstrapper.Valkey.ValkeyQueueDoorbell", StateClassification.PerPodByDesign,
             "Bootstrapper/Valkey/ValkeyQueueDoorbell.cs:21 — los oyentes de los workers de este pod; el aviso viaja entre pods por pub/sub (qep:wake:{cola})"),
+        new("Bootstrapper.Realtime.AppHubConnections", StateClassification.PerPodByDesign,
+            "Bootstrapper/Realtime/AppHubConnections.cs:12 — las conexiones del hub global de este pod con sus tópicos; cada pod entrega sólo a las suyas y el aviso cruza pods por NOTIFY qep_realtime"),
         new("Modules.Messaging.Infrastructure.Webhook.WebhookRouting", StateClassification.PerPodByDesign,
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookRouting.cs:12 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
         new("Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus", StateClassification.PerPodByDesign,

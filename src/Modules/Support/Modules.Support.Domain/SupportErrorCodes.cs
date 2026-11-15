@@ -146,4 +146,9 @@ public static class SupportErrorCodes
 
     /// <summary>La página de consulta sólo responde a un ticket anónimo (plan F12).</summary>
     public const string ReplyPortalUnavailable = "support.reply.portal_unavailable";
+
+    /// <summary>Spec 2026-11-15 §5.5: the app hub refused a topic (subscribe or presence). A hub error, not HTTP. Owner O3: until a
+    /// second module uses the hub, it also covers topics without an authorizer, malformed topics, the per-connection cap and an
+    /// unknown presence state.</summary>
+    public const string RealtimeTopicForbidden = "support.realtime.topic_forbidden";
 }

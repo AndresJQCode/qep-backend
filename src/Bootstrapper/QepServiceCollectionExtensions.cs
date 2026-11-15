@@ -1,6 +1,7 @@
 using Bootstrapper.Authentication;
 using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
+using Bootstrapper.Realtime;
 using Bootstrapper.Seeding;
 using Bootstrapper.Valkey;
 using BuildingBlocks.Application;
@@ -1583,6 +1584,10 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.
+        services.AddScoped<Modules.Support.Application.ISupportMemberPermissions, SupportMemberPermissions>();
+        Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);
+        services.AddAppRealtime();
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
         // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
         // Notifications; Soporte sólo declara los puertos.
