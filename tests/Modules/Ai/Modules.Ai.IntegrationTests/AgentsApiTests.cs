@@ -496,9 +496,9 @@ public sealed class AgentsApiTests
             (occupant.GetProperty("kind").GetString(), occupant.GetProperty("id").GetGuid(), occupant.GetProperty("name").GetString()));
     }
 
-    // §5: una conexión de otro tenant es 404 sin decir de quién es; una sin salida de bot (Instagram, por ahora) es 422.
+    // §5: una conexión de otro tenant es 404 sin decir de quién es. Spec §6.5 (Tarea 7): Instagram ya tiene salida de bot para un agente.
     [Fact]
-    public async Task OnlyTheTenantsWhatsAppConnectionsCanBeChosen()
+    public async Task OnlyTheTenantsConnectionsCanBeChosenAndInstagramIsSupported()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -509,15 +509,14 @@ public sealed class AgentsApiTests
 
         var foreign = await SendAsync(
             setup.Client, HttpMethod.Put, $"{Agents}/{id}", new { name = "Asesor virtual", connectionIds = new[] { Guid.CreateVersion7() } }, ifMatch: 1);
-        var unsupported = await SendAsync(
+        var supported = await SendAsync(
             setup.Client, HttpMethod.Put, $"{Agents}/{id}", new { name = "Asesor virtual", connectionIds = new[] { instagram } }, ifMatch: 1);
 
         Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
         Assert.Equal("ai.connection.not_found", (await ProblemAsync(foreign)).Code);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, unsupported.StatusCode);
-        Assert.Equal("ai.agent.channel_not_supported", (await ProblemAsync(unsupported)).Code);
+        Assert.Equal(HttpStatusCode.OK, supported.StatusCode);
         var connections = await JsonAsync(await setup.Client.GetAsync($"{AiUrl()}/connections", Ct));
-        Assert.False(connections.EnumerateArray().Single(connection => connection.GetProperty("id").GetGuid() == instagram)
+        Assert.True(connections.EnumerateArray().Single(connection => connection.GetProperty("id").GetGuid() == instagram)
             .GetProperty("botSupported").GetBoolean());
     }
 

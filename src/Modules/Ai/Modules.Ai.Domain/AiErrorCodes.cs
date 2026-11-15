@@ -26,8 +26,11 @@ public static class AiErrorCodes
 
     public const string AgentAlreadyActive = "ai.agent.already_active";
 
-    /// <summary>422: una conexión de un canal sin salida de bot (hoy, todo lo que no es WhatsApp).</summary>
+    /// <summary>422: una conexión de un canal sin salida de bot (hoy, todo lo que no es WhatsApp ni Instagram).</summary>
     public const string AgentChannelNotSupported = "ai.agent.channel_not_supported";
+
+    /// <summary>409 (§4.7): borrar un agente que todavía atiende conversaciones (sesiones vivas). Se pausa y se espera a que terminen.</summary>
+    public const string AgentHasLiveSessions = "ai.agent.has_live_sessions";
 
     /// <summary>404: una conexión que no es del tenant (no se dice de quién es).</summary>
     public const string ConnectionNotFound = "ai.connection.not_found";

@@ -36,6 +36,10 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
 
     public DbSet<ModelJob> ModelJobs => Set<ModelJob>();
 
+    public DbSet<AgentSession> Sessions => Set<AgentSession>();
+
+    public DbSet<AgentTurn> Turns => Set<AgentTurn>();
+
     internal DbSet<ToolCallRow> ToolCalls => Set<ToolCallRow>();
 
     internal DbSet<UsageRecordRow> UsageRecords => Set<UsageRecordRow>();

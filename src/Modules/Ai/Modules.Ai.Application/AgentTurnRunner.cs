@@ -140,7 +140,8 @@ public sealed partial class AgentTurnRunner(
     IAiProviderCredentials credentials,
     AiRunLimits limits,
     IClock clock,
-    ILogger<AgentTurnRunner> logger)
+    ILogger<AgentTurnRunner> logger,
+    AiMetrics? metrics = null)
 {
     /// <summary>§10: una respuesta que copia este tanto de las instrucciones del agente se descarta.</summary>
     internal const int LeakWindow = 200;
@@ -221,6 +222,8 @@ public sealed partial class AgentTurnRunner(
             catch (AiInvalidResponseException invalid)
             {
                 await RecordUsageAsync(context, invalid.Usage, invalid.ServedModel, AiRunOutcomes.InvalidResponse);
+                metrics?.RecordCall(context.Provider.Value, AiRunOutcomes.InvalidResponse);
+                metrics?.RecordError(context.Provider.Value, invalid.Code);
                 LogInvalidResponse(logger, context.TenantId, context.JobId, invalid.Reason);
                 if (retriedInvalid)
                 {
@@ -232,12 +235,15 @@ public sealed partial class AgentTurnRunner(
             }
             catch (AiModelException failure)
             {
-                await RecordUsageAsync(
-                    context, failure.Usage, failure.ServedModel, failure is AiRefusedException ? AiRunOutcomes.Refused : AiRunOutcomes.Error);
+                var failed = failure is AiRefusedException ? AiRunOutcomes.Refused : AiRunOutcomes.Error;
+                await RecordUsageAsync(context, failure.Usage, failure.ServedModel, failed);
+                metrics?.RecordCall(context.Provider.Value, failed);
+                metrics?.RecordError(context.Provider.Value, failure.Code);
                 return await ProviderFailureAsync(context, failure, cancellationToken);
             }
 
             await RecordUsageAsync(context, response.Usage, response.ServedModel, AiRunOutcomes.Ok);
+            metrics?.RecordCall(context.Provider.Value, AiRunOutcomes.Ok);
 
             var final = response.ToolCalls.FirstOrDefault(call =>
                 call.Name is AgentToolNames.SendReply or AgentToolNames.HandoffToHuman);

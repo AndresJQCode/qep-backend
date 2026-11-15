@@ -48,6 +48,43 @@ public sealed class ModelJob
 
     public DateTimeOffset? CompletedAt { get; private set; }
 
+    /// <summary>§6.3 paso 4: la respuesta ya calculada cuando el commit corto no pudo tomar el candado de la conversación. El reintento la
+    /// usa sin llamar al modelo otra vez. JSON propio de Application; nunca sale a logs.</summary>
+    public string? ResultJson { get; private set; }
+
+    /// <summary>Spec 2026-10-29 §6.2 paso 6/7: el trabajo de una sesión, con el debounce de D-A14 para juntar ráfagas.</summary>
+    public static ModelJob ForSession(Guid id, Guid tenantId, Guid sessionId, int upToSeq, DateTimeOffset nextAttemptAt, DateTimeOffset now) =>
+        new()
+        {
+            Id = id,
+            TenantId = tenantId,
+            SessionId = sessionId,
+            UpToSeq = upToSeq,
+            Status = ModelJobStatus.Pending,
+            NextAttemptAt = nextAttemptAt,
+            CreatedAt = now,
+        };
+
+    /// <summary>D-A14: un entrante que llega con este trabajo todavía <c>Pending</c> sólo mueve hasta dónde responde.</summary>
+    public void ExtendTo(int upToSeq)
+    {
+        if (Status != ModelJobStatus.Pending)
+        {
+            throw new InvalidOperationException("Only a pending job takes more customer turns.");
+        }
+
+        UpToSeq = Math.Max(UpToSeq, upToSeq);
+    }
+
+    /// <summary>§6.3 paso 4: el candado de la conversación estaba tomado; la respuesta queda guardada y el trabajo se retoma en
+    /// <paramref name="retryAt"/>. Sigue <c>Running</c> con el lease acortado, no vuelve a <c>Pending</c>: la sesión puede tener ya el
+    /// siguiente trabajo pendiente (D-A14) y el índice único de pendientes chocaría.</summary>
+    public void HoldResult(string resultJson, DateTimeOffset retryAt)
+    {
+        ResultJson = resultJson;
+        LeaseUntil = retryAt;
+    }
+
     public static ModelJob ForTest(Guid id, Guid tenantId, Guid testId, int upToSeq, DateTimeOffset now) =>
         new()
         {
@@ -66,6 +103,14 @@ public sealed class ModelJob
         Status = ModelJobStatus.Pending;
         NextAttemptAt = nextAttemptAt;
         LeaseUntil = null;
+        ErrorCode = errorCode;
+    }
+
+    /// <summary>D-A17 para el trabajo de una sesión: como <see cref="Reschedule"/>, pero sigue <c>Running</c> con el lease hasta
+    /// <paramref name="retryAt"/>, por la misma razón que <see cref="HoldResult"/>: el siguiente trabajo de la sesión puede estar ya pendiente.</summary>
+    public void RetryAt(DateTimeOffset retryAt, string errorCode)
+    {
+        LeaseUntil = retryAt;
         ErrorCode = errorCode;
     }
 

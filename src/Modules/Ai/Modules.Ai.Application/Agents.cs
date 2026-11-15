@@ -374,12 +374,13 @@ public sealed class ResumeAgentHandler(
     }
 }
 
-/// <summary>Borra el agente con sus versiones y conexiones, y libera la ocupación en el mismo commit. El 409 <c>has_live_sessions</c> del
-/// spec llega con las sesiones (plan 2026-11-12, Tarea 7): hoy no hay sesiones que cuidar.</summary>
+/// <summary>Borra el agente con sus versiones y conexiones, y libera la ocupación en el mismo commit. Con sesiones vivas responde 409
+/// <c>ai.agent.has_live_sessions</c> (§4.7, §6.4).</summary>
 public sealed class DeleteAgentHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IAgentRepository agents,
+    IAgentSessionRepository sessions,
     IAiUnitOfWork unitOfWork,
     IAiAuditRecorder audit,
     IClock clock)
@@ -390,6 +391,13 @@ public sealed class DeleteAgentHandler(
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.AgentManage, cancellationToken);
         var agent = await agents.FindAsync(command.TenantId, command.AgentId, cancellationToken) ?? throw AiNotFound.Agent(command.AgentId);
         AiVersions.Ensure(agent.Version, command.Version);
+        // Una sesión viva termina con su versión (D-A5); borrar el agente la dejaría sin versión a mitad de la conversación.
+        if (await sessions.HasLiveSessionsAsync(command.TenantId, agent.Id, cancellationToken))
+        {
+            throw new ResourceConflictException(
+                AiErrorCodes.AgentHasLiveSessions, "El agente todavía atiende conversaciones. Pausa el agente y espera a que terminen para borrarlo.");
+        }
+
         agents.Remove(agent);
         audit.Record(command.TenantId, executionContext.SubjectId, AiAuditActions.AgentDeleted, agent.Id, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);

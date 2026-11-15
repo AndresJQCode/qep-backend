@@ -1214,6 +1214,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();
         services.AddScoped<IAgentConnectionSlots, AgentConnectionSlots>();
+        // Spec 2026-10-29 §6.1–§6.6 (plan 2026-11-12, Tarea 7): la cola, la conversación, el envío y el horario de los agentes en canales
+        // reales, por adaptadores sobre Mensajería.
+        services.AddScoped<IAiInbox, AiInbox>();
+        services.AddScoped<IAiConversations, AiConversations>();
+        services.AddScoped<IAiBotOutbound, AiBotOutbound>();
+        services.AddScoped<IAiBusinessHours, AiBusinessHours>();
         // Plan 2026-11-12 (correcciones de la revisión): no se borra una conexión que atiende un bot. Integrations no ve Mensajería.
         services.AddScoped<IConnectionBotOccupancy, IntegrationsConnectionBotOccupancy>();
 

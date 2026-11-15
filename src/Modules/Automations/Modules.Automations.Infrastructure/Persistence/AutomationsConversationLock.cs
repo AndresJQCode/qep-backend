@@ -9,7 +9,7 @@ namespace Modules.Automations.Infrastructure.Persistence;
 /// </summary>
 public static class AutomationsConversationLock
 {
-    /// <summary>Primera clave del lock de dos claves: la fecha del plan. Cualquier constante sirve mientras ningún otro lock de dos
-    /// claves la use (hoy sólo está <c>TenantChangeLock.Namespace</c> = 20261008).</summary>
-    public const int Namespace = 20261022;
+    /// <summary>Spec 2026-10-29 §6.2: es <see cref="BuildingBlocks.Application.ConversationBotLock.Namespace"/>, compartido con los agentes de
+    /// IA para que el motor y el agente nunca trabajen la misma conversación a la vez.</summary>
+    public const int Namespace = BuildingBlocks.Application.ConversationBotLock.Namespace;
 }

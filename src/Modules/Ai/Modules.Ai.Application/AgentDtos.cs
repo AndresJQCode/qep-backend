@@ -39,7 +39,7 @@ public sealed record AgentIssueDto(string Severity, string Code, string Path, st
 /// <summary>Quién ocupa una conexión (§4.3): un chatbot o un agente, para que la pantalla ofrezca ir a pausarlo.</summary>
 public sealed record AiServedByDto(string Kind, Guid Id, string Name);
 
-/// <param name="BotSupported"><c>false</c> en un canal sin salida de bot (hoy, todo lo que no es WhatsApp): se muestra deshabilitada en vez
+/// <param name="BotSupported"><c>false</c> en un canal sin salida de bot (hoy, todo lo que no es WhatsApp ni Instagram): se muestra deshabilitada en vez
 /// de desaparecer, para que el tenant sepa por qué no la puede elegir.</param>
 public sealed record AiConnectionDto(
     Guid Id, string Name, string Channel, string Handle, string Status, AiServedByDto? ServedBy, bool BotSupported);

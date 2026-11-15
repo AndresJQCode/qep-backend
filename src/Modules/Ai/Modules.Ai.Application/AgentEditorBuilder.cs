@@ -9,8 +9,10 @@ public sealed class AgentEditorBuilder(
 {
     private const string WhatsApp = "WhatsApp";
 
-    /// <summary>Hoy sólo WhatsApp tiene salida de bot; Instagram llega con la Tarea 7 (spec 2026-10-29 §6.5).</summary>
-    public static bool SupportsBot(string channel) => channel == WhatsApp;
+    private const string Instagram = "Instagram";
+
+    /// <summary>Spec 2026-10-29 §6.5: WhatsApp e Instagram tienen salida de bot para un agente (Instagram sólo con texto).</summary>
+    public static bool SupportsBot(string channel) => channel is WhatsApp or Instagram;
 
     public AgentModelAvailability AvailabilityOf(AgentModelRef model)
     {
@@ -140,7 +142,7 @@ public sealed class AgentEditorBuilder(
             if (!SupportsBot(connection.Channel))
             {
                 throw new AiDomainException(
-                    AiErrorCodes.AgentChannelNotSupported, "Por ahora un agente IA sólo puede atender conexiones de WhatsApp.");
+                    AiErrorCodes.AgentChannelNotSupported, "Un agente IA sólo puede atender conexiones de WhatsApp o Instagram.");
             }
         }
     }

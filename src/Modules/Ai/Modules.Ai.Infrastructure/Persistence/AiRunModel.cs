@@ -68,8 +68,7 @@ internal sealed class UsageRecordRow
 }
 
 /// <summary>
-/// Las tablas de la ejecución del modelo (spec 2026-10-29 §4.2): pruebas, trabajos, herramientas y consumo. Las sesiones y los turnos llegan
-/// con la Tarea 7. Los tokens son <c>int</c>, como el spec: una sola llamada no pasa de 2³¹ (el contexto es de 1M); las sumas se hacen en <c>bigint</c>.
+/// Las tablas de la ejecución del modelo (spec 2026-10-29 §4.2): pruebas, sesiones y turnos, trabajos, herramientas y consumo. Los tokens son <c>int</c>, como el spec: una sola llamada no pasa de 2³¹ (el contexto es de 1M); las sumas se hacen en <c>bigint</c>.
 /// </summary>
 internal static class AiRunModel
 {
@@ -82,9 +81,18 @@ internal static class AiRunModel
 
     public const string ToolCallIndex = "IX_tool_calls_job_call";
 
+    /// <summary>§4.2: una sola sesión viva por conversación.</summary>
+    public const string LiveSessionIndex = "IX_sessions_live";
+
+    public const string SessionStatusCheck = "status IN ('Live','HandedOff','WindowClosed','Interrupted','Failed','Abandoned')";
+
+    public const string TurnRoleCheck = "role IN ('Customer','Agent','Greeting')";
+
     public static void Configure(ModelBuilder modelBuilder)
     {
         ConfigureTest(modelBuilder);
+        ConfigureSession(modelBuilder);
+        ConfigureTurn(modelBuilder);
         ConfigureJob(modelBuilder);
         ConfigureToolCall(modelBuilder);
         ConfigureUsage(modelBuilder);
@@ -135,9 +143,63 @@ internal static class AiRunModel
         job.Property(value => value.ErrorCode).HasColumnName("error_code").HasMaxLength(64);
         job.Property(value => value.CreatedAt).HasColumnName("created_at");
         job.Property(value => value.CompletedAt).HasColumnName("completed_at");
+        // §6.3 paso 4: la respuesta guardada cuando el commit corto no tomó el candado.
+        job.Property(value => value.ResultJson).HasColumnName("result").HasColumnType("jsonb");
         job.HasIndex(value => value.SessionId, SessionOpenJobIndex).IsUnique().HasFilter("status = 'Pending'");
         job.HasIndex(value => value.NextAttemptAt, "IX_model_jobs_due").HasFilter("status IN ('Pending','Running')");
         job.HasIndex(value => value.TestId, "IX_model_jobs_test").HasFilter("test_id IS NOT NULL");
+    }
+
+    private static void ConfigureSession(ModelBuilder modelBuilder)
+    {
+        var session = modelBuilder.Entity<AgentSession>();
+        session.ToTable("sessions", AiDbContext.Schema, table => table.HasCheckConstraint("CK_sessions_status", SessionStatusCheck));
+        session.HasKey(value => value.Id);
+        session.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        session.Property(value => value.TenantId).HasColumnName("tenant_id");
+        // Referencias blandas a otros esquemas (§4.2): sin FK.
+        session.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        session.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        session.Property(value => value.AgentId).HasColumnName("agent_id");
+        session.Property(value => value.AgentVersionId).HasColumnName("agent_version_id");
+        session.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        session.Property(value => value.NextSeq).HasColumnName("next_seq").HasDefaultValue(1);
+        session.Property(value => value.RepliesWithoutHuman).HasColumnName("replies_without_human").HasDefaultValue(0);
+        session.Property(value => value.ConsecutiveFailures).HasColumnName("consecutive_failures").HasDefaultValue(0);
+        session.Property(value => value.SupersededInRow).HasColumnName("superseded_in_row").HasDefaultValue(0);
+        session.Property(value => value.LastInboundMessageId).HasColumnName("last_inbound_message_id");
+        session.Property(value => value.StartedAt).HasColumnName("started_at");
+        session.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        session.Property(value => value.EndedAt).HasColumnName("ended_at");
+        session.Property(value => value.EndReason).HasColumnName("end_reason").HasMaxLength(AgentSession.ReasonMaxLength);
+        session.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(AgentSession.FailureCodeMaxLength);
+        session.Ignore(value => value.IsLive);
+        session.Ignore(value => value.CanSupersede);
+        session.HasIndex(value => value.ConversationId, LiveSessionIndex).IsUnique().HasFilter("status = 'Live'");
+        session.HasIndex(value => new { value.TenantId, value.AgentId, value.StartedAt }, "IX_sessions_tenant_agent_started")
+            .IsDescending(false, false, true);
+        // D-A19: el barrido de abandonadas recorre sólo las vivas.
+        session.HasIndex(value => value.UpdatedAt, "IX_sessions_live_updated").HasFilter("status = 'Live'");
+        session.HasIndex(value => new { value.ConversationId, value.StartedAt }, "IX_sessions_conversation_started").IsDescending(false, true);
+    }
+
+    private static void ConfigureTurn(ModelBuilder modelBuilder)
+    {
+        var turn = modelBuilder.Entity<AgentTurn>();
+        turn.ToTable("turns", AiDbContext.Schema, table => table.HasCheckConstraint("CK_turns_role", TurnRoleCheck));
+        turn.HasKey(value => value.Id);
+        turn.Property(value => value.Id).HasColumnName("id").UseIdentityAlwaysColumn();
+        turn.Property(value => value.TenantId).HasColumnName("tenant_id");
+        turn.Property(value => value.SessionId).HasColumnName("session_id");
+        turn.Property(value => value.Seq).HasColumnName("seq");
+        turn.Property(value => value.Role).HasColumnName("role").HasConversion<string>().HasMaxLength(12);
+        turn.Property(value => value.MessageId).HasColumnName("message_id");
+        turn.Property(value => value.JobId).HasColumnName("job_id");
+        turn.Property(value => value.SourcesJson).HasColumnName("sources").HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
+        turn.Property(value => value.Truncated).HasColumnName("truncated").HasDefaultValue(false).HasSentinel(false);
+        turn.Property(value => value.CreatedAt).HasColumnName("created_at");
+        turn.HasOne<AgentSession>().WithMany().HasForeignKey(value => value.SessionId).OnDelete(DeleteBehavior.Cascade);
+        turn.HasIndex(value => new { value.SessionId, value.Seq }, "IX_turns_session_seq").IsUnique();
     }
 
     private static void ConfigureToolCall(ModelBuilder modelBuilder)

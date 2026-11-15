@@ -66,6 +66,19 @@ public static class AiInfrastructureExtensions
         services.AddOptions<AiWorkerOptions>().Bind(configuration.GetSection(AiWorkerOptions.SectionName));
         services.AddSingleton<AiModelWorker>();
         services.AddHostedService(provider => provider.GetRequiredService<AiModelWorker>());
+
+        // Spec 2026-10-29 §6.2–§6.8 (plan 2026-11-12, Tarea 7): las sesiones en canales reales. Los puertos hacia Mensajería (IAiInbox,
+        // IAiConversations, IAiBotOutbound, IAiBusinessHours) van en Bootstrapper.
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<AiWorkerOptions>>().Value.ToTimings());
+        services.AddSingleton<AiMetrics>();
+        services.AddScoped<IAgentSessionRepository, AgentSessionRepository>();
+        services.AddScoped<IAiSessionUnitOfWork, AiSessionUnitOfWork>();
+        services.AddScoped<IAiModuleStatus, AiModuleStatus>();
+        services.AddScoped<AiInboxProcessor>();
+        services.AddScoped<AgentSessionJobProcessor>();
+        services.AddScoped<AiSessionSweeper>();
+        services.AddSingleton<AiInboxWorker>();
+        services.AddHostedService(provider => provider.GetRequiredService<AiInboxWorker>());
         return services;
     }
 }

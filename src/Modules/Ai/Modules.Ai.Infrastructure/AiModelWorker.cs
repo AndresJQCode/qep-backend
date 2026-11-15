@@ -20,11 +20,30 @@ public sealed class AiWorkerOptions
 
     /// <summary>D-A20: el lease de un trabajo, mayor que su tope de 120 s.</summary>
     public int LeaseMinutes { get; set; } = 3;
+
+    /// <summary>D-A14: cuánto espera un trabajo nuevo de una sesión para juntar una ráfaga del cliente.</summary>
+    public int DebounceSeconds { get; set; } = 2;
+
+    /// <summary>D-A19: horas sin entrante tras las que una sesión está abandonada.</summary>
+    public int IdleHours { get; set; } = 24;
+
+    /// <summary>D-A19: cada cuánto corre el barrido de abandonadas.</summary>
+    public int IdleSweepMinutes { get; set; } = 10;
+
+    /// <summary>§6.8: cada cuánto corre el barrido de tenants con el módulo apagado.</summary>
+    public int ModuleSweepSeconds { get; set; } = 60;
+
+    /// <summary>Plan 2026-11-12, Tarea 7: apaga los dos workers (cola y modelo). Las pruebas que siembran filas a mano lo apagan para que no
+    /// les ganen la carrera; en producción queda prendido.</summary>
+    public bool Enabled { get; set; } = true;
+
+    public AiSessionTimings ToTimings() =>
+        new(TimeSpan.FromSeconds(Math.Max(0, DebounceSeconds)), TimeSpan.FromHours(Math.Max(1, IdleHours)));
 }
 
 /// <summary>
 /// Spec 2026-10-29 §6.3: vacía <c>ai.model_jobs</c>. Cada trabajo en su scope: se reclama (<c>SKIP LOCKED</c>), se corre con el modelo fuera de
-/// toda transacción y se cierra con un guardado corto. Hoy corre los del playground (§7); los de las sesiones reales llegan con la Tarea 7.
+/// toda transacción y se cierra con un guardado corto. Corre los del playground (§7) y los de las sesiones reales (§6.3).
 /// </summary>
 internal sealed partial class AiModelWorker(
     IServiceScopeFactory scopeFactory, IOptions<AiWorkerOptions> options, ILogger<AiModelWorker> logger) : BackgroundService
@@ -38,6 +57,11 @@ internal sealed partial class AiModelWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!options.Value.Enabled)
+        {
+            return;
+        }
+
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, options.Value.PollSeconds)));
         do
         {
@@ -73,7 +97,14 @@ internal sealed partial class AiModelWorker(
 
             try
             {
-                await scope.ServiceProvider.GetRequiredService<AgentTestJobProcessor>().ProcessAsync(job, cancellationToken);
+                if (job.TestId is not null)
+                {
+                    await scope.ServiceProvider.GetRequiredService<AgentTestJobProcessor>().ProcessAsync(job, cancellationToken);
+                }
+                else
+                {
+                    await scope.ServiceProvider.GetRequiredService<AgentSessionJobProcessor>().ProcessAsync(job, cancellationToken);
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

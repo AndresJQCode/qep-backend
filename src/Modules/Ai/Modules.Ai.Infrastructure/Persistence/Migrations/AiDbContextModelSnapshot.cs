@@ -113,6 +113,109 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.ToTable("agent_connections", "ai");
                 });
 
+            modelBuilder.Entity("Modules.Ai.Domain.AgentSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("agent_id");
+
+                    b.Property<Guid>("AgentVersionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("agent_version_id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("consecutive_failures");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<string>("EndReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("end_reason");
+
+                    b.Property<DateTimeOffset?>("EndedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ended_at");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_code");
+
+                    b.Property<Guid?>("LastInboundMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_inbound_message_id");
+
+                    b.Property<int>("NextSeq")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("next_seq");
+
+                    b.Property<int>("RepliesWithoutHuman")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("replies_without_human");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<int>("SupersededInRow")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("superseded_in_row");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "ConversationId", "StartedAt" }, "IX_sessions_conversation_started")
+                        .IsDescending(false, true);
+
+                    b.HasIndex(new[] { "ConversationId" }, "IX_sessions_live")
+                        .IsUnique()
+                        .HasFilter("status = 'Live'");
+
+                    b.HasIndex(new[] { "UpdatedAt" }, "IX_sessions_live_updated")
+                        .HasFilter("status = 'Live'");
+
+                    b.HasIndex(new[] { "TenantId", "AgentId", "StartedAt" }, "IX_sessions_tenant_agent_started")
+                        .IsDescending(false, false, true);
+
+                    b.ToTable("sessions", "ai", t =>
+                        {
+                            t.HasCheckConstraint("CK_sessions_status", "status IN ('Live','HandedOff','WindowClosed','Interrupted','Failed','Abandoned')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Ai.Domain.AgentTest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -175,6 +278,69 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "TenantId", "AgentId" }, "IX_tests_tenant_agent");
 
                     b.ToTable("tests", "ai");
+                });
+
+            modelBuilder.Entity("Modules.Ai.Domain.AgentTurn", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("job_id");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("role");
+
+                    b.Property<int>("Seq")
+                        .HasColumnType("integer")
+                        .HasColumnName("seq");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SourcesJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("sources")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<bool>("Truncated")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("truncated");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "SessionId", "Seq" }, "IX_turns_session_seq")
+                        .IsUnique();
+
+                    b.ToTable("turns", "ai", t =>
+                        {
+                            t.HasCheckConstraint("CK_turns_role", "role IN ('Customer','Agent','Greeting')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Ai.Domain.AgentVersion", b =>
@@ -263,6 +429,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("outcome");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("result");
 
                     b.Property<Guid?>("SessionId")
                         .HasColumnType("uuid")
@@ -538,6 +708,15 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.HasOne("Modules.Ai.Domain.Agent", null)
                         .WithMany("Connections")
                         .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Ai.Domain.AgentTurn", b =>
+                {
+                    b.HasOne("Modules.Ai.Domain.AgentSession", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

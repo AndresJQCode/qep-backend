@@ -29,7 +29,7 @@ public interface IAiModelJobs
     void Add(ModelJob job);
 
     /// <summary>Un trabajo vencido (pendiente, o en curso con el lease vencido) pasa a <c>Running</c> con <paramref name="lease"/> y un intento
-    /// más, con <c>SKIP LOCKED</c>: dos workers nunca toman el mismo. Hoy sólo los de pruebas; los de sesiones llegan con la Tarea 7.</summary>
+    /// más, con <c>SKIP LOCKED</c>: dos workers nunca toman el mismo. De pruebas y de sesiones.</summary>
     Task<ModelJob?> ClaimAsync(DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken);
 }
 
