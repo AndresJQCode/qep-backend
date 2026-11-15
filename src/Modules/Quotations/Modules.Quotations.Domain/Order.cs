@@ -782,7 +782,7 @@ public sealed class Order
 
     // Sin empresa no hay país contra el cual validarlos (D22: fijar la empresa habilita los selectores).
     private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates) =>
-        WithholdingSelectorRules.Ensure(rates, BillingAccount?.Country, "order.billing");
+        WithholdingSelectorRules.Ensure(rates, BillingAccount?.Country, operationCityId: null, "order.billing");
 
     /// <summary>
     /// Fija o cambia la empresa y la cuenta con la que se cobra un pedido <see cref="IsEditable"/> (spec
@@ -1709,7 +1709,8 @@ public sealed class Order
                 _withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate),
                 BillsToFinalConsumer,
                 BillingAccount,
-                Currency));
+                Currency,
+                operationCityId: null));
         DocumentWithholding.SettleAll(_withholdings, WithholdingSource.Document, totals.Withholdings);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;

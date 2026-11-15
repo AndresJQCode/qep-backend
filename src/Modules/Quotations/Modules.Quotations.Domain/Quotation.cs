@@ -724,7 +724,8 @@ public sealed class Quotation
     // Sin parte propia no hay selectores; lo demás (país de la empresa, uno por tipo) es la regla compartida con el
     // pedido.
     private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates) =>
-        WithholdingSelectorRules.Ensure(rates, Billing is null ? null : BillingAccount?.Country, "quotation.billing");
+        WithholdingSelectorRules.Ensure(
+            rates, Billing is null ? null : BillingAccount?.Country, operationCityId: null, "quotation.billing");
 
     /// <summary>
     /// Cuál sería la moneda de esta cotización con esa cuenta de cobro. La aplicación la consulta
@@ -1225,7 +1226,8 @@ public sealed class Quotation
                 WithholdingsOf(activeSource).Select(withholding => withholding.Rate),
                 BillsToFinalConsumer,
                 BillingAccount,
-                Currency));
+                Currency,
+                operationCityId: null));
         DocumentWithholding.SettleAll(_withholdings, activeSource, totals.Withholdings);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;

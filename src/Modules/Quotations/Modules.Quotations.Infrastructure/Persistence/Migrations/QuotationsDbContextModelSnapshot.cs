@@ -1593,6 +1593,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("base_amount");
 
+                            b1.Property<decimal>("CatalogPercentage")
+                                .HasPrecision(6, 3)
+                                .HasColumnType("numeric(6,3)")
+                                .HasColumnName("catalog_percentage");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("city_id");
+
                             b1.Property<string>("Country")
                                 .IsRequired()
                                 .HasMaxLength(2)
@@ -1800,6 +1809,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasPrecision(14, 2)
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("base_amount");
+
+                            b1.Property<decimal>("CatalogPercentage")
+                                .HasPrecision(6, 3)
+                                .HasColumnType("numeric(6,3)")
+                                .HasColumnName("catalog_percentage");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("city_id");
 
                             b1.Property<string>("Country")
                                 .IsRequired()

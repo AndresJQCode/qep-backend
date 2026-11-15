@@ -263,6 +263,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         withholding.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
         // Plan P3: distingue «no aplica» de una tasa al 0 % que sí aplicó.
         withholding.Property(value => value.Applied).HasColumnName("applied");
+        // Spec ReteICA por empresa §7.5: el municipio de una tasa municipal (null en las nacionales) y el porcentaje del
+        // catálogo al congelar; `percentage` es el efectivo. Las filas anteriores se rellenan con su `percentage`.
+        withholding.Property(value => value.CityId).HasColumnName("city_id");
+        withholding.Property(value => value.CatalogPercentage).HasColumnName("catalog_percentage").HasPrecision(6, 3);
+        withholding.Ignore(value => value.Overridden);
         withholding.Ignore(value => value.Rate);
     }
 

@@ -14,11 +14,14 @@ internal static class WithholdingCandidates
     /// retenciones (paso 3).</param>
     /// <param name="currency">La moneda del documento: si no es la moneda en que el país discrimina
     /// impuestos, no hay base sin IVA sobre la que retener (paso 2).</param>
+    /// <param name="operationCityId">El municipio de la operación del documento: una tasa municipal aplica sólo si es
+    /// de ese municipio (spec ReteICA por empresa §7.5, paso defensivo: la re-resolución ya lo garantiza).</param>
     public static IReadOnlyList<WithholdingRate> For(
         IEnumerable<WithholdingRate> source,
         bool billsToFinalConsumer,
         QuotationBillingAccount? billingAccount,
-        string currency)
+        string currency,
+        Guid? operationCityId)
     {
         if (billsToFinalConsumer)
         {
@@ -33,6 +36,11 @@ internal static class WithholdingCandidates
         }
 
         // Paso 4: sólo las del país de la empresa. La foto del cliente trae las de todos sus países (D16).
-        return [.. source.Where(rate => string.Equals(rate.Country, country.Country, StringComparison.OrdinalIgnoreCase))];
+        return
+        [
+            .. source.Where(rate =>
+                string.Equals(rate.Country, country.Country, StringComparison.OrdinalIgnoreCase)
+                && (!TaxCountries.IsMunicipal(country.Country, rate.Type) || rate.CityId == operationCityId)),
+        ];
     }
 }

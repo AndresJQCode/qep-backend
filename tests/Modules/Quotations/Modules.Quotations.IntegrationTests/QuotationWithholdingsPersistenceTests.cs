@@ -15,6 +15,7 @@ namespace Modules.Quotations.IntegrationTests;
 public sealed class QuotationWithholdingsPersistenceTests
 {
     private const string LastMigrationBeforeWithholdings = "20261110023855_AddOrderBuyerAccount";
+    private const string LastMigrationBeforeWithholdingCity = "20261112121413_FreezePreDeployPaidLinesWithoutCost";
 
     private static readonly Guid TenantId = Guid.Parse("01900000-0000-7000-8000-00000000f011");
     private static readonly MemberId Advisor = new(Guid.Parse("01900000-0000-7000-8000-00000000f012"));
@@ -194,6 +195,88 @@ public sealed class QuotationWithholdingsPersistenceTests
         await using var read = NewContext(connectionString);
         var reloaded = await FindAsync(read, quotation.Id);
         Assert.Equal("CO", reloaded.BillingAccount!.Country);
+    }
+
+    // Spec ReteICA por empresa §7.5: la foto guarda el municipio y el porcentaje del catálogo junto al efectivo.
+    [Fact]
+    public async Task PhotoRoundTripsCityAndCatalogPercentage()
+    {
+        await using var database = await StartEmptyDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateAsync(connectionString);
+        var bogota = Guid.CreateVersion7();
+        var edited = new WithholdingRate(
+            Guid.CreateVersion7(), "ReteICA Bogotá", "ReteICA", "CO", 0.966m, null, null, null, bogota)
+        {
+            Percentage = 0.8m,
+        };
+
+        var quotation = NewQuotation([Retefuente, edited], ColombianAccount);
+        AddLine(quotation);
+        await using (var create = NewContext(connectionString))
+        {
+            create.Quotations.Add(quotation);
+            await CustomerReferenceReplica.SaveAsync(create);
+        }
+
+        await using var read = NewContext(connectionString);
+        var reloaded = await FindAsync(read, quotation.Id);
+
+        var rows = reloaded.CustomerWithholdings.ToArray();
+        Assert.Equal([Retefuente, edited], rows.Select(w => w.Rate));
+        Assert.Null(rows[0].CityId);
+        Assert.False(rows[0].Overridden);
+        Assert.Equal(bogota, rows[1].CityId);
+        Assert.Equal(0.8m, rows[1].Percentage);
+        Assert.Equal(0.966m, rows[1].CatalogPercentage);
+        Assert.True(rows[1].Overridden);
+    }
+
+    // Review Focus 5: las filas que congeló el baseline reciben catalog_percentage = percentage, así no salen como
+    // editadas y ningún total se mueve.
+    [Fact]
+    public async Task CatalogPercentageIsBackfilledFromPercentage()
+    {
+        await using var database = await StartEmptyDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateAsync(connectionString);
+
+        var quotation = NewQuotation([Retefuente], ColombianAccount);
+        AddLine(quotation);
+        await using (var context = NewContext(connectionString))
+        {
+            context.Quotations.Add(quotation);
+            await CustomerReferenceReplica.SaveAsync(context);
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync(LastMigrationBeforeWithholdingCity, TestContext.Current.CancellationToken);
+
+            // Sin las columnas nuevas: la fila queda como la dejó el baseline, con 2,5 %.
+            await ExecuteAsync(
+                connectionString,
+                "UPDATE quotations.quotation_withholdings SET percentage = 2.5 " +
+                $"WHERE document_id = '{quotation.Id.Value}'");
+
+            await migrator.MigrateAsync(null, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            "2.500|2.500|",
+            await ScalarAsync(
+                connectionString,
+                "SELECT catalog_percentage::text || '|' || percentage::text || '|' || coalesce(city_id::text, '') " +
+                $"FROM quotations.quotation_withholdings WHERE document_id = '{quotation.Id.Value}'"));
+        await using var read = NewContext(connectionString);
+        var row = Assert.Single((await FindAsync(read, quotation.Id)).CustomerWithholdings);
+        Assert.False(row.Overridden);
+        Assert.Equal(2_500m, row.Amount);
+    }
+
+    private static async Task<string> ScalarAsync(string connectionString, string sql)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        return (string)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
     private static Quotation NewQuotation(IReadOnlyList<WithholdingRate> customerWithholdings, QuotationBillingAccount account) =>
