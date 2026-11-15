@@ -324,6 +324,24 @@ public sealed class CustomerMergeAcrossModulesApiTests
         Assert.Equal(new CustomerMergeReferenceCounts(1, 1, 1, 1, 1), await references.CountAsync(tenantId, [arranged.Survivor], Ct));
     }
 
+    // Soporte, revisión final C3: la vista previa de la fusión no cuenta tickets (sus ocho conteos son fijos, README «Clientes:
+    // fusión»), aunque la fusión sí los mueve. Un cliente con sólo un ticket cuenta cero en todo.
+    [Fact]
+    public async Task TheMergePreviewDoesNotCountSupportTickets()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var arranged = await ArrangeAsync(factory, connectionString);
+        await InsertSupportTicketAsync(connectionString, Guid.CreateVersion7(), arranged.Tenant.TenantId, arranged.Merged);
+        using var scope = factory.Services.CreateScope();
+        var references = scope.ServiceProvider.GetRequiredService<ICustomerMergeReferences>();
+
+        var counts = await references.CountAsync(arranged.Tenant.TenantId, [arranged.Merged], Ct);
+
+        Assert.Equal(new CustomerMergeReferenceCounts(0, 0, 0, 0, 0), counts);
+    }
+
     // §4: la fusión no se puede deshacer, así que queda completa o no pasa. Un trigger por sentencia rompe el último UPDATE
     // (shopify.orders, CustomerMergeReferences) aunque no haya filas que cambiar: todo lo de antes, Customers incluido, vuelve.
     [Fact]

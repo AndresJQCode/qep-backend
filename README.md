@@ -4746,7 +4746,8 @@ tiene que valer para su país (por defecto, el del tenant). Vincular un cliente,
 vinculado, su contacto es el respaldo** (owner, 2026-11-14): el alta copia en la foto del solicitante el `email` y el `phone_e164`
 del cliente (nunca el `phone` crudo) sólo en los campos que `requester` dejó vacíos, y después valida el canal contra esa foto. Lo
 que trae `requester` siempre gana. Sin `requester`, la foto queda con sólo ese contacto y el país del tenant; un valor del cliente
-que no cabe en la foto (correo de más de 254, celular que no es E.164) no se copia. Sin correo ni celular en ninguno de los dos,
+que no cabe en la foto (correo de más de 254 o que no cumple el formato de correo que se le exige al de `requester`, celular que
+no es E.164) no se copia. Sin correo ni celular en ninguno de los dos,
 todo canal responde ese 422 (`TicketRequesterNormalizer.WithCustomerContact`, amarrado por
 `ALinkedCustomerEmailIsCopiedIntoAnEmptyRequesterForEmail` y `ALinkedCustomerWithoutContactAndNoRequesterContactIs422ForEmail`).
 Vincular el cliente después, con `PUT …/customer`, no toca la foto ni el canal.
@@ -4760,10 +4761,7 @@ notas internas.
 **Clientes.** Cualquier ticket del cliente, en cualquier estado, bloquea su borrado (motivo `supportTickets`), y la fusión mueve
 `support.tickets.customer_id` al cliente que queda, sin subir la `version` del ticket. La vista previa de la fusión no cuenta tickets.
 Escribir `customer_id` toma el candado compartido del cliente (`CustomerReferenceLock`): un alta que llega mientras se borra su
-cliente espera al borrado y falla con 422.
-
-**Retención de usuarios:** `SupportUserReferenceProbe` impide borrar a un usuario cuya membresía sea responsable de un ticket o haya
-actuado en su traza.
+cliente espera al borrado y falla con 422. Ese candado se toma antes del radicado, así la espera no frena las demás altas del tenant.
 
 **Migraciones:** `Tenancy` `AddSupportModuleKey` (el CHECK de `tenant_modules` admite `support`; su `Down` borra las filas `support`
 antes de volver al CHECK anterior), `Support` `InitialSupport` (esquema `support`: `tenant_settings`, `ticket_types`, `tickets` y

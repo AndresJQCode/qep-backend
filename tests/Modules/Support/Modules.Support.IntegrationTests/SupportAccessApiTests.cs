@@ -22,7 +22,10 @@ public sealed class SupportAccessApiTests(SharedSupportHost sharedHost) : IClass
 
         var response = await client.GetAsync($"{SupportUrl(tenant)}/ticket-types", Ct);
 
+        // La política corta antes del handler: 403 pelado, sin código (como LoansAccessApiTests). Un código acá diría que el
+        // handler corrió sin el permiso.
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Null(await CodeOrNullAsync(response));
     }
 
     [Fact]
@@ -46,7 +49,38 @@ public sealed class SupportAccessApiTests(SharedSupportHost sharedHost) : IClass
 
         var response = await client.GetAsync($"{SupportUrl(tenant)}/ticket-types", Ct);
 
+        // ModuleEntitlementMask quita el permiso antes del handler (RequiredModules: [Support]): 403 pelado, sin
+        // tenancy.module_not_enabled (SupportAuthorization lo explica; mismo contrato que LoansAccessApiTests).
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Null(await CodeOrNullAsync(response));
+    }
+
+    // Revisión final, B9: también sobre un ticket que existe en el otro tenant, 403 y nunca 404 (un 404 confirmaría el id).
+    [Fact]
+    public async Task ATicketOfAnotherTenantIs403Never404()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var theirs = await SupportTicketScenario.StartAsync(factory);
+        var ticket = await theirs.CreateAsync();
+        var mine = await SupportTicketScenario.StartAsync(factory);
+
+        var response = await mine.Client.GetAsync($"{theirs.Url}/tickets/{SupportTicketScenario.Id(ticket)}", Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("authorization.denied", await CodeOfAsync(response));
+    }
+
+    // El código del problem details, o null si el cuerpo viene vacío o no lo trae.
+    private static async Task<string?> CodeOrNullAsync(HttpResponseMessage response)
+    {
+        var body = await BodyAsync(response);
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        using var document = System.Text.Json.JsonDocument.Parse(body);
+        return document.RootElement.TryGetProperty("code", out var code) ? code.GetString() : null;
     }
 
     [Fact]
