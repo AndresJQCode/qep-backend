@@ -1,8 +1,10 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Support.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
@@ -47,6 +49,48 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
         foreach (var response in responses)
         {
             Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal("support.public.not_found", await CodeOfAsync(response));
+            bodies.Add(WithoutTraceId(await JsonAsync(response)));
+        }
+
+        Assert.Single(bodies.Distinct(StringComparer.Ordinal));
+    }
+
+    // Owner, 2026-11-15 (E1): la página de consulta funciona desde el primer día, aunque el formulario no esté publicado. Un slug que no
+    // es de nadie, un tenant inactivo y el módulo apagado siguen siendo el mismo 404, con el mismo cuerpo y no-store.
+    [Fact]
+    public async Task TheConsultPageIsServedWithoutAPublishedFormAndIsTheSame404Otherwise()
+    {
+        var factory = await host.StartTestAsync();
+        var unpublished = await SeedPublishedTenantAsync(factory, NewTenantId(), published: false);
+        var withoutForm = NewTenantId();
+        await SeedTenantAsync(factory, withoutForm);
+        var inactive = await SeedPublishedTenantAsync(factory, NewTenantId());
+        await SuspendAsync(factory, inactive);
+        var moduleOff = await SeedPublishedTenantAsync(
+            factory, NewTenantId(), modules: TenantModuleKeys.All.Where(key => key != TenantModuleKeys.Support).ToList());
+        using var client = VisitorClient(factory);
+
+        var served = await client.GetAsync(PublicUrl(unpublished, "/consult"), Ct);
+        Assert.Equal(HttpStatusCode.OK, served.StatusCode);
+        Assert.Equal("no-store", served.Headers.CacheControl?.ToString());
+        var consult = await served.Content.ReadFromJsonAsync<SupportPublicConsultDto>(Ct);
+        Assert.NotNull(consult);
+        Assert.Equal("Support API Tests", consult.TenantName);
+        Assert.Equal("#00B4FF", consult.AccentColor);
+        // Sin ninguna versión del formulario, la página usa su color por defecto.
+        var bare = await client.GetAsync(PublicUrl(await SlugOfAsync(factory, withoutForm), "/consult"), Ct);
+        Assert.Equal(HttpStatusCode.OK, bare.StatusCode);
+        Assert.Null((await bare.Content.ReadFromJsonAsync<SupportPublicConsultDto>(Ct))!.AccentColor);
+        // El formulario sigue cerrado: publicar sólo abre radicar.
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(PublicUrl(unpublished, "/form"), Ct)).StatusCode);
+
+        var bodies = new List<string>();
+        foreach (var slug in new[] { "no-existe-este-slug", inactive, moduleOff })
+        {
+            var response = await client.GetAsync(PublicUrl(slug, "/consult"), Ct);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
             Assert.Equal("support.public.not_found", await CodeOfAsync(response));
             bodies.Add(WithoutTraceId(await JsonAsync(response)));
         }

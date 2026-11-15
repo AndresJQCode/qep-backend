@@ -35,7 +35,7 @@ public sealed class ResendPublicPinHandler(
             throw new SupportDomainException(SupportErrorCodes.PublicCaptchaInvalid, "The anti-bot challenge was not passed.");
         }
 
-        var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
+        var tenant = await resolver.ResolveForConsultAsync(command.TenantSlug, cancellationToken);
         if (!SupportTicketNumber.TryParse(command.Number, out var number))
         {
             return false;

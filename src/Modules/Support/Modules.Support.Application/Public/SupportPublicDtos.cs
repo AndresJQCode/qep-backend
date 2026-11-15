@@ -23,6 +23,14 @@ public sealed record SupportPublicFormDto(
     int FormVersion,
     bool AllowAttachments);
 
+/// <summary>
+/// Lo que la página de consulta necesita para dibujarse sola (owner, 2026-11-15, E1). Existe aparte de <see cref="SupportPublicFormDto"/>
+/// porque la consulta funciona aunque el tenant nunca haya publicado su formulario, y <c>GET /form</c> responde 404 en ese caso: sin esta
+/// ruta la página no tendría de dónde sacar el nombre, el logo ni el color. <see cref="AccentColor"/> es el de la versión vigente del
+/// formulario, publicada o no; null si no hay ninguna, y la página usa su color por defecto.
+/// </summary>
+public sealed record SupportPublicConsultDto(string TenantName, string? LogoUrl, string? AccentColor);
+
 /// <summary>Un tipo activo y publicado, en el orden de la consola.</summary>
 public sealed record SupportPublicTypeDto(Guid Id, string Name, int? TermBusinessDays);
 

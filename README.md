@@ -5027,7 +5027,6 @@ información con el PIN y el `reason` de `reply-options`— sale de una sola lis
 | `no_author` | Ningún miembro activo puede firmar el envío por Mensajería (plan F11) | PIN |
 | `portal_only` | Un anónimo sólo se responde por la página de consulta | `reply-options` |
 | `portal_unavailable` | La página de consulta sólo responde a anónimos | `reply-options` |
-| `form_unpublished` | El formulario público del tenant no está publicado: el enlace de consulta daría 404 | PIN |
 
 **Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
 la pantalla lo sube con la sesión de subida de Mensajería
@@ -5055,8 +5054,12 @@ Plan `docs/superpowers/plans/2026-11-15-support-phase-3-public-form-backend.md` 
 llama directo desde el navegador, sin BFF, a un grupo **anónimo**: `/api/v1/public/support/{tenantSlug}`. Ningún handler del grupo lee el
 contexto de ejecución ni la cookie de sesión, no hay CSRF (exención por prefijo, `SupportPublicPaths`), toda respuesta —también 404, 413
 y 429— lleva `Cache-Control: no-store` y ningún cuerpo pasa de 64 KB (`413 support.public.body_too_large`; un JSON ilegible es `400
-support.public.body_invalid`). Un slug que no es de nadie, un tenant inactivo, el módulo `support` apagado y un formulario sin publicar
-responden el mismo `404 support.public.not_found`, con el mismo cuerpo.
+support.public.body_invalid`). Un slug que no es de nadie, un tenant inactivo y el módulo `support` apagado responden el mismo `404
+support.public.not_found`, con el mismo cuerpo, en todas las rutas. **La página de consulta y la información con el PIN funcionan sin
+publicar el formulario** (owner, 2026-11-15): `GET /consult`, `POST /tickets/lookup` y `POST /tickets/resend-pin` sólo exigen tenant
+activo y módulo prendido (`SupportPublicResolver.ResolveForConsultAsync`), así todo solicitante tiene desde el primer día un enlace de
+consulta que sirve. Publicar sólo abre el formulario: `GET /form`, la geografía, radicar y los adjuntos responden ese mismo 404 mientras
+la versión vigente no esté publicada (`ResolveAsync`).
 
 **Rutas públicas** (relativas al grupo). Los limitadores son por IP del visitante (`RemoteIpAddress`, ya corregida por `X-Real-IP` detrás
 del ingress) y cada uno tiene su propia cubeta.
@@ -5064,6 +5067,7 @@ del ingress) y cada uno tiene su propia cubeta.
 | Método y ruta | Cuerpo | Éxito | Turnstile | Límite por IP |
 | --- | --- | --- | --- | --- |
 | `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país y textos legales vigentes | No | 60 / min |
+| `GET /consult` | — | `{ tenantName, logoUrl, accentColor }` para dibujar la página de consulta; `accentColor` es el de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
 | `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
 | `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
 | `POST /attachments/{fileId}/complete` | `{ uploadKey }` | `200` `{ status }`: `available` o `rejected` | No | 20 / 10 min |
@@ -5094,9 +5098,7 @@ cuándo y por qué canal salió la información y por qué no, nunca el PIN.
 **A dónde va la información con el PIN** (`SupportOpeningSender`, plan F10, F11 y F23 a F26). La misma regla al crear el ticket y al
 reenviar el PIN; al crear, sale **después** de confirmar el ticket y anota su resultado en un segundo guardado que toca sólo
 `ticket_access`: el ticket queda creado pase lo que pase con el envío, y la `version` del `201` sigue valiendo para el siguiente
-`If-Match`. **La información sólo sale mientras el formulario del tenant está publicado**: sin publicar, el enlace de consulta
-respondería 404, así que no se manda nada y queda anotado `form_unpublished` (por el canal que habría usado). El PIN igual se emite (sólo
-su hash): publicado el formulario, «Reenviar PIN» manda uno nuevo.
+`If-Match`. Sale aunque el formulario del tenant no esté publicado: la página de consulta no depende de él (owner, 2026-11-15).
 
 | Ticket | Canal (`last_sent_channel`) | Qué sale |
 | --- | --- | --- |

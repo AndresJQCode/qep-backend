@@ -119,10 +119,6 @@ public static class SupportChannelReasons
     /// Motivo de <c>reply-options</c>.</summary>
     public const string PortalUnavailable = "portal_unavailable";
 
-    /// <summary>El formulario público del tenant no está publicado: el enlace de consulta respondería 404, así que la información con el
-    /// PIN no sale. Falla de la información con el PIN.</summary>
-    public const string FormUnpublished = "form_unpublished";
-
     /// <summary>Todos los códigos de esta lista.</summary>
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -145,7 +141,6 @@ public static class SupportChannelReasons
         NoAuthor,
         PortalOnly,
         PortalUnavailable,
-        FormUnpublished,
     };
 }
 

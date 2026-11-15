@@ -73,7 +73,6 @@ public sealed class SupportReplyParityTests
         SupportChannelReasons.NoAuthor,
         SupportChannelReasons.PortalOnly,
         SupportChannelReasons.PortalUnavailable,
-        SupportChannelReasons.FormUnpublished,
     ];
 
     [Fact]

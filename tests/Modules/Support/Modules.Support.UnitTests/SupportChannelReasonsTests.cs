@@ -44,9 +44,13 @@ public sealed class SupportChannelReasonsTests
     {
         Assert.Contains(SupportChannelReasons.NoAuthor, SupportChannelReasons.All);
         Assert.Equal("no_author", SupportChannelReasons.NoAuthor);
-        Assert.Contains(SupportChannelReasons.FormUnpublished, SupportChannelReasons.All);
-        Assert.Equal("form_unpublished", SupportChannelReasons.FormUnpublished);
     }
+
+    // Owner, 2026-11-15 (E1): la página de consulta funciona sin el formulario publicado, así que la apertura sale siempre que el canal
+    // lo permita y ya no existe el motivo «formulario sin publicar».
+    [Fact]
+    public void ThereIsNoFormUnpublishedReason() =>
+        Assert.DoesNotContain("form_unpublished", SupportChannelReasons.All);
 
     [Fact]
     public void AllHoldsEveryConstant()

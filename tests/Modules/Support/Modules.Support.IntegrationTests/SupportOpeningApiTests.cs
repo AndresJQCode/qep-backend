@@ -127,31 +127,32 @@ public sealed class SupportOpeningApiTests(SupportOpeningHost host) : IClassFixt
         Assert.Equal("Thread", await TextAsync(rig.Factory, "SELECT last_sent_channel FROM support.ticket_access WHERE ticket_id = @id", ("id", Id(created))));
     }
 
-    // Revisión final, I2: sin el formulario publicado, el enlace de consulta responde 404. La apertura no sale (ni por el hilo ni por
-    // correo) y queda anotada como form_unpublished; el PIN igual se emite (sólo su hash), para que publicar y reenviar funcione después.
-    // El 201 llega y la versión del ticket no cambia.
+    // Owner, 2026-11-15 (E1, reemplaza la revisión final I2): la página de consulta funciona sin el formulario publicado, así que la
+    // apertura sale igual por el canal del ticket. El 201 llega y la versión del ticket no cambia.
     [Fact]
-    public async Task AnUnpublishedFormSendsNoOpeningAndRecordsFormUnpublishedForAConversationTicket()
+    public async Task AnUnpublishedFormStillSendsTheOpeningOfAConversationTicket()
     {
         var rig = await RigAsync(published: false);
         var conversation = await ConversationAsync(rig, windowOpen: true);
 
         var created = await CreateFromConversationAsync(rig, conversation);
 
-        Assert.DoesNotContain(host.Channels.ThreadSends, item => item.ConversationId == conversation);
-        await AssertFormUnpublishedAsync(rig, created, "Thread");
+        var send = Assert.Single(host.Channels.ThreadSends, item => item.ConversationId == conversation);
+        Assert.True(await PinMatchesAsync(rig, created, SixDigits.Match(send.Text).Groups[1].Value));
+        await AssertOpeningSentAsync(rig, created, "Thread");
     }
 
     [Fact]
-    public async Task AnUnpublishedFormSendsNoOpeningAndRecordsFormUnpublishedForAManualEmailTicket()
+    public async Task AnUnpublishedFormStillEmailsTheOpeningOfAManualEmailTicket()
     {
         var rig = await RigAsync(published: false);
         var email = $"sin-publicar-{Guid.CreateVersion7():N}@example.com";
 
         var created = await rig.CreateManualAsync("Email", email);
 
-        Assert.Empty(host.Emails.To(email));
-        await AssertFormUnpublishedAsync(rig, created, "Email");
+        var sent = Assert.Single(host.Emails.To(email));
+        Assert.True(await PinMatchesAsync(rig, created, sent.Pin));
+        await AssertOpeningSentAsync(rig, created, "Email");
     }
 
     // La apertura escribe sólo en ticket_access: la versión del 201 sigue sirviendo para el siguiente cambio del asesor.
@@ -170,15 +171,13 @@ public sealed class SupportOpeningApiTests(SupportOpeningHost host) : IClassFixt
         Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
     }
 
-    private static async Task AssertFormUnpublishedAsync(Rig rig, JsonElement created, string channel)
+    private static async Task AssertOpeningSentAsync(Rig rig, JsonElement created, string channel)
     {
         var access = created.GetProperty("consultAccess");
         Assert.Equal(channel, access.GetProperty("channel").GetString());
-        Assert.Equal(SupportChannelReasons.FormUnpublished, access.GetProperty("failureCode").GetString());
-        Assert.Equal("form_unpublished", await TextAsync(
+        Assert.Equal(JsonValueKind.Null, access.GetProperty("failureCode").ValueKind);
+        Assert.Null(await TextAsync(
             rig.Factory, "SELECT last_failure_code FROM support.ticket_access WHERE ticket_id = @id", ("id", Id(created))));
-        Assert.False(string.IsNullOrEmpty(await TextAsync(
-            rig.Factory, "SELECT pin_hash FROM support.ticket_access WHERE ticket_id = @id", ("id", Id(created)))));
         Assert.Equal(
             created.GetProperty("version").GetInt64(),
             await ScalarAsync(rig.Factory, "SELECT version FROM support.tickets WHERE id = @id", ("id", Id(created))));

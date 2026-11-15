@@ -58,6 +58,12 @@ public static class PublicSupportEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
+        // Owner, 2026-11-15 (E1): la página de consulta se dibuja con esto aunque el formulario no esté publicado.
+        group.MapGet("/consult", GetConsultAsync)
+            .Produces<SupportPublicConsultDto>()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         group.MapGet("/geography/departments", ListDepartmentsAsync)
             .Produces<SupportPublicGeoListDto>()
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -158,6 +164,10 @@ public static class PublicSupportEndpoints
     private static async Task<IResult> GetFormAsync(
         string tenantSlug, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetPublicFormQuery(tenantSlug), cancellationToken));
+
+    private static async Task<IResult> GetConsultAsync(
+        string tenantSlug, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetPublicConsultQuery(tenantSlug), cancellationToken));
 
     private static async Task<IResult> ListDepartmentsAsync(
         string tenantSlug, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

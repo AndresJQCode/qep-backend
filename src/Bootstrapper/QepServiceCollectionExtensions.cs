@@ -1629,6 +1629,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Support.Application.GetPublicFormQuery, Modules.Support.Application.SupportPublicFormDto>,
             Modules.Support.Application.GetPublicFormHandler>();
         services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetPublicConsultQuery, Modules.Support.Application.SupportPublicConsultDto>,
+            Modules.Support.Application.GetPublicConsultHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListPublicSupportDepartmentsQuery, Modules.Support.Application.SupportPublicGeoListDto>,
             Modules.Support.Application.ListPublicSupportDepartmentsHandler>();
         services.AddScoped<

@@ -242,6 +242,34 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
         Assert.Equal(HttpStatusCode.OK, (await LookupAsync(rig, filed.Number, filed.Pin, NextIp())).StatusCode);
     }
 
+    // Owner, 2026-11-15 (E1): consultar y reenviar el PIN no dependen del formulario publicado. Un tenant que lo despublica sigue
+    // atendiendo a quien ya radicó; lo que se cierra es el formulario y radicar.
+    [Fact]
+    public async Task LookupAndResendWorkWhileTheFormIsUnpublished()
+    {
+        var rig = await RigAsync();
+        var email = Email();
+        var filed = await FileNamedAsync(rig, email: email);
+        await ExecuteAsync(
+            rig.Factory, "UPDATE support.form_versions SET is_published = false WHERE tenant_id = @tenant", ("tenant", rig.TenantId));
+
+        var lookup = await LookupAsync(rig, filed.Number, filed.Pin, NextIp());
+        host.Clock.UtcNow = ClockedSupportHost.Reception + SupportTicketAccess.ResendCooldown + TimeSpan.FromMinutes(1);
+        var resend = await ResendAsync(rig, filed.Number);
+
+        Assert.True(lookup.StatusCode == HttpStatusCode.OK, await BodyAsync(lookup));
+        Assert.Equal(filed.Number, (await JsonAsync(lookup)).GetProperty("number").GetString());
+        Assert.Equal(HttpStatusCode.Accepted, resend.StatusCode);
+        var emails = host.Emails.To(email);
+        Assert.Equal(2, emails.Count);
+        Assert.Equal(HttpStatusCode.OK, (await LookupAsync(rig, filed.Number, emails[^1].Pin, NextIp())).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await rig.Client.GetAsync(PublicUrl(rig.Slug, "/form"), Ct)).StatusCode);
+        using var filer = VisitorClient(rig.Factory, NextIp());
+        var filing = await PostJsonAsync(filer, PublicUrl(rig.Slug, "/tickets"), NamedBody(rig.TypeId, rig.CityId, Email()));
+        Assert.Equal(HttpStatusCode.NotFound, filing.StatusCode);
+        Assert.Equal("support.public.not_found", await CodeOfAsync(filing));
+    }
+
     [Fact]
     public async Task ABadCaptchaOnLookupIs422CaptchaInvalid()
     {

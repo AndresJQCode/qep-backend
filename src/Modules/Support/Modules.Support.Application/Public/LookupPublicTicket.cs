@@ -35,7 +35,7 @@ public sealed partial class LookupPublicTicketHandler(
             throw new SupportDomainException(SupportErrorCodes.PublicCaptchaInvalid, "The anti-bot challenge was not passed.");
         }
 
-        var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
+        var tenant = await resolver.ResolveForConsultAsync(command.TenantSlug, cancellationToken);
         var pin = command.Pin?.Trim() ?? string.Empty;
         SupportTicket ticket;
         SupportReadContext context;

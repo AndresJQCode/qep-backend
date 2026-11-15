@@ -8,12 +8,22 @@ namespace Modules.Support.Application;
 /// <summary>El tenant que atiende el formulario público, con la versión vigente (publicada) del formulario.</summary>
 public sealed record SupportPublicTenant(Guid TenantId, string Slug, string Name, string Country, SupportFormVersion Form);
 
+/// <summary>El tenant que atiende la página de consulta: no exige formulario publicado (owner, 2026-11-15, E1).</summary>
+public sealed record SupportPublicConsultTenant(Guid TenantId, string Slug, string Name);
+
 /// <summary>
-/// Del slug de la ruta al tenant que atiende el formulario público (plan F3, precedente <c>StorefrontResolver</c>): slug normalizado →
-/// tenant <c>Active</c> → módulo <c>support</c> prendido → formulario publicado. Un slug que no es de nadie, un tenant inactivo, el
-/// módulo apagado y un formulario sin publicar dan el mismo 404 <c>support.public.not_found</c>, con el mismo cuerpo: quien sondea
-/// slugs no distingue un tenant en preparación de uno que no existe. Falla CERRADO: un tenant sin fila de módulos tampoco se sirve. No
-/// lee el contexto de ejecución ni la sesión: el grupo es anónimo.
+/// Del slug de la ruta al tenant que atiende el grupo público (plan F3, precedente <c>StorefrontResolver</c>), con dos entradas:
+/// <list type="bullet">
+/// <item><see cref="ResolveAsync"/>, la del formulario: slug normalizado → tenant <c>Active</c> → módulo <c>support</c> prendido →
+/// formulario publicado. La usan <c>GET /form</c>, la geografía, radicar y los adjuntos.</item>
+/// <item><see cref="ResolveForConsultAsync"/>, la de la consulta: lo mismo sin exigir formulario publicado (owner, 2026-11-15, E1:
+/// todo solicitante tiene un enlace de consulta que funciona desde el primer día). La usan <c>GET /consult</c>, consultar un ticket y
+/// «Reenviar PIN».</item>
+/// </list>
+/// En las dos, un slug que no es de nadie, un tenant inactivo, el módulo apagado y (en la del formulario) un formulario sin publicar dan
+/// el mismo 404 <c>support.public.not_found</c>, con el mismo cuerpo: quien sondea slugs no distingue un tenant en preparación de uno que
+/// no existe. Falla CERRADO: un tenant sin fila de módulos tampoco se sirve. No lee el contexto de ejecución ni la sesión: el grupo es
+/// anónimo.
 /// </summary>
 public sealed class SupportPublicResolver(
     ITenantSlugDirectory slugs,
@@ -26,7 +36,31 @@ public sealed class SupportPublicResolver(
 
     private const int SlugMaxLength = 63;
 
+    /// <summary>La entrada del formulario: exige la versión vigente publicada.</summary>
     public async Task<SupportPublicTenant> ResolveAsync(string? slug, CancellationToken cancellationToken)
+    {
+        var (tenantId, normalized) = await ServedTenantAsync(slug, cancellationToken);
+        var form = await forms.CurrentAsync(tenantId.Value, cancellationToken);
+        if (form is not { IsPublished: true })
+        {
+            throw NotFound();
+        }
+
+        var name = await tenants.GetDisplayNameAsync(tenantId, cancellationToken) ?? throw NotFound();
+        var regional = await tenants.GetRegionalSettingsAsync(tenantId, cancellationToken) ?? throw NotFound();
+        return new SupportPublicTenant(tenantId.Value, normalized, name, regional.Country, form);
+    }
+
+    /// <summary>La entrada de la consulta: no mira el formulario.</summary>
+    public async Task<SupportPublicConsultTenant> ResolveForConsultAsync(string? slug, CancellationToken cancellationToken)
+    {
+        var (tenantId, normalized) = await ServedTenantAsync(slug, cancellationToken);
+        var name = await tenants.GetDisplayNameAsync(tenantId, cancellationToken) ?? throw NotFound();
+        return new SupportPublicConsultTenant(tenantId.Value, normalized, name);
+    }
+
+    // Lo común a las dos entradas: slug válido, tenant activo y módulo prendido.
+    private async Task<(TenantId TenantId, string Slug)> ServedTenantAsync(string? slug, CancellationToken cancellationToken)
     {
         var normalized = slug?.Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(normalized) || normalized.Length is < SlugMinLength or > SlugMaxLength)
@@ -46,15 +80,7 @@ public sealed class SupportPublicResolver(
             throw NotFound();
         }
 
-        var form = await forms.CurrentAsync(tenantId.Value, cancellationToken);
-        if (form is not { IsPublished: true })
-        {
-            throw NotFound();
-        }
-
-        var name = await tenants.GetDisplayNameAsync(tenantId, cancellationToken) ?? throw NotFound();
-        var regional = await tenants.GetRegionalSettingsAsync(tenantId, cancellationToken) ?? throw NotFound();
-        return new SupportPublicTenant(tenantId.Value, normalized, name, regional.Country, form);
+        return (tenantId, normalized);
     }
 
     // Un solo mensaje para todas las causas: el cuerpo es idéntico salvo el traceId.
