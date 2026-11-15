@@ -10,7 +10,8 @@ namespace Bootstrapper;
 /// Vive acá y no en ninguno de los dos módulos: Soporte guarda el cliente como id suelto y el composition root es el único lugar
 /// donde ese cruce es legítimo.
 ///
-/// Proyecta sólo las tres columnas que Soporte usa: la bandeja resuelve decenas de clientes por página.
+/// Proyecta sólo las columnas que Soporte usa: la bandeja resuelve decenas de clientes por página. El contacto es <c>email</c> y
+/// <c>phone_e164</c>, nunca el <c>phone</c> crudo: la foto del solicitante guarda el celular en E.164.
 /// </summary>
 internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISupportCustomerLookup
 {
@@ -21,7 +22,7 @@ internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISup
         var id = new CustomerId(customerId);
         var row = await customers.Customers.AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && customer.Id == id)
-            .Select(customer => new Row(customer.Id, customer.Name, customer.IsActive))
+            .Select(customer => new Row(customer.Id, customer.Name, customer.IsActive, customer.Email, customer.PhoneE164))
             .SingleOrDefaultAsync(cancellationToken);
         return row?.ToRef();
     }
@@ -37,7 +38,7 @@ internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISup
         var ids = customerIds.Distinct().Select(id => new CustomerId(id)).ToArray();
         var rows = await customers.Customers.AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && ids.Contains(customer.Id))
-            .Select(customer => new Row(customer.Id, customer.Name, customer.IsActive))
+            .Select(customer => new Row(customer.Id, customer.Name, customer.IsActive, customer.Email, customer.PhoneE164))
             .ToListAsync(cancellationToken);
         return rows.Select(row => row.ToRef()).ToArray();
     }
@@ -64,8 +65,8 @@ internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISup
         return ids.Select(id => id.Value).ToArray();
     }
 
-    private sealed record Row(CustomerId Id, string Name, bool IsActive)
+    private sealed record Row(CustomerId Id, string Name, bool IsActive, string? Email, string? PhoneE164)
     {
-        public SupportCustomerRef ToRef() => new(Id.Value, Name, IsActive);
+        public SupportCustomerRef ToRef() => new(Id.Value, Name, IsActive, Email, PhoneE164);
     }
 }

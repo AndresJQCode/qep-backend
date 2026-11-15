@@ -36,9 +36,9 @@ internal static class SupportTicketRules
     /// Plan D14: vincular un cliente exige el módulo <c>customers</c> (403 <c>tenancy.module_not_enabled</c>) y un cliente activo del
     /// tenant (422 <c>customer_not_found</c> / <c>customer_inactive</c>; un fusionado está inactivo). La existencia se vuelve a
     /// comprobar al guardar, con el candado del cliente (<c>CustomerReferenceWrites</c>): un borrado que gane la carrera sale como
-    /// <c>customer_not_found</c>.
+    /// <c>customer_not_found</c>. Devuelve el cliente: el alta toma de ahí el contacto de respaldo.
     /// </summary>
-    public static async Task EnsureCustomerAsync(
+    public static async Task<SupportCustomerRef> EnsureCustomerAsync(
         ITenantModules tenantModules, ISupportCustomerLookup customers, Guid tenantId, Guid customerId, CancellationToken cancellationToken)
     {
         await TenantModuleGuard.EnsureEnabledAsync(tenantModules, tenantId, TenantModuleKeys.Customers, cancellationToken);
@@ -48,6 +48,8 @@ internal static class SupportTicketRules
         {
             throw new SupportDomainException(SupportErrorCodes.CustomerInactive, "An inactive customer cannot be linked to a ticket.");
         }
+
+        return customer;
     }
 
     /// <summary>El responsable es una membresía activa con <c>support.ticket.manage</c>: el mismo conjunto que ofrece
@@ -70,8 +72,9 @@ internal static class SupportTicketRules
 
     /// <summary>
     /// Plan D8 y spec §8.3, para un ticket manual: no hay hilo abierto, así que <c>Thread</c> no está disponible; <c>Email</c> exige
-    /// el correo del solicitante y <c>WhatsAppTemplate</c> su celular. Con cliente vinculado cuenta sólo lo que trae el solicitante:
-    /// el puerto de clientes no expone su contacto en esta fase.
+    /// el correo de la foto del solicitante y <c>WhatsAppTemplate</c> su celular. Con cliente vinculado, el alta ya copió en la foto
+    /// el correo y el celular del cliente que el solicitante dejó vacíos (<see cref="TicketRequesterNormalizer.WithCustomerContact"/>,
+    /// owner 2026-11-14), así que acá basta mirar la foto.
     /// </summary>
     public static void EnsureReplyChannel(SupportReplyChannel channel, TicketRequester? requester)
     {

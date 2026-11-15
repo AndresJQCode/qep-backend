@@ -165,10 +165,60 @@ public sealed class SupportTicketsApiTests(ClockedSupportHost host) : IClassFixt
         Assert.Equal("support.ticket.reply_channel_unavailable", await CodeOfAsync(withoutMobile));
     }
 
-    /// <summary>Revisión final I1: el canal se valida sólo contra el correo y el celular del solicitante. El contacto del cliente
-    /// vinculado no cuenta en esta fase (el puerto de clientes no lo expone); cambiarlo es decisión pendiente del owner.</summary>
+    /// <summary>Revisión final I1 (owner, 2026-11-14): con cliente vinculado, su correo y su celular llenan los campos de contacto que
+    /// el solicitante dejó vacíos, y el canal se valida después contra esa foto.</summary>
     [Fact]
-    public async Task ALinkedCustomerWithoutRequesterContactIs422ForEmail()
+    public async Task ALinkedCustomerEmailIsCopiedIntoAnEmptyRequesterForEmail()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS", email: "compras@novasteel.co");
+        var withoutRequester = Body(await scenario.TypeIdAsync("Queja"), customerId: customer);
+        withoutRequester["requester"] = null;
+
+        var response = await scenario.PostAsync(withoutRequester);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var requester = (await scenario.DetailAsync(Id(await JsonAsync(response)))).GetProperty("requester");
+        Assert.Equal("compras@novasteel.co", requester.GetProperty("email").GetString());
+        Assert.Equal(JsonValueKind.Null, requester.GetProperty("mobilePhone").ValueKind);
+        Assert.Equal(JsonValueKind.Null, requester.GetProperty("firstNames").ValueKind);
+        Assert.Equal("CO", requester.GetProperty("countryCode").GetString());
+    }
+
+    [Fact]
+    public async Task TheRequesterEmailWinsOverTheLinkedCustomerEmail()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS", email: "compras@novasteel.co");
+
+        var ticket = await scenario.CreateAsync(Body(
+            await scenario.TypeIdAsync("Queja"), requester: new { firstNames = "Ana", email = "ana@example.com" }, customerId: customer));
+
+        var requester = (await scenario.DetailAsync(Id(ticket))).GetProperty("requester");
+        Assert.Equal("ana@example.com", requester.GetProperty("email").GetString());
+        Assert.Equal("Ana", requester.GetProperty("firstNames").GetString());
+    }
+
+    [Fact]
+    public async Task ALinkedCustomerMobileEnablesWhatsAppTemplate()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS", phoneE164: "+573001234567");
+
+        var ticket = await scenario.CreateAsync(Body(
+            await scenario.TypeIdAsync("Queja"), requester: new { firstNames = "Ana" }, customerId: customer,
+            replyChannel: "WhatsAppTemplate"));
+
+        Assert.Equal("WhatsAppTemplate", ticket.GetProperty("replyChannel").GetString());
+        var requester = ticket.GetProperty("requester");
+        Assert.Equal("+573001234567", requester.GetProperty("mobilePhone").GetString());
+        Assert.Equal(JsonValueKind.Null, requester.GetProperty("email").ValueKind);
+        Assert.Equal("Ana", requester.GetProperty("firstNames").GetString());
+    }
+
+    /// <summary>Sin contacto en el cliente ni en el solicitante no hay a dónde responder: el respaldo no inventa un canal.</summary>
+    [Fact]
+    public async Task ALinkedCustomerWithoutContactAndNoRequesterContactIs422ForEmail()
     {
         var scenario = await StartAsync(await host.StartTestAsync());
         var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS");

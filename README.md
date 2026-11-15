@@ -4739,12 +4739,14 @@ con documento `NIT`); si no, `422 support.ticket.requester_required`. El celular
 tiene que valer para su país (por defecto, el del tenant). Vincular un cliente, al crear o con `PUT …/customer`, exige el módulo
 `customers` prendido (`403 tenancy.module_not_enabled`) y un cliente activo del tenant (`422 support.ticket.customer_not_found` o
 `support.ticket.customer_inactive`; un fusionado está inactivo). El canal de respuesta `Thread` no está disponible en un alta manual
-(`422 support.ticket.reply_channel_unavailable`), `Email` exige correo y `WhatsAppTemplate` exige celular. **El correo y el celular
-son los del solicitante (`requester`), nunca los del cliente vinculado**: el puerto de clientes no expone su contacto en esta fase.
-Con un cliente vinculado y sin `requester`, o con un `requester` sin correo ni celular, todo canal responde ese 422; la pantalla
-tiene que copiar el correo o el celular del cliente en `requester` para habilitar `Email` o `WhatsAppTemplate`
-(`SupportTicketRules.EnsureReplyChannel`, amarrado por `ALinkedCustomerWithoutRequesterContactIs422ForEmail`). Usar el contacto
-del cliente como respaldo es decisión pendiente del owner.
+(`422 support.ticket.reply_channel_unavailable`), `Email` exige correo y `WhatsAppTemplate` exige celular. **Con un cliente
+vinculado, su contacto es el respaldo** (owner, 2026-11-14): el alta copia en la foto del solicitante el `email` y el `phone_e164`
+del cliente (nunca el `phone` crudo) sólo en los campos que `requester` dejó vacíos, y después valida el canal contra esa foto. Lo
+que trae `requester` siempre gana. Sin `requester`, la foto queda con sólo ese contacto y el país del tenant; un valor del cliente
+que no cabe en la foto (correo de más de 254, celular que no es E.164) no se copia. Sin correo ni celular en ninguno de los dos,
+todo canal responde ese 422 (`TicketRequesterNormalizer.WithCustomerContact`, amarrado por
+`ALinkedCustomerEmailIsCopiedIntoAnEmptyRequesterForEmail` y `ALinkedCustomerWithoutContactAndNoRequesterContactIs422ForEmail`).
+Vincular el cliente después, con `PUT …/customer`, no toca la foto ni el canal.
 
 **Traza y auditoría.** La traza del ticket son sus eventos (`Created`, `StatusChanged`, `AssigneeChanged`, `TypeChanged`,
 `CustomerChanged`), ordenados por un ordinal que asigna el agregado, no por hora. Cada cambio audita en la misma transacción:

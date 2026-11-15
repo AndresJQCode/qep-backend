@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using System.Text.RegularExpressions;
 using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Support.Domain;
@@ -166,6 +167,27 @@ internal static class TicketRequesterNormalizer
             : normalized;
     }
 
+    /// <summary>
+    /// El contacto del cliente vinculado como respaldo (owner, 2026-11-14): su correo y su celular llenan sólo los campos que el
+    /// solicitante dejó vacíos; lo que trae el solicitante siempre gana. Sin solicitante, la foto queda con sólo ese contacto y el
+    /// país <paramref name="country"/> (el cliente vinculado ya cumple <c>requester_required</c>); sin contacto que copiar, no hay
+    /// foto. Un valor del cliente que no cabe en la foto (correo de más de <see cref="TicketRequester.EmailMaxLength"/>, celular que
+    /// no es E.164) no se copia: recortarlo daría un contacto que no existe.
+    /// </summary>
+    public static TicketRequester? WithCustomerContact(TicketRequester? requester, SupportCustomerRef customer, string country)
+    {
+        var email = Clean(customer.Email) is { Length: <= TicketRequester.EmailMaxLength } fittingEmail ? fittingEmail : null;
+        var mobile = Clean(customer.MobilePhone) is { } phone && Regex.IsMatch(phone, MobilePattern) ? phone : null;
+        if (requester is null)
+        {
+            return email is null && mobile is null
+                ? null
+                : new TicketRequester(null, null, null, null, null, email, mobile, null, country, null);
+        }
+
+        return requester with { Email = requester.Email ?? email, MobilePhone = requester.MobilePhone ?? mobile };
+    }
+
     private static string? Clean(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 }
 
@@ -181,7 +203,7 @@ internal static class SupportTextRules
 
 /// <summary>
 /// El alta manual (spec §8.3, plan D6–D8 y D14). Orden: autorización → membresía de quien actúa → validador → solicitante →
-/// provisión → tipo activo → cliente → responsable → canal → transacción → radicado → ticket → auditoría → guardar → confirmar.
+/// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → transacción → radicado → ticket → auditoría → guardar → confirmar.
 /// Todo lo que puede responder 422 va antes de la transacción, así un rechazo no gasta un radicado. La provisión abre su propia
 /// transacción, así que va antes de <see cref="ISupportUnitOfWork.BeginTransactionAsync"/>.
 /// </summary>
@@ -228,7 +250,10 @@ public sealed class CreateTicketHandler(
         var type = await SupportTicketRules.EnsureTypeAsync(types, validated.TenantId, validated.TicketTypeId, cancellationToken);
         if (validated.CustomerId is { } customerId)
         {
-            await SupportTicketRules.EnsureCustomerAsync(tenantModules, customers, validated.TenantId, customerId, cancellationToken);
+            var customer = await SupportTicketRules.EnsureCustomerAsync(
+                tenantModules, customers, validated.TenantId, customerId, cancellationToken);
+            requester = TicketRequesterNormalizer.WithCustomerContact(
+                requester, customer, TicketRequesterNormalizer.CountryOf(validated.Requester, tenantCountry));
         }
 
         await SupportTicketRules.EnsureAssigneeAsync(members, validated.TenantId, validated.AssigneeMemberId, cancellationToken);
