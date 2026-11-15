@@ -761,8 +761,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `ApiScopeDefinition` en DI (la constante vive en el módulo dueño) y sus rutas cuelgan del grupo de `ExternalApiEndpoints`, que fija
   el esquema `ApiKey`; una ruta externa fuera de ese grupo no recibe ese esquema. Los `code` `external.*` son contrato público con
   los integradores: no se renombran.
-- **Un camino nuevo que lea autores de `messaging.messages` tiene que tratar `sent_by_kind = 4`** (clave de API; el 3 está reservado
-  para agentes IA). Ese autor no tiene `sent_by_member_id`: lleva `sent_by_api_key_id` y `sent_by_api_key_name`, así que un join al
+- **Un camino nuevo que lea autores de `messaging.messages` tiene que tratar `sent_by_kind = 4`** (clave de API; el 3 es el agente
+  de IA, en su propia entrada más abajo). Ese autor no tiene `sent_by_member_id`: lleva `sent_by_api_key_id` y `sent_by_api_key_name`, así que un join al
   miembro lo pierde en silencio. Y uno que muestre «primera respuesta» debe excluirlo: un envío automático de un sistema externo no
   es una respuesta de una persona.
 - **El indicador de escritura de WhatsApp marca el mensaje como leído para el contacto** (decisión del owner, 2026-10-31). Cloud API lo
@@ -812,6 +812,66 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Open && PaymentStatus == PaymentPending && PaymentProofs.Count == 0 && !IsPrepared && !IsInvoiced` (D5 y spec 2026-11-10, `Order.CanBeCancelledByBuyer`: un pedido con cualquier comprobante, preparado o facturado ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
 - **`Order.LinkBuyerAccount` no sube `Version`, pero `Version` es token de concurrencia.** El enlace del alta diferida es invisible para el `If-Match` de la consola, y aun así su `UPDATE` lleva `WHERE version = …`: si otra escritura ganó, `BuyerOrderGateway.LinkAsync` relee y reintenta una vez (sólo si sigue vacío). El checkout resuelve la sesión del comprador siempre que llega el header, no sólo con `updateProfile`; `ScalarTextAsync` de las pruebas de Store devuelve `""` para un `NULL`.
 - **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`. `BuyerNotes` la escribe sólo `CreateFromStore` y nada más la toca; un método nuevo que la edite le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill).
+- **Un agente de IA nunca cae al otro proveedor** (plan 2026-11-12, C-20). El resolvedor toma el proveedor **de la versión de la
+  sesión**, no del borrador ni del tenant, y un error agotado del proveedor termina en traspaso, nunca en una llamada al otro. No
+  agregues un «respaldo» aunque el tenant tenga las dos conexiones: el historial del cliente iría a una cuenta que el tenant no eligió
+  para ese agente y le gastaría saldo sin aviso. El único respaldo es el de Anthropic **dentro** de Anthropic (C-9,
+  `server-side-fallback`). Lo amarra `AgentTurnRunnerTests.TheRunnerAsksTheResolverForTheProviderOfTheVersion`.
+- **El `issue` bloqueante de IA es por proveedor, no por tenant** (C-19). Clave rechazada, sin permiso o sin saldo pasan a
+  `NeedsAttention` **la conexión de ese proveedor** (`IAiProviderCredentials.MarkNeedsAttentionAsync`), y sus agentes dejan de tomar
+  conversaciones; los del otro proveedor siguen. El procesador de entrantes revisa la cuenta del proveedor **del agente** antes de abrir
+  sesión. Lo amarran `AgentTurnRunnerTests.AnAccountErrorLeavesTheIssueOnlyOnThatProvidersConnection` y
+  `AgentSessionProcessorTests.WithoutTheAgentsProviderAccountNoSessionOpensEvenIfTheOtherProviderIsConnected`. La saca una prueba
+  exitosa de la clave en Integraciones, no un reintento.
+- **Cuatro reglas de `ClaudeModelClient` que parecen simplificables y no lo son** (plan 2026-11-12). (1) **C-8:** herramientas con
+  `strict: true` y sin `tool_choice` forzado: en Opus 5.5 y Sonnet 5.5, `any` o `tool` responde 400. Por eso un `end_turn` con texto y
+  sin herramienta final se acepta como `send_reply` sin fuentes (`ToolsAreStrictSortedByNameAndNeverForced`,
+  `AnEndTurnWithTextComesBackAsASendReplyWithoutSources`). (2) **C-11:** la petición nunca termina en `assistant`, que es *prefill* y
+  responde 400; el saludo ya enviado va como mensaje `system` después del primer turno del cliente
+  (`TheGreetingIsASystemMessageAfterTheFirstCustomerTurnAndTheRequestNeverEndsInAssistant`). (3) **C-12:** el `system` es idéntico byte a
+  byte en la misma versión y lleva el único punto de caché; la fecha, la hora y la ventana van en `VolatileContext`, **después**
+  (`TheSystemPromptCarriesTheOnlyCachePointAndTheVolatileContextGoesAfterIt`). Un `DateTime.Now` en `AgentPromptBuilder` invalida el
+  caché en cada llamada sin ningún error; sólo lo delata `cache_read_input_tokens` en 0, que es lo que mide el eval. (4) **C-13:**
+  `MaxRetries = 0`: con los reintentos del SDK el tiempo real es el timeout por tres y el trabajo pasa su tope y su lease sin saberlo.
+  Reintenta el worker (`ModelJob.MaxAttempts`), igual para los dos proveedores.
+- **OpenAI va con `HttpClient` directo, sin su SDK, y con `store: false` explícito** (spec 2026-10-29 §9.1, O-2 y O-3). El SDK oficial
+  reintenta solo 408, 429 y 5xx hasta tres veces, que es justo lo que C-13 prohíbe; no lo «modernices» agregando el paquete. Y `store`
+  vale `true` si se omite: la conversación del cliente quedaría guardada en la cuenta del tenant (`ItKeepsNoStateOnTheProvider`). Al
+  comparar consumo: en OpenAI `input_tokens` **incluye** los leídos de caché y en Anthropic no; `ai.usage_records` los guarda como los
+  reporta cada proveedor, que es lo que se contrasta con su factura (O-7). `cache_creation_input_tokens` de OpenAI es `NULL`, no `0` (C-4).
+- **Una clave de proveedor de IA jamás se imprime**, ni al verificar que una conexión existe. Son BYOK: viven cifradas en `integrations`
+  (no en `user-secrets`, el ConfigMap ni el Secret), y en código viajan en `AiCredential`, cuyo `ToString` no la escribe. Los clientes
+  nombrados `ai.anthropic` y `ai.openai` van con `RemoveAllLoggers()`: el log de `HttpClient` escribiría el `Authorization`. Lo amarran
+  `AnthropicNoLeakTests` y `OpenAiNoLeakTests`, con el host en `Trace`. El eval (`Modules.Ai.Eval`) lee la clave sólo de
+  `QEP_EVAL_ANTHROPIC_API_KEY` / `QEP_EVAL_OPENAI_API_KEY`, de una cuenta de evaluación, y nunca la acepta por argumento. **El eval gasta
+  dinero real: no se corre sin el presupuesto aprobado por el owner** (README, «Agentes IA», «Eval»).
+- **La cola del bot se rutea por `bot_kind`, y una conexión sin ocupante no deja fila** (spec 2026-10-29 §6.1). El webhook decide en
+  `InboundIngestion.BotKindForAsync`: una conversación con el asistente `Active` sigue con el bot con que empezó
+  (`automation_bot_kind`); si no, la toma quien ocupa la conexión en `messaging.connection_bots`; sin ocupante **no se encola** (antes se
+  encolaba y el motor la marcaba `skipped`). El síntoma en una prueba que siembra la conversación sin sembrar el ocupante es un bot mudo
+  sin error (`AutomationInboxTests.WithoutAnOccupantTheInboundIsNotEnqueued`). Los agentes reclaman sólo `bot_kind = 2` y el motor de
+  chatbots sólo `1` (`AnAgentOccupantRoutesTheRowToTheAgentAndTheChatbotEngineDoesNotClaimIt`). Los valores de `BotKind` se guardan en
+  tres columnas: no se reordenan.
+- **`sent_by_kind = 3` es un agente de IA: lleva `sent_by_agent_id` y nunca miembro** (`CK_messages_sent_by_agent`,
+  `CK_messages_sent_by_kind IN (1,2,3,4)`). Un join al miembro lo pierde en silencio, igual que al `4`. Para «primera respuesta» cuenta
+  como un chatbot y nunca como asesor (`MessagingReportSource`); su nombre sale del mismo diccionario de los chatbots
+  (`IAutomationsChatbotNames`, que ahora lee también Ai). Un lector nuevo de autores decide qué hace con el 3 y con el 4.
+- **El `Down` de `AddAgentAutomation` (Messaging) sólo corre sobre una base sin agentes.** Con un mensaje `sent_by_kind = 3` o una
+  conversación de un agente, los CHECK viejos fallan y el `Down` se deshace entero. El rollback de los agentes es revertir el código, no
+  correr ese `Down`.
+- **El `Down` de `AddOpenAiProvider` borra las conexiones de `openai`, y con ellas sus secretos** (`CASCADE`), igual que el de
+  `AddAnthropicProvider` con las de `anthropic`: Postgres valida las filas al volver a poner el CHECK. Correrlo en producción le borra la
+  clave a cada tenant que la había conectado; tienen que volver a ponerla.
+- **El borrador de cotización de un agente no se duplica por el índice, no por la búsqueda previa** (spec 2026-10-29 D-A16). La clave es
+  `ai:{jobId}:{callId}` en `quotations.quotations.external_key`; `IX_quotations_tenant_external_key` (parcial) cierra la carrera y
+  `QuotationsUnitOfWork` lo traduce **por nombre de índice** a `quotation.quotation.external_key_taken`, que `ExternalQuotationService`
+  resuelve devolviendo la cotización que ganó (`AlreadyExisted`). Mismo patrón que `IX_orders_tenant_external_key`: no lo cambies por una
+  consulta en el servicio (`ExternalQuotationServiceTests.TheSameExternalKeyReturnsTheExistingQuotation`). Y un traspaso con borrador
+  escrito no lo descarta un turno nuevo del cliente: el trabajo siguiente crearía otro.
+- **La causa de un traspaso vive en tres enums que se cambian juntos**: `HandoffCauseKind` del motor de chatbots (Automations), el de los
+  agentes (`Modules.Ai.Application.HandoffCauseKind`) y `AutomationHandoffKind` (Messaging), traducidos por nombre en Bootstrapper. Un
+  código de traspaso de agente nuevo tiene que pasar `AutomationHandoff.IsValidCode` o se guarda `null` sin error, y un proveedor nuevo
+  tiene que sobrevivir la limpieza del hilo. Los amarra `HandoffCauseKindParityTests` (Bootstrapper.UnitTests).
 
 ## Verificación
 

@@ -477,15 +477,18 @@ planeado:
 
 ### Task 11: Documentación y despliegue
 
-- [ ] README: sección «Agentes IA» (módulo, flujo de dos etapas, proveedores elegibles por agente, opciones
-  `Ai:Providers`, cómo agregar un proveedor, cómo probar con servidores falsos).
-- [ ] CLAUDE.md: gotchas que no se deducen del código: sin respaldo entre proveedores (C-20); el `issue` es por
-  proveedor (C-19); y de Anthropic, C-8, C-11, C-12 y C-13; las claves de proveedor jamás se imprimen.
-- [ ] Red: el pod tiene que llegar a `api.anthropic.com` y al host de OpenAI que fije P-1. Ninguna clave de proveedor va
-  en el ConfigMap ni en el Secret del despliegue: con BYOK viven cifradas en `integrations`.
+- [x] README: sección «Agentes IA» (módulo, flujo de dos etapas, proveedores elegibles por agente, opciones
+  `Ai:Providers`, cómo agregar un proveedor, cómo probar con servidores falsos), más «Eval» y «Despliegue».
+- [x] CLAUDE.md: gotchas que no se deducen del código: sin respaldo entre proveedores (C-20); el `issue` es por
+  proveedor (C-19); y de Anthropic, C-8, C-11, C-12 y C-13; las claves de proveedor jamás se imprimen. Suma OpenAI sin SDK y
+  `store: false`, el ruteo por `bot_kind`, `sent_by_kind = 3`, los `Down` de `AddAgentAutomation` y `AddOpenAiProvider`, la
+  idempotencia del borrador de cotización y la paridad de `HandoffCauseKind`.
+- [x] Red: el pod tiene que llegar a `api.anthropic.com` y a `api.openai.com` (P-1 resuelta, O-1). Ninguna clave de proveedor va
+  en el ConfigMap ni en el Secret del despliegue: con BYOK viven cifradas en `integrations`. En README, «Agentes IA», «Despliegue».
 - [ ] Frontend: el spec de producto supone un solo proveedor (OpenAI). Se le avisa a su developer de la elección por
-  agente, de `GET /ai/models` agrupado y de `GET /ai/settings` por proveedor; **no** se edita desde este repo.
-- [ ] Al mergear cada slice a `develop`: fila de Agentes IA en `docs/estado.md` y su Registro.
+  agente, de `GET /ai/models` agrupado y de `GET /ai/settings` por proveedor; **no** se edita desde este repo. Pendiente: el
+  orquestador se lo reporta al owner.
+- [ ] Al mergear cada slice a `develop`: fila de Agentes IA en `docs/estado.md` y su Registro. Se hace al mergear, no en esta rama.
 
 ## Spec discrepancies
 
