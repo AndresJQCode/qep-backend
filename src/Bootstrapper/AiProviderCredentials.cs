@@ -7,13 +7,20 @@ namespace Bootstrapper;
 
 /// <summary>
 /// Plan 2026-11-12, C-1: la clave de cada proveedor de modelos es la única conexión de ese proveedor en Integrations
-/// (<c>maxConnections: 1</c>), con la misma clave de proveedor que Ai (<c>anthropic</c>). Integrations ya filtra tenant, estado,
-/// visibilidad y clave legible; acá se traduce a la causa de Ai. Un proveedor de Ai que Integrations todavía no ofrece (OpenAI hasta la
-/// Tarea 6) no tiene conexión posible: <c>NotConfigured</c> y <c>connectable: false</c>.
+/// (<c>maxConnections: 1</c>), con la misma clave de proveedor que Ai (<c>anthropic</c>, <c>openai</c>). Integrations ya filtra tenant,
+/// estado, visibilidad y clave legible; acá se traduce a la causa de Ai. Un proveedor de Ai que Integrations no ofrezca no tiene conexión
+/// posible: <c>NotConfigured</c> y <c>connectable: false</c>.
 /// </summary>
 internal sealed class AiProviderCredentials(IIntegrationConnections connections, IConnectionHealthReporter healthReporter)
     : IAiProviderCredentials
 {
+    /// <summary>El campo secreto de cada proveedor de Integrations que es un proveedor de modelos.</summary>
+    private static readonly Dictionary<string, string> ApiKeyFields = new(StringComparer.Ordinal)
+    {
+        [IntegrationProviders.Anthropic.Key] = AnthropicFieldKeys.ApiKey,
+        [IntegrationProviders.OpenAi.Key] = OpenAiFieldKeys.ApiKey,
+    };
+
     public async Task<AiCredentialResolution> ResolveAsync(Guid tenantId, AiProvider provider, CancellationToken cancellationToken)
     {
         if (IntegrationProviders.Find(provider.Value) is null)
@@ -33,7 +40,8 @@ internal sealed class AiProviderCredentials(IIntegrationConnections connections,
             return AiCredentialResolution.Unusable(ReasonOf(resolution.Unavailable));
         }
 
-        return connection.Secrets.GetValueOrDefault(AnthropicFieldKeys.ApiKey) is { Length: > 0 } apiKey
+        return ApiKeyFields.TryGetValue(provider.Value, out var field)
+            && connection.Secrets.GetValueOrDefault(field) is { Length: > 0 } apiKey
             ? AiCredentialResolution.Resolved(new AiCredential(connection.Id, apiKey))
             : AiCredentialResolution.Unusable(AiCredentialUnavailableReason.SecretUnreadable);
     }

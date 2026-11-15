@@ -44,7 +44,7 @@ public sealed class AiProviderCredentialsTests
         Assert.Null(resolution.Credential);
     }
 
-    // C-19: la conexión de un proveedor no habilita al otro. OpenAI no es todavía un proveedor de Integrations (Tarea 6).
+    // C-19: la conexión de un proveedor no habilita al otro.
     [Fact]
     public async Task OpenAiIsNotConfiguredEvenWithAnAnthropicConnection()
     {
@@ -112,10 +112,33 @@ public sealed class AiProviderCredentialsTests
         Assert.Equal(
             [
                 new AiProviderConnectionState(AiProviders.Anthropic, Connectable: true, id, "NeedsAttention"),
-                new AiProviderConnectionState(AiProviders.OpenAi, Connectable: false, null, null),
+                new AiProviderConnectionState(AiProviders.OpenAi, Connectable: true, null, null),
             ],
             states);
     }
+
+    // Tarea 6: OpenAI es un proveedor de Integrations con la misma forma; su clave se resuelve igual, de su propia conexión.
+    [Fact]
+    public async Task ResolveReturnsTheKeyOfTheActiveOpenAiConnection()
+    {
+        var id = Guid.CreateVersion7();
+        var connections = new StubConnections
+        {
+            Listings = { ["openai"] = [new ConnectionListing(id, "Cuenta de OpenAI", ConnectionStatus.Active)] },
+            Resolution = ConnectionResolution.Resolved(new ResolvedConnection(
+                id, "openai", "Cuenta de OpenAI", new Dictionary<string, string>(),
+                new Dictionary<string, string> { ["apiKey"] = "sk-proj-SENTINEL" })),
+        };
+
+        var resolution = await new AiProviderCredentials(connections, new StubReporter()).ResolveAsync(TenantId, AiProviders.OpenAi, Ct);
+
+        Assert.Null(resolution.Unavailable);
+        Assert.Equal((id, "sk-proj-SENTINEL"), (resolution.Credential?.ConnectionId, resolution.Credential?.ApiKey));
+    }
+
+    [Fact]
+    public void TheOpenAiProviderKeyMatchesIntegrations() =>
+        Assert.Equal(IntegrationProviders.OpenAi.Key, AiProviders.OpenAi.Value);
 
     // El adaptador nombra el proveedor de Integrations con la misma clave que Ai: si alguna diverge, la conexión nunca se encuentra.
     [Fact]

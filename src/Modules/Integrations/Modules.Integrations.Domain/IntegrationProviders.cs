@@ -74,6 +74,12 @@ public static class AnthropicFieldKeys
     public const string ApiKey = "apiKey";
 }
 
+/// <summary>Spec 2026-10-29 §4.5: la clave de la cuenta de OpenAI del tenant, el único campo.</summary>
+public static class OpenAiFieldKeys
+{
+    public const string ApiKey = "apiKey";
+}
+
 /// <summary>
 /// La lista cerrada de proveedores, como <see cref="TenantModuleKeys.All"/> (spec 2026-10-08,
 /// «Catálogo»). Cada proveedor entra con el spec de su consumidor, porque sin módulo consumidor nunca
@@ -322,7 +328,26 @@ public static class IntegrationProviders
         onboarding: ProviderOnboarding.Form,
         requiresTenantEnablement: false);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic];
+    /// <summary>Spec 2026-10-29 §4.5 y plan 2026-11-12, C-1: la clave de la cuenta de OpenAI del tenant (BYOK), con la misma forma que la
+    /// de Anthropic. Llega con su adaptador (Tarea 6): un proveedor que nadie puede usar no se ofrece. Lo prueba <c>GET /v1/models</c>
+    /// (spec §9.1, O-10).</summary>
+    public static readonly IntegrationProvider OpenAi = new(
+        "openai",
+        "OpenAI",
+        IntegrationCategory.Ai,
+        [TenantModuleKeys.Ai],
+        [
+            new FieldDefinition(
+                OpenAiFieldKeys.ApiKey, "Clave de API", FieldKind.Secret,
+                required: true, maxLength: 256, pattern: @"^[\x21-\x7E]{1,256}\z",
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla.",
+                revealSuffix: 4),
+        ],
+        maxConnections: 1,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic, OpenAi];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>
