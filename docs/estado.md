@@ -162,6 +162,91 @@ del POS por número parcial y documento del cliente (2026-10-23).
 Los specs `2026-09-*` que el README cita (`README.md:449`, `:564`, `:2028`) se borraron en `8662d50c` («limpieza»); el
 historial de `git` los conserva.
 
+## Pruebas manuales pendientes del owner (en `develop`, no en `main`)
+
+Lista armada el 2026-11-15 contra git: `origin/main` en `a4d7a31e`; todo lo de abajo entró a `develop` desde el
+2026-11-10 (`453bb3f9`) y nada de eso está en `main`. Lo mergeado antes ya está en `main` y no se repite aquí. Cada
+punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y el detalle técnico sigue en su fila de
+«Trabajo en curso» o del «Registro». Las ramas que sólo tocan pruebas (`81092593`, `b6ccc790`, `ddd6a4c6`,
+`e51eff93`, `fbf823f3`, `2b39ceae`) no tienen prueba manual.
+
+**Mensajería y clientes**
+
+- [ ] **Tarjetas de contacto compartidas** (`453bb3f9`): recibir por WhatsApp un contacto con varios teléfonos y correo;
+  la burbuja muestra nombre, organización, teléfonos y correos.
+- [ ] **Escribirle o agregar como cliente a un contacto compartido** (`bb408f7b`): un teléfono que ya es de un cliente
+  muestra ese cliente; uno desconocido ofrece «Agregar como cliente» con país y número precargados; «Escribirle» abre
+  la conversación.
+- [ ] **Búsqueda y filtro por teléfono en `/customers`** (`04764f39`, `381dcde1`): buscar por parte del teléfono, usar
+  el filtro de teléfono y exportar el Excel con el filtro puesto.
+- [ ] **Contactos de empresa** (`014c2872`): vincular una persona a un cliente empresa; la lista oculta los contactos por
+  defecto y los muestra con el filtro; la ficha de la empresa lista sus contactos; importar y exportar el Excel con la
+  columna «Empresa»; enviar una cotización a un contacto; triage del embudo sobre una empresa con negocio abierto
+  (422 `pipeline.triage.not_pending`).
+- [ ] **Borrar clientes en lote** (`f34664ac`): seleccionar varios en `/customers`, uno con cotización (queda en
+  `blocked`) y otro sólo con conversación (se borra, con sus mensajes y medios); el contacto borrado que vuelve a
+  escribir se crea de nuevo. También el `curl.exe` del endpoint.
+- [ ] **El bot suelta la conversación** (`d42e30e3`, sin frontend): tomar una conversación con una corrida del bot
+  esperando y comprobar que la corrida termina `Interrupted`; borrar el chatbot responde 409
+  `automations.chatbot.has_live_runs` sólo mientras atiende.
+- [ ] **API externa: encabezado multimedia** (`a8681589`, contra Meta real): enviar por
+  `POST /api/v1/external/whatsapp/messages` una plantilla con encabezado de imagen, otra de video y otra de documento;
+  un encabezado que no coincide responde 422 `messaging.template.header_mismatch`; el hilo de la bandeja muestra el
+  encabezado.
+
+**Pedidos, tienda e impuestos**
+
+- [ ] **Estados del pedido en cuatro ejes** (`0e85094d`, con frontend y storefront): marcar y desmarcar pagado,
+  preparar (el pedido deja de editarse) y desmarcar, archivar y desarchivar, facturado; un comprobante deja el pago en
+  «Pendiente de verificar»; filtros del listado; ajustes en `/orders-settings`; el comprador ve los ejes en la tienda.
+  Decidir si el listado conserva «Todos menos archivados».
+- [ ] **Costo de producto y reporte de margen** (`e5212c5b`): cargar costo por variante con `admin`; sin
+  `catalog.product_cost.read` no se ve; vender en el POS y marcar un pedido pagado; `/reports/margin` por moneda, con las
+  líneas sin costo aparte.
+- [ ] **Impuestos por tipo y país** (`8052ee2f`): crear tasas IVA, Retefuente y ReteICA con país; cargar la UVT del año
+  en la consola de operador; cliente con retenciones; la cotización congela sus retenciones; enviarla sin empresa
+  facturadora responde 422 `quotation.billing.account_required`; un pedido editable cambia retenciones y empresa;
+  una cotización vieja con la retención del 2,5 % conserva sus totales.
+- [ ] **ReteICA por empresa y municipio** (`d4e4c39e`, `4ca73b63`): tasa ReteICA con municipio asignada a una empresa;
+  cliente agente retenedor en ese municipio; la cotización y el pedido la resuelven por municipio de la operación;
+  cambiar empresa, municipio o cliente la re-resuelve; editar el porcentaje y marcar «Sin retención»; el PDF imprime el
+  porcentaje; el historial muestra el texto neutro al quitarla.
+- [ ] **Tienda en modo catálogo** (`7d47fe06`, con storefront): apagar «Mostrar precios» en `/settings/store`; la tienda
+  deja de mostrarlos (hasta ~6 min por la caché) y el pedido se valoriza igual; volver a prenderlo.
+- [ ] **Detalle y cancelación del pedido del comprador** (`ae8913cd`, `dd6ca631`, storefront): con cuenta, abrir un
+  pedido y ver totales, facturación, envío y nota; cancelar uno sin comprobante.
+- [ ] **404 cacheable de la tienda** (`d363d026`): `curl.exe -i` a un host de tienda inexistente responde 404 con
+  `Cache-Control: public, max-age=60`.
+
+**Shopify** (tienda de desarrollo real)
+
+- [ ] **Tokens offline que expiran** (`b3b559b5`, bloqueante antes del 2027-01-01): §9 del spec
+  `2026-11-12-shopify-tokens-que-expiran`; instalar, ver el refresco del worker y forzar `token_expired` con su texto en
+  el frontend.
+- [ ] **Fuente del documento del comprador** (`1f0c7a4b`, frontend `7d976a1c`): los selects de la página de la tienda
+  listan las opciones; guardar una y comprobar que un pedido nuevo toma el documento de ahí.
+- [ ] **Líneas personalizadas** (`d293a2b1`): un pedido con una línea sin producto queda en espera con su título;
+  «Asociar a un producto» desde la bandeja lo reintenta; la sección «Líneas personalizadas» de la tienda lista y borra
+  la asociación.
+- [ ] **Días de historial en «Sincronizar ahora»** (`f87c8d12`): poner N días, sincronizar y ver pedidos anteriores al
+  enlace; quitar el valor.
+- [ ] **Sincronizar ediciones en dos sentidos** (`11e3f26c`, `6948130b`, frontend `e2e835be`): editar un pedido en
+  Shopify y verlo aplicado (`Automatic`) o en «Cambios por revisar» (`Manual`), con aceptar, rechazar y marcar revisado;
+  un conflicto con una corrección del asesor; la corrección del asesor (dirección, ciudad, nota, atributos) llega a
+  Shopify; con la conexión inactiva queda retenida y se libera por pedido y para toda la tienda; una ciudad de otro
+  departamento responde 422. V-11, V-12 y V-13. Antes, la versión de la app con `write_orders`.
+
+**Sin pantallas todavía** (se prueban por API, con Scalar o `curl.exe`, o se esperan al frontend)
+
+- [ ] **Agentes IA, Tareas 1 a 4** (`2ff69228`): no contesta conversaciones todavía. Conexión `anthropic` con su
+  probador, `GET …/ai/models` y `…/ai/settings`, crear, publicar, pausar y reanudar un agente; borrar una conexión que
+  atiende un chatbot o un agente responde 409 `integrations.connection.in_use_by_bot`.
+- [ ] **Soporte/PQRSF fases 1 y 2** (`5904b975`, `5db3fd16`, `4e5d4606`): prender el módulo `support`; crear un ticket
+  y ver el radicado `SOP-…`; el vencimiento cuenta lunes a viernes sin festivos de Colombia; editar un ticket Resuelto
+  responde 422 `support.ticket.not_editable`; abrir un ticket desde una conversación, fijar mensajes y «Seguir el
+  hilo»; responder por WhatsApp con la ventana abierta, con la plantilla `qep_soporte_respuesta` con la ventana cerrada
+  y por correo.
+
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
 - **Shopify: sincronizar ediciones (2026-11-15):** correr antes la integración completa de Shopify y Quotations. Antes de publicar la `ConfigMap` con `write_orders`, liberar en el Dev Dashboard de Shopify una versión de la app que pida ese scope (si no, toda instalación nueva falla con `scopes_missing`; README § Integración con Shopify, «Despliegue»). Backend y frontend salen juntos: sin el frontend nadie ve «Cambios por revisar» ni libera envíos retenidos. Verificar V-11, V-12 (teléfono E.164 como eco, `note: null` borra la nota) y V-13 contra una tienda real.
@@ -328,6 +413,7 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-15 — Nueva sección «Pruebas manuales pendientes del owner»: la lista de lo que está en `develop` y no en `main` (`origin/main` en `a4d7a31e`), armada contra `git log origin/main..develop`.
 - 2026-11-15 — Mergeado a `develop` (`4e5d4606`, `--no-ff`, sin push) **Soporte/PQRSF fase 2 «Mensajería» backend** (`feature/support-messaging`, 18 commits hasta `2e419c1e`; rama y worktree borrados). Sin conflictos (automerge de `CLAUDE.md`, `README.md` y `SupportTicket.cs` con la guarda R9); build del resultado 0 errores en un worktree aparte (el checkout principal tenía la API corriendo). Ninguna prueba corrida por decisión del owner.
 - 2026-11-15 — Mergeado a `develop` (`6948130b`, `--no-ff`, sin push) **la validación de la ciudad de la corrección de un pedido de Shopify contra su departamento** (`feature/shopify-ciudad-departamento`, `685925bc`; rama y worktree borrados). `PUT …/shopify/orders/{id}/corrections` con parte de envío responde 422 `validation.failed` con `errors["shippingParty.departmentId"]` si el departamento no existe y `errors["shippingParty.cityId"]` si la ciudad no existe o es de otro departamento, antes de escribir o encolar nada (puerto `IShopifyGeographyLookup.CheckCityAsync`); `DescribeCityAsync` ya no describe una ciudad de otro departamento. Pruebas en verde sobre la rama: unitarias de Shopify (667) y Bootstrapper (578), e integración `ShopifyOrderCorrectionApiTests` (17/17); **integración completa de Shopify sin correr** (la corre el owner). Sin migraciones.
 - 2026-11-15 — Mergeado a `develop` (`5db3fd16`, `--no-ff`, sin push) **las decisiones del owner sobre Soporte** (`feature/support-owner-decisions`, 4 commits; rama y worktree borrados): plazos de lunes a viernes con festivos de Colombia (deja de leer el horario de atención), 422 `support.ticket.not_editable` al editar un ticket Resuelto o Cerrado, y en el spec el reloj legal confirmado, sin pausa parcial, petición incompleta, reclamación directa y retención. Build del merge 0 errores; ninguna prueba corrida por decisión del owner (las corre al final).
