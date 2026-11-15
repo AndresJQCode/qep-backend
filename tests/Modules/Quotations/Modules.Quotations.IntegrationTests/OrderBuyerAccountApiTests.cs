@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Modules.Tenancy.Application;
 using Npgsql;
@@ -245,6 +246,42 @@ public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) :
         Assert.Equal(HttpStatusCode.PreconditionFailed, delete.StatusCode);
         Assert.Equal(HttpStatusCode.PreconditionRequired, missing.StatusCode);
         Assert.False(await StoredSetByMemberAsync(connectionString, orderId));
+    }
+
+    // Revisión final de la rama: los enlaces automáticos no suben la versión, así que uno que confirma entre la carga y el
+    // guardado del asesor pasa el WHERE version = …. Es el camino de ApplyAsync (SetBuyerAccountByMember + ForceBuyerAccountWrite
+    // + guardado) con el enlace por SQL en medio: sin forzar la columna, quitar sobre un pedido cargado sin cuenta dejaba la
+    // cuenta automática y la marca del asesor a la vez.
+    [Fact]
+    public async Task TheMemberDecisionOverwritesAnAutomaticLinkCommittedAfterTheLoad()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var connectionString = sharedHost.Database.GetConnectionString();
+        var accountId = await SeedBuyerAccountAsync(connectionString, UniqueEmail(), verified: true);
+        var (tenantId, _, client, orderId) = await StoreOrderAsync(factory, buyerAccountId: null);
+        using var _ = client;
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IOrderRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>();
+        var order = Assert.IsType<Order>(
+            await repository.FindByIdAsync(tenantId, new OrderId(orderId), TestContext.Current.CancellationToken));
+
+        await using (var connection = new NpgsqlConnection(connectionString))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var link = new NpgsqlCommand(
+                "UPDATE quotations.orders SET buyer_account_id = @account WHERE id = @id", connection);
+            link.Parameters.AddWithValue("account", accountId);
+            link.Parameters.AddWithValue("id", orderId);
+            Assert.Equal(1, await link.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+        }
+
+        Assert.True(order.SetBuyerAccountByMember(null, DateTimeOffset.UtcNow));
+        repository.ForceBuyerAccountWrite(order);
+        await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.Null(await StoredBuyerAccountAsync(connectionString, orderId));
+        Assert.True(await StoredSetByMemberAsync(connectionString, orderId));
     }
 
     private static string UniqueEmail() => $"buyer-{Guid.CreateVersion7():N}@example.com";

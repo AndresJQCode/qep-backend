@@ -87,6 +87,15 @@ public interface IOrderRepository
     Task<int> LinkStoreOrdersByBillingEmailAsync(
         Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Obliga a que el siguiente guardado escriba <c>buyer_account_id</c> aunque el valor no haya cambiado respecto a lo
+    /// leído. Lo necesita la decisión del asesor (spec 2026-11-15 §4): los enlaces automáticos (<see cref="Order.LinkBuyerAccount"/>
+    /// y <see cref="LinkStoreOrdersByBillingEmailAsync"/>) no suben la versión, así que uno que confirme entre la carga y el
+    /// guardado pasa el <c>WHERE version = …</c>; si quitar sobre un pedido cargado sin cuenta no escribiera la columna, la
+    /// fila quedaría con la cuenta automática y la marca del asesor a la vez.
+    /// </summary>
+    void ForceBuyerAccountWrite(Order order);
+
     /// <summary>Un pedido del comprador, con tracking y con sus comprobantes, para poder cancelarlo.</summary>
     Task<Order?> FindByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken);

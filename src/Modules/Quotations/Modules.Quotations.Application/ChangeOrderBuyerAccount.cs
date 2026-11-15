@@ -102,6 +102,8 @@ internal static class OrderBuyerAccountChange
         }
     }
 
+    // Adelanta el error de origen antes de buscar el correo; el respaldo es la guarda de Order.SetBuyerAccountByMember, que es
+    // la única que cubre el DELETE.
     public static void EnsureStoreOrder(Order order)
     {
         if (order.Source != OrderSource.Store)
@@ -128,6 +130,9 @@ internal static class OrderBuyerAccountChange
         var previous = order.BuyerAccountId;
         if (order.SetBuyerAccountByMember(buyerAccountId, now))
         {
+            // Un enlace automático pudo confirmar después de la carga sin subir la versión: la decisión del asesor se escribe
+            // siempre, aunque EF vea el mismo valor que leyó.
+            orderRepository.ForceBuyerAccountWrite(order);
             auditPublisher.PublishWithDetails(
                 tenantId,
                 executionContext.SubjectId,

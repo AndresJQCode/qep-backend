@@ -1083,6 +1083,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public void ForceBuyerAccountWrite(Order order) => throw new NotSupportedException();
+
     public Task<Order?> FindByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken)
     {

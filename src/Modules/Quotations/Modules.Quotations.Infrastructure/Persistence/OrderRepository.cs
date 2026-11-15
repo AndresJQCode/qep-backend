@@ -146,6 +146,9 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
     }
 
     // El origen y el rol se guardan como texto (HasConversion<string>), y un correo NULL nunca coincide.
+    // lower(trim(...)) replica BuyerEmail.TryNormalize (Trim + ToLowerInvariant), que es como llega normalizedEmail. El trim
+    // de SQL sólo quita espacios: un correo guardado con tabulador o salto de línea no coincide, que es el lado seguro (no
+    // enlaza de más).
     public Task<int> LinkStoreOrdersByBillingEmailAsync(
         Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken)
     {
@@ -166,6 +169,9 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             """,
             cancellationToken);
     }
+
+    public void ForceBuyerAccountWrite(Order order) =>
+        dbContext.Entry(order).Property(value => value.BuyerAccountId).IsModified = true;
 
     public Task<Order?> FindByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken) =>
