@@ -368,6 +368,9 @@ public sealed class PublicBuyerOrdersApiTests
         var line = Assert.Single(detail["lines"]!.AsArray())!;
         Assert.Equal(orderId, (Guid)detail["id"]!);
         Assert.Equal("Camiseta", (string)line["name"]!);
+        // El producto sembrado no tiene foto: la clave viaja igual, en null.
+        Assert.Equal(["imageUrl", "lineTotal", "name", "quantity", "unitPrice"], Keys(line));
+        Assert.Null((string?)line["imageUrl"]);
         Assert.Equal(2m, (decimal)line["quantity"]!);
         Assert.Equal(10_000m, (decimal)line["unitPrice"]!);
         Assert.Equal((decimal)line["unitPrice"]! * (decimal)line["quantity"]!, (decimal)line["lineTotal"]!);

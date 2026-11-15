@@ -45,7 +45,8 @@ internal sealed class BuyerOrdersAdapter(IServiceScopeFactory scopes) : IBuyerOr
         new(
             order.Id, order.Number, order.CreatedAt, order.Status, order.PaymentStatus, order.FulfillmentStatus, order.Invoiced,
             order.Total, order.Currency, order.LineCount, order.FirstLineName,
-            order.Lines.Select(line => new BuyerOrderLineDto(line.Name, line.Quantity, line.UnitPrice, line.LineTotal)).ToList(),
+            order.Lines.Select(line => new BuyerOrderLineDto(
+                line.Name, line.Quantity, line.UnitPrice, line.LineTotal, line.ImageUrl)).ToList(),
             order.CancelledAt, order.CanCancel,
             order.Subtotal, order.TaxAmount, order.FreightTotal, order.IsStorePickup, order.CarrierName, order.BilledTo,
             order.Billing is { } billing
