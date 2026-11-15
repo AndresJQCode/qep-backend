@@ -47,6 +47,17 @@ public sealed class ValkeyRegistrationTests
         Assert.IsType(expected, provider.GetRequiredService<BuildingBlocks.Application.IQueueDoorbell>());
     }
 
+    [Theory]
+    [InlineData("true", typeof(ValkeyApiKeyTouchGate))]
+    [InlineData("false", typeof(NullApiKeyTouchGate))]
+    public void TheApiKeyTouchGateFollowsItsArea(string on, Type expected)
+    {
+        var services = Register(("Valkey:Areas:ApiKeyTouch", on));
+        using var provider = services.BuildServiceProvider();
+
+        Assert.IsType(expected, provider.GetRequiredService<Modules.ApiAccess.Application.IApiKeyTouchGate>());
+    }
+
     [Fact]
     public void WithRateLimitingOnThePartitionsUseValkey()
     {

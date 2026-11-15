@@ -7,6 +7,7 @@ using Bootstrapper.Valkey.Permissions;
 using Bootstrapper.Valkey.Presence;
 using Bootstrapper.Valkey.RateLimiting;
 using Bootstrapper.Valkey.Sessions;
+using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
 using Modules.Buyers.Application;
 using Modules.Identity.Application;
@@ -49,6 +50,7 @@ public static class ValkeyServiceCollectionExtensions
         AddPermissionsCache(services, IsOn(valkey, ValkeyArea.Permissions));
 
         AddDoorbells(services, IsOn(valkey, ValkeyArea.Doorbells));
+        AddApiKeyTouchGate(services, IsOn(valkey, ValkeyArea.ApiKeyTouch));
 
         // El líder del muestreador de colas (D-7, plan P14): se registra siempre y decide en cada vuelta con el
         // interruptor de Doorbells; apagado, todos los pods muestrean como antes.
@@ -79,6 +81,21 @@ public static class ValkeyServiceCollectionExtensions
         }
 
         services.AddSingleton<IQueueDoorbell, ValkeyQueueDoorbell>();
+    }
+
+    /// <summary>
+    /// La compuerta del toque de <c>last_used_at</c> de las claves de API (D-8). Apagada, el nulo: cada request intenta su
+    /// <c>UPDATE</c> como antes. Prendida (<c>Valkey:Areas:ApiKeyTouch</c>), sólo el que pone <c>qep:touch:apikey:{id}</c>.
+    /// </summary>
+    private static void AddApiKeyTouchGate(IServiceCollection services, bool shared)
+    {
+        if (!shared)
+        {
+            services.AddSingleton<IApiKeyTouchGate, NullApiKeyTouchGate>();
+            return;
+        }
+
+        services.AddSingleton<IApiKeyTouchGate, ValkeyApiKeyTouchGate>();
     }
 
     /// <summary>
