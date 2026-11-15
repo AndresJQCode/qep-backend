@@ -256,6 +256,65 @@ public sealed class StoreOrderGatewayTests(SharedQuotationsHost sharedHost) : IC
         Assert.Equal(foreign.Total, foreign.NetTotal);
     }
 
+    // Spec ReteICA por empresa §7.5 (R5, R6, A10): el pedido de la tienda nace en el municipio de la empresa, con la ReteICA
+    // de la empresa ahí si el cliente es agente en ese municipio.
+    [Fact]
+    public async Task StoreOrderStartsWithTheCompanysCityAndCustomerRule()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId, cityId: city.CityId);
+        var reteIca = await InsertWithholdingRateAsync(factory, tenantId, "ReteICA Bogotá", "ReteICA", 0.966m, cityId: city.CityId);
+        await AssignCompanyWithholdingRateAsync(factory, tenantId, account.CompanyId, reteIca);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        await SetWithholdingAgentAsync(factory, tenantId, customerId, city.CityId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+
+        var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050"), quantity: 1m),
+            TestContext.Current.CancellationToken));
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(tenantId)}/{result.OrderId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Equal(city.CityId, detail.OperationCity?.Id);
+        var row = Assert.Single(detail.Order.Withholdings);
+        Assert.Equal((reteIca, (Guid?)city.CityId), (row.TaxRateId, row.CityId));
+        Assert.Equal(("Resolved", (bool?)true), (detail.MunicipalWithholdings[0].Status, detail.MunicipalWithholdings[0].CustomerIsAgent));
+    }
+
+    // Review Focus 3 (baseline D22): una empresa con su ReteICA en otro municipio, o con la de su municipio inactiva, no tumba
+    // el checkout: el pedido entra sin fila municipal.
+    [Fact]
+    public async Task StoreOrderNeverFailsOnMunicipalResolution()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (city, other) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId, cityId: city.CityId);
+        var elsewhere = await InsertWithholdingRateAsync(factory, tenantId, "ReteICA otra", "ReteICA", 1m, cityId: other.CityId);
+        var inactive = await InsertWithholdingRateAsync(factory, tenantId, "ReteICA vieja", "ReteICA", 0.5m, cityId: city.CityId);
+        await ChangeTaxRateAsync(factory, inactive, isActive: false);
+        await AssignCompanyWithholdingRateAsync(factory, tenantId, account.CompanyId, elsewhere);
+        await AssignCompanyWithholdingRateAsync(factory, tenantId, account.CompanyId, inactive);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        await SetWithholdingAgentAsync(factory, tenantId, customerId, city.CityId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+
+        var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050"), quantity: 1m),
+            TestContext.Current.CancellationToken));
+
+        var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
+        Assert.Empty(order.Withholdings);
+        Assert.Equal(city.CityId, order.OperationCityId);
+    }
+
     // Una empresa de afuera con cuenta en pesos: otro país sin cambiar la moneda del pedido.
     private static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)> CreateSpanishCompanyAsync(
         HttpClient client, Guid tenantId)

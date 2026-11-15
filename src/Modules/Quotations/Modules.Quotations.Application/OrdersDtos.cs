@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace Modules.Quotations.Application;
 
 public sealed record OrderPaymentProofDto(
@@ -88,7 +91,10 @@ public sealed record OrderDto(
     /// <summary>Lo que falta por pagar: neto − consignado, con el redondeo de la moneda (pesos enteros en COP). Negativo
     /// es sobrante. Un total que no cierra se explica con un campo: la pantalla no resta comprobantes, que con la
     /// fracción de la retención le daría un saldo de centavos que no se ve (spec 2026-11-10 §3.2).</summary>
-    decimal Balance);
+    decimal Balance,
+    /// <summary>El municipio de la operación (spec ReteICA por empresa §7.5). No viaja en <c>OrderResponse</c>: el
+    /// compositor del detalle lo resuelve a nombre en la raíz de <see cref="OrderDetailResponse"/> (plan P2).</summary>
+    Guid? OperationCityId = null);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
@@ -193,7 +199,22 @@ public sealed record SaveOrderEditsRequest(
     /// <summary>Fija o cambia la empresa y la cuenta con que se cobra el pedido pendiente (D22), misma forma que en la
     /// cotización. <b>Ausente o null conserva</b> la guardada. En otra moneda es
     /// <c>order.billing.currency_change_not_allowed</c> (plan P10).</summary>
-    QuotationBillingAccountRequest? BillingAccount = null);
+    QuotationBillingAccountRequest? BillingAccount = null,
+    /// <summary>El porcentaje de la retención municipal de cada tipo (spec ReteICA por empresa §7.7). Ausente conserva
+    /// todos; una entrada con <c>percentage: null</c> vuelve al del catálogo.</summary>
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    /// <summary>Los tipos municipales con «Sin retención» elegido (owner 2026-11-13): quitan la fila de ese tipo del
+    /// pedido. Ausente, null o vacío = sin marca.</summary>
+    IReadOnlyList<string>? ClearedWithholdingTypes = null)
+{
+    /// <summary>
+    /// El municipio de la operación (plan P1): ausente conserva el guardado (o el de la empresa si cambia, A6),
+    /// <c>null</c> = el de la empresa, un id = ése. Ver <see cref="CreateQuotationRequest.OperationCityId"/> por qué es
+    /// un <see cref="JsonElement"/> y una propiedad.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public JsonElement OperationCityId { get; init; }
+}
 
 /// <summary>El bloque de facturación de «Editar pedido»: la parte propia (o ninguna), el consumidor final,
 /// la razón social del cliente y el perfil fiscal de la parte, como en <see cref="QuotationPartiesRequest"/>.</summary>
@@ -359,7 +380,13 @@ public sealed record OrderDetailResponse(
     IReadOnlyCollection<OrderHistoryEntryResponse> History,
     int[] AvailableFloors,
     // Spec 2026-11-10 §4.6: como en QuotationResponse. Sólo en la respuesta HTTP: el DTO interno no los trae.
-    IReadOnlyList<ClientContactDto> ClientContacts);
+    IReadOnlyList<ClientContactDto> ClientContacts,
+    // Spec ReteICA por empresa §9.4 (plan P2, owner 2026-11-13): en la raíz y no dentro de Order, como Client y
+    // AvailableFloors, porque los compone el endpoint con lookups que OrderResponse no tiene (OrderResponse también sale de
+    // /approve, /cancel… sin compositor). Misma forma y misma regla que en QuotationResponse.
+    QuotationCityResponse? OperationCity,
+    QuotationCityResponse? BillingCompanyCity,
+    IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings);
 
 public sealed record OrdersPageResponse(
     IReadOnlyCollection<OrderListItemResponse> Items,

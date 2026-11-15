@@ -210,7 +210,12 @@ public sealed class OrderWithholdingsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var setup = await SetUpAsync(factory);
         var retefuente = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
-        var reteIca = await InsertWithholdingRateAsync(factory, setup.TenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m);
+        // Spec ReteICA por empresa §7.5: la ReteICA es la de la empresa colombiana en su municipio. La edición cambia de
+        // empresa, así que el selector la acepta aunque el cliente no sea agente ahí (R11, A11).
+        var reteIca = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m,
+            cityId: await EnsureCityIdAsync(setup.Client));
+        await AssignCompanyWithholdingRateAsync(factory, setup.TenantId, setup.Account.CompanyId, reteIca);
         var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId);
         var spanish = await CreateSpanishCompanyAsync(setup.Client, setup.TenantId);
         var created = await CreateManualAsync(setup, clientId, spanish, quantity: 3m);

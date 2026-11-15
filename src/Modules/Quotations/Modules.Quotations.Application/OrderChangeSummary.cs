@@ -91,9 +91,19 @@ public static class OrderChangeSummary
         return names.Length == 0 ? "ninguna" : string.Join(", ", names);
     }
 
-    /// <summary>Los selectores de retención de un pedido pendiente (spec impuestos por tipo D21).</summary>
-    public static string WithholdingsChanged(string before, string after) =>
-        Trim($"Cambió las retenciones de {before} a {after}.");
+    /// <summary>Los selectores de retención de un pedido pendiente (spec impuestos por tipo D21). Con
+    /// <paramref name="notAgent"/>, la tasa municipal elegida es para un municipio donde el cliente no es agente (aplicación
+    /// a mano, spec ReteICA por empresa R11) y el texto lo dice; el punto doble con un municipio que termina en punto
+    /// («Bogotá, D.C.») es lo que da el literal del spec.</summary>
+    public static string WithholdingsChanged(string before, string after, (string Type, string City)? notAgent = null) =>
+        Trim(notAgent is { } manual
+            ? $"Cambió las retenciones de {before} a {after}; el cliente no está registrado como agente retenedor de {manual.Type} en {manual.City}."
+            : $"Cambió las retenciones de {before} a {after}.");
+
+    /// <summary>La re-resolución quitó una tasa municipal aplicada a mano porque el cliente no es agente en el municipio
+    /// nuevo (spec ReteICA por empresa §7.8, R11).</summary>
+    public static string ManualWithholdingRemoved(string type) =>
+        Trim($"Se quitó la {type} aplicada a mano al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.");
 
     /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
     public static string Sent(QuotationRecipient recipient, string? contactName = null) => recipient switch

@@ -115,5 +115,7 @@ public sealed class OrderResponseComposerTests
             customers ?? new StubQuotationCustomerLookup(Customer),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
-            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()));
+            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
 }
