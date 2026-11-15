@@ -264,6 +264,9 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AssigneeMemberId")
+                        .HasDatabaseName("IX_tickets_assignee");
+
                     b.HasIndex("TenantId", "CustomerId")
                         .HasDatabaseName("IX_tickets_tenant_customer");
 
@@ -281,6 +284,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.ToTable("tickets", "support", t =>
                         {
                             t.HasCheckConstraint("CK_tickets_intake", "intake IN ('Manual','Conversation','PublicForm')");
+
+                            t.HasCheckConstraint("CK_tickets_manual_medium", "manual_medium IN ('Phone','InPerson','Email','Letter','Other')");
 
                             t.HasCheckConstraint("CK_tickets_reply_channel", "reply_channel IN ('Thread','WhatsAppTemplate','Email')");
 
@@ -327,11 +332,17 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ActorMemberId")
+                        .HasDatabaseName("IX_ticket_events_actor");
+
                     b.HasIndex("TicketId", "Ordinal")
                         .IsUnique()
                         .HasDatabaseName("IX_ticket_events_ticket_ordinal");
 
-                    b.ToTable("ticket_events", "support");
+                    b.ToTable("ticket_events", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketType", b =>

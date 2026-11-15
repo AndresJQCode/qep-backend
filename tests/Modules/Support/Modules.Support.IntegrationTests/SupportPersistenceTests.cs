@@ -506,6 +506,64 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal((await CustomerIdsAsync(factory, tenant, "Cliente 201")).Order(), found.Order());
     }
 
+    // Revisión final m3: los CHECK de los dos enums que faltaban. La base rechaza un valor fuera del enum aunque lo escriba SQL crudo.
+    [Theory]
+    [InlineData("UPDATE support.tickets SET manual_medium = 'Fax' WHERE id = @id", "CK_tickets_manual_medium")]
+    [InlineData("UPDATE support.ticket_events SET kind = 'Deleted' WHERE ticket_id = @id", "CK_ticket_events_kind")]
+    public async Task AValueOutsideTheEnumIsRejectedByItsCheck(string sql, string constraint)
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var ticket = NewTicket(tenant, (await TypesAsync(factory, tenant))[0], 1, Now, Guid.CreateVersion7());
+        await SaveAsync(factory, ticket);
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var update = new NpgsqlCommand(sql, connection);
+        update.Parameters.AddWithValue("id", ticket.Id.Value);
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => update.ExecuteNonQueryAsync(Ct));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal(constraint, exception.ConstraintName);
+    }
+
+    // El alta manual sin medio no existe hoy, pero las fases 2 y 3 lo dejan en NULL: el CHECK lo admite.
+    [Fact]
+    public async Task TheManualMediumCheckAcceptsNull()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var ticket = NewTicket(tenant, (await TypesAsync(factory, tenant))[0], 1, Now, Guid.CreateVersion7());
+        await SaveAsync(factory, ticket);
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var update = new NpgsqlCommand("UPDATE support.tickets SET manual_medium = NULL WHERE id = @id", connection);
+        update.Parameters.AddWithValue("id", ticket.Id.Value);
+
+        Assert.Equal(1, await update.ExecuteNonQueryAsync(Ct));
+    }
+
+    // Revisión final m2: SupportUserReferenceProbe busca por membresía sola, sin tenant, en las dos columnas.
+    [Theory]
+    [InlineData("IX_tickets_assignee", "tickets", "(assignee_member_id)")]
+    [InlineData("IX_ticket_events_actor", "ticket_events", "(actor_member_id)")]
+    public async Task TheUserReferenceProbeColumnsAreIndexed(string index, string table, string columns)
+    {
+        var (factory, _) = await NewTenantAsync();
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var select = new NpgsqlCommand(
+            "SELECT tablename, indexdef FROM pg_indexes WHERE schemaname = 'support' AND indexname = @index", connection);
+        select.Parameters.AddWithValue("index", index);
+        await using var reader = await select.ExecuteReaderAsync(Ct);
+
+        Assert.True(await reader.ReadAsync(Ct), $"The index {index} does not exist.");
+        Assert.Equal(table, reader.GetString(0));
+        Assert.EndsWith($"USING btree {columns}", reader.GetString(1));
+    }
+
     private static async Task SeedNamedCustomersAsync(QepApiFactory factory, Guid tenant, int count)
     {
         await using var connection = new NpgsqlConnection(ConnectionString(factory));

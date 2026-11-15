@@ -4766,8 +4766,9 @@ cliente espera al borrado y falla con 422.
 actuado en su traza.
 
 **Migraciones:** `Tenancy` `AddSupportModuleKey` (el CHECK de `tenant_modules` admite `support`; su `Down` borra las filas `support`
-antes de volver al CHECK anterior) y `Support` `InitialSupport` (esquema `support`: `tenant_settings`, `ticket_types`, `tickets` y
-`ticket_events`).
+antes de volver al CHECK anterior), `Support` `InitialSupport` (esquema `support`: `tenant_settings`, `ticket_types`, `tickets` y
+`ticket_events`) y `Support` `AddSupportProbeIndexesAndChecks` (los índices `IX_tickets_assignee` e `IX_ticket_events_actor` de la
+sonda de usuarios, y los CHECK `CK_tickets_manual_medium` y `CK_ticket_events_kind`, armados con los nombres de sus enums).
 
 **Avisos para quien opera:**
 

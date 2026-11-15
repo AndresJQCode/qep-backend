@@ -107,6 +107,8 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             table.HasCheckConstraint("CK_tickets_status", InList("status", Enum.GetNames<SupportTicketStatus>()));
             table.HasCheckConstraint("CK_tickets_intake", InList("intake", Enum.GetNames<SupportTicketIntake>()));
             table.HasCheckConstraint("CK_tickets_reply_channel", InList("reply_channel", Enum.GetNames<SupportReplyChannel>()));
+            // Nullable: un NULL pasa el IN (da desconocido, no falso), que es lo que quieren las entradas sin medio manual.
+            table.HasCheckConstraint("CK_tickets_manual_medium", InList("manual_medium", Enum.GetNames<ManualIntakeMedium>()));
         });
         ticket.HasKey(value => value.Id);
         ticket.Property(value => value.Id)
@@ -186,12 +188,15 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             .HasDatabaseName("IX_tickets_tenant_status_received");
         ticket.HasIndex(value => new { value.TenantId, value.DueOn }).HasDatabaseName("IX_tickets_tenant_due");
         ticket.HasIndex(value => new { value.TenantId, value.CustomerId }).HasDatabaseName("IX_tickets_tenant_customer");
+        // Para SupportUserReferenceProbe, que busca por membresía sola, sin tenant: un usuario se borra en todos sus tenants.
+        ticket.HasIndex(value => value.AssigneeMemberId).HasDatabaseName("IX_tickets_assignee");
     }
 
     private static void ConfigureTicketEvent(ModelBuilder modelBuilder)
     {
         var item = modelBuilder.Entity<SupportTicketEvent>();
-        item.ToTable("ticket_events", Schema);
+        item.ToTable("ticket_events", Schema, table =>
+            table.HasCheckConstraint("CK_ticket_events_kind", InList("kind", Enum.GetNames<SupportTicketEventKind>())));
         item.HasKey(value => value.Id);
         item.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         item.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -204,6 +209,8 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         item.Property(value => value.OccurredAt).HasColumnName("occurred_at");
         item.Property(value => value.Details).HasColumnName("details").HasColumnType("jsonb");
         item.HasIndex(value => new { value.TicketId, value.Ordinal }).IsUnique().HasDatabaseName(TicketEventOrdinalIndex);
+        // Para SupportUserReferenceProbe, igual que IX_tickets_assignee: la traza es la tabla que más crece.
+        item.HasIndex(value => value.ActorMemberId).HasDatabaseName("IX_ticket_events_actor");
     }
 
     private static string InList(string column, IEnumerable<string> values) =>
