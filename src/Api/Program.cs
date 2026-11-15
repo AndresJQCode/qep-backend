@@ -202,6 +202,40 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
             }));
 
+    // Formulario público de Soporte (plan F6): el navegador llama directo, sin BFF, así que la cubeta es RemoteIpAddress, que
+    // UseForwardedHeaders ya corrigió con X-Real-IP detrás del ingress. Más estrictos que Public: radicar y consultar son el blanco de
+    // abuso (spam de tickets y fuerza bruta del PIN, que además frena el bloqueo por radicado de SupportTicketAccess).
+    options.AddPolicy(
+        RateLimiterPolicies.SupportPublicRead,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+    options.AddPolicy(
+        RateLimiterPolicies.SupportPublicSubmit,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            }));
+    options.AddPolicy(
+        RateLimiterPolicies.SupportPublicLookup,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
     static string? StorefrontSecret(HttpContext httpContext) =>
         httpContext.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;
 });
@@ -228,7 +262,7 @@ app.UseMiddleware<ExternalApiCallLoggingMiddleware>();
 // manejador de excepciones porque no tiran nada. Ver RequestFailureLoggingMiddleware.
 app.UseMiddleware<RequestFailureLoggingMiddleware>();
 // Antes del limitador, a propósito: así el 429 (y el 400/413 del cuerpo, el 401 de la clave y lo que sale por excepción) de /buyer/*
-// también llevan Cache-Control: no-store. Ver BuyerNoStoreMiddleware.
+// y del formulario público de Soporte también llevan Cache-Control: no-store. Ver BuyerNoStoreMiddleware.
 app.UseMiddleware<BuyerNoStoreMiddleware>();
 app.UseRateLimiter();
 // La defensa CSRF protege la sesión autenticada por cookie (ver AddAuthentication);
@@ -339,6 +373,9 @@ app.MapStoreEndpoints();
 app.MapPublicStoreEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontSubmit);
 // Cuentas de comprador (spec 2026-11-07): mismo prefijo y misma clave del storefront; las credenciales llevan su propio cupo por ruta.
 app.MapPublicBuyerEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontCredentials);
+// Formulario público de Soporte (spec 2026-11-14 §9): anónimo, sin CSRF, con su CORS sin credenciales y limitadores por IP.
+app.MapPublicSupportEndpoints(
+    RateLimiterPolicies.SupportPublicRead, RateLimiterPolicies.SupportPublicSubmit, RateLimiterPolicies.SupportPublicLookup);
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al

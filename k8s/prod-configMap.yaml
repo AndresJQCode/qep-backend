@@ -48,6 +48,11 @@ data:
   # *.qcode.co: bajo ese dominio corren otras apps, y cualquiera que entre a la lista puede mutar con
   # la sesión del usuario. Sin la clave no hay CORS y la SPA en ese dominio no puede llamar a la API.
   Cors__AllowedOrigins__0: "https://qep.qcode.co"
+  # Origen exacto de la página pública de Soporte (plan Soporte fase 3, F4), que llama al grupo anónimo
+  # /api/v1/public/support/… desde el navegador. Es otra política CORS, sin credenciales, que sólo pide ese grupo: este
+  # origen no recibe CORS en las rutas de la consola. En Production es obligatoria: sin ella el pod no arranca
+  # (SupportPublicFormOptionsValidator), porque la página quedaría sin API sin ningún error.
+  Support__PublicForm__AllowedOrigins__0: "https://soporte.lulocrm.com"
   # Variables OTLP estándar que el exportador del SDK lee directamente, no a través de
   # IConfiguration — ver src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
   # No definir OpenTelemetry__Endpoint acá: tendría precedencia sobre estas.

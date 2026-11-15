@@ -1581,8 +1581,20 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
         services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();
         // Soporte fase 3: el host del formulario público (plan F28 y F29).
-        services.AddOptions<SupportPublicFormOptions>().Bind(configuration.GetSection(SupportPublicFormOptions.SectionName));
+        // Los orígenes del grupo público se validan al arrancar, como Cors:AllowedOrigins (plan F4).
+        services.AddOptions<SupportPublicFormOptions>()
+            .Bind(configuration.GetSection(SupportPublicFormOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<SupportPublicFormOptions>, SupportPublicFormOptionsValidator>();
         services.AddSingleton<Modules.Support.Application.ISupportPublicOptions, SupportPublicOptions>();
+        // El grupo anónimo: Turnstile de la tienda (F28), países y celular (F19, F20) y la geografía de Colombia (F19).
+        services.AddScoped<Modules.Support.Application.ISupportCaptcha, SupportCaptcha>();
+        services.AddScoped<SupportPhoneNormalizer>();
+        services.AddScoped<Modules.Support.Application.ISupportCountries>(provider => provider.GetRequiredService<SupportPhoneNormalizer>());
+        services.AddScoped<Modules.Support.Application.ISupportPhoneNormalizer>(
+            provider => provider.GetRequiredService<SupportPhoneNormalizer>());
+        services.AddScoped<Modules.Support.Application.ISupportGeography, SupportGeography>();
+        services.AddScoped<Modules.Support.Application.SupportPublicResolver>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno

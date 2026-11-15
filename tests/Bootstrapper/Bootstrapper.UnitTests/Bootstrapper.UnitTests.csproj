@@ -19,5 +19,7 @@
     <ProjectReference Include="..\..\..\src\Bootstrapper\Bootstrapper.csproj" />
     <!-- BuyerParityTests ata el header de sesión de Store.Api al de Buyers.Api (que trae Store.Api transitivo). -->
     <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Api\Modules.Buyers.Api.csproj" />
+    <!-- SupportPublicPathsTests ata el prefijo y la política CORS de Bootstrapper al grupo público de Support.Api. -->
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Api\Modules.Support.Api.csproj" />
   </ItemGroup>
 </Project>
