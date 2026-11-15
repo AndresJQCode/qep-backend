@@ -491,7 +491,7 @@ En este orden, cada paso desplegado y verificado antes del siguiente:
    D-7. Se verifica que el pod arranca, que el log dice `ConnectionStrings:Valkey` y conectado, y que
    `qep_valkey_connected` vale 1.
 3. **Prender las áreas de a una, en este orden, cada una con su verificación:** `Presence` (D-2), `RateLimiting` (D-3),
-   `Sessions` (D-4), `Permissions` (D-5), `SendBudget` (D-6), `Doorbells` (D-7), `ApiKeyTouch` (D-8). Los flags van en
+   `Sessions` (D-4), `Permissions` (D-5), `Doorbells` (D-7), `ApiKeyTouch` (D-8). `SendBudget` (D-6) no se prende: el cubo de envío se queda en Postgres (`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13 y el área no tiene adaptador. Los flags van en
    `prod-configMap.yaml` (`Valkey__Enabled: "true"`, `Valkey__Areas__Presence: "true"`, etc.), así que cada paso es un
    commit de un manifiesto. Entre paso y paso, un día de logs sin fallbacks inesperados.
 4. **Recién entonces el paso 3 del spec de réplicas** (`replicas: 2` + PDB), con D-7 y DP-1 de ese spec cerradas por

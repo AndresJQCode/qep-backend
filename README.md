@@ -2729,7 +2729,7 @@ que pasa entre un área y la siguiente:
 increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h])
 ```
 
-tiene que dar 0 en condiciones normales. Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
+tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
 secretos; nunca `get secret -o yaml` ni `-o json`):
 
 ```powershell
@@ -2745,6 +2745,32 @@ kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-con
 
 Si el contador sube sin que Valkey esté caído (`qep_valkey_connected` en 1), revisa primero la ACL del usuario `qep`:
 el gateway convierte un `NOPERM` en respaldo. `ValkeyAclCompatibilityTests` dice qué comandos usa cada área.
+
+**Flota mezclada (I-3).** Mientras un despliegue prende `Sessions` o `Permissions` (o tras un rollback seguido de volver a
+prenderlas dentro del TTL), los pods con el área apagada no invalidan: usan `NullSessionCache` y `NullTenantAccessVersion`.
+Un cierre de sesión o una suspensión que atendió un pod viejo puede seguir sirviéndose desde caché en un pod nuevo hasta
+~5 min en sesiones (un acierto exige `LastSeenAt` dentro del `TouchThreshold` de 5 min) y hasta 60 s en permisos
+(`EntryTtl`). El cambio no es instantáneo: espera a que termine el rollout y, si en esa ventana una revocación tiene que
+ser inmediata, hazla cuando el rollout ya terminó.
+
+**Antes de prender `Doorbells`** (decisiones del owner, no se resuelven en el código):
+
+- **I-1, carga de despertares.** Cada insert confirmado en el outbox despierta a todos los oyentes del outbox de cada pod
+  (13 definiciones de correo en un solo bucle más 8 consumidores: ~21 consultas de candidatos o reclamo por pod y por
+  commit). Con tráfico sostenido puede superar la carga fija de polling de hoy. Mide primero la tasa de inserts del
+  outbox o agrega un espaciado mínimo entre ticks disparados por timbre.
+- **I-2, filas que vencen por tiempo.** Las filas que se vuelven reclamables por reloj (backoff de reintento, leases
+  vencidos, filas escritas bajo la transacción de otro contexto) no timbran: esperan la red de seguridad en vez del poll
+  de hoy (`automation` 1 s → 15 s, `webhook` 3 s → 15 s, `shopify_webhook` 15 s → 30 s, `media` 5 s → 30 s, `export`
+  5 s → 30 s, `outbox` 15 s → 30 s; `DoorbellQueues.SafetyNet`). Caso concreto: con dos réplicas, un mensaje del bot
+  reprogramado +5 s porque otro pod tiene el candado de la conversación responde entre 5 y 15 s más tarde.
+- **I-4, líder del muestreador.** Sólo el pod que tiene `qep:leader:queue-sampler` publica los gauges de colas; las
+  lecturas de los demás expiran a ~60 s y el liderazgo puede alternar porque su TTL (15 s) es igual al intervalo.
+  Confirma que alertas como `QepQueueMetricsMissing` agregan entre pods (viven en el repo de plataforma) antes de
+  prender `Doorbells` con dos réplicas.
+- **Notifications.** Con `Doorbells` prendido, el drenado hasta vaciar quita el freno de hoy (~20 filas por definición
+  cada 15 s). `SendAsync` marca un envío fallido como `Failed` sin reintento, así que una caída del proveedor quema todo
+  el backlog de correos en segundos. Decide si agregas reintento o backoff antes de prender.
 
 ### Infraestructura local
 
