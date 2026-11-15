@@ -517,6 +517,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   quedan juntos o no quedan (`AShopifyFailureAfterTheOrderWriteRollsBackBoth`). Después del commit ese contexto apunta a una
   transacción terminada: nada en el scope vuelve a usarlo (el handler arma la respuesta con el estado que devolvió
   `CorrectAsync`, sin releer el pedido). Un camino nuevo que corrija un pedido de Shopify y encole su envío pasa por ahí, nunca por `IShopifyOrderWriter`.
+- **Un envío a Shopify `Held` nunca lo reclama el worker; sólo lo mueven los dos endpoints de sincronización** (owner,
+  2026-11-14). Una corrección no se pierde por la conexión: guardada con la conexión no operativa (`connection_inactive`), con la
+  conexión caída al mandar (`connection_missing`) o con `access_denied`, el envío queda retenido con el motivo en `failure_code`.
+  `ListPendingAsync` y `TryClaimAsync` filtran `status = 'Pending'`, así que reactivar la conexión no lo manda: lo sueltan
+  `POST …/orders/{id}/push` y `POST …/stores/{connectionId}/pushes/release`. `IX_order_pushes_mirror_pending` cubre `Pending` y
+  `Held` (un solo envío abierto por pedido) y se fusiona igual en los dos; si cambias el filtro, cambia también `FindOpenAsync`. Un
+  motivo nuevo de la conexión va a `HoldAsync` del procesador, no a `FailAsync`: un `Failed` no se puede volver a mandar.
 - **Límite conocido de la detección de ediciones** (spec 2026-11-14): dos snapshots del mismo pedido que tocan el mismo grupo,
   intercalados por milisegundos (B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A
   falla), pueden dejar la proyección vieja y un `qep_changed` falso en la edición siguiente. No se cerró; la alternativa es un

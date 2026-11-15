@@ -4512,8 +4512,19 @@ atributos) viaja a Shopify.
   dirección entera; la nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
   del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
-  `Failed` con `access_denied` (403 o `ACCESS_DENIED`, por ejemplo sin `write_orders`), `user_error` (`userErrors`; al log sólo
-  van los campos, nunca el mensaje), `order_not_found`, `connection_missing`, `rejected` (otro 4xx) o `retries_exhausted`.
+  `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro
+  4xx) o `retries_exhausted`.
+- **Una corrección no se pierde por la conexión** (owner, 2026-11-14). El envío queda **retenido** (`Held`, el motivo en
+  `failure_code`) en tres casos: la corrección se guardó con la conexión no operativa (no `Active` o el módulo apagado, la misma
+  regla del worker) → `connection_inactive`; la conexión cayó después de encolar → `connection_missing`; Shopify respondió
+  `access_denied` (403 o `ACCESS_DENIED`, por ejemplo sin `write_orders`) → `access_denied`, que también se arregla del lado de la
+  conexión (el comercio vuelve a abrir la app). La corrección se guarda en QEP igual, y la respuesta del `PUT …/corrections` trae
+  `shopifySync`: `Queued`, `Held` o `NothingToSend`; con `Held` la pantalla avisa que el cambio queda marcado para sincronizar
+  cuando se active la conexión. Un retenido se comporta como un pendiente al fusionar (`IX_order_pushes_mirror_pending` cubre
+  `Pending` y `Held`: un solo envío abierto por pedido) y sigue retenido. **El worker nunca reclama uno retenido**: lo sueltan sólo
+  `POST …/orders/{id}/push` (un pedido) y `POST …/stores/{connectionId}/pushes/release` (todos los de la tienda, una sentencia por
+  tenant y conexión), que exigen la conexión operativa y lo dejan `Pending` sin intentos ni lease. `GET …/stores` trae
+  `heldPushCount` por tienda para el aviso «N pedidos pendientes de sincronizar».
   Shopify devuelve el `orders/updated` con el valor de QEP: es eco y se adopta sin crear cambio. Mientras manda, el envío queda
   tomado 2 minutos (holgado frente a los 10 s del timeout más las lecturas), para que otra réplica no lo mande dos veces. Toda
   corrección que se encola mientras el envío está pendiente le sube la versión, también con los mismos grupos: si el worker
@@ -4526,7 +4537,9 @@ atributos) viaja a Shopify.
 | `GET /orders/{id}/changes` | `quotations.order.read` | los cambios de una fila del espejo, todos los estados (404 `shopify.order.not_found`) |
 | `POST /changes/{changeId}/accept` \| `/reject` \| `/review` | `quotations.order.manage` | 404 `shopify.edit.not_found`; 409 `shopify.edit.not_open`; `review` de un `Pending` 422 `shopify.edit.not_blocked`; `accept` que ya no se puede aplicar deja el cambio `Blocked` y responde 422 `shopify.edit.order_not_editable` \| `payment_status_not_allowed` \| `product_unmatched` (D16); otra regla del pedido responde 422 con el código de Quotations y el cambio sigue abierto; pedido inexistente 404 `shopify.order.not_found`; tienda borrada 422 `shopify.store.not_operational`; el pedido cambió entre el cálculo y la escritura, 412 `concurrency.conflict`. Un 409 sobre un cambio que un webhook acaba de reemplazar es «recarga el cambio» |
 | `GET /qep-orders/{qepOrderId}` | `quotations.order.read` | el panel de Shopify del detalle del pedido: `canEdit`, `editBlockedReason` (`NotImported`, `Cancelled`, `Archived`, `Invoiced`, `Prepared`, D20), `shippingAddressSupported`, los atributos, el último envío y el cambio abierto (404 `shopify.order.not_found` si el pedido no vino de Shopify) |
-| `PUT /orders/{id}/corrections` | `quotations.order.manage` | `If-Match` con la versión del **pedido de QEP**; sin él 428 `precondition.if_match_required`, versión vieja 412, fila no importada 422 `shopify.order.not_imported`, pedido no editable 422 `order.order.not_editable`, recogida con dirección 422 `order.order.store_pickup`, dirección fuera de Colombia 422 `shopify.order.address_not_supported`, cuerpo inválido 422 `validation.failed` con `errors` |
+| `PUT /orders/{id}/corrections` | `quotations.order.manage` | `If-Match` con la versión del **pedido de QEP**; sin él 428 `precondition.if_match_required`, versión vieja 412, fila no importada 422 `shopify.order.not_imported`, pedido no editable 422 `order.order.not_editable`, recogida con dirección 422 `order.order.store_pickup`, dirección fuera de Colombia 422 `shopify.order.address_not_supported`, cuerpo inválido 422 `validation.failed` con `errors`; la respuesta trae `shopifySync` (`Queued` \| `Held` \| `NothingToSend`) |
+| `POST /orders/{id}/push` | `quotations.order.manage` | suelta el envío retenido del pedido (`Held` → `Pending`) y responde el panel; conexión aún no operativa 422 `shopify.store.not_operational`; sin envío retenido 409 `shopify.push.nothing_held`; fila o pedido inexistente 404 `shopify.order.not_found`; una corrección a la vez 412 |
+| `POST /stores/{connectionId}/pushes/release` | `quotations.order.manage` | suelta todos los envíos retenidos de la tienda y responde `{ "released": n }`; conexión de otro tenant o inexistente 403 `authorization.denied`; no operativa 422 `shopify.store.not_operational`. Mismo permiso que «Sincronizar ahora» de la tienda: lo hace quien corrige pedidos |
 
 **Límite conocido** (sin resolver a propósito). Dos snapshots del mismo pedido que tocan el mismo grupo y llegan intercalados
 por milisegundos —B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A falla—
@@ -4594,8 +4607,8 @@ no está en `Backend-prod`) cuenta como ausente. Sin ellas el pod entra en crash
 **`write_orders` (spec 2026-11-14).** La corrección del asesor (dirección de envío, nota del cliente y atributos) viaja a
 Shopify con `orderUpdate`, que exige `write_orders`. Según el owner, los comercios ya enlazados lo tienen concedido; sumarlo a
 `Shopify:App:Scopes` es para que una instalación nueva lo pida, y un canje nuevo sin él falla con `scopes_missing`. Falta
-verificarlo (V-13): si una tienda no lo tuviera, sus envíos terminan `Failed` con `access_denied` y el comercio tiene que
-volver a abrir la app desde su Shopify para concederlo.
+verificarlo (V-13): si una tienda no lo tuviera, sus envíos quedan retenidos (`Held`) con `access_denied`; el comercio tiene que
+volver a abrir la app desde su Shopify para concederlo, y después alguien los suelta con `POST …/stores/{connectionId}/pushes/release`.
 
 **Ediciones en la tienda.** `GET|PUT …/shopify/stores/{connectionId}` llevan además `editSync` (`Manual`, por defecto, o
 `Automatic`) y `editPaymentStatuses` (los estados de pago de QEP en que un cambio de Shopify se aplica; por defecto los cuatro:
@@ -4665,7 +4678,7 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    | --- | --- | --- |
    | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada, y que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo y mirar `shopify.orders.payload` y `shopify.order_edits` |
    | V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes`, y que el `orders/updated` de vuelta salga como eco. Además: (a) el teléfono de ida y vuelta: si Shopify guarda en E.164 el teléfono nacional que QEP mandó, el eco tiene que salir igual (QEP compara sin el indicativo de país, `ShopifyOrderProjection.SamePhone`); (b) que `note: null` borre la nota en Shopify y no se ignore (si la ignora, mandar `""`) | Corregir una ciudad en QEP, ver el envío `Sent` y la dirección en Shopify, y que no aparezca un cambio; mirar el teléfono que quedó en Shopify; borrar la nota del cliente en QEP y verla vacía en Shopify |
-   | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` de cada tienda; un envío `Failed` con `access_denied` también lo delata |
+   | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` de cada tienda; un envío `Held` con `access_denied` también lo delata |
 
 ### Contratos de servicio (cobros recurrentes)
 
