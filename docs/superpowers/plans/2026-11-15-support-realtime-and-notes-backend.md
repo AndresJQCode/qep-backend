@@ -412,7 +412,10 @@ Las tres tocan `AppHub`, `AppHubConnections` y el registro de Bootstrapper: van 
 
 **Revisión final** (modelo más capaz, toda la rama contra `develop`): arquitectura (`SupportLayerTests`, BuildingBlocks sin módulos, Mensajería intacta), aislamiento de tenant en el hub, avisos sólo después del commit, presencia sin fantasmas y notas sin fuga al solicitante.
 
-## Decisiones abiertas del owner
+## Decisiones del owner (resueltas 2026-11-15)
+
+**Las cinco quedan aprobadas tal como el plan las asume.** O3: el código pasa a `realtime.topic_forbidden` cuando un segundo
+módulo use el hub, no antes.
 
 - **O1 (N15, N19, N21):** el choque de `clientId` usa `409 concurrency.conflict`; completar antes del `PUT` usa `428 support.public.attachment_not_uploaded`; nota o archivo inexistente en la descarga usa `404 support.attachment.not_found`. Ninguno es un código nuevo; si prefieres códigos `support.note.*`, hay que sumarlos al spec y al frontend.
 - **O2 (N17):** `ticket_note_files` guarda la foto del archivo (nombre, tipo, tamaño), columnas que §5.4 no lista.
