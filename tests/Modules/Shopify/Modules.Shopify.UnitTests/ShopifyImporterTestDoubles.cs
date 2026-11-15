@@ -169,6 +169,17 @@ internal sealed class FakeGeographyLookup : IShopifyGeographyLookup
 
     public Task<ShopifyCityName?> DescribeCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken) =>
         Task.FromResult(Names.GetValueOrDefault((departmentId, cityId)));
+
+    /// <summary>Por ids, contra lo sembrado en <see cref="Cities"/> y <see cref="Departments"/>.</summary>
+    public Task<ShopifyCityCheck> CheckCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+    {
+        var departmentExists = Departments.ContainsValue(departmentId) || Cities.Values.Any(city => city.DepartmentId == departmentId);
+        var city = Cities.Values.FirstOrDefault(candidate => candidate.CityId == cityId);
+        return Task.FromResult(
+            !departmentExists ? ShopifyCityCheck.DepartmentNotFound
+            : city is null || city.DepartmentId != departmentId ? ShopifyCityCheck.CityNotInDepartment
+            : ShopifyCityCheck.Matches);
+    }
 }
 
 /// <summary>La bandeja de Geography vista desde Shopify: anota cada reporte y responde <see cref="Outcome"/>; <see cref="OnReport"/>

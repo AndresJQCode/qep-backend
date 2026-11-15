@@ -837,6 +837,25 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(new ShopifyCityLookup(null, null), await lookup.LookupCityAsync("Narnia", "Cali", Ct));
     }
 
+    // Owner 2026-11-15: la corrección del pedido distingue el departamento que no existe de la ciudad que no existe o es de otro
+    // departamento, y el envío a Shopify no describe una ciudad fuera de su departamento.
+    [Fact]
+    public async Task GeographyLookupChecksTheCityBelongsToItsDepartment()
+    {
+        var antioquia = Department.Create(DepartmentId.New(), "05", "ANTIOQUIA");
+        var cundinamarca = Department.Create(DepartmentId.New(), "25", "CUNDINAMARCA");
+        var medellin = City.Create(CityId.New(), "05001", "MEDELLÍN", antioquia.Id);
+        var soacha = City.Create(CityId.New(), "25754", "SOACHA", cundinamarca.Id);
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia, cundinamarca), new NamedCities(medellin, soacha));
+
+        Assert.Equal(ShopifyCityCheck.Matches, await lookup.CheckCityAsync(antioquia.Id.Value, medellin.Id.Value, Ct));
+        Assert.Equal(ShopifyCityCheck.CityNotInDepartment, await lookup.CheckCityAsync(antioquia.Id.Value, soacha.Id.Value, Ct));
+        Assert.Equal(ShopifyCityCheck.CityNotInDepartment, await lookup.CheckCityAsync(antioquia.Id.Value, Guid.CreateVersion7(), Ct));
+        Assert.Equal(ShopifyCityCheck.DepartmentNotFound, await lookup.CheckCityAsync(Guid.CreateVersion7(), medellin.Id.Value, Ct));
+        Assert.Equal(new ShopifyCityName("MEDELLÍN", "ANTIOQUIA"), await lookup.DescribeCityAsync(antioquia.Id.Value, medellin.Id.Value, Ct));
+        Assert.Null(await lookup.DescribeCityAsync(antioquia.Id.Value, soacha.Id.Value, Ct));
+    }
+
     // Spec 2026-10-26 §4.2: Shopify reporta con su origen y la fila del espejo como referencia; lo que vuelve es el resultado y,
     // si el texto ya tiene sinónimo, cuál.
     [Fact]

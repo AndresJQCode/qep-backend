@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Unicode;
 using BuildingBlocks.Application;
 using FluentValidation;
+using FluentValidation.Results;
 using Modules.Audit.Domain;
 using Modules.Shopify.Domain;
 using Modules.Tenancy.Application;
@@ -62,7 +63,9 @@ public sealed record GetShopifyOrderSyncQuery(Guid TenantId, Guid QepOrderId) : 
 /// Las claves de <c>errors</c> son contrato con el formulario (camelCase, índice base 0): <c>shippingParty.name</c>,
 /// <c>shippingParty.phone</c>, <c>shippingParty.email</c>, <c>shippingParty.address</c>, <c>shippingParty.departmentId</c>,
 /// <c>shippingParty.cityId</c>, <c>buyerNotes</c>, <c>attributes</c> (ausente, más de 50 o con una clave repetida tras recortar),
-/// <c>attributes[i].key</c> y <c>attributes[i].value</c>. Los textos se miden recortados.
+/// <c>attributes[i].key</c> y <c>attributes[i].value</c>. Los textos se miden recortados. Con la forma válida, el handler agrega
+/// con el mismo 422 <c>validation.failed</c> (owner 2026-11-15): <c>shippingParty.departmentId</c> si el departamento no existe y
+/// <c>shippingParty.cityId</c> si la ciudad no existe o es de otro departamento.
 /// </summary>
 public sealed class CorrectShopifyOrderValidator : AbstractValidator<CorrectShopifyOrderCommand>
 {
@@ -269,7 +272,9 @@ public sealed class ShopifyOrderSyncReader(
 /// <item>Permiso de gestión de pedidos y membresía activa (firma el historial; sin ella, 403).</item>
 /// <item>La fila tiene que estar <c>Imported</c> con pedido (422 <c>shopify.order.not_imported</c>); el pedido, en la versión del
 /// <c>If-Match</c> (412) y editable (422 <c>order.order.not_editable</c>). Con parte: sin recogida (422 <c>order.order.store_pickup</c>)
-/// y en Colombia (422 <c>shopify.order.address_not_supported</c>). Todo antes de abrir la transacción.</item>
+/// y en Colombia (422 <c>shopify.order.address_not_supported</c>), con el departamento existente y la ciudad existente y de ese
+/// departamento (422 <c>validation.failed</c> en <c>shippingParty.departmentId</c> o <c>shippingParty.cityId</c>, owner 2026-11-15).
+/// Todo antes de abrir la transacción.</item>
 /// <item>Se decide qué grupos cambiaron: la parte contra la del pedido (<see cref="ShopifyOrderProjection.SameParty"/> y el correo),
 /// la nota recortada (vacía es <c>null</c>) contra la del pedido, los atributos contra los vigentes
 /// (<see cref="ShopifyOrderAttributes.CurrentOf"/>). Sin cambios no se escribe nada.</item>
@@ -292,6 +297,7 @@ public sealed class CorrectShopifyOrderHandler(
     IClock clock,
     ShopifyOrderSyncReader reader,
     IShopifyConnectionDirectory connections,
+    IShopifyGeographyLookup geography,
     IValidator<CorrectShopifyOrderCommand> validator) : ICommandHandler<CorrectShopifyOrderCommand, ShopifyOrderSyncDto>
 {
     /// <summary>Owner 2026-11-14: los valores de <see cref="ShopifyOrderSyncDto.ShopifySync"/>.</summary>
@@ -344,6 +350,8 @@ public sealed class CorrectShopifyOrderHandler(
                 throw new ShopifyDomainException(
                     ShopifyErrorCodes.OrderAddressNotSupported, "Only a shipping address in Colombia can be corrected.");
             }
+
+            await EnsureCityInDepartmentAsync(command.ShippingParty, cancellationToken);
         }
 
         var party = command.ShippingParty is { } input && PartyChanged(input, order.ShippingParty)
@@ -415,6 +423,23 @@ public sealed class CorrectShopifyOrderHandler(
         {
             ShopifySync = push.Status == ShopifyOrderPushStatus.Held ? SyncHeld : SyncQueued,
         };
+    }
+
+    // Owner 2026-11-15: una ciudad inexistente dejaba el envío reintentando ~8 h, y una de otro departamento mandaba a Shopify una
+    // dirección incoherente. Es el mismo 422 validation.failed del validador, con la clave del campo que hay que corregir.
+    private async Task EnsureCityInDepartmentAsync(ShopifyPartyInput party, CancellationToken cancellationToken)
+    {
+        var failure = await geography.CheckCityAsync(party.DepartmentId!.Value, party.CityId!.Value, cancellationToken) switch
+        {
+            ShopifyCityCheck.DepartmentNotFound => new ValidationFailure("shippingParty.departmentId", "The department does not exist."),
+            ShopifyCityCheck.CityNotInDepartment => new ValidationFailure(
+                "shippingParty.cityId", "The city does not exist or does not belong to the department."),
+            _ => null,
+        };
+        if (failure is not null)
+        {
+            throw new ValidationException([failure]);
+        }
     }
 
     // El correo no cuenta en SameParty (Shopify no lo trae en la dirección), pero el asesor sí lo corrige en la parte de QEP.

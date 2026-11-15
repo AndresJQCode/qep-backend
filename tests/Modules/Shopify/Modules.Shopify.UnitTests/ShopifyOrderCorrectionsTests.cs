@@ -75,6 +75,7 @@ public sealed class ShopifyOrderCorrectionsTests
                 Edit.Clock,
                 Reader,
                 Connections,
+                Edit.World.Geography,
                 new CorrectShopifyOrderValidator());
 
         /// <summary>La conexión del pedido, operativa: la corrección se encola (owner 2026-11-14).</summary>
@@ -241,6 +242,34 @@ public sealed class ShopifyOrderCorrectionsTests
         await Assert.ThrowsAsync<ValidationException>(() => world.CorrectAsync(world.Command(attributes: null) with { Attributes = null }));
 
         Assert.Empty(world.Corrections.Calls);
+    }
+
+    // Owner 2026-11-15: el departamento y la ciudad existen, y la ciudad es de ese departamento. Si no, el envío a Shopify se
+    // quedaba reintentando (ciudad inexistente) o mandaba una dirección incoherente (ciudad de otro departamento).
+    [Theory]
+    [InlineData("otherDepartmentCity", "shippingParty.cityId")]
+    [InlineData("unknownCity", "shippingParty.cityId")]
+    [InlineData("unknownDepartment", "shippingParty.departmentId")]
+    public async Task AShippingCityOutsideItsDepartmentIsAValidationErrorBeforeAnyWrite(string scenario, string expectedKey)
+    {
+        var world = new CorrectionWorld();
+        var cundinamarca = Guid.Parse("01900000-0000-7000-8000-0000000000c4");
+        var soacha = Guid.Parse("01900000-0000-7000-8000-0000000000c5");
+        world.Edit.World.Geography.Cities[("CUNDINAMARCA", "Soacha")] = new ShopifyCityRef(cundinamarca, soacha);
+        var party = scenario switch
+        {
+            "otherDepartmentCity" => PartyInput(soacha),
+            "unknownCity" => PartyInput(Guid.CreateVersion7()),
+            _ => PartyInput(MedellinId) with { DepartmentId = Guid.CreateVersion7() },
+        };
+        var saves = world.Edit.World.UnitOfWork.Saves;
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => world.CorrectAsync(world.Command(party, buyerNotes: "B")));
+
+        Assert.Equal([expectedKey], error.Errors.Select(failure => failure.PropertyName).ToArray());
+        Assert.Empty(world.Corrections.Calls);
+        Assert.Empty(world.AllPushes);
+        Assert.Equal(saves, world.Edit.World.UnitOfWork.Saves);
     }
 
     // D22: vacío, espacios y null son lo mismo, y se guardan null.

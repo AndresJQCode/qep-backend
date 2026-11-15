@@ -646,7 +646,8 @@ internal sealed class NamedDepartments(params Department[] departments) : IDepar
 
     public Task<IReadOnlyList<Department>> ListAllAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
 
-    public Task<Department?> FindAsync(DepartmentId departmentId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<Department?> FindAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
+        Task.FromResult(departments.FirstOrDefault(department => department.Id == departmentId));
 
     public Task<IReadOnlyList<Department>> ListByIdsAsync(
         IReadOnlyCollection<DepartmentId> departmentIds, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -670,7 +671,8 @@ internal sealed class NamedCities(params City[] cities) : ICityRepository
     public Task<IReadOnlyList<City>> ListByDepartmentAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task<City?> FindAsync(CityId cityId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<City?> FindAsync(CityId cityId, CancellationToken cancellationToken) =>
+        Task.FromResult(cities.FirstOrDefault(city => city.Id == cityId));
 
     public Task<IReadOnlyList<City>> ListByIdsAsync(IReadOnlyCollection<CityId> cityIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();

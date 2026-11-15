@@ -32,11 +32,27 @@ internal sealed class ShopifyGeographyLookup(IDepartmentRepository departments, 
             match is null ? null : new ShopifyCityRef(department.Id.Value, match.City.Id.Value, match.SynonymId?.Value));
     }
 
-    /// <summary>Spec 2026-11-14 §5: los nombres DIVIPOLA de la ciudad y su departamento, para el <c>orderUpdate</c>.</summary>
+    /// <summary>Spec 2026-11-14 §5: los nombres DIVIPOLA de la ciudad y su departamento, para el <c>orderUpdate</c>. Una ciudad de
+    /// otro departamento no se describe (owner 2026-11-15): mandaría a Shopify una dirección incoherente.</summary>
     public async Task<ShopifyCityName?> DescribeCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken)
     {
         var department = await departments.FindAsync(new DepartmentId(departmentId), cancellationToken);
         var city = await cities.FindAsync(new CityId(cityId), cancellationToken);
-        return department is null || city is null ? null : new ShopifyCityName(city.Name, department.Name);
+        return department is null || city is null || city.DepartmentId != department.Id
+            ? null
+            : new ShopifyCityName(city.Name, department.Name);
+    }
+
+    /// <summary>Owner 2026-11-15: el departamento existe y la ciudad existe y es de él.</summary>
+    public async Task<ShopifyCityCheck> CheckCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+    {
+        var department = await departments.FindAsync(new DepartmentId(departmentId), cancellationToken);
+        if (department is null)
+        {
+            return ShopifyCityCheck.DepartmentNotFound;
+        }
+
+        var city = await cities.FindAsync(new CityId(cityId), cancellationToken);
+        return city is not null && city.DepartmentId == department.Id ? ShopifyCityCheck.Matches : ShopifyCityCheck.CityNotInDepartment;
     }
 }

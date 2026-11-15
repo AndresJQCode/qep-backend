@@ -354,6 +354,45 @@ public sealed class ShopifyOrderCorrectionApiTests
         Assert.True(errors.ContainsKey("attributes[0].key"));
     }
 
+    // Owner 2026-11-15: la ciudad tiene que existir y ser del departamento elegido, y el departamento tiene que existir; si no, 422
+    // con la clave del campo y nada escrito ni encolado. Antes una ciudad inexistente dejaba el envío reintentando ~8 h y una de
+    // otro departamento mandaba a Shopify una dirección incoherente.
+    [Theory]
+    [InlineData("otherDepartmentCity", "shippingParty.cityId")]
+    [InlineData("unknownCity", "shippingParty.cityId")]
+    [InlineData("unknownDepartment", "shippingParty.departmentId")]
+    public async Task AShippingCityOutsideItsDepartmentIs422OnItsKey(string scenario, string expectedKey)
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var city = await flow.ScalarAsync("SELECT city_id::text FROM quotations.order_parties WHERE role = 'Shipping'");
+        var body = await CorrectionBodyAsync(flow);
+        var party = body["shippingParty"]!;
+        switch (scenario)
+        {
+            case "otherDepartmentCity":
+                // Bogotá (11001) es de Bogotá D.C., no de Antioquia (el departamento de Envigado).
+                party["cityId"] = Guid.Parse(await flow.ScalarAsync("SELECT id::text FROM geography.cities WHERE divipola_code = '11001'"));
+                break;
+            case "unknownCity":
+                party["cityId"] = Guid.CreateVersion7();
+                break;
+            default:
+                party["departmentId"] = Guid.CreateVersion7();
+                break;
+        }
+
+        var response = await PutAsync(client, flow, body);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("validation.failed", problem!["code"]!.GetValue<string>());
+        Assert.Equal([expectedKey], problem["errors"]!.AsObject().Select(pair => pair.Key).ToArray());
+        Assert.Equal(city, await flow.ScalarAsync("SELECT city_id::text FROM quotations.order_parties WHERE role = 'Shipping'"));
+        Assert.Equal("0", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_pushes"));
+    }
+
     // Review Minor 4: un null en la lista de atributos es un 422 con su índice, no un 500.
     [Fact]
     public async Task ANullAttributeIs422WithItsIndex()
