@@ -56,13 +56,19 @@ public interface IDoorbellListener : IDisposable
     /// aviso que llegó mientras no se esperaba hace volver al instante.
     /// </summary>
     Task<bool> WaitAsync(TimeSpan poll, TimeSpan safetyNet, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Área prendida, conectado y suscrito: los avisos llegan. Sólo entonces el bucle repite un lote lleno sin esperar; si no, espera el
+    /// intervalo de hoy aunque haya más (Global Constraints: área apagada o Valkey caído = el intervalo de hoy).
+    /// </summary>
+    bool IsLive { get; }
 }
 
 public static class DoorbellPolling
 {
     /// <summary>
     /// El bucle de un worker con timbre: corre <paramref name="tick"/>; mientras devuelva <c>true</c> (el lote vino lleno, puede
-    /// haber más) lo repite sin esperar; si no, espera con el oyente. Sale sin lanzar cuando se cancela
+    /// haber más) y el oyente esté vivo, lo repite sin esperar; si no, espera con el oyente. Sale sin lanzar cuando se cancela
     /// <paramref name="stoppingToken"/>. El tick maneja sus propios errores: una excepción que no sea el apagado sube.
     /// </summary>
     public static Task RunAsync(
@@ -88,6 +94,10 @@ public static class DoorbellPolling
     ///
     /// Al <paramref name="poll"/> se le descuenta lo que tardó el tick (nunca menos de cero): sin timbres, la cadencia es la del
     /// <c>PeriodicTimer</c> de antes, que contaba desde el comienzo del tick anterior y no desde su final.
+    ///
+    /// Un vencimiento cero (hay más ya) repite sin esperar sólo con el oyente vivo (<see cref="IDoorbellListener.IsLive"/>). Con el área
+    /// apagada, Valkey caído o sin suscripción, espera el intervalo de hoy menos lo que tardó el tick, igual que antes: un worker que
+    /// marca fallidos sin reintento (los correos) no quema su cola en segundos durante una caída del proveedor.
     /// </summary>
     public static async Task RunAsync(
         IDoorbellListener listener,
@@ -105,7 +115,7 @@ public static class DoorbellPolling
             {
                 var started = Stopwatch.GetTimestamp();
                 var due = await tick(stoppingToken).ConfigureAwait(false);
-                if (due is { } next && next <= TimeSpan.Zero)
+                if (due is { } next && next <= TimeSpan.Zero && listener.IsLive)
                 {
                     continue;
                 }

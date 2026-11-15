@@ -23,6 +23,8 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
         await using var harness = await Harness.StartAsync(ConnectionString());
         using var listener = harness.Doorbell.Listen(DoorbellQueues.Automation);
         await harness.WaitSubscribedAsync(listener);
+        // Fix round 2: conectado y suscrito, el oyente está vivo y el bucle puede repetir un lote lleno sin esperar.
+        Assert.True(listener.IsLive);
         var stopwatch = Stopwatch.StartNew();
 
         var waiting = listener.WaitAsync(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), Ct);
@@ -126,6 +128,7 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
         await harness.WaitSubscribedAsync(listener);
         await container.StopAsync(Ct);
         await harness.WaitDisconnectedAsync();
+        Assert.False(listener.IsLive);
         var stopwatch = Stopwatch.StartNew();
 
         var rang = await listener.WaitAsync(TimeSpan.FromMilliseconds(300), TimeSpan.FromSeconds(30), Ct);
@@ -141,6 +144,7 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
         var doorbell = new NullQueueDoorbell();
         using var listener = doorbell.Listen(DoorbellQueues.Automation);
         doorbell.Ring(DoorbellQueues.Automation);
+        Assert.False(listener.IsLive);
         var stopwatch = Stopwatch.StartNew();
 
         var rang = await listener.WaitAsync(TimeSpan.FromSeconds(1), DoorbellQueues.SafetyNet(DoorbellQueues.Automation), Ct);
@@ -175,12 +179,12 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
         Assert.Equal(TimeSpan.FromSeconds(30), DoorbellQueues.SafetyNet(DoorbellQueues.Outbox));
     }
 
-    // El bucle: un tick que trae lote lleno se repite sin esperar; uno que no, espera con el oyente.
+    // El bucle con el área prendida y el oyente vivo: un tick que trae lote lleno se repite sin esperar; uno que no, espera con el oyente.
     [Fact]
     public async Task PollingRepeatsAFullBatchWithoutWaitingAndWaitsOtherwise()
     {
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        var listener = new CountingListener(() => stopping.Cancel());
+        var listener = new CountingListener(() => stopping.Cancel(), live: true);
         var results = new Queue<bool>([true, true, false]);
         var ticks = 0;
 
@@ -231,11 +235,12 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
         Assert.Equal(TimeSpan.FromSeconds(30), Assert.Single(listener.Waits).SafetyNet);
     }
 
+    // Fix round 2 (b): área prendida y oyente vivo ⇒ un lote lleno repite sin esperar.
     [Fact]
     public async Task AZeroDueRepeatsWithoutWaiting()
     {
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        var listener = new RecordingListener(() => stopping.Cancel());
+        var listener = new RecordingListener(() => stopping.Cancel(), live: true);
         var dues = new Queue<TimeSpan?>([TimeSpan.Zero, TimeSpan.Zero, null]);
 
         await DoorbellPolling.RunAsync(
@@ -243,6 +248,46 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
 
         Assert.Empty(dues);
         Assert.Equal(TimeSpan.FromSeconds(15), Assert.Single(listener.Waits).SafetyNet);
+    }
+
+    // Fix round 2 (a), regla del controlador: con el área apagada, Valkey caído o el oyente sin suscribir, un lote lleno NO repite al
+    // instante: espera el intervalo de hoy menos lo que tardó el tick, como el PeriodicTimer. Un consumidor de correo con el proveedor
+    // caído quemaría el outbox entero a Failed en segundos.
+    [Fact]
+    public async Task WithTheListenerNotLiveAFullBatchWaitsThePollMinusTheTick()
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var listener = new RecordingListener(() => stopping.Cancel(), live: false);
+        var ticks = 0;
+
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromMilliseconds(500),
+            TimeSpan.FromSeconds(15),
+            async _ =>
+            {
+                ticks++;
+                await Task.Delay(100, Ct);
+                return true;
+            },
+            stopping.Token);
+
+        Assert.Equal(1, ticks);
+        Assert.InRange(Assert.Single(listener.Waits).Poll, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(410));
+    }
+
+    [Fact]
+    public async Task WithTheListenerNotLiveAZeroDueWaitsThePoll()
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var listener = new RecordingListener(() => stopping.Cancel(), live: false);
+        var dues = new Queue<TimeSpan?>([TimeSpan.Zero, TimeSpan.Zero]);
+
+        await DoorbellPolling.RunAsync(
+            listener, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(15), _ => Task.FromResult(dues.Dequeue()), stopping.Token);
+
+        Assert.Single(dues);
+        Assert.InRange(Assert.Single(listener.Waits).Poll, TimeSpan.FromMilliseconds(900), TimeSpan.FromSeconds(1));
     }
 
     // Review de bloque B: con el área apagada la cadencia es la de hoy (PeriodicTimer): lo que tardó el tick se descuenta del intervalo,
@@ -291,9 +336,11 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
 
     private string ConnectionString() => ValkeyTestServer.ConnectionString(server.Container, asQep: false);
 
-    private sealed class RecordingListener(Action onWait) : IDoorbellListener
+    private sealed class RecordingListener(Action onWait, bool live = false) : IDoorbellListener
     {
         public List<(TimeSpan Poll, TimeSpan SafetyNet)> Waits { get; } = [];
+
+        public bool IsLive => live;
 
         public Task<bool> WaitAsync(TimeSpan poll, TimeSpan safetyNet, CancellationToken cancellationToken)
         {
@@ -307,9 +354,11 @@ public sealed class QueueDoorbellTests(ValkeyPlainServer server) : IClassFixture
         }
     }
 
-    private sealed class CountingListener(Action onWait) : IDoorbellListener
+    private sealed class CountingListener(Action onWait, bool live = false) : IDoorbellListener
     {
         public int Waits { get; private set; }
+
+        public bool IsLive => live;
 
         public Task<bool> WaitAsync(TimeSpan poll, TimeSpan safetyNet, CancellationToken cancellationToken)
         {

@@ -90,6 +90,8 @@ public sealed class NotificationsDeliveryWorkerTests
 
         public IDoorbellListener Listen(string queue) => this;
 
+        public bool IsLive => false;
+
         public async Task<bool> WaitAsync(TimeSpan poll, TimeSpan safetyNet, CancellationToken cancellationToken)
         {
             await Task.Delay(poll, cancellationToken);

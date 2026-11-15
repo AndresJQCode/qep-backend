@@ -128,6 +128,9 @@ internal sealed class ValkeyQueueDoorbell(ValkeyGateway gateway) : IQueueDoorbel
 
         internal string Queue => _state.Queue;
 
+        /// <summary>Conectado y con la suscripción de la cola: sólo así un lote lleno repite sin esperar (fix round 2).</summary>
+        public bool IsLive => _owner._gateway.IsConnected && _state.Subscribed;
+
         public async Task<bool> WaitAsync(TimeSpan poll, TimeSpan safetyNet, CancellationToken cancellationToken)
         {
             if (!_owner._gateway.IsConnected
@@ -184,6 +187,9 @@ internal sealed class NullQueueDoorbell : IQueueDoorbell
     private sealed class PollingListener : IDoorbellListener
     {
         public static readonly PollingListener Instance = new();
+
+        /// <summary>Nunca: con el área apagada todo espera el intervalo de hoy, también un lote lleno.</summary>
+        public bool IsLive => false;
 
         public async Task<bool> WaitAsync(TimeSpan poll, TimeSpan safetyNet, CancellationToken cancellationToken)
         {
