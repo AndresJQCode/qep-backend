@@ -52,7 +52,8 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         Assert.True(body.GetProperty("showAddress").GetBoolean());
         Assert.True(body.GetProperty("showLandline").GetBoolean());
         Assert.True(body.GetProperty("businessNameRequired").GetBoolean());
-        Assert.False(body.GetProperty("allowAttachments").GetBoolean());
+        // Owner, 2026-11-15 (E2): los adjuntos vienen prendidos.
+        Assert.True(body.GetProperty("allowAttachments").GetBoolean());
         Assert.Equal(JsonValueKind.Null, body.GetProperty("accentColor").ValueKind);
         Assert.EndsWith("/" + await SlugAsync(tenant), body.GetProperty("publicUrl").GetString(), StringComparison.Ordinal);
         Assert.StartsWith("https://", body.GetProperty("publicUrl").GetString(), StringComparison.Ordinal);
@@ -169,6 +170,11 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         Assert.Equal("true", await TextAsync(
             factory, "SELECT allow_attachments::text FROM support.form_versions WHERE tenant_id = @tenant AND version = 1",
             ("tenant", Guid.Parse(tenant))));
+        // Owner, 2026-11-15 (E2): con el default de la columna en true, un false tiene que llegar a la base (HasSentinel(true)).
+        Assert.Equal("false", await TextAsync(
+            factory, "SELECT allow_attachments::text FROM support.form_versions WHERE tenant_id = @tenant AND version = 2",
+            ("tenant", Guid.Parse(tenant))));
+        Assert.False((await JsonAsync(await client.GetAsync(FormUrl(tenant), Ct))).GetProperty("allowAttachments").GetBoolean());
         Assert.Equal("Gracias por escribirnos.", body.GetProperty("successMessage").GetString());
         Assert.Empty(Blockers(body));
         Assert.Equal(2L, await CountFormVersionsAsync(tenant));

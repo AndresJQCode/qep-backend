@@ -7,8 +7,7 @@ namespace Modules.Support.Application;
 /// Lo que la página necesita para dibujar el formulario. <see cref="Fields"/> sale de <c>SupportFormFields</c> y
 /// <see cref="DocumentTypesByCountry"/> de la tabla compartida (<c>CO</c>, <c>ES</c> y <c>*</c> para el resto): la pantalla no conoce
 /// ninguna de las dos reglas. <see cref="FormVersion"/> y <see cref="SupportPublicLegalDto.Version"/> vuelven en el radicado para
-/// detectar que algo cambió mientras la persona escribía. Con <see cref="AllowAttachments"/> en false la página no dibuja el control de
-/// adjuntos: el tenant no los recibe (spec §9.3) y las rutas de adjuntos responden 422 <c>support.public.attachments_disabled</c>.
+/// detectar que algo cambió mientras la persona escribía. <see cref="Attachments"/> dice si se reciben adjuntos y con qué límites.
 /// </summary>
 public sealed record SupportPublicFormDto(
     string TenantName,
@@ -21,7 +20,16 @@ public sealed record SupportPublicFormDto(
     IReadOnlyDictionary<string, IReadOnlyList<string>> DocumentTypesByCountry,
     SupportPublicLegalDto Legal,
     int FormVersion,
-    bool AllowAttachments);
+    SupportPublicAttachmentsDto Attachments);
+
+/// <summary>
+/// Los adjuntos del formulario (spec §9.3; owner, 2026-11-15). Con <see cref="Allowed"/> en false la página no dibuja el control: el
+/// tenant no los recibe y las rutas de adjuntos responden 422 <c>support.public.attachments_disabled</c>. <see cref="MaxFiles"/>,
+/// <see cref="MaxSizeBytes"/> y <see cref="MimeTypes"/> salen de <c>SupportPublicAttachmentRules</c> para que la página arme su
+/// <c>accept</c> y sus avisos con la misma regla que valida el backend, sin una copia propia que se quede atrás cuando la lista cambie
+/// (por ejemplo, el día que se acepte Word con ClamAV prendido). <c>image/jpg</c> no viene: el backend lo toma como <c>image/jpeg</c>.
+/// </summary>
+public sealed record SupportPublicAttachmentsDto(bool Allowed, int MaxFiles, long MaxSizeBytes, IReadOnlyList<string> MimeTypes);
 
 /// <summary>
 /// Lo que la página de consulta necesita para dibujarse sola (owner, 2026-11-15, E1). Existe aparte de <see cref="SupportPublicFormDto"/>

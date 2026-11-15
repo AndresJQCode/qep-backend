@@ -112,6 +112,10 @@ public static class SupportErrorCodes
     /// con una lista de adjuntos no vacía.</summary>
     public const string PublicAttachmentsDisabled = "support.public.attachments_disabled";
 
+    /// <summary>Owner, 2026-11-15 (E2): el tenant ya tiene <c>SupportPublicAttachmentRules.MaxPendingPerTenantPerDay</c> subidas
+    /// abiertas en las últimas 24 h sin reclamar por un ticket. Lo responde abrir una subida (422); la página dice «intenta más tarde».</summary>
+    public const string PublicAttachmentsBusy = "support.public.attachments_busy";
+
     /// <summary>Revisión final, I1: un ticket anónimo no guarda cliente (spec §9.4). Lo rechaza el agregado, para todo camino.</summary>
     public const string AnonymousHasNoCustomer = "support.ticket.anonymous_has_no_customer";
 

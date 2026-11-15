@@ -18,6 +18,10 @@ public interface ISupportAttachmentStorage
     /// <summary>El archivo si es del tenant, con esa clave y <c>Available</c>; si no, <c>null</c>.</summary>
     Task<SupportAttachmentFile?> FindAvailableAsync(Guid tenantId, Guid fileId, Guid uploadKey, CancellationToken cancellationToken);
 
+    /// <summary>Cuántas subidas del tenant se abrieron en la última <paramref name="window"/> y ningún ticket reclamó todavía, sea cual
+    /// sea su estado (owner, 2026-11-15, E2: el tope de <c>SupportPublicAttachmentRules.MaxPendingPerTenantPerDay</c>).</summary>
+    Task<int> CountPendingAsync(Guid tenantId, TimeSpan window, CancellationToken cancellationToken);
+
     /// <summary>Una URL firmada de 5 minutos (plan F37). Quien llama ya autorizó.</summary>
     Task<Uri> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken);
 }

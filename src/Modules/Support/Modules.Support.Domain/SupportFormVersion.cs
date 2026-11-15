@@ -39,7 +39,7 @@ public sealed partial class SupportFormVersion
     public bool BusinessNameRequired { get; private set; }
 
     /// <summary>Spec §9.3 «Adjuntos: el tenant los permite o no». Apagado, la página esconde el control y el backend responde 422
-    /// <c>support.public.attachments_disabled</c> a abrir, completar y radicar con adjuntos. Arranca apagado: el tenant lo prende.</summary>
+    /// <c>support.public.attachments_disabled</c> a abrir, completar y radicar con adjuntos. Arranca prendido (owner, 2026-11-15, E2): el tenant lo apaga si no los quiere.</summary>
     public bool AllowAttachments { get; private set; }
 
     /// <summary><c>#</c> y seis hexadecimales; null usa el color por defecto de la página.</summary>
@@ -97,8 +97,8 @@ public sealed partial class SupportFormVersion
         };
     }
 
-    /// <summary>El formulario de un tenant sin versiones (plan F14): sin publicar, todo visible, la razón social obligatoria y sin
-    /// adjuntos. Versión 0, sin id: no se guarda.</summary>
+    /// <summary>El formulario de un tenant sin versiones (plan F14): sin publicar, todo visible, la razón social obligatoria y con
+    /// adjuntos (owner, 2026-11-15, E2). Versión 0, sin id: no se guarda.</summary>
     public static SupportFormVersion Default(Guid tenantId) =>
         new()
         {
@@ -109,7 +109,7 @@ public sealed partial class SupportFormVersion
             ShowAddress = true,
             ShowLandline = true,
             BusinessNameRequired = true,
-            AllowAttachments = false,
+            AllowAttachments = true,
         };
 
     public static bool IsValidAccentColor(string? value) => value is not null && AccentColorPattern().IsMatch(value);

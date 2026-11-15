@@ -107,6 +107,20 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         Assert.True(found.AllowAttachments);
     }
 
+    // Owner, 2026-11-15 (E2): los adjuntos vienen prendidos, también en el default de la columna.
+    [Fact]
+    public async Task TheAllowAttachmentsColumnDefaultsToTrue()
+    {
+        var factory = await sharedHost.StartTestAsync();
+
+        Assert.Equal("true", await TextAsync(
+            factory,
+            """
+            SELECT column_default FROM information_schema.columns
+            WHERE table_schema = 'support' AND table_name = 'form_versions' AND column_name = 'allow_attachments'
+            """));
+    }
+
     [Fact]
     public async Task AnAnonymousTicketRoundTripsWithoutRequester()
     {

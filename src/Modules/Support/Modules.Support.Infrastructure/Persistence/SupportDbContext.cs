@@ -161,7 +161,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         form.Property(value => value.ShowAddress).HasColumnName("show_address");
         form.Property(value => value.ShowLandline).HasColumnName("show_landline");
         form.Property(value => value.BusinessNameRequired).HasColumnName("business_name_required");
-        form.Property(value => value.AllowAttachments).HasColumnName("allow_attachments").HasDefaultValue(false);
+        // Owner, 2026-11-15 (E2): prendido por defecto. El sentinel en true (precedente: Store, show_prices) hace que EF mande siempre un
+        // false: sin él, un bool con default true se omite del INSERT cuando vale false y la base lo dejaría en true.
+        form.Property(value => value.AllowAttachments).HasColumnName("allow_attachments").HasDefaultValue(true).HasSentinel(true);
         form.Property(value => value.AccentColor).HasColumnName("accent_color").HasMaxLength(SupportFormVersion.AccentColorLength);
         form.Property(value => value.IntroText).HasColumnName("intro_text").HasMaxLength(SupportFormVersion.IntroTextMaxLength);
         form.Property(value => value.SuccessMessage)

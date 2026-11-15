@@ -53,7 +53,11 @@ public sealed class GetPublicFormHandler(
             },
             new SupportPublicLegalDto(legal.Version, legal.AuthorizationText, legal.PolicyText, legal.PolicyUrl, legal.TermsText),
             form.Version,
-            form.AllowAttachments);
+            new SupportPublicAttachmentsDto(
+                form.AllowAttachments,
+                SupportPublicAttachmentRules.MaxFiles,
+                SupportPublicAttachmentRules.MaxSizeBytes,
+                SupportPublicAttachmentRules.MimeTypes));
     }
 
     private static List<SupportPublicFieldDto> Fields(SupportFormVariant variant, SupportFormVersion form) =>

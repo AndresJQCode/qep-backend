@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Storage.Application;
 using Modules.Support.Application;
+using Modules.Support.Domain;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 using static Modules.Support.IntegrationTests.SupportMessagingSeed;
 using static Modules.Support.IntegrationTests.SupportPublicHarness;
@@ -133,11 +134,12 @@ public sealed class SupportPublicAttachmentsApiTests(SupportPublicAttachmentsHos
         Assert.Equal(0L, await TicketCountAsync(rig));
     }
 
+    // Owner, 2026-11-15: hasta tres archivos por ticket; el cuarto es el mismo 422 de siempre en Attachments.
     [Fact]
-    public async Task SixFilesAreRejected()
+    public async Task FourFilesAreRejected()
     {
         var rig = await RigAsync();
-        var files = Enumerable.Range(0, 6).Select(_ => new Attachment(Guid.CreateVersion7(), Guid.NewGuid())).ToArray();
+        var files = Enumerable.Range(0, 4).Select(_ => new Attachment(Guid.CreateVersion7(), Guid.NewGuid())).ToArray();
 
         var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), files));
 
@@ -164,6 +166,43 @@ public sealed class SupportPublicAttachmentsApiTests(SupportPublicAttachmentsHos
         Assert.Contains("Name", await ErrorKeysAsync(wrongType));
         Assert.Equal(0L, await ScalarAsync(
             rig.Factory, "SELECT count(*) FROM storage.file_resources WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+    }
+
+    // Owner, 2026-11-15: sólo PDF, JPEG, PNG y WebP. Word y Excel se rechazan al abrir (ClamAV está apagado en producción), sin tocar
+    // Storage.
+    [Theory]
+    [InlineData("carta.doc", "application/msword")]
+    [InlineData("carta.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")]
+    [InlineData("hoja.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
+    [InlineData("hoja.xls", "application/vnd.ms-excel")]
+    public async Task OfficeFilesAreRejectedAtOpen(string name, string mimeType)
+    {
+        var rig = await RigAsync();
+
+        var response = await PostJsonAsync(rig.Client, PublicUrl(rig.Slug, "/attachments"), new { name, mimeType, sizeBytes = 10 });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Contains("Name", await ErrorKeysAsync(response));
+        Assert.Equal(0L, await ScalarAsync(
+            rig.Factory, "SELECT count(*) FROM storage.file_resources WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+    }
+
+    // image/jpg no es un tipo registrado, pero el accept de la página lo usa: se abre como image/jpeg, que es lo que Storage acepta y
+    // lo que va firmado en el PUT.
+    [Fact]
+    public async Task ImageJpgOpensAsImageJpeg()
+    {
+        var rig = await RigAsync();
+
+        var response = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, "/attachments"), new { name = "foto.jpg", mimeType = "image/jpg", sizeBytes = 10 });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var session = await JsonAsync(response);
+        Assert.Equal("image/jpeg", session.GetProperty("headers").GetProperty("Content-Type").GetString());
+        Assert.Equal("image/jpeg", await TextAsync(
+            rig.Factory, "SELECT mime_type FROM storage.file_resources WHERE id = @id", ("id", session.GetProperty("fileId").GetGuid())));
     }
 
     // Plan F37: el asesor de Soporte no necesariamente tiene storage.file.read. La descarga pide support.ticket.read o manage
@@ -249,7 +288,7 @@ public sealed class SupportPublicAttachmentsApiTests(SupportPublicAttachmentsHos
             rig.Client, rig.TicketsUrl,
             WithAttachments(AnonymousBody(rig.TypeId), new Attachment(Guid.CreateVersion7(), Guid.NewGuid())));
 
-        Assert.False(form.GetProperty("allowAttachments").GetBoolean());
+        Assert.False(form.GetProperty("attachments").GetProperty("allowed").GetBoolean());
         foreach (var response in new[] { open, complete, filed })
         {
             Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -269,8 +308,68 @@ public sealed class SupportPublicAttachmentsApiTests(SupportPublicAttachmentsHos
 
         var form = await JsonAsync(await rig.Client.GetAsync(PublicUrl(rig.Slug, "/form"), Ct));
 
-        Assert.True(form.GetProperty("allowAttachments").GetBoolean());
+        // Owner, 2026-11-15: la página arma su accept y su tope con esto, no con una lista propia.
+        var attachments = form.GetProperty("attachments");
+        Assert.True(attachments.GetProperty("allowed").GetBoolean());
+        Assert.Equal(3, attachments.GetProperty("maxFiles").GetInt32());
+        Assert.Equal(10L * 1024 * 1024, attachments.GetProperty("maxSizeBytes").GetInt64());
+        Assert.Equal(
+            ["application/pdf", "image/jpeg", "image/png", "image/webp"],
+            attachments.GetProperty("mimeTypes").EnumerateArray().Select(item => item.GetString()!).Order(StringComparer.Ordinal));
     }
+
+    // Owner, 2026-11-15 (E2): el limitador por IP no frena a muchas IPs a la vez llenando el bucket. Un tenant tiene a lo sumo 200
+    // subidas abiertas en las últimas 24 h sin reclamar por un ticket; la 201 es 422 support.public.attachments_busy, sin tocar Storage.
+    // Un archivo ya reclamado y uno de hace más de 24 h no cuentan, y otro tenant sigue con su cupo entero.
+    [Fact]
+    public async Task TheTwoHundredAndFirstOpenUploadOfADayIs422AndOnlyForThatTenant()
+    {
+        var rig = await RigAsync();
+        var claimed = await UploadAsync(rig, "reclamado.pdf");
+        Assert.Equal(
+            HttpStatusCode.Created,
+            (await PostJsonAsync(rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), claimed))).StatusCode);
+        // 199 abiertas hoy más una de ayer: con la reclamada, 201 filas del tenant, de las que cuentan 199.
+        await CopyFileAsync(rig, claimed.FileId, count: SupportPublicAttachmentRules.MaxPendingPerTenantPerDay - 1, hoursAgo: 0);
+        await CopyFileAsync(rig, claimed.FileId, count: 1, hoursAgo: 25);
+
+        var twoHundredth = await OpenFromNewIpAsync(rig.Factory, rig.Slug);
+        var filesBefore = await FileCountAsync(rig.Factory, rig.TenantId);
+        var twoHundredAndFirst = await OpenFromNewIpAsync(rig.Factory, rig.Slug);
+        var other = await RigAsync();
+        var otherTenant = await OpenFromNewIpAsync(other.Factory, other.Slug);
+
+        Assert.Equal(HttpStatusCode.Created, twoHundredth.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, twoHundredAndFirst.StatusCode);
+        Assert.Equal("support.public.attachments_busy", await CodeOfAsync(twoHundredAndFirst));
+        Assert.Equal(filesBefore, await FileCountAsync(rig.Factory, rig.TenantId));
+        Assert.Equal(HttpStatusCode.Created, otherTenant.StatusCode);
+    }
+
+    // Cada apertura desde su propia IP: el limitador de subidas es de 20 cada 10 minutos por IP.
+    private static async Task<HttpResponseMessage> OpenFromNewIpAsync(SupportApiHarness.QepApiFactory factory, string slug)
+    {
+        using var client = VisitorClient(factory, NextIp());
+        return await PostJsonAsync(
+            client, PublicUrl(slug, "/attachments"), new { name = "acta.pdf", mimeType = "application/pdf", sizeBytes = 10 });
+    }
+
+    private static Task<long> FileCountAsync(SupportApiHarness.QepApiFactory factory, Guid tenantId) =>
+        ScalarAsync(factory, "SELECT count(*) FROM storage.file_resources WHERE tenant_id = @tenant", ("tenant", tenantId));
+
+    // Copias sin reclamar de un archivo del tenant, abiertas hace hoursAgo horas: lo que dejarían muchas IPs abriendo sin radicar.
+    private static Task CopyFileAsync(Rig rig, Guid sourceId, int count, int hoursAgo) =>
+        ExecuteAsync(
+            rig.Factory,
+            """
+            INSERT INTO storage.file_resources (id, tenant_id, owner_id, owner_type, name, mime_type, size_bytes, storage_key, checksum,
+                category, tags, public_storage_key, published_at, status, created_at, updated_at, deleted_at)
+            SELECT gen_random_uuid(), tenant_id, gen_random_uuid(), owner_type, name, mime_type, size_bytes, storage_key || '-' || n,
+                checksum, category, tags, NULL, NULL, 'PendingUpload', now() - make_interval(hours => @hoursAgo), now(), NULL
+            FROM storage.file_resources, generate_series(1, @count) AS n
+            WHERE id = @source
+            """,
+            ("source", sourceId), ("count", count), ("hoursAgo", hoursAgo));
 
     // Las demás pruebas de la clase usan un formulario que permite adjuntos: el que no los permite lo prueba la de arriba.
     private async Task<Rig> RigAsync(bool allowAttachments = true)

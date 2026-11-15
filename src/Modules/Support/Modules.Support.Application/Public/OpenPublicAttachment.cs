@@ -19,7 +19,7 @@ public sealed class OpenPublicAttachmentValidator : AbstractValidator<OpenPublic
         RuleFor(command => command.Name)
             .Must(name => SupportPublicAttachmentRules.AllowedMimeTypesByExtension.ContainsKey(Path.GetExtension(name!.Trim())))
             .When(command => SupportPublicAttachmentRules.IsValidName(command.Name))
-            .WithMessage("Only PDF, Word, Excel, JPG, JPEG, WEBP and PNG files are allowed.");
+            .WithMessage("Only PDF, JPG, JPEG, PNG and WEBP files are allowed.");
         RuleFor(command => command.MimeType)
             .Must((command, mimeType) => SupportPublicAttachmentRules.IsAllowedType(command.Name, mimeType))
             .When(command => SupportPublicAttachmentRules.IsValidName(command.Name)
@@ -36,7 +36,9 @@ public sealed class OpenPublicAttachmentValidator : AbstractValidator<OpenPublic
 /// con su propio limitador por IP. El <c>uploadKey</c> es un <see cref="Guid.NewGuid"/> (v4, aleatorio) y no un v7 como los ids de
 /// Storage, que se adivinan por la hora: es lo único que ata la subida a esta persona, y sólo viaja en esta respuesta. No lee el
 /// contexto de ejecución ni la sesión. Si el formulario no permite adjuntos (spec §9.3), 422 <c>support.public.attachments_disabled</c>
-/// sin abrir nada en Storage.
+/// sin abrir nada en Storage. Si el tenant ya tiene <see cref="SupportPublicAttachmentRules.MaxPendingPerTenantPerDay"/> subidas
+/// abiertas en las últimas 24 h sin reclamar (owner, 2026-11-15, E2), 422 <c>support.public.attachments_busy</c>, también sin abrir nada:
+/// el limitador por IP no frena a muchas IPs a la vez. Es un tope blando: dos aperturas simultáneas en el borde pueden pasarlo por una.
 /// </summary>
 public sealed class OpenPublicAttachmentHandler(
     SupportPublicResolver resolver,
@@ -50,10 +52,21 @@ public sealed class OpenPublicAttachmentHandler(
         var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
         CompletePublicAttachmentHandler.EnsureAllowed(tenant.Form);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        if (await storage.CountPendingAsync(tenant.TenantId, SupportPublicAttachmentRules.PendingWindow, cancellationToken)
+            >= SupportPublicAttachmentRules.MaxPendingPerTenantPerDay)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.PublicAttachmentsBusy, "The support form is receiving too many attachments; try again later.");
+        }
 
         var uploadKey = Guid.NewGuid();
         var upload = await storage.OpenAsync(
-            tenant.TenantId, uploadKey, command.Name!.Trim(), command.MimeType!.Trim(), command.SizeBytes!.Value, cancellationToken);
+            tenant.TenantId,
+            uploadKey,
+            command.Name!.Trim(),
+            SupportPublicAttachmentRules.NormalizeMimeType(command.MimeType!),
+            command.SizeBytes!.Value,
+            cancellationToken);
         return new SupportPublicAttachmentSessionDto(upload.FileId, uploadKey, upload.UploadUrl.AbsoluteUri, upload.Headers);
     }
 }

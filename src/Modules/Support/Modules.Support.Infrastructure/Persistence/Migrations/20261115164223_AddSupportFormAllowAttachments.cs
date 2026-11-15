@@ -16,7 +16,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                 table: "form_versions",
                 type: "boolean",
                 nullable: false,
-                defaultValue: false);
+                defaultValue: true);
         }
 
         /// <inheritdoc />

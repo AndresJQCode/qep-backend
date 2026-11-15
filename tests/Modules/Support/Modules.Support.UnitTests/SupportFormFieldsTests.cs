@@ -120,8 +120,8 @@ public sealed class SupportFormFieldsTests
         Assert.True(form.ShowLandline);
         Assert.True(form.BusinessNameRequired);
         Assert.Null(form.AccentColor);
-        // Spec §9.3: los adjuntos los prende el tenant; mientras no guarde, el formulario no los ofrece.
-        Assert.False(form.AllowAttachments);
+        // Owner, 2026-11-15 (E2): los adjuntos vienen prendidos; el tenant los apaga si no los quiere.
+        Assert.True(form.AllowAttachments);
     }
 
     [Fact]

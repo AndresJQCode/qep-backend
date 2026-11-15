@@ -167,7 +167,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.Property<bool>("AllowAttachments")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
-                        .HasDefaultValue(false)
+                        .HasDefaultValue(true)
                         .HasColumnName("allow_attachments");
 
                     b.Property<bool>("BusinessNameRequired")

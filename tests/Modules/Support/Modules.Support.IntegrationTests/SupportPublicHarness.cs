@@ -82,7 +82,8 @@ internal static class SupportPublicHarness
     /// <summary>
     /// Un tenant con el formulario publicado: su fila y sus módulos, los tipos por defecto (todos publicados), la versión 1 de los
     /// textos legales y la versión 1 del formulario. Por SQL de dominio y no por la consola: el host puede tener la autenticación real.
-    /// Sin adjuntos salvo <paramref name="allowAttachments"/>, como el formulario por defecto (spec §9.3). Devuelve el slug.
+    /// Con adjuntos salvo <paramref name="allowAttachments"/> en false, como el formulario por defecto (owner, 2026-11-15, E2). Devuelve
+    /// el slug.
     /// </summary>
     public static async Task<string> SeedPublishedTenantAsync(
         QepApiFactory factory,
@@ -93,7 +94,7 @@ internal static class SupportPublicHarness
         bool showAddress = true,
         bool showLandline = true,
         bool businessNameRequired = true,
-        bool allowAttachments = false)
+        bool allowAttachments = true)
     {
         await SeedTenantAsync(factory, tenantId, modules);
         var tenant = Guid.Parse(tenantId);

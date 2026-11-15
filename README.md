@@ -5122,13 +5122,24 @@ directo al bucket privado de R2 con `uploadUrl` y los `headers` tal cual (`Conte
 si sale `available`, mandar el par al radicar.
 
 - **El tenant los permite o no** (spec §9.3). `allow_attachments` es de cada versión del formulario (`PUT /settings/public-form`,
-  `allowAttachments`, obligatorio como los demás interruptores) y arranca **apagado**. `GET /form` lo trae en `allowAttachments` para que
-  la página esconda el control. Apagado, abrir, completar y radicar con una lista de adjuntos no vacía responden `422
-  support.public.attachments_disabled`, antes de tocar Storage; radicar sin adjuntos sigue igual.
+  `allowAttachments`, obligatorio como los demás interruptores) y arranca **prendido** (owner, 2026-11-15; también el default de la
+  columna): el tenant los apaga si no los quiere. `GET /form` lo trae en `attachments` (`{ allowed, maxFiles, maxSizeBytes, mimeTypes }`):
+  la página esconde el control con `allowed` y arma su `accept` y sus avisos con el resto, sin una lista propia. Apagado, abrir,
+  completar y radicar con una lista de adjuntos no vacía responden `422 support.public.attachments_disabled`, antes de tocar Storage;
+  radicar sin adjuntos sigue igual.
 
-- **Límites** (`SupportPublicAttachmentRules`): hasta **5** archivos por ticket, **10 MB** cada uno, nombre simple de hasta 260 y los
-  tipos de Storage (pdf, doc, docx, xls, xlsx, jpg, jpeg, png, webp) con su MIME. Abrir fuera de eso es `422 validation.failed` con el
-  campo (`Name`, `MimeType`, `SizeBytes`); seis o un par repetido al radicar, con `Attachments`.
+- **Límites** (`SupportPublicAttachmentRules`): hasta **3** archivos por ticket, **10 MB** cada uno, nombre simple de hasta 260 y sólo
+  **PDF, JPEG, PNG y WebP** (`.pdf`, `.jpg`, `.jpeg`, `.png`, `.webp`; `application/pdf`, `image/jpeg`, `image/png`, `image/webp`).
+  `image/jpg`, que no es un tipo registrado pero algunos navegadores mandan, se toma como `image/jpeg`. Abrir fuera de eso es `422
+  validation.failed` con el campo (`Name`, `MimeType`, `SizeBytes`); cuatro o un par repetido al radicar, con `Attachments`. La lista es
+  un subconjunto de la de Storage (`SupportAttachmentParityTests`).
+- **Sin Word ni Excel mientras `Storage:ClamAv:Enabled` esté apagado en producción** (owner, 2026-11-15): un adjunto anónimo con macros
+  lo abre un asesor. Sumar un tipo de Office exige prender ClamAV primero.
+- **Tope por tenant** (owner, 2026-11-15): el limitador por IP no frena a muchas IPs a la vez llenando el bucket. Un tenant tiene a lo
+  sumo **200** subidas abiertas en las últimas 24 h que ningún ticket reclamó (`MaxPendingPerTenantPerDay`; las reclamadas no cuentan);
+  pasado eso, abrir responde `422 support.public.attachments_busy`, sin tocar Storage, y la página dice «Estamos recibiendo muchos
+  archivos. Intenta más tarde.». Es un tope blando: dos aperturas simultáneas en el borde pueden pasarlo por una. El conteo es SQL crudo
+  en `SupportAttachmentStorage` (Bootstrapper) sobre `storage.file_resources` y `support.ticket_attachments`.
 - **`uploadKey`** es un GUID aleatorio (v4) que sólo recibe quien abrió la sesión y que Storage guarda como `OwnerId` del archivo. Completar
   y radicar exigen el par `(fileId, uploadKey)` del mismo tenant: otra clave, un id que no existe, un archivo sin subir o en cuarentena
   responden lo mismo, `422 support.public.attachment_invalid`. Completar antes de que termine el `PUT` es `428
@@ -5179,7 +5190,7 @@ tenancy.slug.reserved`). Antes de desplegar se corre la consulta de los avisos d
 
 **Migraciones:** `Support` `AddSupportPublicForm` (`form_versions`, `legal_text_versions`, `consents`, `ticket_access` y las columnas del
 formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attachments`) y `Support` `AddSupportFormAllowAttachments`
-(`form_versions.allow_attachments`, `false` por defecto). Storage no tiene migración: `SupportTicket` se guarda por nombre en `owner_type`.
+(`form_versions.allow_attachments`, `true` por defecto). Storage no tiene migración: `SupportTicket` se guarda por nombre en `owner_type`.
 
 ### API externa
 
