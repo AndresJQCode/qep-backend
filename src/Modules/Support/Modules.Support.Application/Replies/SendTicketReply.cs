@@ -180,8 +180,11 @@ public sealed class SendTicketReplyHandler(
         if (reply is null)
         {
             var text = command.Text!.Trim();
+            // Revisión final (I1 y M2): la fila guarda el destino de la plantilla al celular y el adjunto, para que un retomado mande
+            // exactamente esto.
             reply = SupportTicketReply.Start(
-                command.TenantId, ticket.Id, clientId, channel, route.Delivery, text, route.ConnectionId, actor, context.Now);
+                command.TenantId, ticket.Id, clientId, channel, route.Delivery, text, route.ConnectionId, actor, context.Now,
+                route.WaId, command.UploadId, command.FileName?.Trim());
             replies.Add(reply);
             try
             {
@@ -198,10 +201,8 @@ public sealed class SendTicketReplyHandler(
             }
         }
 
-        // La fila no guarda adjunto: un retomado sale tal como quedó guardado, como texto, aunque el reintento traiga uno.
-        var outcome = existing is null
-            ? await SendAsync(ticket, route, reply, actor, command.UploadId, command.FileName?.Trim(), cancellationToken)
-            : await SendAsync(ticket, route, reply, actor, uploadId: null, fileName: null, cancellationToken);
+        // El adjunto sale de la fila: un retomado manda el que guardó (o ninguno), nunca el que traiga el reintento.
+        var outcome = await SendAsync(ticket, route, reply, actor, cancellationToken);
         if (outcome is SupportChannelSendResult.Rejected rejected)
         {
             if (existing is not null)
@@ -280,9 +281,11 @@ public sealed class SendTicketReplyHandler(
     /// <summary>
     /// CM1: la ruta de una Pending vieja sale de su fila. La entrega guardada manda: <c>Text</c> va al hilo del ticket aunque la ventana se
     /// haya cerrado (Mensajería devuelve lo que ya salió por <c>clientId</c>, o lo rechaza y la fila queda Failed); <c>Template</c> va a la
-    /// conversación del ticket o, sin ella, al celular por la conexión guardada; <c>Email</c>, al correo de la foto. Lo que ya no se puede
-    /// es una <see cref="SupportDomainException"/>, que quien llama convierte en Failed. Sin Mensajería prendida responde 403 y la fila
-    /// sigue Pending: prender el módulo y reintentar la retoma.
+    /// conversación del ticket o, sin ella, al <c>wa_id</c> y por la conexión guardados (revisión final, I1: sin volver a mirar el
+    /// celular de la foto, la conexión ni la aprobación de la plantilla, porque Mensajería, idempotente por <c>clientId</c>, devuelve
+    /// primero lo que ya salió); <c>Email</c>, al correo de la foto. Lo que ya no se puede es una <see cref="SupportDomainException"/>,
+    /// que quien llama convierte en Failed. Sin Mensajería prendida responde 403 y la fila sigue Pending: prender el módulo y reintentar
+    /// la retoma.
     /// </summary>
     private async Task<SupportReplyRoute> ResumeRouteAsync(
         SupportTicket ticket, SupportTicketReply stored, CancellationToken cancellationToken)
@@ -300,9 +303,15 @@ public sealed class SendTicketReplyHandler(
             return new SupportReplyRoute(stored.Delivery, conversationId, null, null);
         }
 
-        return stored.Delivery is SupportReplyDelivery.Template
-            ? await TemplateToPhoneAsync(ticket, stored.ConnectionId, cancellationToken)
-            : throw new SupportDomainException(SupportErrorCodes.NoConversation, "The ticket no longer has a conversation to reply through.");
+        if (stored.Delivery is not SupportReplyDelivery.Template)
+        {
+            throw new SupportDomainException(SupportErrorCodes.NoConversation, "The ticket no longer has a conversation to reply through.");
+        }
+
+        // Una fila sin destino guardado no tiene a dónde volver a salir (sólo una anterior a AddSupportReplyTargets).
+        return stored is { ConnectionId: { } connection, TargetWaId: { } waId }
+            ? new SupportReplyRoute(SupportReplyDelivery.Template, null, connection, waId)
+            : throw Unavailable(SupportReplyChannel.WhatsAppTemplate);
     }
 
     /// <summary>CM2: el retomado que no salió deja su fila <c>Failed</c> con el motivo, con su traza y su auditoría, y responde 201 como
@@ -347,11 +356,12 @@ public sealed class SendTicketReplyHandler(
     }
 
     private async Task<SupportChannelSendResult> SendAsync(
-        SupportTicket ticket, SupportReplyRoute route, SupportTicketReply reply, Guid actor, Guid? uploadId, string? fileName,
-        CancellationToken cancellationToken) => route.Delivery switch
+        SupportTicket ticket, SupportReplyRoute route, SupportTicketReply reply, Guid actor, CancellationToken cancellationToken) =>
+        route.Delivery switch
         {
             SupportReplyDelivery.Text => await channels.SendThreadAsync(
-                new SupportChannelThreadSend(ticket.TenantId, route.ConversationId!.Value, reply.Id, actor, reply.Text, uploadId, fileName),
+                new SupportChannelThreadSend(
+                    ticket.TenantId, route.ConversationId!.Value, reply.Id, actor, reply.Text, reply.UploadId, reply.FileName),
                 cancellationToken),
             SupportReplyDelivery.Template => await channels.SendTemplateAsync(
                 new SupportChannelTemplateSend(
@@ -417,7 +427,8 @@ public sealed class SendTicketReplyHandler(
                 reply.MarkSent(sent.MessageId, now);
                 break;
             case SupportChannelSendResult.Failed failed:
-                reply.MarkFailed(failed.Code, now);
+                // M4: el mensaje que Mensajería registró como fallido queda en la fila; no se fija en el expediente.
+                reply.MarkFailed(failed.Code, failed.MessageId, now);
                 break;
         }
 
@@ -432,7 +443,11 @@ public sealed class SendTicketReplyHandler(
             linkedConversation = conversationId;
         }
 
-        if (outcome is SupportChannelSendResult.Sent { MessageId: { } messageId } && ticket.ConversationId is { } ticketConversation)
+        // Revisión final (M7): se fija sólo si salió por la conversación del ticket (ya con la que vinculó la plantilla); uno que
+        // Mensajería mandó por otra no es de este expediente.
+        if (outcome is SupportChannelSendResult.Sent { MessageId: { } messageId, ConversationId: { } sentConversation }
+            && ticket.ConversationId is { } ticketConversation
+            && sentConversation == ticketConversation)
         {
             await PinAsync(ticket, ticketConversation, messageId, now, cancellationToken);
         }

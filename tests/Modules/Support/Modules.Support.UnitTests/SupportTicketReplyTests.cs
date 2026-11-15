@@ -33,12 +33,60 @@ public sealed class SupportTicketReplyTests
         Assert.Equal(SupportReplyStatus.Pending, reply.Status);
         Assert.Equal("Ya revisamos tu caso.", reply.Text);
 
-        reply.MarkFailed("send_failed", Now.AddMinutes(2));
+        reply.MarkFailed("send_failed", messageId: null, Now.AddMinutes(2));
 
         Assert.Equal(SupportReplyStatus.Failed, reply.Status);
         Assert.Equal("send_failed", reply.FailureCode);
         Assert.Throws<InvalidOperationException>(() => reply.MarkSent(Guid.CreateVersion7(), Now.AddMinutes(3)));
-        Assert.Throws<InvalidOperationException>(() => reply.MarkFailed("send_failed", Now.AddMinutes(3)));
+        Assert.Throws<InvalidOperationException>(() => reply.MarkFailed("send_failed", messageId: null, Now.AddMinutes(3)));
+    }
+
+    // Revisión final (M4): el mensaje que Mensajería registró como fallido queda en la fila, para que la pantalla lo encuentre en el hilo.
+    [Fact]
+    public void AFailedReplyKeepsTheMessageMessagingRecorded()
+    {
+        var reply = Reply(Ticket());
+        var messageId = Guid.CreateVersion7();
+
+        reply.MarkFailed("send_failed", messageId, Now.AddMinutes(2));
+
+        Assert.Equal((SupportReplyStatus.Failed, (Guid?)messageId), (reply.Status, reply.MessageId));
+    }
+
+    // Revisión final (I1 y M2): la fila guarda a dónde y qué sale (el wa_id de la plantilla al celular, el adjunto del hilo), para que
+    // retomarla mande exactamente lo guardado.
+    [Fact]
+    public void AReplyStoresItsTemplateTargetAndItsAttachment()
+    {
+        var connection = Guid.CreateVersion7();
+        var upload = Guid.CreateVersion7();
+
+        var template = SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.WhatsAppTemplate, SupportReplyDelivery.Template,
+            "Hola", connection, Actor, Now, targetWaId: "573001234567");
+        var attached = SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, SupportReplyDelivery.Text,
+            "Te adjunto la factura", null, Actor, Now, uploadId: upload, fileName: "  factura.pdf ");
+
+        Assert.Equal(((Guid?)connection, "573001234567"), (template.ConnectionId, template.TargetWaId));
+        Assert.Equal(((Guid?)upload, "factura.pdf"), (attached.UploadId, attached.FileName));
+    }
+
+    [Fact]
+    public void ATargetOrAnAttachmentOutsideItsDeliveryIsRejected()
+    {
+        Assert.Throws<ArgumentException>(() => SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, SupportReplyDelivery.Text,
+            "Hola", null, Actor, Now, targetWaId: "573001234567"));
+        Assert.Throws<ArgumentException>(() => SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, SupportReplyDelivery.Template,
+            "Hola", null, Actor, Now, uploadId: Guid.CreateVersion7(), fileName: "factura.pdf"));
+        Assert.Throws<ArgumentException>(() => SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, SupportReplyDelivery.Text,
+            "Hola", null, Actor, Now, uploadId: Guid.CreateVersion7()));
+        Assert.Throws<ArgumentException>(() => SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.WhatsAppTemplate, SupportReplyDelivery.Template,
+            "Hola", null, Actor, Now, targetWaId: new string('5', SupportTicketReply.TargetWaIdMaxLength + 1)));
     }
 
     [Fact]
@@ -117,7 +165,7 @@ public sealed class SupportTicketReplyTests
     {
         var ticket = Ticket();
         var reply = Reply(ticket);
-        reply.MarkFailed("send_failed", Now.AddMinutes(2));
+        reply.MarkFailed("send_failed", messageId: null, Now.AddMinutes(2));
 
         ticket.RecordReply(reply, Now.AddMinutes(2));
 

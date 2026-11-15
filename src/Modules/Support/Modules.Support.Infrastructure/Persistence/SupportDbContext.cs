@@ -35,6 +35,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
     /// <summary>Único del <c>clientId</c> por ticket (plan E16): un reintento de la misma respuesta choca acá.</summary>
     public const string TicketReplyClientIndex = "IX_ticket_replies_ticket_client";
 
+    /// <summary>Los vínculos por (tenant, conversación, mensaje): el NOT EXISTS de <c>SupportThreadFeed</c> lo nombra en su comentario.</summary>
+    public const string TicketMessageConversationIndex = "IX_ticket_messages_conversation";
+
     public DbSet<SupportTicketType> TicketTypes => Set<SupportTicketType>();
 
     public DbSet<SupportTenantSettings> TenantSettings => Set<SupportTenantSettings>();
@@ -256,8 +259,11 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             .IsDescending(false, true, true)
             .HasFilter("state <> 'Released'")
             .HasDatabaseName("IX_ticket_messages_ticket_visible");
-        // Para el borrado de clientes, que limpia los vínculos de las conversaciones que se borran (plan E18).
-        link.HasIndex(value => new { value.TenantId, value.ConversationId }).HasDatabaseName("IX_ticket_messages_conversation");
+        // Para el borrado de clientes, que limpia los vínculos de las conversaciones que se borran (plan E18), y para el NOT EXISTS del
+        // feed del seguimiento, que busca por (tenant, conversación, mensaje): con message_id en el índice no recorre los vínculos de
+        // toda la conversación por cada entrante (revisión final, I2).
+        link.HasIndex(value => new { value.TenantId, value.ConversationId, value.MessageId })
+            .HasDatabaseName(TicketMessageConversationIndex);
     }
 
     private static void ConfigureUnclassifiedMessage(ModelBuilder modelBuilder)
@@ -312,6 +318,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         // Mensaje y conexión son referencias blandas a messaging e integrations.
         reply.Property(value => value.MessageId).HasColumnName("message_id");
         reply.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        // Lo que retoma una Pending vieja (revisión final, I1 y M2): el destino de la plantilla al celular y el adjunto del hilo.
+        reply.Property(value => value.TargetWaId).HasColumnName("target_wa_id").HasMaxLength(SupportTicketReply.TargetWaIdMaxLength);
+        reply.Property(value => value.UploadId).HasColumnName("upload_id");
+        reply.Property(value => value.FileName).HasColumnName("file_name").HasMaxLength(SupportTicketReply.FileNameMaxLength);
         reply.Property(value => value.AuthorMemberId).HasColumnName("author_member_id");
         reply.Property(value => value.CreatedAt).HasColumnName("created_at");
         reply.Property(value => value.UpdatedAt).HasColumnName("updated_at");

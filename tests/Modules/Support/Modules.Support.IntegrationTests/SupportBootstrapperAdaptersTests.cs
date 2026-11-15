@@ -109,6 +109,47 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         Assert.Equal([afterOldest, afterBoth], pending.Select(item => item.MessageId));
     }
 
+    // Revisión final (I2): las dos lecturas del feed miran sólo lo que llegó dentro de Support:Workers:FeedLookbackHours (24 h por
+    // defecto), por created_at, y no todo desde follow_since en cada tick. La ventana del ticket se sigue midiendo con occurred_at.
+    [Fact]
+    public async Task TheFeedSkipsInboundCreatedBeforeTheLookback()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var conversation = await SeedConversationAsync(Factory, tenant);
+        await SupportTicketSeed.SaveConversationTicketAsync(Factory, tenant, conversation, Since);
+        var stale = await SeedMessageAsync(Factory, tenant, conversation, Since.AddMinutes(1));
+        var fresh = await SeedMessageAsync(Factory, tenant, conversation, Since.AddMinutes(2));
+        await ExecuteAsync(
+            Factory, "UPDATE messaging.messages SET created_at = now() - interval '25 hours' WHERE id = @id", ("id", stale));
+
+        var pending = await FeedAsync();
+
+        Assert.Equal([fresh], pending.Select(item => item.MessageId));
+    }
+
+    [Fact]
+    public async Task TheReassignableListSkipsUnclassifiedCreatedBeforeTheLookback()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var conversation = await SeedConversationAsync(Factory, tenant);
+        await SupportTicketSeed.SaveConversationTicketAsync(Factory, tenant, conversation, Since);
+        var stale = Guid.CreateVersion7();
+        var fresh = Guid.CreateVersion7();
+        await ExecuteAsync(
+            Factory,
+            """
+            INSERT INTO support.unclassified_messages (message_id, tenant_id, conversation_id, occurred_at, created_at)
+            VALUES (@stale, @tenant, @conversation, @first, now() - interval '25 hours'), (@fresh, @tenant, @conversation, @second, now())
+            """,
+            ("stale", stale), ("fresh", fresh), ("tenant", tenant), ("conversation", conversation),
+            ("first", Since.AddMinutes(1)), ("second", Since.AddMinutes(2)));
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var reassignable = await scope.ServiceProvider.GetRequiredService<ISupportThreadFeed>().ListReassignableUnclassifiedAsync(50, Ct);
+
+        Assert.Equal([fresh], reassignable.Select(item => item.MessageId));
+    }
+
     [Fact]
     public async Task TheConversationEventJoinsTheSupportTransaction()
     {

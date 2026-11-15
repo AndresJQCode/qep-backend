@@ -142,6 +142,39 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketReplySent, Id(ticket).ToString()));
     }
 
+    // Revisión final (I3): la respuesta lleva su clientId, así la pantalla puede retomar una que quedó Pending con el mismo valor.
+    [Fact]
+    public async Task TheReplyCarriesItsClientIdInTheResultAndInTheDetail()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var clientId = Guid.CreateVersion7();
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId, channel = "Thread", text = "Hola" });
+
+        Assert.Equal(clientId, result.GetProperty("reply").GetProperty("clientId").GetGuid());
+        var listed = Assert.Single(result.GetProperty("ticket").GetProperty("replies").EnumerateArray());
+        Assert.Equal(clientId, listed.GetProperty("clientId").GetGuid());
+        var detail = await scenario.DetailAsync(Id(ticket));
+        Assert.Equal(clientId, Assert.Single(detail.GetProperty("replies").EnumerateArray()).GetProperty("clientId").GetGuid());
+    }
+
+    // Revisión final (M7): el mensaje se fija sólo si salió por la conversación del ticket. Uno que Mensajería mandó por otra no entra
+    // al expediente de este ticket.
+    [Fact]
+    public async Task AMessageSentThroughAnotherConversationIsNotPinned()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var message = Guid.CreateVersion7();
+        _channels.OnThread = _ => new SupportChannelSendResult.Sent(message, Guid.CreateVersion7());
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = "Hola" });
+
+        Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+        Assert.Equal(0, await ScalarAsync(Factory, "SELECT count(*) FROM support.ticket_messages WHERE message_id = @id", ("id", message)));
+    }
+
     [Fact]
     public async Task AThreadReplyOutsideTheWindowGoesAsTheSupportTemplate()
     {
@@ -193,6 +226,10 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal(connection, send.ConnectionId);
         Assert.Equal("573001234567", send.WaId);
         Assert.Equal("Ana Gómez", send.RecipientName);
+        // I1: la fila guarda el destino, para que un retomado salga al mismo wa_id aunque la foto cambie.
+        Assert.Equal(
+            "573001234567",
+            await TextAsync(Factory, "SELECT target_wa_id FROM support.ticket_replies WHERE id = @id", ("id", send.ClientId)));
         var detail = result.GetProperty("ticket");
         Assert.Equal(opened, detail.GetProperty("conversationId").GetGuid());
         Assert.Equal("WhatsApp", detail.GetProperty("conversationChannel").GetString());
@@ -253,6 +290,8 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         var reply = result.GetProperty("reply");
         Assert.Equal("Failed", reply.GetProperty("status").GetString());
         Assert.Equal("send_failed", reply.GetProperty("failureCode").GetString());
+        // Revisión final (M4): el mensaje fallido queda en la fila (para ubicarlo en el hilo), pero no se fija en el expediente.
+        Assert.Equal(failedMessage, reply.GetProperty("messageId").GetGuid());
         var listed = Assert.Single(result.GetProperty("ticket").GetProperty("replies").EnumerateArray());
         Assert.Equal("Failed", listed.GetProperty("status").GetString());
         Assert.Equal(0, await ScalarAsync(Factory, "SELECT count(*) FROM support.ticket_messages WHERE message_id = @id", ("id", failedMessage)));
@@ -412,12 +451,40 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         var templateClient = Guid.CreateVersion7();
         await SeedPendingReplyAsync(
             scenario, Id(manual), templateClient, DateTimeOffset.UtcNow.AddMinutes(-2),
-            Modules.Support.Domain.SupportReplyChannel.WhatsAppTemplate, Modules.Support.Domain.SupportReplyDelivery.Template, stored);
+            Modules.Support.Domain.SupportReplyChannel.WhatsAppTemplate, Modules.Support.Domain.SupportReplyDelivery.Template, stored,
+            targetWaId: "573001234567");
         _channels.OnTemplate = _ => new SupportChannelSendResult.Failed(null, "send_failed");
 
         await ReplyCreatedAsync(scenario, manual, new { clientId = templateClient, channel = "WhatsAppTemplate", text = "Hola", connectionId = other });
 
         Assert.Equal(stored, Assert.Single(_channels.TemplateSends).ConnectionId);
+    }
+
+    // Revisión final (I1): la plantilla al celular retomada sale al wa_id y por la conexión que guardó su fila, sin repetir las revisiones
+    // de Soporte. La plantilla ya no aprobada y el celular editado no la marcan Failed: Mensajería, idempotente por clientId, devuelve lo
+    // que ya salió (el doble responde Sent).
+    [Fact]
+    public async Task AResumedTemplateToPhoneUsesItsStoredTargetWithoutSupportChecks()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync(requester: new { firstNames = "Ana", lastNames = "Gómez", email = "ana@example.com", mobilePhone = "+573009990000" });
+        var connection = Guid.CreateVersion7();
+        var opened = await SeedConversationAsync(Factory, scenario.TenantId, waId: "573001234567", connectionId: connection);
+        var clientId = Guid.CreateVersion7();
+        var rowId = await SeedPendingReplyAsync(
+            scenario, Id(ticket), clientId, DateTimeOffset.UtcNow.AddMinutes(-2),
+            Modules.Support.Domain.SupportReplyChannel.WhatsAppTemplate, Modules.Support.Domain.SupportReplyDelivery.Template, connection,
+            targetWaId: "573001234567");
+        _channels.OnTemplate = _ => new SupportChannelSendResult.Sent(Guid.CreateVersion7(), opened);
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId, channel = "WhatsAppTemplate", text = "Hola", connectionId = connection });
+
+        var send = Assert.Single(_channels.TemplateSends);
+        Assert.Equal((rowId, (Guid?)connection, "573001234567", (Guid?)null), (send.ClientId, send.ConnectionId, send.WaId, send.ConversationId));
+        Assert.Equal((rowId, "Sent"), (
+            result.GetProperty("reply").GetProperty("id").GetGuid(),
+            result.GetProperty("reply").GetProperty("status").GetString()));
+        Assert.Equal(opened, result.GetProperty("ticket").GetProperty("conversationId").GetGuid());
     }
 
     // CM2: un retomado que el canal rechaza, o que ya no tiene ruta (422), deja su fila Failed con el motivo: nunca la borra ni la deja
@@ -477,21 +544,29 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
     }
 
-    // Revisión del bloque D: la fila no guarda adjunto, así que el retomado de una Pending sale como texto, tal como quedó guardada,
-    // aunque el reintento traiga un uploadId y un nombre.
+    // Revisión final (M2): la fila guarda su adjunto, y el retomado de una Pending manda exactamente lo guardado: el adjunto guardado y
+    // no el del reintento, y ninguno si la fila no lo tenía.
     [Fact]
-    public async Task AResumedPendingReplyIgnoresTheRetryAttachment()
+    public async Task AResumedPendingReplySendsItsStoredAttachmentNotTheRetryOne()
     {
         var scenario = await StartAsync(Factory);
         var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
-        var clientId = Guid.CreateVersion7();
-        var rowId = await SeedPendingReplyAsync(scenario, Id(ticket), clientId, DateTimeOffset.UtcNow.AddMinutes(-2));
+        var withAttachment = Guid.CreateVersion7();
+        var storedUpload = Guid.CreateVersion7();
+        var attachedRow = await SeedPendingReplyAsync(
+            scenario, Id(ticket), withAttachment, DateTimeOffset.UtcNow.AddMinutes(-2), uploadId: storedUpload, fileName: "guardada.pdf");
+        var textOnly = Guid.CreateVersion7();
+        var textRow = await SeedPendingReplyAsync(scenario, Id(ticket), textOnly, DateTimeOffset.UtcNow.AddMinutes(-2));
 
         await ReplyCreatedAsync(
-            scenario, ticket, new { clientId, channel = "Thread", text = "Hola", uploadId = Guid.CreateVersion7(), fileName = "factura.pdf" });
+            scenario, ticket, new { clientId = withAttachment, channel = "Thread", text = "Hola", uploadId = Guid.CreateVersion7(), fileName = "otra.pdf" });
+        await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = textOnly, channel = "Thread", text = "Hola", uploadId = Guid.CreateVersion7(), fileName = "factura.pdf" });
 
-        var send = Assert.Single(_channels.ThreadSends);
-        Assert.Equal((rowId, (Guid?)null, (string?)null, "Hola"), (send.ClientId, send.UploadId, send.FileName, send.Text));
+        var sends = _channels.ThreadSends.ToArray();
+        Assert.Equal(2, sends.Length);
+        Assert.Equal((attachedRow, (Guid?)storedUpload, "guardada.pdf", "Hola"), (sends[0].ClientId, sends[0].UploadId, sends[0].FileName, sends[0].Text));
+        Assert.Equal((textRow, (Guid?)null, (string?)null, "Hola"), (sends[1].ClientId, sends[1].UploadId, sends[1].FileName, sends[1].Text));
     }
 
     // Ruling del controlador (revisión del bloque D): Instagram no lleva pie en un adjunto, así que el texto de la respuesta se perdería.
@@ -530,6 +605,11 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         var send = Assert.Single(_channels.ThreadSends);
         Assert.Equal((conversation, uploadId, "factura.pdf", "Te adjunto la factura"), (send.ConversationId, send.UploadId, send.FileName, send.Text));
         Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+        // M2: la fila guarda el adjunto, para que un retomado mande el mismo.
+        Assert.Equal(
+            $"{uploadId}|factura.pdf",
+            await TextAsync(
+                Factory, "SELECT upload_id::text || '|' || file_name FROM support.ticket_replies WHERE id = @id", ("id", send.ClientId)));
     }
 
     // E19: un adjunto sólo sale por el hilo dentro de la ventana. Fuera, la respuesta sería la plantilla, que no lo lleva: 422 sin fila.
@@ -601,12 +681,15 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         DateTimeOffset createdAt,
         Modules.Support.Domain.SupportReplyChannel channel = Modules.Support.Domain.SupportReplyChannel.Thread,
         Modules.Support.Domain.SupportReplyDelivery delivery = Modules.Support.Domain.SupportReplyDelivery.Text,
-        Guid? connectionId = null)
+        Guid? connectionId = null,
+        string? targetWaId = null,
+        Guid? uploadId = null,
+        string? fileName = null)
     {
         await using var scope = Factory.Services.CreateAsyncScope();
         var reply = Modules.Support.Domain.SupportTicketReply.Start(
             scenario.TenantId, new Modules.Support.Domain.SupportTicketId(ticketId), clientId, channel, delivery, "Hola", connectionId,
-            scenario.CallerMemberId, createdAt);
+            scenario.CallerMemberId, createdAt, targetWaId, uploadId, fileName);
         scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>().Add(reply);
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         return reply.Id;

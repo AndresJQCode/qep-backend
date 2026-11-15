@@ -339,7 +339,9 @@ public sealed class SupportTicket
     }
 
     /// <summary>La conversación que crea o encuentra una respuesta por plantilla a un ticket sin conversación (plan E14). Empieza
-    /// a seguir el hilo desde ya. Un ticket que ya tiene conversación no la cambia: quien llama lo revisa antes.</summary>
+    /// a seguir el hilo desde ya, salvo que esté cerrado (revisión final, M3): un cerrado no sigue el hilo, así que la ventana nace
+    /// apagada, con <see cref="FollowOffAt"/> en este instante. Un ticket que ya tiene conversación no la cambia: quien llama lo revisa
+    /// antes.</summary>
     public void LinkConversation(SupportConversationRef conversation, Guid actorMemberId, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(conversation);
@@ -349,11 +351,12 @@ public sealed class SupportTicket
             throw new InvalidOperationException($"The ticket '{Id}' already has a conversation.");
         }
 
+        var closed = Status is SupportTicketStatus.Closed;
         ConversationId = conversation.Id;
         ConversationChannel = conversation.Channel;
-        FollowThread = true;
+        FollowThread = !closed;
         FollowSince = now;
-        FollowOffAt = null;
+        FollowOffAt = closed ? now : null;
         AddEvent(
             SupportTicketEventKind.ConversationLinked, actorMemberId, now,
             new { conversationId = conversation.Id, channel = conversation.Channel });

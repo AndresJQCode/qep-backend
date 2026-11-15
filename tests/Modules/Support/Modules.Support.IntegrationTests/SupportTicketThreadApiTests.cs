@@ -42,6 +42,33 @@ public sealed class SupportTicketThreadApiTests(SupportHostWithoutWorkers host) 
         Assert.Equal("Hola, tengo un problema con mi pedido", item.GetProperty("message").GetProperty("text").GetString());
     }
 
+    // Revisión final (M6): fijar un entrante que esperaba en «sin clasificar» lo clasifica en ese ticket, en el mismo guardado: si no,
+    // seguiría pidiéndole al asesor que decida de qué ticket es.
+    [Fact]
+    public async Task PinningAnUnclassifiedMessageAssignsItsPendingRowToTheTicket()
+    {
+        var scenario = await StartAsync(host.Factory);
+        var conversation = await SeedConversationAsync(scenario.Factory, scenario.TenantId);
+        var chosen = await scenario.CreateFromConversationAsync(conversation);
+        await scenario.CreateFromConversationAsync(conversation, "Otro caso");
+        var inbound = await SeedMessageAsync(scenario.Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow.AddMinutes(1));
+        await FollowAsync();
+        Assert.Single((await UnclassifiedAsync(scenario, conversation)).GetProperty("items").EnumerateArray());
+
+        var current = await scenario.DetailAsync(Id(chosen));
+        var response = await scenario.PostActionAsync($"tickets/{Id(chosen)}/messages/{inbound}/pin", null, Version(current));
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        Assert.Empty((await UnclassifiedAsync(scenario, conversation)).GetProperty("items").EnumerateArray());
+        Assert.Equal(
+            "Assigned",
+            await TextAsync(scenario.Factory, "SELECT resolution FROM support.unclassified_messages WHERE message_id = @id", ("id", inbound)));
+        Assert.Equal(
+            Id(chosen).ToString(),
+            await TextAsync(
+                scenario.Factory, "SELECT assigned_ticket_id::text FROM support.unclassified_messages WHERE message_id = @id", ("id", inbound)));
+    }
+
     [Fact]
     public async Task PinningAMessageOfAnotherConversationIs422()
     {

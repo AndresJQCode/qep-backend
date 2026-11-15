@@ -82,9 +82,12 @@ public sealed record SupportTicketDetailDto(
 
 /// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>;
 /// <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
-/// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló.</summary>
+/// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló. <c>ClientId</c> es el que mandó la
+/// pantalla: con él retoma una respuesta que quedó <c>Pending</c> (revisión final, I3). <c>MessageId</c> también viene en una fallida si
+/// Mensajería registró el mensaje.</summary>
 public sealed record SupportReplyDto(
     Guid Id,
+    Guid ClientId,
     string Channel,
     string Delivery,
     string Text,

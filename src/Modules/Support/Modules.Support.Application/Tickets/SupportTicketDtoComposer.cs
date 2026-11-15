@@ -97,6 +97,7 @@ public sealed class SupportTicketDtoComposer(
     /// <summary>Una respuesta como la dibujan el detalle y el resultado de responder.</summary>
     internal static SupportReplyDto ToReplyDto(SupportTicketReply reply, IReadOnlyDictionary<Guid, string> membersById) => new(
         reply.Id,
+        reply.ClientId,
         reply.Channel.ToString(),
         reply.Delivery.ToString(),
         reply.Text,

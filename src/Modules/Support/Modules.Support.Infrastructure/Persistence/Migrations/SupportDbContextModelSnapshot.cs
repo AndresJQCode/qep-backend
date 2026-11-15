@@ -418,12 +418,12 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "ConversationId")
-                        .HasDatabaseName("IX_ticket_messages_conversation");
-
                     b.HasIndex("TicketId", "MessageId")
                         .IsUnique()
                         .HasDatabaseName("IX_ticket_messages_ticket_message");
+
+                    b.HasIndex("TenantId", "ConversationId", "MessageId")
+                        .HasDatabaseName("IX_ticket_messages_conversation");
 
                     b.HasIndex("TicketId", "OccurredAt", "MessageId")
                         .IsDescending(false, true, true)
@@ -475,6 +475,11 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(64)")
                         .HasColumnName("failure_code");
 
+                    b.Property<string>("FileName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("file_name");
+
                     b.Property<Guid?>("MessageId")
                         .HasColumnType("uuid")
                         .HasColumnName("message_id");
@@ -484,6 +489,11 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)")
                         .HasColumnName("status");
+
+                    b.Property<string>("TargetWaId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("target_wa_id");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
@@ -502,6 +512,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UploadId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("upload_id");
 
                     b.HasKey("Id");
 

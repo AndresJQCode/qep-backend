@@ -4805,7 +4805,8 @@ plantilla del sistema `SupportReply`.
 
 **Seguimiento del hilo.** Los entrantes no se empujan desde la ingesta: `SupportThreadFollowWorker` lee por sondeo, con
 `Support:Workers` en `appsettings.json` y defaults en código: `Enabled` (verdadero si falta: el worker se registra o no al arrancar),
-`FollowIntervalSeconds` (5) y `BatchSize` (200 entrantes por pasada). Un entrante cuenta para un ticket no cerrado si cae en su ventana
+`FollowIntervalSeconds` (5), `BatchSize` (200 entrantes por pasada) y `FeedLookbackHours` (24: cada pasada mira sólo los entrantes y
+las filas sin clasificar que llegaron en esas horas, por `created_at`). Un entrante cuenta para un ticket no cerrado si cae en su ventana
 `[follow_since, follow_off_at)`: con un candidato se vincula (`Linked`), con dos o más queda «sin clasificar», y una fila sin clasificar
 pasa sola cuando le queda un único candidato. Un vínculo automático no sube la versión del ticket ni escribe evento; reabre a `Open` un
 ticket `WaitingOnCustomer`. Lo que el worker acepta y no corrige:
@@ -4813,6 +4814,8 @@ ticket `WaitingOnCustomer`. Lo que el worker acepta y no corrige:
 - **Un entrante que siempre falla** se registra (sólo ids) y se salta en cada pasada; no frena el resto del lote.
 - **Un ticket que apagó el seguimiento hace más de una hora** (`SupportThreadFeed.FollowOffGrace`) ya no hace recorrer su
   conversación: un entrante de antes del apagado que el worker no alcanzó a ver en esa hora queda sin vincular.
+- **Un worker caído más de `FeedLookbackHours`** deja sin vincular los entrantes que llegaron mientras tanto (el asesor los fija a
+  mano desde el hilo) y sin pasar solas las filas sin clasificar más viejas que eso (el asesor las asigna o las descarta).
 - **Prender el seguimiento otra vez** abre una ventana nueva desde ese momento: lo que llegó con el interruptor apagado no se vincula,
   y un entrante de la ventana anterior que el worker todavía no procesaba (unos segundos de retraso) puede quedar fuera.
 - **Una fila sin clasificar cuyos candidatos se cerraron todos** queda pendiente hasta que el asesor la descarte; no ocupa el lote.
@@ -4827,15 +4830,19 @@ conversación manda la plantilla al celular de la foto por la conexión elegida,
 `Email` va al correo de la foto. Responder no toma la conversación, no cambia su estado ni su asignación y no resta no leídos. Cada
 respuesta es una fila de `support.ticket_replies` que se confirma `Pending` **antes** de llamar afuera; su `id` es el `clientId` que viaja
 a Mensajería, idempotente por él. Un reintento con el mismo `clientId` devuelve la fila guardada sin mirar el `If-Match`; una `Pending` de
-menos de 60 s se devuelve sin enviar (la está mandando otro request) y una más vieja se retoma por el canal, la entrega y la conexión que
-guardó su fila (sin adjunto: la fila no lo guarda, y un retomado sale como texto aunque el reintento traiga uno): si el canal la
-rechaza o ya no tiene ruta, queda `Failed` con el motivo. **El correo no es idempotente**: una `Pending` de correo de más de 60 s se
+menos de 60 s se devuelve sin enviar (la está mandando otro request) y una más vieja se retoma con exactamente lo que guardó su fila: el
+canal, la entrega, la conexión, el texto, el adjunto (`upload_id`, `file_name`; el del reintento se ignora) y, en una plantilla al
+celular, el `target_wa_id` que se tomó de la foto al crearla (sin volver a revisar el celular, la conexión ni la aprobación de la
+plantilla: Mensajería devuelve primero lo que ya salió con ese `clientId`). Si el canal la rechaza o ya no tiene ruta, queda `Failed`
+con el motivo. La fila trae su `clientId` en el detalle y en el resultado, para que la pantalla retome una que quedó `Pending`. Una
+`Failed` trae `messageId` si Mensajería registró el mensaje (no se fija en el expediente), y un mensaje se fija sólo si salió por la
+conversación del ticket. **El correo no es idempotente**: una `Pending` de correo de más de 60 s se
 vuelve a mandar al retomarla, y el solicitante puede recibirlo dos veces.
 
 **`failureCode` de una respuesta `Failed`** tiene dos orígenes, y la pantalla tiene que traducir los dos: un motivo de Mensajería o del
 correo cuando el canal la rechazó o falló (`send_failed`, `window_closed`, `contact_blocked`, `connection_unavailable`,
 `attachment_unavailable`…), o un código de error de Soporte cuando un retomado ya no tenía ruta (`support.ticket.no_conversation`,
-`support.ticket.reply_channel_unavailable`, `support.reply.template_not_approved`, `support.reply.connection_required`…).
+`support.ticket.reply_channel_unavailable`).
 
 **Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
 la pantalla lo sube con la sesión de subida de Mensajería

@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Modules.Messaging.Domain;
 using Modules.Support.Application;
+using Modules.Support.Infrastructure;
 using Modules.Support.Infrastructure.Persistence;
 
 namespace Bootstrapper;
@@ -10,19 +12,26 @@ namespace Bootstrapper;
 /// <see cref="SupportDbContext"/>. Mensajería no avisa: un entrante cuenta para un ticket si su hora (<c>occurred_at</c>, no la de
 /// llegada) cae en la ventana de seguimiento de un ticket no cerrado de su conversación (plan E4), la misma regla que
 /// <c>SupportTicket.CoversInbound</c>. Recorre los mensajes de cada conversación seguida por <c>IX_messages_thread</c>
-/// (<c>conversation_id, occurred_at</c>) y descarta los ya vistos por <c>IX_ticket_messages_conversation</c> y la PK de
-/// <c>unclassified_messages</c>.
+/// (<c>conversation_id, occurred_at</c>) y descarta los ya vistos por <c>IX_ticket_messages_conversation</c>
+/// (<c>tenant_id, conversation_id, message_id</c>) y la PK de <c>unclassified_messages</c>.
+///
+/// **Lookback (revisión final, I2).** Las dos lecturas miran sólo lo que llegó en las últimas <c>Support:Workers:FeedLookbackHours</c>
+/// (24 por defecto), por <c>created_at</c>: sin eso, una conversación seguida se recorría entera desde <c>follow_since</c> en cada tick,
+/// para siempre. La ventana del ticket se sigue midiendo con <c>occurred_at</c>. Un worker caído más que el lookback deja sin vincular lo
+/// que llegó mientras tanto.
 ///
 /// **Lo que lee por nombre.** <c>support.tickets</c> (<c>tenant_id</c>, <c>conversation_id</c>, <c>status</c>, <c>follow_since</c>,
 /// <c>follow_off_at</c>), <c>support.ticket_messages</c> (<c>tenant_id</c>, <c>conversation_id</c>, <c>message_id</c>),
-/// <c>support.unclassified_messages</c> (<c>message_id</c>, <c>tenant_id</c>, <c>conversation_id</c>, <c>resolution</c>) y
-/// <c>messaging.messages</c> (<c>id</c>, <c>tenant_id</c>, <c>conversation_id</c>, <c>occurred_at</c>, <c>direction</c>,
-/// <c>imported</c>). Renombrar una compila y deja el worker fallando en cada tick sin vincular nada; lo amarra
-/// <c>SupportBootstrapperAdaptersTests</c>.
+/// <c>support.unclassified_messages</c> (<c>message_id</c>, <c>tenant_id</c>, <c>conversation_id</c>, <c>resolution</c>,
+/// <c>created_at</c>) y <c>messaging.messages</c> (<c>id</c>, <c>tenant_id</c>, <c>conversation_id</c>, <c>occurred_at</c>,
+/// <c>created_at</c>, <c>direction</c>, <c>imported</c>). Renombrar una compila y deja el worker fallando en cada tick sin vincular nada;
+/// lo amarra <c>SupportBootstrapperAdaptersTests</c>.
 /// </summary>
-internal sealed class SupportThreadFeed(SupportDbContext support) : ISupportThreadFeed
+internal sealed class SupportThreadFeed(SupportDbContext support, IOptions<SupportWorkerOptions> options) : ISupportThreadFeed
 {
     private const short InboundDirection = (short)MessageDirection.Inbound;
+
+    private TimeSpan Lookback => TimeSpan.FromHours(Math.Max(1, options.Value.FeedLookbackHours));
 
     /// <summary>Cuánto después de apagar «Seguir el hilo» se sigue recorriendo la conversación por los entrantes de antes del apagado.
     /// El worker corre cada pocos segundos: una hora sobra.</summary>
@@ -31,6 +40,7 @@ internal sealed class SupportThreadFeed(SupportDbContext support) : ISupportThre
     public async Task<IReadOnlyList<SupportPendingInbound>> ListPendingAsync(int take, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(take);
+        var lookback = Lookback;
         // El CTE da, por conversación seguida, el follow_since más viejo: así cada conversación recorre IX_messages_thread
         // (conversation_id, occurred_at) por rango y no desde su primer mensaje. Entran los tickets que siguen el hilo y los que lo
         // apagaron hace menos de FollowOffGrace: un entrante que llegó antes de apagar todavía se vincula en el tick siguiente, y un
@@ -50,6 +60,7 @@ internal sealed class SupportThreadFeed(SupportDbContext support) : ISupportThre
               ON m.conversation_id = f.conversation_id AND m.tenant_id = f.tenant_id AND m.occurred_at >= f.since
             WHERE m.direction = {InboundDirection}
               AND NOT m.imported
+              AND m.created_at >= now() - {lookback}
               AND EXISTS (
                   SELECT 1 FROM support.tickets t
                   WHERE t.tenant_id = m.tenant_id
@@ -75,11 +86,13 @@ internal sealed class SupportThreadFeed(SupportDbContext support) : ISupportThre
         int take, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(take);
+        var lookback = Lookback;
         var rows = await support.Database.SqlQuery<PendingRow>($"""
             SELECT u.tenant_id AS "TenantId", u.conversation_id AS "ConversationId", u.message_id AS "MessageId",
                    u.occurred_at AS "OccurredAt"
             FROM support.unclassified_messages u
             WHERE u.resolution IS NULL
+              AND u.created_at >= now() - {lookback}
               AND (SELECT count(*) FROM support.tickets t
                    WHERE t.tenant_id = u.tenant_id
                      AND t.conversation_id = u.conversation_id

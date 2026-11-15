@@ -12,6 +12,12 @@ public sealed class SupportTicketReply
 
     public const int FailureCodeMaxLength = 64;
 
+    /// <summary>El largo del <c>wa_id</c> guardado de una plantilla al celular (columna <c>target_wa_id</c>).</summary>
+    public const int TargetWaIdMaxLength = 32;
+
+    /// <summary>El largo del nombre del adjunto: el de la sesión de subida de Mensajería (<c>SupportReplyAttachmentRules</c>).</summary>
+    public const int FileNameMaxLength = 256;
+
     // EF Core materializa por acá; Start es el único punto de entrada de código.
     private SupportTicketReply()
     {
@@ -42,6 +48,16 @@ public sealed class SupportTicketReply
     /// <summary>La conexión de WhatsApp que eligió el asesor para una plantilla sin conversación (plan E14).</summary>
     public Guid? ConnectionId { get; private set; }
 
+    /// <summary>Revisión final (I1): el <c>wa_id</c> al que sale una plantilla sin conversación, tomado del celular de la foto al crear la
+    /// fila. Retomarla manda a este, no al celular que la foto tenga después.</summary>
+    public string? TargetWaId { get; private set; }
+
+    /// <summary>Revisión final (M2): el adjunto de una respuesta por el hilo (la sesión de subida de Mensajería y su nombre). Retomarla
+    /// manda este, no el que traiga el reintento.</summary>
+    public Guid? UploadId { get; private set; }
+
+    public string? FileName { get; private set; }
+
     public Guid AuthorMemberId { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -49,7 +65,9 @@ public sealed class SupportTicketReply
     public DateTimeOffset UpdatedAt { get; private set; }
 
     /// <summary>El correo sale sólo como <see cref="SupportReplyDelivery.Email"/>, y los canales de Mensajería nunca como correo.
-    /// El texto llega validado por el validador de la API; acá se repite la regla para que el dominio no dependa de quien llama.</summary>
+    /// El texto llega validado por el validador de la API; acá se repite la regla para que el dominio no dependa de quien llama.
+    /// <paramref name="targetWaId"/> va sólo con una plantilla; el adjunto (<paramref name="uploadId"/> con su <paramref name="fileName"/>,
+    /// los dos o ninguno) sólo con texto por el hilo.</summary>
     public static SupportTicketReply Start(
         Guid tenantId,
         SupportTicketId ticketId,
@@ -59,7 +77,10 @@ public sealed class SupportTicketReply
         string text,
         Guid? connectionId,
         Guid authorMemberId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string? targetWaId = null,
+        Guid? uploadId = null,
+        string? fileName = null)
     {
         if (clientId == Guid.Empty)
         {
@@ -69,6 +90,30 @@ public sealed class SupportTicketReply
         if ((channel is SupportReplyChannel.Email) != (delivery is SupportReplyDelivery.Email))
         {
             throw new ArgumentException($"A '{channel}' reply cannot go out as '{delivery}'.", nameof(delivery));
+        }
+
+        if (targetWaId is not null
+            && (delivery is not SupportReplyDelivery.Template
+                || string.IsNullOrWhiteSpace(targetWaId)
+                || targetWaId.Trim().Length > TargetWaIdMaxLength))
+        {
+            throw new ArgumentException(
+                $"A target wa_id goes only with a template and has between 1 and {TargetWaIdMaxLength} characters.", nameof(targetWaId));
+        }
+
+        if ((uploadId is null) != (fileName is null))
+        {
+            throw new ArgumentException("An attachment needs both its upload id and its file name.", nameof(uploadId));
+        }
+
+        if (uploadId is not null
+            && (delivery is not SupportReplyDelivery.Text
+                || uploadId == Guid.Empty
+                || string.IsNullOrWhiteSpace(fileName)
+                || fileName.Trim().Length > FileNameMaxLength))
+        {
+            throw new ArgumentException(
+                $"An attachment goes only with a text reply, with a file name of up to {FileNameMaxLength} characters.", nameof(uploadId));
         }
 
         return new SupportTicketReply
@@ -82,6 +127,9 @@ public sealed class SupportTicketReply
             Text = ValidText(text),
             Status = SupportReplyStatus.Pending,
             ConnectionId = connectionId,
+            TargetWaId = targetWaId?.Trim(),
+            UploadId = uploadId,
+            FileName = fileName?.Trim(),
             AuthorMemberId = authorMemberId,
             CreatedAt = now,
             UpdatedAt = now,
@@ -106,7 +154,9 @@ public sealed class SupportTicketReply
         UpdatedAt = now;
     }
 
-    public void MarkFailed(string code, DateTimeOffset now)
+    /// <summary>Revisión final (M4): <paramref name="messageId"/> es el mensaje que Mensajería registró como fallido, si lo hay. Queda en
+    /// la fila para ubicarlo en el hilo; quien llama no lo fija en el expediente.</summary>
+    public void MarkFailed(string code, Guid? messageId, DateTimeOffset now)
     {
         if (string.IsNullOrWhiteSpace(code) || code.Length > FailureCodeMaxLength)
         {
@@ -116,6 +166,7 @@ public sealed class SupportTicketReply
         EnsurePending();
         Status = SupportReplyStatus.Failed;
         FailureCode = code;
+        MessageId = messageId;
         UpdatedAt = now;
     }
 

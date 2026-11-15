@@ -270,6 +270,11 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                 schema: "support",
                 table: "tickets");
 
+            // Revisión final (M5): la restricción vieja no admite las clases de la fase 2; sin borrar esas filas, el Down falla al
+            // volver a crearla en una base que ya las tiene.
+            migrationBuilder.Sql(
+                "DELETE FROM support.ticket_events WHERE kind IN ('MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked');");
+
             migrationBuilder.AddCheckConstraint(
                 name: "CK_ticket_events_kind",
                 schema: "support",

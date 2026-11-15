@@ -202,4 +202,22 @@ public sealed class SupportTicketConversationTests
         Assert.Equal(ConversationId, DetailsOf(linked).GetProperty("conversationId").GetGuid());
         Assert.Equal("WhatsApp", DetailsOf(linked).GetProperty("channel").GetString());
     }
+
+    // Revisión final (M3): una plantilla a un ticket cerrado vincula la conversación, pero un cerrado no sigue el hilo: la ventana nace
+    // apagada, como la deja cerrar.
+    [Fact]
+    public void ALinkedConversationOnAClosedTicketDoesNotFollowTheThread()
+    {
+        var ticket = Manual();
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, Later(10), Clock);
+        ticket.ChangeStatus(SupportTicketStatus.Closed, Actor, Later(11), Clock);
+
+        ticket.LinkConversation(WhatsApp, Actor, Later(15));
+
+        Assert.Equal(ConversationId, ticket.ConversationId);
+        Assert.False(ticket.FollowThread);
+        Assert.Equal(Later(15), ticket.FollowOffAt);
+        Assert.False(ticket.CoversInbound(Later(16)));
+        Assert.Equal(SupportTicketEventKind.ConversationLinked, ticket.Events[^1].Kind);
+    }
 }

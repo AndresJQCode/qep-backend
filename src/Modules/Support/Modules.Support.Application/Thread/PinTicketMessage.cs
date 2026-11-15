@@ -11,7 +11,8 @@ public sealed record PinTicketMessageCommand(Guid TenantId, Guid TicketId, Guid 
 /// <summary>
 /// Fijar un mensaje en el expediente (plan E9): cualquier mensaje de la conversación del ticket, entrante o saliente, también anterior al
 /// ticket o uno que se había soltado. Ticket sin conversación: 422 <c>support.ticket.no_conversation</c>; mensaje de otra conversación:
-/// 422 <c>support.message.not_in_conversation</c>. Fijar uno ya fijado no hace nada (ni evento ni versión).
+/// 422 <c>support.message.not_in_conversation</c>. Fijar uno ya fijado no hace nada (ni evento ni versión). Fijar un entrante que
+/// esperaba en «sin clasificar» lo deja <c>Assigned</c> a este ticket en el mismo guardado (revisión final, M6): el asesor ya decidió.
 /// </summary>
 public sealed class PinTicketMessageHandler(
     IExecutionContext executionContext,
@@ -19,6 +20,7 @@ public sealed class PinTicketMessageHandler(
     IMembershipDirectory membershipDirectory,
     ISupportTicketRepository tickets,
     ISupportTicketMessageRepository links,
+    ISupportUnclassifiedRepository unclassified,
     ISupportConversationDirectory conversations,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -59,6 +61,12 @@ public sealed class PinTicketMessageHandler(
         else
         {
             link.Pin(now);
+        }
+
+        if (await unclassified.FindAsync(command.TenantId, message.Id, cancellationToken) is { IsPending: true } pending
+            && pending.ConversationId == conversationId)
+        {
+            pending.Assign(ticket.Id, actor, now);
         }
 
         var version = ticket.Version;

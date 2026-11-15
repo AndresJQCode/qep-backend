@@ -866,17 +866,24 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   (`OutboundSettlement`), que es la que apaga `history_managed`: un camino nuevo de envío desde Soporte que se salte `IOutboundMessages`
   deja que la siguiente parte del historial pise la conversación. Lo amarra `SupportReplyOutboundTests.ASupportReplyTurnsOffHistoryManaged`.
 - **Un vínculo `Linked` del worker no sube la versión del ticket ni escribe evento** (plan E7). Si lo hiciera, cada mensaje del cliente
-  le daría un 412 al asesor que tiene el ticket abierto. Sólo sube cuando cambia el estado (`WaitingOnCustomer` → `Open`) o escribe un
-  evento (reasignar desde «sin clasificar»). La idempotencia del worker es por índices (`IX_ticket_messages_ticket_message`,
-  `PK_unclassified_messages`, traducidos por nombre), no por candados: no la cambies por una consulta previa.
-- **El retomado de una respuesta `Pending` sale por su fila, nunca por el reintento** (`SendTicketReply`, revisión del bloque C). Una
-  `Pending` de más de 60 s se retoma con el canal, la entrega, la conexión y el texto guardados, sin mirar `If-Match`; si el canal la
-  rechaza o ya no tiene ruta, queda `Failed` con el motivo y nunca se borra (sólo una respuesta nueva rechazada antes de enviar se
-  borra). El correo no tiene `clientId` del otro lado: retomar una `Pending` de correo lo manda otra vez, y eso está aceptado (README).
-- **El adjunto de una respuesta de Soporte no se guarda en `ticket_replies`.** Viaja en el cuerpo (`uploadId`, `fileName`) hasta
-  `ISupportReplyOutbound`, que arma la clave del staging con la membresía de quien responde: la sesión de subida tiene que abrirla el
-  mismo asesor, para esa conversación. Las reglas que Soporte copia de Mensajería (nombre 256, pie 1024, permiso de la sesión) viven en
-  `SupportReplyAttachmentRules` y las amarra `SupportReplyParityTests`.
+  le daría un 412 al asesor que tiene el ticket abierto. Sólo sube cuando cambia el estado (`WaitingOnCustomer` → `Open`); pasar sola
+  una fila de «sin clasificar» (`SupportThreadFollower.ReassignAsync`) tampoco escribe evento. El único `MessageClassified` lo escribe
+  el asesor al asignar. La idempotencia del worker es por índices (`IX_ticket_messages_ticket_message`, `PK_unclassified_messages`,
+  traducidos por nombre), no por candados: no la cambies por una consulta previa.
+- **El retomado de una respuesta `Pending` sale por su fila, nunca por el reintento** (`SendTicketReply`, revisión del bloque C y
+  revisión final). Una `Pending` de más de 60 s se retoma con el canal, la entrega, la conexión, el `target_wa_id`, el adjunto y el texto
+  guardados, sin mirar `If-Match`. La plantilla al celular retomada no vuelve a revisar el celular de la foto, la conexión ni la
+  aprobación de la plantilla: Mensajería, idempotente por `clientId`, devuelve primero lo que ya salió, y esas revisiones la marcarían
+  `Failed` aunque el mensaje sí haya salido. Si el canal la rechaza o ya no tiene ruta, queda `Failed` con el motivo y nunca se borra
+  (sólo una respuesta nueva rechazada antes de enviar se borra). El correo no tiene `clientId` del otro lado: retomar una `Pending` de
+  correo lo manda otra vez, y eso está aceptado (README).
+- **El adjunto de una respuesta de Soporte se guarda en `ticket_replies` (`upload_id`, `file_name`) y viaja hasta
+  `ISupportReplyOutbound`**, que arma la clave del staging con la membresía de quien responde: la sesión de subida tiene que abrirla el
+  mismo asesor, para esa conversación. Un retomado manda el adjunto guardado, nunca el del reintento. Las reglas que Soporte copia de
+  Mensajería (nombre 256, pie 1024, permiso de la sesión) viven en `SupportReplyAttachmentRules` y las amarra `SupportReplyParityTests`.
+- **El feed del seguimiento mira sólo las últimas `Support:Workers:FeedLookbackHours` (24) por `created_at`** (`SupportThreadFeed`,
+  revisión final). Sin el límite recorría cada conversación seguida desde `follow_since` en cada tick, para siempre. Un worker caído más
+  que el lookback deja sin vincular lo que llegó mientras tanto: no lo «arregles» quitando el límite, sube la configuración.
 - **`CustomerDeletionReferences` desvincula la conversación de los tickets que la usaban** (plan E18): `conversation_id` en `NULL`,
   seguimiento apagado, `ticket_messages` y `unclassified_messages` de esa conversación borrados y `ticket_replies.message_id` en `NULL`,
   subiendo `version`. El ticket sobrevive (lo bloquea su propio cliente, no la conversación). Una tabla nueva de Soporte con un id de
