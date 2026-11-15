@@ -325,7 +325,8 @@ public sealed class CustomerMergeAcrossModulesApiTests
     }
 
     // Soporte, revisión final C3: la vista previa de la fusión no cuenta tickets (sus ocho conteos son fijos, README «Clientes:
-    // fusión»), aunque la fusión sí los mueve. Un cliente con sólo un ticket cuenta cero en todo.
+    // fusión»), aunque la fusión sí los mueve. Un cliente con sólo un ticket cuenta cero en todo. Llama al adaptador porque es lo
+    // que lee la vista previa: sus conteos salen de ICustomerMergeReferences.CountAsync (CustomerMerge.cs:97).
     [Fact]
     public async Task TheMergePreviewDoesNotCountSupportTickets()
     {

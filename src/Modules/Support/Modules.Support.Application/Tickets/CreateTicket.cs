@@ -226,8 +226,8 @@ internal static class SupportTextRules
 
 /// <summary>
 /// El alta manual (spec §8.3, plan D6–D8 y D14). Orden: autorización → membresía de quien actúa → validador → solicitante →
-/// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → contexto (reloj leído una vez) →
-/// transacción → candado del cliente → radicado → ticket → auditoría → guardar → confirmar.
+/// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → transacción → candado del
+/// cliente → radicado → contexto (reloj leído una vez) → ticket → auditoría → guardar → confirmar.
 /// Todo lo que puede responder 422 va antes de la transacción, así un rechazo no gasta un radicado. La provisión abre su propia
 /// transacción, así que va antes de <see cref="ISupportUnitOfWork.BeginTransactionAsync"/>.
 /// </summary>
@@ -285,8 +285,7 @@ public sealed class CreateTicketHandler(
         await SupportTicketRules.EnsureAssigneeAsync(members, validated.TenantId, validated.AssigneeMemberId, cancellationToken);
         SupportTicketRules.EnsureReplyChannel(channel, requester);
 
-        var context = await composer.ReadContextAsync(validated.TenantId, cancellationToken);
-        var now = context.Now;
+        SupportReadContext context;
         SupportTicket ticket;
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
@@ -298,6 +297,10 @@ public sealed class CreateTicketHandler(
             }
 
             var number = await numbers.NextAsync(validated.TenantId, cancellationToken);
+            // El reloj se lee ya con el radicado (fix round 1): con la fila del radicado tomada las altas van en fila, así la hora de
+            // radicación sigue el orden del número aunque una haya esperado el candado de su cliente. Es sólo lectura: no toma candados.
+            context = await composer.ReadContextAsync(validated.TenantId, cancellationToken);
+            var now = context.Now;
             ticket = SupportTicket.CreateManual(
                 SupportTicketId.New(),
                 validated.TenantId,

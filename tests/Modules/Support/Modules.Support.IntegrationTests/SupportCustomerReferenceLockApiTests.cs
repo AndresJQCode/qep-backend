@@ -109,14 +109,20 @@ public sealed class SupportCustomerReferenceLockApiTests
         Assert.Same(other, await Task.WhenAny(other, Task.Delay(OtherAnswerWindow, Ct)));
         var otherResponse = await other;
         Assert.True(otherResponse.StatusCode == HttpStatusCode.Created, await BodyAsync(otherResponse));
-        Assert.Equal("SOP-000001", (await JsonAsync(otherResponse)).GetProperty("number").GetString());
+        var otherTicket = await JsonAsync(otherResponse);
+        Assert.Equal("SOP-000001", otherTicket.GetProperty("number").GetString());
         Assert.False(waiting.IsCompleted);
 
         // Sin borrado, el que esperaba sigue y toma el radicado siguiente.
         await transaction.RollbackAsync(Ct);
         var waitingResponse = await waiting;
         Assert.True(waitingResponse.StatusCode == HttpStatusCode.Created, await BodyAsync(waitingResponse));
-        Assert.Equal("SOP-000002", (await JsonAsync(waitingResponse)).GetProperty("number").GetString());
+        var waitingTicket = await JsonAsync(waitingResponse);
+        Assert.Equal("SOP-000002", waitingTicket.GetProperty("number").GetString());
+        // La radicación sigue el orden del radicado: el que tomó el número después no puede figurar recibido antes.
+        var otherReceived = otherTicket.GetProperty("receivedAt").GetDateTimeOffset();
+        var waitingReceived = waitingTicket.GetProperty("receivedAt").GetDateTimeOffset();
+        Assert.True(waitingReceived >= otherReceived, $"SOP-000002 received {waitingReceived:O}, SOP-000001 received {otherReceived:O}");
     }
 
     [Fact]
