@@ -94,7 +94,8 @@ public sealed class CreateCustomerHandler(
             : null;
 
         // Spec 2026-11-15: con empresa, el alta corre en una transacción para bloquear la fila de la empresa, igual que
-        // SetCustomerCompanyHandler: así no se vuelve contacto de otra (ni se desactiva) entre esta lectura y el commit.
+        // SetCustomerCompanyHandler: así no se vuelve contacto de otra entre esta lectura y el commit. Desactivarla no toma
+        // este bloqueo (tampoco frente al vínculo de un cliente existente): sólo espera a que el alta confirme.
         // Se resuelve antes del CUC, como la clasificación y la ciudad, para no quemar un número con una empresa que no existe.
         // Sin empresa no se abre transacción (`await using` sobre null no hace nada): el alta sigue exactamente como antes.
         // Cada salida sin CommitAsync la deshace al liberarla.
@@ -192,8 +193,9 @@ public sealed class CreateCustomerHandler(
         }
         catch (CustomersDomainException e) when (e.Code == CustomerIdentificationTaken.Code)
         {
-            // Postgres deja abortada la transacción tras la violación del índice, y ResolveAsync relee al dueño: hay que
-            // deshacerla antes, o esa lectura falla y el 422 con `existing` se vuelve un 500.
+            // Defensivo: EF Core guarda dentro de un savepoint y, al fallar, vuelve a él, así que la transacción sigue usable y
+            // ResolveAsync podría releer al dueño dentro de ella. Deshacerla antes suelta el bloqueo de la empresa y deja esa
+            // lectura en autocommit, sin depender de que los savepoints automáticos sigan prendidos.
             if (transaction is not null)
             {
                 await transaction.DisposeAsync();
