@@ -1268,10 +1268,16 @@ internal sealed class StubQuotationProductLookup(
 {
     public int FindManyCalls { get; private set; }
 
+    public IReadOnlyCollection<Guid> LastRequestedIds { get; private set; } = [];
+
+    public Guid? LastTenantId { get; private set; }
+
     public Task<IReadOnlyDictionary<Guid, QuotationVariantRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
     {
         FindManyCalls++;
+        LastRequestedIds = productIds;
+        LastTenantId = tenantId;
         return Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantRef>>(
             productIds.Where(products.ContainsKey).Distinct().ToDictionary(id => id, id => products[id]));
     }
