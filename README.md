@@ -4914,6 +4914,16 @@ sonda de usuarios, y los CHECK `CK_tickets_manual_medium` y `CK_ticket_events_ki
 - **Un `INSERT` a mano en `support.tickets` tiene que llenar todas las columnas `NOT NULL`** (el tipo va copiado en `type_name`,
   `term_is_legal` y `requires_formal_response`; `received_on`, `last_event_ordinal`, `version`) y un `number` libre del tenant: el
   índice único es `(tenant_id, number)` y el contador de `tenant_settings` no se entera.
+- **Slugs reservados (fase 3).** Las rutas fijas del host del formulario público (`soporte.lulocrm.com/{tenantSlug}`, spec §9.2) no
+  pueden ser slug de un tenant nuevo: `TenantSlugReservations.Reserved` (Tenancy.Domain) y `422 tenancy.slug.reserved` al registrar
+  o crear. Un tenant que ya existía con uno de ellos sigue cargando, pero su formulario taparía una ruta del host: **antes de desplegar**
+  se consulta producción y lo que salga se corrige a mano con el tenant:
+
+  ```sql
+  SELECT id, slug FROM tenancy.tenants
+  WHERE slug IN ('api', 'app', 'assets', 'static', 'public', 'consultar', 'calificar', 'admin', 'www', 'soporte',
+                 'support', 'pqrsf', 'qep', 'login', 'cuenta', 'health', 'status', 'robots', 'sitemap');
+  ```
 
 **Retención** (owner, 2026-11-15, spec §13.10; el abogado confirma): los tickets se conservan 10 años desde el cierre (Código de
 Comercio art. 60; Ley 962 de 2005 art. 28); después se anonimizan los datos personales del solicitante y el ticket queda para

@@ -133,9 +133,13 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt) =>
-        new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
+        DateTimeOffset createdAt)
+    {
+        // La reserva va aquí y no en el constructor: EnsureNotReserved sólo protege lo nuevo.
+        EnsureNotReserved(ValidateSlug(slug));
+        return new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
             createdAt);
+    }
 
     /// <summary>
     /// Aplica las mismas reglas y los mismos códigos que <see cref="Create"/> a los datos de un
@@ -149,6 +153,7 @@ public sealed class Tenant
         string dateFormat)
     {
         var normalizedSlug = ValidateSlug(slug);
+        EnsureNotReserved(normalizedSlug);
         ValidateDisplayName(displayName);
         ValidateCulture(defaultCulture);
         ValidateTimeZone(timeZone);
@@ -374,6 +379,21 @@ public sealed class Tenant
         }
 
         return normalized;
+    }
+
+    /// <summary>
+    /// Un slug que es ruta fija del host de Soporte (<see cref="TenantSlugReservations"/>). Sólo
+    /// lo llaman <see cref="Create"/> y <see cref="EnsureValidRegistration"/>: un tenant que ya
+    /// existía con uno de estos slugs sigue cargando.
+    /// </summary>
+    private static void EnsureNotReserved(string normalizedSlug)
+    {
+        if (TenantSlugReservations.IsReserved(normalizedSlug))
+        {
+            throw new TenantDomainException(
+                TenantSlugReservations.ReservedCode,
+                "Tenant slug is reserved.");
+        }
     }
 
     private static string ValidateDisplayName(string value)

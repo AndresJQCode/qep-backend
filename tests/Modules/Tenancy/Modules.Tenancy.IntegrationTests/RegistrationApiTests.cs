@@ -156,6 +156,33 @@ public sealed class RegistrationApiTests
         Assert.Equal("1", count![0]);
     }
 
+    /// <summary>
+    /// Los slugs reservados son las rutas fijas del host del formulario de Soporte (§9.2): un
+    /// tenant llamado <c>api</c> taparía una ruta del host.
+    /// </summary>
+    [Fact]
+    public async Task RegisterTenantRejectsAReservedSlug()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), true);
+        using var owner = CreateOwnerClient(factory, NewEmail());
+
+        var response = await RegisterAsync(owner, "api");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.slug.reserved", problem!.Code);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var count = await QueryRowAsync(
+            connection,
+            "SELECT count(*) FROM tenancy.tenants WHERE slug = @slug",
+            ("slug", "api"));
+        Assert.Equal("0", count![0]);
+    }
+
     private static string NewEmail() => $"owner-{Guid.NewGuid():N}@example.com";
 
     private static string NewSlug() => $"org-{Guid.NewGuid():N}"[..12];
