@@ -44,6 +44,8 @@ public static class SupportInfrastructureExtensions
         // Plan F35 y F36: los adjuntos del formulario, y la sonda que le dice al barrido de Storage cuáles ya reclamó un ticket.
         services.AddScoped<ISupportTicketAttachmentRepository, SupportTicketAttachmentRepository>();
         services.AddScoped<IFileReferenceProbe, SupportAttachmentReferenceProbe>();
+        // Spec 2026-11-15 §5.2: the ticket notices of the app hub, after each commit.
+        services.AddScoped<ISupportRealtime, SupportRealtimeNotifier>();
 
         // Fase 2 (plan E2): el seguimiento del hilo sondea los entrantes de Mensajería. Apagable por configuración para que las pruebas
         // lo llamen a mano sin que el worker se lleve los entrantes por detrás.

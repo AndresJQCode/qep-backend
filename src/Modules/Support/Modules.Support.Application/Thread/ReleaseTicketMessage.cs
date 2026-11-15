@@ -22,6 +22,7 @@ public sealed class ReleaseTicketMessageHandler(
     ISupportTicketMessageRepository links,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer)
     : ICommandHandler<ReleaseTicketMessageCommand, SupportTicketDetailDto>
 {
@@ -52,6 +53,11 @@ public sealed class ReleaseTicketMessageHandler(
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketMessageReleased, ChangedFields, now,
             cancellationToken);
+        if (ticket.Version != version)
+        {
+            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+        }
+
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }
 }

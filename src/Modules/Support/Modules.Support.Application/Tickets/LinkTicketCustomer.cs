@@ -37,6 +37,7 @@ public sealed class LinkTicketCustomerHandler(
     ISupportCustomerLookup customers,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     IValidator<LinkTicketCustomerCommand> validator)
     : ICommandHandler<LinkTicketCustomerCommand, SupportTicketDetailDto>
@@ -63,6 +64,10 @@ public sealed class LinkTicketCustomerHandler(
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketCustomerChanged, ChangedFields, now,
             cancellationToken);
+        if (ticket.Version != version)
+        {
+            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+        }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }

@@ -66,6 +66,7 @@ public sealed class CreateTicketFromConversationHandler(
     ISupportTicketNumberGenerator numbers,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     ISupportConversationEvents conversationEvents,
     SupportTicketDtoComposer composer,
     SupportOpeningDelivery openingDelivery,
@@ -147,6 +148,7 @@ public sealed class CreateTicketFromConversationHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
+        await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
         await conversationEvents.NotifyChangedAsync(command.TenantId, conversation.Id, cancellationToken);
         await openingDelivery.DeliverAsync(
             ticket, access, pin, SupportOpeningSender.ConsultUrl(publicOptions, slug, ticket.DisplayNumber), context.Now,

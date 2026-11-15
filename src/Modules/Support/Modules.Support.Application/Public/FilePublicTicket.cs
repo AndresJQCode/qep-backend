@@ -213,6 +213,7 @@ public sealed class FilePublicTicketHandler(
     ISupportPinHasher pinHasher,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     SupportOpeningDelivery openingDelivery,
     ISupportPublicOptions publicOptions,
@@ -320,6 +321,7 @@ public sealed class FilePublicTicketHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
+        await realtime.TicketChangedAsync(tenant.TenantId, ticket.Id.Value, CancellationToken.None);
         var consultUrl = SupportOpeningSender.ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber);
         // Un anónimo no tiene a dónde: el PIN sólo se ve en esta respuesta. Con destino, la anotación es un segundo guardado, sólo de
         // la clave; si falla, el ticket ya está confirmado y el PIN se muestra igual (plan F23; revisión del Bloque B, Minor 2).

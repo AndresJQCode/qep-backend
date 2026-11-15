@@ -38,6 +38,7 @@ public sealed class SetTicketFollowThreadHandler(
     ISupportTicketRepository tickets,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     IValidator<SetTicketFollowThreadCommand> validator)
     : ICommandHandler<SetTicketFollowThreadCommand, SupportTicketDetailDto>
@@ -58,6 +59,11 @@ public sealed class SetTicketFollowThreadHandler(
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketFollowChanged, ChangedFields,
             context.Now, cancellationToken);
+        if (ticket.Version != version)
+        {
+            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+        }
+
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }
 }

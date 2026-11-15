@@ -23,6 +23,7 @@ public sealed partial class SupportThreadFollower(
     ISupportUnclassifiedRepository unclassified,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     ILogger<SupportThreadFollower> logger)
 {
@@ -77,6 +78,8 @@ public sealed partial class SupportThreadFollower(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        // Plan N13: the linked ticket (even without a version bump), or every candidate of the new unclassified row.
+        await AnnounceAsync(candidates);
         return true;
     }
 
@@ -110,7 +113,17 @@ public sealed partial class SupportThreadFollower(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await AnnounceAsync([ticket]);
         return true;
+    }
+
+    // After the save, with no token: a notice is never worth failing the pass, and ISupportRealtime never throws.
+    private async Task AnnounceAsync(IReadOnlyList<SupportTicket> changed)
+    {
+        foreach (var ticket in changed)
+        {
+            await realtime.TicketChangedAsync(ticket.TenantId, ticket.Id.Value, CancellationToken.None);
+        }
     }
 
     private void Link(SupportTicket ticket, Guid conversationId, Guid messageId, DateTimeOffset occurredAt, SupportReadContext context)
