@@ -52,4 +52,12 @@ public static class ShopifyAuditActions
     public const string OrderCorrected = "shopify.order.corrected";
 
     public const string ShopifyOrderResourceType = "shopify_order";
+
+    /// <summary>Owner 2026-11-14: alguien soltó el envío retenido de un pedido («Sincronizar con Shopify»). Recurso: la fila del
+    /// espejo; detalle: los grupos.</summary>
+    public const string OrderPushReleased = "shopify.order.push_released";
+
+    /// <summary>Owner 2026-11-14: alguien soltó los envíos retenidos de una tienda. Recurso: la conexión; detalle:
+    /// <c>{ "released": n }</c>. Sin envíos retenidos no se audita nada.</summary>
+    public const string StorePushesReleased = "shopify.store.pushes_released";
 }

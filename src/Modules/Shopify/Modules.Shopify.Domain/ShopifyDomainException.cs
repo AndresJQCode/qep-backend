@@ -88,4 +88,8 @@ public static class ShopifyErrorCodes
 
     /// <summary>Plan 2026-11-14 D21: la parte de envío sólo se corrige en Colombia. 422.</summary>
     public const string OrderAddressNotSupported = "shopify.order.address_not_supported";
+
+    /// <summary>Owner 2026-11-14: «Sincronizar con Shopify» de un pedido que no tiene un envío retenido (nunca lo tuvo, ya salió o
+    /// ya se soltó). 409: el estado cambió, la pantalla recarga el panel.</summary>
+    public const string PushNothingHeld = "shopify.push.nothing_held";
 }

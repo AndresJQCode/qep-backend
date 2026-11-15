@@ -48,8 +48,32 @@ public static class ShopifyOrderEditEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        // Owner 2026-11-14: soltar las correcciones retenidas por la conexión, de un pedido o de toda la tienda.
+        group.MapPost("/orders/{orderId:guid}/push", ReleaseOrderPushAsync)
+            .RequireAuthorization(ShopifyPermissions.OrderManage)
+            .Produces<ShopifyOrderSyncDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/stores/{connectionId:guid}/pushes/release", ReleaseStorePushesAsync)
+            .RequireAuthorization(ShopifyPermissions.OrderManage)
+            .Produces<ShopifyPushReleaseResult>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         return endpoints;
     }
+
+    private static async Task<IResult> ReleaseOrderPushAsync(
+        Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ReleaseShopifyOrderPushCommand(tenantId, orderId), cancellationToken));
+
+    private static async Task<IResult> ReleaseStorePushesAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ReleaseShopifyStorePushesCommand(tenantId, connectionId), cancellationToken));
 
     private static async Task<IResult> GetSyncAsync(
         Guid tenantId, Guid qepOrderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

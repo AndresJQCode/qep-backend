@@ -287,9 +287,22 @@ internal sealed class FakeOrderPushRepository(FakeShopifyDatabase database) : IS
 {
     private IEnumerable<ShopifyOrderPush> All => database.OrderPushes.Concat(database.PendingOrderPushes);
 
-    public Task<ShopifyOrderPush?> FindPendingAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
-        Task.FromResult(All.FirstOrDefault(push =>
-            push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.Status == ShopifyOrderPushStatus.Pending));
+    public Task<ShopifyOrderPush?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        Task.FromResult(All.FirstOrDefault(push => push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.IsOpen));
+
+    public Task<IReadOnlyDictionary<Guid, int>> CountHeldByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, int>>(All
+            .Where(push => push.TenantId == tenantId && push.Status == ShopifyOrderPushStatus.Held)
+            .GroupBy(push => push.ConnectionId)
+            .ToDictionary(group => group.Key, group => group.Count()));
+
+    public Task<int> ReleaseHeldAsync(Guid tenantId, Guid connectionId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var held = All.Where(push => push.TenantId == tenantId && push.ConnectionId == connectionId && push.Status == ShopifyOrderPushStatus.Held)
+            .ToList();
+        held.ForEach(push => push.Release(now));
+        return Task.FromResult(held.Count);
+    }
 
     public Task<ShopifyOrderPush?> FindLatestAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
         Task.FromResult(All

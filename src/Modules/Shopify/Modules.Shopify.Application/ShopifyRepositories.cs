@@ -116,8 +116,15 @@ public interface IShopifyOrderEditRepository
 /// <c>concurrency.conflict</c>.</summary>
 public interface IShopifyOrderPushRepository
 {
-    /// <summary>El envío <c>Pending</c> de la fila, si hay (a lo sumo uno).</summary>
-    Task<ShopifyOrderPush?> FindPendingAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+    /// <summary>El envío abierto de la fila (<c>Pending</c> o <c>Held</c>), si hay (a lo sumo uno).</summary>
+    Task<ShopifyOrderPush?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    /// <summary>Owner 2026-11-14: cuántos envíos retenidos tiene cada conexión del tenant (las que no tienen, no salen).</summary>
+    Task<IReadOnlyDictionary<Guid, int>> CountHeldByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Owner 2026-11-14: suelta todos los envíos retenidos de una conexión del tenant en una sentencia que se confirma en el
+    /// acto (<c>Pending</c> desde cero y versión nueva, como <see cref="ShopifyOrderPush.Release"/>). Devuelve cuántos.</summary>
+    Task<int> ReleaseHeldAsync(Guid tenantId, Guid connectionId, DateTimeOffset now, CancellationToken cancellationToken);
 
     /// <summary>El último envío de la fila, en cualquier estado (lo muestra el detalle del pedido).</summary>
     Task<ShopifyOrderPush?> FindLatestAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);

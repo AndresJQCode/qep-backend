@@ -103,6 +103,48 @@ public sealed class ShopifyOrderPushWorkerTests
             await flow.ScalarAsync("SELECT status || '|' || failure_code || '|' || attempts FROM shopify.order_pushes"));
     }
 
+    // Owner, 2026-11-14: un envío retenido no lo reclama el worker, aunque la conexión ya esté activa; sólo lo sueltan los dos
+    // endpoints de sincronización.
+    [Fact]
+    public async Task TheWorkerNeverClaimsAHeldPush()
+    {
+        var shopify = new RecordingUpdater();
+        await using var flow = await Flow.StartAsync(services =>
+        {
+            services.RemoveAll<IShopifyOrderUpdater>();
+            services.AddSingleton<IShopifyOrderUpdater>(shopify);
+        });
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await ShopifyOrderCorrectionApiTests.SetConnectionActiveAsync(flow, active: false);
+        await CorrectTheNoteAsync(flow, "A");
+        await ShopifyOrderCorrectionApiTests.SetConnectionActiveAsync(flow, active: true);
+
+        await DrainAsync(flow);
+
+        Assert.Equal("Held|0", await flow.ScalarAsync("SELECT status || '|' || attempts FROM shopify.order_pushes"));
+        Assert.Empty(shopify.Updates);
+    }
+
+    // Owner, 2026-11-14: la conexión cae después de encolar; al mandar, el envío queda retenido con connection_missing, no Failed.
+    [Fact]
+    public async Task AConnectionThatDroppedAfterTheEnqueueHoldsThePush()
+    {
+        var shopify = new RecordingUpdater();
+        await using var flow = await Flow.StartAsync(services =>
+        {
+            services.RemoveAll<IShopifyOrderUpdater>();
+            services.AddSingleton<IShopifyOrderUpdater>(shopify);
+        });
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await CorrectTheNoteAsync(flow, "A");
+        await ShopifyOrderCorrectionApiTests.SetConnectionActiveAsync(flow, active: false);
+
+        await DrainAsync(flow);
+
+        Assert.Equal("Held|connection_missing", await flow.ScalarAsync("SELECT status || '|' || failure_code FROM shopify.order_pushes"));
+        Assert.Empty(shopify.Updates);
+    }
+
     // Review B3-B: cerrar el envío por SQL sube la versión. Una corrección que había leído el pendiente y se fusiona con él choca
     // (412) en vez de responder 200 sobre un envío que ya nadie va a mandar.
     [Fact]

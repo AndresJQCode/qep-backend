@@ -647,7 +647,7 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                     b.HasIndex("MirrorOrderId")
                         .IsUnique()
                         .HasDatabaseName("IX_order_pushes_mirror_pending")
-                        .HasFilter("status = 'Pending'");
+                        .HasFilter("status IN ('Pending','Held')");
 
                     b.HasIndex("MirrorOrderId", "CreatedAt")
                         .HasDatabaseName("IX_order_pushes_mirror_created");
@@ -657,7 +657,7 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
 
                     b.ToTable("order_pushes", "shopify", t =>
                         {
-                            t.HasCheckConstraint("CK_order_pushes_status", "status IN ('Pending','Sent','Failed')");
+                            t.HasCheckConstraint("CK_order_pushes_status", "status IN ('Pending','Sent','Failed','Held')");
                         });
                 });
 

@@ -117,7 +117,8 @@ public sealed class ListShopifyStoresHandler(
     ITenantModules tenantModules,
     IShopifyTenantConnections connections,
     IShopifyStoreRepository stores,
-    IShopifyOrderMirrorRepository mirrors) : IQueryHandler<ListShopifyStoresQuery, IReadOnlyList<ShopifyStoreSummaryDto>>
+    IShopifyOrderMirrorRepository mirrors,
+    IShopifyOrderPushRepository pushes) : IQueryHandler<ListShopifyStoresQuery, IReadOnlyList<ShopifyStoreSummaryDto>>
 {
     public async Task<IReadOnlyList<ShopifyStoreSummaryDto>> HandleAsync(ListShopifyStoresQuery query, CancellationToken cancellationToken)
     {
@@ -127,6 +128,7 @@ public sealed class ListShopifyStoresHandler(
         var linked = await connections.ListAsync(query.TenantId, cancellationToken);
         var byConnection = (await stores.ListAsync(query.TenantId, cancellationToken)).ToDictionary(store => store.ConnectionId);
         var waiting = await mirrors.CountWaitingByConnectionAsync(query.TenantId, cancellationToken);
+        var held = await pushes.CountHeldByConnectionAsync(query.TenantId, cancellationToken);
         return
         [
             .. linked.Select(connection =>
@@ -139,7 +141,8 @@ public sealed class ListShopifyStoresHandler(
                     connection.Status,
                     store?.IsConfigured ?? false,
                     waiting.GetValueOrDefault(connection.ConnectionId),
-                    store?.LastReconciledAt);
+                    store?.LastReconciledAt,
+                    held.GetValueOrDefault(connection.ConnectionId));
             }),
         ];
     }

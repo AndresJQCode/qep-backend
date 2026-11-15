@@ -24,6 +24,9 @@ public static class ShopifyOrderEditsRegistration
         services.AddScoped<ShopifyOrderSyncReader>();
         services.AddScoped<ICommandHandler<CorrectShopifyOrderCommand, ShopifyOrderSyncDto>, CorrectShopifyOrderHandler>();
         services.AddScoped<IQueryHandler<GetShopifyOrderSyncQuery, ShopifyOrderSyncDto>, GetShopifyOrderSyncHandler>();
+        // Owner 2026-11-14: soltar las correcciones retenidas por la conexión.
+        services.AddScoped<ICommandHandler<ReleaseShopifyOrderPushCommand, ShopifyOrderSyncDto>, ReleaseShopifyOrderPushHandler>();
+        services.AddScoped<ICommandHandler<ReleaseShopifyStorePushesCommand, ShopifyPushReleaseResult>, ReleaseShopifyStorePushesHandler>();
         return services;
     }
 }

@@ -3,9 +3,15 @@ using Modules.Shopify.Domain;
 
 namespace Modules.Shopify.Application;
 
-/// <summary>Los motivos de un envío <c>Failed</c> (spec 2026-11-14 §5, plan D14). Contrato con el diccionario del frontend.</summary>
+/// <summary>Los motivos de un envío <c>Failed</c> o <c>Held</c> (spec 2026-11-14 §5, plan D14; owner 2026-11-14). Contrato con el
+/// diccionario del frontend. Retienen (<c>Held</c>, se pueden volver a mandar): <see cref="ConnectionInactive"/> (la corrección se
+/// guardó con la conexión inactiva), <see cref="ConnectionMissing"/> (la conexión cayó antes de mandar) y <see cref="AccessDenied"/>
+/// (sin <c>write_orders</c>: también se arregla del lado de la conexión, cuando el comercio vuelve a abrir la app). Los demás son
+/// <c>Failed</c>, definitivos.</summary>
 public static class ShopifyPushFailureCodes
 {
+    public const string ConnectionInactive = "connection_inactive";
+
     public const string AccessDenied = "access_denied";
 
     public const string UserError = "user_error";
@@ -30,9 +36,11 @@ public static class ShopifyPushFailureCodes
 /// reemplaza la dirección entera (Review Focus 3).</item>
 /// <item>Nota: <c>BuyerNotes</c> (vacía la borra en Shopify). Atributos: los de QEP o, sin corrección, los del último snapshot.</item>
 /// </list>
-/// Conexión ausente o no operativa → <c>connection_missing</c>; token vencido (<c>AccessToken</c> nulo, lo refresca otro worker) →
-/// reintentar sin llamar a Shopify; pedido o fila ausente → <c>order_not_found</c>. Con <c>Updated</c> el envío queda <c>Sent</c> y con
-/// <c>Failed</c>, <c>Failed</c> con su código, en un guardado; con <c>Retry</c> no se escribe nada (la espera la da el lease).
+/// Conexión ausente o no operativa → <c>Held</c> con <c>connection_missing</c>; token vencido (<c>AccessToken</c> nulo, lo refresca
+/// otro worker) → reintentar sin llamar a Shopify; pedido o fila ausente → <c>order_not_found</c>. Con <c>Updated</c> el envío queda
+/// <c>Sent</c>; con <c>Failed</c> de <c>access_denied</c>, <c>Held</c>; con otro <c>Failed</c>, <c>Failed</c> con su código, en un
+/// guardado; con <c>Retry</c> no se escribe nada (la espera la da el lease). Owner 2026-11-14: una corrección no se pierde por un
+/// motivo de la conexión.
 /// </summary>
 public sealed class ShopifyOrderPushProcessor(
     IShopifyConnectionDirectory connections,
@@ -53,7 +61,7 @@ public sealed class ShopifyOrderPushProcessor(
         var connection = await connections.FindAsync(push.TenantId, push.ConnectionId, cancellationToken);
         if (connection is not { IsOperational: true })
         {
-            return await FailAsync(push, ShopifyPushFailureCodes.ConnectionMissing, cancellationToken);
+            return await HoldAsync(push, ShopifyPushFailureCodes.ConnectionMissing, cancellationToken);
         }
 
         if (string.IsNullOrWhiteSpace(connection.AccessToken))
@@ -78,6 +86,9 @@ public sealed class ShopifyOrderPushProcessor(
             case ShopifyOrderUpdateKind.Updated:
                 push.MarkSent(clock.UtcNow);
                 await unitOfWork.SaveChangesAsync(cancellationToken);
+                break;
+            case ShopifyOrderUpdateKind.Failed when string.Equals(result.FailureCode, ShopifyPushFailureCodes.AccessDenied, StringComparison.Ordinal):
+                await HoldAsync(push, ShopifyPushFailureCodes.AccessDenied, cancellationToken);
                 break;
             case ShopifyOrderUpdateKind.Failed:
                 await FailAsync(push, result.FailureCode ?? ShopifyPushFailureCodes.Rejected, cancellationToken);
@@ -113,6 +124,14 @@ public sealed class ShopifyOrderPushProcessor(
             ? row.QepAttributes is { } edited ? ShopifyEditPlanner.ReadAttributes(edited) : latest.Attributes
             : null;
         return new ShopifyOrderUpdate(row.ShopifyOrderId, address, setNote, setNote ? order.BuyerNotes : null, attributes);
+    }
+
+    // Owner 2026-11-14: un motivo de la conexión no mata la corrección; queda retenida hasta que alguien la suelte.
+    private async Task<ShopifyOrderUpdateResult> HoldAsync(ShopifyOrderPush push, string code, CancellationToken cancellationToken)
+    {
+        push.Hold(code, clock.UtcNow);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return new ShopifyOrderUpdateResult(ShopifyOrderUpdateKind.Failed, code, null);
     }
 
     private async Task<ShopifyOrderUpdateResult> FailAsync(ShopifyOrderPush push, string code, CancellationToken cancellationToken)

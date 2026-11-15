@@ -57,6 +57,51 @@ public sealed class ShopifyOrderPushTests
         Assert.Equal(ShopifyOrderPush.FailureCodeMaxLength, push.FailureCode!.Length);
     }
 
+    // Owner, 2026-11-14: una corrección guardada con la conexión inactiva no se pierde; queda retenida con su motivo.
+    [Fact]
+    public void AHeldPushKeepsItsReasonAndIsNotPending()
+    {
+        var push = ShopifyOrderPush.Create(ImportedRow(), [ShopifyPushGroup.Note], ImporterWorld.Now);
+
+        push.Hold("connection_inactive", ImporterWorld.Now.AddMinutes(1));
+
+        Assert.Equal((ShopifyOrderPushStatus.Held, "connection_inactive", 2L), (push.Status, push.FailureCode, push.Version));
+        Assert.True(push.IsOpen);
+    }
+
+    [Fact]
+    public void AHeldPushTakesMoreGroupsAndStaysHeld()
+    {
+        var push = ShopifyOrderPush.Create(ImportedRow(), [ShopifyPushGroup.Note], ImporterWorld.Now);
+        push.Hold("connection_inactive", ImporterWorld.Now);
+
+        push.Merge([ShopifyPushGroup.Attributes], ImporterWorld.Now.AddMinutes(1));
+
+        Assert.Equal([ShopifyPushGroup.Note, ShopifyPushGroup.Attributes], push.Groups);
+        Assert.Equal((ShopifyOrderPushStatus.Held, "connection_inactive"), (push.Status, push.FailureCode));
+    }
+
+    [Fact]
+    public void ReleasingAHeldPushMakesItPendingFromScratch()
+    {
+        var push = ShopifyOrderPush.Create(ImportedRow(), [ShopifyPushGroup.Note], ImporterWorld.Now);
+        push.Hold("connection_missing", ImporterWorld.Now);
+
+        push.Release(ImporterWorld.Now.AddMinutes(1));
+
+        Assert.Equal(
+            (ShopifyOrderPushStatus.Pending, (string?)null, 0, (DateTimeOffset?)null, ImporterWorld.Now.AddMinutes(1)),
+            (push.Status, push.FailureCode, push.Attempts, push.LeaseUntil, push.UpdatedAt));
+    }
+
+    [Fact]
+    public void OnlyAHeldPushIsReleased()
+    {
+        var push = ShopifyOrderPush.Create(ImportedRow(), [ShopifyPushGroup.Note], ImporterWorld.Now);
+
+        Assert.Throws<InvalidOperationException>(() => push.Release(ImporterWorld.Now));
+    }
+
     [Fact]
     public void ARowWithoutAnOrderCannotPush()
     {

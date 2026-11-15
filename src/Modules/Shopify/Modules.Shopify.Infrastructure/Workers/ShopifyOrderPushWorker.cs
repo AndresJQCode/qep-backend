@@ -11,7 +11,8 @@ namespace Modules.Shopify.Infrastructure.Workers;
 /// Spec 2026-11-14 §5 y plan D14, copia de <see cref="ShopifyCityCorrectionWorker"/>: toma lotes de <see cref="BatchSize"/> envíos
 /// pendientes, reclama cada uno con un <c>UPDATE</c> que se commitea solo (un solo ganador entre réplicas) y lo procesa en su propio
 /// scope. El reclamo toma el envío por <see cref="InFlightLease"/> mientras está en vuelo. Lo que el procesador cierra (<c>Sent</c>,
-/// <c>Failed</c>) lo guarda él. Un <c>Retry</c> o una excepción reprograman el envío con la espera de la escalera
+/// <c>Failed</c>) o retiene (<c>Held</c>, owner 2026-11-14) lo guarda él; un retenido no vuelve a salir de acá: lo sueltan los
+/// endpoints de sincronización. Un <c>Retry</c> o una excepción reprograman el envío con la espera de la escalera
 /// (<see cref="Leases"/>, o el <c>Retry-After</c> de Shopify si es mayor); en el intento <see cref="MaxAttempts"/> el envío termina
 /// <c>Failed</c> con <c>retries_exhausted</c>.
 /// <para>Toda corrección encolada mientras el envío está pendiente sube su versión, también con los mismos grupos

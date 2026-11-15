@@ -74,7 +74,19 @@ public sealed class ShopifyOrderCorrectionsTests
                 Edit.World.UnitOfWork,
                 Edit.Clock,
                 Reader,
+                Connections,
                 new CorrectShopifyOrderValidator());
+
+        /// <summary>La conexión del pedido, operativa: la corrección se encola (owner 2026-11-14).</summary>
+        public FakeConnectionDirectory Connections
+        {
+            get
+            {
+                var directory = new FakeConnectionDirectory();
+                directory.Connections[Edit.World.Connection.ShopDomain] = Edit.World.Connection;
+                return directory;
+            }
+        }
 
         public GetShopifyOrderSyncHandler SyncHandler => new(Context, new ShopifyEnabledModules(), Edit.World.Mirrors, Edit.World.Writer, Reader);
 

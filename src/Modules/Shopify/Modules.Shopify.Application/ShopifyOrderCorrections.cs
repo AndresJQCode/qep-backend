@@ -291,8 +291,16 @@ public sealed class CorrectShopifyOrderHandler(
     IShopifyUnitOfWork unitOfWork,
     IClock clock,
     ShopifyOrderSyncReader reader,
+    IShopifyConnectionDirectory connections,
     IValidator<CorrectShopifyOrderCommand> validator) : ICommandHandler<CorrectShopifyOrderCommand, ShopifyOrderSyncDto>
 {
+    /// <summary>Owner 2026-11-14: los valores de <see cref="ShopifyOrderSyncDto.ShopifySync"/>.</summary>
+    public const string SyncQueued = "Queued";
+
+    public const string SyncHeld = "Held";
+
+    public const string SyncNothingToSend = "NothingToSend";
+
     public const string OrderNotEditableCode = "order.order.not_editable";
 
     public const string StorePickupCode = "order.order.store_pickup";
@@ -364,10 +372,16 @@ public sealed class CorrectShopifyOrderHandler(
 
         if (groups.Count == 0)
         {
-            return await reader.ReadAsync(row, order, cancellationToken);
+            return await reader.ReadAsync(row, order, cancellationToken) with { ShopifySync = SyncNothingToSend };
         }
 
+        // Owner 2026-11-14: con la conexión no operativa (la misma regla que el worker, connection_missing) la corrección se guarda
+        // igual y el envío queda retenido: la marca de que este pedido hay que sincronizarlo cuando se reactive la conexión.
+        var holdReason = await connections.FindAsync(command.TenantId, row.ConnectionId, cancellationToken) is { IsOperational: true }
+            ? null
+            : ShopifyPushFailureCodes.ConnectionInactive;
         var now = clock.UtcNow;
+        ShopifyOrderPush push;
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
             if (party is not null || notesChanged)
@@ -383,7 +397,7 @@ public sealed class CorrectShopifyOrderHandler(
                 row.SetQepAttributes(ShopifyOrderAttributes.Write(attributes));
             }
 
-            await pushes.EnqueueAsync(row, groups, now, cancellationToken);
+            push = await pushes.EnqueueAsync(row, groups, now, cancellationToken, holdReason);
             auditRecorder.Record(
                 command.TenantId,
                 executionContext.SubjectId,
@@ -397,7 +411,10 @@ public sealed class CorrectShopifyOrderHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        return await reader.ReadAsync(row, order, cancellationToken);
+        return await reader.ReadAsync(row, order, cancellationToken) with
+        {
+            ShopifySync = push.Status == ShopifyOrderPushStatus.Held ? SyncHeld : SyncQueued,
+        };
     }
 
     // El correo no cuenta en SameParty (Shopify no lo trae en la dirección), pero el asesor sí lo corrige en la parte de QEP.

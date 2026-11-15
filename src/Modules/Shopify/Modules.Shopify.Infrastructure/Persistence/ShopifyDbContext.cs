@@ -417,9 +417,11 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
             .WithMany()
             .HasForeignKey(value => value.MirrorOrderId)
             .OnDelete(DeleteBehavior.Cascade);
+        // Un solo envío abierto por pedido: pendiente o retenido (owner 2026-11-14). El nombre del índice se conserva porque
+        // ShopifyUnitOfWork lo traduce por nombre.
         push.HasIndex(value => value.MirrorOrderId)
             .IsUnique()
-            .HasFilter("status = 'Pending'")
+            .HasFilter("status IN ('Pending','Held')")
             .HasDatabaseName(OrderPushMirrorPendingIndex);
         // El worker busca los pendientes con el lease vencido; el detalle del pedido lee el último envío de su fila.
         push.HasIndex(value => new { value.Status, value.LeaseUntil }).HasDatabaseName("IX_order_pushes_status_lease");

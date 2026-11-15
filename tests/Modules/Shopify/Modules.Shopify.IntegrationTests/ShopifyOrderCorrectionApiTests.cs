@@ -91,6 +91,200 @@ public sealed class ShopifyOrderCorrectionApiTests
         Assert.Equal("1", await flow.ScalarAsync("SELECT count(*)::text FROM audit.entries WHERE action = 'shopify.order.corrected'"));
     }
 
+    // Owner, 2026-11-14: con la conexión operativa, la respuesta dice que el cambio quedó encolado para Shopify.
+    [Fact]
+    public async Task ACorrectionOnAnActiveConnectionSaysItWasQueued()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+
+        var response = await PutAsync(client, flow, await CorrectionBodyAsync(flow, withParty: false, buyerNotes: "Llamar antes"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("Queued", dto!["shopifySync"]?.GetValue<string>());
+        Assert.Equal("1", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_pushes"));
+    }
+
+    /// <summary>Pausa o reanuda la conexión de la tienda del flujo, como lo haría Integrations.</summary>
+    internal static async Task SetConnectionActiveAsync(Flow flow, bool active)
+    {
+        await using var scope = flow.Factory.Services.CreateAsyncScope();
+        var connectionId = Guid.Parse(await flow.ScalarAsync("SELECT connection_id::text FROM shopify.orders LIMIT 1"));
+        var connection = await scope.ServiceProvider.GetRequiredService<Modules.Integrations.Application.IIntegrationConnectionRepository>()
+            .FindAsync(flow.World.TenantId, connectionId, Ct);
+        Assert.NotNull(connection);
+        if (active)
+        {
+            connection.Resume(DateTimeOffset.UtcNow);
+        }
+        else
+        {
+            connection.Pause(DateTimeOffset.UtcNow);
+        }
+
+        await scope.ServiceProvider.GetRequiredService<Modules.Integrations.Application.IIntegrationsUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
+    // Owner, 2026-11-14 (reemplaza review B3 M1): con la conexión pausada, la corrección se guarda en QEP y el envío queda retenido
+    // (Held, connection_inactive): la marca de que hay algo por sincronizar cuando se reactive. La respuesta lo dice para que la
+    // pantalla avise.
+    [Fact]
+    public async Task ACorrectionOnAnInactiveConnectionIsSavedAndHeld()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await SetConnectionActiveAsync(flow, active: false);
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+
+        var response = await PutAsync(client, flow, await CorrectionBodyAsync(flow, withParty: false, buyerNotes: "Llamar antes"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Llamar antes", await flow.ScalarAsync("SELECT buyer_notes FROM quotations.orders"));
+        Assert.Equal("1|Held|connection_inactive|{Note}", await flow.ScalarAsync(
+            "SELECT count(*) || '|' || max(status) || '|' || max(failure_code) || '|' || max(groups::text) FROM shopify.order_pushes"));
+        var dto = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("Held", dto!["shopifySync"]?.GetValue<string>());
+        Assert.Equal("Held", dto["push"]!["status"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ASecondCorrectionMergesIntoTheHeldPush()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await SetConnectionActiveAsync(flow, active: false);
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(client, flow, await CorrectionBodyAsync(flow, withParty: false, buyerNotes: "Llamar antes"))).StatusCode);
+
+        var response = await PutAsync(
+            client,
+            flow,
+            await CorrectionBodyAsync(
+                flow, withParty: false, buyerNotes: "Llamar antes", attributes: new JsonArray(new JsonObject { ["key"] = "documento", ["value"] = "999" })));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("1|Held|{Note,Attributes}", await flow.ScalarAsync(
+            "SELECT count(*) || '|' || max(status) || '|' || max(groups::text) FROM shopify.order_pushes"));
+    }
+
+    private static async Task<string?> CodeAsync(HttpResponseMessage response) =>
+        (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))?["code"]?.GetValue<string>();
+
+    private static string ReleaseOrderRoute(Flow flow, string mirrorId) =>
+        $"/api/v1/tenants/{flow.World.TenantId}/shopify/orders/{mirrorId}/push";
+
+    // Owner, 2026-11-14: reactivada la conexión, «Sincronizar con Shopify» de un pedido suelta su envío retenido.
+    [Fact]
+    public async Task ReleasingAHeldPushOfAnOrderMakesItPending()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await SetConnectionActiveAsync(flow, active: false);
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(client, flow, await CorrectionBodyAsync(flow, withParty: false, buyerNotes: "Llamar antes"))).StatusCode);
+        await SetConnectionActiveAsync(flow, active: true);
+        var mirrorId = await flow.ScalarAsync("SELECT id::text FROM shopify.orders");
+
+        var response = await client.PostAsync(ReleaseOrderRoute(flow, mirrorId), content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Pending|0||true", await flow.ScalarAsync(
+            "SELECT status || '|' || attempts || '|' || coalesce(failure_code, '') || '|' || (lease_until IS NULL)::text FROM shopify.order_pushes"));
+        var dto = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("Pending", dto!["push"]!["status"]!.GetValue<string>());
+        Assert.Equal("1", await flow.ScalarAsync("SELECT count(*)::text FROM audit.entries WHERE action = 'shopify.order.push_released'"));
+    }
+
+    [Fact]
+    public async Task ReleasingWhileTheConnectionIsStillInactiveIs422()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await SetConnectionActiveAsync(flow, active: false);
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(client, flow, await CorrectionBodyAsync(flow, withParty: false, buyerNotes: "Llamar antes"))).StatusCode);
+        var mirrorId = await flow.ScalarAsync("SELECT id::text FROM shopify.orders");
+
+        var response = await client.PostAsync(ReleaseOrderRoute(flow, mirrorId), content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("shopify.store.not_operational", await CodeAsync(response));
+        Assert.Equal("Held", await flow.ScalarAsync("SELECT status FROM shopify.order_pushes"));
+    }
+
+    [Fact]
+    public async Task ReleasingAnOrderWithNothingHeldIs409()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(client, flow, await CorrectionBodyAsync(flow, withParty: false, buyerNotes: "Llamar antes"))).StatusCode);
+        var mirrorId = await flow.ScalarAsync("SELECT id::text FROM shopify.orders");
+
+        var response = await client.PostAsync(ReleaseOrderRoute(flow, mirrorId), content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("shopify.push.nothing_held", await CodeAsync(response));
+    }
+
+    private static JsonObject OtherOrder(long id, string name)
+    {
+        var order = Fixture();
+        order["id"] = id;
+        order["admin_graphql_api_id"] = $"gid://shopify/Order/{id}";
+        order["name"] = name;
+        return order;
+    }
+
+    // Owner, 2026-11-14: el botón global de la tienda suelta todos sus envíos retenidos en una sentencia, sólo de esa conexión y
+    // ese tenant, y dice cuántos.
+    [Fact]
+    public async Task ReleasingTheHeldPushesOfAStoreCountsOnlyItsOwn()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        await flow.DeliverAsync("orders/create", "wh-2", OtherOrder(820982911946154600, "#1002"));
+        await flow.DeliverAsync("orders/create", "wh-3", OtherOrder(820982911946154601, "#1003"));
+        await SetConnectionActiveAsync(flow, active: false);
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        foreach (var mirrorId in (await flow.ScalarAsync("SELECT string_agg(id::text, ',' ORDER BY id) FROM shopify.orders")).Split(','))
+        {
+            var request = new HttpRequestMessage(HttpMethod.Put, CorrectionsRoute(flow, mirrorId))
+            {
+                Content = JsonContent.Create(await CorrectionBodyAsync(flow, withParty: false, buyerNotes: "Llamar antes")),
+            };
+            var orderVersion = await ScalarAsync<string>(
+                flow.ConnectionString,
+                "SELECT o.version::text FROM quotations.orders o JOIN shopify.orders m ON m.qep_order_id = o.id WHERE m.id = @id",
+                ("id", Guid.Parse(mirrorId)));
+            request.Headers.TryAddWithoutValidation("If-Match", $"\"{orderVersion}\"");
+            Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(request, Ct)).StatusCode);
+        }
+
+        // Uno pasa a otro tenant y otro a otra conexión del mismo tenant: el botón no los toca.
+        await ExecuteAsync(flow.ConnectionString, """
+            UPDATE shopify.order_pushes SET tenant_id = gen_random_uuid()
+             WHERE mirror_order_id = (SELECT id FROM shopify.orders WHERE order_name = '#1002');
+            UPDATE shopify.order_pushes SET connection_id = gen_random_uuid()
+             WHERE mirror_order_id = (SELECT id FROM shopify.orders WHERE order_name = '#1003');
+            """);
+        await SetConnectionActiveAsync(flow, active: true);
+        var connectionId = await flow.ScalarAsync("SELECT connection_id::text FROM shopify.orders LIMIT 1");
+        using var stores = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage, ShopifyPermissions.ConnectionRead);
+        var listed = await stores.GetFromJsonAsync<JsonArray>($"/api/v1/tenants/{flow.World.TenantId}/shopify/stores", Ct);
+        Assert.Equal(1, listed!.Single(store => store!["connectionId"]!.GetValue<string>() == connectionId)!["heldPushCount"]!.GetValue<int>());
+
+        var response = await stores.PostAsync(
+            $"/api/v1/tenants/{flow.World.TenantId}/shopify/stores/{connectionId}/pushes/release", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal(1, result!["released"]!.GetValue<int>());
+        Assert.Equal("Held,Held,Pending", await flow.ScalarAsync("SELECT string_agg(status, ',' ORDER BY status) FROM shopify.order_pushes"));
+    }
+
     [Fact]
     public async Task AShopifyFailureAfterTheOrderWriteRollsBackBoth()
     {

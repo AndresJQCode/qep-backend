@@ -136,7 +136,7 @@ public sealed class ShopifyOrderPushProcessorTests
     }
 
     [Fact]
-    public async Task AccessDeniedFailsWithItsCode()
+    public async Task AccessDeniedHoldsThePushWithItsCode()
     {
         var world = new PushWorld();
         world.Updater.Result = new ShopifyOrderUpdateResult(ShopifyOrderUpdateKind.Failed, "access_denied", null);
@@ -144,19 +144,22 @@ public sealed class ShopifyOrderPushProcessorTests
 
         await world.ProcessAsync(push);
 
-        Assert.Equal((ShopifyOrderPushStatus.Failed, "access_denied"), (push.Status, push.FailureCode));
+        // Owner, 2026-11-14: sin write_orders la corrección no se pierde; queda retenida hasta que el comercio conceda el permiso y
+        // alguien la vuelva a mandar.
+        Assert.Equal((ShopifyOrderPushStatus.Held, "access_denied"), (push.Status, push.FailureCode));
         Assert.Equal(1, world.Edit.World.UnitOfWork.Saves);
     }
 
+    // Owner, 2026-11-14: la conexión cayó después de encolar; el envío queda retenido, no muerto.
     [Fact]
-    public async Task AMissingConnectionFails()
+    public async Task AMissingConnectionHoldsThePush()
     {
         var world = new PushWorld(connected: false);
         var push = world.Push(ShopifyPushGroup.Note);
 
         await world.ProcessAsync(push);
 
-        Assert.Equal((ShopifyOrderPushStatus.Failed, "connection_missing"), (push.Status, push.FailureCode));
+        Assert.Equal((ShopifyOrderPushStatus.Held, "connection_missing"), (push.Status, push.FailureCode));
         Assert.Empty(world.Updater.Updates);
     }
 

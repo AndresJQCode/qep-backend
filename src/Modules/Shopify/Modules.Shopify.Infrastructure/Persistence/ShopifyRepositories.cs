@@ -225,11 +225,33 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
 /// dos encolados en la misma unidad de trabajo se fusionan en vez de chocar con el índice.</summary>
 internal sealed class ShopifyOrderPushRepository(ShopifyDbContext dbContext) : IShopifyOrderPushRepository
 {
-    public async Task<ShopifyOrderPush?> FindPendingAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
-        dbContext.OrderPushes.Local.FirstOrDefault(push =>
-            push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.Status == ShopifyOrderPushStatus.Pending)
+    private static readonly string Held = nameof(ShopifyOrderPushStatus.Held);
+
+    private static readonly string Pending = nameof(ShopifyOrderPushStatus.Pending);
+
+    public async Task<ShopifyOrderPush?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        dbContext.OrderPushes.Local.FirstOrDefault(push => push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.IsOpen)
         ?? await dbContext.OrderPushes.SingleOrDefaultAsync(
-            push => push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.Status == ShopifyOrderPushStatus.Pending,
+            push => push.TenantId == tenantId
+                && push.MirrorOrderId == mirrorOrderId
+                && (push.Status == ShopifyOrderPushStatus.Pending || push.Status == ShopifyOrderPushStatus.Held),
+            cancellationToken);
+
+    public async Task<IReadOnlyDictionary<Guid, int>> CountHeldByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        await dbContext.OrderPushes
+            .AsNoTracking()
+            .Where(push => push.TenantId == tenantId && push.Status == ShopifyOrderPushStatus.Held)
+            .GroupBy(push => push.ConnectionId)
+            .Select(group => new { ConnectionId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(group => group.ConnectionId, group => group.Count, cancellationToken);
+
+    public Task<int> ReleaseHeldAsync(Guid tenantId, Guid connectionId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE shopify.order_pushes
+               SET status = {Pending}, failure_code = NULL, attempts = 0, lease_until = NULL, updated_at = {now}, version = version + 1
+             WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND status = {Held}
+            """,
             cancellationToken);
 
     public Task<ShopifyOrderPush?> FindLatestAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>

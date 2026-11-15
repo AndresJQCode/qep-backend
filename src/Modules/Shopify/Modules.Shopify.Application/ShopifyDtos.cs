@@ -10,6 +10,9 @@ namespace Modules.Shopify.Application;
 /// estado de la conexión (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>); el texto lo tiene el frontend.
 /// <see cref="WaitingCount"/> va en cero, nunca ausente. <see cref="LastReconciledAt"/> es <c>null</c> mientras la tienda no
 /// exista en el módulo. <see cref="ShopDomain"/> es <c>null</c> si no se conoce, igual que en <see cref="ShopifyStoreDto"/>.
+/// <see cref="HeldPushCount"/> (owner 2026-11-14) son los pedidos de la tienda con correcciones retenidas (envío <c>Held</c>), en cero
+/// si no hay. BFF: la pantalla pinta «N pedidos pendientes de sincronizar» junto al botón que los suelta
+/// (<c>POST …/stores/{connectionId}/pushes/release</c>) sin pedir la lista de envíos.
 /// </summary>
 public sealed record ShopifyStoreSummaryDto(
     Guid ConnectionId,
@@ -18,7 +21,8 @@ public sealed record ShopifyStoreSummaryDto(
     string Status,
     bool IsConfigured,
     int WaitingCount,
-    DateTimeOffset? LastReconciledAt);
+    DateTimeOffset? LastReconciledAt,
+    int HeldPushCount);
 
 /// <summary>
 /// Spec 2026-10-15 §6.1 y §7 <c>GET|PUT /stores/{connectionId}</c>: la configuración de la tienda. BFF: el formulario muestra el
@@ -177,9 +181,10 @@ public sealed record ShopifyOrderChangePageDto(IReadOnlyList<ShopifyOrderChangeD
 public sealed record ShopifyAttributeDto(string Key, string Value);
 
 /// <summary>Spec 2026-11-14 §5: el último envío a Shopify del pedido. <see cref="Status"/> (<c>Pending</c>, <c>Sent</c>,
-/// <c>Failed</c>) y <see cref="Groups"/> (<c>ShippingAddress</c>, <c>Note</c>, <c>Attributes</c>) por nombre;
-/// <see cref="FailureCode"/> en <c>snake_case</c> (<c>access_denied</c>, <c>user_error</c>, <c>order_not_found</c>,
-/// <c>connection_missing</c>, <c>rejected</c>, <c>retries_exhausted</c>), que el frontend traduce. <see cref="LastAttemptAt"/> es la
+/// <c>Failed</c>, <c>Held</c>) y <see cref="Groups"/> (<c>ShippingAddress</c>, <c>Note</c>, <c>Attributes</c>) por nombre;
+/// <see cref="FailureCode"/> en <c>snake_case</c>, que el frontend traduce: en <c>Failed</c>, <c>user_error</c>,
+/// <c>order_not_found</c>, <c>rejected</c> o <c>retries_exhausted</c>; en <c>Held</c> (owner 2026-11-14, retenido hasta que alguien
+/// lo sincronice), el motivo: <c>connection_inactive</c>, <c>connection_missing</c> o <c>access_denied</c>. <see cref="LastAttemptAt"/> es la
 /// última vez que el worker lo tocó, <c>null</c> si todavía no lo intentó.</summary>
 public sealed record ShopifyOrderPushDto(
     string Status, IReadOnlyList<string> Groups, string? FailureCode, int Attempts, DateTimeOffset? LastAttemptAt, DateTimeOffset? SentAt);
@@ -196,6 +201,11 @@ public sealed record ShopifyOrderPushDto(
 /// <para><see cref="Attributes"/> son los de QEP si el asesor los corrigió (<see cref="AttributesEditedInQep"/>); si no, los del
 /// último Shopify aplicado. <see cref="OrderVersion"/> es el <c>If-Match</c> del <c>PUT …/corrections</c>. <see cref="Push"/> es el
 /// último envío (<c>null</c> si nunca hubo) y <see cref="OpenChange"/>, el cambio <c>Pending</c> o <c>Blocked</c> de Shopify.</para>
+/// <para><see cref="ShopifySync"/> (owner 2026-11-14) sólo viene en la respuesta del <c>PUT …/corrections</c>; en el <c>GET</c> y en
+/// <c>POST …/push</c> es <c>null</c>. Dice qué pasó con la corrección del lado de Shopify: <c>Queued</c> (encolada, sale sola),
+/// <c>Held</c> (guardada en QEP pero retenida: la conexión no está activa, o ya había un envío retenido de este pedido) o
+/// <c>NothingToSend</c> (no cambió nada). BFF: con <c>Held</c> la pantalla avisa «la conexión no está activa; el cambio queda
+/// marcado y lo podrás sincronizar cuando la actives» sin tener que cruzar el estado de la conexión con el del envío.</para>
 /// </summary>
 public sealed record ShopifyOrderSyncDto(
     Guid MirrorOrderId,
@@ -208,4 +218,8 @@ public sealed record ShopifyOrderSyncDto(
     IReadOnlyList<ShopifyAttributeDto> Attributes,
     bool AttributesEditedInQep,
     ShopifyOrderPushDto? Push,
-    ShopifyOrderChangeDto? OpenChange);
+    ShopifyOrderChangeDto? OpenChange,
+    string? ShopifySync = null);
+
+/// <summary>Owner 2026-11-14: lo que respondió soltar los envíos retenidos de una tienda: cuántos quedaron pendientes.</summary>
+public sealed record ShopifyPushReleaseResult(int Released);
