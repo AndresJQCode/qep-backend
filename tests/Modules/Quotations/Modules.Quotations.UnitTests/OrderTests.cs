@@ -2197,6 +2197,71 @@ public sealed class OrderTests
         Assert.Equal(buyer, order.BuyerAccountId);
     }
 
+    // Spec 2026-11-15 §3.3: la decisión del asesor manda; el enlace automático ya no toca la cuenta.
+    [Fact]
+    public void LinkBuyerAccountIsRefusedAfterAMemberDecision()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7());
+        order.SetBuyerAccountByMember(null, Now.AddHours(1));
+
+        Assert.False(order.LinkBuyerAccount(Guid.CreateVersion7()));
+        Assert.Null(order.BuyerAccountId);
+    }
+
+    [Fact]
+    public void SetBuyerAccountByMemberReplacesMarksAndBumpsVersion()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7());
+        var version = order.Version;
+        var buyer = Guid.CreateVersion7();
+
+        Assert.True(order.SetBuyerAccountByMember(buyer, Now.AddHours(1)));
+
+        Assert.Equal(buyer, order.BuyerAccountId);
+        Assert.True(order.BuyerAccountSetByMember);
+        Assert.Equal(version + 1, order.Version);
+        Assert.Equal(Now.AddHours(1), order.UpdatedAt);
+    }
+
+    // Quitar sobre un pedido sin cuenta significa «no lo enlaces solo», y esa decisión vale (spec §4).
+    [Fact]
+    public void RemovingFromAnOrderWithoutAccountStillMarks()
+    {
+        var order = NewBuyerStoreOrder(null);
+
+        Assert.True(order.SetBuyerAccountByMember(null, Now.AddHours(1)));
+
+        Assert.Null(order.BuyerAccountId);
+        Assert.True(order.BuyerAccountSetByMember);
+    }
+
+    [Fact]
+    public void SetBuyerAccountByMemberWithTheSameAccountTwiceChangesNothing()
+    {
+        var order = NewBuyerStoreOrder(null);
+        var buyer = Guid.CreateVersion7();
+        Assert.True(order.SetBuyerAccountByMember(buyer, Now.AddHours(1)));
+        var version = order.Version;
+
+        Assert.False(order.SetBuyerAccountByMember(buyer, Now.AddHours(2)));
+
+        Assert.Equal(version, order.Version);
+        Assert.Equal(buyer, order.BuyerAccountId);
+    }
+
+    [Fact]
+    public void SetBuyerAccountByMemberOnANonStoreOrderIsSourceInvalid()
+    {
+        var order = NewShopifyOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(
+            () => order.SetBuyerAccountByMember(Guid.CreateVersion7(), Now.AddHours(1)));
+
+        Assert.Equal("order.order.source_invalid", error.Code);
+        Assert.Null(order.BuyerAccountId);
+        Assert.False(order.BuyerAccountSetByMember);
+    }
+
     private static void AssertNotCancellableByBuyer(Order order, Guid buyer)
     {
         var status = order.Status;
