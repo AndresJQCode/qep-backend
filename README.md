@@ -4727,9 +4727,11 @@ hay «por vencer» (un ticket pasa de `OnTrack` a `Overdue`). Lo usan el filtro 
 
 **Bandeja** (`GET /tickets`). Filtros: `status` (uno o varios nombres separados por coma), `typeId`, `assignee` (`me`, `unassigned`
 o el id de una membresía), `due` (`overdue`: reloj corriendo y vencido antes de hoy; `dueSoon`: reloj corriendo y vence entre hoy y
-el umbral), `search`, `page` y `pageSize` (25 por defecto, hasta 100). **Un `search` de sólo dígitos, con o sin `SOP-`, se toma
-como radicado y nada más**: no busca ese texto en el asunto ni en los nombres. Cualquier otro término busca en el asunto, en los
-nombres del solicitante (nombres, apellidos, razón social) y en el nombre de los clientes vinculados. El resumen (`Summary`) es del
+el umbral), `search`, `page` y `pageSize` (25 por defecto, hasta 100). **Un `search` que es un radicado se busca como radicado y
+nada más**: no busca ese texto en el asunto ni en los nombres. Es radicado (`SupportTicketNumber.TryParse`) si, sin espacios a los
+lados y quitando un `SOP-` inicial sin distinguir mayúsculas, queda sólo de dígitos ASCII que caben en un `long` y valen más de 0
+(`SOP-000127`, `sop-127`, `127`). Un `0`, un `SOP-` sin dígitos o un número que no cabe en un `long` no es radicado y busca como
+texto. Cualquier otro término busca en el asunto, en los nombres del solicitante (nombres, apellidos, razón social) y en el nombre de los clientes vinculados. El resumen (`Summary`) es del
 tenant entero, no del filtro: los seis estados siempre, en el orden de arriba e incluso en cero, más los vencidos y los por vencer.
 
 **Alta manual** (`POST /tickets`). Exige un cliente (`customerId`) **o** un solicitante con nombre (`FirstNames`, o `BusinessName`
@@ -4737,7 +4739,12 @@ con documento `NIT`); si no, `422 support.ticket.requester_required`. El celular
 tiene que valer para su país (por defecto, el del tenant). Vincular un cliente, al crear o con `PUT …/customer`, exige el módulo
 `customers` prendido (`403 tenancy.module_not_enabled`) y un cliente activo del tenant (`422 support.ticket.customer_not_found` o
 `support.ticket.customer_inactive`; un fusionado está inactivo). El canal de respuesta `Thread` no está disponible en un alta manual
-(`422 support.ticket.reply_channel_unavailable`), `Email` exige correo y `WhatsAppTemplate` exige celular.
+(`422 support.ticket.reply_channel_unavailable`), `Email` exige correo y `WhatsAppTemplate` exige celular. **El correo y el celular
+son los del solicitante (`requester`), nunca los del cliente vinculado**: el puerto de clientes no expone su contacto en esta fase.
+Con un cliente vinculado y sin `requester`, o con un `requester` sin correo ni celular, todo canal responde ese 422; la pantalla
+tiene que copiar el correo o el celular del cliente en `requester` para habilitar `Email` o `WhatsAppTemplate`
+(`SupportTicketRules.EnsureReplyChannel`, amarrado por `ALinkedCustomerWithoutRequesterContactIs422ForEmail`). Usar el contacto
+del cliente como respaldo es decisión pendiente del owner.
 
 **Traza y auditoría.** La traza del ticket son sus eventos (`Created`, `StatusChanged`, `AssigneeChanged`, `TypeChanged`,
 `CustomerChanged`), ordenados por un ordinal que asigna el agregado, no por hora. Cada cambio audita en la misma transacción:

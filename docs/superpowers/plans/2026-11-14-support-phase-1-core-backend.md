@@ -131,6 +131,8 @@ DTO (en `SupportDtos.cs`; cada uno lleva en su comentario el motivo de pantalla)
 - `SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonBusinessDays, int MaxDueSoonBusinessDays, long Version)` [owner 2026-11-14]: viaja con el rango (0 y 30) para que el formulario de ajustes no lo repita; `0` significa «apagado». Un tenant que nunca guardó ve 3.
 - `SupportMemberDto(Guid Id, string DisplayName)`, `SupportCustomerRefDto(Guid Id, string Name, bool IsActive)`, `SupportRequesterDto` (los campos de D7), `SupportAssigneesDto(IReadOnlyList<SupportMemberDto> Items)`, `SupportStatusCountDto(string Status, int Count)`.
 
+**Canal de respuesta en el alta manual** (revisión final, I1). `SupportTicketRules.EnsureReplyChannel` mira sólo el correo y el celular de `requester`, nunca el contacto del cliente vinculado (el puerto de clientes no lo expone en esta fase). `Thread` nunca vale en un alta manual; `Email` exige `requester.email` y `WhatsAppTemplate` exige `requester.mobilePhone`; si falta, `422 support.ticket.reply_channel_unavailable`. Con un cliente vinculado y sin `requester`, todo canal da ese 422: la pantalla habilita los canales según lo que trae `requester` y, si quiere usar el contacto del cliente, lo copia en `requester`. Lo amarra `SupportTicketsApiTests.ALinkedCustomerWithoutRequesterContactIs422ForEmail`.
+
 El frontend de clientes también debe mostrar el motivo de bloqueo nuevo `supportTickets` (Tarea 11).
 
 ## Estructura de archivos
@@ -742,6 +744,7 @@ tests/ArchitectureTests/ArchitectureTests/SupportLayerTests.cs
 ## Decisiones pendientes
 
 - **P2 (owner con el abogado).** Regla del día parcial de una pausa (D3): este plan descuenta sólo los días hábiles completos detenidos. Se suma al punto 1 de §13 del spec.
+- **Contacto del cliente como respaldo del canal de respuesta (owner; revisión final, I1).** Hoy un alta manual con cliente vinculado valida `Email` y `WhatsAppTemplate` sólo contra el `requester`, así que el caso «llama un cliente conocido» sin `requester` da 422 en todo canal. Decidir si el contacto del cliente cuenta. El arreglo correcto es que `ISupportCustomerLookup`/`SupportCustomerRef` devuelvan correo y celular, y que el alta los copie en la foto del `requester` cuando éste no los trae: la foto es lo que la fase 2 necesita para enviar las respuestas. Hasta entonces la regla está en el contrato BFF y amarrada por prueba.
 - Siguen abiertos los del spec que bloquean el despliegue y no esta fase: validación legal del reloj (§13.1 y §13.4) y el aplicar términos a tenants privados (§4).
 
 ## Spec discrepancies (spec contra código)
