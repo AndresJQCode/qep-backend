@@ -333,14 +333,25 @@ demás tablas de §4.2 llegan con las tareas que las usan. Rutas de §5: `GET /c
 **Empieza resolviendo P-1 y P-6 para OpenAI (técnicas, sin el owner).** No bloquea a ningún otro slice: hasta que llegue, `GET /ai/models` marca
 `openai` con `available: false` en sus modelos y publicar un agente de OpenAI responde `ai.agent.model_unavailable`.
 
-- [ ] Resolver P-1 contra la documentación oficial de OpenAI (no de memoria) y anotar la respuesta en el spec.
-- [ ] Paquete (si P-1 elige SDK) con lock files regenerados en el mismo commit.
-- [ ] RED/GREEN: `OpenAiModelClientTests` con las mismas exigencias que `ClaudeModelClientTests` que apliquen
+Hecha en `feat/agentes-ia-claude`. P-1 y P-6 quedaron resueltas en el spec, §9.1 (O-1..O-10, con las fuentes). Cambia respecto de
+lo planeado:
+
+- **Sin paquete:** P-1 eligió la Responses API con `HttpClient` directo (O-2), así que no hay lock files que regenerar. La columna
+  OpenAI de la tabla de errores es O-8 y O-9.
+- **OpenAI entra en Integrations en esta tarea** (proveedor `openai`, migración `AddOpenAiProvider`, `OpenAiConnectionTester`), no
+  en la Tarea 2: allá se dejó fuera para no ofrecer una conexión que nadie podía usar. `GET /ai/settings` lo lista con
+  `connectable: true` y sus modelos quedan `available: true` en `appsettings.json`, con la descripción de D-4a.
+- **El esfuerzo de OpenAI es opcional** (O-6): la lista inicial no lo fija y se manda el default del modelo hasta que AI-B9 diga otra
+  cosa.
+
+- [x] Resolver P-1 contra la documentación oficial de OpenAI (no de memoria) y anotar la respuesta en el spec.
+- [x] Paquete (si P-1 elige SDK) con lock files regenerados en el mismo commit. No aplica: sin SDK.
+- [x] RED/GREEN: `OpenAiModelClientTests` con las mismas exigencias que `ClaudeModelClientTests` que apliquen
   (herramientas, `VolatileContext` fuera del prefijo estable, errores tipados de la columna OpenAI, clave por
   petición, sin estado del lado del proveedor) y las propias que P-1 determine.
-- [ ] `OpenAiConnectionTester` real (reemplaza el `unverified` de la Tarea 2).
-- [ ] Prueba de no-filtración para OpenAI.
-- [ ] Commit `feat(ai): add OpenAI model client`.
+- [x] `OpenAiConnectionTester` real (reemplaza el `unverified` de la Tarea 2).
+- [x] Prueba de no-filtración para OpenAI (`OpenAiNoLeakTests`).
+- [x] Commit `feat(ai): add OpenAI model client`.
 
 ### Task 7 (AI-B6): Mensajería y ejecución en canales reales
 
