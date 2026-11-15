@@ -1009,10 +1009,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   los objetos**, al revés que la de comprobantes: un guardado fallido no deja una fila `Available` sin objeto que un radicado podría
   reclamar; un borrado fallido deja un objeto huérfano y un log (`AFailedObjectDeleteLeavesTheRowPurgedNotAvailable`). No lo «alinees»
   con el orden de los comprobantes.
-- **Abrir una subida anónima va con el candado del tenant** (`SupportPublicAttachmentsLock`, `pg_advisory_xact_lock(20261115,
-  hashtext(tenant_id))`, en `ISupportUnitOfWork.LockPublicAttachmentsAsync`): contar las abiertas sin reclamar y abrir la nueva van con
-  él tomado, y Storage confirma la fila antes de que se suelte. Sin él el tope de 200 se pasa con aperturas a la vez
-  (`ConcurrentOpensAtTheEdgeNeverExceedTheCap`). El número no lo usa ningún otro candado de dos claves; uno nuevo elige otro.
+- **El tope de 200 subidas anónimas por tenant es blando a propósito** (`OpenPublicAttachmentHandler`, fix round 1 del Bloque F): cuenta
+  y después abre, así que entran unas pocas de más bajo ráfaga simultánea. No le pongas un candado por tenant: en un endpoint anónimo,
+  quien espera el candado retiene una conexión del pool y quien lo tiene necesita otra para Storage, así que unas pocas IPs vaciarían el
+  pool de toda la API. `lock_timeout` tampoco sirve (sigue reteniendo conexiones) y un try-lock rechazaría las 3 subidas en paralelo de una
+  sola persona.
 - **Un ticket anónimo no tiene cliente ni ninguna columna `requester_*`, y la base lo exige** (`CK_tickets_anonymous`). Una columna nueva
   de la foto del solicitante entra en `SupportDbContext.RequesterColumns` y en una migración que rehaga el CHECK, o el anónimo puede
   llevarla sin error.

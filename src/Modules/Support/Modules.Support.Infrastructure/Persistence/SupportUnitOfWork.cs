@@ -122,19 +122,6 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
         }
     }
 
-    // Sin transacción abierta el candado se soltaría al terminar la sentencia y no serializaría nada: se exige, como LockByNumberAsync.
-    public async Task LockPublicAttachmentsAsync(Guid tenantId, CancellationToken cancellationToken)
-    {
-        if (dbContext.Database.CurrentTransaction is null)
-        {
-            throw new InvalidOperationException("The public attachments lock needs an open transaction.");
-        }
-
-        await dbContext.Database.ExecuteSqlAsync(
-            $"SELECT pg_advisory_xact_lock({SupportPublicAttachmentsLock.Namespace}, hashtext({tenantId.ToString()}))",
-            cancellationToken);
-    }
-
     public void DiscardChanges() => dbContext.ChangeTracker.Clear();
 
     private static SupportDomainException CustomerNotFound(CustomerReferenceToHold reference) =>

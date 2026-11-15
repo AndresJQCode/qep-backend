@@ -346,23 +346,6 @@ public sealed class SupportPublicAttachmentsApiTests(SupportPublicAttachmentsHos
         Assert.Equal(HttpStatusCode.Created, otherTenant.StatusCode);
     }
 
-    // Block E (E-4): contar y abrir van con el candado del tenant (SupportPublicAttachmentsLock), así aperturas a la vez en el borde hacen
-    // fila y el tope es exacto. Con 197 abiertas y ocho a la vez, entran tres y el tenant queda en 200, nunca más.
-    [Fact]
-    public async Task ConcurrentOpensAtTheEdgeNeverExceedTheCap()
-    {
-        var rig = await RigAsync();
-        var first = await OpenAsync(rig, "primero.pdf", 10);
-        await CopyFileAsync(rig, first.FileId, count: SupportPublicAttachmentRules.MaxPendingPerTenantPerDay - 4, hoursAgo: 0);
-        Assert.Equal((long)SupportPublicAttachmentRules.MaxPendingPerTenantPerDay - 3, await FileCountAsync(rig.Factory, rig.TenantId));
-
-        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => OpenFromNewIpAsync(rig.Factory, rig.Slug)));
-
-        Assert.Equal(3, responses.Count(response => response.StatusCode == HttpStatusCode.Created));
-        Assert.Equal(5, responses.Count(response => response.StatusCode == HttpStatusCode.UnprocessableEntity));
-        Assert.Equal((long)SupportPublicAttachmentRules.MaxPendingPerTenantPerDay, await FileCountAsync(rig.Factory, rig.TenantId));
-    }
-
     // Block E (E-3): el conteo del tope filtra por tenant, dueño y hora de creación; el índice lo sirve sin recorrer todos los adjuntos
     // que el tenant tuvo alguna vez.
     [Fact]

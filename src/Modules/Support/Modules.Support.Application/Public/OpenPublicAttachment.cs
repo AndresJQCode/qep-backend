@@ -38,14 +38,13 @@ public sealed class OpenPublicAttachmentValidator : AbstractValidator<OpenPublic
 /// contexto de ejecución ni la sesión. Si el formulario no permite adjuntos (spec §9.3), 422 <c>support.public.attachments_disabled</c>
 /// sin abrir nada en Storage. Si el tenant ya tiene <see cref="SupportPublicAttachmentRules.MaxPendingPerTenantPerDay"/> subidas
 /// abiertas en las últimas 24 h sin reclamar (owner, 2026-11-15, E2), 422 <c>support.public.attachments_busy</c>, también sin abrir nada:
-/// el limitador por IP no frena a muchas IPs a la vez. El tope es exacto (Block E, E-4): contar y abrir van con el candado del tenant
-/// (<see cref="ISupportUnitOfWork.LockPublicAttachmentsAsync"/>), así dos aperturas a la vez en el borde hacen fila y la segunda ya cuenta
-/// la fila que Storage confirmó para la primera. Storage guarda en su propia transacción, que confirma antes de que se suelte el candado.
+/// el limitador por IP no frena a muchas IPs a la vez. Es un tope blando a propósito (fix round 1 del Bloque F): cuenta y después abre,
+/// así que unas pocas de más pueden entrar bajo una ráfaga simultánea. Un candado por tenant en un endpoint anónimo expondría el pool de
+/// conexiones de toda la API: quien espera el candado retiene una conexión, y quien lo tiene necesita otra para Storage.
 /// </summary>
 public sealed class OpenPublicAttachmentHandler(
     SupportPublicResolver resolver,
     ISupportAttachmentStorage storage,
-    ISupportUnitOfWork unitOfWork,
     IValidator<OpenPublicAttachmentCommand> validator)
     : ICommandHandler<OpenPublicAttachmentCommand, SupportPublicAttachmentSessionDto>
 {
@@ -55,10 +54,6 @@ public sealed class OpenPublicAttachmentHandler(
         var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
         CompletePublicAttachmentHandler.EnsureAllowed(tenant.Form);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
-
-        // Sin commit (el 422 o una falla de Storage), el Dispose deshace la transacción y suelta el candado.
-        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        await unitOfWork.LockPublicAttachmentsAsync(tenant.TenantId, cancellationToken);
         if (await storage.CountPendingAsync(tenant.TenantId, SupportPublicAttachmentRules.PendingWindow, cancellationToken)
             >= SupportPublicAttachmentRules.MaxPendingPerTenantPerDay)
         {
@@ -74,7 +69,6 @@ public sealed class OpenPublicAttachmentHandler(
             SupportPublicAttachmentRules.NormalizeMimeType(command.MimeType!),
             command.SizeBytes!.Value,
             cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
         return new SupportPublicAttachmentSessionDto(upload.FileId, uploadKey, upload.UploadUrl.AbsoluteUri, upload.Headers);
     }
 }

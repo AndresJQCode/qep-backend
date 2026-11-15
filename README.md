@@ -5161,9 +5161,9 @@ si sale `available`, mandar el par al radicar.
 - **Tope por tenant** (owner, 2026-11-15): el limitador por IP no frena a muchas IPs a la vez llenando el bucket. Un tenant tiene a lo
   sumo **200** subidas abiertas en las últimas 24 h que ningún ticket reclamó (`MaxPendingPerTenantPerDay`; las reclamadas no cuentan);
   pasado eso, abrir responde `422 support.public.attachments_busy`, sin tocar Storage, y la página dice «Estamos recibiendo muchos
-  archivos. Intenta más tarde.». El tope es exacto: contar y abrir van con un candado de base por tenant
-  (`pg_advisory_xact_lock(20261115, hashtext(tenant_id))`, `SupportPublicAttachmentsLock`), así aperturas a la vez en el borde hacen
-  fila. El conteo es SQL crudo en `SupportAttachmentStorage` (Bootstrapper) sobre `storage.file_resources` (servido por
+  archivos. Intenta más tarde.». Es un tope blando a propósito: cuenta y después abre, así que entran
+  unas pocas de más bajo ráfaga simultánea; un candado por tenant en un endpoint anónimo expondría el pool de conexiones de toda la API
+  (quien espera retiene una conexión y quien lo tiene necesita otra para Storage). El conteo es SQL crudo en `SupportAttachmentStorage` (Bootstrapper) sobre `storage.file_resources` (servido por
   `IX_file_resources_tenant_owner_created`) y `support.ticket_attachments`.
 - **`uploadKey`** es un GUID aleatorio (v4) que sólo recibe quien abrió la sesión y que Storage guarda como `OwnerId` del archivo. Completar
   y radicar exigen el par `(fileId, uploadKey)` del mismo tenant: otra clave, un id que no existe, un archivo sin subir o en cuarentena
