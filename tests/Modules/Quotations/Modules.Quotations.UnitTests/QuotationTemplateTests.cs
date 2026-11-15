@@ -76,11 +76,35 @@ public sealed partial class QuotationTemplateTests
             RetentionAmount = 10_398m,
             Withholdings =
             [
-                new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m),
-                new QuotationPdfWithholding("ReteICA Bogotá", 2_898m),
+                new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m, "2,5 %"),
+                new QuotationPdfWithholding("ReteICA Bogotá", 2_898m, "0,966 %"),
             ],
             NetTotal = 1_525_722m,
         });
+
+    // Spec ReteICA por empresa §7.9 (R13): el rótulo de cada fila es el nombre de la tasa, un espacio, su porcentaje y dos
+    // puntos. No se deduplica: si el nombre ya dice el porcentaje, sale dos veces («Retefuente 2,5 % 2,5 %:»), porque el
+    // nombre lo pone el tenant y el porcentaje es el efectivo.
+    [Fact]
+    public async Task EachWithholdingRowCarriesItsPercentage()
+    {
+        var (source, data, _) = await CapturedRequestAsync(Complete() with
+        {
+            Withholdings =
+            [
+                new QuotationPdfWithholding("ReteICA Bogotá", 2_898m, "0,966 %"),
+                new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m, "2,5 %"),
+            ],
+        });
+
+        const string Label = "retencion.name + \" \" + retencion.percentageLabel + \":\"";
+        Assert.Contains(Label, StripComments(source), StringComparison.Ordinal);
+        Assert.Equal<string>(
+            ["ReteICA Bogotá 0,966 %:", "Retefuente 2,5 % 2,5 %:"],
+            data.GetProperty("withholdings").EnumerateArray()
+                .Select(row => row.GetProperty("name").GetString() + " " + row.GetProperty("percentageLabel").GetString() + ":")
+                .ToArray());
+    }
 
     // El caso completo ejercita todas las ramas que dibujan algo: descuento por linea, retencion,
     // cuenta de cobro y partes con datos propios.
@@ -559,7 +583,7 @@ public sealed partial class QuotationTemplateTests
         RetentionAmount: 32271.43m,
         Withholdings:
         [
-            new QuotationPdfWithholding("Retefuente 2,5 %", 32271.43m),
+            new QuotationPdfWithholding("Retefuente 2,5 %", 32271.43m, "2,5 %"),
         ],
         NetTotal: 1503848.57m,
         CustomerVatSurplus: false,

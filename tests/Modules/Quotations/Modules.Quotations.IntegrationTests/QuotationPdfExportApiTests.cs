@@ -89,14 +89,19 @@ public sealed class QuotationPdfExportApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        // Una UVT redonda: la Retefuente (4 UVT = 200.000) aplica sobre una base de 300.000. Desde el spec ReteICA por
-        // empresa (A15) el cliente no puede tener una ReteICA: la fila municipal del PDF la cubre el Bloque C.
+        // Una UVT redonda: las dos tasas (4 UVT = 200.000) aplican sobre una base de 300.000. La Retefuente es del
+        // cliente; la ReteICA, de la empresa en su municipio, donde el cliente es agente (spec ReteICA por empresa §7.5).
         await InsertTaxUnitValueAsync(factory, "CO", TodayInBogota().Year, 50_000m);
-        var company = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var cityId = await EnsureCityIdAsync(client);
+        var company = await CreateCompanyWithBankAccountAsync(client, tenantId, cityId: cityId);
         var vat = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
         var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 119_000m, taxRateId: vat);
         var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m, minimumBase: 4m);
+        var reteIca = await InsertWithholdingRateAsync(
+            factory, tenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m, cityId: cityId);
+        await AssignCompanyWithholdingRateAsync(factory, tenantId, company.CompanyId, reteIca);
         var customerId = await CreateActiveCustomerAsync(client, tenantId, withholdingTaxRateIds: [retefuente]);
+        await SetWithholdingAgentAsync(factory, tenantId, customerId, cityId);
         var quotation = await CreateQuotationAsync(
             client, tenantId, customerId,
             billingAccount: new QuotationBillingAccountRequest(
@@ -111,10 +116,15 @@ public sealed class QuotationPdfExportApiTests
 
         var document = factory.PdfRenderer.LastDocument;
         Assert.NotNull(document);
+        // Cada fila con su porcentaje efectivo, con el separador del tenant (spec ReteICA por empresa §7.9).
         Assert.Equal(
-            new[] { new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m) },
+            new[]
+            {
+                new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m, "2,5 %"),
+                new QuotationPdfWithholding("ReteICA Bogotá", 2_898m, "0,966 %"),
+            },
             document.Withholdings);
-        Assert.Equal(7_500m, document.RetentionAmount);
+        Assert.Equal(10_398m, document.RetentionAmount);
     }
 
     [Fact]

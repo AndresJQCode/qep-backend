@@ -106,8 +106,12 @@ public enum QuotationPdfKind
     Order
 }
 
-/// <summary>Una retención que aplicó, tal como el documento la imprime: el nombre de la tasa y lo que resta.</summary>
-public sealed record QuotationPdfWithholding(string Name, decimal Amount);
+/// <summary>Una retención que aplicó, tal como el documento la imprime: el nombre de la tasa, lo que resta y su porcentaje
+/// efectivo ya escrito (spec ReteICA por empresa §7.9, R13).</summary>
+/// <param name="PercentageLabel">El porcentaje efectivo con el separador decimal del tenant, hasta tres decimales sin ceros
+/// de sobra, más « %» («0,966 %», «4 %»). Lo arma el mapper y no Typst porque la plantilla no sabe del tenant; el del
+/// catálogo de una tasa editada no se imprime: el cliente comprueba el monto con el efectivo.</param>
+public sealed record QuotationPdfWithholding(string Name, decimal Amount, string PercentageLabel);
 
 /// <summary>Una parte del documento: a quién se le factura, o a quién se le entrega.</summary>
 /// <param name="SameAsCustomer">
