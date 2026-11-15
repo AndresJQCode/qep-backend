@@ -354,5 +354,7 @@ public sealed class BuyerSignupRequestedWorkerTests
         public void Add(BuyerAccount account) => inner.Add(account);
 
         public void Remove(BuyerAccount account) => inner.Remove(account);
+
+        public Task LockAsync(Guid id, CancellationToken cancellationToken) => inner.LockAsync(id, cancellationToken);
     }
 }

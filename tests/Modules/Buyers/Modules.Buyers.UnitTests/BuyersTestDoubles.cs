@@ -74,6 +74,9 @@ internal sealed class BuyersWorld
     /// <summary>Corre en el próximo guardado y lo hace fallar con el conflicto de email: simula al ganador de la carrera.</summary>
     public Action? WinTheRaceOnNextSave { get; set; }
 
+    /// <summary>Corre al tomar el candado de la cuenta: simula un login que confirmó su sesión mientras se esperaba el candado.</summary>
+    public Action? OnAccountLock { get; set; }
+
     /// <summary>Corre en el próximo guardado y lo hace fallar por concurrencia: simula otra escritura (o la purga) de la cuenta.</summary>
     public Action? ConflictOnNextSave { get; set; }
 
@@ -105,6 +108,13 @@ internal sealed class BuyersWorld
         public void Add(BuyerAccount account) => world._pendingAccounts.Add(account);
 
         public void Remove(BuyerAccount account) => world.SavedAccounts.Remove(account);
+
+        public Task LockAsync(Guid id, CancellationToken cancellationToken)
+        {
+            world.Steps.Add("lock");
+            world.OnAccountLock?.Invoke();
+            return Task.CompletedTask;
+        }
     }
 
     internal sealed class FakeProfiles(BuyersWorld world) : IBuyerProfileRepository
@@ -155,9 +165,12 @@ internal sealed class BuyersWorld
             return Task.FromResult(world.SavedSessions.SingleOrDefault(s => s.TokenHash == hash));
         }
 
-        public Task<IReadOnlyList<BuyerSession>> ListActiveAsync(Guid accountId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<BuyerSession>>(
+        public Task<IReadOnlyList<BuyerSession>> ListActiveAsync(Guid accountId, CancellationToken cancellationToken)
+        {
+            world.Steps.Add("list");
+            return Task.FromResult<IReadOnlyList<BuyerSession>>(
                 world.SavedSessions.Where(s => s.AccountId == accountId && s.RevokedAt is null).ToList());
+        }
 
         public Task<IReadOnlyList<RevokedBuyerSession>> RevokeActiveAsync(
             Guid accountId, Guid? keepSessionId, DateTimeOffset now, string reason, CancellationToken cancellationToken)
@@ -257,6 +270,14 @@ internal sealed class BuyersWorld
             world.Steps.RemoveAt(world.Steps.Count - 1);
             await afterSave(cancellationToken);
             world.Steps.Add("commit");
+        }
+
+        // Como la real: beforeSave corre ya dentro de la transacción, antes del guardado.
+        public async Task SaveChangesAsync(
+            Func<CancellationToken, Task> beforeSave, Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken)
+        {
+            await beforeSave(cancellationToken);
+            await SaveChangesAsync(afterSave, cancellationToken);
         }
 
         public void DiscardPendingChanges()

@@ -11,6 +11,13 @@ public interface IBuyerAccountRepository
     void Add(BuyerAccount account);
 
     void Remove(BuyerAccount account);
+
+    /// <summary>
+    /// Bloquea la fila de la cuenta (<c>FOR UPDATE</c>) hasta el fin de la transacción en curso; fuera de una transacción no
+    /// retiene nada. Choca con el <c>FOR KEY SHARE</c> que toma la clave foránea al insertar una sesión: un login concurrente o
+    /// confirmó antes y se ve, o espera.
+    /// </summary>
+    Task LockAsync(Guid id, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -129,6 +136,13 @@ public interface IBuyersUnitOfWork
     /// traducciones que <see cref="SaveChangesAsync(CancellationToken)"/>.
     /// </summary>
     Task SaveChangesAsync(Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Como <see cref="SaveChangesAsync(Func{CancellationToken, Task}, CancellationToken)"/>, y además corre
+    /// <paramref name="beforeSave"/> dentro de la misma transacción, antes del guardado (por ejemplo, un candado y una lectura).
+    /// </summary>
+    Task SaveChangesAsync(
+        Func<CancellationToken, Task> beforeSave, Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken);
 
     void DiscardPendingChanges();
 }

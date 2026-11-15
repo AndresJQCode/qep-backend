@@ -58,16 +58,27 @@ public sealed class DeleteBuyerAccountHandler(
             BuyerIntegrationEvents.AccountDeleted,
             new BuyerEmailPayload(account.Id, account.Email, storefront.Host, storefront.Name, null),
             clock.UtcNow);
-        // La cascada se lleva las sesiones sin que nadie las nombre: la caché (spec 2026-11-13, D-4) las lista antes y saca sus
-        // entradas antes del guardado y otra vez después.
-        var activeSessions = (await sessionRepository.ListActiveAsync(account.Id, cancellationToken))
-            .Select(active => new RevokedBuyerSession(active.Id, active.TokenHash))
-            .ToArray();
         accounts.Remove(account);
         var accountId = account.Id;
-        await sessionCache.RemoveAsync(activeSessions, cancellationToken);
+
+        // La cascada se lleva las sesiones sin que nadie las nombre: la caché (spec 2026-11-13, D-4) las lista y saca sus
+        // entradas antes del commit y otra vez después. La lista va con la cuenta bloqueada, dentro de la transacción del
+        // borrado: el INSERT de la sesión de un login concurrente toma FOR KEY SHARE sobre la cuenta por la clave foránea, así
+        // que o confirmó antes del candado y la lista la ve, o espera y falla contra la cuenta borrada. Sin el candado, una
+        // sesión confirmada entre la lista y el borrado quedaba cacheada para una cuenta que ya no existe, y los pedidos del
+        // comprador (BuyerOrders) usan session.AccountId sin releer la cuenta.
+        RevokedBuyerSession[] activeSessions = [];
         await unitOfWork.SaveChangesAsync(
-            token => outbox.RemoveAccountEmailsAsync(accountId, token), cancellationToken);
+            async token =>
+            {
+                await accounts.LockAsync(accountId, token);
+                activeSessions = (await sessionRepository.ListActiveAsync(accountId, token))
+                    .Select(active => new RevokedBuyerSession(active.Id, active.TokenHash))
+                    .ToArray();
+                await sessionCache.RemoveAsync(activeSessions, token);
+            },
+            token => outbox.RemoveAccountEmailsAsync(accountId, token),
+            cancellationToken);
         await sessionCache.RemoveAsync(activeSessions, cancellationToken);
         return true;
     }
