@@ -1,4 +1,5 @@
 using Modules.Buyers.Application;
+using Modules.Buyers.Domain;
 using Modules.Store.Application;
 
 namespace Bootstrapper;
@@ -44,5 +45,16 @@ internal sealed class StoreBuyerAccounts(
 
         var account = await accounts.FindAsync(session.AccountId, cancellationToken);
         return account?.Id;
+    }
+
+    public async Task<Guid?> FindVerifiedAccountIdAsync(string email, CancellationToken cancellationToken)
+    {
+        if (!BuyerEmail.TryNormalize(email, out var normalized))
+        {
+            return null;
+        }
+
+        var account = await accounts.FindByEmailAsync(normalized, cancellationToken);
+        return account is { IsVerified: true } ? account.Id : null;
     }
 }

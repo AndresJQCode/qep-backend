@@ -234,6 +234,25 @@ internal sealed class FakeBuyers(CallLog log) : IStoreBuyerAccounts
 
         return Task.FromResult(ResolvedAccountId);
     }
+
+    /// <summary>La cuenta verificada que devuelve la búsqueda por el correo de facturación.</summary>
+    public Guid? VerifiedAccountId { get; set; }
+
+    public Exception? FindVerifiedThrows { get; set; }
+
+    public List<string> FindVerifiedCalls { get; } = [];
+
+    public Task<Guid?> FindVerifiedAccountIdAsync(string email, CancellationToken cancellationToken)
+    {
+        log.Entries.Add("buyers.find-verified");
+        FindVerifiedCalls.Add(email);
+        if (FindVerifiedThrows is not null)
+        {
+            throw FindVerifiedThrows;
+        }
+
+        return Task.FromResult(VerifiedAccountId);
+    }
 }
 
 /// <summary>Guarda en memoria lo que se loguea, para afirmar el nivel y que el mensaje no lleve datos del visitante.</summary>
