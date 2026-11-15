@@ -100,10 +100,10 @@ public static class OrderChangeSummary
             ? $"Cambió las retenciones de {before} a {after}; el cliente no está registrado como agente retenedor de {manual.Type} en {manual.City}."
             : $"Cambió las retenciones de {before} a {after}.");
 
-    /// <summary>La re-resolución quitó una tasa municipal aplicada a mano porque el cliente no es agente en el municipio
-    /// nuevo (spec ReteICA por empresa §7.8, R11).</summary>
-    public static string ManualWithholdingRemoved(string type) =>
-        Trim($"Se quitó la {type} aplicada a mano al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.");
+    /// <summary>La re-resolución quitó una tasa municipal porque el cliente no es agente en el municipio. No dice «a mano»:
+    /// no se guarda si la fila salió de la regla o del selector (owner 2026-11-14; spec §7.8, R11).</summary>
+    public static string WithholdingRemovedNotAgent(string type) =>
+        Trim($"Se quitó la {type} al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.");
 
     /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
     public static string Sent(QuotationRecipient recipient, string? contactName = null) => recipient switch

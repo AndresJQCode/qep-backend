@@ -145,7 +145,7 @@ public sealed class OrderMunicipalWithholdingsTests
         Assert.Equal((Bogota, Medellin), (change.Municipal.OperationCityBefore, change.Municipal.OperationCityAfter));
         Assert.Equal(Medellin, order.OperationCityId);
         Assert.Equal([Retefuente], order.Withholdings.OrderBy(w => w.Position).Select(w => w.Rate));
-        Assert.Equal(ReteIcaBogota, Assert.Single(change.Municipal.RemovedManual));
+        Assert.Equal(ReteIcaBogota, Assert.Single(change.Municipal.RemovedNotAgent));
         Assert.Empty(change.Municipal.DiscardedOverrides);
         Assert.Equal(2_500m, order.RetentionAmount);
     }
@@ -159,7 +159,7 @@ public sealed class OrderMunicipalWithholdingsTests
 
         Assert.True(change.Municipal.Triggered);
         Assert.Equal([Retefuente, ReteIcaMedellin], order.Withholdings.OrderBy(w => w.Position).Select(w => w.Rate));
-        Assert.Empty(change.Municipal.RemovedManual);
+        Assert.Empty(change.Municipal.RemovedNotAgent);
         Assert.Equal(3_500m, order.RetentionAmount);
     }
 
@@ -229,7 +229,7 @@ public sealed class OrderMunicipalWithholdingsTests
         Assert.Null(order.OperationCityId);
         Assert.DoesNotContain(order.Withholdings, w => w.Type == "ReteICA");
         Assert.Equal(0.8m, Assert.Single(change.Municipal.DiscardedOverrides).Percentage);
-        Assert.Empty(change.Municipal.RemovedManual);
+        Assert.Empty(change.Municipal.RemovedNotAgent);
     }
 
     [Fact]

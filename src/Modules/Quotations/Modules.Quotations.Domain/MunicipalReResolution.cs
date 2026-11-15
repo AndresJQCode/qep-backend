@@ -5,14 +5,14 @@ namespace Modules.Quotations.Domain;
 /// <summary>
 /// Lo que pasó con las retenciones municipales en una edición (spec ReteICA por empresa §7.6), para que la aplicación
 /// escriba el historial: si hubo re-resolución, el municipio de antes y el de después, las filas con porcentaje editado
-/// que se perdieron y, en el pedido, las aplicadas a mano que se quitaron porque el cliente no es agente ahí.
+/// que se perdieron y, en el pedido, las municipales que se quitaron porque el cliente no es agente ahí.
 /// </summary>
 public sealed record MunicipalReResolution(
     bool Triggered,
     Guid? OperationCityBefore,
     Guid? OperationCityAfter,
     IReadOnlyList<WithholdingRate> DiscardedOverrides,
-    IReadOnlyList<WithholdingRate> RemovedManual)
+    IReadOnlyList<WithholdingRate> RemovedNotAgent)
 {
     /// <summary>No hubo cambio de empresa, de municipio ni de cliente: nada se re-resolvió.</summary>
     public static MunicipalReResolution None { get; } = new(false, null, null, [], []);
@@ -61,7 +61,7 @@ internal static class MunicipalReResolver
     /// <param name="current">Las filas de la fuente, en su orden.</param>
     /// <param name="customerRule">true para la fuente del cliente y el pedido; false para el selector de facturación propia
     /// (plan P5), que sólo mueve lo que ya estaba elegido.</param>
-    public static (IReadOnlyList<WithholdingRate> Rates, IReadOnlyList<WithholdingRate> Discarded, IReadOnlyList<WithholdingRate> RemovedManual)
+    public static (IReadOnlyList<WithholdingRate> Rates, IReadOnlyList<WithholdingRate> Discarded, IReadOnlyList<WithholdingRate> RemovedNotAgent)
         ReResolve(
             IReadOnlyList<WithholdingRate> current,
             MunicipalContext municipal,
@@ -70,7 +70,7 @@ internal static class MunicipalReResolver
     {
         var rates = new List<WithholdingRate>();
         var discarded = new List<WithholdingRate>();
-        var removedManual = new List<WithholdingRate>();
+        var removedNotAgent = new List<WithholdingRate>();
         var resolvedTypes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var rate in current)
         {
@@ -100,8 +100,8 @@ internal static class MunicipalReResolver
             }
             else if (offer is { CompanyRate: not null, CustomerIsAgent: false } && operationCityId is not null)
             {
-                // La empresa sí tiene tasa ahí, pero el cliente no es agente: la que estaba era una aplicación a mano.
-                removedManual.Add(rate);
+                // La empresa sí tiene tasa ahí, pero el cliente no es agente. No se sabe si la fila salió de la regla o del selector.
+                removedNotAgent.Add(rate);
             }
         }
 
@@ -113,7 +113,7 @@ internal static class MunicipalReResolver
                 .OfType<WithholdingRate>());
         }
 
-        return (rates, discarded, removedManual);
+        return (rates, discarded, removedNotAgent);
     }
 
     /// <summary>Las reglas del porcentaje editado (spec §7.7), con el prefijo de código de cada documento. Devuelve el
