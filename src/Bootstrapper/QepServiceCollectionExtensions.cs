@@ -1515,6 +1515,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
+        // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
+        // Notifications; Soporte sólo declara los puertos.
+        services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();
+        services.AddScoped<Modules.Support.Application.ISupportThreadFeed, SupportThreadFeed>();
+        services.AddScoped<Modules.Support.Application.ISupportConversationEvents, SupportConversationEvents>();
+        services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
+        services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno

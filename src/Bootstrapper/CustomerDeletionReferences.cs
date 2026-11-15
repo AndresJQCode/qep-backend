@@ -24,7 +24,10 @@ namespace Bootstrapper;
 ///
 /// **Lo que lee por nombre.** <c>quotations.quotations.client_id</c>, <c>quotations.orders.client_id</c>,
 /// <c>loans.loans.customer_id</c>, <c>billing.services.customer_id</c>, <c>billing.charges.customer_id</c>,
-/// <c>billing.customer_profiles.customer_id</c>, <c>support.tickets.customer_id</c>; en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
+/// <c>billing.customer_profiles.customer_id</c>, <c>support.tickets.customer_id</c>; en <c>support</c>, por las conversaciones que se
+/// borran (plan E18 de la fase 2): <c>tickets</c> (<c>conversation_id</c>, <c>conversation_channel</c>, <c>follow_thread</c>,
+/// <c>follow_off_at</c>, <c>updated_at</c>, <c>version</c>), <c>ticket_messages.conversation_id</c>,
+/// <c>unclassified_messages.conversation_id</c> y <c>ticket_replies</c> (<c>ticket_id</c>, <c>message_id</c>); en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
 /// <c>blocked_at</c>), <c>messages</c> (<c>conversation_id</c>, <c>direction</c>), <c>message_media.storage_key</c>,
 /// <c>scheduled_messages.media_storage_key</c>, <c>automation_inbox.conversation_id</c>, <c>campaign_recipients</c>
 /// (<c>customer_id</c>, <c>conversation_id</c>, <c>message_id</c>, <c>status</c>, <c>failure_code</c>, <c>failure_reason</c>) y
@@ -291,6 +294,28 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
             """, cancellationToken);
         await database.ExecuteSqlAsync($"""
             DELETE FROM pipeline.deals WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
+        // Soporte fase 2 (plan E18): un ticket que no es de estos clientes (los suyos bloquean el borrado) y nació de una de estas
+        // conversaciones, o la vinculó por plantilla, sobrevive sin ella: deja de seguir el hilo desde ahora, pierde los vínculos de
+        // mensajes y los entrantes sin clasificar de esas conversaciones, y la respuesta que salió por ahí conserva su fila sin el
+        // mensaje. Sube la versión: la pantalla que lo tenía abierto vuelve a cargarlo en vez de pisarlo.
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM support.ticket_messages WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM support.unclassified_messages WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            UPDATE support.ticket_replies SET message_id = NULL
+            WHERE tenant_id = {tenantId} AND message_id IS NOT NULL
+              AND ticket_id IN (SELECT id FROM support.tickets WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv}))
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            UPDATE support.tickets
+            SET conversation_id = NULL, conversation_channel = NULL, follow_thread = false,
+                follow_off_at = coalesce(follow_off_at, now()), updated_at = now(), version = version + 1
+            WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
             """, cancellationToken);
 
         // D-5: los CASCADE se llevan messages, message_media y scheduled_messages.

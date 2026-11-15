@@ -265,6 +265,21 @@ internal static class SupportApiHarness
         return (database, factory);
     }
 
+    /// <summary>La configuración de un host propio cuyo seguimiento del hilo no corre solo: la prueba llama
+    /// <c>SupportThreadFollower.ProcessBatchAsync</c> a mano, y el feed no se vacía por detrás.</summary>
+    public static readonly IReadOnlyDictionary<string, string> WorkersOff =
+        new Dictionary<string, string> { ["Support:Workers:Enabled"] = "false" };
+
+    /// <summary>Base y fábrica propias, con el seguimiento apagado: para las pruebas que leen o escriben toda la base (el feed) o
+    /// cambian servicios.</summary>
+    public static async Task<(PostgreSqlContainer Database, QepApiFactory Factory)> OpenOwnHostAsync(
+        Action<IServiceCollection>? configureServices = null)
+    {
+        var database = await StartDatabaseAsync();
+        var factory = new QepApiFactory(database.GetConnectionString(), configureServices, WorkersOff);
+        return (database, factory);
+    }
+
     public static async Task<string> BodyAsync(HttpResponseMessage response) =>
         await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
@@ -298,7 +313,12 @@ internal static class SupportApiHarness
     /// <param name="configureServices">
     /// Sustituciones de servicios para la prueba; corre después del registro de la aplicación.
     /// </param>
-    public sealed class QepApiFactory(string connectionString, Action<IServiceCollection>? configureServices = null)
+    /// <param name="settings">Claves de configuración extra, por ejemplo <c>Support:Workers:Enabled</c> = <c>false</c> para que el
+    /// seguimiento del hilo no corra solo y la prueba lo llame a mano.</param>
+    public sealed class QepApiFactory(
+        string connectionString,
+        Action<IServiceCollection>? configureServices = null,
+        IReadOnlyDictionary<string, string>? settings = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -320,6 +340,10 @@ internal static class SupportApiHarness
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos
             // en el tenant de pruebas. El harness no depende del entorno del shell.
             builder.UseSetting("Seed:Enabled", "false");
+            foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+            {
+                builder.UseSetting(key, value);
+            }
 
             if (configureServices is not null)
             {
