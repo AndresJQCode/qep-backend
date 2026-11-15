@@ -122,6 +122,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IBillingTemplateReadiness, BillingTemplateReadiness>();
         // Spec 2026-11-09 D5: la del pedido, para el directorio de canales y el sender de Meta en Bootstrapper.
         services.AddScoped<IOrderTemplateReadiness, OrderTemplateReadiness>();
+        // Soporte fase 2: la de «Aviso de respuesta», para las opciones de respuesta de un ticket y su envío por plantilla.
+        services.AddScoped<ISupportReplyTemplateReadiness, SupportReplyTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

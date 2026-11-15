@@ -38,6 +38,15 @@ public static class SystemTemplateVariables
         new("valor_total", "Valor total", "2.450.000 COP"),
     ];
 
+    /// <summary>Soporte fase 2: la plantilla «Aviso de respuesta». <c>respuesta</c> es el texto del asesor, así que al enviar tiene que
+    /// cumplir <c>TemplateParameterRules</c> (sin saltos de línea).</summary>
+    public static IReadOnlyList<SystemTemplateVariable> SupportReply { get; } =
+    [
+        .. Fixed,
+        new("radicado", "Radicado del caso", "SOP-000127"),
+        new("respuesta", "Respuesta del asesor", "Revisamos tu solicitud y ya quedó resuelta."),
+    ];
+
     public static IReadOnlyList<SystemTemplateVariable> BillingReminder { get; } =
     [
         .. Fixed,

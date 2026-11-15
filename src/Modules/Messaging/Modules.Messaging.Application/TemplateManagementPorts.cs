@@ -25,6 +25,9 @@ public interface IMessageTemplateRepository
     /// <summary>Spec 2026-11-09 D1: la única fila <c>Order</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindOrderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Soporte fase 2: la única fila <c>SupportReply</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindSupportReplyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Todas, con tracking, por nombre e idioma en orden ordinal: el refresco las recorre y las modifica.</summary>
     Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -58,6 +61,14 @@ public interface IQuotationTemplateReadiness
 /// fila <c>Order</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la lee el directorio de canales (D6) y el sender al
 /// enviar (D9).</summary>
 public interface IOrderTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Soporte fase 2: la señal de la plantilla «Aviso de respuesta», hermana de <see cref="IOrderTemplateReadiness"/>. Devuelve la fila
+/// <c>SupportReply</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la leen las opciones de respuesta de un ticket y el
+/// envío por plantilla (<c>ISupportReplyOutbound</c>).</summary>
+public interface ISupportReplyTemplateReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }

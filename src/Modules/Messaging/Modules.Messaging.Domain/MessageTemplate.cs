@@ -17,6 +17,9 @@ public enum MessageTemplateKind
 
     /// <summary>Spec 2026-11-09 D1: la plantilla del pedido que QEP aprovisiona por conexión, hermana de <see cref="Quotation"/>.</summary>
     Order,
+
+    /// <summary>Soporte fase 2: la plantilla «Aviso de respuesta» que QEP aprovisiona por conexión (se guarda por nombre: va al final).</summary>
+    SupportReply,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -94,13 +97,20 @@ public static partial class MessageTemplateName
 
     public const string OrderPrefix = "qep_pedido_";
 
+    /// <summary>Soporte fase 2: <c>qep_soporte_respuesta</c> y sus versiones (<c>qep_soporte_respuesta_v2</c>…).</summary>
+    public const string SupportReplyName = "qep_soporte_respuesta";
+
+    public const string SupportReplyPrefix = "qep_soporte_respuesta_";
+
     public static bool IsReserved(string? name) =>
         name is not null
         && (string.Equals(name, QuotationName, StringComparison.Ordinal)
             || name.StartsWith(QuotationPrefix, StringComparison.Ordinal)
             || name.StartsWith(BillingPrefix, StringComparison.Ordinal)
             || string.Equals(name, OrderName, StringComparison.Ordinal)
-            || name.StartsWith(OrderPrefix, StringComparison.Ordinal));
+            || name.StartsWith(OrderPrefix, StringComparison.Ordinal)
+            || string.Equals(name, SupportReplyName, StringComparison.Ordinal)
+            || name.StartsWith(SupportReplyPrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -170,7 +180,7 @@ public sealed class MessageTemplate
     {
         if (kind == MessageTemplateKind.External)
         {
-            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation, Order or Billing.");
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation, Order, Billing or SupportReply.");
         }
 
         if (!MessageTemplateName.IsValid(name))
@@ -245,6 +255,18 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.Order;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Soporte fase 2: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_soporte_respuesta</c> creada en la consola de Meta.</summary>
+    public void AdoptAsSupportReply(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateSupportReplyConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.SupportReply;
         UpdatedAt = now;
     }
 

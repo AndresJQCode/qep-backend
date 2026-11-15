@@ -166,6 +166,13 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-11-09 D3: existe una <c>qep_pedido</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
     public const string TemplateOrderConflict = "messaging.template.order_conflict";
 
+    /// <summary>Soporte fase 2: la conexión ya tiene su plantilla «Aviso de respuesta» viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_reply</c>.</summary>
+    public const string TemplateSupportReplyExists = "messaging.template.support_reply_exists";
+
+    /// <summary>Soporte fase 2: existe una <c>qep_soporte_respuesta</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateSupportReplyConflict = "messaging.template.support_reply_conflict";
+
     /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
     public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";
 
