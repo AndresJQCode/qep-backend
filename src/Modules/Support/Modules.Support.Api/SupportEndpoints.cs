@@ -302,7 +302,84 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        // Fase 3 (plan F14 a F16): el formulario público y los textos legales son versionados e insert-only. El If-Match es el número
+        // de la versión vigente, y 0 vale: es la de un tenant que todavía no guardó nada.
+        group.MapGet("/settings/public-form", GetFormSettingsAsync)
+            .RequireAuthorization(SupportPolicies.SettingsView)
+            .Produces<SupportFormSettingsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/settings/public-form", UpdateFormSettingsAsync)
+            .RequireAuthorization(SupportPermissions.SettingsManage)
+            .Accepts<UpdateFormSettingsRequest>("application/json")
+            .Produces<SupportFormSettingsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapGet("/settings/legal-texts", GetLegalTextsAsync)
+            .RequireAuthorization(SupportPolicies.SettingsView)
+            .Produces<SupportLegalTextsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/settings/legal-texts", PublishLegalTextsAsync)
+            .RequireAuthorization(SupportPermissions.SettingsManage)
+            .Accepts<PublishLegalTextsRequest>("application/json")
+            .Produces<SupportLegalTextsDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
+
+    private static async Task<IResult> GetFormSettingsAsync(
+        Guid tenantId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var form = await dispatcher.QueryAsync(new GetFormSettingsQuery(tenantId), cancellationToken);
+        SetETag(httpContext, form.Version);
+        return Results.Ok(form);
+    }
+
+    private static async Task<IResult> UpdateFormSettingsAsync(
+        Guid tenantId,
+        UpdateFormSettingsRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var expectedVersion = RequireVersion(httpContext, "public form", allowZero: true);
+        var form = await dispatcher.SendAsync(UpdateFormSettingsCommand.From(tenantId, request, expectedVersion), cancellationToken);
+        SetETag(httpContext, form.Version);
+        return Results.Ok(form);
+    }
+
+    private static async Task<IResult> GetLegalTextsAsync(
+        Guid tenantId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var texts = await dispatcher.QueryAsync(new GetLegalTextsQuery(tenantId), cancellationToken);
+        SetETag(httpContext, texts.Version);
+        return Results.Ok(texts);
+    }
+
+    private static async Task<IResult> PublishLegalTextsAsync(
+        Guid tenantId,
+        PublishLegalTextsRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var expectedVersion = RequireVersion(httpContext, "legal texts", allowZero: true);
+        var texts = await dispatcher.SendAsync(PublishLegalTextsCommand.From(tenantId, request, expectedVersion), cancellationToken);
+        SetETag(httpContext, texts.Version);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/settings/legal-texts", texts);
+    }
+
+    private static void SetETag(HttpContext httpContext, long version) =>
+        httpContext.Response.Headers.ETag = $"\"{version}\"";
 
     private static async Task<IResult> ListTicketsAsync(
         Guid tenantId,
@@ -425,14 +502,15 @@ public static class SupportEndpoints
     }
 
     // Copia de LoansEndpoints.RequireVersion (Support no referencia ese módulo): sin If-Match 428; la versión vieja es 412 en el
-    // handler.
-    private static long RequireVersion(HttpContext httpContext, string resource) =>
-        TryParseVersion(httpContext.Request.Headers.IfMatch, out var version)
+    // handler. allowZero: el recurso versionado insert-only (formulario, textos legales), cuya versión 0 es «todavía no hay ninguna».
+    private static long RequireVersion(HttpContext httpContext, string resource, bool allowZero = false) =>
+        TryParseVersion(httpContext.Request.Headers.IfMatch, out var version) && (allowZero || version > 0)
             ? version
             : throw new PreconditionRequiredException(
                 "precondition.if_match_required",
                 $"A valid If-Match header containing the loaded {resource} version is required.");
 
+    // Cualquier entero no negativo; RequireVersion decide si el 0 vale.
     private static bool TryParseVersion(string? etag, out long version)
     {
         version = 0;
@@ -448,6 +526,6 @@ public static class SupportEndpoints
         }
 
         normalized = normalized.Trim('"');
-        return long.TryParse(normalized, out version) && version > 0;
+        return long.TryParse(normalized, out version) && version >= 0;
     }
 }

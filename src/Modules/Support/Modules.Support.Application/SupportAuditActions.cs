@@ -35,8 +35,19 @@ public static class SupportAuditActions
 
     public const string TicketReplyFailed = "support.ticket.reply_failed";
 
+    // Fase 3 (formulario público): cada guardado crea una versión nueva.
+    public const string FormUpdated = "support.form.updated";
+
+    public const string LegalTextsPublished = "support.legal_texts.published";
+
     public static class Resources
     {
+        /// <summary>La configuración del formulario público del tenant; su id es el del tenant, como <see cref="Settings"/>.</summary>
+        public const string PublicForm = "public_form";
+
+        /// <summary>Los textos legales del tenant; su id es el del tenant.</summary>
+        public const string LegalTexts = "legal_texts";
+
         public const string Ticket = "ticket";
 
         /// <summary>Un entrante sin clasificar; su id es el del mensaje de Mensajería.</summary>

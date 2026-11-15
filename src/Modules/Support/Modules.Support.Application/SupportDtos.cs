@@ -22,6 +22,39 @@ public sealed record SupportTicketTypeDto(
 /// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3.</summary>
 public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonBusinessDays, int MaxDueSoonBusinessDays, long Version);
 
+/// <summary>
+/// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
+/// formulario por defecto, sin publicar) y va en el <c>If-Match</c> del <c>PUT</c>. <c>PublishBlockers</c> dice por qué no se puede
+/// publicar (<c>legal_texts_required</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
+/// <c>PublicUrl</c> es el enlace que el tenant comparte.
+/// </summary>
+public sealed record SupportFormSettingsDto(
+    int Version,
+    bool IsPublished,
+    bool ShowDocument,
+    bool ShowAddress,
+    bool ShowLandline,
+    bool BusinessNameRequired,
+    string? AccentColor,
+    string? IntroText,
+    string? SuccessMessage,
+    string PublicUrl,
+    IReadOnlyList<string> PublishBlockers);
+
+/// <summary>
+/// La versión vigente de los textos legales (fase 3, plan F16). Sin ninguna publicada, el texto base de QEP con <c>IsExample</c> en
+/// verdadero, <c>Version</c> 0 y sin autor: la pantalla lo marca como ejemplo y nada se guarda hasta publicar.
+/// </summary>
+public sealed record SupportLegalTextsDto(
+    int Version,
+    bool IsExample,
+    string AuthorizationText,
+    string? PolicyText,
+    string? PolicyUrl,
+    string? TermsText,
+    DateTimeOffset? CreatedAt,
+    SupportMemberDto? CreatedBy);
+
 /// <summary>Una página de la bandeja. <c>Summary</c> es del tenant entero, no de la página ni del filtro: las pestañas cuentan siempre
 /// lo mismo, filtres lo que filtres.</summary>
 public sealed record SupportTicketPageDto(

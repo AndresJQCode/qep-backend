@@ -485,6 +485,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
             Modules.Support.Application.UpdateSupportSettingsHandler>();
+        // Fase 3: el formulario público y los textos legales, versionados (plan F14 a F16).
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetFormSettingsQuery, Modules.Support.Application.SupportFormSettingsDto>,
+            Modules.Support.Application.GetFormSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateFormSettingsCommand, Modules.Support.Application.SupportFormSettingsDto>,
+            Modules.Support.Application.UpdateFormSettingsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetLegalTextsQuery, Modules.Support.Application.SupportLegalTextsDto>,
+            Modules.Support.Application.GetLegalTextsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PublishLegalTextsCommand, Modules.Support.Application.SupportLegalTextsDto>,
+            Modules.Support.Application.PublishLegalTextsHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.CreateTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.CreateTicketHandler>();
@@ -1567,6 +1580,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportConversationEvents, SupportConversationEvents>();
         services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
         services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();
+        // Soporte fase 3: el host del formulario público (plan F28 y F29).
+        services.AddOptions<SupportPublicFormOptions>().Bind(configuration.GetSection(SupportPublicFormOptions.SectionName));
+        services.AddSingleton<Modules.Support.Application.ISupportPublicOptions, SupportPublicOptions>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno
