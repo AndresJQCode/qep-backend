@@ -104,6 +104,33 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         Assert.True(await RetainsAsync(factory, memberUser));
     }
 
+    // Fase 3: el autor de una versión del formulario o de los textos legales queda en created_by (CLAUDE.md: toda columna con id de
+    // membresía en support entra en la sonda).
+    [Fact]
+    public async Task AFormOrLegalTextAuthorIsReferenced()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var formAuthor = await SeedMemberAsync(factory, $"form-{Guid.CreateVersion7():N}@example.com", "Fer", "admin", tenantId: tenant.ToString());
+        var textAuthor = await SeedMemberAsync(factory, $"text-{Guid.CreateVersion7():N}@example.com", "Gabi", "admin", tenantId: tenant.ToString());
+        var formUser = await UserOfAsync(factory, formAuthor);
+        var textUser = await UserOfAsync(factory, textAuthor);
+        Assert.False(await RetainsAsync(factory, formUser));
+        Assert.False(await RetainsAsync(factory, textUser));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ISupportFormRepository>().Add(SupportFormVersion.Create(
+                Guid.CreateVersion7(), tenant, 1, false, true, true, true, true, null, null, null, formAuthor, Now));
+            scope.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>().Add(SupportLegalTextVersion.Create(
+                Guid.CreateVersion7(), tenant, 1, "Autorizo el tratamiento de mis datos.", null, "https://example.com/politica", null,
+                textAuthor, Now));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        Assert.True(await RetainsAsync(factory, formUser));
+        Assert.True(await RetainsAsync(factory, textUser));
+    }
+
     private async Task<(QepApiFactory Factory, Guid Tenant)> NewTenantAsync()
     {
         var factory = await sharedHost.StartTestAsync();

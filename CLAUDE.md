@@ -881,8 +881,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   sólo `manage`, y el handler tiene que revalidar con la misma regla (`SupportAuthorization.EnsureCanViewAsync` /
   `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
 - **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
-  `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id` y
-  `unclassified_messages.resolved_by_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
+  `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id`,
+  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by` y `legal_text_versions.created_by`; una columna nueva que no se sume ahí deja borrar al usuario que
   referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
   `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
   nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.

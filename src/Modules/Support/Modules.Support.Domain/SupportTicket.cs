@@ -17,7 +17,8 @@ public sealed class SupportTicket
 
     private readonly List<SupportTicketEvent> events = [];
 
-    // EF Core materializa por acá; CreateManual y CreateFromConversation son los únicos puntos de entrada de código.
+    // EF Core materializa por acá; CreateManual, CreateFromConversation y CreateFromPublicForm son los únicos puntos de entrada de
+    // código.
     private SupportTicket()
     {
         TypeName = string.Empty;
@@ -99,6 +100,13 @@ public sealed class SupportTicket
     /// <summary>Cuándo dejó de seguirlo: al apagar o al cerrar. Null mientras lo sigue.</summary>
     public DateTimeOffset? FollowOffAt { get; private set; }
 
+    /// <summary>Fase 3 (spec §9.4): radicado desde el formulario público sin datos personales. No tiene cliente, ni foto del
+    /// solicitante, ni consentimiento, y se responde sólo por <see cref="SupportReplyChannel.Portal"/>.</summary>
+    public bool IsAnonymous { get; private set; }
+
+    /// <summary>Fase 3 (plan F14): la versión del formulario con que se radicó. Sólo la tienen los tickets del formulario público.</summary>
+    public Guid? FormVersionId { get; private set; }
+
     public int LastEventOrdinal { get; private set; }
 
     /// <summary>Los eventos de esta instancia: al crear, el <see cref="SupportTicketEventKind.Created"/>; cargado de la base, sólo
@@ -155,8 +163,53 @@ public sealed class SupportTicket
             SupportReplyChannel.Thread, conversation, customerId, requester, assigneeMemberId, actorMemberId, now, clock);
     }
 
-    // El alta común de las dos entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
-    // constructor vacío.
+    /// <summary>
+    /// Fase 3 (spec §9.3 y §9.4, plan F22): el ticket que radica un solicitante en el formulario público. No tiene actor (el evento
+    /// <see cref="SupportTicketEventKind.Created"/> va con actor null, el sistema) ni responsable. Con <paramref name="requester"/>
+    /// null es anónimo: sin cliente ni foto, y se responde por <see cref="SupportReplyChannel.Portal"/>; si no, por correo. La regla
+    /// del nombre de las otras entradas (plan D6) no aplica: los campos los exige el validador según <see cref="SupportFormFields"/>,
+    /// y un NIT sin razón social se muestra como «NIT &lt;número&gt;».
+    /// </summary>
+    public static SupportTicket CreateFromPublicForm(
+        SupportTicketId id,
+        Guid tenantId,
+        long number,
+        SupportTicketType type,
+        string subject,
+        string description,
+        TicketRequester? requester,
+        Guid? customerId,
+        Guid formVersionId,
+        DateTimeOffset now,
+        SupportClockContext clock)
+    {
+        if (formVersionId == Guid.Empty)
+        {
+            throw new ArgumentException("A ticket from the public form needs its form version.", nameof(formVersionId));
+        }
+
+        var anonymous = requester is null;
+        if (anonymous && customerId is not null)
+        {
+            throw new ArgumentException("An anonymous ticket cannot be linked to a customer.", nameof(customerId));
+        }
+
+        if (!anonymous && string.IsNullOrWhiteSpace(requester!.Email))
+        {
+            throw new ArgumentException("A named ticket from the public form needs an email to reply to.", nameof(requester));
+        }
+
+        var ticket = Start(
+            id, tenantId, number, type, subject, description, SupportTicketIntake.PublicForm, medium: null,
+            anonymous ? SupportReplyChannel.Portal : SupportReplyChannel.Email, conversation: null, customerId, requester,
+            assigneeMemberId: null, actorMemberId: null, now, clock);
+        ticket.IsAnonymous = anonymous;
+        ticket.FormVersionId = formVersionId;
+        return ticket;
+    }
+
+    // El alta común de las tres entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
+    // constructor vacío. Sin actor sólo entra el formulario público.
     private static SupportTicket Start(
         SupportTicketId id,
         Guid tenantId,
@@ -171,7 +224,7 @@ public sealed class SupportTicket
         Guid? customerId,
         TicketRequester? requester,
         Guid? assigneeMemberId,
-        Guid actorMemberId,
+        Guid? actorMemberId,
         DateTimeOffset now,
         SupportClockContext clock)
     {
@@ -180,7 +233,7 @@ public sealed class SupportTicket
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
         EnsureSameTenant(tenantId, type);
         conversation?.EnsureValid();
-        if (customerId is null && requester is not { HasName: true })
+        if (intake is not SupportTicketIntake.PublicForm && customerId is null && requester is not { HasName: true })
         {
             throw RequesterRequired();
         }

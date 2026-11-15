@@ -74,6 +74,22 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "A reply with this client id already exists for the ticket.",
                 exception);
         }
+        // Fase 3 (plan F14 y F16): dos guardados que crean la misma versión del formulario o de los textos legales. El If-Match ya
+        // filtró la mayoría; esto es la carrera entre dos que leyeron la misma versión vigente.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.FormVersionIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.FormVersionTaken,
+                "This version of the public form already exists.",
+                exception);
+        }
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.LegalTextVersionIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.LegalTextsVersionTaken,
+                "This version of the legal texts already exists.",
+                exception);
+        }
     }
 
     // Copia de CustomersUnitOfWork.BeginTransactionAsync. Los SaveChanges que corran dentro siguen pasando por la traducción de

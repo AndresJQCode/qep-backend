@@ -77,4 +77,47 @@ public static class SupportErrorCodes
     public const string UnclassifiedAlreadyRecorded = "support.unclassified.already_recorded";
 
     public const string ReplyDuplicateClientId = "support.reply.duplicate_client_id";
+
+    // Fase 3, formulario público (spec §9, plan F1 a F37). Los de support.public.* los ve la página pública; el resto, la consola.
+
+    /// <summary>Slug desconocido, tenant inactivo, módulo apagado o formulario sin publicar: el mismo 404 (plan F3).</summary>
+    public const string PublicNotFound = "support.public.not_found";
+
+    /// <summary>Radicado desconocido, PIN errado o radicado bloqueado: la misma respuesta (plan F9, anti-enumeración).</summary>
+    public const string PublicLookupFailed = "support.public.lookup_failed";
+
+    public const string PublicCaptchaInvalid = "support.public.captcha_invalid";
+
+    /// <summary>La versión de los textos legales que aceptó la persona ya no es la vigente: la pantalla recarga (plan F17).</summary>
+    public const string PublicLegalTextsOutdated = "support.public.legal_texts_outdated";
+
+    public const string PublicFormOutdated = "support.public.form_outdated";
+
+    public const string PublicConsentRequired = "support.public.consent_required";
+
+    public const string PublicDepartmentNotFound = "support.public.department_not_found";
+
+    public const string PublicBodyTooLarge = "support.public.body_too_large";
+
+    public const string PublicBodyInvalid = "support.public.body_invalid";
+
+    /// <summary>Publicar el formulario exige una versión de los textos legales (plan F15).</summary>
+    public const string FormLegalTextsRequired = "support.form.legal_texts_required";
+
+    public const string FormNoPublishedTypes = "support.form.no_published_types";
+
+    /// <summary>Traducido por nombre de índice (<c>IX_form_versions_tenant_version</c>): dos guardados de la misma versión.</summary>
+    public const string FormVersionTaken = "support.form.version_taken";
+
+    /// <summary>Traducido por nombre de índice (<c>IX_legal_text_versions_tenant_version</c>).</summary>
+    public const string LegalTextsVersionTaken = "support.legal_texts.version_taken";
+
+    /// <summary>Los textos legales necesitan la política como texto o como URL (spec §9.5).</summary>
+    public const string LegalTextsPolicyRequired = "support.legal_texts.policy_required";
+
+    /// <summary>Un ticket anónimo sólo se responde por la página de consulta (plan F12).</summary>
+    public const string ReplyPortalOnly = "support.reply.portal_only";
+
+    /// <summary>La página de consulta sólo responde a un ticket anónimo (plan F12).</summary>
+    public const string ReplyPortalUnavailable = "support.reply.portal_unavailable";
 }
