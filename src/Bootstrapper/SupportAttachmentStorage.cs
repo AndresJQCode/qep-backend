@@ -14,7 +14,10 @@ namespace Bootstrapper;
 /// que no existe. Nada de esto pasa por <c>StorageAuthorization</c>: la consola sigue igual.
 /// <para><see cref="CountPendingAsync"/> (owner, 2026-11-15, E2) es SQL crudo sobre la conexión de <see cref="SupportDbContext"/> y lee
 /// por nombre <c>storage.file_resources</c> (<c>tenant_id</c>, <c>owner_type</c>, <c>created_at</c>, <c>deleted_at</c>, <c>id</c>) y
-/// <c>support.ticket_attachments</c> (<c>file_id</c>, por <c>IX_ticket_attachments_file</c>). Renombrar una columna compila y deja
+/// <c>support.ticket_attachments</c> (<c>file_id</c>, por <c>IX_ticket_attachments_file</c>) y <c>support.ticket_note_files</c>
+/// (<c>file_id</c>, por <c>IX_ticket_note_files_file</c>: spec 2026-11-15, plan N20, un archivo de nota ya está reclamado y no cuenta
+/// como subida pendiente del formulario). Las notas usan el mismo dueño <see cref="FileOwnerType.SupportTicket"/> con la clave
+/// <c>SupportNoteUploads.OwnerKey</c> (plan N18). Renombrar una columna compila y deja
 /// <c>POST …/attachments</c> en 500; lo amarra <c>SupportPublicAttachmentsApiTests</c>, que corre contra el esquema migrado.</para>
 /// </summary>
 internal sealed class SupportAttachmentStorage(IStorageSystemUploads uploads, SupportDbContext support) : ISupportAttachmentStorage
@@ -32,6 +35,7 @@ internal sealed class SupportAttachmentStorage(IStorageSystemUploads uploads, Su
               AND f.created_at >= now() - {window}
               AND f.deleted_at IS NULL
               AND NOT EXISTS (SELECT 1 FROM support.ticket_attachments a WHERE a.file_id = f.id)
+              AND NOT EXISTS (SELECT 1 FROM support.ticket_note_files n WHERE n.file_id = f.id)
             """).SingleAsync(cancellationToken);
 
     public async Task<SupportAttachmentUpload> OpenAsync(

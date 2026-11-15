@@ -45,7 +45,51 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Plan N18 and N19: Storage's member-less upload with the owner of (ticket, caller). The file does not pass through here: the
+        // browser uploads it straight to the bucket with the signed URL.
+        group.MapPost("/tickets/{ticketId:guid}/notes/attachments", OpenNoteAttachmentAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Accepts<SupportNoteAttachmentRequest>("application/json")
+            .Produces<SupportNoteAttachmentSessionDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/tickets/{ticketId:guid}/notes/attachments/{fileId:guid}/complete", CompleteNoteAttachmentAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Produces<SupportNoteAttachmentStatusDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        // Plan N21: with seeing the ticket it is enough, like a public form attachment; it does not ask for storage.file.read.
+        group.MapGet("/tickets/{ticketId:guid}/notes/{noteId:guid}/files/{fileId:guid}/download", DownloadNoteFileAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportAttachmentDownloadDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
     }
+
+    private static async Task<IResult> OpenNoteAttachmentAsync(
+        Guid tenantId,
+        Guid ticketId,
+        SupportNoteAttachmentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var session = await dispatcher.SendAsync(OpenNoteAttachmentCommand.From(tenantId, ticketId, request), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticketId}/notes/attachments/{session.FileId}", session);
+    }
+
+    private static async Task<IResult> CompleteNoteAttachmentAsync(
+        Guid tenantId, Guid ticketId, Guid fileId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new CompleteNoteAttachmentCommand(tenantId, ticketId, fileId), cancellationToken));
+
+    private static async Task<IResult> DownloadNoteFileAsync(
+        Guid tenantId, Guid ticketId, Guid noteId, Guid fileId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new GetNoteFileDownloadCommand(tenantId, ticketId, noteId, fileId), cancellationToken));
 
     private static async Task<IResult> ListNotesAsync(
         Guid tenantId,

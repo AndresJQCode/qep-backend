@@ -46,6 +46,7 @@ public sealed class AddTicketNoteHandler(
     ISupportTicketRepository tickets,
     ISupportTicketNoteRepository notes,
     ISupportMemberDirectory members,
+    ISupportAttachmentStorage storage,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     ISupportRealtime realtime,
@@ -83,7 +84,7 @@ public sealed class AddTicketNoteHandler(
             throw Closed();
         }
 
-        var files = ResolveFiles(command.FileIds);
+        var files = await ResolveFilesAsync(command.TenantId, ticket.Id, actor, command.FileIds ?? [], cancellationToken);
         var note = SupportTicketNote.Create(noteId, command.TenantId, ticket.Id, actor, command.Text!, files, clock.UtcNow);
         notes.Add(note);
         auditPublisher.Publish(
@@ -107,11 +108,33 @@ public sealed class AddTicketNoteHandler(
     internal static SupportDomainException Closed() =>
         new(SupportErrorCodes.NoteTicketClosed, "A closed ticket takes no new notes.");
 
-    // Files arrive with Task 5 of the plan; until then any file id is not a valid file.
-    private static IReadOnlyList<SupportNoteFileSnapshot> ResolveFiles(IReadOnlyList<Guid>? fileIds) =>
-        fileIds is null or { Count: 0 }
-            ? []
-            : throw new SupportDomainException(SupportErrorCodes.NoteFileInvalid, "The note file is not valid.");
+    /// <summary>
+    /// Plan N18 and N19: the count and the repeats first (422 <c>support.note.too_many_files</c>, without asking Storage), then each
+    /// file must be <c>Available</c> under the owner of (ticket, caller): another member's, another ticket's, a public form's, a pending
+    /// or rejected one, or one that does not exist is 422 <c>support.note.file_invalid</c>, all the same. A file already in another note
+    /// passes here and loses on <c>IX_ticket_note_files_file</c> at commit, with the same code. The snapshot keeps name, type and size
+    /// (plan N17).
+    /// </summary>
+    private async Task<IReadOnlyList<SupportNoteFileSnapshot>> ResolveFilesAsync(
+        Guid tenantId, SupportTicketId ticketId, Guid actor, IReadOnlyList<Guid> fileIds, CancellationToken cancellationToken)
+    {
+        if (fileIds.Count > SupportTicketNote.MaxFiles || fileIds.Distinct().Count() != fileIds.Count)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.NoteTooManyFiles, $"A note takes up to {SupportTicketNote.MaxFiles} different files.");
+        }
+
+        var ownerKey = SupportNoteUploads.OwnerKey(ticketId, actor);
+        var files = new List<SupportNoteFileSnapshot>(fileIds.Count);
+        foreach (var fileId in fileIds)
+        {
+            var file = await storage.FindAvailableAsync(tenantId, fileId, ownerKey, cancellationToken)
+                ?? throw SupportNoteAttachmentRules.FileInvalid();
+            files.Add(new SupportNoteFileSnapshot(file.FileId, file.Name, file.MimeType, file.SizeBytes));
+        }
+
+        return files;
+    }
 }
 
 /// <summary>Maps notes to their contract, naming each author once per call.</summary>
