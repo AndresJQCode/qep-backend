@@ -912,6 +912,22 @@ public sealed class CompositionRootTests
         Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
     }
 
+    /// <summary>Spec 2026-10-29 §12: el worker de modelo y el procesador de las pruebas se arman con todos sus puertos (las fuentes de las
+    /// herramientas son adaptadores de Bootstrapper: sin su registro, el primer trabajo daría 500 en vez de una respuesta).</summary>
+    [Fact]
+    public void TheContainerBuildsTheAiModelWorkerAndTheTestJobProcessor()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<AgentTestJobProcessor>());
+        var worker = typeof(Modules.Ai.Infrastructure.AiInfrastructureExtensions).Assembly.GetType("Modules.Ai.Infrastructure.AiModelWorker", throwOnError: true)!;
+        Assert.IsAssignableFrom<IHostedService>(provider.GetRequiredService(worker));
+    }
+
     /// <summary>
     /// Spec 2026-10-25 D-E5: <c>RunUnitWriter</c> es un parámetro opcional de <c>RunProcessor</c>, así que sin su registro el contenedor
     /// arma el procesador igual, sin registro de unidades, y ninguna corrida deja su fila en <c>run_units</c> sin error en ningún lado.
@@ -1039,6 +1055,16 @@ public sealed class CompositionRootTests
                 ["Storage:R2:SecretAccessKey"] = "secret",
                 ["Storage:R2:Bucket"] = "bucket",
                 ["Notifications:EmailProvider"] = "log",
+                // La lista curada de Ai (C-3): sin ella, armar algo que lea el catálogo de modelos lanza al validar las opciones.
+                ["Ai:DefaultProvider"] = "anthropic",
+                ["Ai:Providers:anthropic:Models:0:Id"] = "claude-opus-5-5",
+                ["Ai:Providers:anthropic:Models:0:Label"] = "Claude Opus 5.5",
+                ["Ai:Providers:anthropic:Models:0:IsDefault"] = "true",
+                ["Ai:Providers:anthropic:Models:0:Effort"] = "medium",
+                ["Ai:Providers:openai:Models:0:Id"] = "gpt-6-luna",
+                ["Ai:Providers:openai:Models:0:Label"] = "GPT-6 Luna",
+                ["Ai:Providers:openai:Models:0:IsDefault"] = "true",
+                ["Ai:Providers:openai:Models:0:Available"] = "false",
             })
             .Build();
 

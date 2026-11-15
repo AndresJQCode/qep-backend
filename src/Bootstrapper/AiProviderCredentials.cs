@@ -11,7 +11,8 @@ namespace Bootstrapper;
 /// visibilidad y clave legible; acá se traduce a la causa de Ai. Un proveedor de Ai que Integrations todavía no ofrece (OpenAI hasta la
 /// Tarea 6) no tiene conexión posible: <c>NotConfigured</c> y <c>connectable: false</c>.
 /// </summary>
-internal sealed class AiProviderCredentials(IIntegrationConnections connections) : IAiProviderCredentials
+internal sealed class AiProviderCredentials(IIntegrationConnections connections, IConnectionHealthReporter healthReporter)
+    : IAiProviderCredentials
 {
     public async Task<AiCredentialResolution> ResolveAsync(Guid tenantId, AiProvider provider, CancellationToken cancellationToken)
     {
@@ -54,6 +55,11 @@ internal sealed class AiProviderCredentials(IIntegrationConnections connections)
 
         return states;
     }
+
+    /// <summary>Spec 2026-10-29 §4.5 y C-19: por el reportero de Integrations, como Mensajería con Meta: de <c>Active</c> a <c>NeedsAttention</c>,
+    /// auditado y publicado en la misma transacción. Una prueba exitosa de la clave la devuelve a <c>Active</c>.</summary>
+    public Task MarkNeedsAttentionAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken) =>
+        healthReporter.ReportCredentialsRejectedAsync(tenantId, connectionId, failureCode, cancellationToken);
 
     // maxConnections: 1, así que hay una o ninguna; si algún día hubiera más, gana la primera por nombre (el orden de Integrations).
     private async Task<ConnectionListing?> FirstAsync(Guid tenantId, AiProvider provider, CancellationToken cancellationToken)

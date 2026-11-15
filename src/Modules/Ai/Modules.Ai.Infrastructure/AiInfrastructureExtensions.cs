@@ -45,6 +45,22 @@ public static class AiInfrastructureExtensions
         services.AddKeyedScoped<IAiModelClient, PendingProviderModelClient>(AiProviders.OpenAi.Value);
         services.AddSingleton<IValidateOptions<AiModelClientRegistrationOptions>, AiModelClientRegistrationValidator>();
         services.AddOptions<AiModelClientRegistrationOptions>().ValidateOnStart();
+
+        // Plan 2026-11-12, 5.5: el bucle común, sus herramientas de lectura (los puertos van en Bootstrapper) y lo que deja escrito.
+        services.AddScoped<AgentPromptBuilder>();
+        services.AddScoped<AgentTurnRunner>();
+        services.AddScoped<IAgentTool, SearchCatalogTool>();
+        services.AddScoped<IAgentTool, GetOrderStatusTool>();
+        services.AddScoped<IAgentTool, SimulatedQuotationDraftTool>();
+        services.AddScoped<IAiRunLedger, AiRunLedger>();
+
+        // Spec 2026-10-29 §7: el playground, con la cola ai.model_jobs y su worker.
+        services.AddScoped<IAgentTestRepository, AgentTestRepository>();
+        services.AddScoped<IAiModelJobs, AiModelJobs>();
+        services.AddScoped<AgentTestJobProcessor>();
+        services.AddOptions<AiWorkerOptions>().Bind(configuration.GetSection(AiWorkerOptions.SectionName));
+        services.AddSingleton<AiModelWorker>();
+        services.AddHostedService(provider => provider.GetRequiredService<AiModelWorker>());
         return services;
     }
 }

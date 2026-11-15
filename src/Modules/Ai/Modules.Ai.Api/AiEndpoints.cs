@@ -80,7 +80,63 @@ public static class AiEndpoints
             .WithWriteContract()
             .Produces(StatusCodes.Status204NoContent);
 
+        // §7: el playground. Abre una prueba con la foto del borrador; cada mensaje encola un trabajo y responde 202 sin esperar al
+        // modelo (el frontend sondea GET mientras pending): así no depende del timeout de los proxys.
+        agents.MapPost("/{agentId:guid}/tests", CreateTestAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Accepts<CreateAgentTestRequest>("application/json")
+            .Produces<AgentTestDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        var tests = group.MapGroup("/tests");
+
+        tests.MapPost("/{testId:guid}/messages", SendTestMessageAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Accepts<SendAgentTestMessageRequest>("application/json")
+            .Produces<AgentTestDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        tests.MapGet("/{testId:guid}", GetTestAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Produces<AgentTestDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        tests.MapDelete("/{testId:guid}", DeleteTestAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
+    }
+
+    // Sin Location: el playground abre con la prueba que vuelve. El cuerpo es opcional (sin cliente fijo).
+    private static async Task<IResult> CreateTestAsync(
+        Guid tenantId, Guid agentId, CreateAgentTestRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Created(
+            (string?)null,
+            await dispatcher.SendAsync(new CreateAgentTestCommand(tenantId, agentId, request?.CustomerId), cancellationToken));
+
+    private static async Task<IResult> SendTestMessageAsync(
+        Guid tenantId, Guid testId, SendAgentTestMessageRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Accepted(
+            (string?)null,
+            await dispatcher.SendAsync(new SendAgentTestMessageCommand(tenantId, testId, request.Text), cancellationToken));
+
+    private static async Task<IResult> GetTestAsync(Guid tenantId, Guid testId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetAgentTestQuery(tenantId, testId), cancellationToken));
+
+    private static async Task<IResult> DeleteTestAsync(
+        Guid tenantId, Guid testId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new DeleteAgentTestCommand(tenantId, testId), cancellationToken);
+        return Results.NoContent();
     }
 
     /// <summary>Lo común de toda escritura sobre un agente existente: <c>If-Match</c> (428 sin él, 412 si es viejo).</summary>
@@ -182,3 +238,9 @@ public sealed record AgentSourceRequest(string Kind, Guid? AgentId);
 public sealed record CreateAgentRequest(string Name, AgentSourceRequest Source);
 
 public sealed record UpdateAgentRequest(string Name, IReadOnlyList<Guid>? ConnectionIds);
+
+/// <summary>§7: <c>customerId</c> fija un cliente del tenant para <c>get_order_status</c>; sin él, la herramienta responde
+/// <c>customer_unknown</c>.</summary>
+public sealed record CreateAgentTestRequest(Guid? CustomerId);
+
+public sealed record SendAgentTestMessageRequest(string Text);

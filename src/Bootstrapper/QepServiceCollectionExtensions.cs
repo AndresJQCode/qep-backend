@@ -1199,7 +1199,17 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<PauseAgentCommand, AgentEditorDto>, PauseAgentHandler>();
         services.AddScoped<ICommandHandler<ResumeAgentCommand, AgentEditorDto>, ResumeAgentHandler>();
         services.AddScoped<ICommandHandler<DeleteAgentCommand, bool>, DeleteAgentHandler>();
+        // Spec 2026-10-29 §7: el playground.
+        services.AddScoped<ICommandHandler<CreateAgentTestCommand, AgentTestDto>, CreateAgentTestHandler>();
+        services.AddScoped<ICommandHandler<SendAgentTestMessageCommand, AgentTestDto>, SendAgentTestMessageHandler>();
+        services.AddScoped<IQueryHandler<GetAgentTestQuery, AgentTestDto>, GetAgentTestHandler>();
+        services.AddScoped<ICommandHandler<DeleteAgentTestCommand, bool>, DeleteAgentTestHandler>();
         services.AddValidatorsFromAssemblyContaining<CreateAgentValidator>();
+        // Spec 2026-10-29 §8.3: las fuentes de las herramientas de lectura y las respuestas rápidas, por adaptadores sobre Catalog,
+        // Quotations y Mensajería (Ai no ve ninguno de los tres).
+        services.AddScoped<IAiCatalogSearch, AiCatalogSearch>();
+        services.AddScoped<IAiOrderStatusReader, AiOrderStatusReader>();
+        services.AddScoped<IAiQuickReplies, AiQuickReplies>();
         // Spec 2026-10-29 D-A3 y §4.3: conexiones, miembros y la ocupación neutral, por adaptadores (Ai no ve Mensajería).
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();
