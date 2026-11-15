@@ -165,6 +165,27 @@ public sealed class SupportTicketsApiTests(ClockedSupportHost host) : IClassFixt
         Assert.Equal("support.ticket.reply_channel_unavailable", await CodeOfAsync(withoutMobile));
     }
 
+    /// <summary>Revisión final I1: el canal se valida sólo contra el correo y el celular del solicitante. El contacto del cliente
+    /// vinculado no cuenta en esta fase (el puerto de clientes no lo expone); cambiarlo es decisión pendiente del owner.</summary>
+    [Fact]
+    public async Task ALinkedCustomerWithoutRequesterContactIs422ForEmail()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS");
+        var typeId = await scenario.TypeIdAsync("Queja");
+        var withoutRequester = Body(typeId, customerId: customer);
+        withoutRequester["requester"] = null;
+
+        var onlyCustomer = await scenario.PostAsync(withoutRequester);
+        var requesterWithoutContact = await scenario.PostAsync(
+            Body(typeId, requester: new { firstNames = "Ana" }, customerId: customer));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, onlyCustomer.StatusCode);
+        Assert.Equal("support.ticket.reply_channel_unavailable", await CodeOfAsync(onlyCustomer));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, requesterWithoutContact.StatusCode);
+        Assert.Equal("support.ticket.reply_channel_unavailable", await CodeOfAsync(requesterWithoutContact));
+    }
+
     [Fact]
     public async Task AnInactiveTypeIs422()
     {
