@@ -6,7 +6,7 @@ using Modules.Customers.Infrastructure.Persistence;
 namespace Bootstrapper;
 
 /// <summary>
-/// Adapta Quotations, Pos, Pipeline, Messaging, ServiceContracts, Loans y Shopify al puerto <see cref="ICustomerMergeReferences"/> de Customers
+/// Adapta Quotations, Pos, Pipeline, Messaging, ServiceContracts, Loans, Ai y Shopify al puerto <see cref="ICustomerMergeReferences"/> de Customers
 /// (spec 2026-10-24 §4). Vive en el composition root por la misma razón que <see cref="CatalogVariantUsageChecker"/>:
 /// Customers no referencia los otros módulos (<c>CustomersLayerTests</c>) y el acoplamiento entre esquemas se cablea acá.
 ///
@@ -150,6 +150,12 @@ internal sealed class CustomerMergeReferences(CustomersDbContext customers) : IC
         // Préstamos: sin subir versión (F15). Las cuotas no guardan cliente, así que loans.loans es la única tabla que mover.
         await database.ExecuteSqlAsync($"""
             UPDATE loans.loans SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
+        // Las pruebas del playground de agentes de IA que fijaron al fusionado (§7): sin subir versión (F15). Las sesiones siguen a su
+        // conversación, que ya se movió arriba.
+        await database.ExecuteSqlAsync($"""
+            UPDATE ai.tests SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
             """, cancellationToken);
 
         await database.ExecuteSqlAsync($"""

@@ -498,6 +498,66 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
             await CompanyStateAsync(seeded));
     }
 
+    // Revisión final de agentes de IA, hallazgo 5: las sesiones del agente en las conversaciones del cliente (con sus turnos, trabajos y
+    // llamadas a herramientas, que guardan sus pedidos y cotizaciones) y las pruebas del playground que lo fijaron se van con él. Las del
+    // otro cliente del tenant no se tocan.
+    [Fact]
+    public async Task DeletingACustomerTakesItsAgentSessionsAndPlaygroundTests()
+    {
+        var tenant = Guid.CreateVersion7();
+        var customer = await InsertCustomerAsync(tenant, Name, Phone);
+        var bystander = await InsertCustomerAsync(tenant, "Sofía", "+573009998877");
+        var mine = await SeedAgentFootprintAsync(tenant, customer, await InsertConversationAsync(tenant, customer, blocked: false));
+        var theirs = await SeedAgentFootprintAsync(tenant, bystander, await InsertConversationAsync(tenant, bystander, blocked: false));
+        Assert.Equal("1|1|2|2|1", await AgentFootprintStateAsync(mine));
+
+        var deletion = await DeleteAsync(tenant, [customer]);
+
+        Assert.Empty(deletion.Blockers);
+        Assert.Equal("0|0|0|0|0", await AgentFootprintStateAsync(mine));
+        Assert.Equal("1|1|2|2|1", await AgentFootprintStateAsync(theirs));
+    }
+
+    private sealed record AgentFootprint(Guid Session, Guid SessionJob, Guid Test, Guid TestJob);
+
+    private async Task<AgentFootprint> SeedAgentFootprintAsync(Guid tenant, Guid customer, Guid conversation)
+    {
+        var footprint = new AgentFootprint(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        await SeedAsync(
+            """
+            INSERT INTO ai.sessions (id, tenant_id, conversation_id, connection_id, agent_id, agent_version_id, status, started_at, updated_at)
+            VALUES (@session, @tenant, @conversation, gen_random_uuid(), @agent, gen_random_uuid(), 'Live', now(), now());
+            INSERT INTO ai.turns (tenant_id, session_id, seq, role, message_id, created_at)
+            VALUES (@tenant, @session, 1, 'Customer', gen_random_uuid(), now());
+            INSERT INTO ai.tests (id, tenant_id, agent_id, member_id, customer_id, config, transcript, handed_off, created_at, updated_at,
+                expires_at, version)
+            VALUES (@test, @tenant, @agent, gen_random_uuid(), @customer, '{}'::jsonb, '[]'::jsonb, false, now(), now(),
+                now() + interval '1 day', 1);
+            INSERT INTO ai.model_jobs (id, tenant_id, session_id, test_id, up_to_seq, status, attempts, next_attempt_at, created_at)
+            VALUES (@sessionJob, @tenant, @session, NULL, 1, 'Done', 1, now(), now()),
+                   (@testJob, @tenant, NULL, @test, 1, 'Done', 1, now(), now());
+            INSERT INTO ai.tool_calls (tenant_id, job_id, call_id, tool, arguments, result, outcome, duration_ms, created_at)
+            VALUES (@tenant, @sessionJob, 'call_1', 'get_order_status', '{}'::jsonb, '{"orders":[]}'::jsonb, 'ok', 5, now()),
+                   (@tenant, @testJob, 'call_2', 'get_order_status', '{}'::jsonb, '{"orders":[]}'::jsonb, 'ok', 5, now());
+            """,
+            ("tenant", tenant), ("customer", customer), ("conversation", conversation), ("agent", Guid.CreateVersion7()),
+            ("session", footprint.Session), ("sessionJob", footprint.SessionJob), ("test", footprint.Test), ("testJob", footprint.TestJob));
+        return footprint;
+    }
+
+    // sesiones | turnos | trabajos | llamadas a herramientas | pruebas
+    private async Task<string?> AgentFootprintStateAsync(AgentFootprint f) =>
+        await TextAsync(
+            """
+            SELECT concat_ws('|',
+                (SELECT count(*) FROM ai.sessions WHERE id = @session),
+                (SELECT count(*) FROM ai.turns WHERE session_id = @session),
+                (SELECT count(*) FROM ai.model_jobs WHERE id IN (@sessionJob, @testJob)),
+                (SELECT count(*) FROM ai.tool_calls WHERE job_id IN (@sessionJob, @testJob)),
+                (SELECT count(*) FROM ai.tests WHERE id = @test))
+            """,
+            ("session", f.Session), ("sessionJob", f.SessionJob), ("test", f.Test), ("testJob", f.TestJob));
+
     private sealed record CompanyFootprint(Guid Tenant, Guid Company, Guid Contact, Guid Conversation, Guid Deal, Guid Triage);
 
     private async Task<CompanyFootprint> SeedCompanyWithContactDealAsync()

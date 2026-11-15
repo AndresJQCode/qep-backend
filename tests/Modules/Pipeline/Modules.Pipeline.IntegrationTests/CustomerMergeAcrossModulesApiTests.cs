@@ -201,6 +201,20 @@ public sealed class CustomerMergeAcrossModulesApiTests
     private static Task<Guid> LoanCustomerAsync(string connectionString, Guid loanId) =>
         ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM loans.loans WHERE id = @id", ("id", loanId));
 
+    // Revisión final de agentes de IA, hallazgo 5: una prueba del playground que fijó al fusionado pasa al que queda.
+    private static Task<int> InsertAgentTestAsync(string connectionString, Guid testId, Guid tenantId, Guid customerId) =>
+        ExecuteAsync(connectionString,
+            """
+            INSERT INTO ai.tests (id, tenant_id, agent_id, member_id, customer_id, config, transcript, handed_off, created_at, updated_at,
+                expires_at, version)
+            VALUES (@id, @tenant, gen_random_uuid(), gen_random_uuid(), @customer, '{}'::jsonb, '[]'::jsonb, false, now(), now(),
+                now() + interval '1 day', 1)
+            """,
+            ("id", testId), ("tenant", tenantId), ("customer", customerId));
+
+    private static Task<Guid> AgentTestCustomerAsync(string connectionString, Guid testId) =>
+        ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM ai.tests WHERE id = @id", ("id", testId));
+
     private static string[] All(Guid customerId) => [.. Tables.Select(table => $"{table}={customerId}")];
 
     // §4: el negocio que abrió el sent del fusionado, su foto y la conversación pasan al que queda, y el tablero lo dibuja a su
@@ -271,6 +285,10 @@ public sealed class CustomerMergeAcrossModulesApiTests
         await InsertLoanAsync(connectionString, loanOfMerged, tenantId, arranged.Merged);
         await InsertLoanAsync(connectionString, loanOfBystander, tenantId, arranged.Bystander);
         await InsertLoanAsync(connectionString, Guid.CreateVersion7(), other.TenantId, arranged.Merged);
+        var testOfMerged = Guid.CreateVersion7();
+        var testOfOtherTenant = Guid.CreateVersion7();
+        await InsertAgentTestAsync(connectionString, testOfMerged, tenantId, arranged.Merged);
+        await InsertAgentTestAsync(connectionString, testOfOtherTenant, other.TenantId, arranged.Merged);
 
         using var scope = factory.Services.CreateScope();
         var references = scope.ServiceProvider.GetRequiredService<ICustomerMergeReferences>();
@@ -286,6 +304,8 @@ public sealed class CustomerMergeAcrossModulesApiTests
         Assert.Equal(All(arranged.Merged), await OwnersAsync(connectionString, foreign));
         Assert.Equal(arranged.Survivor, await LoanCustomerAsync(connectionString, loanOfMerged));
         Assert.Equal(arranged.Bystander, await LoanCustomerAsync(connectionString, loanOfBystander));
+        Assert.Equal(arranged.Survivor, await AgentTestCustomerAsync(connectionString, testOfMerged));
+        Assert.Equal(arranged.Merged, await AgentTestCustomerAsync(connectionString, testOfOtherTenant));
         Assert.Equal(1, await ScalarAsync<long>(connectionString,
             "SELECT count(*) FROM loans.loans WHERE tenant_id = @tenant AND customer_id = @customer",
             ("tenant", other.TenantId), ("customer", arranged.Merged)));
