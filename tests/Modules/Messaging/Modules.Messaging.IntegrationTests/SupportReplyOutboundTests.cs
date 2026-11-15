@@ -57,7 +57,7 @@ public sealed class SupportReplyOutboundTests
         new(f.Tenant.TenantId, conversationId ?? f.ConversationId, clientId ?? Guid.CreateVersion7(), f.MemberId, text, UploadId: null);
 
     private static SupportTemplateReplySend Template(
-        Fixture f, Guid? conversationId, string text = "Ya quedó resuelto.", Guid? connectionId = null, string? waId = null, Guid? clientId = null) =>
+        Fixture f, Guid? conversationId, string text = "Ya quedó resuelto", Guid? connectionId = null, string? waId = null, Guid? clientId = null) =>
         new(f.Tenant.TenantId, conversationId, connectionId, waId, CustomerId: null, "Ana Pérez", clientId ?? Guid.CreateVersion7(), f.MemberId,
             "SOP-000127", text);
 
@@ -207,10 +207,11 @@ public sealed class SupportReplyOutboundTests
         Assert.Equal("qep_soporte_respuesta", template.GetProperty("name").GetString());
         var component = Assert.Single(template.GetProperty("components").EnumerateArray());
         Assert.Equal(
-            [("nombre_contacto", "Ana Pérez"), ("radicado", "SOP-000127"), ("respuesta", "Ya quedó resuelto.")],
+            [("nombre_contacto", "Ana Pérez"), ("radicado", "SOP-000127"), ("respuesta", "Ya quedó resuelto")],
             component.GetProperty("parameters").EnumerateArray()
                 .Select(item => (item.GetProperty("parameter_name").GetString()!, item.GetProperty("text").GetString()!)));
-        Assert.Equal($"{bsuidOnly}|{f.MemberId}|11|1|Hola Ana Pérez, te escribimos sobre tu caso SOP-000127: Ya quedó resuelto.",
+        Assert.Equal(
+            $"{bsuidOnly}|{f.MemberId}|11|1|Hola Ana Pérez, te escribimos sobre tu caso SOP-000127: Ya quedó resuelto. Si tienes dudas, responde este mensaje.",
             await ScalarAsync<string>(f.ConnectionString,
                 "SELECT conversation_id || '|' || sent_by_member_id || '|' || kind || '|' || status || '|' || text FROM messaging.messages WHERE id = @id",
                 ("id", sent.MessageId)));
@@ -359,5 +360,234 @@ public sealed class SupportReplyOutboundTests
         // Instagram no tiene plantillas.
         Assert.Equal(new SupportReplySendResult.Rejected("channel_unsupported"), template);
         Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+    }
+
+    /// <summary>Meta retiene la primera llamada de envío hasta que la prueba la suelte (copia de <c>ExternalSendApiTests.HeldMeta</c>): así
+    /// el segundo envío llega mientras el primero tiene el reclamo abierto.</summary>
+    private sealed class HeldMeta(Func<int, HttpResponseMessage> answer)
+    {
+        private int _calls;
+
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Released { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public HttpResponseMessage Respond()
+        {
+            var call = Interlocked.Increment(ref _calls);
+            if (call == 1)
+            {
+                Entered.TrySetResult();
+                Assert.True(Released.Task.Wait(TimeSpan.FromSeconds(60)), "La prueba nunca soltó la primera llamada a Meta.");
+            }
+
+            return answer(call);
+        }
+    }
+
+    private static async Task WaitForABlockedBackendAsync(string connectionString)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await CountAsync(connectionString, "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'") > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(50, Ct);
+        }
+
+        Assert.Fail("El segundo envío nunca quedó esperando el candado de la fila.");
+    }
+
+    // Review Focus 3: dos envíos en vuelo con el mismo clientId. El segundo llega con el primero todavía en Meta, espera el candado del
+    // reclamo y sale por TakeInFlightAsync con la misma fila, sin otra llamada.
+    [Fact]
+    public async Task TwoRepliesInFlightWithTheSameClientIdSendOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Reset();
+        var held = new HeldMeta(call => FakeMetaGraphHandler.Json(HttpStatusCode.OK,
+            """{"messaging_product":"whatsapp","contacts":[{"input":"573001234567","wa_id":"573001234567"}],"messages":[{"id":"wamid.held"}]}"""));
+        f.Factory.MetaHandler.RespondWith("/111/messages$", request => held.Respond());
+        var clientId = Guid.CreateVersion7();
+
+        var first = SendThreadAsync(f, Thread(f, clientId: clientId));
+        await held.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        var second = SendThreadAsync(f, Thread(f, clientId: clientId));
+        await WaitForABlockedBackendAsync(f.ConnectionString);
+        held.Released.TrySetResult();
+        var results = await Task.WhenAll(first, second);
+
+        var ids = results.Select(result => Assert.IsType<SupportReplySendResult.Sent>(result).MessageId).ToArray();
+        Assert.Equal(ids[0], ids[1]);
+        Assert.Equal(1, held.Calls);
+        Assert.Equal(1L, await OutboundRowsAsync(f));
+    }
+
+    // Sin conversación en la respuesta, el reintento la busca por teléfono sin crearla y devuelve lo ya enviado antes de mirar la plantilla
+    // o la conexión, que pudieron cambiar después del envío.
+    [Fact]
+    public async Task RetryingATemplateReplyByPhoneReturnsTheSentMessageEvenIfTheTemplateOrConnectionChanged()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedApprovedTemplateAsync(f);
+        var clientId = Guid.CreateVersion7();
+        var send = Template(f, conversationId: null, connectionId: f.ConnectionId, waId: "573009998877", clientId: clientId);
+        var first = Assert.IsType<SupportReplySendResult.Sent>(await SendTemplateAsync(f, send));
+
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.message_templates SET status = 'PAUSED' WHERE kind = 'SupportReply'");
+        var afterPause = Assert.IsType<SupportReplySendResult.Sent>(await SendTemplateAsync(f, send));
+        await ExecuteAsync(f.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
+        var afterConnectionPaused = Assert.IsType<SupportReplySendResult.Sent>(await SendTemplateAsync(f, send));
+
+        Assert.Equal(first, afterPause);
+        Assert.Equal(first, afterConnectionPaused);
+        Assert.Single(Sends(f));
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+    }
+
+    [Theory]
+    [InlineData("Ana\nPérez", "SOP-000127")]
+    [InlineData("Ana      Pérez", "SOP-000127")]
+    [InlineData("   ", "SOP-000127")]
+    [InlineData("Ana Pérez", "")]
+    [InlineData("Ana Pérez", "SOP-\r000127")]
+    public async Task AnInvalidRecipientNameOrCaseNumberIsRecipientInvalid(string recipientName, string ticketNumber)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedApprovedTemplateAsync(f);
+
+        var toConversation = await SendTemplateAsync(f, Template(f, f.ConversationId) with { RecipientName = recipientName, TicketNumber = ticketNumber });
+        var byPhone = await SendTemplateAsync(
+            f, Template(f, null, connectionId: f.ConnectionId, waId: "573009998877") with { RecipientName = recipientName, TicketNumber = ticketNumber });
+
+        Assert.Equal(new SupportReplySendResult.Rejected("recipient_invalid"), toConversation);
+        Assert.Equal(new SupportReplySendResult.Rejected("recipient_invalid"), byPhone);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Equal(0L, await OutboundRowsAsync(f));
+        Assert.Empty(Sends(f));
+    }
+
+    // La respuesta cabe sola como parámetro (≤ 1024), pero el cuerpo armado con el texto fijo pasa de 1024: Meta la rechazaría.
+    [Fact]
+    public async Task AReplyThatOverflowsTheBodyWithTheBaseTextIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedApprovedTemplateAsync(f);
+        var reply = string.Join(' ', Enumerable.Repeat("respuesta", 110))[..1000].Trim();
+        Assert.True(TemplateParameterRules.IsValid(reply));
+
+        var result = await SendTemplateAsync(f, Template(f, f.ConversationId, text: reply));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("template_text_invalid"), result);
+        Assert.Equal(0L, await OutboundRowsAsync(f));
+        Assert.Empty(Sends(f));
+    }
+
+    [Fact]
+    public async Task AThreadTextOutsideTheAdvisorRuleIsTextInvalid()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var control = await SendThreadAsync(f, Thread(f, text: "Hola\u0000"));
+        var blank = await SendThreadAsync(f, Thread(f, text: "   "));
+        var tooLong = await SendThreadAsync(f, Thread(f, text: new string('a', SendMessageValidator.TextMaxLength + 1)));
+
+        Assert.All(new[] { control, blank, tooLong }, result => Assert.Equal(new SupportReplySendResult.Rejected("text_invalid"), result));
+        Assert.Equal(0L, await OutboundRowsAsync(f));
+        Assert.Empty(Sends(f));
+    }
+
+    [Fact]
+    public async Task MetaRejectingTheTemplateLeavesAFailedRowAndReturnsFailed()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedApprovedTemplateAsync(f);
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(132015));
+
+        var failed = Assert.IsType<SupportReplySendResult.Failed>(await SendTemplateAsync(f, Template(f, f.ConversationId)));
+
+        Assert.Equal("send_failed", failed.Code);
+        Assert.Equal($"11|4|132015|{f.MemberId}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT kind || '|' || status || '|' || failure_code || '|' || sent_by_member_id FROM messaging.messages WHERE id = @id",
+            ("id", failed.MessageId!.Value)));
+    }
+
+    // Plan E12: Soporte responde aunque la conversación la tenga otro asesor, y no se la quita.
+    [Fact]
+    public async Task AReplyToAConversationAssignedToAnotherMemberIsSentAndKeepsTheAssignment()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var other = (await SeedMemberAsync(f.ConnectionString, f.Tenant.TenantId, "Beto", "advisor")).MembershipId;
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.conversations SET assigned_member_id = @other, assigned_at = now() WHERE id = @id", ("other", other), ("id", f.ConversationId));
+
+        var sent = Assert.IsType<SupportReplySendResult.Sent>(await SendThreadAsync(f, Thread(f)));
+
+        Assert.Equal(other, await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT assigned_member_id FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId)));
+        Assert.Equal(f.MemberId, await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT sent_by_member_id FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
+        Assert.Single(Sends(f));
+    }
+
+    [Fact]
+    public async Task AnInstagramReplyInsideTheWindowGoesThroughTheInstagramSender()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        await SeedInstagramConnectionAsync(factory, tenant.TenantId, "Instagram Ventas", InstagramPayloads.DefaultAccountId);
+        factory.MetaHandler.Respond($@"^/v24\.0/{InstagramPayloads.DefaultUserId}\?", HttpStatusCode.OK,
+            """{"name":"Laura Pérez","username":"laura.perez","id":"1234567890123456"}""");
+        using (var anonymous = factory.CreateClient())
+        {
+            await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Text("m1", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, "hola"));
+            await DrainDeliveriesAsync(factory);
+        }
+
+        var sendPath = $"/v24.0/{InstagramPayloads.DefaultAccountId}/messages";
+        factory.MetaHandler.Respond($"^{sendPath}$", HttpStatusCode.OK,
+            $$"""{"recipient_id":"{{InstagramPayloads.DefaultUserId}}","message_id":"mid.support"}""");
+        var conversationId = await ScalarAsync<Guid>(connectionString, "SELECT id FROM messaging.conversations");
+        var memberId = await OwnerMembershipIdAsync(connectionString, tenant);
+        using var scope = factory.Services.CreateScope();
+        var outbound = scope.ServiceProvider.GetRequiredService<ISupportReplyOutbound>();
+
+        var sent = Assert.IsType<SupportReplySendResult.Sent>(await outbound.SendThreadAsync(
+            new SupportThreadReplySend(tenant.TenantId, conversationId, Guid.CreateVersion7(), memberId, "Ya revisamos tu caso.", UploadId: null), Ct));
+        var tooLong = await outbound.SendThreadAsync(
+            new SupportThreadReplySend(
+                tenant.TenantId, conversationId, Guid.CreateVersion7(), memberId, new string('a', SendMessageValidator.InstagramTextMaxLength + 1), UploadId: null),
+            Ct);
+
+        var call = Assert.Single(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == sendPath && request.Method == HttpMethod.Post);
+        Assert.Contains(InstagramPayloads.DefaultUserId, call.Body, StringComparison.Ordinal);
+        Assert.Contains("Ya revisamos tu caso.", call.Body, StringComparison.Ordinal);
+        Assert.Equal($"1|{memberId}", await ScalarAsync<string>(connectionString,
+            "SELECT status || '|' || sent_by_member_id FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
+        // Instagram corta en 1000 caracteres: el texto del asesor que pasa de ahí no sale.
+        Assert.Equal(new SupportReplySendResult.Rejected("text_invalid"), tooLong);
     }
 }

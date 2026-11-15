@@ -22,7 +22,7 @@ public abstract record SupportReplySendResult
 
     /// <summary>Antes de enviar, sin fila en el hilo ni llamada a Meta (salvo <c>connection_unavailable</c> por credencial rechazada al
     /// enviar, que tampoco deja fila). <paramref name="Reason"/> es uno de <see cref="SupportReplyReasons"/>: <c>window_closed</c>,
-    /// <c>contact_blocked</c>, <c>template_not_approved</c>, <c>template_text_invalid</c>, <c>text_invalid</c>, <c>connection_unavailable</c>,
+    /// <c>contact_blocked</c>, <c>template_not_approved</c>, <c>template_text_invalid</c>, <c>recipient_invalid</c>, <c>text_invalid</c>, <c>connection_unavailable</c>,
     /// <c>conversation_not_found</c>, <c>attachment_unavailable</c>, <c>channel_unsupported</c>.</summary>
     public sealed record Rejected(string Reason) : SupportReplySendResult;
 
@@ -37,7 +37,12 @@ public static class SupportReplyReasons
     public const string WindowClosed = "window_closed";
     public const string ContactBlocked = "contact_blocked";
     public const string TemplateNotApproved = "template_not_approved";
+    /// <summary>La respuesta del asesor no cumple las reglas de un parámetro de Meta, o el cuerpo armado pasa de 1024.</summary>
     public const string TemplateTextInvalid = "template_text_invalid";
+
+    /// <summary>El nombre del destinatario o el radicado no cumplen las reglas de un parámetro de Meta (vacío, saltos de línea, más de
+    /// cuatro espacios seguidos o más de 1024).</summary>
+    public const string RecipientInvalid = "recipient_invalid";
 
     /// <summary>El texto no cumple la regla del asesor (<c>SendMessageValidator</c>) o pasa el tope de Instagram (1000).</summary>
     public const string TextInvalid = "text_invalid";
@@ -183,7 +188,13 @@ public sealed class SupportReplyOutbound(
     {
         ArgumentNullException.ThrowIfNull(send);
 
-        // 1. La respuesta es un parámetro de plantilla: sin saltos de línea, ≤ 1024 y sin más de cuatro espacios seguidos, antes de tocar nada.
+        // 1. Todo valor de la plantilla cumple las reglas de Meta, antes de tocar nada: sin saltos de línea, ≤ 1024 y sin más de cuatro
+        // espacios seguidos. El nombre y el radicado vienen de la foto del ticket: si no sirven no es culpa del texto del asesor.
+        if (!TemplateParameterRules.IsValid(send.RecipientName) || !TemplateParameterRules.IsValid(send.TicketNumber))
+        {
+            return Rejected(SupportReplyReasons.RecipientInvalid);
+        }
+
         if (!TemplateParameterRules.IsValid(send.Text))
         {
             return Rejected(SupportReplyReasons.TemplateTextInvalid);
@@ -230,6 +241,14 @@ public sealed class SupportReplyOutbound(
                 return Rejected(SupportReplyReasons.ConversationNotFound);
             }
 
+            // Un reintento de algo que ya salió se devuelve antes de mirar la plantilla o la conexión: pudieron cambiar después del envío.
+            // Sólo busca: si no hay conversación, todavía no se crea.
+            if (await opener.FindByPhoneAsync(send.TenantId, chosen, waId, ct) is { } existingId
+                && await AlreadySentAsync(existingId, send.ClientId, ct) is { } sent)
+            {
+                return sent;
+            }
+
             connectionId = chosen;
         }
 
@@ -247,6 +266,12 @@ public sealed class SupportReplyOutbound(
         };
         await senderValues.AddAsync(send.TenantId, send.AuthorMemberId, SystemTemplateSend.VariablesOf(template), values, ct);
         if (SystemTemplateSend.Build(template, values) is not { } built)
+        {
+            return Rejected(SupportReplyReasons.TemplateTextInvalid);
+        }
+
+        // Meta limita el cuerpo ya armado a 1024: una respuesta que cabe sola como parámetro puede pasarse junto con el texto fijo.
+        if (built.Text.Length > TemplateParameterRules.MaxValueLength)
         {
             return Rejected(SupportReplyReasons.TemplateTextInvalid);
         }

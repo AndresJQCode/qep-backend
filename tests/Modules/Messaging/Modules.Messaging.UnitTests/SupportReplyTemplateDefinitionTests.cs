@@ -38,9 +38,19 @@ public sealed class SupportReplyTemplateDefinitionTests
     public void TheBaseTextTutea()
     {
         Assert.Equal(
-            "Hola {{nombre_contacto}}, te escribimos sobre tu caso {{radicado}}: {{respuesta}}",
+            "Hola {{nombre_contacto}}, te escribimos sobre tu caso {{radicado}}: {{respuesta}}. Si tienes dudas, responde este mensaje.",
             SupportReplyTemplateDefinition.BaseBody);
         Assert.Null(SupportReplyTemplateDefinition.Draft(SupportReplyTemplateDefinition.Name, SupportReplyTemplateDefinition.BaseBody).Footer);
+    }
+
+    // Meta rechaza un cuerpo que empieza o termina con una variable.
+    [Fact]
+    public void TheBaseBodyNeitherStartsNorEndsWithAVariable()
+    {
+        var body = SupportReplyTemplateDefinition.BaseBody.Trim();
+
+        Assert.DoesNotMatch(@"^\{\{[a-z0-9_]+\}\}", body);
+        Assert.DoesNotMatch(@"\{\{[a-z0-9_]+\}\}[.!?]?$", body);
     }
 
     // Meta rechaza la plantilla si un ejemplo lleva $, # o % (README § Plantilla de WhatsApp).
@@ -80,6 +90,10 @@ public sealed class SupportReplyTemplateDefinitionTests
     [InlineData("""[{"type":"BODY","text":"Hola {{nombre_contacto}}, caso {{radicado}}: {{respuesta}}"}]""", true)]
     [InlineData("""[{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias por escribirnos."}]""", true)]
     [InlineData("""[{"type":"BODY","text":"Hola {{nombre_contacto}}, pedido {{numero_pedido}}."}]""", false)]
+    // De las claves viejas sólo fullname: el envío no sabe llenar order_number, total ni valid_until.
+    [InlineData("""[{"type":"BODY","text":"Hola {{fullname}}, caso {{radicado}}: {{respuesta}}."}]""", true)]
+    [InlineData("""[{"type":"BODY","text":"Hola {{fullname}}, caso {{order_number}}: {{respuesta}}."}]""", false)]
+    [InlineData("""[{"type":"BODY","text":"Hola {{nombre_contacto}}, vence {{valid_until}}."}]""", false)]
     [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{nombre_contacto}}, caso {{radicado}}."}]""", false)]
     [InlineData("""[{"type":"HEADER","format":"TEXT","text":"Soporte"},{"type":"BODY","text":"Hola {{nombre_contacto}}, caso {{radicado}}."}]""", false)]
     [InlineData("""[{"type":"BODY","text":"Hola {{nombre_contacto}}, caso {{radicado}}."},{"type":"BUTTONS","buttons":[{"type":"QUICK_REPLY","text":"Sí"}]}]""", false)]

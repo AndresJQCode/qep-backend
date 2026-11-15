@@ -22,12 +22,17 @@ public static class SupportReplyTemplateDefinition
     public const string Name = MessageTemplateName.SupportReplyName;
     public const string Language = "es";
     public const string Category = "UTILITY";
-    public const string BaseBody = "Hola {{nombre_contacto}}, te escribimos sobre tu caso {{radicado}}: {{respuesta}}";
+    /// <summary>No empieza ni termina con una variable: Meta rechaza un cuerpo así.</summary>
+    public const string BaseBody =
+        "Hola {{nombre_contacto}}, te escribimos sobre tu caso {{radicado}}: {{respuesta}}. Si tienes dudas, responde este mensaje.";
 
     /// <summary>Las claves que el envío llena además de las fijas.</summary>
     public const string CaseNumberKey = "radicado";
 
     public const string ReplyKey = "respuesta";
+
+    // La única clave vieja que el envío sabe llenar (LegacyKeys la traduce a nombre_contacto).
+    private const string LegacyContactNameKey = "fullname";
 
     // «qep_soporte_respuesta_v»: dentro del prefijo reservado, así que ninguna libre puede tomar una versión.
     private const string VersionPrefix = MessageTemplateName.SupportReplyPrefix + "v";
@@ -70,7 +75,8 @@ public static class SupportReplyTemplateDefinition
     public static JsonObject Payload(string name, string body) => TemplateComponentsBuilder.CreatePayload(Draft(name, body));
 
     /// <summary>Una externa se adopta si tiene sólo cuerpo (sin encabezado de ningún tipo ni botones), no vacío, y sus variables son de la
-    /// lista de Soporte o claves viejas. Mira la forma, no el texto.</summary>
+    /// lista de Soporte o <c>fullname</c>. De las claves viejas, el envío sólo sabe llenar esa (la traduce a <c>nombre_contacto</c>): una
+    /// <c>order_number</c> o <c>valid_until</c> quedaría sin valor y la plantilla nunca saldría. Mira la forma, no el texto.</summary>
     public static bool IsAdoptable(string componentsJson)
     {
         ArgumentNullException.ThrowIfNull(componentsJson);
@@ -79,7 +85,7 @@ public static class SupportReplyTemplateDefinition
         return !string.IsNullOrWhiteSpace(described.Body)
             && described.Header is null
             && described.UnsupportedReason is null
-            && described.Parameters.All(key => allowed.Contains(key) || SystemTemplateVariables.LegacyKeys.ContainsKey(key))
+            && described.Parameters.All(key => allowed.Contains(key) || string.Equals(key, LegacyContactNameKey, StringComparison.Ordinal))
             && described.Buttons.Count == 0;
     }
 

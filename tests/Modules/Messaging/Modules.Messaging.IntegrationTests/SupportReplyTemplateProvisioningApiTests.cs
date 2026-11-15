@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Persistence;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -103,6 +105,18 @@ public sealed class SupportReplyTemplateProvisioningApiTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
+        // La de pedido viva en la misma conexión: su índice único parcial no cuenta la de Soporte, ni al revés.
+        using (var scope = f.Factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            dbContext.MessageTemplates.Add(MessageTemplate.Pending(
+                f.Tenant.TenantId, f.ConnectionId, "500", OrderTemplateDefinition.Name, OrderTemplateDefinition.Language, OrderTemplateDefinition.Category,
+                TemplateComponentsBuilder.Named, MessageTemplateStatuses.Approved,
+                TemplateComponentsBuilder.Components(OrderTemplateDefinition.Draft(OrderTemplateDefinition.Name, OrderTemplateDefinition.BaseBody), "4::handle").ToJsonString(),
+                MessageTemplateKind.Order, null, DateTimeOffset.UtcNow));
+            await dbContext.SaveChangesAsync(Ct);
+        }
+
         Assert.Equal(HttpStatusCode.Created, (await SendAsync(f.Admin, HttpMethod.Post, SupportReplyUrl(f))).StatusCode);
         var before = MetaCalls(f).Length;
 
@@ -111,6 +125,9 @@ public sealed class SupportReplyTemplateProvisioningApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("messaging.template.support_reply_exists", (await ProblemAsync(response)).Code);
         Assert.Equal(before, MetaCalls(f).Length);
+        Assert.Equal("Order,SupportReply", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(kind, ',' ORDER BY kind) FROM messaging.message_templates WHERE tenant_id = @t AND connection_id = @c",
+            ("t", f.Tenant.TenantId), ("c", f.ConnectionId)));
     }
 
     [Fact]
