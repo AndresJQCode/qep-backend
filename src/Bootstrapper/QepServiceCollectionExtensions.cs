@@ -1596,6 +1596,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportGeography, SupportGeography>();
         services.AddScoped<Modules.Support.Application.SupportPublicResolver>();
         services.AddScoped<Modules.Support.Application.ISupportTenantBranding, SupportTenantBranding>();
+        services.AddScoped<Modules.Support.Application.ISupportOpeningEmail, SupportOpeningEmailSender>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.FilePublicTicketCommand, Modules.Support.Application.SupportPublicFiledDto>,
+            Modules.Support.Application.FilePublicTicketHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.GetPublicFormQuery, Modules.Support.Application.SupportPublicFormDto>,
             Modules.Support.Application.GetPublicFormHandler>();

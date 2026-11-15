@@ -42,6 +42,44 @@ public sealed record SupportPublicGeoListDto(IReadOnlyList<SupportPublicGeoItemD
 
 public sealed record SupportPublicGeoItemDto(Guid Id, string Name);
 
+/// <summary>
+/// El radicado del formulario. Todo anulable, para que su ausencia sea un 422 <c>validation.failed</c> con el campo. Con
+/// <see cref="Anonymous"/> no viaja solicitante ni consentimiento. <see cref="LegalTextVersion"/> y <see cref="FormVersion"/> son las
+/// que la página cargó: si cambiaron, 422 y la página recarga.
+/// </summary>
+public sealed record SupportPublicFileRequest(
+    Guid? TicketTypeId,
+    string? Subject,
+    string? Description,
+    bool Anonymous,
+    SupportPublicRequesterRequest? Requester,
+    bool AcceptsDataPolicy,
+    int? LegalTextVersion,
+    int? FormVersion,
+    string? TurnstileToken);
+
+/// <summary>Los datos del solicitante. Las claves son las de <see cref="SupportPublicFieldDto.Key"/>; la ciudad es
+/// <see cref="CityId"/> con país <c>CO</c> y <see cref="CityName"/> con cualquier otro (plan F19). Un campo que el formulario oculta se
+/// ignora.</summary>
+public sealed record SupportPublicRequesterRequest(
+    string? DocumentType,
+    string? DocumentNumber,
+    string? FirstNames,
+    string? LastNames,
+    string? BusinessName,
+    string? Address,
+    string? LandlinePhone,
+    string? MobilePhone,
+    string? Country,
+    Guid? CityId,
+    string? CityName,
+    string? Email);
+
+/// <summary>El radicado. <see cref="Pin"/> viaja sólo aquí, una vez: después sólo se puede reenviar uno nuevo al correo registrado.
+/// <see cref="PinEmailed"/> dice si el correo de apertura salió; la pantalla lo muestra igual.</summary>
+public sealed record SupportPublicFiledDto(
+    string Number, string Pin, DateOnly? DueOn, string? SuccessMessage, bool PinEmailed, string ConsultUrl);
+
 /// <summary>La consulta de un ticket: radicado (con o sin prefijo), PIN y el token de Turnstile. El PIN viaja en el cuerpo y no en la
 /// URL, para que no quede en logs (plan F9).</summary>
 public sealed record SupportPublicLookupRequest(string? Number, string? Pin, string? TurnstileToken);

@@ -231,6 +231,30 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         Assert.Null(await channels.FindThreadAsync(other, onActive, Ct));
     }
 
+    // Fase 3 (plan F21): el documento del formulario se compara normalizado (sin signos, en mayúsculas), con el tipo, contra la ficha
+    // de Customers. Un fusionado no sale; un incompleto sí; un documento de otro tipo o de otro tenant, no.
+    [Fact]
+    public async Task FindIdsByDocumentUsesTheNormalizedNumberAndSkipsMerged()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var other = await NewSeededTenantAsync();
+        var dotted = await SupportPublicHarness.SeedIdentifiedCustomerAsync(Factory, tenant, "Verde Puntos", "Nit", "900.123.456");
+        var plain = await SupportPublicHarness.SeedIdentifiedCustomerAsync(Factory, tenant, "Verde Plano", "Nit", "900123456");
+        await SupportPublicHarness.SeedIdentifiedCustomerAsync(Factory, tenant, "Verde Fusionado", "Nit", "900-123-456", mergedInto: plain);
+        await SupportPublicHarness.SeedIdentifiedCustomerAsync(Factory, tenant, "Otro tipo", "Cc", "900123456");
+        await SupportPublicHarness.SeedIdentifiedCustomerAsync(Factory, other, "Otro tenant", "Nit", "900123456");
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var lookup = scope.ServiceProvider.GetRequiredService<ISupportCustomerLookup>();
+        var ids = await lookup.FindIdsByDocumentAsync(tenant, "nit", " 900123456 ", Ct);
+        var none = await lookup.FindIdsByDocumentAsync(tenant, "NIT", "111", Ct);
+
+        Assert.Equal(2, ids.Count);
+        Assert.Contains(dotted, ids);
+        Assert.Contains(plain, ids);
+        Assert.Empty(none);
+    }
+
     private async Task<Guid> SeedConnectionAsync(Guid tenant, string status)
     {
         var id = Guid.CreateVersion7();

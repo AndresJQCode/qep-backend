@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
@@ -128,6 +129,87 @@ internal static class SupportPublicHarness
     public static Task<HttpResponseMessage> PostJsonAsync(HttpClient client, string url, object body) =>
         client.PostAsJsonAsync(url, body, Ct);
 
+    /// <summary>El primer tipo activo y publicado del tenant (los tipos por defecto los siembra el aprovisionador).</summary>
+    public static async Task<Guid> FirstTypeIdAsync(QepApiFactory factory, string tenantId) =>
+        Guid.Parse((await TextAsync(
+            factory,
+            "SELECT id::text FROM support.ticket_types WHERE tenant_id = @tenant AND is_active AND is_published ORDER BY position LIMIT 1",
+            ("tenant", Guid.Parse(tenantId))))!);
+
+    /// <summary>Una ciudad cualquiera de Geography (la sembró su migración).</summary>
+    public static async Task<Guid> AnyCityIdAsync(QepApiFactory factory) =>
+        Guid.Parse((await TextAsync(factory, "SELECT id::text FROM geography.cities ORDER BY id LIMIT 1"))!);
+
+    /// <summary>Un radicado con nombre, de Colombia, con todo lo que pide el formulario por defecto.</summary>
+    public static object NamedBody(
+        Guid typeId,
+        Guid cityId,
+        string email,
+        string documentType = "CC",
+        string documentNumber = "1020304050",
+        string token = FakeSupportCaptcha.ValidToken,
+        int legalTextVersion = 1,
+        int formVersion = 1) =>
+        new
+        {
+            ticketTypeId = typeId,
+            subject = "No me llegó el pedido",
+            description = "Pagué el lunes y todavía no llega.",
+            anonymous = false,
+            requester = new
+            {
+                documentType,
+                documentNumber,
+                firstNames = documentType == "NIT" ? null : "Ana",
+                lastNames = documentType == "NIT" ? null : "Gómez",
+                businessName = documentType == "NIT" ? "Verde S.A.S." : null,
+                address = "Calle 1 # 2-3",
+                landlinePhone = (string?)null,
+                mobilePhone = "3001234567",
+                country = "CO",
+                cityId,
+                cityName = (string?)null,
+                email,
+            },
+            acceptsDataPolicy = true,
+            legalTextVersion,
+            formVersion,
+            turnstileToken = token,
+        };
+
+    /// <summary>Un radicado anónimo: sin solicitante ni consentimiento.</summary>
+    public static object AnonymousBody(Guid typeId, string token = FakeSupportCaptcha.ValidToken) =>
+        new
+        {
+            ticketTypeId = typeId,
+            subject = "Denuncia anónima",
+            description = "Quiero reportar algo sin dar mis datos.",
+            anonymous = true,
+            requester = (object?)null,
+            acceptsDataPolicy = false,
+            legalTextVersion = (int?)null,
+            formVersion = 1,
+            turnstileToken = token,
+        };
+
+    /// <summary>Un cliente con documento, insertado por SQL como <see cref="SupportApiHarness.SeedCustomerAsync"/>. El tipo va con el
+    /// nombre del enum de Customers (<c>Nit</c>, <c>Cc</c>). <paramref name="mergedInto"/> lo deja fusionado en otro.</summary>
+    public static async Task<Guid> SeedIdentifiedCustomerAsync(
+        QepApiFactory factory, Guid tenantId, string name, string type, string number, Guid? mergedInto = null)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(
+            factory,
+            """
+            INSERT INTO customers.customers (id, tenant_id, name, is_active, completeness, whatsapp_user_id, with_retention, vat_surplus,
+                version, created_at, updated_at, identification_type, identification_number, merged_into_id, merged_at)
+            VALUES (@id, @tenant, @name, @active, 'Incomplete', @wa, false, false, 1, now(), now(), @type, @number, @merged, @mergedAt)
+            """,
+            ("id", id), ("tenant", tenantId), ("name", name), ("active", mergedInto is null), ("wa", $"CO.{id:N}"), ("type", type),
+            ("number", number), ("merged", mergedInto), ("mergedAt", mergedInto is null ? null : DateTimeOffset.UtcNow));
+        return id;
+    }
+
     public static string? Header(HttpResponseMessage response, string name) =>
         response.Headers.TryGetValues(name, out var values) ? string.Join(",", values) : null;
 }
@@ -161,6 +243,9 @@ public class SupportPublicHost : IAsyncLifetime
 
     internal MutableTenantClock Clock { get; } = new(ClockedSupportHost.Reception);
 
+    /// <summary>El correo de apertura: anota en vez de mandar. Cada prueba mira sólo los correos a su dirección.</summary>
+    internal RecordingSupportOpeningEmail Emails { get; } = new();
+
     /// <summary>Con la autenticación real (sin el stub): la defensa CSRF corre y la cookie de sesión se valida de verdad.</summary>
     protected virtual bool RealAuthentication => false;
 
@@ -175,9 +260,16 @@ public class SupportPublicHost : IAsyncLifetime
     {
     }
 
+    /// <summary>Para sumar configuración en una clase derivada.</summary>
+    protected virtual void ConfigureSettings(Dictionary<string, string> settings)
+    {
+    }
+
     public async ValueTask InitializeAsync()
     {
         _database = await StartDatabaseAsync();
+        var settings = SupportPublicHarness.Settings(RealAuthentication);
+        ConfigureSettings(settings);
         _factory = new QepApiFactory(
             _database.GetConnectionString(),
             services =>
@@ -187,9 +279,11 @@ public class SupportPublicHost : IAsyncLifetime
                 services.AddSingleton<ISupportCaptcha>(Captcha);
                 services.RemoveAll<ITenantClock>();
                 services.AddSingleton<ITenantClock>(Clock);
+                services.RemoveAll<ISupportOpeningEmail>();
+                services.AddSingleton<ISupportOpeningEmail>(Emails);
                 ConfigureServices(services);
             },
-            SupportPublicHarness.Settings(RealAuthentication));
+            settings);
     }
 
     public async ValueTask DisposeAsync()
@@ -212,4 +306,64 @@ public class SupportPublicHost : IAsyncLifetime
 public sealed class SupportPublicRealAuthHost : SupportPublicHost
 {
     protected override bool RealAuthentication => true;
+}
+
+/// <summary><see cref="SupportPublicHost"/> con todo el log en <c>Trace</c> y capturado en memoria: la prueba de que el PIN no llega
+/// a ningún log necesita ver hasta lo más verboso.</summary>
+public sealed class SupportPublicLoggedHost : SupportPublicHost
+{
+    internal CapturingLoggerProvider Logs { get; } = new();
+
+    protected override void ConfigureSettings(Dictionary<string, string> settings)
+    {
+        settings["Logging:LogLevel:Default"] = "Trace";
+        settings["Logging:LogLevel:Microsoft.AspNetCore"] = "Trace";
+    }
+
+    protected override void ConfigureServices(IServiceCollection services) =>
+        services.AddSingleton<ILoggerProvider>(Logs);
+}
+
+/// <summary>El correo de apertura que anota en vez de mandar. Falla como el canal real (<c>send_failed</c>) para las direcciones de
+/// <see cref="FailFor"/>: así una prueba hace fallar el suyo sin tocar el de las demás.</summary>
+internal sealed class RecordingSupportOpeningEmail : ISupportOpeningEmail
+{
+    public ConcurrentQueue<SupportOpeningEmail> Sent { get; } = new();
+
+    public ConcurrentDictionary<string, bool> FailFor { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyList<SupportOpeningEmail> To(string address) =>
+        Sent.Where(email => string.Equals(email.ToAddress, address, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    public Task<SupportChannelSendResult> SendAsync(SupportOpeningEmail email, CancellationToken cancellationToken)
+    {
+        Sent.Enqueue(email);
+        return Task.FromResult<SupportChannelSendResult>(FailFor.ContainsKey(email.ToAddress)
+            ? new SupportChannelSendResult.Failed(null, SupportChannelReasons.SendFailed)
+            : new SupportChannelSendResult.Sent(null, null));
+    }
+}
+
+/// <summary>Todo lo que se loguea, ya formateado y con la excepción, en memoria.</summary>
+internal sealed class CapturingLoggerProvider : ILoggerProvider
+{
+    public ConcurrentQueue<string> Entries { get; } = new();
+
+    public ILogger CreateLogger(string categoryName) => new Capturing(categoryName, Entries);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class Capturing(string category, ConcurrentQueue<string> entries) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            entries.Enqueue($"{category} {formatter(state, exception)} {state} {exception}");
+    }
 }

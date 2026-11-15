@@ -66,6 +66,17 @@ public static class PublicSupportEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
+        group.MapPost("/tickets", FileAsync)
+            .RequireRateLimiting(submitPolicy)
+            .Accepts<SupportPublicFileRequest>("application/json")
+            .Produces<SupportPublicFiledDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         group.MapPost("/tickets/lookup", LookupAsync)
             .RequireRateLimiting(lookupPolicy)
             .Accepts<SupportPublicLookupRequest>("application/json")
@@ -88,6 +99,26 @@ public static class PublicSupportEndpoints
     private static async Task<IResult> ListCitiesAsync(
         string tenantSlug, Guid departmentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListPublicSupportCitiesQuery(tenantSlug, departmentId), cancellationToken));
+
+    // El PIN sólo viaja en esta respuesta, una vez (plan F9 y el contrato).
+    private static async Task<IResult> FileAsync(
+        string tenantSlug, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<SupportPublicFileRequest>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        var filed = await dispatcher.SendAsync(
+            FilePublicTicketCommand.From(tenantSlug, VisitorIp(httpContext), body), cancellationToken);
+        return Results.Created((string?)null, filed);
+    }
+
+    // La IP del visitante: RemoteIpAddress, que UseForwardedHeaders ya tomó de X-Real-IP detrás del ingress de confianza. Va a Turnstile
+    // y al consentimiento; sin IP (sólo en un TestServer sin par) queda un valor fijo, para que el consentimiento no pierda la fila.
+    private static string VisitorIp(HttpContext httpContext) =>
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
     // Task 4: lee el cuerpo con su tope y resuelve el tenant. La consulta llega en la Task 7.
     private static async Task<IResult> LookupAsync(

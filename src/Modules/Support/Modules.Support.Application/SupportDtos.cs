@@ -107,7 +107,21 @@ public sealed record SupportTicketDetailDto(
     bool FollowsThread,
     DateTimeOffset? FollowOffAt,
     int UnclassifiedCount,
-    IReadOnlyList<SupportReplyDto> Replies);
+    IReadOnlyList<SupportReplyDto> Replies,
+    bool IsAnonymous,
+    IReadOnlyList<SupportCustomerCandidateDto> CustomerCandidates,
+    SupportConsultAccessDto? ConsultAccess);
+
+// Fase 3 (formulario público): IsAnonymous apaga en la pantalla todo lo que pide un solicitante (sólo se responde por la página);
+// CustomerCandidates son los clientes con el documento de la foto cuando el ticket no tiene cliente (cero o varios al radicar, plan
+// F21), para vincular uno sin buscarlo; ConsultAccess dice si la información con el PIN salió, por dónde y por qué no.
+
+/// <summary>Un cliente con el mismo documento que el solicitante. <c>IsActive</c> como en <see cref="SupportCustomerRefDto"/>.</summary>
+public sealed record SupportCustomerCandidateDto(Guid Id, string Name, bool IsActive);
+
+/// <summary>El último envío de la información con el PIN. <c>Channel</c> ∈ <c>Email</c>, <c>Thread</c>, <c>None</c>;
+/// <c>FailureCode</c> si no salió (<c>send_failed</c>, <c>window_closed</c>…). Nunca trae el PIN.</summary>
+public sealed record SupportConsultAccessDto(DateTimeOffset? LastSentAt, string? Channel, string? FailureCode);
 
 // Fase 2 (Mensajería): el detalle suma la conversación del ticket. FollowOffAt dibuja la franja «Este ticket no sigue el hilo desde …»
 // sin que la pantalla lea la traza; UnclassifiedCount es el aviso «hay mensajes sin clasificar» de esa conversación; Replies trae las

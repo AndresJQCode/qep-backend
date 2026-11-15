@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Support.Application;
 
@@ -22,7 +23,9 @@ public sealed class SupportTicketDtoComposer(
     ISupportSettingsRepository settings,
     ITenantClock tenantClock,
     ISupportReplyRepository replies,
-    ISupportUnclassifiedRepository unclassified)
+    ISupportUnclassifiedRepository unclassified,
+    ISupportTicketAccessRepository accesses,
+    ITenantModules tenantModules)
 {
     /// <summary>Lo que el contrato muestra de un miembro o cliente que ya no se resuelve (un miembro removido, un cliente borrado).</summary>
     internal const string UnknownName = "Sin nombre";
@@ -91,7 +94,37 @@ public sealed class SupportTicketDtoComposer(
             ticket.FollowThread,
             ticket.FollowOffAt,
             unclassifiedCount,
-            ticketReplies.Select(reply => ToReplyDto(reply, membersById)).ToList());
+            ticketReplies.Select(reply => ToReplyDto(reply, membersById)).ToList(),
+            ticket.IsAnonymous,
+            await CustomerCandidatesAsync(ticket, cancellationToken),
+            await accesses.FindAsync(ticket.TenantId, ticket.Id, cancellationToken) is { } access
+                ? new SupportConsultAccessDto(access.LastSentAt, access.LastSentChannel, access.LastFailureCode)
+                : null);
+    }
+
+    // Plan F21: sin cliente y con documento en la foto, los clientes con ese documento (si customers está prendido): al radicar no se
+    // vinculó porque había cero o varios. Con cliente, o sin documento, no hay candidatos.
+    private async Task<IReadOnlyList<SupportCustomerCandidateDto>> CustomerCandidatesAsync(
+        SupportTicket ticket, CancellationToken cancellationToken)
+    {
+        if (ticket.CustomerId is not null
+            || ticket.Requester is not { DocumentType: { } type, DocumentNumber: { } number }
+            || await tenantModules.FindAsync(ticket.TenantId, cancellationToken) is not { } modules
+            || !modules.IsEnabled(TenantModuleKeys.Customers))
+        {
+            return [];
+        }
+
+        var ids = await customers.FindIdsByDocumentAsync(ticket.TenantId, type, number, cancellationToken);
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var found = (await customers.FindManyAsync(ticket.TenantId, ids, cancellationToken)).ToDictionary(customer => customer.Id);
+        return ids.Where(found.ContainsKey)
+            .Select(id => new SupportCustomerCandidateDto(id, found[id].Name, found[id].IsActive))
+            .ToList();
     }
 
     /// <summary>Una respuesta como la dibujan el detalle y el resultado de responder.</summary>

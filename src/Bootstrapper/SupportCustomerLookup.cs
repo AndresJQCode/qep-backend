@@ -1,4 +1,6 @@
+using BuildingBlocks.Domain.Identification;
 using Microsoft.EntityFrameworkCore;
+using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Persistence;
 using Modules.Support.Application;
@@ -14,7 +16,7 @@ namespace Bootstrapper;
 /// <see cref="FindAsync"/> (alta y vinculación) lo trae. El contacto es <c>email</c> y <c>phone_e164</c>, nunca el <c>phone</c>
 /// crudo: la foto del solicitante guarda el celular en E.164.
 /// </summary>
-internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISupportCustomerLookup
+internal sealed class SupportCustomerLookup(CustomersDbContext customers, ICustomerDuplicateQueries duplicates) : ISupportCustomerLookup
 {
     private const string LikeEscapeCharacter = "\\";
 
@@ -68,6 +70,31 @@ internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISup
             .Select(customer => customer.Id)
             .ToListAsync(cancellationToken);
         return ids.Select(id => id.Value).ToArray();
+    }
+
+    // Fase 3 (plan F21): por la consulta de duplicados de Customers, que compara con la expresión del índice
+    // IX_customers_tenant_identification_normalized y ya deja fuera a los fusionados; acá no se copia la expresión. El tipo se compara
+    // por el valor del contrato, y un tipo que Customers no conoce no casa con nadie.
+    public async Task<IReadOnlyList<Guid>> FindIdsByDocumentAsync(
+        Guid tenantId, string documentType, string documentNumber, CancellationToken cancellationToken)
+    {
+        var normalized = CustomerIdentificationNormalizer.Normalize(documentNumber);
+        var type = documentType?.Trim();
+        if (normalized.Length == 0 || string.IsNullOrEmpty(type) || !DocumentTypesByCountry.IsKnown(type))
+        {
+            return [];
+        }
+
+        // Se piden algunos de más: los de otro tipo o inactivos se descartan después y no deben dejar fuera a uno que sí casa.
+        var matches = await duplicates.FindByNormalizedIdentificationAsync(
+            tenantId, normalized, excludeCustomerId: null, ISupportCustomerLookup.DocumentMatchLimit * 5, cancellationToken);
+        return matches
+            .Where(customer => customer.IsActive
+                && customer.IdentificationType is { } candidate
+                && string.Equals(candidate.ToWireValue(), type, StringComparison.OrdinalIgnoreCase))
+            .Take(ISupportCustomerLookup.DocumentMatchLimit)
+            .Select(customer => customer.Id.Value)
+            .ToList();
     }
 
     private sealed record RefRow(CustomerId Id, string Name, bool IsActive)
