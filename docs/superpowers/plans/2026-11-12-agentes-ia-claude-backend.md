@@ -359,15 +359,34 @@ Como §4.4, §6.1–§6.8 del spec (`BotRef`, `sent_by_kind = 3` con `sent_by_ag
 Instagram en `IBotOutbound`, `ChannelOutboundRules`, procesador de entrantes, `AiModelWorker`, traspasos, apagado del
 módulo). Cambia:
 
-- [ ] El procesador de entrantes revisa el `issue` **del proveedor del agente** de la conexión (C-19) antes de abrir
+Hecha en `feat/agentes-ia-claude` (`40f6ec87`, `528a3c9d`, `1ddaccfc`), con build en verde y **pruebas escritas sin correr** (las corre el
+owner). Cambia respecto de lo planeado:
+
+- **El `HandoffCauseKind` espejo vive en Ai** (`Modules.Ai.Application.HandoffCauseKind`, los seis kinds de agente de §4.4) y la prueba de
+  paridad compara Automations ∪ Ai con `AutomationHandoffKind`; los códigos `permission_denied`, `refused` y `request_invalid` viajan en
+  `Code` y la prueba exige que todo `AgentHandoffCodes.All` sobreviva la limpieza del hilo. Los topes de D-A20 y la respuesta inválida usan
+  los códigos que ya mostraba el playground (`invalid_response`, `model_calls_exceeded`, `tool_calls_exceeded`, `job_timed_out`) más
+  `max_replies_without_human` y `send_failed`.
+- **El trabajo de una sesión en reintento o con la respuesta guardada sigue `Running` con el lease acortado**, no vuelve a `Pending`: el
+  siguiente trabajo de la sesión puede estar ya pendiente y el índice único `IX_model_jobs_session_open` chocaría.
+- **Los nombres de agentes los resuelve el mismo puerto de los chatbots** (`IAutomationsChatbotNames`, adaptador que ahora lee también Ai):
+  `MessageDto.sentByAgent` y `ConversationSummary.automationBot` salen de ese diccionario.
+- **Una conversación sin ocupante en `connection_bots` ya no encola** (`AutomationInboxTests` siembra un ocupante chatbot).
+- **Dashboard y alertas no están en este repo** (`k8s/platform/dashboards/...` vive en el repo de plataforma): falta sumar `ai_model` y las
+  series `qep.ai.model.calls` / `qep.ai.model.errors` allá.
+- **`issue` en `GET /ai/settings`**: sigue siendo el `status` de la conexión (`NeedsAttention`); el código del fallo no se expone porque
+  `ConnectionListing` de Integrations no lo trae.
+
+- [x] El procesador de entrantes revisa el `issue` **del proveedor del agente** de la conexión (C-19) antes de abrir
   sesión.
-- [ ] Los códigos nuevos de traspaso (`permission_denied`, `refused`, `request_invalid`) en
+- [x] Los códigos nuevos de traspaso (`permission_denied`, `refused`, `request_invalid`) en
   `HandoffCauseKind`/`AutomationHandoffKind` **juntos**, con `HandoffCauseKindParityTests`; el evento lleva `provider`.
-- [ ] Barrido de lectores de autor por `sent_by_kind = 3` (un join al miembro lo pierde en silencio), y CHECK
+- [x] Barrido de lectores de autor por `sent_by_kind = 3` (un join al miembro lo pierde en silencio), y CHECK
   `sent_by_kind IN (1,2,3,4)`.
 - [ ] Cola `ai.model_jobs` en `QueueNames`, `QueueMetricsSource`, dashboard y alertas; métricas de llamadas y errores
-  etiquetadas por `provider`.
-- [ ] El código se mergea apagado por el módulo `ai` (fuera de `DefaultForNewTenants`); se enciende tenant por tenant.
+  etiquetadas por `provider`. Hecho en este repo (`QueueNames`, `QueueMetricsSource`, su prueba y el meter `Qep.Ai`); **faltan dashboard y
+  alertas en el repo de plataforma**.
+- [x] El código se mergea apagado por el módulo `ai` (fuera de `DefaultForNewTenants`); se enciende tenant por tenant.
 
 ### Task 8 (AI-B7): `create_quotation_draft`
 
