@@ -59,6 +59,7 @@ using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Loans.Infrastructure;
+using Modules.Support.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Store.Infrastructure;
@@ -67,6 +68,8 @@ using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
+using SupportPermissions = Modules.Support.Application.SupportPermissions;
+using SupportPolicies = Modules.Support.Application.SupportPolicies;
 using StorePermissions = Modules.Store.Application.StorePermissions;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
@@ -461,6 +464,52 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
+
+        // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
+        // responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketTypesQuery, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
+            Modules.Support.Application.ListTicketTypesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
+            Modules.Support.Application.CreateTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
+            Modules.Support.Application.UpdateTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ReorderTicketTypesCommand, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
+            Modules.Support.Application.ReorderTicketTypesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetSupportSettingsQuery, Modules.Support.Application.SupportSettingsDto>,
+            Modules.Support.Application.GetSupportSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
+            Modules.Support.Application.UpdateSupportSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.CreateTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetTicketQuery, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.GetTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListSupportAssigneesQuery, Modules.Support.Application.SupportAssigneesDto>,
+            Modules.Support.Application.ListSupportAssigneesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketStatusCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketStatusHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AssignTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.AssignTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketTypeCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.LinkTicketCustomerCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.LinkTicketCustomerHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
+            Modules.Support.Application.ListTicketsHandler>();
+        services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -1125,6 +1174,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
@@ -1143,6 +1193,7 @@ public static class QepServiceCollectionExtensions
         services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
+        services.AddSupportInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
         services.AddBuyersInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
@@ -1447,11 +1498,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
         services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, LoansUserReferenceProbe>();
+        services.AddScoped<IUserReferenceProbe, SupportUserReferenceProbe>();
 
         // Mismo patrón para `loans` (spec de préstamos 2026-10-31): clientes y encargados son ids sueltos y el composition root cablea sus
         // puertos contra Customers, Tenancy y Authorization. Con ruta completa por el mismo choque de nombres.
         services.AddScoped<Modules.Loans.Application.ILoansCustomerLookup, LoansCustomerLookup>();
         services.AddScoped<Modules.Loans.Application.ILoansMemberDirectory, LoansMemberDirectory>();
+
+        // `support` (spec 2026-11-14): clientes, responsables y el calendario son de otros módulos y Soporte sólo declara puertos. El
+        // calendario sale del horario predeterminado de Mensajería sin que Soporte la referencie.
+        services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
+        services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno
@@ -1827,6 +1885,10 @@ public static class QepServiceCollectionExtensions
                 // Spec de préstamos (2026-10-31): los préstamos que la empresa otorga los administra quien administra la empresa.
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
+                // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
+                SupportPermissions.Read,
+                SupportPermissions.Manage,
+                SupportPermissions.SettingsManage,
                 // Spec de la tienda en línea (owner, 2026-11-03): publicar la tienda y fijar sus cuentas de cobro es de admin y de nadie más.
                 // La bandeja de solicitudes ya la tiene: es quotations.order.manage, el permiso de Pedidos.
                 StorePermissions.SettingsManage,
@@ -1894,7 +1956,10 @@ public static class QepServiceCollectionExtensions
                 MessagingPermissions.ResolutionReasonManage,
                 // Spec 2026-10-13 D32: la asesora trabaja sus negocios; los ajustes del embudo los decide quien administra.
                 PipelinePermissions.DealRead,
-                PipelinePermissions.DealManage
+                PipelinePermissions.DealManage,
+                // Spec 2026-11-14 (soporte, C1): el asesor atiende los tickets; configurar los tipos y el umbral es de admin.
+                SupportPermissions.Read,
+                SupportPermissions.Manage
             ]));
         services.AddSingleton(new RoleDefinition(
             "billing",
@@ -2563,6 +2628,29 @@ public static class QepServiceCollectionExtensions
             "Préstamos",
             "medium",
             RequiredModules: [ModuleKeys.Loans]));
+        // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
+        // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.Read,
+            "Ver tickets de soporte",
+            "Permite ver todos los tickets de soporte del tenant, su detalle y su trazabilidad.",
+            "Soporte",
+            "low",
+            RequiredModules: [ModuleKeys.Support]));
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.Manage,
+            "Gestionar tickets de soporte",
+            "Permite crear tickets y cambiar su estado, su responsable, su tipo y su cliente.",
+            "Soporte",
+            "medium",
+            RequiredModules: [ModuleKeys.Support]));
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.SettingsManage,
+            "Configurar soporte",
+            "Permite crear, editar y ordenar los tipos de ticket y fijar cuántos días hábiles antes un ticket está por vencer.",
+            "Soporte",
+            "medium",
+            RequiredModules: [ModuleKeys.Support]));
         // Spec de la tienda en línea (2026-11-03): con [store], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece. La bandeja no declara permiso nuevo: usa quotations.order.manage.
         services.AddSingleton(new PermissionDefinition(
@@ -2992,6 +3080,25 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 LoansPermissions.Manage,
                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
+            // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                SupportPermissions.Read,
+                policy => AddPermissionRequirement(policy, SupportPermissions.Read))
+            .AddPolicy(
+                SupportPermissions.Manage,
+                policy => AddPermissionRequirement(policy, SupportPermissions.Manage))
+            .AddPolicy(
+                SupportPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, SupportPermissions.SettingsManage))
+            // Plan D5: ver tickets acepta leer o gestionar, y D15: leer los ajustes acepta además configurar. Un solo claim con
+            // varios valores permitidos; no son permisos, así que no se asignan a roles.
+            .AddPolicy(
+                SupportPolicies.TicketView,
+                policy => AddAnyPermissionRequirement(policy, SupportPermissions.Read, SupportPermissions.Manage))
+            .AddPolicy(
+                SupportPolicies.SettingsView,
+                policy => AddAnyPermissionRequirement(
+                    policy, SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage))
             // Spec de la tienda en línea: sin esta política, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 StorePermissions.SettingsManage,
@@ -3008,5 +3115,13 @@ public static class QepServiceCollectionExtensions
     {
         policy.RequireAuthenticatedUser();
         policy.RequireClaim(QepClaimTypes.Permission, permission);
+    }
+
+    private static void AddAnyPermissionRequirement(
+        AuthorizationPolicyBuilder policy,
+        params string[] permissions)
+    {
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(QepClaimTypes.Permission, permissions);
     }
 }

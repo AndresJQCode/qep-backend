@@ -283,8 +283,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   una sentencia más antes de la de Shopify, que sigue siendo la última. Renombrar esa columna compila y rompe la fusión en
   ejecución; la amarran `CustomerMergeReferencesTests` y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los veintidós módulos construidos son ApiAccess, Audit, Authorization, Buyers, Catalog, Companies, Customers, Geography,
-  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Store, Suppliers y Tenancy — cada
+  Los veintitrés módulos construidos son ApiAccess, Audit, Authorization, Buyers, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Store, Suppliers, Support y Tenancy — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
@@ -550,10 +550,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   mano: no siguen solas a la migración) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
   (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que resuelven el checker real del contenedor y lo
   corren contra el esquema de las migraciones.
-- **`CustomerMergeReferences` escribe en cinco esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
-  quotations, pos, pipeline, messaging y shopify: es SQL crudo en Bootstrapper sobre `quotations.quotations`/`orders.client_id`,
-  `pos.sales.customer_id`, `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`,
-  `messaging.conversations.customer_id`, `messaging.campaigns.audience_customer_ids` y `shopify.orders.qep_customer_id`, sobre la
+- **`CustomerMergeReferences` escribe en ocho esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
+  quotations, pos, pipeline, messaging, billing, loans, support y shopify: es SQL crudo en Bootstrapper sobre
+  `quotations.quotations`/`orders.client_id`, `pos.sales.customer_id`,
+  `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`, `messaging.conversations.customer_id`,
+  `messaging.campaigns.audience_customer_ids`, `billing.services`/`charges`/`customer_profiles.customer_id`,
+  `loans.loans.customer_id`, `support.tickets.customer_id` (sin subir `version`, como el préstamo) y `shopify.orders.qep_customer_id`, sobre la
   conexión del `CustomersDbContext` para quedar dentro de su transacción. Renombrar una de esas columnas compila y la fusión
   responde 500 (`42703`); como todo es una transacción, no fusiona nada. Lo amarran `CustomerMergeReferencesTests` (réplicas
   hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
@@ -829,6 +831,26 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Open && PaymentStatus == PaymentPending && PaymentProofs.Count == 0 && !IsPrepared && !IsInvoiced` (D5 y spec 2026-11-10, `Order.CanBeCancelledByBuyer`: un pedido con cualquier comprobante, preparado o facturado ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
 - **`Order.LinkBuyerAccount` no sube `Version`, pero `Version` es token de concurrencia.** El enlace del alta diferida es invisible para el `If-Match` de la consola, y aun así su `UPDATE` lleva `WHERE version = …`: si otra escritura ganó, `BuyerOrderGateway.LinkAsync` relee y reintenta una vez (sólo si sigue vacío). El checkout resuelve la sesión del comprador siempre que llega el header, no sólo con `updateProfile`; `ScalarTextAsync` de las pruebas de Store devuelve `""` para un `NULL`.
 - **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`. `BuyerNotes` la escribe sólo `CreateFromStore` y nada más la toca; un método nuevo que la edite le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill).
+- **`support.ticket.view` es una política, no un permiso: exige `support.ticket.read` o `support.ticket.manage`** (plan de soporte
+  fase 1, D5; el owner fijó que quien tenga cualquiera de los dos ve todos los tickets del tenant). Vive en `SupportPolicies.TicketView`,
+  fuera de `SupportPermissions`, para que no se cuente ni se asigne como permiso, y se registra con `AddAnyPermissionRequirement`
+  (`QepServiceCollectionExtensions`); `SupportPolicies.SettingsView` (`support.settings.view`) hace lo mismo con `read`, `manage` o
+  `support.settings.manage`. Una ruta de lectura de Soporte con `RequireAuthorization(SupportPermissions.Read)` deja afuera a un rol con
+  sólo `manage`, y el handler tiene que revalidar con la misma regla (`SupportAuthorization.EnsureCanViewAsync` /
+  `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
+- **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
+  `tickets.assignee_member_id` y `ticket_events.actor_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
+  referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
+  `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
+  nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
+- **Las pruebas de plazos de Soporte comparten un host por clase con el reloj movible: `ClockedSupportHost`** (`SupportTicketsApiTests`,
+  `SupportTicketActionsApiTests`, `SupportInboxApiTests`). Rompe a propósito la regla de «una prueba que toca el reloj levanta su host»:
+  el `ITenantClock` del host es un `MutableTenantClock` y lo comparten sólo las pruebas de esa clase. Hoy es seguro porque xUnit corre
+  las pruebas de una clase una tras otra, `StartTestAsync()` devuelve el reloj a `ClockedSupportHost.Reception` (viernes
+  2026-11-13 10:00 en Bogotá) antes de cada una, y cada prueba siembra su propio tenant y sólo afirma sobre él. Se rompe, con fallas
+  que dependen del orden, si una prueba nueva usa el host sin llamar a `StartTestAsync()` (hereda el reloj que dejó la anterior) o si se
+  activa el paralelismo dentro de la clase (dos pruebas moverían el mismo reloj). Una prueba que necesite otra configuración del host
+  levanta el suyo.
 
 ## Verificación
 
@@ -842,9 +864,10 @@ Los comandos (`restore` / `format` / `build` / `test`) están en
   `triage_decisions`; `origin_conversation_id` de otros negocios a `NULL`), `pos.sales`, `shopify.orders`, `billing.customer_profiles`
   y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
   `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado
-  cotizaciones, pedidos, préstamos, contratos de servicio (y sus cobros) y una conversación bloqueada.
+  cotizaciones, pedidos, préstamos, contratos de servicio (y sus cobros), tickets de soporte (`support.tickets.customer_id`, motivo
+  `supportTickets`, en cualquier estado: también uno cerrado) y una conversación bloqueada.
 - **`CustomerReferenceLock` serializa el borrado contra quien referencia al cliente** (advisory lock por cliente, `Exclusive` para el
-  borrado, `Shared` para escritores). Lo toman las unidades de trabajo de Quotations, Loans y ServiceContracts; en Messaging, el ingreso
+  borrado, `Shared` para escritores). Lo toman las unidades de trabajo de Quotations, Loans, ServiceContracts y Support; en Messaging, el ingreso
   (entrante y coexistencia), el opener, el cambio de cliente y el despacho de campañas, con **un solo candado compartido antes de
   cualquier candado de fila de conversación**. El borrado además toma el candado por conversación del runner de Automations
   (`AutomationsConversationLock.Namespace`) antes del `FOR UPDATE` de `conversations`: sin ese orden hay un ciclo de espera que la base

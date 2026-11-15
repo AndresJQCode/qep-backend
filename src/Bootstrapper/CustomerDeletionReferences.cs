@@ -8,7 +8,7 @@ using Modules.Messaging.Domain;
 namespace Bootstrapper;
 
 /// <summary>
-/// Adapta Quotations, Loans, ServiceContracts, Messaging, Automations, Pipeline, Pos, Geography y Shopify al puerto
+/// Adapta Quotations, Loans, ServiceContracts, Support, Messaging, Automations, Pipeline, Pos, Geography y Shopify al puerto
 /// <see cref="ICustomerDeletionReferences"/> de Customers (spec 2026-11-10, borrar clientes, §4.2, §4.3 y §5). Vive en el
 /// composition root por la misma razón que <see cref="CustomerMergeReferences"/>: Customers no referencia los otros módulos
 /// (<c>CustomersLayerTests</c>) y el acoplamiento entre esquemas se cablea acá.
@@ -24,7 +24,7 @@ namespace Bootstrapper;
 ///
 /// **Lo que lee por nombre.** <c>quotations.quotations.client_id</c>, <c>quotations.orders.client_id</c>,
 /// <c>loans.loans.customer_id</c>, <c>billing.services.customer_id</c>, <c>billing.charges.customer_id</c>,
-/// <c>billing.customer_profiles.customer_id</c>; en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
+/// <c>billing.customer_profiles.customer_id</c>, <c>support.tickets.customer_id</c>; en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
 /// <c>blocked_at</c>), <c>messages</c> (<c>conversation_id</c>, <c>direction</c>), <c>message_media.storage_key</c>,
 /// <c>scheduled_messages.media_storage_key</c>, <c>automation_inbox.conversation_id</c>, <c>campaign_recipients</c>
 /// (<c>customer_id</c>, <c>conversation_id</c>, <c>message_id</c>, <c>status</c>, <c>failure_code</c>, <c>failure_reason</c>) y
@@ -102,6 +102,10 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
                 SELECT customer_id AS "Value" FROM billing.services WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
                 UNION
                 SELECT customer_id AS "Value" FROM billing.charges WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+                """).ToListAsync(cancellationToken)],
+            // D4 (spec de soporte 2026-11-14): cualquier ticket, abierto o cerrado, bloquea, como cotizaciones y pedidos.
+            [CustomerDeletionBlockReasons.SupportTickets] = [.. await database.SqlQuery<Guid>($"""
+                SELECT DISTINCT customer_id AS "Value" FROM support.tickets WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
                 """).ToListAsync(cancellationToken)],
         };
 
