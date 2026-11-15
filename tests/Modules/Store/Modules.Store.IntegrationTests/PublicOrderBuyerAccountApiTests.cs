@@ -106,6 +106,14 @@ public sealed class PublicOrderBuyerAccountApiTests
             Assert.Equal(HttpStatusCode.NoContent, verified.StatusCode);
         }
 
+        public async Task ExecuteAsync(string sql)
+        {
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new NpgsqlCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
         public async Task<long> CountAsync(string sql)
         {
             await using var connection = new NpgsqlConnection(ConnectionString);
@@ -115,7 +123,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         }
     }
 
-    private static async Task<Rig> OpenRigAsync(Action<IServiceCollection>? configure = null, string[]? salesCountries = null)
+    internal static async Task<Rig> OpenRigAsync(Action<IServiceCollection>? configure = null, string[]? salesCountries = null)
     {
         var fixture = await OpenAsync(
             (_, body) =>
@@ -166,7 +174,7 @@ public sealed class PublicOrderBuyerAccountApiTests
             Task.FromResult(true);
     }
 
-    private static Dictionary<string, object?> Billing(Rig rig, string email = "ana@test.co") => new()
+    internal static Dictionary<string, object?> Billing(Rig rig, string email = "ana@test.co") => new()
     {
         ["name"] = "Ana Pérez",
         ["identificationType"] = "CC",
@@ -180,7 +188,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         ["cityName"] = null,
     };
 
-    private static Dictionary<string, object?> Body(Rig rig, Action<Dictionary<string, object?>>? tweak = null)
+    internal static Dictionary<string, object?> Body(Rig rig, Action<Dictionary<string, object?>>? tweak = null)
     {
         var body = new Dictionary<string, object?>
         {
@@ -204,7 +212,7 @@ public sealed class PublicOrderBuyerAccountApiTests
             body["createAccount"] = new { password, acceptsDataPolicy = true };
         });
 
-    private static async Task<HttpResponseMessage> SubmitAsync(Rig rig, object body, string? visitorIp = null, string? session = null)
+    internal static async Task<HttpResponseMessage> SubmitAsync(Rig rig, object body, string? visitorIp = null, string? session = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, Url("/order-requests")) { Content = JsonContent.Create(body) };
         request.Headers.Add("X-Qep-Visitor-Ip", visitorIp ?? NextIp());
@@ -216,7 +224,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         return await rig.Fixture.Storefront.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    private static async Task<JsonNode> CreatedAsync(HttpResponseMessage response)
+    internal static async Task<JsonNode> CreatedAsync(HttpResponseMessage response)
     {
         var json = await JsonAsync(response);
         Assert.True(response.StatusCode == HttpStatusCode.Created, json.ToJsonString());
@@ -445,7 +453,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         Assert.Equal(2, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
     }
 
-    private static async Task<string> LoginAsync(Rig rig, string email = "ana@test.co", string password = "una-contrasena-larga")
+    internal static async Task<string> LoginAsync(Rig rig, string email = "ana@test.co", string password = "una-contrasena-larga")
     {
         var response = await rig.PostBuyerAsync("/session", new { email, password });
         var json = await JsonAsync(response);
@@ -569,7 +577,7 @@ public sealed class PublicOrderBuyerAccountApiTests
     // ---- La cuenta en el pedido (pedidos del comprador §4.2) ----------------------------------------------------------------
 
     // ScalarTextAsync devuelve "" para un NULL de SQL (DBNull.ToString()).
-    private static async Task<string?> OrderBuyerAccountAsync(Rig rig, Guid orderId) =>
+    internal static async Task<string?> OrderBuyerAccountAsync(Rig rig, Guid orderId) =>
         await rig.ScalarTextAsync($"SELECT buyer_account_id::text FROM quotations.orders WHERE id = '{orderId}'") is { Length: > 0 } id
             ? id
             : null;
@@ -585,7 +593,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         return json;
     }
 
-    private static async Task<string> AccountIdAsync(Rig rig, string email) =>
+    internal static async Task<string> AccountIdAsync(Rig rig, string email) =>
         (await rig.ScalarTextAsync($"SELECT id::text FROM buyers.accounts WHERE email = '{email}'"))!;
 
     [Fact]

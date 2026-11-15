@@ -1068,6 +1068,11 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         }
     }
 
+    // Es SQL: lo cubre la integración (BuyerLoginOrderLinkApiTests).
+    public Task<int> LinkStoreOrdersByBillingEmailAsync(
+        Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<Order?> FindByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken)
     {

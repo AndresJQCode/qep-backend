@@ -50,6 +50,10 @@ public sealed class BuyerOrdersAdapterTests
 
         public Task<bool> LinkAsync(Guid tenantId, Guid orderId, Guid buyerAccountId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<int> LinkByEmailAsync(
+            Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private static BuyerOrderDetail SampleDetail() =>
