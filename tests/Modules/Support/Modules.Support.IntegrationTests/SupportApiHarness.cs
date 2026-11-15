@@ -1,3 +1,5 @@
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -178,8 +180,9 @@ internal static class SupportApiHarness
     /// La membresía activa de quien llama (<see cref="SubjectId"/>) en el tenant: la que actúa sobre un ticket y la que
     /// resuelve <c>assignee=me</c>. Sin ella el stub sólo trae permisos y el handler responde 403.
     /// </summary>
+    /// <remarks>Con el host compartido cada prueba pasa su propio <paramref name="subjectId"/>: el usuario es único en la base.</remarks>
     public static async Task<Guid> SeedCallerMembershipAsync(
-        QepApiFactory factory, string displayName, string role = "admin", string tenantId = TenantId)
+        QepApiFactory factory, string displayName, string role = "admin", string tenantId = TenantId, string subjectId = SubjectId)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
@@ -187,7 +190,7 @@ internal static class SupportApiHarness
         var ct = TestContext.Current.CancellationToken;
         var now = DateTimeOffset.UtcNow;
 
-        var user = User.CreateInvited(UserId.Parse(SubjectId), $"caller-{tenantId[^12..]}@example.com", now);
+        var user = User.CreateInvited(UserId.Parse(subjectId), $"caller-{subjectId[^12..]}-{tenantId[^12..]}@example.com", now);
         identity.Users.Add(user);
         var membership = Membership.CreateActive(
             MembershipId.New(), user.Id.Value, new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId)), [role], "test", now);
@@ -251,6 +254,33 @@ internal static class SupportApiHarness
 
     public static async Task<string> BodyAsync(HttpResponseMessage response) =>
         await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+    // Desde el texto y no desde el stream: así se puede leer el mismo cuerpo dos veces (el código y después los errores).
+    public static async Task<JsonElement> JsonAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        return document.RootElement.Clone();
+    }
+
+    /// <summary>El <c>code</c> del problema (contrato de <c>ApiExceptionHandler</c>).</summary>
+    public static async Task<string?> CodeOfAsync(HttpResponseMessage response) =>
+        (await JsonAsync(response)).TryGetProperty("code", out var code) ? code.GetString() : null;
+
+    /// <summary>Las claves del mapa <c>errors</c> de un 422 <c>validation.failed</c>.</summary>
+    public static async Task<IReadOnlyList<string>> ErrorKeysAsync(HttpResponseMessage response) =>
+        (await JsonAsync(response)).GetProperty("errors").EnumerateObject().Select(property => property.Name).ToList();
+
+    /// <summary>Un <c>PUT</c> con <c>If-Match</c>; <paramref name="version"/> null lo manda sin el header.</summary>
+    public static async Task<HttpResponseMessage> PutAsync(HttpClient client, string url, object body, long? version)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, url) { Content = JsonContent.Create(body) };
+        if (version is { } value)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", $"\"{value}\"");
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
 
     /// <param name="configureServices">
     /// Sustituciones de servicios para la prueba; corre después del registro de la aplicación.

@@ -53,9 +53,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         settings.HasKey(value => value.TenantId);
         settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
         settings.Property<long>("NextTicketNumber").HasColumnName("next_ticket_number").HasDefaultValue(1L);
-        settings.Property(value => value.DueSoonBusinessDays)
-            .HasColumnName("due_soon_business_days")
-            .HasDefaultValue(SupportTenantSettings.DefaultDueSoonBusinessDays);
+        // Sin HasDefaultValue en el modelo: con él EF tomaría el 0 de C# como «sin valor» y escribiría el default, y 0 es un umbral
+        // válido (apaga «por vencer»). El DEFAULT 3 de la columna sí existe (migración InitialSupport): lo usa el INSERT del
+        // aprovisionador.
+        settings.Property(value => value.DueSoonBusinessDays).HasColumnName("due_soon_business_days");
         settings.Property<DateTimeOffset>("CreatedAt").HasColumnName("created_at");
         settings.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         settings.Property(value => value.Version)

@@ -18,10 +18,14 @@ public static class SupportAuditActions
 
     public const string TicketTypesReordered = "support.ticket_type.reordered";
 
+    public const string SettingsUpdated = "support.settings.updated";
+
     public static class Resources
     {
         public const string Ticket = "ticket";
 
         public const string TicketType = "ticket_type";
+
+        public const string Settings = "settings";
     }
 }

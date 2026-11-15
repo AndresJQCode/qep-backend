@@ -105,9 +105,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnName("created_at");
 
                     b.Property<int>("DueSoonBusinessDays")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
-                        .HasDefaultValue(3)
                         .HasColumnName("due_soon_business_days");
 
                     b.Property<long>("NextTicketNumber")

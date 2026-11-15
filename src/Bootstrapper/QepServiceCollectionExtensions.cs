@@ -464,6 +464,27 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
+
+        // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
+        // responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketTypesQuery, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
+            Modules.Support.Application.ListTicketTypesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
+            Modules.Support.Application.CreateTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
+            Modules.Support.Application.UpdateTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ReorderTicketTypesCommand, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
+            Modules.Support.Application.ReorderTicketTypesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetSupportSettingsQuery, Modules.Support.Application.SupportSettingsDto>,
+            Modules.Support.Application.GetSupportSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
+            Modules.Support.Application.UpdateSupportSettingsHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -1128,6 +1149,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
