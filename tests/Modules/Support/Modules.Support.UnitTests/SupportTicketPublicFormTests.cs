@@ -44,6 +44,23 @@ public sealed class SupportTicketPublicFormTests
     public void AnAnonymousTicketCannotCarryACustomer() =>
         Assert.Throws<ArgumentException>(() => FromForm(requester: null, customerId: Guid.CreateVersion7()));
 
+    // Revisión final, I1: la promesa a quien radicó sin datos (spec §9.4) la cumple el agregado, no la pantalla. Ningún camino de la
+    // consola le pone cliente a un anónimo.
+    [Fact]
+    public void AnAnonymousTicketRejectsACustomerLink()
+    {
+        var ticket = FromForm(requester: null);
+
+        var exception = Assert.Throws<SupportDomainException>(
+            () => ticket.LinkCustomer(Guid.CreateVersion7(), Guid.CreateVersion7(), Received.AddHours(1)));
+
+        Assert.Equal("support.ticket.anonymous_has_no_customer", exception.Code);
+        Assert.Equal(SupportErrorCodes.AnonymousHasNoCustomer, exception.Code);
+        Assert.Null(ticket.CustomerId);
+        Assert.Single(ticket.Events);
+        Assert.Equal(1L, ticket.Version);
+    }
+
     [Fact]
     public void ANamedTicketRepliesByEmail()
     {

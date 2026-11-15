@@ -107,11 +107,13 @@ public sealed class SupportTicketDtoComposer(
     }
 
     // Plan F21: sin cliente y con documento en la foto, los clientes con ese documento (si customers está prendido): al radicar no se
-    // vinculó porque había cero o varios. Con cliente, o sin documento, no hay candidatos.
+    // vinculó porque había cero o varios. Con cliente, o sin documento, no hay candidatos; un anónimo nunca los tiene, porque no se le
+    // puede vincular cliente (revisión final, I1).
     private async Task<IReadOnlyList<SupportCustomerCandidateDto>> CustomerCandidatesAsync(
         SupportTicket ticket, CancellationToken cancellationToken)
     {
-        if (ticket.CustomerId is not null
+        if (ticket.IsAnonymous
+            || ticket.CustomerId is not null
             || ticket.Requester is not { DocumentType: { } type, DocumentNumber: { } number }
             || await tenantModules.FindAsync(ticket.TenantId, cancellationToken) is not { } modules
             || !modules.IsEnabled(TenantModuleKeys.Customers))

@@ -348,10 +348,17 @@ public sealed class SupportTicket
 
     /// <summary>Desvincular deja la foto del solicitante; si no hay foto con nombre, el ticket quedaría sin nadie y se rechaza
     /// (pre-flight R11). Resuelto o cerrado se rechaza (R9); la fusión de clientes mueve tickets en cualquier estado, pero por SQL y
-    /// sin pasar por acá (<c>CustomerMergeReferences</c>).</summary>
+    /// sin pasar por acá (<c>CustomerMergeReferences</c>). Un anónimo no recibe cliente (spec §9.4): quien radicó sin datos no aparece
+    /// en la ficha de nadie.</summary>
     public void LinkCustomer(Guid? customerId, Guid actorMemberId, DateTimeOffset now)
     {
         EnsureEditable();
+        if (IsAnonymous && customerId is not null)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.AnonymousHasNoCustomer, "An anonymous ticket cannot be linked to a customer.");
+        }
+
         if (customerId == CustomerId)
         {
             return;

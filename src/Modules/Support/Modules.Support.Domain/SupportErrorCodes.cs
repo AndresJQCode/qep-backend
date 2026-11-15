@@ -108,6 +108,9 @@ public static class SupportErrorCodes
     /// </summary>
     public const string PublicAttachmentInvalid = "support.public.attachment_invalid";
 
+    /// <summary>Revisión final, I1: un ticket anónimo no guarda cliente (spec §9.4). Lo rechaza el agregado, para todo camino.</summary>
+    public const string AnonymousHasNoCustomer = "support.ticket.anonymous_has_no_customer";
+
     /// <summary>Completar antes de que el navegador termine el PUT: el archivo todavía no está en el bucket (428).</summary>
     public const string PublicAttachmentNotUploaded = "support.public.attachment_not_uploaded";
 

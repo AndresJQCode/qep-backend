@@ -121,9 +121,10 @@ public sealed record SupportAttachmentDto(Guid Id, string FileName, string MimeT
 /// <summary>La URL firmada de un adjunto: vive 5 minutos y baja el archivo con su nombre.</summary>
 public sealed record SupportAttachmentDownloadDto(string Url);
 
-// Fase 3 (formulario público): IsAnonymous apaga en la pantalla todo lo que pide un solicitante (sólo se responde por la página);
+// Fase 3 (formulario público): IsAnonymous apaga en la pantalla todo lo que pide un solicitante (sólo se responde por la página), y el
+// backend rechaza vincularle cliente (support.ticket.anonymous_has_no_customer);
 // CustomerCandidates son los clientes con el documento de la foto cuando el ticket no tiene cliente (cero o varios al radicar, plan
-// F21), para vincular uno sin buscarlo; ConsultAccess dice si la información con el PIN salió, por dónde y por qué no.
+// F21), para vincular uno sin buscarlo, y siempre vacía en un anónimo; ConsultAccess dice si la información con el PIN salió, por dónde y por qué no.
 
 /// <summary>Un cliente con el mismo documento que el solicitante. <c>IsActive</c> como en <see cref="SupportCustomerRefDto"/>.</summary>
 public sealed record SupportCustomerCandidateDto(Guid Id, string Name, bool IsActive);
