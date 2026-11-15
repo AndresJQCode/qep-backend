@@ -1183,7 +1183,9 @@ Notas:
 Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de la petición; el tenant sale del host, nunca del cuerpo.
 
 - `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status` (`Open` \| `Archived` \| `Cancelled`), `paymentStatus`, `fulfillmentStatus` (`NotPrepared` \| `Prepared`), `invoiced`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`, `isStorePickup` (en la lista para que la tienda muestre «Listo para recoger» o «Enviado» sin abrir el detalle). `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`), `cancelledAt`, `subtotal`, `taxAmount`, `freightTotal` (`subtotal + taxAmount + freightTotal == total`), `carrierName`, `billedTo` (`FinalConsumer | BillingParty | Customer`), `billing` (sólo con `BillingParty`), `shipping` (sin correo ni documento; `null` con recogida) y `buyerNotes`. Con excedente de IVA, las líneas van sin IVA.
-- **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: salvo el pedido que pidió el alta diferida (punto 2), un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
+- **Sólo aparecen los pedidos enlazados a la cuenta** (`buyer_account_id`). Desde el spec 2026-11-15 el enlace también llega por el correo de
+  facturación (puntos 3 y 4), así que un pedido hecho como invitado aparece en cuanto su comprador inicia sesión en esa tienda con una cuenta
+  verificada del mismo correo; los anteriores al despliegue también (spec 2026-11-15 §3.4). Un pedido sin cuenta no se lista ni se puede abrir.
 - **Cómo llega la cuenta al pedido** (`quotations.orders.buyer_account_id`, sin FK):
   1. **En el checkout.** Si llega `X-Qep-Buyer-Session`, Store resuelve la cuenta **antes** de crear el pedido, con o sin `updateProfile`. Una sesión que no
      sirve (vencida, de otro host, de cuenta borrada) o una falla de Buyers (queda un `Warning`) deja un pedido de invitado; sin `updateProfile` el recibo
@@ -1192,6 +1194,17 @@ Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de 
      mensaje (`IBuyerOrderLinker`, después del commit del alta y fuera de él). Si el email ya tenía una cuenta verificada no se enlaza nada: esa rama no
      toca la cuenta. El enlace sólo escribe si el pedido no tiene cuenta, así que nunca pisa la del checkout; si falla, queda un `Warning` y el pedido
      sin cuenta, sin reintento.
+  3. **En el checkout, por el correo de facturación** (spec 2026-11-15 §3.1). Si la sesión no resolvió cuenta, Store busca la cuenta **verificada**
+     del correo de facturación, normalizado como en Buyers (`BuyerEmail.TryNormalize`), y la pone en el pedido. La sesión gana siempre: con una
+     sesión válida va su cuenta aunque el correo sea otro. Una cuenta sin verificar no enlaza, y una falla de la búsqueda deja el pedido de invitado
+     (queda un `Warning`, sin el correo).
+  4. **Al iniciar sesión** (spec 2026-11-15 §3.2). Después de confirmar la sesión y fuera de su transacción, `POST /buyer/session` enlaza los pedidos
+     del tenant de la tienda con origen `Store`, sin cuenta, sin decisión del asesor y cuyo correo de facturación recortado y en minúsculas es el de
+     la cuenta. Una sola sentencia que no sube la versión. Una falla (también una cancelación) se registra con el id de la cuenta y el ingreso
+     responde igual.
+- **La decisión del asesor manda** (`quotations.orders.buyer_account_set_by_member`). Cuando alguien de la consola cambia o quita la cuenta
+  (`PUT`/`DELETE /orders/{id}/buyer-account`, ver «Cuenta de comprador del pedido» en § Pedidos), la marca queda en `true` y ningún camino
+  automático (alta diferida, inicio de sesión) vuelve a tocar la cuenta de ese pedido.
 - **La anulación del comprador es más estricta que la del equipo** (D5, spec 2026-11-10): sólo si `Status == Open`, `PaymentStatus == PaymentPending`, no hay ningún comprobante de pago registrado, el pedido no está preparado **y** no está facturado (`Order.CanBeCancelledByBuyer`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
 - Orden de chequeos: IP del visitante (422 `store.public.visitor_ip_required`), host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
 #### Cambios en `POST /order-requests`
@@ -1702,6 +1715,24 @@ Todos nacen `Open` y publican `quotations.order.created.v1` con `source` y `quot
 del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?source=`), el
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
+
+#### Cuenta de comprador del pedido
+
+Spec 2026-11-15 §4 (`docs/superpowers/specs/2026-11-15-store-order-buyer-link-design.md`). Sólo pedidos con `source = Store`.
+
+- El detalle (`GET /orders/{id}` y las respuestas de escritura que devuelven `OrderDetailResponse`) trae en la raíz `buyerAccount`:
+  `{ "id", "email" }` o `null`. Es `null` sin cuenta y también si la cuenta se borró: borrarla no limpia `buyer_account_id` del pedido.
+  El listado no lo trae.
+- `PUT /api/v1/tenants/{tenantId}/orders/{orderId}/buyer-account` con `{ "email": "…" }` enlaza el pedido a la cuenta **verificada** de ese
+  correo (las cuentas son de la plataforma, no del tenant). `DELETE` en la misma ruta la quita; sobre un pedido sin cuenta también vale y
+  significa «no lo enlaces solo».
+- Los dos: permiso `quotations.order.manage`, `If-Match` con la versión del pedido (sin él `428 precondition.if_match_required`, viejo
+  `412 concurrency.conflict`), responden `200` con el `OrderDetailResponse` completo y el `ETag` nuevo. Suben la versión, ponen la marca
+  `buyer_account_set_by_member` y auditan `quotation.order.buyer_account_changed` con el id anterior y el nuevo, nunca correos. Un `PUT` con
+  la misma cuenta y la marca ya puesta responde `200` sin cambiar nada.
+- Errores: `422 validation.failed` (`Email` vacío, inválido o de más de 254 caracteres), `422 order.buyer_account.not_found` (no hay cuenta
+  con ese correo o no está verificada: un solo código para los dos), `422 order.order.source_invalid` (el pedido no es de la tienda), `403`
+  (sin permiso o de otro tenant, nunca 404).
 
 #### Los cuatro ejes del pedido
 
