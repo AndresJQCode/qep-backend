@@ -21,7 +21,7 @@ public sealed class ListConversationTicketsHandler(
     SupportTicketDtoComposer composer)
     : IQueryHandler<ListConversationTicketsQuery, SupportConversationTicketsDto>
 {
-    public const string MessagingDisabled = "messaging_disabled";
+    public const string MessagingDisabled = SupportChannelReasons.MessagingDisabled;
 
     public const string NoPermission = "no_permission";
 

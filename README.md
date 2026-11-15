@@ -5001,6 +5001,33 @@ correo cuando el canal la rechazó o falló (`send_failed`, `window_closed`, `co
 `attachment_unavailable`…), o un código de error de Soporte cuando un retomado ya no tenía ruta (`support.ticket.no_conversation`,
 `support.ticket.reply_channel_unavailable`).
 
+**Códigos de falla.** Todo código que la pantalla lee de Soporte —el `failureCode` de una respuesta, el `ConsultAccess.FailureCode` de la
+información con el PIN y el `reason` de `reply-options`— sale de una sola lista, `SupportChannelReasons`
+(`Modules.Support.Application/ISupportReplyChannels.cs`). Los que vienen de Mensajería son copia de `SupportReplyReasons`, amarrada por
+`SupportFailureCodeParityTests`. El frontend traduce por esta lista.
+
+| Código | Cuándo | Dónde se ve |
+| --- | --- | --- |
+| `window_closed` | La ventana de 24 h está cerrada | Respuesta, PIN, `reply-options` |
+| `contact_blocked` | El contacto está bloqueado | Respuesta, `reply-options` |
+| `template_not_approved` | La conexión no tiene aprobada «Aviso de respuesta» | Respuesta, `reply-options` |
+| `template_text_invalid` | El texto no cabe en un parámetro de Meta | Respuesta |
+| `recipient_invalid` | El nombre o el radicado no caben en la plantilla | Respuesta |
+| `text_invalid` | El texto no cumple la regla del canal (tope de Instagram) | Respuesta, PIN |
+| `connection_unavailable` | La conexión está pausada, borrada o pide atención | Respuesta, PIN, `reply-options` |
+| `conversation_not_found` | La conversación ya no existe | Respuesta, PIN |
+| `attachment_unavailable` | El adjunto no está disponible para esa conversación | Respuesta |
+| `channel_unsupported` | Instagram no tiene plantillas | Respuesta |
+| `customer_not_found` | Abrir la conversación chocó con un cliente borrado | Respuesta |
+| `send_failed` | El canal intentó y no salió | Respuesta, PIN |
+| `no_conversation` | El ticket no tiene conversación | `reply-options` |
+| `messaging_disabled` | Mensajería está apagada en el tenant | `reply-options`, ficha de la conversación |
+| `no_mobile` | La foto no tiene celular para la plantilla | `reply-options` |
+| `no_email` | La foto no tiene correo | `reply-options` |
+| `no_author` | Ningún miembro activo puede firmar el envío por Mensajería (plan F11) | PIN |
+| `portal_only` | Un anónimo sólo se responde por la página de consulta | `reply-options` |
+| `portal_unavailable` | La página de consulta sólo responde a anónimos | `reply-options` |
+
 **Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
 la pantalla lo sube con la sesión de subida de Mensajería
 (`POST /api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages/media/upload-session`, que exige

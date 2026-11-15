@@ -12,22 +12,9 @@ internal sealed record SupportThreadAvailability(
     SupportReplyRoute? Route, string? Reason, string? ErrorCode, DateTimeOffset? WindowClosesAt);
 
 /// <summary>Las reglas de la respuesta que comparten <c>reply-options</c> y el envío (plan E13 a E15), para que la pantalla prometa lo
-/// mismo que el envío hace.</summary>
+/// mismo que el envío hace. Los motivos son de <see cref="SupportChannelReasons"/> (Tarea 8a: un solo vocabulario).</summary>
 internal static class SupportReplyRules
 {
-    public const string NoConversation = "no_conversation";
-    public const string MessagingDisabled = "messaging_disabled";
-    public const string WindowClosed = "window_closed";
-    public const string ContactBlocked = "contact_blocked";
-    public const string TemplateNotApproved = "template_not_approved";
-    public const string NoMobile = "no_mobile";
-    public const string NoEmail = "no_email";
-    public const string ConnectionUnavailable = "connection_unavailable";
-
-    // Fase 3 (plan F12): los motivos de reply-options que acompañan a support.reply.portal_only y support.reply.portal_unavailable.
-    public const string PortalOnly = "portal_only";
-    public const string PortalUnavailable = "portal_unavailable";
-
     /// <summary>
     /// Plan E13: dentro de la ventana de 24 h, texto; fuera, en WhatsApp la plantilla «Aviso de respuesta» a la misma conversación si su
     /// conexión la tiene aprobada, y en Instagram nada (no tiene plantillas). Un contacto bloqueado no recibe nada, y por una conexión que
@@ -38,24 +25,26 @@ internal static class SupportReplyRules
     {
         if (ticket.ConversationId is not { } conversationId)
         {
-            return new SupportThreadAvailability(null, NoConversation, SupportErrorCodes.NoConversation, null);
+            return new SupportThreadAvailability(null, SupportChannelReasons.NoConversation, SupportErrorCodes.NoConversation, null);
         }
 
         var thread = await channels.FindThreadAsync(ticket.TenantId, conversationId, cancellationToken);
         if (thread is null)
         {
-            return new SupportThreadAvailability(null, NoConversation, SupportErrorCodes.ConversationNotFound, null);
+            return new SupportThreadAvailability(
+                null, SupportChannelReasons.NoConversation, SupportErrorCodes.ConversationNotFound, null);
         }
 
         if (thread.Blocked)
         {
-            return new SupportThreadAvailability(null, ContactBlocked, SupportErrorCodes.ReplyContactBlocked, thread.WindowClosesAt);
+            return new SupportThreadAvailability(
+                null, SupportChannelReasons.ContactBlocked, SupportErrorCodes.ReplyContactBlocked, thread.WindowClosesAt);
         }
 
         if (!thread.ConnectionOperational)
         {
             return new SupportThreadAvailability(
-                null, ConnectionUnavailable, SupportErrorCodes.ReplyConnectionUnavailable, thread.WindowClosesAt);
+                null, SupportChannelReasons.ConnectionUnavailable, SupportErrorCodes.ReplyConnectionUnavailable, thread.WindowClosesAt);
         }
 
         if (thread.WindowClosesAt is { } closesAt && closesAt > now)
@@ -66,14 +55,15 @@ internal static class SupportReplyRules
 
         if (thread.Channel == SupportConversationRef.Instagram)
         {
-            return new SupportThreadAvailability(null, WindowClosed, SupportErrorCodes.ReplyWindowClosed, thread.WindowClosesAt);
+            return new SupportThreadAvailability(
+                null, SupportChannelReasons.WindowClosed, SupportErrorCodes.ReplyWindowClosed, thread.WindowClosesAt);
         }
 
         return await channels.IsTemplateApprovedAsync(ticket.TenantId, thread.ConnectionId, cancellationToken)
             ? new SupportThreadAvailability(
                 new SupportReplyRoute(SupportReplyDelivery.Template, conversationId, null, null), null, null, thread.WindowClosesAt)
             : new SupportThreadAvailability(
-                null, TemplateNotApproved, SupportErrorCodes.ReplyTemplateNotApproved, thread.WindowClosesAt);
+                null, SupportChannelReasons.TemplateNotApproved, SupportErrorCodes.ReplyTemplateNotApproved, thread.WindowClosesAt);
     }
 
     /// <summary>El código de Soporte de cada motivo con que un canal rechaza un envío (ruling C-R1).</summary>

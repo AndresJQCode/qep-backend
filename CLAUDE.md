@@ -946,6 +946,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El cuerpo de la plantilla `SupportReply` no termina ni empieza con una variable** (Meta rechaza esos cuerpos). El texto base cierra
   con «Si tienes dudas, responde este mensaje.» y `TheBaseBodyNeitherStartsNorEndsWithAVariable` lo amarra. Un texto propio de un tenant
   (cuerpo de `POST …/template-management/support-reply`) tiene la misma restricción en Meta; la aprobación es por conexión.
+- **Un código de falla nuevo de Soporte va a `SupportChannelReasons` y, si sale de Mensajería, también a su copia en
+  `SupportReplyOutbound`; `SupportFailureCodeParityTests` los amarra. El frontend traduce por esta lista** (Tarea 8a, owner 2026-11-15).
+  Es el único vocabulario del `failureCode` de una respuesta, del `ConsultAccess.FailureCode` y del `reason` de `reply-options`: un
+  literal suelto en `Modules.Support.*` es un código que la pantalla no conoce.
 - **El formulario público de Soporte (`/api/v1/public/support/{tenantSlug}`) no se prueba con el stub de auth** (fase 3). En modo stub
   `RequireCsrfHeaderMiddleware` ni se registra y la cookie no se valida: una prueba con stub pasa aunque la exención por prefijo
   (`SupportPublicPaths`, duplicado de `PublicSupportEndpoints.GroupPattern` y atado por `SupportPublicPathsTests`) esté rota o un handler

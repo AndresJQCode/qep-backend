@@ -28,9 +28,9 @@ public sealed class GetReplyOptionsHandler(
         // Plan F12: un anónimo sólo se responde por la página de consulta; ningún otro canal llega a él.
         if (ticket.IsAnonymous)
         {
-            var portalOnly = new SupportChannelOptionDto(false, SupportReplyRules.PortalOnly, []);
+            var portalOnly = new SupportChannelOptionDto(false, SupportChannelReasons.PortalOnly, []);
             return new SupportReplyOptionsDto(
-                new SupportThreadOptionDto(false, SupportReplyRules.PortalOnly, null, null, false),
+                new SupportThreadOptionDto(false, SupportChannelReasons.PortalOnly, null, null, false),
                 portalOnly,
                 portalOnly,
                 nameof(SupportReplyChannel.Portal),
@@ -45,8 +45,8 @@ public sealed class GetReplyOptionsHandler(
         SupportChannelOptionDto template;
         if (!messagingOn)
         {
-            thread = new SupportThreadOptionDto(false, SupportReplyRules.MessagingDisabled, null, null, false);
-            template = new SupportChannelOptionDto(false, SupportReplyRules.MessagingDisabled, []);
+            thread = new SupportThreadOptionDto(false, SupportChannelReasons.MessagingDisabled, null, null, false);
+            template = new SupportChannelOptionDto(false, SupportChannelReasons.MessagingDisabled, []);
         }
         else
         {
@@ -67,7 +67,7 @@ public sealed class GetReplyOptionsHandler(
         }
 
         var email = string.IsNullOrWhiteSpace(ticket.Requester?.Email)
-            ? new SupportChannelOptionDto(false, SupportReplyRules.NoEmail, [])
+            ? new SupportChannelOptionDto(false, SupportChannelReasons.NoEmail, [])
             : new SupportChannelOptionDto(true, null, []);
 
         return new SupportReplyOptionsDto(
@@ -75,20 +75,20 @@ public sealed class GetReplyOptionsHandler(
             template,
             email,
             DefaultChannel(ticket.ReplyChannel, thread, template, email),
-            new SupportChannelOptionDto(false, SupportReplyRules.PortalUnavailable, []));
+            new SupportChannelOptionDto(false, SupportChannelReasons.PortalUnavailable, []));
     }
 
     private async Task<SupportChannelOptionDto> TemplateWithoutConversationAsync(SupportTicket ticket, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(ticket.Requester?.MobilePhone))
         {
-            return new SupportChannelOptionDto(false, SupportReplyRules.NoMobile, []);
+            return new SupportChannelOptionDto(false, SupportChannelReasons.NoMobile, []);
         }
 
         var connections = await channels.ListTemplateConnectionsAsync(ticket.TenantId, cancellationToken);
         return new SupportChannelOptionDto(
             connections.Count > 0,
-            connections.Count > 0 ? null : SupportReplyRules.TemplateNotApproved,
+            connections.Count > 0 ? null : SupportChannelReasons.TemplateNotApproved,
             connections.Select(connection => new SupportConnectionOptionDto(connection.Id, connection.Name)).ToList());
     }
 
