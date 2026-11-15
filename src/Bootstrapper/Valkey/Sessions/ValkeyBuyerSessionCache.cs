@@ -59,11 +59,15 @@ internal sealed partial class ValkeyBuyerSessionCache(
             return;
         }
 
+        // Sin el token de quien llama: el segundo RemoveAsync corre después del commit, y un request cancelado ahí no puede
+
+        // saltárselo. El tope lo pone OperationTimeoutMs del gateway.
+
         var attempt = await gateway.TryAsync(
             ValkeyArea.Sessions,
             database => SessionCacheRevocation.MarkAndDeleteAsync(
                 database, sessions.Select(session => (MarkerKey(session.TokenHash), EntryKey(session.TokenHash)))),
-            cancellationToken).ConfigureAwait(false);
+            CancellationToken.None).ConfigureAwait(false);
         if (!attempt.Succeeded)
         {
             foreach (var session in sessions)
