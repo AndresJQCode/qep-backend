@@ -180,6 +180,7 @@ tenant factura con varias empresas en municipios distintos.
 | A15 | ~~Fusión por alcance~~ **Simplificada** (2026-11-12): `withholdingTaxRateIds` del cliente acepta sólo tasas de alcance nacional y una municipal es `withholding_tax_rate_municipal`. No hay asignaciones municipales guardadas que conservar (§7.4). |
 | A16 | **Tasas inactivas en la empresa.** La escritura de la empresa tolera un id ya guardado que hoy esté inactivo (se conserva) y rechaza uno **nuevo** inactivo (§7.3). La parte de la migración se retira: no hay migración (§11). |
 | A17 | ~~Despliegue conjunto~~ → owner R12. |
+| A18 | **Tolerancia del id municipal ya guardado en el documento** (owner, 2026-11-14; mismo criterio que A16 en la empresa). En un cuerpo que **no** cambia la empresa ni el municipio de la operación, un id de tipo municipal `T` en `billingWithholdingTaxRateIds` / `withholdingTaxRateIds` igual al id de la fila de `T` guardada en el documento se acepta y se conserva **tal cual**: la fila congelada (porcentaje editado incluido), sin re-resolver, sin 422 y sin evento en el historial, aunque ya no sea el `companyRate` de hoy y aunque otros selectores del mismo cuerpo cambien. Un id de `T` distinto del guardado se valida como siempre contra `companyRate` (A4). Con cambio de empresa o de municipio rige A11; en la creación no aplica (no hay fila guardada). Igual en cotización y pedido (§7.6). Motivo: la cotización reenvía la lista completa en cada guardado; sin esta regla, que la empresa reemplace su tasa de ese municipio haría 422 en todo guardado, aunque sólo cambien las notas. |
 
 ## 7. Diseño
 
@@ -392,6 +393,15 @@ ausencia de un id es ambigua (no eligió nada, o eligió «Sin retención»), la
 
 Sin cambio de empresa ni de municipio, la validación es la de siempre: un id municipal que no es `companyRate` es
 `{quotation|order}.billing.withholding_tax_rate_invalid` y un porcentaje sin fila es `…withholding_percentage_not_editable`.
+
+**Id municipal ya guardado (A18, owner 2026-11-14).** Excepción a lo anterior: sin cambio de empresa ni de municipio, un id de tipo
+municipal `T` igual al de la fila de `T` guardada en el documento (fuente de facturación propia en la cotización, filas del pedido)
+se acepta aunque ya no sea el `companyRate` de hoy, y la fila se conserva **tal cual** —el id, el porcentaje del catálogo congelado y
+el porcentaje editado—, sin re-resolver, sin 422 y sin evento en el historial. Vale también si otros selectores del mismo cuerpo
+cambian: reenviar el id guardado nunca relee el catálogo de hoy para esa fila. Un id de `T` distinto del guardado se valida contra
+`companyRate` (A4). Con cambio de empresa o de municipio rige A11; en la creación no hay fila guardada y rige la validación estricta
+de abajo. La cotización reenvía la lista completa en cada guardado (save-all): sin esta regla, que la empresa reemplace su tasa de
+ese municipio haría 422 en cada guardado de la cotización, aunque sólo cambien las notas.
 
 **En la creación (owner, 2026-11-14).** Al crear una cotización (`CreateQuotationRequest`, en `POST /quotations` y en
 `POST /quotations/preview`) el asesor elige lo mismo que en el editor: municipio de la operación, la ReteICA de facturación propia,
@@ -630,7 +640,8 @@ no se mueve (owner, 2026-11-13). En la cotización van en la raíz de `Quotation
     validan contra la empresa y el municipio del mismo cuerpo (§7.6, «En la creación», owner 2026-11-14).
 - `CreateOrderRequest` (pedido manual) no cambia (A10).
 - `billingWithholdingTaxRateIds` (cotización) y `withholdingTaxRateIds` (pedido) no cambian de forma: para un tipo municipal sólo
-  aceptan la tasa de `municipalWithholdings[].companyRate` (A4).
+  aceptan la tasa de `municipalWithholdings[].companyRate` (A4), **o** el id de la fila de ese tipo ya guardada en el documento
+  cuando el cuerpo no cambia la empresa ni el municipio; esa fila se conserva tal cual, porcentaje editado incluido (A18, §7.6).
 - Historial: `eventType` puede valer `"WithholdingRateEdited"` en las dos líneas de tiempo.
 
 ## 10. Códigos de error NUEVOS
@@ -745,6 +756,12 @@ Integración (Testcontainers, un proyecto a la vez):
   **anterior** y un porcentaje → el id se ignora sin 422, la fila sale de la re-resolución y el porcentaje se aplica sólo si queda
   una fila de ese tipo (si no, se ignora sin 422). Igual en la edición del pedido y en las dos vistas previas. Sin cambio de empresa
   ni de municipio, el id que no es `companyRate` sigue siendo `…withholding_tax_rate_invalid`.
+- Id municipal ya guardado (A18, owner 2026-11-14): (1) cotización con ReteICA Bogotá guardada; la empresa reemplaza su tasa de
+  Bogotá por otra; `PUT` de la cotización con sólo las notas cambiadas y la lista de ids completa (id viejo incluido) → 200, la fila
+  ReteICA conserva el id y el porcentaje viejos, sin evento en el historial; (2) lo mismo en el pedido (`PUT …/orders/{id}` con
+  `withholdingTaxRateIds` que incluye el id guardado) → 200; (3) con una ReteICA editada (0,8 %), un cuerpo que cambia sólo un
+  selector nacional y reenvía el id ReteICA guardado → el 0,8 % sobrevive, sin `WithholdingRateEdited`, en cotización y pedido;
+  (4) control: un id municipal que no es ni el guardado ni el `companyRate` → 422 `…withholding_tax_rate_invalid`.
 - «Sin retención» explícito (owner, 2026-11-13): (1) un `PUT` de cotización con facturación propia que cambia la empresa y trae
   `clearedWithholdingTypes: ["ReteICA"]` y un id de Retefuente → sin fila ReteICA y la Retefuente aplicada, igual en su vista previa;
   (2) lo mismo en la edición del pedido y su vista previa; (3) el mismo tipo en la marca y como id del selector (o con porcentaje no

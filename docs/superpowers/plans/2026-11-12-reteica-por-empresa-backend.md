@@ -63,6 +63,7 @@ Each is reversible by the owner; the owning task repeats it in a code comment.
 | P10 | `HistoryFormat.Percentage(decimal)` → `value.ToString("0.###", Numbers) + " %"`; the PDF uses the same pattern with `RegionalNumberFormat.Separators(numberFormat)`. | `HistoryFormat.Number` rounds to 2 decimals; 0,966 needs 3. |
 | P12 | The «Sin retención» marker is applied in Application, between selectors and percentages: `WithholdingSelection.ResolveAsync` drops cleared types from the selection it returns (no re-resolved row appended for them, P6), then the domain removes any row of that type left in the target source (`Quotation.ClearMunicipalWithholdings` on `Billing`, `Order.ClearMunicipalWithholdings`), returning the overridden rows it discarded so history logs them like the re-resolution. Type and conflict checks run first, in `MunicipalSelectionMarker.Validate`, before any domain call. | One place decides the body; the domain only removes rows and reports discarded overrides. |
 | P13 | Quotation creation (owner 2026-11-14, spec §7.6 «En la creación»): `QuotationDraftBuilder.BuildAsync` computes the creation city with `Quotation.OperationCityAtCreation(billingAccount, choice)`, resolves **one** `MunicipalContext` with it and passes that same context to `Quotation.Create` and to `QuotationEditsApplication.ApplyAsync`. Create already fixes the account and the city, so the `UpdateDetails` inside `ApplyAsync` sees the same company and the same city → `MunicipalReResolution.Triggered == false` → selectors run with `IgnoreUnmatched = false` and percentages validate as usual: on create nothing is ignored silently. No `WithholdingRateEdited` and no manual-application summary on create (the header is part of the creation, `QuotationDraftBuilder.cs:102`). | Computing the context in two places with different cities would turn creation into a "city change" and A11 would swallow a wrong id instead of 422. |
+| P14 | A18 (owner 2026-11-14, spec §6.3 A18 and §7.6): `WithholdingSelection.ResolveAsync` receives the frozen rows of the target source (quotation `Billing`, order rows). Without a context change, a municipal id equal to the frozen row's `TaxRateId` of its type skips the `AllowedMunicipalRateIds` check and returns the **frozen `WithholdingRate`** (not `candidate.Rate`), so neither a replaced company rate (422 on every save-all) nor a change of another selector (catalog photo overwriting the edited percentage) touches it. With a context change A11 rules; on create there are no frozen rows. | Same tolerance as A16 in the company; the quotation resends the full list on every save. |
 | P11 | City references in all responses share the shape `{ id, name, departmentId, departmentName }`: `TaxRateCityDto` (Catalog), `CompanyMunicipalityDto` (Companies), `CustomerMunicipalityDto` (Customers), `QuotationCityResponse` (Quotations). Existing `CompanyCityDto`/`CustomerCityRef` are not reused because their shapes differ (DIVIPOLA codes). | Spec §9.1: one "municipality reference" shape. |
 
 ## Owner decisions found while planning
@@ -81,6 +82,7 @@ Each is reversible by the owner; the owning task repeats it in a code comment.
 6. **A11 in a body that changes company or municipality** (owner 2026-11-13): the new company's ReteICA id for the resulting city is accepted and a ReteICA percentage is applied; the old company's id is ignored without 422 and the row stays the re-resolved one; a percentage with no row of its type left is ignored without 422; without a context change a non-offered id is still 422. History order: discarded override first, then the new edit. Known residual risk (spec §7.6): a non-SPA client sending a stale percentage with a company change gets it applied. Pinned in Task 11 (`WithholdingSelectionTests`), Task 12 and Task 13 (`…ChangesAcceptsTheNewCompanysRate`, `…IgnoresTheOldCompanysRate`).
 7. **«Sin retención» in the same body that changes company or municipality** (owner 2026-11-13): `clearedWithholdingTypes: ["ReteICA"]` removes the row the re-resolution left, so one send saves everything the advisor chose; the national selectors of the same body still apply. A cleared type that also comes as a municipal id or a non-null percentage is 422 `…withholding_selection_conflict` even when A11 would have ignored the id; a non-municipal type is 422 `…withholding_type_invalid`. A discarded edited percentage is logged as `WithholdingRateEdited`. Pinned in Task 11 (`MunicipalSelectionMarkerTests`), Tasks 9–10 (domain) and Tasks 12–13 (API and previews).
 8. **Creating a quotation with ReteICA** (owner 2026-11-14, P13): own billing on `POST /quotations` and `POST /quotations/preview` with the company's ReteICA id for the operation city is applied, a percentage is applied, the marker leaves no row, and a ReteICA id of another city is **422** `quotation.billing.withholding_tax_rate_invalid` — never ignored as A11 would. A creation that silently lost a wrong id means the builder resolved two different contexts. Pinned in Task 9 (`OperationCityAtCreationFollowsTheChoice`) and Task 12 (`Create…` tests).
+9. **A18, the stored municipal id** (owner 2026-11-14, P14): without a company or municipality change, resending the id of the stored municipal row keeps that frozen row as is (edited percentage included), even if the company replaced its rate for that city and even if another selector of the same body changed; no 422, no history entry. A municipal id that is neither the stored one nor the `companyRate` is still 422. Pinned in Task 14b.
 
 ---
 
@@ -524,6 +526,31 @@ One implementer. Close with Task 15.
 - [ ] **Step 3: Implement**; template label `retencion.name + " " + retencion.percentageLabel + ":"`.
 - [ ] **Step 4: GREEN** — same filter → PASS.
 - [ ] **Step 5: Commit** — `feat(quotations): print each withholding's percentage on the PDF`.
+
+### Task 14b: A18 — the stored municipal id is kept as is (owner 2026-11-14)
+
+Added after Block C (P14, Review Focus 9). Spec §6.3 A18, §7.6 «Id municipal ya guardado», §9.4, §13. It also closes the Block C
+review finding: when any selector of the body differed from the frozen ids, `WithholdingSelection.ResolveAsync` re-read every id
+from the catalog (`rates.Add(candidate.Rate)`), so an edited municipal percentage (0,8 %) went back to the catalog's 0,966 % with no
+history entry.
+
+**Files:**
+- Modify: `src/Modules/Quotations/Modules.Quotations.Application/WithholdingSelection.cs` (`ResolveAsync` gains the frozen rows of
+  the target source), its callers in `QuotationEditsApplication.cs` and `OrderEdits.cs` (and the previews that share them)
+- Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/WithholdingSelectionTests.cs`,
+  `tests/Modules/Quotations/Modules.Quotations.IntegrationTests/{QuotationMunicipalWithholdingsApiTests,OrderMunicipalWithholdingsApiTests}.cs`
+
+- [ ] **Step 1: Write the failing tests** — unit (`WithholdingSelectionTests`): `AStoredMunicipalIdOutsideTheOffersIsKeptAsIs`,
+  `AStoredMunicipalIdKeepsItsEditedPercentage`, `ADifferentMunicipalIdStillNeedsTheOffer`,
+  `WithAContextChangeTheStoredIdFollowsA11`. Integration, quotation and order each:
+  `ReplacedCompanyRateKeepsTheStoredIdOnANotesOnlySave` (the company replaces its Bogotá rate by another; save with only the notes
+  changed and the full id list, old id included → 200, row keeps the old id and percentage, no history entry),
+  `ChangingANationalSelectorKeepsTheEditedMunicipalPercentage` (0,8 % survives, no `WithholdingRateEdited`),
+  `AMunicipalIdNeitherStoredNorOfferedIs422` (`…withholding_tax_rate_invalid`).
+- [ ] **Step 2: RED** — compile or assertion output.
+- [ ] **Step 3: Implement** P14.
+- [ ] **Step 4: GREEN** — Quotations unit; integration filtered to the new tests plus `ResendingTheSameMunicipalSelectorKeepsTheEditedPercentage`.
+- [ ] **Step 5: Commit** — `fix(quotations): keep the stored municipal withholding when its id is resent`.
 
 ### Task 15: Branch verification (before merging to `develop`)
 
