@@ -490,6 +490,44 @@ planeado:
   orquestador se lo reporta al owner.
 - [ ] Al mergear cada slice a `develop`: fila de Agentes IA en `docs/estado.md` y su Registro. Se hace al mergear, no en esta rama.
 
+## Revisión final: correcciones (2026-11-15)
+
+La revisión final de la rama encontró seis problemas; los seis se corrigieron, cada uno con su prueba de regresión. Las pruebas
+**no se corrieron** en esta rama (decisión del owner: las corre él al final); la verificación fue `dotnet build Backend.slnx` con 0
+errores y 0 avisos.
+
+- [x] **1. Borradores de cotización duplicados.** La clave pasa de `ai:{jobId}:{callId}` a `ai:{jobId}`, y el bucle corre a lo sumo
+  una herramienta que escribe por respuesta (la segunda vuelve con `one_write_per_response`). No se apagaron las llamadas en paralelo
+  del proveedor: también sirven a las lecturas. Pruebas: `CreateQuotationDraftToolTests.ARerunOfTheSameJobAsksForTheSameDraftKey` y
+  `TwoDraftCallsInOneResponseCreateOneDraft`.
+- [x] **2. Un commit que falla volvía a pagar el modelo para siempre.** La respuesta se guarda en el trabajo (`RememberResult`) antes de
+  enviar; una `RequestConcurrencyException` del commit reprograma en 2 s desde lo guardado (`IAiModelJobs.RetryHeldAsync`); pasado
+  `ModelJob.MaxClaims` (10) reclamos, traspaso `AgentFailed` con `job_timed_out`. Pruebas (`AgentSessionProcessorTests`):
+  `AConcurrencyConflictOnTheHandoffRetriesTheStoredResultSoon`, `ARerunAfterTheDraftWasWrittenNeverCallsTheModelAgain`,
+  `AJobClaimedTooManyTimesHandsOffWithoutCallingTheModel`.
+- [x] **3. Turno perdido si el worker reclamaba durante `ExtendTo`.** `FindPendingJobAsync` toma la fila con `FOR UPDATE`. Prueba:
+  `AgentSessionJobRaceTests.TheWorkerCannotClaimAPendingJobWhileTheInboxExtendsIt` (integración).
+- [x] **4. Conversación asignada a un agente que no contesta.** Una conversación devuelta al agente (`Active`, sin sesión) se traspasa
+  si el agente está pausado, borrado, sin versión legible o sin la cuenta de su proveedor, y también con el módulo apagado; un trabajo
+  cuyo agente se borró termina en traspaso. Pruebas (`AgentSessionProcessorTests`): `AReturnedConversationWithoutTheProviderAccountIsHandedOff`,
+  `AReturnedConversationOfAPausedAgentIsHandedOffWithoutASession`, `AReturnedConversationOfADeletedAgentIsHandedOff`,
+  `WithTheModuleOffAnAgentConversationWithoutSessionIsHandedOff`, `AJobWhoseAgentWasDeletedHandsOff`.
+- [x] **5a. Tomar la conversación no terminaba la sesión.** `ReleaseRun` se encola con el `bot_kind` que tenía la conversación antes
+  del cambio; el procesador de entrantes descarta el trabajo pendiente al interrumpir, y el worker revisa la conversación antes de llamar
+  al modelo. Pruebas: `AgentSessionProcessorTests.AReleaseRunEndsTheAgentSessionAndDiscardsItsPendingJob`,
+  `AJobIsDiscardedBeforeCallingTheModelWhenAPersonTookTheConversation`;
+  `ConversationAutomationApiTests.TheSignalOfAnAgentConversationGoesToTheAgentQueue` y `TheSignalOfAChatbotConversationStaysInTheChatbotQueue`.
+- [x] **5b. Borrar un cliente dejaba sus datos de IA.** `CustomerDeletionReferences` borra `ai.tool_calls`, `ai.model_jobs`, `ai.turns`
+  y `ai.sessions` de sus conversaciones y las `ai.tests` que lo fijaron; `CustomerMergeReferences` mueve `ai.tests.customer_id`.
+  Pruebas: `CustomerDeletionAcrossModulesTests.DeletingACustomerTakesItsAgentSessionsAndPlaygroundTests`, `CustomerMergeReferencesTests`
+  (la réplica suma `ai.tests`) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`. `CustomerWriteDoubles`
+  no cambia: el puerto es el mismo.
+- [x] **6. Instagram encolaba todo con `position: 0`.** Cada mensaje lleva su posición en la entrada, como WhatsApp. Prueba:
+  `AutomationInboxTests.TwoInstagramMessagesOfOneDeliveryAreEnqueuedInOrderOneMicrosecondApart`.
+
+Abierto para el owner: el código del traspaso por tope de reclamos reusa `job_timed_out` (uno propio necesita su texto en el frontend);
+pausar o borrar un agente no traspasa en el acto sus conversaciones devueltas sin sesión, lo hace el siguiente entrante (D-A6).
+
 ## Spec discrepancies
 
 - El spec tiene un solo proveedor (OpenAI) en §1, §4.5, §6.3, §6.7, §9, §10 y §14 («otros proveedores» fuera); este plan

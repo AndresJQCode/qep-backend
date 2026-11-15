@@ -536,7 +536,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`CustomerMergeReferences` escribe en cinco esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
   quotations, pos, pipeline, messaging y shopify: es SQL crudo en Bootstrapper sobre `quotations.quotations`/`orders.client_id`,
   `pos.sales.customer_id`, `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`,
-  `messaging.conversations.customer_id`, `messaging.campaigns.audience_customer_ids` y `shopify.orders.qep_customer_id`, sobre la
+  `messaging.conversations.customer_id`, `messaging.campaigns.audience_customer_ids`, `ai.tests.customer_id` (las pruebas del playground
+  de agentes de IA; las sesiones siguen a su conversación) y `shopify.orders.qep_customer_id`, sobre la
   conexión del `CustomersDbContext` para quedar dentro de su transacción. Renombrar una de esas columnas compila y la fusión
   responde 500 (`42703`); como todo es una transacción, no fusiona nada. Lo amarran `CustomerMergeReferencesTests` (réplicas
   hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
@@ -863,11 +864,36 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `AddAnthropicProvider` con las de `anthropic`: Postgres valida las filas al volver a poner el CHECK. Correrlo en producción le borra la
   clave a cada tenant que la había conectado; tienen que volver a ponerla.
 - **El borrador de cotización de un agente no se duplica por el índice, no por la búsqueda previa** (spec 2026-10-29 D-A16). La clave es
-  `ai:{jobId}:{callId}` en `quotations.quotations.external_key`; `IX_quotations_tenant_external_key` (parcial) cierra la carrera y
+  `ai:{jobId}` en `quotations.quotations.external_key`, **del trabajo y no de la llamada**: el id de la llamada lo inventa el modelo y
+  cambia si el trabajo se retoma, y con él en la clave cada reintento creaba otro borrador (revisión final, hallazgo 1). Por la misma
+  razón el bucle corre a lo sumo una herramienta que escribe por respuesta (`AgentToolNames.Writes`); la segunda vuelve con
+  `one_write_per_response` (`CreateQuotationDraftToolTests.TwoDraftCallsInOneResponseCreateOneDraft`); `IX_quotations_tenant_external_key` (parcial) cierra la carrera y
   `QuotationsUnitOfWork` lo traduce **por nombre de índice** a `quotation.quotation.external_key_taken`, que `ExternalQuotationService`
   resuelve devolviendo la cotización que ganó (`AlreadyExisted`). Mismo patrón que `IX_orders_tenant_external_key`: no lo cambies por una
   consulta en el servicio (`ExternalQuotationServiceTests.TheSameExternalKeyReturnsTheExistingQuotation`). Y un traspaso con borrador
   escrito no lo descarta un turno nuevo del cliente: el trabajo siguiente crearía otro.
+- **La respuesta del modelo se guarda en el trabajo antes de enviar nada, y nunca se vuelve a pedir** (revisión final, hallazgo 2).
+  `AgentSessionJobProcessor` llama `ModelJob.RememberResult` apenas vuelve el bucle; un commit corto que falla, un proceso que muere o el
+  candado ocupado retoman con `result` y no pagan el modelo otra vez. El traspaso de Mensajería lanza `RequestConcurrencyException`
+  cuando un entrante sube `conversations.version` a la vez: el commit se deshace y el trabajo se reprograma por `IAiModelJobs.RetryHeldAsync`,
+  SQL directo para no guardar lo que quedó a medio cambiar en el contexto. Cada reclamo suma un intento, también los que no llaman al
+  modelo, así que el tope de reclamos es `ModelJob.MaxClaims` (10) y no `MaxAttempts`; pasado, traspaso `AgentFailed` con `job_timed_out`.
+  No lo bajes a `MaxAttempts`: unos pocos candados ocupados terminarían el turno. Y el worker mira que la conversación siga siendo del
+  agente **antes** de llamar al modelo (`AgentSessionProcessorTests.AJobIsDiscardedBeforeCallingTheModelWhenAPersonTookTheConversation`).
+- **El trabajo pendiente de una sesión se lee con `FOR UPDATE`** (`AgentSessionRepository.FindPendingJobAsync`, revisión final,
+  hallazgo 3). El reclamo del worker no toma el candado de la conversación; sin el candado de fila, el worker reclamaba el trabajo con el
+  `up_to_seq` viejo mientras el procesador de entrantes lo subía, y el turno nuevo del cliente quedaba sin respuesta. No lo cambies por un
+  `SingleOrDefaultAsync` (`AgentSessionJobRaceTests`).
+- **Una conversación `Active` de un agente sin sesión viva es del agente, y si no la puede retomar se traspasa** (revisión final,
+  hallazgo 4). Pasa cuando una persona se la devuelve: el siguiente entrante abre otra sesión sólo si el agente está `Active`, tiene versión
+  legible y la cuenta de su proveedor; si no (pausado, borrado, sin cuenta, módulo apagado) `AiInboxProcessor` la traspasa. Devolver
+  `null` sin traspaso la dejaba asignada a un agente que nunca contesta. Un trabajo cuyo agente se borró con la sesión viva (la carrera
+  con `DeleteAgentHandler`, que mira las sesiones sin el candado de la conversación) también termina en traspaso. Pausar un agente no
+  corta sus sesiones vivas (D-A6).
+- **La señal `ReleaseRun` lleva el `bot_kind` del bot que tenía la conversación antes del cambio** (revisión final, hallazgo 5).
+  `ReleaseRunSignal.EnqueueIfAssisted` recibe el `AutomationBotKind` leído **antes** (resolver lo borra) y el autoasignado lo devuelve en su
+  `RETURNING`. Con el default `1`, la señal de un agente la reclamaba el motor de chatbots y la sesión del agente seguía viva con su
+  trabajo pendiente. Un camino nuevo que encole la señal pasa el bot (`ConversationAutomationApiTests.TheSignalOfAnAgentConversationGoesToTheAgentQueue`).
 - **La causa de un traspaso vive en tres enums que se cambian juntos**: `HandoffCauseKind` del motor de chatbots (Automations), el de los
   agentes (`Modules.Ai.Application.HandoffCauseKind`) y `AutomationHandoffKind` (Messaging), traducidos por nombre en Bootstrapper. Un
   código de traspaso de agente nuevo tiene que pasar `AutomationHandoff.IsValidCode` o se guarda `null` sin error, y un proveedor nuevo
@@ -881,7 +907,9 @@ Los comandos (`restore` / `format` / `build` / `test`) están en
 - **Borrar clientes escribe en muchos esquemas por nombre** (spec 2026-11-10; `src/Bootstrapper/CustomerDeletionReferences.cs`, igual que
   `CustomerMergeReferences`). Toca `messaging` (conversaciones y todo lo que cuelga: mensajes, adjuntos, mensajes programados,
   `automation_inbox`, destinatarios de campañas con `customer_id` en `NULL`, `audience_customer_ids`), `automations`
-  (`conversation_runs`, `run_units`, `http_calls`), `pipeline` (`deals`, `deal_stage_history`, `deal_quotations`, `deal_orders`,
+  (`conversation_runs`, `run_units`, `http_calls`), `ai` (`sessions`, `turns`, `model_jobs` y `tool_calls` de sus conversaciones, y las
+  `tests` del playground que fijaron al cliente con sus trabajos; `tool_calls` guarda sus pedidos y cotizaciones, y `usage_records` se
+  queda porque es el consumo pagado), `pipeline` (`deals`, `deal_stage_history`, `deal_quotations`, `deal_orders`,
   `triage_decisions`; `origin_conversation_id` de otros negocios a `NULL`), `pos.sales`, `shopify.orders`, `billing.customer_profiles`
   y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
   `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado
