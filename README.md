@@ -1728,8 +1728,10 @@ Spec 2026-11-15 §4 (`docs/superpowers/specs/2026-11-15-store-order-buyer-link-d
   significa «no lo enlaces solo».
 - Los dos: permiso `quotations.order.manage`, `If-Match` con la versión del pedido (sin él `428 precondition.if_match_required`, viejo
   `412 concurrency.conflict`), responden `200` con el `OrderDetailResponse` completo y el `ETag` nuevo. Suben la versión, ponen la marca
-  `buyer_account_set_by_member` y auditan `quotation.order.buyer_account_changed` con el id anterior y el nuevo, nunca correos. Un `PUT` con
-  la misma cuenta y la marca ya puesta responde `200` sin cambiar nada.
+  `buyer_account_set_by_member` y auditan `quotation.order.buyer_account_changed` con el id anterior y el nuevo, nunca correos. Además
+  dejan en el historial del pedido una entrada `BuyerAccountChanged` con el asesor como autor, cuyo texto sí nombra el correo anterior y
+  el nuevo («Cambió la cuenta de comprador de … a …»); los enlaces automáticos no escriben historial. Un `PUT` con la misma cuenta y la
+  marca ya puesta responde `200` sin cambiar nada, sin historial ni auditoría.
 - Errores: `422 validation.failed` (`Email` vacío, inválido o de más de 254 caracteres), `422 order.buyer_account.not_found` (no hay cuenta
   con ese correo o no está verificada: un solo código para los dos), `422 order.order.source_invalid` (el pedido no es de la tienda), `403`
   (sin permiso o de otro tenant, nunca 404).

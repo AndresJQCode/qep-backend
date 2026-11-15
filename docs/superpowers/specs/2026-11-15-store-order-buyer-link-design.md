@@ -114,6 +114,11 @@ Un correo de facturación `NULL` o vacío nunca coincide; la comparación es `lo
 - Los dos: permiso `quotations.order.manage`, revalidación de tenant y permiso en el handler (403, nunca 404), `If-Match` con la
   versión del pedido, suben `Version`, marcan §3.3, auditoría (acción nueva, por ejemplo `quotation.order.buyer_account_changed`, con el id
   anterior y el nuevo, nunca correos) y responden el `OrderDto` completo.
+- **Historial del pedido (owner, 2026-11-15):** cada cambio que sube la versión deja además una entrada `BuyerAccountChanged`
+  (valor nuevo al final de `OrderHistoryEventType`) en el mismo guardado, con el asesor como autor. Su texto nombra la cuenta
+  anterior y la nueva **con sus correos** (a diferencia de la auditoría): lo lee el mismo equipo que ya ve el correo en el detalle, y
+  la foto mantiene la entrada legible si la cuenta se borra después (una anterior ya borrada se nombra «una cuenta ya eliminada»).
+  Sólo la decisión del asesor la escribe: el checkout, el inicio de sesión y el alta diferida no tocan el historial.
 - Sólo pedidos con `source = 'Store'`; otro origen → 422 `order.order.source_invalid` (código existente).
 - **Casos de borde (decisión de diseño):** `PUT` con la misma cuenta que ya tiene y la marca ya en `true` → 200 sin cambios (no
   sube versión ni audita). Cualquier otro `PUT` o `DELETE`, incluido un `DELETE` sobre un pedido sin cuenta, sube versión, pone la
