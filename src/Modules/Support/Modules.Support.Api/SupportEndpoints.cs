@@ -224,6 +224,13 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Fase 3 (plan F37): la URL firmada de un adjunto del formulario público. Con ver el ticket alcanza: no pide storage.file.read.
+        group.MapGet("/tickets/{ticketId:guid}/attachments/{attachmentId:guid}/download", DownloadAttachmentAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportAttachmentDownloadDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         MapTicketAction<ChangeTicketStatusRequest>(group, "status", ChangeStatusAsync);
         MapTicketAction<AssignTicketRequest>(group, "assignee", AssignAsync);
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
@@ -405,6 +412,11 @@ public static class SupportEndpoints
     private static async Task<IResult> GetTicketAsync(
         Guid tenantId, Guid ticketId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetTicketQuery(tenantId, ticketId), cancellationToken));
+
+    private static async Task<IResult> DownloadAttachmentAsync(
+        Guid tenantId, Guid ticketId, Guid attachmentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new GetTicketAttachmentDownloadCommand(tenantId, ticketId, attachmentId), cancellationToken));
 
     private static async Task<IResult> ChangeStatusAsync(
         Guid tenantId,

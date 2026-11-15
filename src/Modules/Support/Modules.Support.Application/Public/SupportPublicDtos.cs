@@ -45,7 +45,8 @@ public sealed record SupportPublicGeoItemDto(Guid Id, string Name);
 /// <summary>
 /// El radicado del formulario. Todo anulable, para que su ausencia sea un 422 <c>validation.failed</c> con el campo. Con
 /// <see cref="Anonymous"/> no viaja solicitante ni consentimiento. <see cref="LegalTextVersion"/> y <see cref="FormVersion"/> son las
-/// que la página cargó: si cambiaron, 422 y la página recarga.
+/// que la página cargó: si cambiaron, 422 y la página recarga. <see cref="Attachments"/> son los archivos ya completados con
+/// <c>available</c>, hasta cinco (plan F35); también para un anónimo.
 /// </summary>
 public sealed record SupportPublicFileRequest(
     Guid? TicketTypeId,
@@ -56,7 +57,29 @@ public sealed record SupportPublicFileRequest(
     bool AcceptsDataPolicy,
     int? LegalTextVersion,
     int? FormVersion,
-    string? TurnstileToken);
+    string? TurnstileToken,
+    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null);
+
+/// <summary>Un adjunto del radicado: el par que devolvió <c>POST …/attachments</c>. Sin el <c>uploadKey</c> que lo abrió, el
+/// <c>fileId</c> no sirve (plan F32).</summary>
+public sealed record SupportPublicAttachmentRef(Guid? FileId, Guid? UploadKey);
+
+/// <summary>Abrir una subida (plan F33): nombre, tipo y tamaño declarados. Los límites son los de <c>SupportPublicAttachmentRules</c>.</summary>
+public sealed record SupportPublicAttachmentRequest(string? Name, string? MimeType, long? SizeBytes);
+
+/// <summary>
+/// La subida abierta. La página hace <c>PUT</c> del archivo a <see cref="UploadUrl"/> con <see cref="Headers"/> tal cual (van firmados),
+/// después completa con <see cref="UploadKey"/> y lo manda junto con <see cref="FileId"/> al radicar. <see cref="UploadKey"/> es un
+/// secreto: no se muestra ni va en la URL.
+/// </summary>
+public sealed record SupportPublicAttachmentSessionDto(
+    Guid FileId, Guid UploadKey, string UploadUrl, IReadOnlyDictionary<string, string> Headers);
+
+public sealed record SupportPublicAttachmentCompleteRequest(Guid? UploadKey);
+
+/// <summary><see cref="Status"/> ∈ <c>available</c> (se puede adjuntar) o <c>rejected</c> (el contenido no es lo que dice o no pasó
+/// el antivirus: la página avisa antes de radicar).</summary>
+public sealed record SupportPublicAttachmentStatusDto(string Status);
 
 /// <summary>Los datos del solicitante. Las claves son las de <see cref="SupportPublicFieldDto.Key"/>; la ciudad es
 /// <see cref="CityId"/> con país <c>CO</c> y <see cref="CityName"/> con cualquier otro (plan F19). Un campo que el formulario oculta se

@@ -35,13 +35,15 @@ public static class PublicSupportEndpoints
     /// <param name="readPolicy">Configuración y geografía: el limitador del grupo.</param>
     /// <param name="submitPolicy">Radicar y reenviar el PIN.</param>
     /// <param name="lookupPolicy">Consultar un ticket.</param>
+    /// <param name="uploadPolicy">Abrir y completar la subida de un adjunto (plan F33).</param>
     public static IEndpointRouteBuilder MapPublicSupportEndpoints(
-        this IEndpointRouteBuilder endpoints, string readPolicy, string submitPolicy, string lookupPolicy)
+        this IEndpointRouteBuilder endpoints, string readPolicy, string submitPolicy, string lookupPolicy, string uploadPolicy)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentException.ThrowIfNullOrWhiteSpace(readPolicy);
         ArgumentException.ThrowIfNullOrWhiteSpace(submitPolicy);
         ArgumentException.ThrowIfNullOrWhiteSpace(lookupPolicy);
+        ArgumentException.ThrowIfNullOrWhiteSpace(uploadPolicy);
 
         var group = endpoints
             .MapGroup(GroupPattern)
@@ -99,7 +101,58 @@ public static class PublicSupportEndpoints
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Plan F33: los adjuntos. Sin Turnstile (el token es de un solo uso y se gasta al radicar), con su propio limitador. El archivo
+        // no pasa por acá: el navegador lo sube directo al bucket con la URL firmada.
+        group.MapPost("/attachments", OpenAttachmentAsync)
+            .RequireRateLimiting(uploadPolicy)
+            .Accepts<SupportPublicAttachmentRequest>("application/json")
+            .Produces<SupportPublicAttachmentSessionDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapPost("/attachments/{fileId:guid}/complete", CompleteAttachmentAsync)
+            .RequireRateLimiting(uploadPolicy)
+            .Accepts<SupportPublicAttachmentCompleteRequest>("application/json")
+            .Produces<SupportPublicAttachmentStatusDto>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         return endpoints;
+    }
+
+    // El uploadKey sólo viaja en esta respuesta y en el cuerpo de completar y radicar, nunca en una URL (plan F32).
+    private static async Task<IResult> OpenAttachmentAsync(
+        string tenantSlug, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<SupportPublicAttachmentRequest>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        var session = await dispatcher.SendAsync(
+            new OpenPublicAttachmentCommand(tenantSlug, body.Name, body.MimeType, body.SizeBytes), cancellationToken);
+        return Results.Created((string?)null, session);
+    }
+
+    private static async Task<IResult> CompleteAttachmentAsync(
+        string tenantSlug, Guid fileId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<SupportPublicAttachmentCompleteRequest>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        return Results.Ok(await dispatcher.SendAsync(
+            new CompletePublicAttachmentCommand(tenantSlug, fileId, body.UploadKey), cancellationToken));
     }
 
     private static async Task<IResult> GetFormAsync(

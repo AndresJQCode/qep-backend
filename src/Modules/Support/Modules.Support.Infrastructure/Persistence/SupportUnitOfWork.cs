@@ -90,6 +90,12 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "This version of the legal texts already exists.",
                 exception);
         }
+        // Plan F35: otra radicación ya reclamó el archivo. El 422 de siempre de un adjunto inválido, no un 409: la página no distingue
+        // un archivo ajeno de uno que no existe, y la transacción del radicado se deshace entera.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketAttachmentFileIndex))
+        {
+            throw new SupportDomainException(SupportErrorCodes.PublicAttachmentInvalid, "The attachment is not valid.");
+        }
     }
 
     // Copia de CustomersUnitOfWork.BeginTransactionAsync. Los SaveChanges que corran dentro siguen pasando por la traducción de

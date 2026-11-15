@@ -40,6 +40,9 @@ public static class SupportAuditActions
 
     public const string LegalTextsPublished = "support.legal_texts.published";
 
+    /// <summary>Plan F37: alguien de la consola pidió la URL de un adjunto del formulario público. El recurso es el ticket.</summary>
+    public const string TicketAttachmentDownloaded = "support.ticket.attachment_downloaded";
+
     public static class Resources
     {
         /// <summary>La configuración del formulario público del tenant; su id es el del tenant, como <see cref="Settings"/>.</summary>

@@ -110,7 +110,16 @@ public sealed record SupportTicketDetailDto(
     IReadOnlyList<SupportReplyDto> Replies,
     bool IsAnonymous,
     IReadOnlyList<SupportCustomerCandidateDto> CustomerCandidates,
-    SupportConsultAccessDto? ConsultAccess);
+    SupportConsultAccessDto? ConsultAccess,
+    IReadOnlyList<SupportAttachmentDto> Attachments);
+
+/// <summary>Un adjunto del formulario público (plan F37), en el orden en que se adjuntó. El archivo se baja con
+/// <c>GET …/tickets/{id}/attachments/{attachmentId}/download</c>: la pantalla no necesita <c>storage.file.read</c>. Una lista vacía
+/// si no tiene, nunca <c>null</c>.</summary>
+public sealed record SupportAttachmentDto(Guid Id, string FileName, string MimeType, long SizeBytes);
+
+/// <summary>La URL firmada de un adjunto: vive 5 minutos y baja el archivo con su nombre.</summary>
+public sealed record SupportAttachmentDownloadDto(string Url);
 
 // Fase 3 (formulario público): IsAnonymous apaga en la pantalla todo lo que pide un solicitante (sólo se responde por la página);
 // CustomerCandidates son los clientes con el documento de la foto cuando el ticket no tiene cliente (cero o varios al radicar, plan

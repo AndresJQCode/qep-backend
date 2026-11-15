@@ -235,6 +235,17 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));
+    // Plan F33: los adjuntos no piden Turnstile, así que el limitador es lo único que frena a quien abre sesiones de subida en serie.
+    options.AddPolicy(
+        RateLimiterPolicies.SupportPublicUpload,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            }));
 
     static string? StorefrontSecret(HttpContext httpContext) =>
         httpContext.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;
@@ -375,7 +386,10 @@ app.MapPublicStoreEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolic
 app.MapPublicBuyerEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontCredentials);
 // Formulario público de Soporte (spec 2026-11-14 §9): anónimo, sin CSRF, con su CORS sin credenciales y limitadores por IP.
 app.MapPublicSupportEndpoints(
-    RateLimiterPolicies.SupportPublicRead, RateLimiterPolicies.SupportPublicSubmit, RateLimiterPolicies.SupportPublicLookup);
+    RateLimiterPolicies.SupportPublicRead,
+    RateLimiterPolicies.SupportPublicSubmit,
+    RateLimiterPolicies.SupportPublicLookup,
+    RateLimiterPolicies.SupportPublicUpload);
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al

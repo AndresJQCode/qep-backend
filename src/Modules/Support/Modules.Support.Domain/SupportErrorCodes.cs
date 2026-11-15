@@ -101,6 +101,19 @@ public static class SupportErrorCodes
 
     public const string PublicBodyInvalid = "support.public.body_invalid";
 
+    /// <summary>
+    /// Plan F32 y F35: un adjunto que no existe, de otro tenant, con otro <c>uploadKey</c>, que no está disponible (sin subir, en
+    /// cuarentena) o que ya reclamó otro ticket (<c>IX_ticket_attachments_file</c>, traducido por nombre). La misma respuesta para
+    /// todos: no dice cuál de ellos fue.
+    /// </summary>
+    public const string PublicAttachmentInvalid = "support.public.attachment_invalid";
+
+    /// <summary>Completar antes de que el navegador termine el PUT: el archivo todavía no está en el bucket (428).</summary>
+    public const string PublicAttachmentNotUploaded = "support.public.attachment_not_uploaded";
+
+    /// <summary>El adjunto no es de ese ticket del tenant (consola, plan F37).</summary>
+    public const string AttachmentNotFound = "support.attachment.not_found";
+
     /// <summary>Publicar el formulario exige una versión de los textos legales (plan F15).</summary>
     public const string FormLegalTextsRequired = "support.form.legal_texts_required";
 

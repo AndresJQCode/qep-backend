@@ -38,4 +38,8 @@ public static class RateLimiterPolicies
 
     /// <summary>Formulario público de Soporte, consultar un ticket: 10 por minuto por IP del visitante (plan F6).</summary>
     public const string SupportPublicLookup = "support-public-lookup";
+
+    /// <summary>Formulario público de Soporte, abrir y completar la subida de un adjunto: 20 cada 10 minutos por IP del visitante
+    /// (plan F33). Cinco adjuntos por radicado, cada uno con dos llamadas, más los reintentos.</summary>
+    public const string SupportPublicUpload = "support-public-upload";
 }

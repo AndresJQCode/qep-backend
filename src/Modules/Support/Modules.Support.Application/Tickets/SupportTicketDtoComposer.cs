@@ -25,6 +25,7 @@ public sealed class SupportTicketDtoComposer(
     ISupportReplyRepository replies,
     ISupportUnclassifiedRepository unclassified,
     ISupportTicketAccessRepository accesses,
+    ISupportTicketAttachmentRepository attachments,
     ITenantModules tenantModules)
 {
     /// <summary>Lo que el contrato muestra de un miembro o cliente que ya no se resuelve (un miembro removido, un cliente borrado).</summary>
@@ -99,7 +100,10 @@ public sealed class SupportTicketDtoComposer(
             await CustomerCandidatesAsync(ticket, cancellationToken),
             await accesses.FindAsync(ticket.TenantId, ticket.Id, cancellationToken) is { } access
                 ? new SupportConsultAccessDto(access.LastSentAt, access.LastSentChannel, access.LastFailureCode)
-                : null);
+                : null,
+            (await attachments.ListAsync(ticket.TenantId, ticket.Id, cancellationToken))
+                .Select(item => new SupportAttachmentDto(item.Id, item.FileName, item.MimeType, item.SizeBytes))
+                .ToList());
     }
 
     // Plan F21: sin cliente y con documento en la foto, los clientes con ese documento (si customers está prendido): al radicar no se

@@ -578,6 +578,61 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("FileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("file_id");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("character varying(260)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("mime_type");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FileId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ticket_attachments_file");
+
+                    b.HasIndex("TicketId");
+
+                    b.HasIndex("TenantId", "TicketId")
+                        .HasDatabaseName("IX_ticket_attachments_tenant_ticket");
+
+                    b.ToTable("ticket_attachments", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_attachments_size", "size_bytes > 0");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -990,6 +1045,15 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.HasOne("Modules.Support.Domain.SupportTicket", null)
                         .WithOne()
                         .HasForeignKey("Modules.Support.Domain.SupportTicketAccess", "TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketAttachment", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

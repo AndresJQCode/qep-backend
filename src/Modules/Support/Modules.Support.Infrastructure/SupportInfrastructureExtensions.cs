@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,6 +41,9 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<ISupportLegalTextRepository, SupportLegalTextRepository>();
         services.AddScoped<ISupportConsentRepository, SupportConsentRepository>();
         services.AddSingleton<ISupportPinHasher, Pbkdf2SupportPinHasher>();
+        // Plan F35 y F36: los adjuntos del formulario, y la sonda que le dice al barrido de Storage cuáles ya reclamó un ticket.
+        services.AddScoped<ISupportTicketAttachmentRepository, SupportTicketAttachmentRepository>();
+        services.AddScoped<IFileReferenceProbe, SupportAttachmentReferenceProbe>();
 
         // Fase 2 (plan E2): el seguimiento del hilo sondea los entrantes de Mensajería. Apagable por configuración para que las pruebas
         // lo llamen a mano sin que el worker se lleve los entrantes por detrás.

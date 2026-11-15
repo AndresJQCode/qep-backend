@@ -62,6 +62,11 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
 
     public DbSet<SupportConsent> Consents => Set<SupportConsent>();
 
+    /// <summary>Único del archivo de Storage (plan F35): dos radicaciones que reclaman el mismo archivo chocan acá.</summary>
+    public const string TicketAttachmentFileIndex = "IX_ticket_attachments_file";
+
+    public DbSet<SupportTicketAttachment> TicketAttachments => Set<SupportTicketAttachment>();
+
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -79,6 +84,37 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureFormVersion(modelBuilder);
         ConfigureLegalTextVersion(modelBuilder);
         ConfigureConsent(modelBuilder);
+        ConfigureTicketAttachment(modelBuilder);
+    }
+
+    // Plan F35: el archivo es una referencia blanda a storage.file_resources (otro esquema, sin FK); el ticket sí, con cascada. El
+    // único sobre file_id lo usan la radicación (traducido por nombre) y la sonda de Storage (SupportAttachmentReferenceProbe).
+    private static void ConfigureTicketAttachment(ModelBuilder modelBuilder)
+    {
+        var attachment = modelBuilder.Entity<SupportTicketAttachment>();
+        attachment.ToTable("ticket_attachments", Schema, table =>
+            table.HasCheckConstraint("CK_ticket_attachments_size", "size_bytes > 0"));
+        attachment.HasKey(value => value.Id);
+        attachment.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        attachment.Property(value => value.TenantId).HasColumnName("tenant_id");
+        attachment.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        attachment.Property(value => value.FileId).HasColumnName("file_id");
+        attachment.Property(value => value.FileName)
+            .HasColumnName("file_name")
+            .HasMaxLength(SupportPublicAttachmentRules.NameMaxLength);
+        attachment.Property(value => value.MimeType)
+            .HasColumnName("mime_type")
+            .HasMaxLength(SupportPublicAttachmentRules.MimeTypeMaxLength);
+        attachment.Property(value => value.SizeBytes).HasColumnName("size_bytes");
+        attachment.Property(value => value.CreatedAt).HasColumnName("created_at");
+        attachment.HasOne<SupportTicket>()
+            .WithMany()
+            .HasForeignKey(value => value.TicketId)
+            .OnDelete(DeleteBehavior.Cascade);
+        attachment.HasIndex(value => value.FileId).IsUnique().HasDatabaseName(TicketAttachmentFileIndex);
+        attachment.HasIndex(value => new { value.TenantId, value.TicketId }).HasDatabaseName("IX_ticket_attachments_tenant_ticket");
     }
 
     // Fase 3 (plan F7): la clave de consulta vive aparte del ticket para que un intento fallido no le suba la versión.

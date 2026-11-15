@@ -508,6 +508,10 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Support.Application.GetTicketQuery, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.GetTicketHandler>();
         services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.GetTicketAttachmentDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
+            Modules.Support.Application.GetTicketAttachmentDownloadHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListSupportAssigneesQuery, Modules.Support.Application.SupportAssigneesDto>,
             Modules.Support.Application.ListSupportAssigneesHandler>();
         services.AddScoped<
@@ -1607,6 +1611,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.LookupPublicTicketCommand, Modules.Support.Application.SupportPublicTicketDto>,
             Modules.Support.Application.LookupPublicTicketHandler>();
+        // Los adjuntos del formulario (plan F30 a F37): el archivo va por la subida sin miembro de Storage.
+        services.AddScoped<Modules.Support.Application.ISupportAttachmentStorage, SupportAttachmentStorage>();
+        services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.OpenPublicAttachmentCommand, Modules.Support.Application.SupportPublicAttachmentSessionDto>,
+            Modules.Support.Application.OpenPublicAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.CompletePublicAttachmentCommand, Modules.Support.Application.SupportPublicAttachmentStatusDto>,
+            Modules.Support.Application.CompletePublicAttachmentHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.ResendPublicPinCommand, bool>,
             Modules.Support.Application.ResendPublicPinHandler>();

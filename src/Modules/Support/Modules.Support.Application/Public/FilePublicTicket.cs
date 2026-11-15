@@ -22,7 +22,8 @@ public sealed record FilePublicTicketCommand(
     bool AcceptsDataPolicy,
     int? LegalTextVersion,
     int? FormVersion,
-    string? TurnstileToken)
+    string? TurnstileToken,
+    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null)
     : ICommand<SupportPublicFiledDto>
 {
     /// <summary>La versión vigente del formulario del tenant, con la que se juzgan los campos. No viaja por el cable: la pone el handler
@@ -43,7 +44,8 @@ public sealed record FilePublicTicketCommand(
             request.AcceptsDataPolicy,
             request.LegalTextVersion,
             request.FormVersion,
-            request.TurnstileToken);
+            request.TurnstileToken,
+            request.Attachments);
     }
 }
 
@@ -66,6 +68,12 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
         RuleFor(command => command.Subject).MustFit(1, SupportTicket.SubjectMaxLength);
         RuleFor(command => command.Description).MustFit(1, SupportTicket.DescriptionMaxLength);
         RuleFor(command => command.FormVersion).NotNull();
+        // Plan F34 y F35: hasta cinco, cada uno con su par completo y sin repetir. Que existan y estén disponibles lo mira el handler,
+        // con la misma respuesta para todos los casos.
+        RuleFor(command => command.Attachments)
+            .Must(AttachmentsFit)
+            .WithMessage(
+                $"Up to {SupportPublicAttachmentRules.MaxFiles} different attachments, each with its fileId and uploadKey.");
 
         When(command => command.Anonymous, () =>
             RuleFor(command => command.Requester)
@@ -148,6 +156,14 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
         });
     }
 
+    /// <summary>Sin adjuntos, o hasta <see cref="SupportPublicAttachmentRules.MaxFiles"/> con <c>fileId</c> y <c>uploadKey</c> y sin
+    /// repetir archivo.</summary>
+    public static bool AttachmentsFit(IReadOnlyList<SupportPublicAttachmentRef>? attachments) =>
+        attachments is null
+        || (attachments.Count <= SupportPublicAttachmentRules.MaxFiles
+            && attachments.All(item => item is { FileId: { } fileId, UploadKey: { } key } && fileId != Guid.Empty && key != Guid.Empty)
+            && attachments.Select(item => item.FileId).Distinct().Count() == attachments.Count);
+
     /// <summary>Los campos que el formulario muestra para este cuerpo: la variante sale del documento que eligió la persona.</summary>
     internal static IReadOnlyList<SupportFormField> FieldsOf(FilePublicTicketCommand command)
     {
@@ -174,8 +190,8 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
 /// <summary>
 /// Radicar desde el formulario público (spec §9.3 y §9.4, plan F17 y F21 a F23). Orden: resolver el tenant → Turnstile → validador →
 /// versiones del formulario y de los textos legales → tipo activo y publicado → foto del solicitante (con la ciudad de Geography) →
-/// provisión → cliente por documento → transacción (candado del cliente, radicado, ticket, clave, consentimiento, auditoría del
-/// sistema) → confirmar → correo de apertura → su resultado en un segundo guardado de la clave. Todo lo que puede responder 422 va antes
+/// adjuntos disponibles con su <c>uploadKey</c> (plan F35) → provisión → cliente por documento → transacción (candado del cliente,
+/// radicado, ticket, clave, consentimiento, adjuntos, auditoría del sistema) → confirmar → correo de apertura → su resultado en un segundo guardado de la clave. Todo lo que puede responder 422 va antes
 /// de la transacción, así un rechazo no gasta un radicado. El correo va después de confirmar: el radicado no depende de él (F23). Nada de
 /// esto lee el contexto de ejecución ni la sesión, y el PIN no va a logs, auditoría ni traza: sólo su hash se guarda.
 /// </summary>
@@ -193,6 +209,8 @@ public sealed partial class FilePublicTicketHandler(
     ISupportTicketRepository tickets,
     ISupportTicketAccessRepository accesses,
     ISupportConsentRepository consents,
+    ISupportAttachmentStorage attachmentStorage,
+    ISupportTicketAttachmentRepository attachments,
     ISupportPinHasher pinHasher,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -242,6 +260,7 @@ public sealed partial class FilePublicTicketHandler(
         }
 
         var requester = validated.Anonymous ? null : await RequesterAsync(validated, cancellationToken);
+        var files = await AvailableAttachmentsAsync(tenant.TenantId, validated.Attachments, cancellationToken);
 
         await provisioner.EnsureAsync(tenant.TenantId, cancellationToken);
         var customerId = await LinkedCustomerAsync(tenant.TenantId, requester, cancellationToken);
@@ -283,12 +302,21 @@ public sealed partial class FilePublicTicketHandler(
                 consents.Add(SupportConsent.Record(Guid.CreateVersion7(), tenant.TenantId, ticket.Id, legal, command.VisitorIp, now));
             }
 
+            // Plan F35: en la misma transacción. Si otra radicación ya reclamó un archivo, IX_ticket_attachments_file lo rechaza al
+            // guardar (SupportUnitOfWork lo traduce por nombre a support.public.attachment_invalid) y la transacción entera se
+            // deshace, radicado incluido.
+            foreach (var file in files)
+            {
+                attachments.Add(SupportTicketAttachment.Attach(
+                    Guid.CreateVersion7(), tenant.TenantId, ticket.Id, file.FileId, file.Name, file.MimeType, file.SizeBytes, now));
+            }
+
             auditPublisher.PublishSystem(
                 tenant.TenantId,
                 SupportAuditActions.TicketCreated,
                 SupportAuditActions.Resources.Ticket,
                 ticket.Id.ToString(),
-                CreatedFields,
+                files.Count > 0 ? [.. CreatedFields, "attachments"] : CreatedFields,
                 now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -368,6 +396,27 @@ public sealed partial class FilePublicTicketHandler(
 
         var matches = await customers.FindIdsByDocumentAsync(tenantId, type, number, cancellationToken);
         return matches.Count == 1 ? matches[0] : null;
+    }
+
+    // Plan F32 y F35: cada archivo tiene que estar disponible, ser del tenant y haberse subido con ese uploadKey. Antes de la
+    // transacción, para que un rechazo no gaste un radicado; uno que falla responde igual que uno que no existe.
+    private async Task<IReadOnlyList<SupportAttachmentFile>> AvailableAttachmentsAsync(
+        Guid tenantId, IReadOnlyList<SupportPublicAttachmentRef>? references, CancellationToken cancellationToken)
+    {
+        if (references is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        var files = new List<SupportAttachmentFile>(references.Count);
+        foreach (var reference in references)
+        {
+            var file = await attachmentStorage.FindAvailableAsync(
+                tenantId, reference.FileId!.Value, reference.UploadKey!.Value, cancellationToken);
+            files.Add(file ?? throw CompletePublicAttachmentHandler.Invalid());
+        }
+
+        return files;
     }
 
     private static string? Clean(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
