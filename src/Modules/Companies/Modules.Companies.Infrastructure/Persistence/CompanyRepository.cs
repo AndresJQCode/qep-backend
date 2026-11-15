@@ -31,7 +31,7 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
         CompanyStatusFilter? status,
         CancellationToken cancellationToken)
     {
-        var query = dbContext.Companies
+        var query = CompaniesWithOrderedBankAccounts()
             .AsNoTracking()
             .Where(company => company.TenantId == tenantId);
 
@@ -96,9 +96,17 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
         Guid tenantId,
         CompanyId companyId,
         CancellationToken cancellationToken) =>
-        dbContext.Companies.SingleOrDefaultAsync(
+        CompaniesWithOrderedBankAccounts().SingleOrDefaultAsync(
             company => company.TenantId == tenantId && company.Id == companyId,
             cancellationToken);
+
+    // Las cuentas en el orden en que se guardaron (el ordinal), que es el que muestran la ficha y el listado. Con dos
+    // colecciones owned (cuentas y tasas municipales) EF une las dos y no ordena la última por su clave: sin este
+    // OrderBy el orden de las cuentas quedaba a merced del plan de Postgres y salía invertido
+    // (CompanyApiTests.ListReturnsTheBankNameOfEachAccountInStoredOrder).
+    private IQueryable<Company> CompaniesWithOrderedBankAccounts() =>
+        dbContext.Companies.Include(company =>
+            company.BankAccounts.OrderBy(account => EF.Property<int>(account, "Id")));
 
     public async Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         (await dbContext.Companies
