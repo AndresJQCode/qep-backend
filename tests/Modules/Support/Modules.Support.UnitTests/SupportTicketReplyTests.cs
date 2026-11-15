@@ -64,6 +64,53 @@ public sealed class SupportTicketReplyTests
         Assert.Equal(JsonValueKind.Null, details.GetProperty("failureCode").ValueKind);
     }
 
+    // Revisión del bloque A (AM1): la regla de texto de SendMessageValidator, repetida en el dominio.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("hola\u0007")]
+    [InlineData("4097")]
+    public void ATextOutsideTheRuleIsRejected(string text)
+    {
+        var value = text == "4097" ? new string('a', SupportTicketReply.TextMaxLength + 1) : text;
+
+        Assert.False(SupportTicketReply.IsValidText(value));
+        Assert.Throws<ArgumentException>(() => SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, SupportReplyDelivery.Text, value, null, Actor, Now));
+    }
+
+    [Theory]
+    [InlineData("Línea uno\nLínea dos")]
+    [InlineData("Con retorno\r\ny tabulador\t.")]
+    public void LineBreaksAndTabsAreAllowed(string text)
+    {
+        Assert.True(SupportTicketReply.IsValidText(text));
+        Assert.Equal(text.Trim(), SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, SupportReplyDelivery.Text, text, null, Actor, Now).Text);
+    }
+
+    // AM1: el correo sale sólo como correo, y los canales de Mensajería nunca como correo.
+    [Theory]
+    [InlineData(SupportReplyChannel.Email, SupportReplyDelivery.Text)]
+    [InlineData(SupportReplyChannel.Email, SupportReplyDelivery.Template)]
+    [InlineData(SupportReplyChannel.Thread, SupportReplyDelivery.Email)]
+    [InlineData(SupportReplyChannel.WhatsAppTemplate, SupportReplyDelivery.Email)]
+    public void TheChannelAndTheDeliveryMustAgreeOnEmail(SupportReplyChannel channel, SupportReplyDelivery delivery) =>
+        Assert.Throws<ArgumentException>(() => SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), channel, delivery, "Hola", null, Actor, Now));
+
+    [Theory]
+    [InlineData(SupportReplyChannel.Email, SupportReplyDelivery.Email)]
+    [InlineData(SupportReplyChannel.Thread, SupportReplyDelivery.Text)]
+    [InlineData(SupportReplyChannel.Thread, SupportReplyDelivery.Template)]
+    [InlineData(SupportReplyChannel.WhatsAppTemplate, SupportReplyDelivery.Template)]
+    public void MatchingChannelsAndDeliveriesStart(SupportReplyChannel channel, SupportReplyDelivery delivery)
+    {
+        var reply = SupportTicketReply.Start(TenantId, SupportTicketId.New(), Guid.CreateVersion7(), channel, delivery, "Hola", null, Actor, Now);
+
+        Assert.Equal((channel, delivery), (reply.Channel, reply.Delivery));
+    }
+
     // Fix round 1 (revisión del bloque C): la traza dice cómo terminó la respuesta, también cuando falló.
     [Fact]
     public void RecordingAFailedReplyKeepsItsStatusAndFailureCode()

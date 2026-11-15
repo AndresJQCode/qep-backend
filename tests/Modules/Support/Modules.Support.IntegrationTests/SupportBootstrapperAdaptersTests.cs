@@ -165,6 +165,44 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         Assert.Null(ofAnotherTenant);
     }
 
+    // Revisión del bloque C (CM3): el adaptador real de SupportReplyChannels mira el estado de la conexión de la conversación en
+    // Integrations. Sólo «Active» es operativa; pausada, de otro tenant o inexistente, no (y reply-options dice connection_unavailable).
+    [Fact]
+    public async Task TheThreadConnectionIsOperationalOnlyWhenActive()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var other = await NewSeededTenantAsync();
+        var active = await SeedConnectionAsync(tenant, "Active");
+        var paused = await SeedConnectionAsync(tenant, "Paused");
+        var foreign = await SeedConnectionAsync(other, "Active");
+        var onActive = await SeedConversationAsync(Factory, tenant, connectionId: active);
+        var onPaused = await SeedConversationAsync(Factory, tenant, waId: "573005550001", connectionId: paused);
+        var onForeign = await SeedConversationAsync(Factory, tenant, waId: "573005550002", connectionId: foreign);
+        var onMissing = await SeedConversationAsync(Factory, tenant, waId: "573005550003");
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var channels = scope.ServiceProvider.GetRequiredService<ISupportReplyChannels>();
+
+        Assert.True((await channels.FindThreadAsync(tenant, onActive, Ct))!.ConnectionOperational);
+        Assert.False((await channels.FindThreadAsync(tenant, onPaused, Ct))!.ConnectionOperational);
+        Assert.False((await channels.FindThreadAsync(tenant, onForeign, Ct))!.ConnectionOperational);
+        Assert.False((await channels.FindThreadAsync(tenant, onMissing, Ct))!.ConnectionOperational);
+        Assert.Null(await channels.FindThreadAsync(other, onActive, Ct));
+    }
+
+    private async Task<Guid> SeedConnectionAsync(Guid tenant, string status)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(
+            Factory,
+            """
+            INSERT INTO integrations.connections (id, tenant_id, provider_key, name, status, fields, created_at, created_by, updated_at, version)
+            VALUES (@id, @tenant, 'whatsapp-cloud', @name, @status, '{}'::jsonb, now(), @member, now(), 1)
+            """,
+            ("id", id), ("tenant", tenant), ("name", $"Conexión {status} {id:N}"), ("status", status), ("member", Guid.CreateVersion7()));
+        return id;
+    }
+
     private async Task<Guid> NewSeededTenantAsync()
     {
         var tenant = NewTenantId();

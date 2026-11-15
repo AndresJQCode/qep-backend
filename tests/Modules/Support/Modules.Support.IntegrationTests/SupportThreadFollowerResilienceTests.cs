@@ -80,6 +80,58 @@ public sealed class SupportThreadFollowerResilienceTests
             factory, "SELECT count(*) FROM support.unclassified_messages WHERE tenant_id = @tenant AND resolution IS NULL", ("tenant", tenant)));
     }
 
+    // Revisión del bloque C (CM4): una fila cuyos candidatos se cerraron todos no tiene a quién pasar. Queda pendiente para el asesor
+    // («De ninguno»), sin vínculo, y no frena la fila reasignable de otra conversación en el mismo lote.
+    [Fact]
+    public async Task ARowWhoseCandidatesAllClosedStaysPendingAndDoesNotBlockAReassignableOne()
+    {
+        var (database, factory) = await OpenOwnHostAsync();
+        await using var _ = database;
+        await using var __ = factory;
+        var tenant = Guid.Parse(NewTenantId());
+        await SeedTenantAsync(factory, tenant.ToString());
+        var orphaned = await SeedConversationAsync(factory, tenant);
+        var live = await SeedConversationAsync(factory, tenant, waId: "573009998877");
+        var closedA = await SaveConversationTicketAsync(factory, tenant, orphaned, Since);
+        var closedB = await SaveConversationTicketAsync(factory, tenant, orphaned, Since);
+        var single = await SaveConversationTicketAsync(factory, tenant, live, Since);
+        await ExecuteAsync(
+            factory,
+            """
+            UPDATE support.tickets
+            SET status = 'Closed', closed_at = @closed, follow_thread = false, follow_off_at = @closed, version = version + 1
+            WHERE id IN (@a, @b)
+            """,
+            ("closed", Since.AddMinutes(5)), ("a", closedA.Id.Value), ("b", closedB.Id.Value));
+        var waiting = Guid.CreateVersion7();
+        var reassignable = Guid.CreateVersion7();
+        await ExecuteAsync(
+            factory,
+            """
+            INSERT INTO support.unclassified_messages (message_id, tenant_id, conversation_id, occurred_at, created_at)
+            VALUES (@waiting, @tenant, @orphaned, @first, now()), (@reassignable, @tenant, @live, @second, now())
+            """,
+            ("waiting", waiting), ("reassignable", reassignable), ("tenant", tenant), ("orphaned", orphaned), ("live", live),
+            ("first", Since.AddMinutes(1)), ("second", Since.AddMinutes(2)));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<SupportThreadFollower>().ProcessBatchAsync(Ct);
+        }
+
+        Assert.Null(await TextAsync(factory, "SELECT resolution FROM support.unclassified_messages WHERE message_id = @id", ("id", waiting)));
+        Assert.Equal(0, await ScalarAsync(factory, "SELECT count(*) FROM support.ticket_messages WHERE message_id = @id", ("id", waiting)));
+        Assert.Equal(
+            "Reassigned",
+            await TextAsync(factory, "SELECT resolution FROM support.unclassified_messages WHERE message_id = @id", ("id", reassignable)));
+        Assert.Equal(
+            "Linked",
+            await TextAsync(
+                factory,
+                "SELECT state FROM support.ticket_messages WHERE ticket_id = @ticket AND message_id = @message",
+                ("ticket", single.Id.Value), ("message", reassignable)));
+    }
+
     // Un entrante que siempre revienta (acá, el repositorio de vínculos) se registra y se salta; el siguiente del lote se vincula igual.
     [Fact]
     public async Task AFailingInboundIsSkippedAndTheRestOfTheBatchIsProcessed()

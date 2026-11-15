@@ -31,6 +31,35 @@ public sealed class SupportTicketMessageTests
         Assert.Equal(Now.AddMinutes(-5), link.OccurredAt);
     }
 
+    // Revisión del bloque A (AM4): un vínculo no nace soltado ni sin ids.
+    [Fact]
+    public void ALinkCannotStartReleasedNorWithoutIds()
+    {
+        var ticketId = SupportTicketId.New();
+
+        Assert.Throws<ArgumentException>(() => SupportTicketMessage.Link(
+            TenantId, ticketId, ConversationId, MessageId, Now, SupportTicketMessageState.Released, Now));
+        Assert.Throws<ArgumentException>(() => SupportTicketMessage.Link(
+            TenantId, ticketId, ConversationId, Guid.Empty, Now, SupportTicketMessageState.Linked, Now));
+        Assert.Throws<ArgumentException>(() => SupportTicketMessage.Link(
+            TenantId, ticketId, Guid.Empty, MessageId, Now, SupportTicketMessageState.Pinned, Now));
+    }
+
+    // AM4: fijar lo fijado y soltar lo soltado no hacen nada, tampoco tocan UpdatedAt.
+    [Fact]
+    public void PinningAndReleasingAreIdempotent()
+    {
+        var link = SupportTicketMessage.Link(
+            TenantId, SupportTicketId.New(), ConversationId, MessageId, Now.AddMinutes(-5), SupportTicketMessageState.Pinned, Now);
+
+        link.Pin(Now.AddMinutes(1));
+        Assert.Equal((SupportTicketMessageState.Pinned, Now), (link.State, link.UpdatedAt));
+
+        link.Release(Now.AddMinutes(2));
+        link.Release(Now.AddMinutes(3));
+        Assert.Equal((SupportTicketMessageState.Released, Now.AddMinutes(2)), (link.State, link.UpdatedAt));
+    }
+
     [Fact]
     public void AResolvedUnclassifiedMessageCannotBeResolvedAgain()
     {

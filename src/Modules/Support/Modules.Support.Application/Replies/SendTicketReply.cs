@@ -88,7 +88,8 @@ public sealed class SendTicketReplyValidator : AbstractValidator<SendTicketReply
 /// El <c>id</c> de la fila es el <c>clientId</c> que viaja a Mensajería, que es idempotente por él: un reintento con una fila todavía
 /// <c>Pending</c> (se cayó entre el envío y la marca) vuelve a llamar y Mensajería devuelve el mensaje que ya salió. El correo no tiene esa
 /// garantía. Una respuesta que el canal rechaza antes de enviar (la ventana se cerró entre la revisión y el envío) borra su fila y
-/// responde 422: el hilo no la muestra y la pantalla tampoco. Una que Meta o el correo rechazan queda <c>Failed</c> y responde 201, igual
+/// responde 422: el hilo no la muestra y la pantalla tampoco. Una <c>Pending</c> retomada no se borra nunca: sale por lo que guardó
+/// su fila y, si el canal la rechaza o ya no tiene ruta, queda <c>Failed</c> con el motivo (201). Una que Meta o el correo rechazan queda <c>Failed</c> y responde 201, igual
 /// que el hilo.
 /// </summary>
 public sealed class SendTicketReplyHandler(
@@ -156,12 +157,29 @@ public sealed class SendTicketReplyHandler(
             throw new RequestConcurrencyException("concurrency.conflict", "The ticket changed after it was loaded.");
         }
 
-        var text = existing?.Text ?? command.Text!.Trim();
-        var route = await RouteAsync(ticket, channel, command, text, context.Now, cancellationToken);
+        // Revisión del bloque C (CM1 y CM2): una Pending vieja sale por lo que guardó su fila (canal, entrega, conexión y texto), nunca por
+        // lo que traiga el reintento. Si ya no tiene por dónde salir, queda Failed con el motivo: no se borra ni se queda Pending.
+        SupportReplyRoute route;
+        if (existing is not null)
+        {
+            try
+            {
+                route = await ResumeRouteAsync(ticket, existing, cancellationToken);
+            }
+            catch (SupportDomainException unavailable)
+            {
+                return await FailResumedAsync(ticket, existing, unavailable.Code, actor, cancellationToken);
+            }
+        }
+        else
+        {
+            route = await RouteAsync(ticket, channel, command, command.Text!.Trim(), context.Now, cancellationToken);
+        }
 
         var reply = existing;
         if (reply is null)
         {
+            var text = command.Text!.Trim();
             reply = SupportTicketReply.Start(
                 command.TenantId, ticket.Id, clientId, channel, route.Delivery, text, route.ConnectionId, actor, context.Now);
             replies.Add(reply);
@@ -183,6 +201,11 @@ public sealed class SendTicketReplyHandler(
         var outcome = await SendAsync(ticket, route, reply, actor, command.UploadId, command.FileName?.Trim(), cancellationToken);
         if (outcome is SupportChannelSendResult.Rejected rejected)
         {
+            if (existing is not null)
+            {
+                return await FailResumedAsync(ticket, reply, rejected.Reason, actor, cancellationToken);
+            }
+
             replies.Remove(reply);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             throw new SupportDomainException(SupportReplyRules.CodeFor(rejected.Reason), $"The reply was rejected: {rejected.Reason}.");
@@ -242,6 +265,44 @@ public sealed class SendTicketReplyHandler(
         }
 
         return route;
+    }
+
+    /// <summary>
+    /// CM1: la ruta de una Pending vieja sale de su fila. La entrega guardada manda: <c>Text</c> va al hilo del ticket aunque la ventana se
+    /// haya cerrado (Mensajería devuelve lo que ya salió por <c>clientId</c>, o lo rechaza y la fila queda Failed); <c>Template</c> va a la
+    /// conversación del ticket o, sin ella, al celular por la conexión guardada; <c>Email</c>, al correo de la foto. Lo que ya no se puede
+    /// es una <see cref="SupportDomainException"/>, que quien llama convierte en Failed. Sin Mensajería prendida responde 403 y la fila
+    /// sigue Pending: prender el módulo y reintentar la retoma.
+    /// </summary>
+    private async Task<SupportReplyRoute> ResumeRouteAsync(
+        SupportTicket ticket, SupportTicketReply stored, CancellationToken cancellationToken)
+    {
+        if (stored.Delivery is SupportReplyDelivery.Email)
+        {
+            return string.IsNullOrWhiteSpace(ticket.Requester?.Email)
+                ? throw Unavailable(SupportReplyChannel.Email)
+                : new SupportReplyRoute(SupportReplyDelivery.Email, null, null, null);
+        }
+
+        await TenantModuleGuard.EnsureEnabledAsync(tenantModules, ticket.TenantId, TenantModuleKeys.Messaging, cancellationToken);
+        if (ticket.ConversationId is { } conversationId)
+        {
+            return new SupportReplyRoute(stored.Delivery, conversationId, null, null);
+        }
+
+        return stored.Delivery is SupportReplyDelivery.Template
+            ? await TemplateToPhoneAsync(ticket, stored.ConnectionId, cancellationToken)
+            : throw new SupportDomainException(SupportErrorCodes.NoConversation, "The ticket no longer has a conversation to reply through.");
+    }
+
+    /// <summary>CM2: el retomado que no salió deja su fila <c>Failed</c> con el motivo, con su traza y su auditoría, y responde 201 como
+    /// cualquier envío fallido. Así el request original que siga en curso encuentra la fila (ya terminada) y no escribe nada más.</summary>
+    private async Task<SupportReplyResultDto> FailResumedAsync(
+        SupportTicket ticket, SupportTicketReply reply, string code, Guid actor, CancellationToken cancellationToken)
+    {
+        var (saved, _) = await ApplyOutcomeAsync(
+            ticket, reply, new SupportChannelSendResult.Failed(null, code), actor, resolve: false, cancellationToken);
+        return await ResultAsync(saved, reply.Id, cancellationToken);
     }
 
     private async Task<SupportReplyRoute> ThreadRouteAsync(SupportTicket ticket, DateTimeOffset now, CancellationToken cancellationToken)

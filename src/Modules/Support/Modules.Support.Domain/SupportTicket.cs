@@ -249,6 +249,8 @@ public sealed class SupportTicket
         else if (target is SupportTicketStatus.Closed)
         {
             ClosedAt = now;
+
+            // Si el asesor ya lo había apagado, se conserva esa hora: lo que llegó con el interruptor apagado nunca entró a la ventana.
             if (FollowThread)
             {
                 FollowThread = false;

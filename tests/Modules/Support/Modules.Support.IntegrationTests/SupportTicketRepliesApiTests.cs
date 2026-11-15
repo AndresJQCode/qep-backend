@@ -379,6 +379,102 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
     }
 
+    // Revisión del bloque C (CM1): una Pending vieja sale por lo que guardó su fila (canal, entrega y conexión), no por lo que traiga el
+    // reintento: el envío ya se decidió, y otra entrega mandaría al cliente un mensaje distinto del que el ticket registra.
+    [Fact]
+    public async Task APendingReplyIsResumedThroughItsStoredChannelNotTheRetryOne()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var emailClient = Guid.CreateVersion7();
+        var emailRow = await SeedPendingReplyAsync(
+            scenario, Id(ticket), emailClient, DateTimeOffset.UtcNow.AddMinutes(-2),
+            Modules.Support.Domain.SupportReplyChannel.Email, Modules.Support.Domain.SupportReplyDelivery.Email);
+
+        var byEmail = await ReplyCreatedAsync(scenario, ticket, new { clientId = emailClient, channel = "Thread", text = "Otro texto" });
+
+        Assert.Empty(_channels.ThreadSends);
+        var email = Assert.Single(_email.Sent);
+        Assert.Equal("Hola", email.Text);
+        Assert.Equal((emailRow, "Email", "Sent"), (
+            byEmail.GetProperty("reply").GetProperty("id").GetGuid(),
+            byEmail.GetProperty("reply").GetProperty("channel").GetString(),
+            byEmail.GetProperty("reply").GetProperty("status").GetString()));
+
+        // La plantilla a un ticket sin conversación sale por la conexión guardada, no por la del reintento.
+        var stored = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        _channels.ApprovedConnections[stored] = "Guardada";
+        _channels.ApprovedConnections[other] = "Otra";
+        var manual = await scenario.CreateAsync();
+        var templateClient = Guid.CreateVersion7();
+        await SeedPendingReplyAsync(
+            scenario, Id(manual), templateClient, DateTimeOffset.UtcNow.AddMinutes(-2),
+            Modules.Support.Domain.SupportReplyChannel.WhatsAppTemplate, Modules.Support.Domain.SupportReplyDelivery.Template, stored);
+        _channels.OnTemplate = _ => new SupportChannelSendResult.Failed(null, "send_failed");
+
+        await ReplyCreatedAsync(scenario, manual, new { clientId = templateClient, channel = "WhatsAppTemplate", text = "Hola", connectionId = other });
+
+        Assert.Equal(stored, Assert.Single(_channels.TemplateSends).ConnectionId);
+    }
+
+    // CM2: un retomado que el canal rechaza, o que ya no tiene ruta (422), deja su fila Failed con el motivo: nunca la borra ni la deja
+    // Pending, así la pantalla y el reintento ven lo mismo.
+    [Fact]
+    public async Task AResumeTheChannelRejectsMarksTheStoredRowFailed()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var clientId = Guid.CreateVersion7();
+        var rowId = await SeedPendingReplyAsync(scenario, Id(ticket), clientId, DateTimeOffset.UtcNow.AddMinutes(-2));
+        _channels.OnThread = _ => new SupportChannelSendResult.Rejected("window_closed");
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId, channel = "Thread", text = "Hola" });
+
+        Assert.Equal((rowId, "Failed", "window_closed"), (
+            result.GetProperty("reply").GetProperty("id").GetGuid(),
+            result.GetProperty("reply").GetProperty("status").GetString(),
+            result.GetProperty("reply").GetProperty("failureCode").GetString()));
+        Assert.Equal(1, await RepliesCountAsync(Id(ticket)));
+        Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketReplyFailed, Id(ticket).ToString()));
+    }
+
+    [Fact]
+    public async Task AResumeWithoutARouteMarksTheStoredRowFailed()
+    {
+        var scenario = await StartAsync(Factory);
+        // Un ticket manual no tiene conversación: una fila Text guardada ya no tiene por dónde salir.
+        var ticket = await scenario.CreateAsync();
+        var clientId = Guid.CreateVersion7();
+        var rowId = await SeedPendingReplyAsync(scenario, Id(ticket), clientId, DateTimeOffset.UtcNow.AddMinutes(-2));
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId, channel = "Thread", text = "Hola" });
+
+        Assert.Empty(_channels.ThreadSends);
+        Assert.Equal((rowId, "Failed", Modules.Support.Domain.SupportErrorCodes.NoConversation), (
+            result.GetProperty("reply").GetProperty("id").GetGuid(),
+            result.GetProperty("reply").GetProperty("status").GetString(),
+            result.GetProperty("reply").GetProperty("failureCode").GetString()));
+        Assert.Equal(1, await RepliesCountAsync(Id(ticket)));
+    }
+
+    // CM4: el retomado de una Pending vieja no mira el If-Match (el envío ya se decidió): uno viejo no es 412.
+    [Fact]
+    public async Task APendingResumeWithAStaleIfMatchIsNotRefused()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var clientId = Guid.CreateVersion7();
+        var rowId = await SeedPendingReplyAsync(scenario, Id(ticket), clientId, DateTimeOffset.UtcNow.AddMinutes(-2));
+        var moved = await scenario.MoveAsync(ticket, "Open");
+        Assert.True(Version(moved) > Version(ticket));
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId, channel = "Thread", text = "Hola" });
+
+        Assert.Equal(rowId, Assert.Single(_channels.ThreadSends).ClientId);
+        Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+    }
+
     // Tarea 11 (E19): el adjunto viaja con su nombre hasta el canal, y el texto de la respuesta es su pie.
     [Fact]
     public async Task AThreadReplyWithAnAttachmentCarriesItToTheChannel()
@@ -457,12 +553,19 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
     }
 
     // Una fila Pending como la deja un proceso que cayó entre confirmarla y marcarla, creada a la hora que se pide.
-    private async Task<Guid> SeedPendingReplyAsync(SupportTicketScenario scenario, Guid ticketId, Guid clientId, DateTimeOffset createdAt)
+    private async Task<Guid> SeedPendingReplyAsync(
+        SupportTicketScenario scenario,
+        Guid ticketId,
+        Guid clientId,
+        DateTimeOffset createdAt,
+        Modules.Support.Domain.SupportReplyChannel channel = Modules.Support.Domain.SupportReplyChannel.Thread,
+        Modules.Support.Domain.SupportReplyDelivery delivery = Modules.Support.Domain.SupportReplyDelivery.Text,
+        Guid? connectionId = null)
     {
         await using var scope = Factory.Services.CreateAsyncScope();
         var reply = Modules.Support.Domain.SupportTicketReply.Start(
-            scenario.TenantId, new Modules.Support.Domain.SupportTicketId(ticketId), clientId, Modules.Support.Domain.SupportReplyChannel.Thread,
-            Modules.Support.Domain.SupportReplyDelivery.Text, "Hola", null, scenario.CallerMemberId, createdAt);
+            scenario.TenantId, new Modules.Support.Domain.SupportTicketId(ticketId), clientId, channel, delivery, "Hola", connectionId,
+            scenario.CallerMemberId, createdAt);
         scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>().Add(reply);
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         return reply.Id;

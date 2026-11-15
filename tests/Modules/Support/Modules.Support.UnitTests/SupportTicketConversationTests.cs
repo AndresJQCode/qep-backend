@@ -123,6 +123,23 @@ public sealed class SupportTicketConversationTests
         Assert.Equal(Later(20), ticket.FollowOffAt);
     }
 
+    // Revisión del bloque A (AM3): si el asesor ya había apagado el seguimiento, cerrar conserva esa hora. Moverla al cierre metería en
+    // la ventana los entrantes que llegaron con el interruptor apagado (plan E4).
+    [Fact]
+    public void ClosingATicketThatAlreadyStoppedFollowingKeepsTheEarlierTime()
+    {
+        var ticket = FromConversation();
+        ticket.SetFollowThread(false, Actor, Later(5));
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, Later(10), Clock);
+
+        ticket.ChangeStatus(SupportTicketStatus.Closed, Actor, Later(20), Clock);
+
+        Assert.False(ticket.FollowThread);
+        Assert.Equal(Later(5), ticket.FollowOffAt);
+        Assert.Equal(Later(20), ticket.ClosedAt);
+        Assert.False(ticket.CoversInbound(Later(7)));
+    }
+
     [Fact]
     public void CoversInboundOnlyInsideTheWindow()
     {

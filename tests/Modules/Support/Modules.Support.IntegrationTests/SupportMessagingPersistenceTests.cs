@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
+using static Modules.Support.IntegrationTests.SupportMessagingSeed;
 
 namespace Modules.Support.IntegrationTests;
 
@@ -201,6 +202,32 @@ public sealed class SupportMessagingPersistenceTests(SharedSupportHost sharedHos
         Assert.Equal(
             [SupportTicketEventKind.Created, SupportTicketEventKind.MessagePinned, SupportTicketEventKind.FollowThreadChanged],
             events.Select(item => item.Kind));
+    }
+
+    // Revisión del bloque A (AM2): el CHECK y el varchar(24) aceptan todos los tipos del enum, no sólo los que la prueba de arriba sabe
+    // producir. Un tipo nuevo que no entre en la migración se pone rojo acá y no en producción.
+    [Fact]
+    public async Task TheEventKindCheckAcceptsEveryKind()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var ticket = await FromConversationAsync(factory, tenant, 1, Guid.CreateVersion7());
+        await SaveAsync(factory, ticket);
+        var kinds = Enum.GetValues<SupportTicketEventKind>();
+
+        for (var index = 0; index < kinds.Length; index++)
+        {
+            await ExecuteAsync(
+                factory,
+                """
+                INSERT INTO support.ticket_events (id, tenant_id, ticket_id, ordinal, kind, actor_member_id, occurred_at, details)
+                VALUES (@id, @tenant, @ticket, @ordinal, @kind, NULL, now(), '{}'::jsonb)
+                """,
+                ("id", Guid.CreateVersion7()), ("tenant", tenant), ("ticket", ticket.Id.Value), ("ordinal", index + 100), ("kind", kinds[index].ToString()));
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var events = await read.ServiceProvider.GetRequiredService<ISupportTicketRepository>().ListEventsAsync(tenant, ticket.Id, Ct);
+        Assert.Equal(kinds, events.Where(item => item.Ordinal >= 100).Select(item => item.Kind));
     }
 
     private async Task<(QepApiFactory Factory, Guid Tenant)> NewTenantAsync()
