@@ -107,6 +107,67 @@ public sealed class QuotationMunicipalWithholdingsApiTests(SharedQuotationsHost 
         Assert.Single(await RateEditedAsync(fx, created.Id));
     }
 
+    // A18 (owner 2026-11-14): la empresa reemplaza su tasa de Bogotá y la cotización se vuelve a guardar con sólo las notas
+    // cambiadas y la lista completa de ids, la guardada incluida. Va en otro orden que el guardado para que el selector se
+    // vuelva a resolver: el id guardado se acepta y su fila se queda como estaba.
+    [Fact]
+    public async Task ReplacedCompanyRateKeepsTheStoredIdOnANotesOnlySave()
+    {
+        var fx = await SetUpAsync();
+        var clientId = await AgentCustomerAsync(fx, fx.Bogota.CityId);
+        var created = await CreateAsync(fx, clientId);
+        var stored = await ReadAsync(await PutAsync(fx, created, Body(created, OwnBilling(fx, [fx.ReteIcaBogota, fx.Retefuente]))));
+        var replacement = await ReplaceBogotaRateAsync(fx);
+
+        var saved = await ReadAsync(await PutAsync(
+            fx, stored, Body(stored, OwnBilling(fx, [fx.Retefuente, fx.ReteIcaBogota])) with { Notes = "Sólo cambian las notas" }));
+
+        var reteIca = Assert.Single(saved.Withholdings, row => row.Type == "ReteICA");
+        Assert.Equal((fx.ReteIcaBogota, 0.966m, false), (reteIca.TaxRateId, reteIca.Percentage, reteIca.PercentageOverridden));
+        Assert.Equal(replacement, Assert.Single(saved.MunicipalWithholdings).CompanyRate?.TaxRateId);
+        Assert.Empty(await RateEditedAsync(fx, saved.Id));
+    }
+
+    // A18: cambiar sólo un selector nacional no relee el catálogo para la fila municipal guardada; el 0,8 % sobrevive.
+    [Fact]
+    public async Task ChangingANationalSelectorKeepsTheEditedMunicipalPercentage()
+    {
+        var fx = await SetUpAsync();
+        var clientId = await AgentCustomerAsync(fx, fx.Bogota.CityId);
+        var created = await CreateAsync(fx, clientId);
+        var edited = await ReadAsync(await PutAsync(
+            fx, created, Body(created, OwnBilling(fx, [fx.ReteIcaBogota])) with { WithholdingPercentages = [new("ReteICA", 0.8m)] }));
+
+        var body = Body(edited, OwnBilling(fx, [fx.ReteIcaBogota, fx.Retefuente]));
+        var preview = await ReadAsync(await PostPreviewAsync(fx, edited, body));
+        var saved = await ReadAsync(await PutAsync(fx, edited, body));
+
+        foreach (var quotation in new[] { preview, saved })
+        {
+            var reteIca = Assert.Single(quotation.Withholdings, row => row.Type == "ReteICA");
+            Assert.Equal((0.8m, 0.966m, true), (reteIca.Percentage, reteIca.CatalogPercentage, reteIca.PercentageOverridden));
+            Assert.Contains(quotation.Withholdings, row => row.TaxRateId == fx.Retefuente);
+        }
+
+        Assert.Single(await RateEditedAsync(fx, saved.Id));
+    }
+
+    // Control de A18: un id municipal que no es ni el guardado ni el de la empresa sigue siendo 422.
+    [Fact]
+    public async Task AMunicipalIdNeitherStoredNorOfferedIs422()
+    {
+        var fx = await SetUpAsync();
+        var clientId = await AgentCustomerAsync(fx, fx.Bogota.CityId);
+        var created = await CreateAsync(fx, clientId);
+        var stored = await ReadAsync(await PutAsync(fx, created, Body(created, OwnBilling(fx, [fx.ReteIcaBogota]))));
+        var unassigned = await InsertWithholdingRateAsync(
+            fx.Factory, fx.TenantId, "ReteICA Bogotá sin asignar", "ReteICA", 1.2m, cityId: fx.Bogota.CityId);
+
+        var response = await PutAsync(fx, stored, Body(stored, OwnBilling(fx, [unassigned, fx.Retefuente])));
+
+        Assert.Equal("quotation.billing.withholding_tax_rate_invalid", await CodeAsync(response));
+    }
+
     [Fact]
     public async Task InvalidBodiesAre422()
     {
@@ -620,6 +681,18 @@ public sealed class QuotationMunicipalWithholdingsApiTests(SharedQuotationsHost 
             edited,
             new QuotationBillingAccountRequest(medellin.CompanyId, medellin.BankName, medellin.AccountNumber, medellin.Currency),
             medellinRate);
+    }
+
+    // La empresa cambia su ReteICA de Bogotá por otra (A18): la vieja sigue activa en el catálogo, pero ya no es la que ofrece.
+    private static async Task<Guid> ReplaceBogotaRateAsync(Fixture fx)
+    {
+        await ExecuteAsync(
+            fx,
+            $"DELETE FROM companies.company_withholding_tax_rates WHERE company_id = '{fx.BogotaAccount.CompanyId}' AND tax_rate_id = '{fx.ReteIcaBogota}'");
+        var replacement = await InsertWithholdingRateAsync(
+            fx.Factory, fx.TenantId, "ReteICA Bogotá 2027", "ReteICA", 1.1m, cityId: fx.Bogota.CityId);
+        await AssignCompanyWithholdingRateAsync(fx.Factory, fx.TenantId, fx.BogotaAccount.CompanyId, replacement);
+        return replacement;
     }
 
     private static async Task<Guid> AgentCustomerAsync(Fixture fx, Guid cityId)

@@ -21,6 +21,13 @@ public sealed record MunicipalSelectorScope(IReadOnlySet<Guid> AllowedMunicipalR
     /// </summary>
     public IReadOnlyList<WithholdingRate> ReResolved { get; init; } = [];
 
+    /// <summary>
+    /// Las filas congeladas de la fuente que el selector reemplaza (A18, plan P14): la facturación propia en la cotización,
+    /// las filas del pedido; vacía al crear. Sin <see cref="IgnoreUnmatched"/>, un id municipal igual al de la fila guardada
+    /// de su tipo se acepta aunque la empresa ya no lo ofrezca y vuelve esa fila tal cual, porcentaje editado incluido.
+    /// </summary>
+    public IReadOnlyList<WithholdingRate> Stored { get; init; } = [];
+
     /// <summary>El alcance de un contexto: aceptadas las tasas que la empresa ofrece en el municipio.</summary>
     public static MunicipalSelectorScope For(MunicipalContext context, bool ignoreUnmatched) =>
         new(
@@ -42,7 +49,8 @@ public static class WithholdingSelection
 {
     /// <param name="companyCountry">El país de la empresa facturadora; null sin empresa, y entonces ningún selector
     /// sirve.</param>
-    /// <param name="scope">Qué ids municipales se aceptan y si los demás se ignoran (spec ReteICA por empresa §7.6).</param>
+    /// <param name="scope">Qué ids municipales se aceptan, si los demás se ignoran y qué filas guardadas se conservan tal cual
+    /// (spec ReteICA por empresa §7.6, A18).</param>
     /// <param name="codePrefix"><c>quotation</c> u <c>order</c>.</param>
     /// <param name="clearedTypes">Los tipos marcados «Sin retención» (plan P12): no reciben la fila re-resuelta.</param>
     /// <returns>Las fotos en el orden de <paramref name="ids"/>, sin las ignoradas y con las re-resueltas al final;
@@ -74,12 +82,33 @@ public static class WithholdingSelection
             throw Invalid(codePrefix);
         }
 
-        var candidates = ids.Count == 0
+        // A18 (plan P14): sin cambio de contexto, el id de la fila municipal guardada no vuelve al catálogo. Con A11 no cuenta:
+        // ese id se eligió contra la empresa o el municipio de antes.
+        var stored = scope.IgnoreUnmatched
+            ? new Dictionary<Guid, WithholdingRate>()
+            : scope.Stored
+                .Where(rate => TaxCountries.IsMunicipal(rate.Country, rate.Type))
+                .ToDictionary(rate => rate.TaxRateId);
+        var toRead = ids.Where(id => !stored.ContainsKey(id)).ToList();
+        var candidates = toRead.Count == 0
             ? new Dictionary<Guid, WithholdingRateCandidate>()
-            : await lookup.ForRatesAsync(tenantId, ids, documentDate, cancellationToken);
+            : await lookup.ForRatesAsync(tenantId, toRead, documentDate, cancellationToken);
         var rates = new List<WithholdingRate>(ids.Count + reResolved.Count);
         foreach (var id in ids)
         {
+            // Se conserva tal cual (id, porcentaje del catálogo congelado, porcentaje editado, municipio) aunque la empresa
+            // ya no la ofrezca o la tasa esté inactiva, igual que A16 en la empresa. El país sí se sigue exigiendo.
+            if (stored.TryGetValue(id, out var frozen))
+            {
+                if (!string.Equals(frozen.Country, country, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw Invalid(codePrefix);
+                }
+
+                rates.Add(frozen);
+                continue;
+            }
+
             if (!candidates.TryGetValue(id, out var candidate) || !candidate.IsActive || !candidate.Withholds)
             {
                 throw Invalid(codePrefix);

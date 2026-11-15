@@ -173,6 +173,96 @@ public sealed class WithholdingSelectionTests
         Assert.Equal(new[] { RetefuenteServicios }, rates);
     }
 
+    // A18 (owner 2026-11-14, plan P14): sin cambio de empresa ni de municipio, el id de la fila municipal guardada se acepta
+    // aunque la empresa ya no lo ofrezca —la reemplazó, la desactivaron o ya no está en el catálogo— y vuelve la foto
+    // congelada tal cual, no la del catálogo de hoy.
+    [Theory]
+    [InlineData("replaced")]
+    [InlineData("inactive")]
+    [InlineData("missing")]
+    public async Task AStoredMunicipalIdOutsideTheOffersIsKeptAsIs(string catalogState)
+    {
+        var stored = Rate("ReteICA Bogotá vieja", "ReteICA", 1.1m) with
+        {
+            CityId = Guid.Parse("0193b6a2-0000-7000-8000-000000001310"),
+        };
+        var today = stored with { Percentage = 1.3m, CatalogPercentage = 1.3m };
+        var lookup = catalogState switch
+        {
+            "replaced" => Catalog().WithRate(today),
+            "inactive" => Catalog().WithRate(today, isActive: false),
+            _ => Catalog(),
+        };
+        var scope = Offered(ReteIca, ignoreUnmatched: false) with { Stored = [stored, RetefuenteServicios] };
+
+        var rates = await WithholdingSelection.ResolveAsync(
+            lookup, TenantId, [RetefuenteCompras.TaxRateId, stored.TaxRateId], "CO", DocumentDate, scope, "quotation",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(new[] { RetefuenteCompras, stored }, rates);
+    }
+
+    // Aunque la empresa la siga ofreciendo, el id guardado no relee el catálogo de hoy: el 0,8 % editado sobrevive.
+    [Theory]
+    [InlineData("quotation")]
+    [InlineData("order")]
+    public async Task AStoredMunicipalIdKeepsItsEditedPercentage(string prefix)
+    {
+        var edited = ReteIca with { Percentage = 0.8m };
+        var scope = Offered(ReteIca, ignoreUnmatched: false) with { Stored = [edited] };
+
+        var rates = await ResolveAsync([edited.TaxRateId, RetefuenteServicios.TaxRateId], "CO", prefix, scope);
+
+        Assert.Equal(new[] { edited, RetefuenteServicios }, rates);
+        Assert.Equal((0.8m, 0.966m, true), (rates[0].Percentage, rates[0].CatalogPercentage, rates[0].Overridden));
+    }
+
+    // Un id municipal distinto del guardado se valida contra la oferta de la empresa, como siempre (A4).
+    [Theory]
+    [InlineData("quotation")]
+    [InlineData("order")]
+    public async Task ADifferentMunicipalIdStillNeedsTheOffer(string prefix)
+    {
+        var other = Rate("ReteICA Bogotá nueva", "ReteICA", 1.2m);
+        var lookup = Catalog().WithRate(other);
+        var scope = MunicipalSelectorScope.None with { Stored = [ReteIca] };
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => WithholdingSelection.ResolveAsync(
+            lookup, TenantId, [other.TaxRateId], "CO", DocumentDate, scope, prefix, TestContext.Current.CancellationToken));
+
+        Assert.Equal($"{prefix}.billing.withholding_tax_rate_invalid", error.Code);
+    }
+
+    // La fila guardada de un país distinto al de la empresa no se tolera: sigue el 422 de siempre.
+    [Fact]
+    public async Task AStoredMunicipalIdOfAnotherCountryIsInvalid()
+    {
+        var scope = MunicipalSelectorScope.None with { Stored = [ReteIca] };
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => ResolveAsync(
+            [ReteIca.TaxRateId], "EC", "order", scope));
+
+        Assert.Equal("order.billing.withholding_tax_rate_invalid", error.Code);
+    }
+
+    // Con cambio de empresa o de municipio rige A11: el id guardado se eligió contra lo anterior y se ignora; queda la fila
+    // de la re-resolución.
+    [Fact]
+    public async Task WithAContextChangeTheStoredIdFollowsA11()
+    {
+        var edited = ReteIca with { Percentage = 0.8m };
+        var reResolved = ReteIca with { TaxRateId = Guid.CreateVersion7(), Name = "ReteICA Medellín", Percentage = 1m };
+        var scope = new MunicipalSelectorScope(new HashSet<Guid>(), IgnoreUnmatched: true)
+        {
+            ReResolved = [reResolved],
+            Stored = [edited],
+        };
+
+        var rates = await ResolveAsync([edited.TaxRateId, RetefuenteServicios.TaxRateId], "CO", "quotation", scope);
+
+        Assert.Equal(new[] { RetefuenteServicios, reResolved }, rates);
+    }
+
     private static MunicipalSelectorScope Offered(WithholdingRate rate, bool ignoreUnmatched) =>
         new(new HashSet<Guid>([rate.TaxRateId]), ignoreUnmatched);
 

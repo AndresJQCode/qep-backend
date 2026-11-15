@@ -233,9 +233,12 @@ internal static class QuotationEditsApplication
             return BillingSelection.None;
         }
 
+        // A18 (plan P14): sin cambio de contexto, reenviar el id municipal guardado conserva su fila tal cual, aunque la
+        // empresa haya reemplazado su tasa o cambie otro selector del mismo cuerpo.
         var scope = MunicipalSelectorScope.For(municipal, ignoreUnmatched: contextChanged) with
         {
             ReResolved = contextChanged ? [.. current.Where(IsMunicipal)] : [],
+            Stored = contextChanged ? [] : current,
         };
 
         // La fecha sólo hace falta para resolver ids: vaciar no consulta ni el catálogo ni el calendario.

@@ -301,6 +301,62 @@ public sealed class OrderMunicipalWithholdingsApiTests(SharedQuotationsHost shar
         Assert.Single(RateEdited(resent));
     }
 
+    // A18 (owner 2026-11-14), gemelo del pedido: la empresa reemplaza su tasa de Bogotá y el pedido se guarda con la lista
+    // completa, la guardada incluida, en otro orden que el guardado para que el selector se vuelva a resolver.
+    [Fact]
+    public async Task ReplacedCompanyRateKeepsTheStoredIdOnANotesOnlySave()
+    {
+        var fx = await SetUpAsync();
+        var clientId = await AgentCustomerAsync(fx, fx.Bogota.CityId);
+        var created = await CreateManualAsync(fx, clientId);
+        var stored = await ReadDetailAsync(await PutAsync(fx, created, Edits(fx, [fx.ReteIcaBogota, fx.Retefuente])));
+        var replacement = await ReplaceBogotaRateAsync(fx);
+
+        var saved = await ReadDetailAsync(await PutAsync(fx, stored, Edits(fx, [fx.Retefuente, fx.ReteIcaBogota])));
+
+        var reteIca = Assert.Single(saved.Order.Withholdings, row => row.Type == "ReteICA");
+        Assert.Equal((fx.ReteIcaBogota, 0.966m, false), (reteIca.TaxRateId, reteIca.Percentage, reteIca.PercentageOverridden));
+        Assert.Equal(replacement, Assert.Single(saved.MunicipalWithholdings).CompanyRate?.TaxRateId);
+        Assert.Empty(RateEdited(saved));
+    }
+
+    // A18: cambiar sólo un selector nacional no relee el catálogo para la fila municipal guardada; el 0,8 % sobrevive.
+    [Fact]
+    public async Task ChangingANationalSelectorKeepsTheEditedMunicipalPercentage()
+    {
+        var fx = await SetUpAsync();
+        var clientId = await AgentCustomerAsync(fx, fx.Bogota.CityId);
+        var edited = await EditedManualAsync(fx, clientId);
+
+        var body = Edits(fx, [fx.ReteIcaBogota, fx.Retefuente]);
+        var preview = await ReadDetailAsync(await PostPreviewAsync(fx, edited, body));
+        var saved = await ReadDetailAsync(await PutAsync(fx, edited, body));
+
+        foreach (var order in new[] { preview, saved })
+        {
+            var reteIca = Assert.Single(order.Order.Withholdings, row => row.Type == "ReteICA");
+            Assert.Equal((0.8m, 0.966m, true), (reteIca.Percentage, reteIca.CatalogPercentage, reteIca.PercentageOverridden));
+            Assert.Contains(order.Order.Withholdings, row => row.TaxRateId == fx.Retefuente);
+        }
+
+        Assert.Single(RateEdited(saved));
+    }
+
+    // Control de A18: un id municipal que no es ni el guardado ni el de la empresa sigue siendo 422.
+    [Fact]
+    public async Task AMunicipalIdNeitherStoredNorOfferedIs422()
+    {
+        var fx = await SetUpAsync();
+        var clientId = await AgentCustomerAsync(fx, fx.Bogota.CityId);
+        var created = await CreateManualAsync(fx, clientId);
+        var unassigned = await InsertWithholdingRateAsync(
+            fx.Factory, fx.TenantId, "ReteICA Bogotá sin asignar", "ReteICA", 1.2m, cityId: fx.Bogota.CityId);
+
+        var response = await PutAsync(fx, created, Edits(fx, [unassigned, fx.Retefuente]));
+
+        Assert.Equal("order.billing.withholding_tax_rate_invalid", await CodeAsync(response));
+    }
+
     // ---- Fixture ----
 
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
@@ -340,6 +396,18 @@ public sealed class OrderMunicipalWithholdingsApiTests(SharedQuotationsHost shar
             fx.Factory, fx.TenantId, "ReteICA Medellín", "ReteICA", 1m, cityId: fx.Medellin.CityId);
         await AssignCompanyWithholdingRateAsync(fx.Factory, fx.TenantId, companyId, rate);
         return rate;
+    }
+
+    // La empresa cambia su ReteICA de Bogotá por otra (A18): la vieja sigue activa en el catálogo, pero ya no es la que ofrece.
+    private static async Task<Guid> ReplaceBogotaRateAsync(Fixture fx)
+    {
+        Assert.Equal(1, await ExecuteSqlAsync(
+            fx.Factory,
+            $"DELETE FROM companies.company_withholding_tax_rates WHERE company_id = '{fx.BogotaAccount.CompanyId}' AND tax_rate_id = '{fx.ReteIcaBogota}'"));
+        var replacement = await InsertWithholdingRateAsync(
+            fx.Factory, fx.TenantId, "ReteICA Bogotá 2027", "ReteICA", 1.1m, cityId: fx.Bogota.CityId);
+        await AssignCompanyWithholdingRateAsync(fx.Factory, fx.TenantId, fx.BogotaAccount.CompanyId, replacement);
+        return replacement;
     }
 
     private static async Task<Guid> AgentCustomerAsync(Fixture fx, Guid cityId)

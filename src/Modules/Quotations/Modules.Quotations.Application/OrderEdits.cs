@@ -227,10 +227,12 @@ internal static class OrderWithholdingEdits
             && !WithholdingSelection.IsUnchanged(ids, current, order.BillingAccount?.Country))
         {
             // A11 (plan P6): tras un cambio de empresa o de municipio el id elegido contra lo anterior se ignora y queda la
-            // fila de la re-resolución; sin cambio, un id municipal que no es la tasa de la empresa es 422.
+            // fila de la re-resolución; sin cambio, un id municipal que no es la tasa de la empresa es 422, salvo el de la fila
+            // guardada, que se conserva tal cual (A18, plan P14).
             var scope = MunicipalSelectorScope.For(municipal, ignoreUnmatched: reResolution.Triggered) with
             {
                 ReResolved = reResolution.Triggered ? [.. current.Where(IsMunicipal)] : [],
+                Stored = reResolution.Triggered ? [] : current,
             };
             IReadOnlyList<WithholdingRate> rates = ids.Count == 0 && scope.ReResolved.Count == 0
                 ? []
