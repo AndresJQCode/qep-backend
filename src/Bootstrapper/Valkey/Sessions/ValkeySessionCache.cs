@@ -34,6 +34,11 @@ internal static class SessionCacheTtl
 /// escribe después del segundo <c>DEL</c> un request que leyó Postgres antes del commit nunca se sirve. Todo va por
 /// <see cref="ValkeyGateway.TryAsync{T}"/>; sin éxito, la lectura es un fallo de caché y se lee Postgres.
 /// </summary>
+/// <remarks>
+/// Dos relojes: <c>LastSeenAt</c> y <c>ValidUntil</c> (o <c>ExpiresAt</c>) los escribe el módulo con su <c>IClock</c>, y el TTL se
+/// calcula acá con <see cref="TimeProvider"/>. En producción los dos son la hora del sistema; en una prueba que mueve sólo uno, el
+/// TTL puede salir distinto del que la prueba espera, pero nunca pasa de <see cref="SessionCacheTtl.MaxEntry"/>.
+/// </remarks>
 internal sealed partial class ValkeySessionCache(
     ValkeyGateway gateway,
     TimeProvider time,
@@ -79,9 +84,7 @@ internal sealed partial class ValkeySessionCache(
         }
 
         // Sin el token de quien llama: el segundo RemoveAsync corre después del commit, y un request cancelado ahí no puede
-
         // saltárselo. El tope lo pone OperationTimeoutMs del gateway.
-
         var attempt = await gateway.TryAsync(
             ValkeyArea.Sessions,
             database => SessionCacheRevocation.MarkAndDeleteAsync(

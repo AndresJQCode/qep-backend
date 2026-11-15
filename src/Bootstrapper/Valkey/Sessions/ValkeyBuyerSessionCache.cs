@@ -13,6 +13,11 @@ namespace Bootstrapper.Valkey.Sessions;
 /// <see cref="ValkeyGateway.TryAsync{T}"/>. El TTL es <c>min(lo que le queda, 15 min)</c>, con lo que le queda =
 /// <c>min(ExpiresAt, LastSeenAt + IdleTimeout)</c>.
 /// </summary>
+/// <remarks>
+/// Dos relojes: <c>LastSeenAt</c> y <c>ValidUntil</c> (o <c>ExpiresAt</c>) los escribe el módulo con su <c>IClock</c>, y el TTL se
+/// calcula acá con <see cref="TimeProvider"/>. En producción los dos son la hora del sistema; en una prueba que mueve sólo uno, el
+/// TTL puede salir distinto del que la prueba espera, pero nunca pasa de <see cref="SessionCacheTtl.MaxEntry"/>.
+/// </remarks>
 internal sealed partial class ValkeyBuyerSessionCache(
     ValkeyGateway gateway,
     TimeProvider time,
@@ -60,9 +65,7 @@ internal sealed partial class ValkeyBuyerSessionCache(
         }
 
         // Sin el token de quien llama: el segundo RemoveAsync corre después del commit, y un request cancelado ahí no puede
-
         // saltárselo. El tope lo pone OperationTimeoutMs del gateway.
-
         var attempt = await gateway.TryAsync(
             ValkeyArea.Sessions,
             database => SessionCacheRevocation.MarkAndDeleteAsync(
