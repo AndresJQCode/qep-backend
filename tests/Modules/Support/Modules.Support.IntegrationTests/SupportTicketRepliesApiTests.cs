@@ -95,6 +95,13 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         var (instagram, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(-1), channel: "Instagram");
         Assert.Equal("window_closed", Reason(await OptionsAsync(scenario, Id(instagram)), "thread"));
 
+        // La conexión de la conversación no está activa: ni texto ni plantilla, aunque la ventana esté abierta.
+        var (paused, pausedConversation) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        _channels.Threads[pausedConversation] = _channels.Threads[pausedConversation] with { ConnectionOperational = false };
+        var down = await OptionsAsync(scenario, Id(paused));
+        Assert.Equal("connection_unavailable", Reason(down, "thread"));
+        Assert.Equal("connection_unavailable", Reason(down, "whatsAppTemplate"));
+
         // Sin Mensajería: ni hilo ni plantilla.
         var noMessaging = await StartAsync(Factory, TenantModuleKeys.All.Where(key => key != TenantModuleKeys.Messaging));
         var off = await OptionsAsync(noMessaging, Id(await noMessaging.CreateAsync()));
@@ -262,6 +269,94 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal(1, await RepliesCountAsync(Id(ticket)));
     }
 
+    // Ruling del controlador (fix round 1): la respuesta HTTP se perdió y la pantalla reintenta con el If-Match que tenía, ya viejo
+    // porque la respuesta subió la versión. Recibe la fila guardada, no un 412, y no se manda otra vez.
+    [Fact]
+    public async Task ALostResponseRetryWithTheStaleIfMatchReturnsTheStoredReply()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var body = new { clientId = Guid.CreateVersion7(), channel = "Thread", text = "Hola" };
+
+        var first = await ReplyCreatedAsync(scenario, ticket, body);
+        Assert.True(Version(first.GetProperty("ticket")) > Version(ticket));
+        var retry = await ReplyCreatedAsync(scenario, ticket, body);
+
+        Assert.Single(_channels.ThreadSends);
+        Assert.Equal(first.GetProperty("reply").GetProperty("id").GetGuid(), retry.GetProperty("reply").GetProperty("id").GetGuid());
+        Assert.Equal("Sent", retry.GetProperty("reply").GetProperty("status").GetString());
+        Assert.Equal(Version(first.GetProperty("ticket")), Version(retry.GetProperty("ticket")));
+
+        // Una respuesta nueva con la versión vieja sí es 412.
+        var stale = await ReplyAsync(scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = "Otra" });
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+    }
+
+    // Review Focus 3, camino Pending: la fila se confirmó y el proceso cayó antes de marcarla. El reintento con el mismo clientId la
+    // retoma: una sola llamada, con el id de la fila como clientId hacia Mensajería, y un solo ReplySent.
+    [Fact]
+    public async Task APendingReplyOlderThanAMinuteIsResumedOnce()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var clientId = Guid.CreateVersion7();
+        var rowId = await SeedPendingReplyAsync(scenario, Id(ticket), clientId, DateTimeOffset.UtcNow.AddMinutes(-2));
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId, channel = "Thread", text = "Hola" });
+
+        var send = Assert.Single(_channels.ThreadSends);
+        Assert.Equal(rowId, send.ClientId);
+        Assert.Equal(rowId, result.GetProperty("reply").GetProperty("id").GetGuid());
+        Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+        Assert.Equal(1, await ReplySentEventsAsync(Id(ticket)));
+        Assert.Equal(1, await RepliesCountAsync(Id(ticket)));
+    }
+
+    // Ruling del controlador: una fila Pending de menos de un minuto la está mandando otro request con el mismo clientId. Se devuelve
+    // tal cual, sin volver a mandar.
+    [Fact]
+    public async Task AFreshPendingReplyIsReturnedWithoutResending()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var clientId = Guid.CreateVersion7();
+        var rowId = await SeedPendingReplyAsync(scenario, Id(ticket), clientId, DateTimeOffset.UtcNow);
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId, channel = "Thread", text = "Hola" });
+
+        Assert.Empty(_channels.ThreadSends);
+        Assert.Equal(rowId, result.GetProperty("reply").GetProperty("id").GetGuid());
+        Assert.Equal("Pending", result.GetProperty("reply").GetProperty("status").GetString());
+        Assert.Equal(0, await ReplySentEventsAsync(Id(ticket)));
+    }
+
+    // Mientras salía el mensaje, otro request terminó la misma respuesta (la marcó y subió la versión del ticket). El guardado de este
+    // choca, recarga, ve la fila ya terminada y no escribe un segundo ReplySent ni otra auditoría.
+    [Fact]
+    public async Task AReplySettledByAnotherRequestDoesNotWriteASecondReplySent()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var message = Guid.CreateVersion7();
+        _channels.OnThread = send =>
+        {
+            ExecuteAsync(
+                Factory,
+                """
+                UPDATE support.ticket_replies SET status = 'Sent', message_id = @message, updated_at = now() WHERE id = @reply;
+                UPDATE support.tickets SET version = version + 1 WHERE id = @ticket;
+                """,
+                ("message", message), ("reply", send.ClientId), ("ticket", Id(ticket))).GetAwaiter().GetResult();
+            return new SupportChannelSendResult.Sent(message, send.ConversationId);
+        };
+
+        var result = await ReplyCreatedAsync(scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = "Hola" });
+
+        Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+        Assert.Equal(0, await ReplySentEventsAsync(Id(ticket)));
+        Assert.Equal(0, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketReplySent, Id(ticket).ToString()));
+    }
+
     [Fact]
     public async Task ATemplateTextWithLineBreaksIs422BeforeSending()
     {
@@ -316,6 +411,22 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
         return await JsonAsync(response);
     }
+
+    // Una fila Pending como la deja un proceso que cayó entre confirmarla y marcarla, creada a la hora que se pide.
+    private async Task<Guid> SeedPendingReplyAsync(SupportTicketScenario scenario, Guid ticketId, Guid clientId, DateTimeOffset createdAt)
+    {
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var reply = Modules.Support.Domain.SupportTicketReply.Start(
+            scenario.TenantId, new Modules.Support.Domain.SupportTicketId(ticketId), clientId, Modules.Support.Domain.SupportReplyChannel.Thread,
+            Modules.Support.Domain.SupportReplyDelivery.Text, "Hola", null, scenario.CallerMemberId, createdAt);
+        scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>().Add(reply);
+        await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        return reply.Id;
+    }
+
+    private Task<long> ReplySentEventsAsync(Guid ticketId) =>
+        ScalarAsync(
+            Factory, "SELECT count(*) FROM support.ticket_events WHERE ticket_id = @id AND kind = 'ReplySent'", ("id", ticketId));
 
     private Task<long> RepliesCountAsync(Guid ticketId) =>
         ScalarAsync(Factory, "SELECT count(*) FROM support.ticket_replies WHERE ticket_id = @id", ("id", ticketId));

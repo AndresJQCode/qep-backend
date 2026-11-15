@@ -60,5 +60,23 @@ public sealed class SupportTicketReplyTests
         Assert.Equal("Thread", details.GetProperty("channel").GetString());
         Assert.Equal("Template", details.GetProperty("delivery").GetString());
         Assert.Equal(messageId, details.GetProperty("messageId").GetGuid());
+        Assert.Equal("Sent", details.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, details.GetProperty("failureCode").ValueKind);
+    }
+
+    // Fix round 1 (revisión del bloque C): la traza dice cómo terminó la respuesta, también cuando falló.
+    [Fact]
+    public void RecordingAFailedReplyKeepsItsStatusAndFailureCode()
+    {
+        var ticket = Ticket();
+        var reply = Reply(ticket);
+        reply.MarkFailed("send_failed", Now.AddMinutes(2));
+
+        ticket.RecordReply(reply, Now.AddMinutes(2));
+
+        var details = JsonDocument.Parse(ticket.Events[^1].Details).RootElement;
+        Assert.Equal("Failed", details.GetProperty("status").GetString());
+        Assert.Equal("send_failed", details.GetProperty("failureCode").GetString());
+        Assert.Equal(JsonValueKind.Null, details.GetProperty("messageId").ValueKind);
     }
 }

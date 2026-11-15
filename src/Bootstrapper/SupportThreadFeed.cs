@@ -24,12 +24,30 @@ internal sealed class SupportThreadFeed(SupportDbContext support) : ISupportThre
 {
     private const short InboundDirection = (short)MessageDirection.Inbound;
 
+    /// <summary>Cuánto después de apagar «Seguir el hilo» se sigue recorriendo la conversación por los entrantes de antes del apagado.
+    /// El worker corre cada pocos segundos: una hora sobra.</summary>
+    internal static readonly TimeSpan FollowOffGrace = TimeSpan.FromHours(1);
+
     public async Task<IReadOnlyList<SupportPendingInbound>> ListPendingAsync(int take, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(take);
+        // El CTE da, por conversación seguida, el follow_since más viejo: así cada conversación recorre IX_messages_thread
+        // (conversation_id, occurred_at) por rango y no desde su primer mensaje. Entran los tickets que siguen el hilo y los que lo
+        // apagaron hace menos de FollowOffGrace: un entrante que llegó antes de apagar todavía se vincula en el tick siguiente, y un
+        // ticket apagado hace días no hace que su conversación se recorra en cada tick.
         var rows = await support.Database.SqlQuery<PendingRow>($"""
+            WITH followed AS (
+                SELECT tenant_id, conversation_id, min(follow_since) AS since
+                FROM support.tickets
+                WHERE status <> 'Closed'
+                  AND conversation_id IS NOT NULL
+                  AND follow_since IS NOT NULL
+                  AND (follow_thread OR follow_off_at >= now() - {FollowOffGrace})
+                GROUP BY tenant_id, conversation_id)
             SELECT m.tenant_id AS "TenantId", m.conversation_id AS "ConversationId", m.id AS "MessageId", m.occurred_at AS "OccurredAt"
-            FROM messaging.messages m
+            FROM followed f
+            JOIN messaging.messages m
+              ON m.conversation_id = f.conversation_id AND m.tenant_id = f.tenant_id AND m.occurred_at >= f.since
             WHERE m.direction = {InboundDirection}
               AND NOT m.imported
               AND EXISTS (
@@ -44,28 +62,35 @@ internal sealed class SupportThreadFeed(SupportDbContext support) : ISupportThre
                   SELECT 1 FROM support.ticket_messages link
                   WHERE link.tenant_id = m.tenant_id AND link.conversation_id = m.conversation_id AND link.message_id = m.id)
               AND NOT EXISTS (SELECT 1 FROM support.unclassified_messages pending WHERE pending.message_id = m.id)
-              AND m.conversation_id IN (
-                  SELECT conversation_id FROM support.tickets
-                  WHERE status <> 'Closed' AND follow_since IS NOT NULL AND conversation_id IS NOT NULL)
             ORDER BY m.occurred_at, m.id
             LIMIT {take}
             """).ToListAsync(cancellationToken);
         return rows.Select(row => new SupportPendingInbound(row.TenantId, row.ConversationId, row.MessageId, row.OccurredAt)).ToList();
     }
 
-    public async Task<IReadOnlyList<SupportConversationKey>> ListConversationsWithPendingUnclassifiedAsync(
+    // Sólo las filas que hoy tienen exactamente un candidato: las que esperan al asesor (dos o más) o se quedaron sin ninguno (todos
+    // cerrados) no salen, así no ocupan la cabeza del lote en cada tick y no matan de hambre a las demás. El conteo es la misma regla de
+    // ventana que SupportTicket.CoversInbound.
+    public async Task<IReadOnlyList<SupportPendingInbound>> ListReassignableUnclassifiedAsync(
         int take, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(take);
-        var rows = await support.Database.SqlQuery<ConversationRow>($"""
-            SELECT tenant_id AS "TenantId", conversation_id AS "ConversationId"
-            FROM support.unclassified_messages
-            WHERE resolution IS NULL
-            GROUP BY tenant_id, conversation_id
-            ORDER BY min(occurred_at), conversation_id
+        var rows = await support.Database.SqlQuery<PendingRow>($"""
+            SELECT u.tenant_id AS "TenantId", u.conversation_id AS "ConversationId", u.message_id AS "MessageId",
+                   u.occurred_at AS "OccurredAt"
+            FROM support.unclassified_messages u
+            WHERE u.resolution IS NULL
+              AND (SELECT count(*) FROM support.tickets t
+                   WHERE t.tenant_id = u.tenant_id
+                     AND t.conversation_id = u.conversation_id
+                     AND t.status <> 'Closed'
+                     AND t.follow_since IS NOT NULL
+                     AND t.follow_since <= u.occurred_at
+                     AND (t.follow_off_at IS NULL OR u.occurred_at < t.follow_off_at)) = 1
+            ORDER BY u.occurred_at, u.message_id
             LIMIT {take}
             """).ToListAsync(cancellationToken);
-        return rows.Select(row => new SupportConversationKey(row.TenantId, row.ConversationId)).ToList();
+        return rows.Select(row => new SupportPendingInbound(row.TenantId, row.ConversationId, row.MessageId, row.OccurredAt)).ToList();
     }
 
     private sealed class PendingRow
@@ -77,12 +102,5 @@ internal sealed class SupportThreadFeed(SupportDbContext support) : ISupportThre
         public Guid MessageId { get; init; }
 
         public DateTimeOffset OccurredAt { get; init; }
-    }
-
-    private sealed class ConversationRow
-    {
-        public Guid TenantId { get; init; }
-
-        public Guid ConversationId { get; init; }
     }
 }

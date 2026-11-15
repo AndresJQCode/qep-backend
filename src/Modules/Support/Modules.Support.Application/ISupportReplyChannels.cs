@@ -1,9 +1,15 @@
 namespace Modules.Support.Application;
 
 /// <summary>El estado de la conversación de un ticket para decidir cómo responderle (plan E13): el canal por nombre, si el contacto
-/// está bloqueado, cuándo cierra la ventana de 24 h (<c>null</c> si el contacto nunca escribió) y su conexión.</summary>
+/// está bloqueado, cuándo cierra la ventana de 24 h (<c>null</c> si el contacto nunca escribió), su conexión y si esa conexión está
+/// activa: por una pausada, borrada o que pide atención no sale nada (<c>connection_unavailable</c> en <c>reply-options</c>).</summary>
 public sealed record SupportThreadStatus(
-    Guid ConversationId, string Channel, bool Blocked, DateTimeOffset? WindowClosesAt, Guid ConnectionId);
+    Guid ConversationId,
+    string Channel,
+    bool Blocked,
+    DateTimeOffset? WindowClosesAt,
+    Guid ConnectionId,
+    bool ConnectionOperational = true);
 
 /// <summary>Una conexión de WhatsApp por la que se puede mandar la plantilla «Aviso de respuesta» (plan E14).</summary>
 public sealed record SupportConnectionOption(Guid Id, string Name);

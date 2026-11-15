@@ -22,29 +22,12 @@ internal static class SupportReplyRules
     public const string TemplateNotApproved = "template_not_approved";
     public const string NoMobile = "no_mobile";
     public const string NoEmail = "no_email";
-
-    /// <summary>Las reglas de Meta para el valor de un parámetro de plantilla, copia de <c>TemplateParameterRules.IsValid</c> de
-    /// Mensajería (Soporte no la ve): de 1 a 1 024, sin saltos de línea ni tabulaciones ni más de cuatro espacios seguidos. Si cambia allá,
-    /// cambia acá.</summary>
-    public const int TemplateValueMaxLength = 1024;
-
-    public const int MaxConsecutiveSpaces = 4;
-
-    /// <summary>Instagram no acepta textos de más de 1 000 caracteres (<c>SendMessageValidator.InstagramTextMaxLength</c>).</summary>
-    public const int InstagramTextMaxLength = 1000;
-
-    public static bool FitsTemplate(string? value) =>
-        !string.IsNullOrWhiteSpace(value)
-        && value.Length <= TemplateValueMaxLength
-        && !value.Contains('\n', StringComparison.Ordinal)
-        && !value.Contains('\r', StringComparison.Ordinal)
-        && !value.Contains('\t', StringComparison.Ordinal)
-        && !value.Contains(new string(' ', MaxConsecutiveSpaces + 1), StringComparison.Ordinal);
+    public const string ConnectionUnavailable = "connection_unavailable";
 
     /// <summary>
     /// Plan E13: dentro de la ventana de 24 h, texto; fuera, en WhatsApp la plantilla «Aviso de respuesta» a la misma conversación si su
-    /// conexión la tiene aprobada, y en Instagram nada (no tiene plantillas). Un contacto bloqueado no recibe nada. Quien llama ya comprobó
-    /// el módulo de Mensajería.
+    /// conexión la tiene aprobada, y en Instagram nada (no tiene plantillas). Un contacto bloqueado no recibe nada, y por una conexión que
+    /// no está activa no sale nada (<c>connection_unavailable</c>). Quien llama ya comprobó el módulo de Mensajería.
     /// </summary>
     public static async Task<SupportThreadAvailability> ThreadAsync(
         ISupportReplyChannels channels, SupportTicket ticket, DateTimeOffset now, CancellationToken cancellationToken)
@@ -63,6 +46,12 @@ internal static class SupportReplyRules
         if (thread.Blocked)
         {
             return new SupportThreadAvailability(null, ContactBlocked, SupportErrorCodes.ReplyContactBlocked, thread.WindowClosesAt);
+        }
+
+        if (!thread.ConnectionOperational)
+        {
+            return new SupportThreadAvailability(
+                null, ConnectionUnavailable, SupportErrorCodes.ReplyConnectionUnavailable, thread.WindowClosesAt);
         }
 
         if (thread.WindowClosesAt is { } closesAt && closesAt > now)
@@ -96,6 +85,30 @@ internal static class SupportReplyRules
         SupportChannelReasons.AttachmentUnavailable => SupportErrorCodes.ReplyAttachmentUnavailable,
         SupportChannelReasons.ConversationNotFound => SupportErrorCodes.ConversationNotFound,
         SupportChannelReasons.CustomerNotFound => SupportErrorCodes.CustomerNotFound,
-        _ => SupportErrorCodes.ReplyConnectionUnavailable,
+        // Un motivo nuevo de Mensajería que todavía no tiene código propio: genérico, nunca uno que mande a mirar otra cosa.
+        _ => SupportErrorCodes.ReplyUnavailable,
     };
+}
+
+/// <summary>
+/// Las reglas del texto de una respuesta que dependen del canal. Son copias de Mensajería, que Soporte no ve: el valor de un parámetro de
+/// plantilla de Meta (<c>TemplateParameterRules.IsValid</c>: de 1 a 1 024, sin saltos de línea ni tabulaciones ni más de cuatro espacios
+/// seguidos) y el tope de Instagram (<c>SendMessageValidator.InstagramTextMaxLength</c>). Las amarra <c>SupportReplyParityTests</c>
+/// (Bootstrapper.UnitTests): si cambian allá, la prueba se pone roja.
+/// </summary>
+public static class SupportReplyTextRules
+{
+    public const int TemplateValueMaxLength = 1024;
+
+    public const int MaxConsecutiveSpaces = 4;
+
+    public const int InstagramTextMaxLength = 1000;
+
+    public static bool FitsTemplate(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Length <= TemplateValueMaxLength
+        && !value.Contains('\n', StringComparison.Ordinal)
+        && !value.Contains('\r', StringComparison.Ordinal)
+        && !value.Contains('\t', StringComparison.Ordinal)
+        && !value.Contains(new string(' ', MaxConsecutiveSpaces + 1), StringComparison.Ordinal);
 }

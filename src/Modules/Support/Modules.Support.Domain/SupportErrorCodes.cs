@@ -64,6 +64,9 @@ public static class SupportErrorCodes
     /// <summary>La conversación es de un canal sin plantillas (Instagram).</summary>
     public const string ReplyChannelUnsupported = "support.reply.channel_unsupported";
 
+    /// <summary>El canal rechazó la respuesta por un motivo que Soporte todavía no traduce a uno propio.</summary>
+    public const string ReplyUnavailable = "support.reply.unavailable";
+
     // Los tres únicos de la fase 2, traducidos por nombre de índice en SupportUnitOfWork (plan E3 y E16). El seguimiento del hilo y
     // el envío los atrapan: no llegan a la pantalla salvo en una carrera.
     public const string MessageAlreadyLinked = "support.message.already_linked";

@@ -56,9 +56,10 @@ internal static class SupportMessagingSeed
         DateTimeOffset occurredAt,
         short direction = Inbound,
         bool imported = false,
-        string? text = "Hola, tengo un problema con mi pedido")
+        string? text = "Hola, tengo un problema con mi pedido",
+        Guid? messageId = null)
     {
-        var id = Guid.CreateVersion7();
+        var id = messageId ?? Guid.CreateVersion7();
         await ExecuteAsync(
             factory,
             """

@@ -16,10 +16,21 @@ internal sealed class SupportReplyChannels(
     IMessagingConnectionDirectory connections,
     ISupportReplyTemplateReadiness readiness) : ISupportReplyChannels
 {
-    public async Task<SupportThreadStatus?> FindThreadAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
-        await outbound.FindThreadAsync(tenantId, conversationId, cancellationToken) is { } thread
-            ? new SupportThreadStatus(thread.ConversationId, thread.Channel, thread.Blocked, thread.WindowClosesAt, thread.ConnectionId)
-            : null;
+    private const string ActiveStatus = "Active";
+
+    // La conexión está operativa si existe en el tenant y está Active (el mismo estado que exige el envío para resolver el remitente).
+    public async Task<SupportThreadStatus?> FindThreadAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    {
+        if (await outbound.FindThreadAsync(tenantId, conversationId, cancellationToken) is not { } thread)
+        {
+            return null;
+        }
+
+        var operational = (await connections.ListAllAsync(tenantId, cancellationToken))
+            .Any(connection => connection.Id == thread.ConnectionId && connection.Status == ActiveStatus);
+        return new SupportThreadStatus(
+            thread.ConversationId, thread.Channel, thread.Blocked, thread.WindowClosesAt, thread.ConnectionId, operational);
+    }
 
     public async Task<IReadOnlyList<SupportConnectionOption>> ListTemplateConnectionsAsync(
         Guid tenantId, CancellationToken cancellationToken)

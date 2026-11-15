@@ -379,7 +379,8 @@ public sealed class SupportTicket
         AddEvent(kind, actorMemberId, now, new { messageId });
     }
 
-    /// <summary>Anota una respuesta en la traza con su canal y, si salió por Mensajería, su mensaje (plan E16).</summary>
+    /// <summary>Anota una respuesta en la traza con su canal, cómo terminó (<c>status</c>, y <c>failureCode</c> si falló) y, si salió
+    /// por Mensajería, su mensaje (plan E16). Se llama después de marcarla.</summary>
     public void RecordReply(SupportTicketReply reply, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(reply);
@@ -398,6 +399,8 @@ public sealed class SupportTicket
                 channel = reply.Channel.ToString(),
                 delivery = reply.Delivery.ToString(),
                 messageId = reply.MessageId,
+                status = reply.Status.ToString(),
+                failureCode = reply.FailureCode,
             });
     }
 

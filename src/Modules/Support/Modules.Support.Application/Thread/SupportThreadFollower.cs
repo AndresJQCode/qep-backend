@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Support.Domain;
 
 namespace Modules.Support.Application;
@@ -7,22 +8,23 @@ namespace Modules.Support.Application;
 /// El seguimiento del hilo (spec §8.2, plan E2 a E6): en cada pasada toma los entrantes en vivo que el feed le da y decide. Un solo
 /// ticket abierto de la conversación cuya ventana cubre la hora del mensaje: lo vincula (<see cref="SupportTicketMessageState.Linked"/>,
 /// sin evento ni versión) y, si el ticket esperaba al cliente, lo pasa a <see cref="SupportTicketStatus.Open"/> como sistema. Dos o
-/// más: el entrante queda sin clasificar. Ninguno (el ticket se cerró entre el feed y la carga): nada. Después revisa las conversaciones
-/// con pendientes sin clasificar y pasa sola cada fila que quedó con un único candidato.
+/// más: el entrante queda sin clasificar. Ninguno (el ticket se cerró entre el feed y la carga): nada. Después pasa sola cada fila sin
+/// clasificar que el feed da como reasignable (hoy con un único candidato).
 ///
 /// Cada entrante va en su propio guardado. Es idempotente por índices, no por candados (plan E3): si otra réplica ya vinculó o registró
 /// el mismo mensaje, el guardado choca con <c>IX_ticket_messages_ticket_message</c> o <c>PK_unclassified_messages</c> y se descarta; si
 /// otra escritura cambió el ticket (versión), el entrante se queda para la siguiente pasada. Entre uno y otro se olvida lo cargado
 /// (<see cref="ISupportUnitOfWork.DiscardChanges"/>), así un guardado fallido no se vuelve a mandar con el siguiente.
 /// </summary>
-public sealed class SupportThreadFollower(
+public sealed partial class SupportThreadFollower(
     ISupportThreadFeed feed,
     ISupportTicketRepository tickets,
     ISupportTicketMessageRepository links,
     ISupportUnclassifiedRepository unclassified,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
-    SupportTicketDtoComposer composer)
+    SupportTicketDtoComposer composer,
+    ILogger<SupportThreadFollower> logger)
 {
     /// <summary>Entrantes por pasada cuando quien llama no dice otro (<c>Support:Workers:BatchSize</c>).</summary>
     public const int DefaultBatchSize = 200;
@@ -36,23 +38,17 @@ public sealed class SupportThreadFollower(
         var resolved = 0;
         foreach (var inbound in await feed.ListPendingAsync(batchSize, cancellationToken))
         {
-            if (await TryAsync(() => FollowAsync(inbound, cancellationToken)))
+            if (await TryAsync(inbound, () => FollowAsync(inbound, cancellationToken)))
             {
                 resolved++;
             }
         }
 
-        foreach (var conversation in await feed.ListConversationsWithPendingUnclassifiedAsync(batchSize, cancellationToken))
+        foreach (var row in await feed.ListReassignableUnclassifiedAsync(batchSize, cancellationToken))
         {
-            var pending = await unclassified.ListPendingAsync(conversation.TenantId, conversation.ConversationId, cancellationToken);
-            var messageIds = pending.Select(row => row.MessageId).ToList();
-            unitOfWork.DiscardChanges();
-            foreach (var messageId in messageIds)
+            if (await TryAsync(row, () => ReassignAsync(row.TenantId, row.MessageId, cancellationToken)))
             {
-                if (await TryAsync(() => ReassignAsync(conversation.TenantId, messageId, cancellationToken)))
-                {
-                    resolved++;
-                }
+                resolved++;
             }
         }
 
@@ -124,8 +120,9 @@ public sealed class SupportThreadFollower(
         SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher);
     }
 
-    // Lo que otra réplica u otra escritura ya ganó no es una falla: se descarta, o se reintenta en la siguiente pasada.
-    private async Task<bool> TryAsync(Func<Task<bool>> step)
+    // Lo que otra réplica u otra escritura ya ganó no es una falla: se descarta, o se reintenta en la siguiente pasada. Cualquier otra
+    // falla de un entrante se registra y se salta: un mensaje que siempre revienta no puede frenar el resto del lote.
+    private async Task<bool> TryAsync(SupportPendingInbound inbound, Func<Task<bool>> step)
     {
         try
         {
@@ -140,9 +137,18 @@ public sealed class SupportThreadFollower(
         {
             return false;
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogInboundFailed(logger, exception, inbound.TenantId, inbound.ConversationId, inbound.MessageId);
+            return false;
+        }
         finally
         {
             unitOfWork.DiscardChanges();
         }
     }
+
+    // Sólo ids: ni el texto del mensaje ni datos del contacto.
+    [LoggerMessage(Level = LogLevel.Error, Message = "Following message {MessageId} of conversation {ConversationId} of tenant {TenantId} failed; it is skipped in this pass.")]
+    private static partial void LogInboundFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId, Guid messageId);
 }

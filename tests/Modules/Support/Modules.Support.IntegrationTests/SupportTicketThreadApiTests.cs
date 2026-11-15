@@ -216,6 +216,12 @@ public sealed class SupportTicketThreadApiTests(SupportHostWithoutWorkers host) 
 
         var all = await MessagesAsync(scenario, Id(ticket));
         Assert.Equal([newest, oldest], Ids(all));
+
+        // Un cursor que no salió de una página anterior es 422 validation.failed en Before, no una página vacía.
+        var garbage = await scenario.Client.GetAsync($"{scenario.Url}/tickets/{Id(ticket)}/messages?before=no-es-un-cursor", Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, garbage.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(garbage));
+        Assert.Equal(["Before"], await ErrorKeysAsync(garbage));
     }
 
     [Fact]

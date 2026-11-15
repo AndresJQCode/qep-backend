@@ -62,8 +62,9 @@ public sealed class SendTicketReplyValidator : AbstractValidator<SendTicketReply
 }
 
 /// <summary>
-/// Responder desde el ticket (spec §8.3, plan E13 a E17). Orden: autorización → membresía → validador → ticket (404) y versión (412) →
-/// <c>clientId</c> ya visto (devuelve esa fila sin enviar) → disponibilidad del canal (422 con su código, sin fila) → fila
+/// Responder desde el ticket (spec §8.3, plan E13 a E17). Orden: autorización → membresía → validador → ticket (404) → <c>clientId</c>
+/// ya visto (terminada o <c>Pending</c> de menos de un minuto: devuelve esa fila sin enviar y sin mirar el <c>If-Match</c>; <c>Pending</c>
+/// más vieja: se retoma) → versión (412, sólo una respuesta nueva) → disponibilidad del canal (422 con su código, sin fila) → fila
 /// <c>Pending</c> confirmada → envío fuera de transacción → transacción: <c>MarkSent</c>/<c>MarkFailed</c>, el mensaje fijado en el
 /// expediente, <c>ReplySent</c>, la conversación nueva de una plantilla (<c>ConversationLinked</c> + <c>TicketOpened</c>), Resuelto si se
 /// pidió y salió, auditoría → confirmar → 201.
@@ -101,6 +102,10 @@ public sealed class SendTicketReplyHandler(
     // ordene siempre igual.
     private static readonly TimeSpan EventOffset = TimeSpan.FromTicks(10);
 
+    /// <summary>Ruling del controlador: una fila <c>Pending</c> más nueva que esto es de un envío en curso (otro request con el mismo
+    /// <c>clientId</c>) y se devuelve sin volver a mandar; una más vieja se cayó entre el envío y la marca, y se retoma.</summary>
+    internal static readonly TimeSpan PendingInFlight = TimeSpan.FromSeconds(60);
+
     public async Task<SupportReplyResultDto> HandleAsync(SendTicketReplyCommand command, CancellationToken cancellationToken)
     {
         await SupportAuthorization.EnsureAsync(
@@ -115,20 +120,27 @@ public sealed class SendTicketReplyHandler(
 
         var ticket = await tickets.FindAsync(command.TenantId, new SupportTicketId(command.TicketId), cancellationToken)
             ?? throw SupportNotFound.Ticket(command.TicketId);
-        if (ticket.Version != command.ExpectedVersion)
+
+        // Ruling del controlador (fix round 1): el clientId se mira antes que la versión. El reintento de una respuesta cuya respuesta
+        // HTTP se perdió trae el If-Match de antes, ya viejo porque la respuesta subió la versión: tiene que recibir su fila, no un 412.
+        var clientId = command.ClientId!.Value;
+        var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
+        var existing = await replies.FindByClientIdAsync(command.TenantId, ticket.Id, clientId, cancellationToken);
+        if (existing is { Status: not SupportReplyStatus.Pending }
+            || (existing is { Status: SupportReplyStatus.Pending } && context.Now - existing.CreatedAt < PendingInFlight))
+        {
+            // Terminada, se devuelve tal cual; Pending y reciente, la está mandando otro request: se devuelve sin volver a mandar.
+            return await ResultAsync(ticket, existing.Id, cancellationToken);
+        }
+
+        // Una fila Pending vieja se retoma sin mirar la versión: el envío ya se decidió y Mensajería devuelve lo que haya salido con ese
+        // clientId. Sólo una respuesta nueva exige la versión que la pantalla cargó.
+        if (existing is null && ticket.Version != command.ExpectedVersion)
         {
             throw new RequestConcurrencyException("concurrency.conflict", "The ticket changed after it was loaded.");
         }
 
-        var clientId = command.ClientId!.Value;
-        var existing = await replies.FindByClientIdAsync(command.TenantId, ticket.Id, clientId, cancellationToken);
-        if (existing is { Status: not SupportReplyStatus.Pending })
-        {
-            return await ResultAsync(ticket, existing.Id, cancellationToken);
-        }
-
-        var text = command.Text!.Trim();
-        var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
+        var text = existing?.Text ?? command.Text!.Trim();
         var route = await RouteAsync(ticket, channel, command, text, context.Now, cancellationToken);
 
         var reply = existing;
@@ -197,7 +209,7 @@ public sealed class SendTicketReplyHandler(
                     SupportErrorCodes.ReplyAttachmentUnavailable, "An attachment only goes inside the 24-hour window.");
             }
 
-            if (!SupportReplyRules.FitsTemplate(text))
+            if (!SupportReplyTextRules.FitsTemplate(text))
             {
                 throw new SupportDomainException(
                     SupportErrorCodes.ReplyTemplateTextInvalid,
@@ -207,7 +219,7 @@ public sealed class SendTicketReplyHandler(
 
         if (route.Delivery is SupportReplyDelivery.Text
             && ticket.ConversationChannel == SupportConversationRef.Instagram
-            && text.Length > SupportReplyRules.InstagramTextMaxLength)
+            && text.Length > SupportReplyTextRules.InstagramTextMaxLength)
         {
             throw new ValidationException(
                 [new ValidationFailure(nameof(SendTicketReplyCommand.Text), "Escribe una respuesta de hasta 1000 caracteres: es el máximo de Instagram.")]);
@@ -299,23 +311,27 @@ public sealed class SendTicketReplyHandler(
         SupportTicket ticket, SupportTicketReply reply, SupportChannelSendResult outcome, Guid actor, bool resolve,
         CancellationToken cancellationToken)
     {
+        // Otro request con el mismo clientId (o la recarga después de un choque de versión) ya la dejó terminada: él escribió la traza,
+        // la auditoría y el Resuelto. Repetirlos daría dos ReplySent por una respuesta.
+        if (reply.Status is not SupportReplyStatus.Pending)
+        {
+            return (ticket, null);
+        }
+
         // El reloj se lee después del envío: lo que se escribe acá va después del mensaje en el hilo.
         var context = await composer.ReadContextAsync(ticket.TenantId, cancellationToken);
         var now = context.Now;
         Guid? linkedConversation = null;
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        if (reply.Status is SupportReplyStatus.Pending)
+        switch (outcome)
         {
-            switch (outcome)
-            {
-                case SupportChannelSendResult.Sent sent:
-                    reply.MarkSent(sent.MessageId, now);
-                    break;
-                case SupportChannelSendResult.Failed failed:
-                    reply.MarkFailed(failed.Code, now);
-                    break;
-            }
+            case SupportChannelSendResult.Sent sent:
+                reply.MarkSent(sent.MessageId, now);
+                break;
+            case SupportChannelSendResult.Failed failed:
+                reply.MarkFailed(failed.Code, now);
+                break;
         }
 
         if (outcome is SupportChannelSendResult.Sent { ConversationId: { } conversationId }

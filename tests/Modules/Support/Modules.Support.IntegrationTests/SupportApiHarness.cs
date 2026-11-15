@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Support.Application;
@@ -276,8 +277,29 @@ internal static class SupportApiHarness
         Action<IServiceCollection>? configureServices = null)
     {
         var database = await StartDatabaseAsync();
-        var factory = new QepApiFactory(database.GetConnectionString(), configureServices, WorkersOff);
+        var factory = new QepApiFactory(
+            database.GetConnectionString(),
+            services =>
+            {
+                RemoveThreadFollowWorker(services);
+                configureServices?.Invoke(services);
+            },
+            WorkersOff);
         return (database, factory);
+    }
+
+    /// <summary>Saca el hosted service del seguimiento por su tipo (precedente <c>PipelineApiHarness</c>), además de la bandera
+    /// <c>Support:Workers:Enabled</c>: si la bandera dejara de leerse, la prueba sigue sin un worker que le gane la carrera.</summary>
+    public static void RemoveThreadFollowWorker(IServiceCollection services)
+    {
+        var workers = services
+            .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                && descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportThreadFollowWorker))
+            .ToList();
+        foreach (var descriptor in workers)
+        {
+            services.Remove(descriptor);
+        }
     }
 
     public static async Task<string> BodyAsync(HttpResponseMessage response) =>
