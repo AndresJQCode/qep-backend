@@ -173,8 +173,10 @@ internal sealed partial class OrphanUserCleanupWorker(
         var users = services.GetRequiredService<IUserRepository>();
         IReadOnlyList<IUserReferenceProbe> probes = services.GetServices<IUserReferenceProbe>().ToList();
         IReadOnlyList<IUserReferencePurger> purgers = services.GetServices<IUserReferencePurger>().ToList();
+        var sessionCache = services.GetRequiredService<ISessionCache>();
         var now = message.Now;
         var userId = MembershipEventPayload.ReadUserId(message.Record.PayloadJson);
+        RevokedSession[] deletedSessions = [];
 
         // Sin usuario no hay nada que borrar: pasa cuando el mensaje se reentrega después de
         // un borrado exitoso. Igual se marca el inbox para no volver a mirarlo.
@@ -200,6 +202,15 @@ internal sealed partial class OrphanUserCleanupWorker(
                     .Where(session => session.UserId == new UserId(userId))
                     .ToListAsync(cancellationToken);
                 dbContext.Sessions.RemoveRange(sessions);
+                // La caché de sesión (spec 2026-11-13, D-4): antes del commit y otra vez después.
+                deletedSessions = sessions
+                    .Select(session => new RevokedSession(session.Id.Value, session.TokenHash))
+                    .ToArray();
+                if (deletedSessions.Length > 0)
+                {
+                    await sessionCache.RemoveAsync(deletedSessions, cancellationToken);
+                }
+
                 users.Remove(user);
                 dbContext.AuditEntries.Add(AuditEntry.Create(
                     tenantId: null,
@@ -227,6 +238,11 @@ internal sealed partial class OrphanUserCleanupWorker(
         if (transaction is not null)
         {
             await transaction.CommitAsync(cancellationToken);
+        }
+
+        if (deletedSessions.Length > 0)
+        {
+            await sessionCache.RemoveAsync(deletedSessions, cancellationToken);
         }
     }
 

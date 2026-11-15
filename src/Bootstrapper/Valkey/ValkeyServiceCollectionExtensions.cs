@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Bootstrapper.Valkey.Presence;
 using Bootstrapper.Valkey.RateLimiting;
+using Bootstrapper.Valkey.Sessions;
+using Modules.Identity.Application;
 using Modules.Messaging.Application;
 
 namespace Bootstrapper.Valkey;
@@ -38,6 +40,7 @@ public static class ValkeyServiceCollectionExtensions
 
         var valkey = configuration.GetSection(ValkeyOptions.SectionName).Get<ValkeyOptions>() ?? new ValkeyOptions();
         AddPresence(services, IsOn(valkey, ValkeyArea.Presence));
+        AddSessionCaches(services, IsOn(valkey, ValkeyArea.Sessions));
 
         // Los limitadores (D-3): la fábrica decide memoria o Valkey con el interruptor del área, y apagada devuelve
         // exactamente la partición de memoria de antes.
@@ -49,6 +52,21 @@ public static class ValkeyServiceCollectionExtensions
     // Lo que se registra se decide con la configuración al arrancar (V3 del plan): un área cuenta prendida sólo con el
     // interruptor general también prendido, igual que en ValkeyGateway.IsEnabled.
     private static bool IsOn(ValkeyOptions valkey, ValkeyArea area) => valkey.Enabled && ValkeyAreas.IsOn(valkey.Areas, area);
+
+    /// <summary>
+    /// La caché de sesión (D-4). Apagada, el nulo: nunca acierta y cada request lee Postgres como antes. Prendida
+    /// (<c>Valkey:Areas:Sessions</c>), la entrada vive en <c>qep:sess:{hash}</c> y toda revocación la saca.
+    /// </summary>
+    private static void AddSessionCaches(IServiceCollection services, bool shared)
+    {
+        if (!shared)
+        {
+            services.AddSingleton<ISessionCache, NullSessionCache>();
+            return;
+        }
+
+        services.AddSingleton<ISessionCache, ValkeySessionCache>();
+    }
 
     /// <summary>
     /// La presencia de la bandeja (D-2). Siempre hay una sola instancia de <see cref="MessagingPresence"/>, el registro local

@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Modules.Audit.Domain;
+using Modules.Identity.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 
@@ -46,6 +47,7 @@ namespace Modules.Identity.Infrastructure.Messaging;
 // va en Error.
 internal sealed partial class SessionRevocationWorker(
     IServiceScopeFactory scopeFactory,
+    ISessionCache sessionCache,
     ILogger<SessionRevocationWorker> logger) : BackgroundService
 {
     /// <summary>
@@ -156,8 +158,21 @@ internal sealed partial class SessionRevocationWorker(
                 now));
         }
 
+        // La caché de sesión (spec 2026-11-13, D-4): antes del guardado y otra vez después.
+        var revoked = activeSessions
+            .Select(session => new RevokedSession(session.Id.Value, session.TokenHash))
+            .ToArray();
+        if (revoked.Length > 0)
+        {
+            await sessionCache.RemoveAsync(revoked, cancellationToken);
+        }
+
         await Claims.MarkProcessedAsync(message, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+        if (revoked.Length > 0)
+        {
+            await sessionCache.RemoveAsync(revoked, cancellationToken);
+        }
     }
 
     // Sin intento (attempts en null) es que falló el reclamo mismo: no se contó nada y el mensaje
