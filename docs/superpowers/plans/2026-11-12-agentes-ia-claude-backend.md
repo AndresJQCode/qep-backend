@@ -388,9 +388,32 @@ owner). Cambia respecto de lo planeado:
   alertas en el repo de plataforma**.
 - [x] El código se mergea apagado por el módulo `ai` (fuera de `DefaultForNewTenants`); se enciende tenant por tenant.
 
-### Task 8 (AI-B7): `create_quotation_draft`
+### Task 8 (AI-B7): `create_quotation_draft` — hecha
 
-Como §8 y P-4/P-4b del spec, sin cambios por el proveedor.
+Como §8 y P-4/P-4b del spec, sin cambios por el proveedor. Hecha en `feat/agentes-ia-claude` con build en verde y **pruebas escritas sin
+correr** (las corre el owner). Cambia respecto de lo planeado:
+
+- **La «empresa facturadora» de P-4 es la cuenta de cobro entera** (`config.quotationDraft.billingAccount { companyId, bankName,
+  accountNumber, currency }`): una cotización no guarda la empresa sola sino una de sus cuentas (`QuotationBillingAccount`), y elegir una
+  cuenta de la empresa por regla sería inventar. La asesora va en `config.quotationDraft.advisorMemberId`. Los dos son nullable para que un
+  `config` guardado antes se siga leyendo.
+- **Validación (D-A7):** con `tools.quotationDraft`, sin asesora → `quotation_advisor_missing` y sin cuenta → `quotation_billing_account_missing`
+  (errores); una asesora que ya no puede cotizar → `quotation_advisor_cannot_quote` como **aviso** («bloquea la herramienta con aviso»): al
+  correr, la herramienta responde `quotation_advisor_unavailable` al modelo sin escribir. «Puede cotizar» = membresía activa con
+  `quotations.quotation.manage` (`AiQuotationAdvisors`, misma regla que `MessagingAssignees`). El editor suma `quotationAdvisors`.
+- **Quotations:** `IExternalQuotationWriter` / `ExternalQuotationService` (asesora explícita, validador y armado de la creación, historial sin
+  miembro, auditoría `PublishByIntegration`), columna `external_key` con `IX_quotations_tenant_external_key` (parcial, traducido por nombre a
+  `quotation.quotation.external_key_taken`) y migración `AddQuotationExternalKey`. El historial por línea no se escribe: audita con la persona
+  que edita y aquí no hay ninguna.
+- **El traspaso lo decide la herramienta, no el modelo:** creado el borrador, el turno termina con `AgentRequested` + `quotation_draft_created`
+  hacia la asesora de la cotización (P-4b); sin cliente o con uno que Quotations no deja cotizar (`client_not_found`, `client_incomplete`,
+  `client_cuc_missing`, `client_inactive`), con `quotation_customer_not_ready` hacia el destino configurado (P-4). Otro rechazo de Quotations
+  vuelve al modelo con su código. El playground simulado traspasa igual.
+- **Un traspaso con borrador escrito no se descarta por un turno nuevo del cliente** (D-A14): el siguiente trabajo crearía otro borrador.
+- `ai.quotation_draft.created` se audita con actor `AiAgent` en el commit corto del traspaso.
+
+- [x] RED/GREEN `CreateQuotationDraftToolTests`, `AgentConfigValidatorTests`, `AgentEditorBuilderTests`, `AgentSessionProcessorTests` (Ai),
+  `AiQuotationDraftsTests` (Bootstrapper), `ExternalQuotationServiceTests` (Quotations, integración).
 
 ### Task 9 (AI-B8): Actividad del agente, historial y conteos
 

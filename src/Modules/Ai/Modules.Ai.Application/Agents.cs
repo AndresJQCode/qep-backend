@@ -126,6 +126,17 @@ public sealed class SaveAgentDraftValidator : AbstractValidator<SaveAgentDraftCo
                 RuleFor(command => command.Config.Model.Provider).NotEmpty().MaximumLength(AgentModelRef.ProviderMaxLength);
                 RuleFor(command => command.Config.Model.Id).NotEmpty().MaximumLength(AgentModelRef.IdMaxLength);
             });
+            // P-4: la cuenta de cobro del borrador viaja entera; los topes son los de Quotations, que además la verifica al crear.
+            When(command => command.Config.QuotationDraft?.BillingAccount is not null, () =>
+            {
+                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.CompanyId).NotEmpty();
+                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.BankName)
+                    .NotEmpty().MaximumLength(AgentBillingAccount.BankNameMaxLength);
+                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.AccountNumber)
+                    .NotEmpty().MaximumLength(AgentBillingAccount.AccountNumberMaxLength);
+                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.Currency)
+                    .NotEmpty().Length(AgentBillingAccount.CurrencyLength);
+            });
         });
     }
 }

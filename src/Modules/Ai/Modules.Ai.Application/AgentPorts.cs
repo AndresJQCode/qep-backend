@@ -75,6 +75,10 @@ public interface IAgentConnectionSlots
 public interface IAiAuditRecorder
 {
     void Record(Guid tenantId, Guid actorId, string action, Guid agentId, DateTimeOffset at);
+
+    /// <summary>Lo que hace el agente sin persona detrás (§4.7, <c>ai.quotation_draft.created</c>): actor <c>AiAgent</c> con el id del
+    /// agente.</summary>
+    void RecordByAgent(Guid tenantId, string action, Guid agentId, DateTimeOffset at);
 }
 
 /// <summary>Spec 2026-10-29 §4.7: las acciones de auditoría de los agentes.</summary>
@@ -88,6 +92,9 @@ public static class AiAuditActions
     public const string AgentPaused = "ai.agent.paused";
     public const string AgentResumed = "ai.agent.resumed";
     public const string AgentDeleted = "ai.agent.deleted";
+
+    /// <summary>§4.7: el agente creó un borrador de cotización (P-4b).</summary>
+    public const string QuotationDraftCreated = "ai.quotation_draft.created";
 }
 
 /// <summary>§4.3: el 409 <c>ai.agent.connection_taken</c> lleva <c>occupant</c> para que la pantalla ofrezca ir a pausar al que la ocupa.</summary>

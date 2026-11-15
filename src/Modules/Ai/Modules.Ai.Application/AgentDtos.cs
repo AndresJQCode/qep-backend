@@ -47,6 +47,9 @@ public sealed record AiConnectionDto(
 /// <summary>Un destino posible del traspaso a un miembro.</summary>
 public sealed record AiMemberDto(Guid Id, string Name);
 
+/// <param name="Members">Los destinos posibles del traspaso a un miembro (pueden responder conversaciones).</param>
+/// <param name="QuotationAdvisors">P-4: quién puede quedar como asesor de los borradores de cotización (pueden cotizar). Es otra lista que
+/// <paramref name="Members"/>: responder conversaciones y cotizar son permisos distintos, y la pantalla no puede cruzarlos.</param>
 public sealed record AgentEditorDto(
     Guid Id,
     string Name,
@@ -60,7 +63,8 @@ public sealed record AgentEditorDto(
     IReadOnlyList<Guid> ConnectionIds,
     IReadOnlyList<AiConnectionDto> Connections,
     IReadOnlyList<AiMemberDto> Members,
-    AiModelCatalogDto Models);
+    AiModelCatalogDto Models,
+    IReadOnlyList<AiMemberDto> QuotationAdvisors);
 
 /// <summary>D-A7: guardar responde la versión nueva (para el siguiente <c>If-Match</c>) y los problemas, sin el editor entero: el
 /// borrador lo tiene la pantalla.</summary>

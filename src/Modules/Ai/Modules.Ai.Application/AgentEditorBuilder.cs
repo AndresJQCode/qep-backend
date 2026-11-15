@@ -5,7 +5,7 @@ namespace Modules.Ai.Application;
 /// <summary>Arma la lista y el editor de agentes, y la validación del borrador con lo que saben otros módulos (conexiones, miembros,
 /// lista de modelos). Un solo lugar para que el <c>GET</c>, el guardado y la publicación digan lo mismo.</summary>
 public sealed class AgentEditorBuilder(
-    IAiConnections connections, IAgentConnectionSlots slots, IAiMembers members, IAiModelCatalog catalog)
+    IAiConnections connections, IAgentConnectionSlots slots, IAiMembers members, IAiModelCatalog catalog, IAiQuotationAdvisors advisors)
 {
     private const string WhatsApp = "WhatsApp";
 
@@ -47,8 +47,16 @@ public sealed class AgentEditorBuilder(
             memberCanReply = (await members.ListAsync(agent.TenantId, cancellationToken)).Any(member => member.Id == memberId);
         }
 
+        bool? advisorCanQuote = null;
+        if (config.Tools.QuotationDraft && config.QuotationDraft?.AdvisorMemberId is { } advisorId)
+        {
+            advisorCanQuote = await advisors.CanQuoteAsync(agent.TenantId, advisorId, cancellationToken);
+        }
+
         return AgentConfigValidator.Validate(
-            config, new AgentValidationContext(LiveConnectionIds(agent, live).Count, AvailabilityOf(config.Model), memberCanReply, publishing));
+            config,
+            new AgentValidationContext(
+                LiveConnectionIds(agent, live).Count, AvailabilityOf(config.Model), memberCanReply, publishing, advisorCanQuote));
     }
 
     private static List<Guid> LiveConnectionIds(Agent agent, IReadOnlySet<Guid> live) =>
@@ -63,6 +71,7 @@ public sealed class AgentEditorBuilder(
         var issues = await ValidateAsync(agent, publishing: false, liveIds, cancellationToken);
         var selectable = await ListSelectableAsync(agent.TenantId, live, cancellationToken);
         var assignable = await members.ListAsync(agent.TenantId, cancellationToken);
+        var quoting = await advisors.ListAsync(agent.TenantId, cancellationToken);
         var published = agent.PublishedVersion;
         return new AgentEditorDto(
             agent.Id,
@@ -77,7 +86,8 @@ public sealed class AgentEditorBuilder(
             LiveConnectionIds(agent, liveIds),
             selectable,
             [.. assignable.Select(member => new AiMemberDto(member.Id, member.Name))],
-            ModelCatalog.ToDto(catalog));
+            ModelCatalog.ToDto(catalog),
+            [.. quoting.Select(member => new AiMemberDto(member.Id, member.Name))]);
     }
 
     public async Task<AgentListResponse> BuildListAsync(Guid tenantId, IReadOnlyList<Agent> agents, CancellationToken cancellationToken)

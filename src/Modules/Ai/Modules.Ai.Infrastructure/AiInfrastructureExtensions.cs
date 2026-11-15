@@ -57,6 +57,8 @@ public static class AiInfrastructureExtensions
         services.AddScoped<IAgentTool, SearchCatalogTool>();
         services.AddScoped<IAgentTool, GetOrderStatusTool>();
         services.AddScoped<IAgentTool, SimulatedQuotationDraftTool>();
+        // Spec 2026-10-29 §8.2 y P-4: la real, sólo en canales reales (sus puertos van en Bootstrapper).
+        services.AddScoped<IAgentTool, CreateQuotationDraftTool>();
         services.AddScoped<IAiRunLedger, AiRunLedger>();
 
         // Spec 2026-10-29 §7: el playground, con la cola ai.model_jobs y su worker.

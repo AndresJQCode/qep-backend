@@ -345,6 +345,10 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
                 ? new HashSet<Guid> { quotation.Id.Value }
                 : []);
 
+    public Task<Quotation?> FindByExternalKeyAsync(
+        Guid tenantId, string externalKey, CancellationToken cancellationToken) =>
+        Task.FromResult<Quotation?>(null);
+
     public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
@@ -673,6 +677,10 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
                     quotation.Items.Count > 0 && quotationIds.Contains(quotation.Id))
                 .Select(quotation => quotation.Id.Value)
                 .ToHashSet());
+
+    public Task<Quotation?> FindByExternalKeyAsync(
+        Guid tenantId, string externalKey, CancellationToken cancellationToken) =>
+        Task.FromResult<Quotation?>(null);
 
     public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
         Guid tenantId,

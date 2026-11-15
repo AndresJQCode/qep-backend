@@ -37,9 +37,11 @@ public abstract record AgentTurnOutcome;
 /// <param name="SourceIds">Sólo las fuentes que existen (§8.2): las demás se descartan.</param>
 public sealed record AgentReplied(string Text, IReadOnlyList<string> SourceIds) : AgentTurnOutcome;
 
-/// <param name="Reason">Uno de <see cref="AgentHandoffReasons.All"/>.</param>
+/// <param name="Reason">Uno de <see cref="AgentHandoffReasons.All"/>, o el código de la herramienta que terminó el turno
+/// (<see cref="AgentToolHandoff"/>).</param>
 /// <param name="Note">Para el evento interno, nunca para el cliente.</param>
-public sealed record AgentHandedOff(string Reason, string? Note) : AgentTurnOutcome;
+/// <param name="MemberId">P-4b: a quién va la conversación en vez del destino configurado (la asesora del borrador de cotización).</param>
+public sealed record AgentHandedOff(string Reason, string? Note, Guid? MemberId = null) : AgentTurnOutcome;
 
 /// <summary>Un error que el worker reintenta (D-A17): proveedor caído o límite de tasa.</summary>
 public sealed record AgentTurnRetry(string Code, TimeSpan? RetryAfter) : AgentTurnOutcome;
@@ -272,10 +274,20 @@ public sealed partial class AgentTurnRunner(
             }
 
             var results = new List<AiToolResult>();
+            AgentToolHandoff? handoff = null;
             foreach (var call in response.ToolCalls)
             {
-                results.Add(await ExecuteAsync(context, offered, call, cancellationToken));
+                var (result, requested) = await ExecuteAsync(context, offered, call, cancellationToken);
+                results.Add(result);
+                handoff ??= requested;
                 callIds.Add(call.Id);
+            }
+
+            // P-4 y P-4b: una herramienta que escribió (o que no pudo por el cliente) termina el turno con su traspaso, sin otra vuelta del
+            // modelo: lo que siga lo decide una persona. Las demás llamadas de la vuelta ya corrieron y quedaron anotadas.
+            if (handoff is not null)
+            {
+                return new AgentHandedOff(handoff.Code, null, handoff.MemberId);
             }
 
             rounds.Add(new AiModelRound(response.OpaqueAssistantBlocks, results));
@@ -345,7 +357,7 @@ public sealed partial class AgentTurnRunner(
         return false;
     }
 
-    private async Task<AiToolResult> ExecuteAsync(
+    private async Task<(AiToolResult Result, AgentToolHandoff? Handoff)> ExecuteAsync(
         AgentTurnContext context, Dictionary<string, IAgentTool> offered, AiToolCall call, CancellationToken cancellationToken)
     {
         var watch = Stopwatch.StartNew();
@@ -360,7 +372,8 @@ public sealed partial class AgentTurnRunner(
             {
                 using var arguments = JsonDocument.Parse(call.ArgumentsJson);
                 result = await tool.ExecuteAsync(
-                    new AgentToolInvocation(context.TenantId, context.JobId, call.Id, context.CustomerId, context.IsTest),
+                    new AgentToolInvocation(
+                        context.TenantId, context.JobId, call.Id, context.CustomerId, context.IsTest, context.Config.QuotationDraft),
                     arguments.RootElement,
                     cancellationToken);
             }
@@ -380,7 +393,7 @@ public sealed partial class AgentTurnRunner(
                 context.TenantId, context.JobId, call.Id, call.Name, call.ArgumentsJson, result.ResultJson,
                 result.IsError ? AiRunOutcomes.Error : AiRunOutcomes.Ok, result.ErrorCode, (int)watch.ElapsedMilliseconds, clock.UtcNow),
             cancellationToken);
-        return new AiToolResult(call.Id, result.ResultJson, result.IsError);
+        return (new AiToolResult(call.Id, result.ResultJson, result.IsError), result.Handoff);
     }
 
     private async Task<AgentTurnOutcome> ProviderFailureAsync(

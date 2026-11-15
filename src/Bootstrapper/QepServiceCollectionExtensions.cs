@@ -809,6 +809,9 @@ public static class QepServiceCollectionExtensions
         // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
         // consume; ningún consumidor referencia Modules.Quotations.Application.
         services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
+        // Spec 2026-10-29 §8.3: el borrador de cotización sin sesión que pide un agente IA (create_quotation_draft); Ai lo
+        // consume por un adaptador (AiQuotationDrafts).
+        services.AddScoped<IExternalQuotationWriter, ExternalQuotationService>();
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
@@ -1210,6 +1213,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAiCatalogSearch, AiCatalogSearch>();
         services.AddScoped<IAiOrderStatusReader, AiOrderStatusReader>();
         services.AddScoped<IAiQuickReplies, AiQuickReplies>();
+        // Spec 2026-10-29 §8.3 y P-4: create_quotation_draft escribe en Quotations y valida la asesora del agente, por adaptadores.
+        services.AddScoped<IAiQuotationDrafts, AiQuotationDrafts>();
+        services.AddScoped<IAiQuotationAdvisors, AiQuotationAdvisors>();
         // Spec 2026-10-29 D-A3 y §4.3: conexiones, miembros y la ocupación neutral, por adaptadores (Ai no ve Mensajería).
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();

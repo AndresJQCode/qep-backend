@@ -246,6 +246,15 @@ internal sealed class QuotationRepository(QuotationsDbContext dbContext) : IQuot
         return rows.ToDictionary(row => row.Id, row => row.QuotationNumber);
     }
 
+    // Sin Include: el que la encuentra sólo lee su id, su número y su asesora (ExternalQuotationService).
+    public Task<Quotation?> FindByExternalKeyAsync(
+        Guid tenantId, string externalKey, CancellationToken cancellationToken) =>
+        dbContext.Quotations
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                quotation => quotation.TenantId == tenantId && quotation.ExternalKey == externalKey,
+                cancellationToken);
+
     public void Add(Quotation quotation) => dbContext.Quotations.Add(quotation);
 
     public void AddHistoryEntry(QuotationHistoryEntry entry) =>

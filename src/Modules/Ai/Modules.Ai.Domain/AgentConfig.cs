@@ -21,7 +21,8 @@ public sealed record AgentConfig(
     AgentTools Tools,
     AgentHandoff Handoff,
     string Trigger,
-    AgentModelRef Model)
+    AgentModelRef Model,
+    AgentQuotationDraft? QuotationDraft = null)
 {
     public const int InstructionsMaxLength = 10_000;
     public const int GreetingMaxLength = 1000;
@@ -70,6 +71,29 @@ public sealed record AgentFaq(string Id, string Question, string Answer);
 
 /// <summary>Spec 2026-10-29 §8: qué herramientas puede usar el agente.</summary>
 public sealed record AgentTools(bool Catalog, bool OrderStatus, bool QuotationDraft);
+
+/// <summary>
+/// Spec 2026-10-29 P-4 (owner, 2026-10-29): con qué asesora y con qué cuenta de cobro nace el borrador de cotización que crea el agente.
+/// Obligatorios para publicar con <c>tools.quotationDraft</c>. Va aparte de <see cref="AgentTools"/> y nullable para que un documento
+/// guardado antes de este campo se siga leyendo (sin él, la herramienta no tiene con qué cotizar y el validador lo dice).
+/// </summary>
+/// <param name="AdvisorMemberId">La membresía de la asesora: queda como asesora de la cotización y recibe la conversación (P-4b).</param>
+/// <param name="BillingAccount">La «empresa facturadora» de P-4. Una cotización no guarda la empresa sola sino una de sus cuentas
+/// (<c>QuotationBillingAccount</c>: empresa, banco, número y moneda), así que el agente guarda la cuenta completa, como la elige el
+/// editor de cotizaciones.</param>
+public sealed record AgentQuotationDraft(Guid? AdvisorMemberId, AgentBillingAccount? BillingAccount);
+
+/// <summary>La cuenta de cobro tal como la recibe Quotations (<c>QuotationBillingAccountRequest</c>); Quotations la verifica contra las
+/// cuentas de la empresa al crear el borrador.</summary>
+public sealed record AgentBillingAccount(Guid CompanyId, string BankName, string AccountNumber, string Currency)
+{
+    /// <summary>Los de <c>QuotationBillingAccount</c>; Ai no ve Quotations, así que se repiten (los amarra el validador del borrador).</summary>
+    public const int BankNameMaxLength = 120;
+
+    public const int AccountNumberMaxLength = 32;
+
+    public const int CurrencyLength = 3;
+}
 
 /// <summary>Spec 2026-10-29 §4.6 y D-A21: a dónde va la conversación cuando el agente la suelta, y los traspasos deterministas.
 /// «Equipo» no existe en el código (P-9): sólo la bandeja sin asignar o un miembro.</summary>

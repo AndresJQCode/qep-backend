@@ -33,7 +33,8 @@ public sealed partial class AgentSessionJobProcessor(
     AgentPromptBuilder promptBuilder,
     AgentTurnRunner runner,
     IClock clock,
-    ILogger<AgentSessionJobProcessor> logger)
+    ILogger<AgentSessionJobProcessor> logger,
+    IAiAuditRecorder audit)
 {
     /// <summary>§6.3 paso 4: el candado estaba tomado; la respuesta guardada se reintenta en 2 s sin llamar al modelo otra vez.</summary>
     internal static readonly TimeSpan LockedRetryDelay = TimeSpan.FromSeconds(2);
@@ -164,7 +165,9 @@ public sealed partial class AgentSessionJobProcessor(
             return;
         }
 
-        if (session.CanSupersede && await sessions.HasCustomerTurnAfterAsync(session.Id, job.UpToSeq, cancellationToken))
+        // El borrador de cotización ya está escrito en Quotations: descartar su traspaso dejaría que el siguiente trabajo creara otro.
+        var wrote = outcome is AgentHandedOff { Reason: AgentHandoffCodes.QuotationDraftCreated };
+        if (!wrote && session.CanSupersede && await sessions.HasCustomerTurnAfterAsync(session.Id, job.UpToSeq, cancellationToken))
         {
             session.RecordSuperseded(now);
             await CloseAsync(job, ModelJobStatus.Discarded, "superseded", null);
@@ -185,7 +188,16 @@ public sealed partial class AgentSessionJobProcessor(
                 await ReplyAsync(turn, replied, cancellationToken);
                 break;
             case AgentHandedOff handedOff:
-                await HandOffAsync(turn, new AgentHandoffCause(HandoffCauseKind.AgentRequested, handedOff.Reason, version.Provider), AgentSessionStatus.HandedOff, sendMessage: true, cancellationToken);
+                if (handedOff.Reason == AgentHandoffCodes.QuotationDraftCreated)
+                {
+                    // §4.7: ai.quotation_draft.created, en el mismo commit que el traspaso. Quotations audita además la cotización por
+                    // integración.
+                    audit.RecordByAgent(job.TenantId, AiAuditActions.QuotationDraftCreated, session.AgentId, now);
+                }
+
+                await HandOffAsync(
+                    turn, new AgentHandoffCause(HandoffCauseKind.AgentRequested, handedOff.Reason, version.Provider), AgentSessionStatus.HandedOff,
+                    sendMessage: true, cancellationToken, handedOff.MemberId);
                 await CloseAsync(job, ModelJobStatus.Done, "handed_off", null);
                 break;
             case AgentTurnRetry exhausted:
@@ -280,9 +292,10 @@ public sealed partial class AgentSessionJobProcessor(
     }
 
     /// <summary>§6.6: el mensaje de traspaso al cliente (si está configurado y se puede enviar), el traspaso con su causa al destino
-    /// configurado, y el fin de la sesión. Si una persona ya la tomó, el traspaso no hace falta.</summary>
+    /// configurado (o a <paramref name="memberId"/>, P-4b), y el fin de la sesión. Si una persona ya la tomó, el traspaso no hace falta.</summary>
     private async Task HandOffAsync(
-        TurnCommit turn, AgentHandoffCause cause, AgentSessionStatus status, bool sendMessage, CancellationToken cancellationToken)
+        TurnCommit turn, AgentHandoffCause cause, AgentSessionStatus status, bool sendMessage, CancellationToken cancellationToken,
+        Guid? memberId = null)
     {
         var handoff = turn.Config.Handoff;
         if (sendMessage && !string.IsNullOrWhiteSpace(handoff.Message))
@@ -297,7 +310,7 @@ public sealed partial class AgentSessionJobProcessor(
         {
             await conversations.HandoffAsync(
                 turn.Job.TenantId, turn.Session.ConversationId, cause,
-                handoff.Destination == AgentHandoff.ToMember ? handoff.MemberId : null, cancellationToken);
+                memberId ?? (handoff.Destination == AgentHandoff.ToMember ? handoff.MemberId : null), cancellationToken);
         }
         catch (DomainException)
         {
@@ -328,13 +341,14 @@ public sealed partial class AgentSessionJobProcessor(
     /// <summary>La forma guardada de una respuesta ya calculada (§6.3 paso 4); sólo la lee este procesador.</summary>
     private sealed record StoredOutcome(
         string Type, string? Text, IReadOnlyList<string>? Sources, string? Reason, string? Note, AgentFailureKind? Kind, AgentFailureReason? FailureReason,
-        string? Code, double? RetryAfterSeconds)
+        string? Code, double? RetryAfterSeconds, Guid? MemberId = null)
     {
         public static string Write(AgentTurnOutcome outcome) => JsonSerializer.Serialize(
             outcome switch
             {
                 AgentReplied replied => new StoredOutcome("replied", replied.Text, replied.SourceIds, null, null, null, null, null, null),
-                AgentHandedOff handedOff => new StoredOutcome("handed_off", null, null, handedOff.Reason, handedOff.Note, null, null, null, null),
+                AgentHandedOff handedOff => new StoredOutcome(
+                    "handed_off", null, null, handedOff.Reason, handedOff.Note, null, null, null, null, handedOff.MemberId),
                 AgentTurnRetry retry => new StoredOutcome("retry", null, null, null, null, null, null, retry.Code, retry.RetryAfter?.TotalSeconds),
                 AgentTurnFailed failed => new StoredOutcome("failed", null, null, null, null, failed.Kind, failed.Reason, failed.Code, null),
                 _ => throw new InvalidOperationException($"Unknown outcome {outcome.GetType().Name}."),
@@ -347,7 +361,7 @@ public sealed partial class AgentSessionJobProcessor(
             return stored.Type switch
             {
                 "replied" => new AgentReplied(stored.Text ?? string.Empty, stored.Sources ?? []),
-                "handed_off" => new AgentHandedOff(stored.Reason ?? AgentHandoffReasons.All[0], stored.Note),
+                "handed_off" => new AgentHandedOff(stored.Reason ?? AgentHandoffReasons.All[0], stored.Note, stored.MemberId),
                 "retry" => new AgentTurnRetry(stored.Code ?? AiModelErrorCodes.ProviderUnavailable,
                     stored.RetryAfterSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null),
                 _ => new AgentTurnFailed(stored.Kind ?? AgentFailureKind.AgentFailed, stored.FailureReason ?? AgentFailureReason.ProviderError, stored.Code),

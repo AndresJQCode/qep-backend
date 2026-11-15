@@ -56,11 +56,49 @@ public sealed class AgentEditorBuilderTests
         Assert.Equal((0, 1), (connections.ListCalls, connections.ListIdsCalls));
     }
 
+    // P-4: el editor lista quién puede cotizar (otra lista que la del traspaso) y avisa si la asesora elegida ya no puede.
+    [Fact]
+    public async Task TheEditorListsTheQuotationAdvisorsAndWarnsWhenTheChosenOneCanNoLongerQuote()
+    {
+        var advisor = Guid.CreateVersion7();
+        var agent = Agent.Create(
+            Tenant,
+            "Asesor virtual",
+            AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")) with
+            {
+                Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: true),
+                QuotationDraft = new AgentQuotationDraft(advisor, new AgentBillingAccount(Guid.CreateVersion7(), "Banco", "123", "COP")),
+            },
+            By,
+            Now);
+        var advisors = new FakeAdvisors(canQuote: false, new AiMemberRef(Guid.CreateVersion7(), "Ana"));
+
+        var editor = await Builder(new FakeConnections(), advisors).BuildAsync(agent, Ct);
+
+        Assert.Equal(["Ana"], editor.QuotationAdvisors.Select(member => member.Name));
+        Assert.Contains(editor.Issues, issue => issue is { Code: "quotation_advisor_cannot_quote", Severity: "Warning" });
+        Assert.Equal([advisor], advisors.Asked);
+    }
+
     private static Agent NewAgent() =>
         Agent.Create(Tenant, "Asesor virtual", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now);
 
-    private static AgentEditorBuilder Builder(IAiConnections connections) =>
-        new(connections, new FakeSlots(), new FakeMembers(), new FakeModelCatalog());
+    private static AgentEditorBuilder Builder(IAiConnections connections, FakeAdvisors? advisors = null) =>
+        new(connections, new FakeSlots(), new FakeMembers(), new FakeModelCatalog(), advisors ?? new FakeAdvisors(canQuote: true));
+
+    private sealed class FakeAdvisors(bool canQuote, params AiMemberRef[] members) : IAiQuotationAdvisors
+    {
+        public List<Guid> Asked { get; } = [];
+
+        public Task<IReadOnlyList<AiMemberRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AiMemberRef>>(members);
+
+        public Task<bool> CanQuoteAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken)
+        {
+            Asked.Add(memberId);
+            return Task.FromResult(canQuote);
+        }
+    }
 
     private sealed class FakeConnections(params AiConnectionRef[] connections) : IAiConnections
     {

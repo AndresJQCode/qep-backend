@@ -40,6 +40,8 @@ public sealed class AgentSessionProcessorTests
 
         public FixedClock Clock { get; } = new(Now);
 
+        public FakeAudit Audit { get; } = new();
+
         public AiInboxProcessor Inbound() => new(
             UnitOfWork, Sessions, Jobs, Inbox, Conversations, Hours, Modules, Credentials, Outbound, AiSessionTimings.Default, Clock,
             NullLogger<AiInboxProcessor>.Instance);
@@ -47,7 +49,7 @@ public sealed class AgentSessionProcessorTests
         public AgentSessionJobProcessor Worker() => new(
             UnitOfWork, Sessions, Conversations, Outbound, Modules, Credentials, null!, null!, null!, null!,
             new AgentTurnRunner(null!, [], null!, Credentials, null!, Clock, NullLogger<AgentTurnRunner>.Instance), Clock,
-            NullLogger<AgentSessionJobProcessor>.Instance);
+            NullLogger<AgentSessionJobProcessor>.Instance, Audit);
     }
 
     private static Agent PublishedAgent(string provider = "anthropic", string? greeting = null, int maxReplies = 20, string trigger = "NewConversation")
@@ -313,6 +315,61 @@ public sealed class AgentSessionProcessorTests
         Assert.Equal((ModelJobStatus.Discarded, 1), (job.Status, session.SupersededInRow));
     }
 
+    // P-4b: el traspaso después del borrador de cotización va a su asesora, no al destino configurado, y queda auditado.
+    [Fact]
+    public async Task AQuotationDraftHandoffGoesToTheAdvisorAndIsAudited()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var advisor = Guid.CreateVersion7();
+        var job = HeldJob(session, $$"""{"type":"handed_off","reason":"quotation_draft_created","memberId":"{{advisor}}"}""");
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        var handoff = Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal(
+            (HandoffCauseKind.AgentRequested, AgentHandoffCodes.QuotationDraftCreated, (Guid?)advisor),
+            (handoff.Cause.Kind, handoff.Cause.Code, handoff.AssignTo));
+        Assert.Equal((AgentSessionStatus.HandedOff, ModelJobStatus.Done), (session.Status, job.Status));
+        Assert.Equal((Tenant, AiAuditActions.QuotationDraftCreated, agent.Id), Assert.Single(world.Audit.Entries));
+    }
+
+    // El borrador ya existe: un turno nuevo del cliente no descarta el traspaso, o el siguiente trabajo crearía otro borrador.
+    [Fact]
+    public async Task AQuotationDraftHandoffIsNeverSuperseded()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = HeldJob(session, $$"""{"type":"handed_off","reason":"quotation_draft_created","memberId":"{{Guid.CreateVersion7()}}"}""");
+        world.Sessions.Turns.Add(session.AppendTurn(AgentTurnRoleKind.Customer, Guid.CreateVersion7(), null, [], false, Now));
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal((ModelJobStatus.Done, 0), (job.Status, session.SupersededInRow));
+    }
+
+    // P-4: sin cliente que se pueda cotizar, el traspaso va al destino configurado y no se audita un borrador que no existe.
+    [Fact]
+    public async Task ACustomerNotReadyHandsOffToTheConfiguredDestination()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+
+        await world.Worker().ProcessAsync(
+            HeldJob(session, """{"type":"handed_off","reason":"quotation_customer_not_ready"}"""), TestContext.Current.CancellationToken);
+
+        var handoff = Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal((AgentHandoffCodes.QuotationCustomerNotReady, (Guid?)null), (handoff.Cause.Code, handoff.AssignTo));
+        Assert.Empty(world.Audit.Entries);
+    }
+
     private static ModelJob HeldJob(AgentSession session, string resultJson)
     {
         var job = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, session.NextSeq - 1, Now, Now);
@@ -323,6 +380,15 @@ public sealed class AgentSessionProcessorTests
     internal sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; set; } = now;
+    }
+
+    internal sealed class FakeAudit : IAiAuditRecorder
+    {
+        public List<(Guid Tenant, string Action, Guid Agent)> Entries { get; } = [];
+
+        public void Record(Guid tenantId, Guid actorId, string action, Guid agentId, DateTimeOffset at) => Entries.Add((tenantId, action, agentId));
+
+        public void RecordByAgent(Guid tenantId, string action, Guid agentId, DateTimeOffset at) => Entries.Add((tenantId, action, agentId));
     }
 
     internal sealed class FakeUnitOfWork : IAiSessionUnitOfWork

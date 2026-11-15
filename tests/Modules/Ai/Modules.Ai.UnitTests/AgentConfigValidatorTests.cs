@@ -106,4 +106,51 @@ public sealed class AgentConfigValidatorTests
         Assert.Equal(config.ToJson(), read.ToJson());
         Assert.Contains("\"model\":{\"provider\":\"anthropic\",\"id\":\"claude-opus-5-5\"}", config.ToJson(), StringComparison.Ordinal);
     }
+
+    // P-4: la herramienta de cotización necesita asesora y cuenta de cobro para publicar.
+    [Fact]
+    public void TheQuotationToolWithoutAdvisorOrAccountIsAnError()
+    {
+        var config = Valid() with { Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: true) };
+
+        var issues = AgentConfigValidator.Validate(config, Context());
+
+        Assert.Equal(
+            [
+                ("quotation_advisor_missing", "quotationDraft.advisorMemberId", AgentIssueSeverity.Error),
+                ("quotation_billing_account_missing", "quotationDraft.billingAccount", AgentIssueSeverity.Error),
+            ],
+            issues.Select(issue => (issue.Code, issue.Path, issue.Severity)));
+    }
+
+    // P-4: una asesora que ya no puede cotizar bloquea la herramienta con aviso; no impide publicar.
+    [Fact]
+    public void AnAdvisorWhoCanNoLongerQuoteIsAWarning()
+    {
+        var config = Valid() with
+        {
+            Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: true),
+            QuotationDraft = new AgentQuotationDraft(Guid.NewGuid(), new AgentBillingAccount(Guid.NewGuid(), "Banco", "123", "COP")),
+        };
+
+        var issue = Assert.Single(AgentConfigValidator.Validate(
+            config, new AgentValidationContext(1, AgentModelAvailability.Available, null, Publishing: true, QuotationAdvisorCanQuote: false)));
+
+        Assert.Equal(
+            ("quotation_advisor_cannot_quote", "quotationDraft.advisorMemberId", AgentIssueSeverity.Warning), (issue.Code, issue.Path, issue.Severity));
+    }
+
+    [Fact]
+    public void WithTheQuotationToolOffItsSettingsAreNotRequired() =>
+        Assert.Empty(AgentConfigValidator.Validate(Valid() with { QuotationDraft = null }, Context()));
+
+    // Un documento guardado antes de quotationDraft se sigue leyendo, sin la configuración.
+    [Fact]
+    public void AConfigSavedBeforeTheQuotationSettingsStillReads()
+    {
+        var json = Valid().ToJson().Replace(",\"quotationDraft\":null", string.Empty, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("quotationDraft", json, StringComparison.Ordinal);
+        Assert.Null(AgentConfig.FromJson(json).QuotationDraft);
+    }
 }

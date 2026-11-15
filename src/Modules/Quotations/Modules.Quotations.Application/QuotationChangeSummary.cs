@@ -32,6 +32,13 @@ public static class QuotationChangeSummary
             ? $"Cotización creada en {currency}."
             : $"Cotización creada para {clientName}, en {currency}.");
 
+    /// <summary>El borrador que crea un agente IA (spec 2026-10-29 §8.2): sin persona detrás, así que la fila no lleva miembro y el
+    /// texto dice de dónde salió.</summary>
+    public static string CreatedByAgent(string? clientName, string currency) =>
+        Trim(clientName is null
+            ? $"Borrador creado por un agente IA en {currency}."
+            : $"Borrador creado por un agente IA para {clientName}, en {currency}.");
+
     public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
         Trim($"Agregó {productName} x{format.Number(quantity)}.");
 

@@ -1060,7 +1060,7 @@ public sealed class ExternalOrderServiceTests
 
     // La membresía activa del owner, por el puerto de Tenancy: el roster HTTP exige un permiso que
     // ManagerPermissions no concede, y lo que se prueba acá no es ese endpoint.
-    private static async Task<Guid> OwnerMembershipIdAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)
+    internal static async Task<Guid> OwnerMembershipIdAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)
     {
         using var scope = factory.Services.CreateScope();
         var directory = scope.ServiceProvider.GetRequiredService<IMembershipDirectory>();

@@ -23,4 +23,17 @@ internal sealed class AiAuditRecorder(AiDbContext dbContext) : IAiAuditRecorder
             NoChangedFields,
             Source,
             at));
+
+    public void RecordByAgent(Guid tenantId, string action, Guid agentId, DateTimeOffset at) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            agentId,
+            AuditActorType.AiAgent,
+            action,
+            AiAuditActions.ResourceAgent,
+            agentId.ToString(),
+            Outcome,
+            NoChangedFields,
+            Source,
+            at));
 }

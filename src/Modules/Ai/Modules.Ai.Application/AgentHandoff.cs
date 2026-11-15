@@ -9,7 +9,9 @@ namespace Modules.Ai.Application;
 /// </summary>
 public enum HandoffCauseKind
 {
-    /// <summary>El modelo llamó <c>handoff_to_human</c>; el código es su motivo cerrado (<see cref="AgentHandoffReasons.All"/>).</summary>
+    /// <summary>El modelo llamó <c>handoff_to_human</c> (el código es su motivo cerrado, <see cref="AgentHandoffReasons.All"/>), o una
+    /// herramienta terminó el turno con un traspaso (P-4 y P-4b: <see cref="AgentHandoffCodes.QuotationDraftCreated"/>,
+    /// <see cref="AgentHandoffCodes.QuotationCustomerNotReady"/>).</summary>
     AgentRequested,
 
     /// <summary>D-A21: llegó a <c>maxRepliesWithoutHuman</c>.</summary>
@@ -55,10 +57,17 @@ public static class AgentHandoffCodes
     /// <summary>Mensajería no pudo enviar la respuesta (conexión caída, mensaje rechazado).</summary>
     public const string SendFailed = "send_failed";
 
+    /// <summary>P-4b: el agente creó el borrador de cotización y pasa la conversación a su asesora para que lo revise y lo envíe.</summary>
+    public const string QuotationDraftCreated = "quotation_draft_created";
+
+    /// <summary>P-4: el cliente de la conversación no existe o no se puede cotizar; no hay borrador.</summary>
+    public const string QuotationCustomerNotReady = "quotation_customer_not_ready";
+
     /// <summary>Todos los códigos que un traspaso de agente puede llevar, para la prueba de paridad.</summary>
     public static IReadOnlyList<string> All { get; } =
     [
-        InvalidResponse, ModelCallsExceeded, ToolCallsExceeded, JobTimedOut, MaxRepliesWithoutHuman, SendFailed,
+        InvalidResponse, ModelCallsExceeded, ToolCallsExceeded, JobTimedOut, MaxRepliesWithoutHuman, SendFailed, QuotationDraftCreated,
+        QuotationCustomerNotReady,
         AiModelErrorCodes.ProviderUnavailable, AiModelErrorCodes.RateLimited, AiModelErrorCodes.QuotaExhausted,
         AiModelErrorCodes.CredentialsRejected, AiModelErrorCodes.PermissionDenied, AiModelErrorCodes.ModelUnavailable,
         AiModelErrorCodes.RequestInvalid, AiModelErrorCodes.Refused, AiErrorCodes.ProviderNotConfigured,
