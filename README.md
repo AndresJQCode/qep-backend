@@ -5079,15 +5079,35 @@ transacción, así un rechazo no gasta radicado. Con solicitante se guarda el co
 candidatos. **Un anónimo** no guarda cliente, foto del solicitante, documento, IP ni consentimiento, y sólo se responde por la página de
 consulta (canal `Portal`).
 
-**PIN.** Seis dígitos aleatorios. Viaja una sola vez, en la respuesta del radicado (y en el correo de apertura, al correo de la foto), y
-**sólo se guarda su hash** (PBKDF2, `support.ticket_access.pin_hash`). La clave vive en `ticket_access` y no en el ticket, para que un
+**PIN.** Seis dígitos aleatorios. Todo ticket nace con uno, también el manual y el que se abre desde una conversación, y **sólo se guarda
+su hash** (PBKDF2, `support.ticket_access.pin_hash`). La clave vive en `ticket_access` y no en el ticket, para que un
 intento fallido no le suba la versión. Consultar con radicado y PIN: un radicado que no existe, un PIN errado y un radicado bloqueado
 responden lo mismo, `422 support.public.lookup_failed`, y los tres pagan el mismo PBKDF2. **Cinco fallos seguidos bloquean ese radicado
 15 minutos**, también para el PIN correcto; un acierto pone el contador en cero. Mirar el bloqueo y anotar el intento ocurren con la fila
 de `ticket_access` tomada (`SELECT … FOR UPDATE`), así N intentos a la vez cuentan N. «Reenviar PIN» responde siempre `202`: si el ticket
-tiene a dónde (el correo de su foto) y pasaron 10 minutos desde el último envío, genera un PIN nuevo y lo manda **al destino registrado,
-nunca a uno del visitante**; el nuevo reemplaza al viejo sólo si salió, y reenviar no desbloquea. La consola ve en el detalle
-(`ConsultAccess`) cuándo y por qué canal salió la información y por qué no, nunca el PIN.
+tiene a dónde (ver abajo) y pasaron 10 minutos desde el último envío, genera un PIN nuevo y lo manda **al destino registrado, nunca a uno
+del visitante**; el nuevo reemplaza al viejo sólo si salió, y reenviar no desbloquea. La consola ve en el detalle (`ConsultAccess`)
+cuándo y por qué canal salió la información y por qué no, nunca el PIN.
+
+**A dónde va la información con el PIN** (`SupportOpeningSender`, plan F10, F11 y F23 a F26). La misma regla al crear el ticket y al
+reenviar el PIN; al crear, sale **después** de confirmar el ticket y anota su resultado en un segundo guardado que toca sólo
+`ticket_access`: el ticket queda creado pase lo que pase con el envío, y la `version` del `201` sigue valiendo para el siguiente
+`If-Match`.
+
+| Ticket | Canal (`last_sent_channel`) | Qué sale |
+| --- | --- | --- |
+| Del formulario, con solicitante | `Email` | El correo de apertura al correo de la foto. El PIN además viaja en la respuesta del radicado |
+| Del formulario, anónimo | — | Nada: el PIN sólo se ve en la respuesta del radicado |
+| Manual con canal `Email` | `Email` | El correo de apertura al correo de la foto |
+| Manual con canal `WhatsAppTemplate` o `Thread`, sin conversación | — | **Nada** (owner, 2026-11-15): mandar a un celular nuevo pide elegir conexión y no cabe en el alta. El PIN se emite igual |
+| Desde una conversación, o manual que ya vinculó una | `Thread` | Texto por el hilo, sólo con la ventana de 24 h abierta; cerrada, nada (`window_closed`). No hay plantilla de apertura (F24) |
+
+El texto por el hilo, tuteando: `Registramos tu caso {radicado} ({tipo}). Fecha límite de respuesta: {fecha}. Consulta su estado en
+{enlace} con la clave {pin}.` La fecha va en el formato regional del tenant y, si el tipo no tiene término, dice `sin fecha límite`. El
+enlace de consulta nunca lleva el PIN. Mensajería exige un autor para la fila del mensaje: firma quien creó el ticket si sigue activo; si
+no, su responsable; si tampoco, el primer gestor en el orden de `GET /assignees`. Sin ninguno no sale (`no_author`). El `clientId` del
+mensaje sale del ticket y de la emisión del PIN (`pin_issued_at`): un reintento de la misma emisión no manda dos veces, y un reenvío es
+otro mensaje. El texto queda en el hilo de Mensajería como cualquier mensaje saliente, con el PIN: es el canal que lo entrega.
 
 **Adjuntos** (plan F30 a F37). Pasan por el pipeline de Storage —staging, magic bytes, antivirus, cuarentena, promoción a `files/` y
 barrido— con el dueño `FileOwnerType.SupportTicket`, por la subida sin miembro `IStorageSystemUploads` (Storage.Application, sin endpoint

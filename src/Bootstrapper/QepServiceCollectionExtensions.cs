@@ -1605,6 +1605,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportTenantBranding, SupportTenantBranding>();
         services.AddScoped<Modules.Support.Application.ISupportOpeningEmail, SupportOpeningEmailSender>();
         services.AddScoped<Modules.Support.Application.SupportOpeningSender>();
+        services.AddScoped<Modules.Support.Application.SupportOpeningDelivery>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.FilePublicTicketCommand, Modules.Support.Application.SupportPublicFiledDto>,
             Modules.Support.Application.FilePublicTicketHandler>();

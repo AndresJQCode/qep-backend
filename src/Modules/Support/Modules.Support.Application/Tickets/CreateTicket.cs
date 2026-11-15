@@ -227,9 +227,13 @@ internal static class SupportTextRules
 /// <summary>
 /// El alta manual (spec §8.3, plan D6–D8 y D14). Orden: autorización → membresía de quien actúa → validador → solicitante →
 /// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → transacción → candado del
-/// cliente → radicado → contexto (reloj leído una vez) → ticket → auditoría → guardar → confirmar.
+/// cliente → radicado → contexto (reloj leído una vez) → ticket → clave de consulta (sólo el hash del PIN) → auditoría → guardar →
+/// confirmar → información con el PIN por su canal.
 /// Todo lo que puede responder 422 va antes de la transacción, así un rechazo no gasta un radicado. La provisión abre su propia
 /// transacción, así que va antes de <see cref="ISupportUnitOfWork.BeginTransactionAsync"/>.
+/// Fase 3 (plan F26): todo ticket manual nace con PIN. Con canal <c>Email</c>, después de confirmar sale el correo de apertura; con
+/// <c>WhatsAppTemplate</c> o <c>Thread</c> no sale nada (no tiene conversación, y mandar a un celular nuevo pide elegir conexión). El
+/// envío no cambia el ticket ni su versión (<see cref="SupportOpeningDelivery"/>).
 /// </summary>
 public sealed class CreateTicketHandler(
     IExecutionContext executionContext,
@@ -239,12 +243,16 @@ public sealed class CreateTicketHandler(
     ISupportProvisioner provisioner,
     ISupportTicketTypeRepository types,
     ISupportTicketRepository tickets,
+    ISupportTicketAccessRepository accesses,
+    ISupportPinHasher pinHasher,
     ISupportCustomerLookup customers,
     ISupportMemberDirectory members,
     ISupportTicketNumberGenerator numbers,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     SupportTicketDtoComposer composer,
+    SupportOpeningDelivery openingDelivery,
+    ISupportPublicOptions publicOptions,
     IValidator<CreateTicketCommand> validator)
     : ICommandHandler<CreateTicketCommand, SupportTicketDetailDto>
 {
@@ -284,9 +292,12 @@ public sealed class CreateTicketHandler(
 
         await SupportTicketRules.EnsureAssigneeAsync(members, validated.TenantId, validated.AssigneeMemberId, cancellationToken);
         SupportTicketRules.EnsureReplyChannel(channel, requester);
+        var slug = await SupportOpeningDelivery.SlugAsync(tenantDirectory, validated.TenantId, cancellationToken);
 
+        var pin = SupportPin.Generate();
         SupportReadContext context;
         SupportTicket ticket;
+        SupportTicketAccess access;
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
             // Orden de candados (revisión final, m1): el del cliente antes que la fila del radicado, que es de todo el tenant. Así un
@@ -317,6 +328,9 @@ public sealed class CreateTicketHandler(
                 now,
                 context.Clock);
             tickets.Add(ticket);
+            // La clave de consulta nace con el ticket, tenga o no a dónde mandarse: sólo su hash, nunca en la auditoría ni en la traza.
+            access = SupportTicketAccess.Issue(ticket.Id, validated.TenantId, pinHasher.Hash(pin), now);
+            accesses.Add(access);
             auditPublisher.Publish(
                 validated.TenantId,
                 executionContext.SubjectId,
@@ -330,6 +344,9 @@ public sealed class CreateTicketHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
+        await openingDelivery.DeliverAsync(
+            ticket, access, pin, SupportOpeningSender.ConsultUrl(publicOptions, slug, ticket.DisplayNumber), context.Now,
+            cancellationToken);
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }
 }

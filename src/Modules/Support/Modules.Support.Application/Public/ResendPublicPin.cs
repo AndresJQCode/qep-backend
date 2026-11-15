@@ -12,7 +12,8 @@ public sealed record ResendPublicPinCommand(string? TenantSlug, string VisitorIp
 /// «Reenviar PIN» (spec §9.4, plan F10; Review Focus 4). Con Turnstile, responde lo mismo exista o no el radicado, sea anónimo, no tenga
 /// destino o esté en enfriamiento: no hace nada y el endpoint dice 202. Si el ticket tiene destino registrado
 /// (<see cref="SupportOpeningSender.HasDestination"/>) y pasaron <see cref="SupportTicketAccess.ResendCooldown"/> desde el último intento,
-/// genera un PIN nuevo y lo manda por <see cref="SupportOpeningSender"/>, al destino del ticket, nunca a uno del visitante. El PIN nuevo
+/// genera un PIN nuevo y lo manda por <see cref="SupportOpeningSender"/>, al destino del ticket, nunca a uno del visitante: el correo de
+/// su foto o, si tiene conversación, el texto por su hilo con la ventana abierta (cerrada: no sale, <c>window_closed</c>). El PIN nuevo
 /// reemplaza al viejo sólo si salió: si el envío falla, la persona conserva el que tenía. El intento queda anotado (el enfriamiento cuenta
 /// desde él) y no desbloquea un radicado bloqueado. Nada toca el ticket ni su versión.
 /// </summary>
@@ -23,7 +24,7 @@ public sealed class ResendPublicPinHandler(
     ISupportPinHasher pinHasher,
     ISupportUnitOfWork unitOfWork,
     ITenantClock tenantClock,
-    SupportOpeningSender openingSender,
+    SupportOpeningDelivery openingDelivery,
     ISupportPublicOptions publicOptions)
     : ICommandHandler<ResendPublicPinCommand, bool>
 {
@@ -65,10 +66,12 @@ public sealed class ResendPublicPinHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        // El segundo guardado toca sólo el PIN y el resultado del envío: columnas que la consulta (contador y bloqueo) no escribe.
+        // El segundo guardado toca sólo el PIN y el resultado del envío: columnas que la consulta (contador y bloqueo) no escribe. La
+        // emisión nueva es `now` (Reissue la fija ahí si sale): con ella el mensaje por el hilo lleva otro ClientId que el de la apertura,
+        // y Mensajería no lo toma por un reintento del anterior.
         var pin = SupportPin.Generate();
-        var outcome = await openingSender.SendAsync(
-            ticket, pin, SupportOpeningSender.ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber), cancellationToken);
+        var outcome = await openingDelivery.SendAsync(
+            ticket, pin, now, SupportOpeningSender.ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber), cancellationToken);
         if (outcome.Sent)
         {
             access.Reissue(pinHasher.Hash(pin), now);

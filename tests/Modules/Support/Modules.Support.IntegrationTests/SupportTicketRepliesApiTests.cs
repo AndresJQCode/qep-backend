@@ -712,7 +712,11 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
             : await SeedConversationAsync(Factory, scenario.TenantId);
         _channels.Threads[conversation] = new SupportThreadStatus(
             conversation, channel, blocked, windowClosesAt, connection ?? Guid.CreateVersion7());
-        return (await scenario.CreateFromConversationAsync(conversation), conversation);
+        var ticket = await scenario.CreateFromConversationAsync(conversation);
+        // Fase 3 (Tarea 8): con la ventana abierta, el alta ya mandó por el hilo la información con el PIN. Estas pruebas miran sólo los
+        // envíos de las respuestas, así que esa apertura (la amarran SupportOpeningApiTests) se descarta.
+        _channels.ThreadSends.Clear();
+        return (ticket, conversation);
     }
 
     private static Task<JsonElement> OptionsAsync(SupportTicketScenario scenario, Guid ticketId) =>

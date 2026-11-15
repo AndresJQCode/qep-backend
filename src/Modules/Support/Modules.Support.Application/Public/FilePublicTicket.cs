@@ -2,7 +2,6 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using FluentValidation.Results;
-using Microsoft.Extensions.Logging;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -195,7 +194,7 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
 /// de la transacción, así un rechazo no gasta un radicado. El correo va después de confirmar: el radicado no depende de él (F23). Nada de
 /// esto lee el contexto de ejecución ni la sesión, y el PIN no va a logs, auditoría ni traza: sólo su hash se guarda.
 /// </summary>
-public sealed partial class FilePublicTicketHandler(
+public sealed class FilePublicTicketHandler(
     SupportPublicResolver resolver,
     ISupportCaptcha captcha,
     ISupportLegalTextRepository legalTexts,
@@ -215,18 +214,11 @@ public sealed partial class FilePublicTicketHandler(
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     SupportTicketDtoComposer composer,
-    SupportOpeningSender openingSender,
+    SupportOpeningDelivery openingDelivery,
     ISupportPublicOptions publicOptions,
-    IValidator<FilePublicTicketCommand> validator,
-    ILogger<FilePublicTicketHandler> logger)
+    IValidator<FilePublicTicketCommand> validator)
     : ICommandHandler<FilePublicTicketCommand, SupportPublicFiledDto>
 {
-    // Sólo el id del ticket y el tipo de la excepción: nunca el PIN, el radicado ni el destinatario.
-    [LoggerMessage(
-        Level = LogLevel.Warning,
-        Message = "The opening delivery of support ticket {TicketId} could not be recorded ({ExceptionType}); the PIN was still returned.")]
-    private static partial void LogDeliveryNotRecorded(ILogger logger, Guid ticketId, string exceptionType);
-
     private static readonly string[] CreatedFields =
         ["ticketTypeId", "subject", "description", "intake", "replyChannel", "customerId", "requester", "isAnonymous"];
 
@@ -323,25 +315,10 @@ public sealed partial class FilePublicTicketHandler(
         }
 
         var consultUrl = SupportOpeningSender.ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber);
-        var emailed = false;
-        // Un anónimo no tiene a dónde: el PIN sólo se ve en esta respuesta.
-        if (SupportOpeningSender.HasDestination(ticket))
-        {
-            var outcome = await openingSender.SendAsync(ticket, pin, consultUrl, cancellationToken);
-            emailed = outcome.Sent;
-            // Un segundo guardado, sólo de la clave: no toca el ticket ni su versión. Si falla, el ticket ya está confirmado y el PIN se
-            // muestra igual (plan F23; revisión del Bloque B, Minor 2): se loguea sin el PIN ni el radicado y la respuesta sigue siendo
-            // el 201. Lo único que se pierde es la anotación del envío en la consola.
-            try
-            {
-                access.RecordDelivery(outcome.Channel, outcome.FailureCode, now);
-                await unitOfWork.SaveChangesAsync(cancellationToken);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                LogDeliveryNotRecorded(logger, ticket.Id.Value, exception.GetType().Name);
-            }
-        }
+        // Un anónimo no tiene a dónde: el PIN sólo se ve en esta respuesta. Con destino, la anotación es un segundo guardado, sólo de
+        // la clave; si falla, el ticket ya está confirmado y el PIN se muestra igual (plan F23; revisión del Bloque B, Minor 2).
+        var outcome = await openingDelivery.DeliverAsync(ticket, access, pin, consultUrl, now, cancellationToken);
+        var emailed = outcome is { Channel: SupportOpeningSender.EmailChannel, Sent: true };
 
         return new SupportPublicFiledDto(ticket.DisplayNumber, pin, ticket.DueOn, tenant.Form.SuccessMessage, emailed, consultUrl);
     }
