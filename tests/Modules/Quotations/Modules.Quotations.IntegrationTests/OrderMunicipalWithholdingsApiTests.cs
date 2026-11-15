@@ -96,6 +96,14 @@ public sealed class OrderMunicipalWithholdingsApiTests(SharedQuotationsHost shar
         Assert.Equal("CustomerNotAgent", Assert.Single(withoutRow.MunicipalWithholdings).Status);
         Assert.Empty(emptied.Order.Withholdings);
         Assert.Equal(("NotSelected", (bool?)true), (emptied.MunicipalWithholdings[0].Status, emptied.MunicipalWithholdings[0].CustomerIsAgent));
+
+        // Un pedido anterior a este trabajo, sin municipio guardado (A8): NoOperationCity y sin consultar agentes.
+        Assert.Equal(
+            1,
+            await ExecuteSqlAsync(
+                fx.Factory, $"UPDATE quotations.orders SET operation_city_id = NULL WHERE id = '{withoutRow.Order.Id}'"));
+        var legacy = Assert.Single((await GetDetailAsync(fx, withoutRow.Order.Id)).MunicipalWithholdings);
+        Assert.Equal(("NoOperationCity", (bool?)null), (legacy.Status, legacy.CustomerIsAgent));
     }
 
     [Fact]

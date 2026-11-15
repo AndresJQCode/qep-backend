@@ -527,6 +527,28 @@ public sealed class QuotationMunicipalWithholdingsApiTests(SharedQuotationsHost 
         Assert.Equal(
             ("CustomerNotAgent", (bool?)false),
             (Assert.Single(withoutRow.MunicipalWithholdings).Status, withoutRow.MunicipalWithholdings[0].CustomerIsAgent));
+
+        // El cliente pasó a ser agente después de resolverse: sin fila, con municipio y tasa, NotSelected (§9.4, rama 4).
+        await SetWithholdingAgentAsync(fx.Factory, fx.TenantId, notAgent, fx.Bogota.CityId);
+        var nowAgent = Assert.Single((await GetAsync(fx, withoutRow.Id)).MunicipalWithholdings);
+        Assert.Equal(("NotSelected", (bool?)true), (nowAgent.Status, nowAgent.CustomerIsAgent));
+        Assert.Empty((await GetAsync(fx, withoutRow.Id)).Withholdings);
+    }
+
+    // Spec §9.4: con facturación propia y sin municipio guardado (documento anterior) la rama es NoOperationCity y el
+    // tercero no tiene lista de agentes.
+    [Fact]
+    public async Task OwnBillingWithoutOperationCityIsNoOperationCity()
+    {
+        var fx = await SetUpAsync();
+        var clientId = await CreateActiveCustomerAsync(fx.Client, fx.TenantId);
+        var created = await ReadAsync(
+            await PostCreateAsync(fx, CreateBody(fx, clientId, OwnBilling(fx, []))), HttpStatusCode.Created);
+        await ExecuteAsync(fx, $"UPDATE quotations.quotations SET operation_city_id = NULL WHERE id = '{created.Id}'");
+
+        var entry = Assert.Single((await GetAsync(fx, created.Id)).MunicipalWithholdings);
+
+        Assert.Equal(("NoOperationCity", (bool?)null), (entry.Status, entry.CustomerIsAgent));
     }
 
     [Fact]
