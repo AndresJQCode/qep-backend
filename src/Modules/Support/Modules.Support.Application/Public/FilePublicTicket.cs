@@ -196,14 +196,11 @@ public sealed class FilePublicTicketHandler(
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     SupportTicketDtoComposer composer,
-    ISupportOpeningEmail openingEmail,
+    SupportOpeningSender openingSender,
     ISupportPublicOptions publicOptions,
     IValidator<FilePublicTicketCommand> validator)
     : ICommandHandler<FilePublicTicketCommand, SupportPublicFiledDto>
 {
-    /// <summary>El canal registrado en <c>ticket_access.last_sent_channel</c> cuando la información sale por correo.</summary>
-    public const string EmailChannel = "Email";
-
     private static readonly string[] CreatedFields =
         ["ticketTypeId", "subject", "description", "intake", "replyChannel", "customerId", "requester", "isAnonymous"];
 
@@ -289,35 +286,20 @@ public sealed class FilePublicTicketHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        var consultUrl = ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber);
+        var consultUrl = SupportOpeningSender.ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber);
         var emailed = false;
-        if (requester is { Email: { } email })
+        // Un anónimo no tiene a dónde: el PIN sólo se ve en esta respuesta.
+        if (SupportOpeningSender.HasDestination(ticket))
         {
-            var result = await openingEmail.SendAsync(
-                new SupportOpeningEmail(email, tenant.Name, ticket.DisplayNumber, ticket.TypeName, ticket.DueOn, consultUrl, pin),
-                cancellationToken);
-            emailed = result is SupportChannelSendResult.Sent;
+            var outcome = await openingSender.SendAsync(ticket, pin, consultUrl, cancellationToken);
+            emailed = outcome.Sent;
             // Un segundo guardado, sólo de la clave: no toca el ticket ni su versión.
-            access.RecordDelivery(EmailChannel, FailureCodeOf(result), now);
+            access.RecordDelivery(outcome.Channel, outcome.FailureCode, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
         return new SupportPublicFiledDto(ticket.DisplayNumber, pin, ticket.DueOn, tenant.Form.SuccessMessage, emailed, consultUrl);
     }
-
-    /// <summary>Plan F29: el enlace de consulta. Lleva el radicado, nunca el PIN.</summary>
-    internal static string ConsultUrl(ISupportPublicOptions options, string slug, string displayNumber) =>
-        $"{options.BaseUrl}/{slug}/consultar?radicado={Uri.EscapeDataString(displayNumber)}";
-
-    /// <summary>El código que queda en <c>ticket_access.last_failure_code</c>: los de <see cref="SupportChannelReasons"/>, nunca uno
-    /// nuevo.</summary>
-    internal static string? FailureCodeOf(SupportChannelSendResult result) => result switch
-    {
-        SupportChannelSendResult.Sent => null,
-        SupportChannelSendResult.Rejected rejected => rejected.Reason,
-        SupportChannelSendResult.Failed failed => failed.Code,
-        _ => SupportChannelReasons.SendFailed,
-    };
 
     // La foto del solicitante: sólo los campos que el formulario muestra, recortados, el celular en E.164 y la ciudad de Geography en
     // Colombia. Una ciudad que no existe es un 422 en su campo.

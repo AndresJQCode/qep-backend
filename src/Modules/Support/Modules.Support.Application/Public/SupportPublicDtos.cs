@@ -83,3 +83,25 @@ public sealed record SupportPublicFiledDto(
 /// <summary>La consulta de un ticket: radicado (con o sin prefijo), PIN y el token de Turnstile. El PIN viaja en el cuerpo y no en la
 /// URL, para que no quede en logs (plan F9).</summary>
 public sealed record SupportPublicLookupRequest(string? Number, string? Pin, string? TurnstileToken);
+
+/// <summary>«Reenviar PIN»: sólo el radicado. El destino es el registrado en el ticket, nunca uno del cuerpo (plan F10).</summary>
+public sealed record SupportPublicResendPinRequest(string? Number, string? TurnstileToken);
+
+/// <summary>
+/// Lo que la consulta muestra (plan F13): el radicado, el tipo, el estado, la radicación, el vencimiento y cómo va el plazo
+/// (<c>DueState</c> como en la consola; <c>TermIsLegal</c> decide si la página dice «plazo legal» u «objetivo»), y todas las
+/// respuestas que salieron, de cualquier canal. Nada más del expediente: ni el solicitante, ni el asunto, ni la traza.
+/// </summary>
+public sealed record SupportPublicTicketDto(
+    string Number,
+    string TypeName,
+    string Status,
+    DateTimeOffset ReceivedAt,
+    DateOnly? DueOn,
+    string? DueState,
+    bool TermIsLegal,
+    IReadOnlyList<SupportPublicReplyDto> Replies);
+
+/// <summary>Una respuesta que salió: su texto, cuándo y por qué canal (<c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>,
+/// <c>Portal</c>).</summary>
+public sealed record SupportPublicReplyDto(string Text, DateTimeOffset SentAt, string Channel);

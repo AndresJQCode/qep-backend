@@ -631,6 +631,74 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
     }
 
+    // Fase 3 (plan F12): un anónimo sólo se responde por la página de consulta; la respuesta queda Sent sin llamar afuera.
+    [Fact]
+    public async Task AnAnonymousTicketRepliesOnlyByPortalAndTheReplyIsSentAtOnce()
+    {
+        var scenario = await StartAsync(Factory);
+        var anonymous = await SupportTicketSeed.SaveAnonymousTicketAsync(Factory, scenario.TenantId);
+        var ticket = await scenario.DetailAsync(anonymous.Id.Value);
+
+        var byEmail = await ReplyAsync(scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = "Hola." });
+        var byThread = await ReplyAsync(scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = "Hola." });
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Portal", text = "Ya revisamos tu caso.", resolve = true });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, byEmail.StatusCode);
+        Assert.Equal("support.reply.portal_only", await CodeOfAsync(byEmail));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, byThread.StatusCode);
+        Assert.Equal("support.reply.portal_only", await CodeOfAsync(byThread));
+        var reply = result.GetProperty("reply");
+        Assert.Equal("Portal", reply.GetProperty("channel").GetString());
+        Assert.Equal("Portal", reply.GetProperty("delivery").GetString());
+        Assert.Equal("Sent", reply.GetProperty("status").GetString());
+        Assert.Equal("Resolved", result.GetProperty("ticket").GetProperty("status").GetString());
+        Assert.True(result.GetProperty("ticket").GetProperty("isAnonymous").GetBoolean());
+        Assert.Empty(_email.Sent);
+        Assert.Empty(_channels.ThreadSends);
+        Assert.Empty(_channels.TemplateSends);
+        Assert.Equal(1, await ReplySentEventsAsync(anonymous.Id.Value));
+    }
+
+    // Review del Bloque A (Minor 2): Portal sobre un ticket con solicitante es 422, también con conversación (antes llegaba a la ruta
+    // del hilo y el dominio lanzaba: un 500).
+    [Fact]
+    public async Task PortalIsRejectedOnANamedTicket()
+    {
+        var scenario = await StartAsync(Factory);
+        var manual = await scenario.CreateAsync();
+        var (withThread, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+
+        var onManual = await ReplyAsync(scenario, manual, new { clientId = Guid.CreateVersion7(), channel = "Portal", text = "Hola." });
+        var onThread = await ReplyAsync(scenario, withThread, new { clientId = Guid.CreateVersion7(), channel = "Portal", text = "Hola." });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, onManual.StatusCode);
+        Assert.Equal("support.reply.portal_unavailable", await CodeOfAsync(onManual));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, onThread.StatusCode);
+        Assert.Equal("support.reply.portal_unavailable", await CodeOfAsync(onThread));
+        Assert.Equal(0, await RepliesCountAsync(Id(manual)));
+        Assert.Equal(0, await RepliesCountAsync(Id(withThread)));
+        Assert.Equal(
+            "portal_unavailable", (await OptionsAsync(scenario, Id(manual))).GetProperty("portal").GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public async Task ReplyOptionsOfAnAnonymousTicketOfferOnlyPortal()
+    {
+        var scenario = await StartAsync(Factory);
+        var anonymous = await SupportTicketSeed.SaveAnonymousTicketAsync(Factory, scenario.TenantId);
+
+        var options = await OptionsAsync(scenario, anonymous.Id.Value);
+
+        Assert.True(Available(options, "portal"));
+        Assert.False(Available(options, "thread"));
+        Assert.False(Available(options, "whatsAppTemplate"));
+        Assert.False(Available(options, "email"));
+        Assert.Equal("portal_only", Reason(options, "thread"));
+        Assert.Equal("portal_only", Reason(options, "email"));
+        Assert.Equal("Portal", options.GetProperty("defaultChannel").GetString());
+    }
+
     // Un ticket desde una conversación sembrada, y el estado del hilo que el doble devuelve para ella.
     private async Task<(JsonElement Ticket, Guid Conversation)> TicketWithThreadAsync(
         SupportTicketScenario scenario,

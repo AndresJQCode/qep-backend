@@ -127,8 +127,8 @@ public sealed record SupportConsultAccessDto(DateTimeOffset? LastSentAt, string?
 // sin que la pantalla lea la traza; UnclassifiedCount es el aviso «hay mensajes sin clasificar» de esa conversación; Replies trae las
 // respuestas con su estado, porque una fallida se muestra igual que en el hilo.
 
-/// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>;
-/// <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
+/// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>, <c>Portal</c>
+/// (fase 3, F12: publicada en la página de consulta); <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c>, <c>Portal</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
 /// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló. <c>ClientId</c> es el que mandó la
 /// pantalla: con él retoma una respuesta que quedó <c>Pending</c> (revisión final, I3). <c>MessageId</c> también viene en una fallida si
 /// Mensajería registró el mensaje.</summary>
@@ -246,8 +246,15 @@ public sealed record SupportTicketRefDto(Guid Id, string Number, string Subject,
 /// <summary>Qué canal puede usar el asesor para responder y qué va a pasar (plan E17b): la pantalla no conoce la ventana de 24 h ni la
 /// aprobación de plantillas. <c>DefaultChannel</c> es el canal de respuesta del ticket si está disponible; si no, el primero que lo
 /// esté (hilo, plantilla, correo).</summary>
+/// <remarks>Fase 3 (plan F12): <c>Portal</c> es la página de consulta, disponible sólo para un ticket anónimo, que no tiene ningún otro
+/// canal; los demás vienen no disponibles con <c>portal_only</c>, y en uno con solicitante <c>Portal</c> viene con
+/// <c>portal_unavailable</c>.</remarks>
 public sealed record SupportReplyOptionsDto(
-    SupportThreadOptionDto Thread, SupportChannelOptionDto WhatsAppTemplate, SupportChannelOptionDto Email, string DefaultChannel);
+    SupportThreadOptionDto Thread,
+    SupportChannelOptionDto WhatsAppTemplate,
+    SupportChannelOptionDto Email,
+    string DefaultChannel,
+    SupportChannelOptionDto Portal);
 
 /// <summary>El hilo de la conversación del ticket. <c>Delivery</c> ∈ <c>Text</c> (dentro de la ventana) o <c>Template</c> (fuera, en
 /// WhatsApp: sale «Aviso de respuesta»), para que la pantalla avise antes de enviar. <c>Reason</c> cuando no está disponible:

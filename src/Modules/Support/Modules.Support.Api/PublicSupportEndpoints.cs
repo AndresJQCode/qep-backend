@@ -80,10 +80,24 @@ public static class PublicSupportEndpoints
         group.MapPost("/tickets/lookup", LookupAsync)
             .RequireRateLimiting(lookupPolicy)
             .Accepts<SupportPublicLookupRequest>("application/json")
+            .Produces<SupportPublicTicketDto>()
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
-            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
+        group.MapPost("/tickets/resend-pin", ResendPinAsync)
+            .RequireRateLimiting(submitPolicy)
+            .Accepts<SupportPublicResendPinRequest>("application/json")
+            .Produces(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
         return endpoints;
     }
@@ -120,9 +134,9 @@ public static class PublicSupportEndpoints
     private static string VisitorIp(HttpContext httpContext) =>
         httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-    // Task 4: lee el cuerpo con su tope y resuelve el tenant. La consulta llega en la Task 7.
+    // El PIN viaja en el cuerpo, nunca en la URL (plan F9).
     private static async Task<IResult> LookupAsync(
-        string tenantSlug, SupportPublicResolver resolver, HttpContext httpContext, CancellationToken cancellationToken)
+        string tenantSlug, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
         var (body, rejection) = await ReadBodyAsync<SupportPublicLookupRequest>(httpContext, cancellationToken);
         if (body is null)
@@ -130,8 +144,24 @@ public static class PublicSupportEndpoints
             return rejection!;
         }
 
-        _ = await resolver.ResolveAsync(tenantSlug, cancellationToken);
-        throw new ResourceNotFoundException(SupportErrorCodes.PublicNotFound, "The support form was not found.");
+        return Results.Ok(await dispatcher.SendAsync(
+            new LookupPublicTicketCommand(tenantSlug, VisitorIp(httpContext), body.Number, body.Pin, body.TurnstileToken),
+            cancellationToken));
+    }
+
+    // Siempre 202 vacío (plan F10, Review Focus 4): la respuesta no dice si el radicado existe ni si salió algo.
+    private static async Task<IResult> ResendPinAsync(
+        string tenantSlug, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<SupportPublicResendPinRequest>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        _ = await dispatcher.SendAsync(
+            new ResendPublicPinCommand(tenantSlug, VisitorIp(httpContext), body.Number, body.TurnstileToken), cancellationToken);
+        return Results.StatusCode(StatusCodes.Status202Accepted);
     }
 
     // Copia del lector de PublicBuyerEndpoints: el tope se aplica leyendo, porque RequestSizeLimitAttribute es sólo metadato que

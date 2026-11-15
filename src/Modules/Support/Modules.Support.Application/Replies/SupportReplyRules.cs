@@ -24,6 +24,10 @@ internal static class SupportReplyRules
     public const string NoEmail = "no_email";
     public const string ConnectionUnavailable = "connection_unavailable";
 
+    // Fase 3 (plan F12): los motivos de reply-options que acompañan a support.reply.portal_only y support.reply.portal_unavailable.
+    public const string PortalOnly = "portal_only";
+    public const string PortalUnavailable = "portal_unavailable";
+
     /// <summary>
     /// Plan E13: dentro de la ventana de 24 h, texto; fuera, en WhatsApp la plantilla «Aviso de respuesta» a la misma conversación si su
     /// conexión la tiene aprobada, y en Instagram nada (no tiene plantillas). Un contacto bloqueado no recibe nada, y por una conexión que

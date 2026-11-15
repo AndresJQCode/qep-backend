@@ -25,6 +25,18 @@ public sealed class GetReplyOptionsHandler(
         await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
         var ticket = await tickets.FindAsync(query.TenantId, new SupportTicketId(query.TicketId), cancellationToken)
             ?? throw SupportNotFound.Ticket(query.TicketId);
+        // Plan F12: un anónimo sólo se responde por la página de consulta; ningún otro canal llega a él.
+        if (ticket.IsAnonymous)
+        {
+            var portalOnly = new SupportChannelOptionDto(false, SupportReplyRules.PortalOnly, []);
+            return new SupportReplyOptionsDto(
+                new SupportThreadOptionDto(false, SupportReplyRules.PortalOnly, null, null, false),
+                portalOnly,
+                portalOnly,
+                nameof(SupportReplyChannel.Portal),
+                new SupportChannelOptionDto(true, null, []));
+        }
+
         var now = (await tenantClock.GetAsync(query.TenantId, cancellationToken)).UtcNow;
         var messagingOn = await SupportConversationRules.IsEnabledAsync(
             tenantModules, query.TenantId, TenantModuleKeys.Messaging, cancellationToken);
@@ -58,7 +70,12 @@ public sealed class GetReplyOptionsHandler(
             ? new SupportChannelOptionDto(false, SupportReplyRules.NoEmail, [])
             : new SupportChannelOptionDto(true, null, []);
 
-        return new SupportReplyOptionsDto(thread, template, email, DefaultChannel(ticket.ReplyChannel, thread, template, email));
+        return new SupportReplyOptionsDto(
+            thread,
+            template,
+            email,
+            DefaultChannel(ticket.ReplyChannel, thread, template, email),
+            new SupportChannelOptionDto(false, SupportReplyRules.PortalUnavailable, []));
     }
 
     private async Task<SupportChannelOptionDto> TemplateWithoutConversationAsync(SupportTicket ticket, CancellationToken cancellationToken)
