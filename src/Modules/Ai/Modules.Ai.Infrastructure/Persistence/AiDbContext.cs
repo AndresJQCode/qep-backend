@@ -32,6 +32,14 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
 
     public DbSet<AgentConnection> AgentConnections => Set<AgentConnection>();
 
+    public DbSet<AgentTest> Tests => Set<AgentTest>();
+
+    public DbSet<ModelJob> ModelJobs => Set<ModelJob>();
+
+    internal DbSet<ToolCallRow> ToolCalls => Set<ToolCallRow>();
+
+    internal DbSet<UsageRecordRow> UsageRecords => Set<UsageRecordRow>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -39,6 +47,7 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
         ConfigureAgent(modelBuilder);
         ConfigureVersion(modelBuilder);
         ConfigureConnection(modelBuilder);
+        AiRunModel.Configure(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
 

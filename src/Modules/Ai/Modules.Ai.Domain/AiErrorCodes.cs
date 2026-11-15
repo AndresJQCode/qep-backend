@@ -34,4 +34,10 @@ public static class AiErrorCodes
 
     /// <summary>422 (plan 2026-11-12 C-18): publicar sin una conexión <c>Active</c> del proveedor del agente; lleva <c>provider</c>.</summary>
     public const string ProviderNotConfigured = "ai.provider.not_configured";
+
+    /// <summary>404 (§4.7): la prueba no existe en el tenant, o ya venció (<c>MapException</c> no tiene 410).</summary>
+    public const string TestNotFound = "ai.test.not_found";
+
+    /// <summary>409 (§4.7): la prueba ya tiene un mensaje en curso.</summary>
+    public const string TestBusy = "ai.test.busy";
 }

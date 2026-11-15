@@ -113,6 +113,70 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.ToTable("agent_connections", "ai");
                 });
 
+            modelBuilder.Entity("Modules.Ai.Domain.AgentTest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("agent_id");
+
+                    b.Property<string>("ConfigJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("config");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<bool>("HandedOff")
+                        .HasColumnType("boolean")
+                        .HasColumnName("handed_off");
+
+                    b.Property<Guid>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<Guid?>("PendingJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("pending_job_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("TranscriptJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("transcript");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "TenantId", "AgentId" }, "IX_tests_tenant_agent");
+
+                    b.ToTable("tests", "ai");
+                });
+
             modelBuilder.Entity("Modules.Ai.Domain.AgentVersion", b =>
                 {
                     b.Property<Guid>("Id")
@@ -162,6 +226,242 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("agent_versions", "ai");
+                });
+
+            modelBuilder.Entity("Modules.Ai.Domain.ModelJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("error_code");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_until");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("outcome");
+
+                    b.Property<Guid?>("SessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid?>("TestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("test_id");
+
+                    b.Property<int>("UpToSeq")
+                        .HasColumnType("integer")
+                        .HasColumnName("up_to_seq");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "NextAttemptAt" }, "IX_model_jobs_due")
+                        .HasFilter("status IN ('Pending','Running')");
+
+                    b.HasIndex(new[] { "SessionId" }, "IX_model_jobs_session_open")
+                        .IsUnique()
+                        .HasFilter("status = 'Pending'");
+
+                    b.HasIndex(new[] { "TestId" }, "IX_model_jobs_test")
+                        .HasFilter("test_id IS NOT NULL");
+
+                    b.ToTable("model_jobs", "ai", t =>
+                        {
+                            t.HasCheckConstraint("CK_model_jobs_owner", "(session_id IS NULL) <> (test_id IS NULL)");
+
+                            t.HasCheckConstraint("CK_model_jobs_status", "status IN ('Pending','Running','Done','Discarded','Failed')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Ai.Infrastructure.Persistence.ToolCallRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Arguments")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("arguments");
+
+                    b.Property<string>("CallId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("call_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("error_code");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("job_id");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("outcome");
+
+                    b.Property<string>("Result")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("result");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Tool")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("tool");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "CreatedAt" }, "IX_tool_calls_created");
+
+                    b.HasIndex(new[] { "JobId", "CallId" }, "IX_tool_calls_job_call")
+                        .IsUnique();
+
+                    b.ToTable("tool_calls", "ai");
+                });
+
+            modelBuilder.Entity("Modules.Ai.Infrastructure.Persistence.UsageRecordRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("agent_id");
+
+                    b.Property<Guid?>("AgentVersionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("agent_version_id");
+
+                    b.Property<int?>("CacheCreationInputTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("cache_creation_input_tokens");
+
+                    b.Property<int?>("CacheReadInputTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("cache_read_input_tokens");
+
+                    b.Property<DateTimeOffset>("CalledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("called_at");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<int>("InputTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("input_tokens");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("job_id");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("model");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("outcome");
+
+                    b.Property<int>("OutputTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("output_tokens");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("ServedModel")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("served_model");
+
+                    b.Property<Guid?>("SessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("session_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid?>("TestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("test_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "TenantId", "CalledAt" }, "IX_usage_records_tenant_called")
+                        .IsDescending(false, true);
+
+                    b.HasIndex(new[] { "TestId" }, "IX_usage_records_test")
+                        .HasFilter("test_id IS NOT NULL");
+
+                    b.ToTable("usage_records", "ai");
                 });
 
             modelBuilder.Entity("Modules.Audit.Domain.AuditEntry", b =>
