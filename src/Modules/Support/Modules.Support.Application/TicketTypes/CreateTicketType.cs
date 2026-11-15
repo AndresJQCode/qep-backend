@@ -46,12 +46,15 @@ public sealed class CreateTicketTypeValidator : AbstractValidator<CreateTicketTy
 }
 
 /// <summary>El tipo nuevo va al final de la lista (<c>Position</c> = la mayor + 1) y activo. El nombre repetido lo frena el índice
-/// <c>IX_ticket_types_tenant_name</c> (409 <c>support.ticket_type.name_taken</c>), no una consulta previa.</summary>
+/// <c>IX_ticket_types_tenant_name</c> (409 <c>support.ticket_type.name_taken</c>), no una consulta previa. Dos altas a la vez se
+/// serializan con el candado de la fila de ajustes del tenant (<see cref="ISupportSettingsRepository.LockAsync"/>, el mismo del
+/// radicado), tomado antes de leer la posición mayor: sin él las dos leerían la misma y compartirían posición (revisión final, m5).</summary>
 public sealed class CreateTicketTypeHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    IClock clock,
+    ITenantClock tenantClock,
     ISupportProvisioner provisioner,
+    ISupportSettingsRepository settings,
     ISupportTicketTypeRepository types,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -68,29 +71,36 @@ public sealed class CreateTicketTypeHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         await provisioner.EnsureAsync(command.TenantId, cancellationToken);
 
-        var existing = await types.ListAsync(command.TenantId, cancellationToken);
-        var now = clock.UtcNow;
-        var type = SupportTicketType.Create(
-            SupportTicketTypeId.New(),
-            command.TenantId,
-            command.Name,
-            command.TermBusinessDays,
-            command.TermIsLegal!.Value,
-            command.RequiresFormalResponse!.Value,
-            command.IsPublished!.Value,
-            existing.Count == 0 ? 1 : existing.Max(item => item.Position) + 1,
-            now);
-        types.Add(type);
-        auditPublisher.Publish(
-            command.TenantId,
-            executionContext.SubjectId,
-            SupportAuditActions.TicketTypeCreated,
-            SupportAuditActions.Resources.TicketType,
-            type.Id.ToString(),
-            "success",
-            CreatedFields,
-            now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        SupportTicketType type;
+        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
+        {
+            await settings.LockAsync(command.TenantId, cancellationToken);
+            // Leída ya con el candado: en READ COMMITTED esta lectura ve el tipo que confirmó el alta que esperábamos.
+            var existing = await types.ListAsync(command.TenantId, cancellationToken);
+            type = SupportTicketType.Create(
+                SupportTicketTypeId.New(),
+                command.TenantId,
+                command.Name,
+                command.TermBusinessDays,
+                command.TermIsLegal!.Value,
+                command.RequiresFormalResponse!.Value,
+                command.IsPublished!.Value,
+                existing.Count == 0 ? 1 : existing.Max(item => item.Position) + 1,
+                now);
+            types.Add(type);
+            auditPublisher.Publish(
+                command.TenantId,
+                executionContext.SubjectId,
+                SupportAuditActions.TicketTypeCreated,
+                SupportAuditActions.Resources.TicketType,
+                type.Id.ToString(),
+                "success",
+                CreatedFields,
+                now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
 
         return SupportDtoMapping.ToDto(type);
     }

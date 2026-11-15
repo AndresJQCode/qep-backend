@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Support.Application;
+using Npgsql;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 
 namespace Modules.Support.IntegrationTests;
@@ -175,6 +176,49 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
         Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], ordered.Select(type => type.GetProperty("position").GetInt32()));
         Assert.Equal("Soporte técnico", ordered[0].GetProperty("name").GetString());
         Assert.Equal(1, await CountAuditEntriesAsync(factory, SupportAuditActions.TicketTypesReordered, tenant));
+    }
+
+    // Revisión final, m5: el alta de un tipo toma la fila de ajustes del tenant (la misma que bloquea el radicado) antes de leer la
+    // posición mayor, así dos altas a la vez no comparten posición. Acá la fila la tiene otra transacción: las dos altas esperan, y al
+    // soltarla salen una tras otra con 9 y 10. Host propio: la prueba mide una espera (como SupportCustomerReferenceLockApiTests).
+    [Fact]
+    public async Task ConcurrentCreationsWaitForTheTenantRowAndGetDistinctPositions()
+    {
+        var database = await StartDatabaseAsync();
+        await using var _d = database;
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = NewTenantId();
+        await SeedTenantAsync(factory, tenant);
+        using var client = CreateClient(factory, SubjectId, tenant, SupportPermissions.SettingsManage);
+        // Calentamiento y provisión: la fila de ajustes tiene que existir antes de bloquearla.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"{SupportUrl(tenant)}/settings/ticket-types", Ct)).StatusCode);
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(Ct);
+        await using var transaction = await connection.BeginTransactionAsync(Ct);
+        await using (var lockRow = new NpgsqlCommand(
+            "SELECT 1 FROM support.tenant_settings WHERE tenant_id = @tenant FOR UPDATE", connection, transaction))
+        {
+            lockRow.Parameters.AddWithValue("tenant", Guid.Parse(tenant));
+            await lockRow.ExecuteNonQueryAsync(Ct);
+        }
+
+        var first = client.PostAsJsonAsync($"{SupportUrl(tenant)}/settings/ticket-types", TypeBody("Garantía", 15, true), Ct);
+        var second = client.PostAsJsonAsync($"{SupportUrl(tenant)}/settings/ticket-types", TypeBody("Devolución", 15, true), Ct);
+        var both = Task.WhenAll(first, second);
+
+        Assert.NotSame(both, await Task.WhenAny(both, Task.Delay(TimeSpan.FromMilliseconds(500), Ct)));
+        await transaction.RollbackAsync(Ct);
+        var responses = await both;
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.Created, response.StatusCode));
+        var positions = new List<int>();
+        foreach (var response in responses)
+        {
+            positions.Add((await JsonAsync(response)).GetProperty("position").GetInt32());
+        }
+
+        Assert.Equal([9, 10], positions.Order());
     }
 
     private static int? Term(JsonElement type) =>

@@ -59,6 +59,11 @@ public sealed class CreateTicketValidatorTests
         Assert.Equal(["Requester.MobilePhone"], Errors(Command(requester: Ana with { MobilePhone = "+0300123" })));
     }
 
+    // Revisión final, m4: el celular se juzga recortado, como lo guarda el normalizador y como se miden los demás campos.
+    [Fact]
+    public void AMobileWithSurroundingSpacesPasses() =>
+        Assert.Empty(Errors(Command(requester: Ana with { MobilePhone = " +573001234567 " })));
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

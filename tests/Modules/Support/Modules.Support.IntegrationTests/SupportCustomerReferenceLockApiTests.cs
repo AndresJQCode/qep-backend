@@ -16,6 +16,9 @@ public sealed class SupportCustomerReferenceLockApiTests
 {
     private static readonly TimeSpan NoAnswerWindow = TimeSpan.FromMilliseconds(500);
 
+    // Holgada a propósito: lo que mide no es la velocidad sino que la otra alta no quede bloqueada hasta que se suelte el candado.
+    private static readonly TimeSpan OtherAnswerWindow = TimeSpan.FromSeconds(15);
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private static async Task<(NpgsqlConnection Connection, NpgsqlTransaction Transaction)> HoldExclusiveAsync(
@@ -80,6 +83,40 @@ public sealed class SupportCustomerReferenceLockApiTests
         // El radicado volvió con la transacción: el siguiente alta es SOP-000001.
         var next = await scenario.CreateAsync(Body(typeId));
         Assert.Equal("SOP-000001", next.GetProperty("number").GetString());
+    }
+
+    // Revisión final, m1: el alta toma el candado del cliente antes que la fila de radicados del tenant. Si lo tomara después, el
+    // alta que espera a un cliente ya tendría la fila y frenaría toda otra alta del tenant hasta que el borrado terminara.
+    [Fact]
+    public async Task ACreationWaitingForItsCustomerDoesNotBlockTheOtherCreationsOfTheTenant()
+    {
+        var database = await StartDatabaseAsync();
+        await using var _d = database;
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var connectionString = database.GetConnectionString();
+        var scenario = await StartAsync(factory);
+        var customerId = await SeedCustomerAsync(factory, scenario.TenantId, "Novasteel SAS");
+        // Calentamiento, como en la prueba de arriba: la primera petición de una fábrica nueva tarda más que la ventana.
+        var typeId = await scenario.TypeIdAsync("Queja");
+        var (connection, transaction) = await HoldExclusiveAsync(connectionString, scenario.TenantId, customerId);
+        await using var _c = connection;
+        await using var _t = transaction;
+
+        var waiting = scenario.PostAsync(Body(typeId, customerId: customerId));
+        Assert.NotSame(waiting, await Task.WhenAny(waiting, Task.Delay(NoAnswerWindow, Ct)));
+
+        var other = scenario.PostAsync(Body(typeId));
+        Assert.Same(other, await Task.WhenAny(other, Task.Delay(OtherAnswerWindow, Ct)));
+        var otherResponse = await other;
+        Assert.True(otherResponse.StatusCode == HttpStatusCode.Created, await BodyAsync(otherResponse));
+        Assert.Equal("SOP-000001", (await JsonAsync(otherResponse)).GetProperty("number").GetString());
+        Assert.False(waiting.IsCompleted);
+
+        // Sin borrado, el que esperaba sigue y toma el radicado siguiente.
+        await transaction.RollbackAsync(Ct);
+        var waitingResponse = await waiting;
+        Assert.True(waitingResponse.StatusCode == HttpStatusCode.Created, await BodyAsync(waitingResponse));
+        Assert.Equal("SOP-000002", (await JsonAsync(waitingResponse)).GetProperty("number").GetString());
     }
 
     [Fact]

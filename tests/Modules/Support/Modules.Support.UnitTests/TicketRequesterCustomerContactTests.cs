@@ -62,4 +62,14 @@ public sealed class TicketRequesterCustomerContactTests
 
         Assert.Equal(Ana, merged);
     }
+
+    // Revisión final, FU2/FU4: el correo del cliente pasa por la misma regla de formato que el del solicitante; uno que no la
+    // cumple no se copia, igual que uno demasiado largo.
+    [Fact]
+    public void ACustomerEmailWithoutTheRequesterFormatIsNotCopied()
+    {
+        var merged = TicketRequesterNormalizer.WithCustomerContact(Ana, Customer("compras-novasteel.co", "+573001234567"), "CO");
+
+        Assert.Equal(Ana with { MobilePhone = "+573001234567" }, merged);
+    }
 }

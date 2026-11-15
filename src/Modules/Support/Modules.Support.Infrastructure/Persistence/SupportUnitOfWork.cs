@@ -23,7 +23,7 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
             await CustomerReferenceWrites.SaveHoldingAsync(
                 dbContext,
                 CustomerReferenceWrites.Collect(dbContext.ChangeTracker, TicketCustomer),
-                reference => new SupportDomainException(reference.NotFoundCode, $"Customer '{reference.CustomerId}' was not found."),
+                CustomerNotFound,
                 cancellationToken);
         }
         // Traducido acá y no en Application, que no referencia EF Core.
@@ -57,6 +57,19 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
     // arriba, y el Dispose sin Commit deshace todo, también el número que emitió SupportTicketNumberGenerator.
     public async Task<ISupportTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         new SupportTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    // El mismo protocolo que SaveHoldingAsync (candado y después existencia, en READ COMMITTED), adelantado: sin transacción
+    // abierta, CustomerReferenceWrites lanza. Pedir otra vez el candado compartido en la misma transacción no espera.
+    public async Task HoldCustomerReferenceAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+    {
+        if (!await CustomerReferenceWrites.HoldAsync(dbContext.Database, tenantId, customerId, cancellationToken))
+        {
+            throw CustomerNotFound(new CustomerReferenceToHold(tenantId, customerId, TicketCustomer.NotFoundCode));
+        }
+    }
+
+    private static SupportDomainException CustomerNotFound(CustomerReferenceToHold reference) =>
+        new(reference.NotFoundCode, $"Customer '{reference.CustomerId}' was not found.");
 
     private sealed class SupportTransaction(IDbContextTransaction transaction) : ISupportTransaction
     {

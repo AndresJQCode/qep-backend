@@ -104,8 +104,9 @@ public sealed class CreateTicketValidator : AbstractValidator<CreateTicketComman
             RuleFor(command => command.Requester!.Email)
                 .EmailAddress()
                 .When(command => !string.IsNullOrWhiteSpace(command.Requester!.Email));
+            // Recortado antes del patrón, como lo guarda el normalizador (revisión final, m4).
             RuleFor(command => command.Requester!.MobilePhone)
-                .Matches(TicketRequesterNormalizer.MobilePattern)
+                .Must(text => TicketRequesterNormalizer.IsMobile(text!.Trim()))
                 .When(command => !string.IsNullOrWhiteSpace(command.Requester!.MobilePhone))
                 .WithMessage("The mobile phone must be E.164, like +573001234567.");
             RuleFor(command => command.Requester!.LandlinePhone).MustFit(0, TicketRequester.LandlinePhoneMaxLength);
@@ -135,6 +136,16 @@ internal static class TicketRequesterNormalizer
 {
     /// <summary>E.164: «+», un dígito de 1 a 9 y de 7 a 14 más (plan D7).</summary>
     public const string MobilePattern = @"^\+[1-9][0-9]{7,14}$";
+
+    // La misma regla de FluentValidation que CreateTicketValidator aplica al correo del solicitante (EmailAddress), armada una vez:
+    // el correo del cliente que se copia en la foto pasa por ella, sin copiar su lógica (revisión final, FU2/FU4).
+    private static readonly InlineValidator<string> EmailFormat = CreateEmailFormat();
+
+    /// <summary>Si <paramref name="text"/> (ya recortado) es un celular E.164.</summary>
+    public static bool IsMobile(string text) => Regex.IsMatch(text, MobilePattern);
+
+    /// <summary>Si <paramref name="text"/> (ya recortado) cumple la regla de formato del correo del solicitante.</summary>
+    public static bool IsEmail(string text) => EmailFormat.Validate(text).IsValid;
 
     /// <summary>El país del solicitante o, sin él, el del tenant (<paramref name="tenantCountry"/>, que el alta lee de sus ajustes
     /// regionales: el mismo origen que el calendario de plazos).</summary>
@@ -173,13 +184,16 @@ internal static class TicketRequesterNormalizer
     /// El contacto del cliente vinculado como respaldo (owner, 2026-11-14): su correo y su celular llenan sólo los campos que el
     /// solicitante dejó vacíos; lo que trae el solicitante siempre gana. Sin solicitante, la foto queda con sólo ese contacto y el
     /// país <paramref name="country"/> (el cliente vinculado ya cumple <c>requester_required</c>); sin contacto que copiar, no hay
-    /// foto. Un valor del cliente que no cabe en la foto (correo de más de <see cref="TicketRequester.EmailMaxLength"/>, celular que
-    /// no es E.164) no se copia: recortarlo daría un contacto que no existe.
+    /// foto. Un valor del cliente que no cabe en la foto (correo de más de <see cref="TicketRequester.EmailMaxLength"/> o sin el formato
+    /// que se le exige al del solicitante, celular que no es E.164) no se copia: recortarlo o guardarlo daría un contacto que no
+    /// existe.
     /// </summary>
     public static TicketRequester? WithCustomerContact(TicketRequester? requester, SupportCustomerContact customer, string country)
     {
-        var email = Clean(customer.Email) is { Length: <= TicketRequester.EmailMaxLength } fittingEmail ? fittingEmail : null;
-        var mobile = Clean(customer.MobilePhone) is { } phone && Regex.IsMatch(phone, MobilePattern) ? phone : null;
+        var email = Clean(customer.Email) is { Length: <= TicketRequester.EmailMaxLength } fittingEmail && IsEmail(fittingEmail)
+            ? fittingEmail
+            : null;
+        var mobile = Clean(customer.MobilePhone) is { } phone && IsMobile(phone) ? phone : null;
         if (requester is null)
         {
             return email is null && mobile is null
@@ -191,6 +205,13 @@ internal static class TicketRequesterNormalizer
     }
 
     private static string? Clean(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    private static InlineValidator<string> CreateEmailFormat()
+    {
+        var validator = new InlineValidator<string>();
+        validator.RuleFor(text => text).EmailAddress().OverridePropertyName("Email");
+        return validator;
+    }
 }
 
 internal static class SupportTextRules
@@ -206,7 +227,7 @@ internal static class SupportTextRules
 /// <summary>
 /// El alta manual (spec §8.3, plan D6–D8 y D14). Orden: autorización → membresía de quien actúa → validador → solicitante →
 /// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → contexto (reloj leído una vez) →
-/// transacción → radicado → ticket → auditoría → guardar → confirmar.
+/// transacción → candado del cliente → radicado → ticket → auditoría → guardar → confirmar.
 /// Todo lo que puede responder 422 va antes de la transacción, así un rechazo no gasta un radicado. La provisión abre su propia
 /// transacción, así que va antes de <see cref="ISupportUnitOfWork.BeginTransactionAsync"/>.
 /// </summary>
@@ -269,6 +290,13 @@ public sealed class CreateTicketHandler(
         SupportTicket ticket;
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
+            // Orden de candados (revisión final, m1): el del cliente antes que la fila del radicado, que es de todo el tenant. Así un
+            // alta que espera a que se borre su cliente no tiene la fila y no frena las demás altas.
+            if (validated.CustomerId is { } heldCustomerId)
+            {
+                await unitOfWork.HoldCustomerReferenceAsync(validated.TenantId, heldCustomerId, cancellationToken);
+            }
+
             var number = await numbers.NextAsync(validated.TenantId, cancellationToken);
             ticket = SupportTicket.CreateManual(
                 SupportTicketId.New(),
