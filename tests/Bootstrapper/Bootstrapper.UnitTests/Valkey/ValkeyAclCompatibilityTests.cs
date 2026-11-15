@@ -50,13 +50,15 @@ public sealed class ValkeyAclCompatibilityTests(ValkeyAclServer server) : IClass
         await buyerCache.SetAsync(buyerHash, buyerSession, Ct);
         Assert.Equal(identitySession, await identityCache.GetAsync(identityHash, Ct));
         Assert.Equal(buyerSession, await buyerCache.GetAsync(buyerHash, Ct));
+        await AssertTtlAsync(harness, $"qep:sess:{identityHash}", SessionCacheTtl.MaxEntry);
+        await AssertTtlAsync(harness, $"qep:sess:buyer:{buyerHash}", SessionCacheTtl.MaxEntry);
 
         await identityCache.RemoveAsync([new RevokedSession(identitySession.SessionId, identityHash)], Ct);
         await buyerCache.RemoveAsync([new RevokedBuyerSession(buyerSession.SessionId, buyerHash)], Ct);
         Assert.Null(await identityCache.GetAsync(identityHash, Ct));
         Assert.Null(await buyerCache.GetAsync(buyerHash, Ct));
-        Assert.True(await harness.Database.KeyExistsAsync($"qep:sess:rev:{identityHash}"));
-        Assert.True(await harness.Database.KeyExistsAsync($"qep:sess:buyer:rev:{buyerHash}"));
+        await AssertTtlAsync(harness, $"qep:sess:rev:{identityHash}", SessionCacheTtl.RevocationMarker);
+        await AssertTtlAsync(harness, $"qep:sess:buyer:rev:{buyerHash}", SessionCacheTtl.RevocationMarker);
 
         Assert.Equal(0, harness.Fallbacks.Count("sessions"));
     }
@@ -109,7 +111,9 @@ public sealed class ValkeyAclCompatibilityTests(ValkeyAclServer server) : IClass
             await Task.Delay(20, Ct);
         }
 
-        Assert.True(doorbell.IsSubscribed(DoorbellQueues.Outbox));
+        Assert.True(
+            doorbell.IsSubscribed(DoorbellQueues.Outbox),
+            "No se suscribió a qep:wake:outbox: revisa SUBSCRIBE o el permiso de canales de la ACL (&qep:*).");
         var stopwatch = Stopwatch.StartNew();
         var waiting = listener.WaitAsync(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), Ct);
         await Task.Delay(100, Ct);
@@ -152,6 +156,14 @@ public sealed class ValkeyAclCompatibilityTests(ValkeyAclServer server) : IClass
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    /// <summary>La clave existe y su TTL es positivo y no pasa del tope.</summary>
+    private static async Task AssertTtlAsync(Harness harness, string key, TimeSpan max)
+    {
+        var ttl = await harness.Database.KeyTimeToLiveAsync(key);
+        Assert.NotNull(ttl);
+        Assert.InRange(ttl.Value, TimeSpan.FromMilliseconds(1), max);
+    }
 
     private string ConnectionString() => ValkeyTestServer.ConnectionString(server.Container, asQep: true);
 
