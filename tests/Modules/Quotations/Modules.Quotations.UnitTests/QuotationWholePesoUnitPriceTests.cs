@@ -121,6 +121,7 @@ public sealed class QuotationWholePesoUnitPriceTests
             new Dictionary<Guid, QuotationItemPricing> { [productId] = new(24_563m, 5m, 19) },
             isRetail: false,
             globalScaleFloor: null,
+            MunicipalContext.None,
             AdvisorId,
             Now);
 
@@ -165,6 +166,7 @@ public sealed class QuotationWholePesoUnitPriceTests
             currency,
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

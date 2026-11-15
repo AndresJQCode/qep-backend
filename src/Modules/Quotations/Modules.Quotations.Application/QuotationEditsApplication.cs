@@ -72,6 +72,8 @@ internal static class QuotationEditsApplication
             repricing,
             edits.IsRetail,
             edits.GlobalScaleFloor,
+            // Provisional hasta que la aplicación arme el contexto municipal (plan, Tarea 12).
+            MunicipalContext.None,
             updatedBy,
             now);
         // Los selectores después del encabezado: se validan contra el país de la cuenta que acaba de quedar (spec

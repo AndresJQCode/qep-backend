@@ -33,7 +33,10 @@ public sealed record QuotationCompanyRef(
     /// que el documento tenga que preservar si la empresa los corrige después.</summary>
     string? Address,
     string? Phone,
-    IReadOnlyCollection<QuotationCompanyAccountRef> BankAccounts);
+    IReadOnlyCollection<QuotationCompanyAccountRef> BankAccounts,
+    /// <summary>Municipio de la empresa (Geography). La cotización y el pedido lo congelan con la cuenta: es el
+    /// municipio de la operación por defecto (spec ReteICA por empresa §7.5, A6).</summary>
+    Guid? CityId = null);
 
 public sealed record QuotationCompanyAccountRef(
     string BankName,

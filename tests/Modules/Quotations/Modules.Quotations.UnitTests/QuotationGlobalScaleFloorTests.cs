@@ -37,6 +37,7 @@ public sealed class QuotationGlobalScaleFloorTests
             "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 
@@ -164,6 +165,7 @@ public sealed class QuotationGlobalScaleFloorTests
             repricing: null,
             isRetail: false,
             globalScaleFloor: 1000,
+            MunicipalContext.None,
             editor,
             editedAt);
 
@@ -187,6 +189,7 @@ public sealed class QuotationGlobalScaleFloorTests
             repricing: null,
             isRetail: false,
             globalScaleFloor: null,
+            MunicipalContext.None,
             AdvisorId,
             Now.AddHours(2));
 
@@ -211,6 +214,7 @@ public sealed class QuotationGlobalScaleFloorTests
             repricing: null,
             isRetail: true,
             globalScaleFloor: 1000,
+            MunicipalContext.None,
             AdvisorId,
             Now.AddHours(2)));
 
@@ -233,6 +237,7 @@ public sealed class QuotationGlobalScaleFloorTests
             repricing: null,
             isRetail: true,
             globalScaleFloor: null,
+            MunicipalContext.None,
             AdvisorId,
             Now.AddHours(2));
 

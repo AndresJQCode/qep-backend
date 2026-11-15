@@ -326,6 +326,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("notes");
 
+                    b.Property<Guid?>("OperationCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("operation_city_id");
+
                     b.Property<string>("OrderNumber")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -906,6 +910,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text")
                         .HasColumnName("notes");
+
+                    b.Property<Guid?>("OperationCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("operation_city_id");
 
                     b.Property<bool?>("PartyVatSurplus")
                         .HasColumnType("boolean")
@@ -1673,6 +1681,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
 
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_city_id");
+
                             b1.Property<Guid>("CompanyId")
                                 .HasColumnType("uuid")
                                 .HasColumnName("billing_company_id");
@@ -1889,6 +1901,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_city_id");
 
                             b1.Property<Guid>("CompanyId")
                                 .HasColumnType("uuid")

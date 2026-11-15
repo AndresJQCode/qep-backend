@@ -81,7 +81,7 @@ public sealed class QuotationDraftBuilder(
             var empty = Quotation.Create(
                 QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
                 validUntil, null, null, QuotationParties.Empty, null, defaultCurrency,
-                customer.VatSurplus, customerWithholdings, input.AdvisorId, input.Now);
+                customer.VatSurplus, customerWithholdings, MunicipalContext.None, input.AdvisorId, input.Now);
             return new QuotationDraft(empty, customer.Name);
         }
 
@@ -91,7 +91,7 @@ public sealed class QuotationDraftBuilder(
         var quotation = Quotation.Create(
             QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
             validUntil, edits.PaymentMethod, edits.Notes, QuotationParties.Empty, billingAccount, defaultCurrency,
-            customer.VatSurplus, customerWithholdings, input.AdvisorId, input.Now);
+            customer.VatSurplus, customerWithholdings, MunicipalContext.None, input.AdvisorId, input.Now);
 
         var outcome = await QuotationEditsApplication.ApplyAsync(
             quotation, new ResolvedEdits(edits, validUntil), input.TenantId, companyLookup,

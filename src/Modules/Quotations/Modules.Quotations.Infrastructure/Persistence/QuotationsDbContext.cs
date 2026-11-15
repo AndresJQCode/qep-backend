@@ -188,8 +188,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasColumnName("billing_company_country")
                 .HasColumnType("char(2)")
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
+            // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
+            billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
         });
         quotation.Navigation(value => value.BillingAccount).IsRequired(false);
+        // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
+        // relleno (A8).
+        quotation.Property(value => value.OperationCityId).HasColumnName("operation_city_id");
 
         quotation.Navigation(value => value.Items)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
@@ -649,8 +654,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasColumnName("billing_company_country")
                 .HasColumnType("char(2)")
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
+            // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
+            billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
         });
         order.Navigation(value => value.BillingAccount).IsRequired();
+        // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
+        // relleno (A8).
+        order.Property(value => value.OperationCityId).HasColumnName("operation_city_id");
         order.Navigation(value => value.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
         order.Navigation(value => value.Parties).UsePropertyAccessMode(PropertyAccessMode.Field);
 

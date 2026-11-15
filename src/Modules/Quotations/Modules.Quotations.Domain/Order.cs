@@ -196,6 +196,12 @@ public sealed class Order
     /// <see cref="FromQuotation"/>, <see cref="CreateManual"/> y <see cref="CreateExternal"/> la exigen.</summary>
     public QuotationBillingAccount? BillingAccount { get; private set; }
 
+    /// <summary>
+    /// El municipio de la operación (spec ReteICA por empresa §7.5), el mismo concepto que en la cotización: decide qué
+    /// tasa municipal aplica. Null en un país sin tipos municipales y en un pedido anterior a este trabajo (A8).
+    /// </summary>
+    public Guid? OperationCityId { get; private set; }
+
     public string? PaymentMethod { get; private set; }
 
     public bool IsRetail { get; private set; }
@@ -403,6 +409,9 @@ public sealed class Order
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
             quotation.BillingAccount, paymentStatus: null, notes ?? quotation.Notes, convertedBy, occurredAt);
+        // Spec ReteICA por empresa §7.5: hereda el municipio de la operación junto con la foto, y las filas con su
+        // porcentaje efectivo y el del catálogo (los lleva Rate).
+        order.OperationCityId = quotation.OperationCityId;
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
@@ -782,7 +791,7 @@ public sealed class Order
 
     // Sin empresa no hay país contra el cual validarlos (D22: fijar la empresa habilita los selectores).
     private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates) =>
-        WithholdingSelectorRules.Ensure(rates, BillingAccount?.Country, operationCityId: null, "order.billing");
+        WithholdingSelectorRules.Ensure(rates, BillingAccount?.Country, OperationCityId, "order.billing");
 
     /// <summary>
     /// Fija o cambia la empresa y la cuenta con la que se cobra un pedido <see cref="IsEditable"/> (spec
@@ -1710,7 +1719,7 @@ public sealed class Order
                 BillsToFinalConsumer,
                 BillingAccount,
                 Currency,
-                operationCityId: null));
+                OperationCityId));
         DocumentWithholding.SettleAll(_withholdings, WithholdingSource.Document, totals.Withholdings);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;

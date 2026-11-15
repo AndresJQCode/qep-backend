@@ -22,6 +22,7 @@ public sealed class QuotationPartyTests
             "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
 

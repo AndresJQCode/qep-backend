@@ -259,6 +259,7 @@ public sealed class QuotationsExportProcessorTests
             defaultCurrency: "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             createdAt ?? Now);
 

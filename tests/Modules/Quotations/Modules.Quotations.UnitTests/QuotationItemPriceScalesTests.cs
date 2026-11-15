@@ -90,6 +90,7 @@ public sealed class QuotationItemPriceScalesTests
             "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 }

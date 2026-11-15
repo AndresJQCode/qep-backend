@@ -79,7 +79,7 @@ public sealed class OrderWithholdingsTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 12, 31), null, null,
             new QuotationParties(OwnBilling, null, BillingVatSurplus: false), ColombianAccount, "COP",
-            customerVatSurplus: false, customerWithholdings: [Retefuente], AdvisorId, Now);
+            customerVatSurplus: false, customerWithholdings: [Retefuente], MunicipalContext.None, AdvisorId, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19, AdvisorId, Now);
         quotation.SetBillingWithholdings([ReteIca], AdvisorId, Now);
         quotation.ConvertToOrder(AdvisorId, Now, new Dictionary<Guid, QuotationProductSnapshot>
@@ -102,16 +102,22 @@ public sealed class OrderWithholdingsTests
     [Fact]
     public void FromQuotationWithClientDataInheritsTheCustomerPhoto()
     {
+        // La ReteICA ya no viene del cliente sino de la empresa en el municipio de la operación (spec ReteICA por empresa).
+        var bogota = Guid.CreateVersion7();
+        var reteIcaBogota = ReteIca with { CityId = bogota };
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 12, 31), null, null,
             QuotationParties.Empty, ColombianAccount, "COP", customerVatSurplus: false,
-            customerWithholdings: [Retefuente, ReteIca], AdvisorId, Now);
+            customerWithholdings: [Retefuente],
+            new MunicipalContext(bogota, [new MunicipalOffer("ReteICA", reteIcaBogota, CustomerIsAgent: true)]),
+            AdvisorId, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19, AdvisorId, Now);
 
         var order = Order.FromQuotation(
             OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now);
 
-        Assert.Equal([Retefuente, ReteIca], order.Withholdings.OrderBy(row => row.Position).Select(row => row.Rate));
+        Assert.Equal(bogota, order.OperationCityId);
+        Assert.Equal([Retefuente, reteIcaBogota], order.Withholdings.OrderBy(row => row.Position).Select(row => row.Rate));
         Assert.Equal([("Retefuente 2,5 %", 100_000m, 2_500m), ("ReteICA Bogotá 0,966 %", 100_000m, 966m)], Applied(order));
         Assert.Equal(quotation.RetentionAmount, order.RetentionAmount);
     }

@@ -99,6 +99,7 @@ public sealed class QuotationDiscountedUnitPriceTests
             "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

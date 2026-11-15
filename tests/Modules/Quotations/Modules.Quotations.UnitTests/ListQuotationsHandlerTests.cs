@@ -225,6 +225,7 @@ public sealed class ListQuotationsHandlerTests
             defaultCurrency: "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

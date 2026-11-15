@@ -62,6 +62,7 @@ public sealed class QuotationPricingRecalculationTests
             "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 
@@ -518,6 +519,7 @@ public sealed class QuotationPricingRecalculationTests
             new Dictionary<Guid, QuotationItemPricing> { [variantId] = new(unitPrice, 0m, 19) },
             isRetail: false,
             globalScaleFloor: null,
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

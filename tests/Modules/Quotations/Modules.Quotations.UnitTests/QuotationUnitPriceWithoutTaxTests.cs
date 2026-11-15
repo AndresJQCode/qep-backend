@@ -75,6 +75,7 @@ public sealed class QuotationUnitPriceWithoutTaxTests
             "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

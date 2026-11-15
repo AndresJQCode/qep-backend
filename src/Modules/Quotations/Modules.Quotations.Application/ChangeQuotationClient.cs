@@ -82,6 +82,8 @@ public sealed class ChangeQuotationClientHandler(
             command.ClientId,
             customer.VatSurplus,
             customerWithholdings,
+            // Provisional hasta que la aplicación arme el contexto municipal (plan, Tarea 12).
+            MunicipalContext.None,
             updatedBy,
             now);
 

@@ -51,7 +51,7 @@ public sealed class OrderPaymentCalculationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 12, 1), "Transferencia",
-            null, QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
+            null, QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [], MunicipalContext.None, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {

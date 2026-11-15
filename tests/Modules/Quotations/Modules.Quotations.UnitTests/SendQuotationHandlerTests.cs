@@ -705,6 +705,7 @@ public sealed class SendQuotationHandlerTests
             defaultCurrency: "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
         quotation.AddItem(

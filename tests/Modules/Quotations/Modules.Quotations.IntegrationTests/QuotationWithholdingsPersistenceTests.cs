@@ -33,8 +33,11 @@ public sealed class QuotationWithholdingsPersistenceTests
     private static readonly WithholdingRate Retefuente =
         new(Guid.CreateVersion7(), "Retefuente 2,5 %", "Retefuente", "CO", 2.5m, null, null, null);
 
+    // El municipio de la operación de las cotizaciones de esta clase (spec ReteICA por empresa §7.5).
+    private static readonly Guid Bogota = Guid.Parse("01900000-0000-7000-8000-00000000f014");
+
     private static readonly WithholdingRate ReteIca =
-        new(Guid.CreateVersion7(), "ReteICA Bogotá 0,966 %", "ReteICA", "CO", 0.966m, 4m, "UVT", 49_799m);
+        new(Guid.CreateVersion7(), "ReteICA Bogotá 0,966 %", "ReteICA", "CO", 0.966m, 4m, "UVT", 49_799m, Bogota);
 
     private static readonly WithholdingRate RetefuenteServicios =
         new(Guid.CreateVersion7(), "Retefuente servicios 4 %", "Retefuente", "CO", 4m, null, null, null);
@@ -204,15 +207,11 @@ public sealed class QuotationWithholdingsPersistenceTests
         await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
-        var bogota = Guid.CreateVersion7();
-        var edited = new WithholdingRate(
-            Guid.CreateVersion7(), "ReteICA Bogotá", "ReteICA", "CO", 0.966m, null, null, null, bogota)
-        {
-            Percentage = 0.8m,
-        };
 
-        var quotation = NewQuotation([Retefuente, edited], ColombianAccount);
+        var quotation = NewQuotation([Retefuente, ReteIca], ColombianAccount with { CityId = Bogota });
         AddLine(quotation);
+        quotation.SetWithholdingPercentage("ReteICA", 0.8m, Advisor, Now);
+        var edited = ReteIca with { Percentage = 0.8m };
         await using (var create = NewContext(connectionString))
         {
             create.Quotations.Add(quotation);
@@ -226,7 +225,9 @@ public sealed class QuotationWithholdingsPersistenceTests
         Assert.Equal([Retefuente, edited], rows.Select(w => w.Rate));
         Assert.Null(rows[0].CityId);
         Assert.False(rows[0].Overridden);
-        Assert.Equal(bogota, rows[1].CityId);
+        Assert.Equal(Bogota, rows[1].CityId);
+        Assert.Equal(Bogota, reloaded.OperationCityId);
+        Assert.Equal(Bogota, reloaded.BillingAccount!.CityId);
         Assert.Equal(0.8m, rows[1].Percentage);
         Assert.Equal(0.966m, rows[1].CatalogPercentage);
         Assert.True(rows[1].Overridden);
@@ -293,9 +294,14 @@ public sealed class QuotationWithholdingsPersistenceTests
             account,
             "COP",
             customerVatSurplus: false,
-            customerWithholdings,
+            [.. customerWithholdings.Where(rate => rate.Type != "ReteICA")],
+            Municipal(customerWithholdings.FirstOrDefault(rate => rate.Type == "ReteICA")),
             Advisor,
             Now);
+
+    // Una ReteICA «del cliente» ya no viene en su foto: es la tasa de la empresa en Bogotá con el cliente agente ahí.
+    private static MunicipalContext Municipal(WithholdingRate? customerReteIca) =>
+        new(Bogota, [new MunicipalOffer("ReteICA", customerReteIca ?? ReteIca, CustomerIsAgent: customerReteIca is not null)]);
 
     // 119.000 con el IVA del 19 % adentro: base sin IVA 100.000.
     private static void AddLine(Quotation quotation) =>
@@ -306,7 +312,7 @@ public sealed class QuotationWithholdingsPersistenceTests
     private static void UseOwnBilling(Quotation quotation) =>
         quotation.UpdateDetails(
             quotation.ValidUntil, null, null, new QuotationParties(OwnBilling, null, BillingVatSurplus: false),
-            quotation.BillingAccount, null, isRetail: false, globalScaleFloor: null, Advisor, Now);
+            quotation.BillingAccount, null, isRetail: false, globalScaleFloor: null, Municipal(null), Advisor, Now);
 
     // Como QuotationRepository.FindAsync: con las líneas y las partes, que el recálculo necesita. La foto de
     // retenciones es owned y llega sola.

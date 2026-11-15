@@ -823,6 +823,7 @@ public sealed class OrphanUserCleanupTests
             // lo que se ejercita aca es la limpieza de usuarios huerfanos, no los totales.
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             advisor,
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
