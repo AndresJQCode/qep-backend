@@ -325,8 +325,8 @@ public sealed class Customer
     public bool IsMerged => MergedIntoId is not null;
 
     /// <summary>Spec 2026-11-10 §3.2: la empresa (otro cliente) de la que esta persona es contacto. Un solo nivel: quien
-    /// tiene empresa no puede tener contactos. Sólo lo escriben <see cref="LinkToCompany"/>, <see cref="UnlinkFromCompany"/>
-    /// y la fusión; crear y editar un cliente nunca lo tocan.</summary>
+    /// tiene empresa no puede tener contactos. Sólo lo escriben <see cref="LinkToCompany"/> (también desde el alta, que puede
+    /// nacer con empresa: spec 2026-11-15), <see cref="UnlinkFromCompany"/> y la fusión; editar un cliente nunca lo toca.</summary>
     public CustomerId? CompanyId { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }

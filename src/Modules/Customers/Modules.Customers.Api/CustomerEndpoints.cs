@@ -366,7 +366,8 @@ public static class CustomerEndpoints
                 request.VatSurplus,
                 request.PersonType,
                 request.WithholdingTaxRateIds,
-                request.WithholdingAgentCities),
+                request.WithholdingAgentCities,
+                CompanyId: request.CompanyId),
             cancellationToken);
 
         return Results.Created(
