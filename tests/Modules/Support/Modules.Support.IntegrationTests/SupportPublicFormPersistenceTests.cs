@@ -221,6 +221,32 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         Assert.Null(await accesses.FindByNumberAsync(Guid.CreateVersion7(), 7, Ct));
     }
 
+    // Revisión del Bloque B (Important 1): la consulta y el reenvío leen la clave con FOR UPDATE, dentro de una transacción; sin ella,
+    // el candado de fila no serviría de nada y la lectura lanza.
+    [Fact]
+    public async Task LockByNumberNeedsATransactionAndLoadsTheAccess()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var form = await SaveFormAsync(factory, tenant, 1);
+        var ticket = await FromFormAsync(factory, tenant, 7, requester: null, form.Id);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ISupportTicketAccessRepository>()
+                .Add(SupportTicketAccess.Issue(ticket.Id, tenant, "pin-hash", Now));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var accesses = read.ServiceProvider.GetRequiredService<ISupportTicketAccessRepository>();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => accesses.LockByNumberAsync(tenant, 7, Ct));
+        await using var transaction = await read.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().BeginTransactionAsync(Ct);
+        var locked = await accesses.LockByNumberAsync(tenant, 7, Ct);
+
+        Assert.Equal(ticket.Id, locked!.Value.Ticket.Id);
+        Assert.Equal("pin-hash", locked.Value.Access.PinHash);
+        Assert.Null(await accesses.LockByNumberAsync(tenant, 8, Ct));
+    }
+
     private async Task<(QepApiFactory Factory, Guid Tenant)> NewTenantAsync()
     {
         var factory = await sharedHost.StartTestAsync();

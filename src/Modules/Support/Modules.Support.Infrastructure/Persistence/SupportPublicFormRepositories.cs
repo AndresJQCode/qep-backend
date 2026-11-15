@@ -27,6 +27,31 @@ internal sealed class SupportTicketAccessRepository(SupportDbContext dbContext) 
         var access = await FindAsync(tenantId, ticket.Id, cancellationToken);
         return access is null ? null : (ticket, access);
     }
+
+    public async Task<(SupportTicket Ticket, SupportTicketAccess Access)?> LockByNumberAsync(
+        Guid tenantId, long number, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException(
+                "Locking a ticket access needs an open transaction (ISupportUnitOfWork.BeginTransactionAsync).");
+        }
+
+        var ticket = await dbContext.Tickets
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.TenantId == tenantId && item.Number == number, cancellationToken);
+        if (ticket is null)
+        {
+            return null;
+        }
+
+        // SELECT * para que EF reciba todas las columnas mapeadas, y sin componer nada encima: EF envolvería el FOR UPDATE en una
+        // subconsulta (gotcha del FromSql crudo, como QuotationSettingsStore).
+        var rows = await dbContext.TicketAccess
+            .FromSql($"SELECT * FROM support.ticket_access WHERE ticket_id = {ticket.Id.Value} AND tenant_id = {tenantId} FOR UPDATE")
+            .ToListAsync(cancellationToken);
+        return rows.Count == 1 ? (ticket, rows[0]) : null;
+    }
 }
 
 internal sealed class SupportFormRepository(SupportDbContext dbContext) : ISupportFormRepository

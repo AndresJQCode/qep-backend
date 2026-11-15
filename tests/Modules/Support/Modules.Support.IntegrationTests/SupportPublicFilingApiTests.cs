@@ -83,6 +83,25 @@ public sealed class SupportPublicFilingApiTests(SupportPublicLoggedHost host) : 
         Assert.Equal("Email", await AccessColumnAsync(rig, "last_sent_channel"));
     }
 
+    // Revisión del Bloque B (Minor 2, plan F23): si anotar la entrega falla después de confirmar el ticket (acá, la fila de la clave
+    // desaparece antes del segundo guardado), el radicado ya existe y el PIN igual se muestra: 201 con el PIN, nunca un 500.
+    [Fact]
+    public async Task AFailedDeliveryBookkeepingStillReturnsThePin()
+    {
+        var rig = await RigAsync();
+        var email = Email();
+        host.Emails.BeforeSend[email] = () => ExecuteAsync(
+            rig.Factory, "DELETE FROM support.ticket_access WHERE tenant_id = @tenant", ("tenant", rig.TenantId));
+
+        var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, NamedBody(rig.TypeId, rig.CityId, email));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await JsonAsync(response);
+        Assert.Matches("^[0-9]{6}$", body.GetProperty("pin").GetString());
+        Assert.Equal("SOP-000001", body.GetProperty("number").GetString());
+        Assert.Equal(1L, await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant"));
+    }
+
     // Review Focus 5: un anónimo no deja cliente, foto del solicitante, IP ni consentimiento. Se responde por la página.
     [Fact]
     public async Task AnAnonymousTicketStoresNoRequesterNoIpAndNoConsent()

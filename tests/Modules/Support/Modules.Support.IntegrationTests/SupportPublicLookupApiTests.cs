@@ -126,6 +126,44 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
         Assert.Equal(versionBefore, await VersionAsync(rig, locked.Number));
     }
 
+    // Revisión del Bloque B (Important 1): veinte PIN errados a la vez, cada uno desde su IP, no se pisan el contador: la fila de la
+    // clave se lee con FOR UPDATE y el radicado queda bloqueado, también para el PIN correcto.
+    [Fact]
+    public async Task ConcurrentWrongPinsStillLockTheTicket()
+    {
+        var rig = await RigAsync();
+        var filed = await FileNamedAsync(rig);
+
+        var attempts = await Task.WhenAll(Enumerable.Range(0, 20)
+            .Select(_ => LookupAsync(rig, filed.Number, WrongPin(filed.Pin), NextIp())));
+        var right = await LookupAsync(rig, filed.Number, filed.Pin, NextIp());
+
+        Assert.All(attempts, response => Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, right.StatusCode);
+        Assert.Equal(1L, await ScalarAsync(
+            rig.Factory,
+            "SELECT count(*) FROM support.ticket_access WHERE tenant_id = @tenant AND locked_until > @now",
+            ("tenant", rig.TenantId), ("now", ClockedSupportHost.Reception)));
+    }
+
+    // Revisión del Bloque B (Minor 4): cinco reenvíos a la vez pasado el enfriamiento mandan un solo correo; los demás encuentran el
+    // intento ya anotado.
+    [Fact]
+    public async Task ConcurrentResendsSendOnce()
+    {
+        var rig = await RigAsync();
+        var email = Email();
+        var filed = await FileNamedAsync(rig, email: email);
+        host.Clock.UtcNow = ClockedSupportHost.Reception + SupportTicketAccess.ResendCooldown + TimeSpan.FromMinutes(1);
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => ResendAsync(rig, filed.Number)));
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.Accepted, response.StatusCode));
+        var emails = host.Emails.To(email);
+        Assert.Equal(2, emails.Count);
+        Assert.Equal(HttpStatusCode.OK, (await LookupAsync(rig, filed.Number, emails[^1].Pin, NextIp())).StatusCode);
+    }
+
     [Fact]
     public async Task TheNumberAcceptsWithAndWithoutPrefix()
     {

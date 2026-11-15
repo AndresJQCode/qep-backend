@@ -30,6 +30,13 @@ public sealed class SupportOpeningSender(ISupportOpeningEmail email, ITenantDire
         return EmailOf(ticket) is not null;
     }
 
+    /// <summary>El canal por el que saldría la información: lo que se anota al reclamar un reenvío, antes de mandar.</summary>
+    public static string ChannelOf(SupportTicket ticket)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+        return EmailOf(ticket) is null ? NoChannel : EmailChannel;
+    }
+
     public async Task<SupportOpeningOutcome> SendAsync(
         SupportTicket ticket, string pin, string consultUrl, CancellationToken cancellationToken)
     {

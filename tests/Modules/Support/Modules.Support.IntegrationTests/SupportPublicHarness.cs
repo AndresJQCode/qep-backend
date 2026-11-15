@@ -332,15 +332,23 @@ internal sealed class RecordingSupportOpeningEmail : ISupportOpeningEmail
 
     public ConcurrentDictionary<string, bool> FailFor { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Algo que corre antes de «mandar» a esa dirección: una prueba lo usa para romper lo que el handler escribe después.</summary>
+    public ConcurrentDictionary<string, Func<Task>> BeforeSend { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public IReadOnlyList<SupportOpeningEmail> To(string address) =>
         Sent.Where(email => string.Equals(email.ToAddress, address, StringComparison.OrdinalIgnoreCase)).ToList();
 
-    public Task<SupportChannelSendResult> SendAsync(SupportOpeningEmail email, CancellationToken cancellationToken)
+    public async Task<SupportChannelSendResult> SendAsync(SupportOpeningEmail email, CancellationToken cancellationToken)
     {
+        if (BeforeSend.TryGetValue(email.ToAddress, out var before))
+        {
+            await before();
+        }
+
         Sent.Enqueue(email);
-        return Task.FromResult<SupportChannelSendResult>(FailFor.ContainsKey(email.ToAddress)
+        return FailFor.ContainsKey(email.ToAddress)
             ? new SupportChannelSendResult.Failed(null, SupportChannelReasons.SendFailed)
-            : new SupportChannelSendResult.Sent(null, null));
+            : new SupportChannelSendResult.Sent(null, null);
     }
 }
 

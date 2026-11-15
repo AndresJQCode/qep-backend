@@ -13,5 +13,15 @@ public interface ISupportTicketAccessRepository
     Task<(SupportTicket Ticket, SupportTicketAccess Access)?> FindByNumberAsync(
         Guid tenantId, long number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Como <see cref="FindByNumberAsync"/>, pero la clave se lee con <c>SELECT … FOR UPDATE</c>: exige la transacción de
+    /// <see cref="ISupportUnitOfWork.BeginTransactionAsync"/> (sin ella lanza). La consulta y el reenvío la usan para que mirar el bloqueo
+    /// o el enfriamiento y anotar el intento sean una sola cosa: sin el candado, dos intentos a la vez leen el mismo contador y uno se
+    /// pierde (revisión del Bloque B, Important 1). Se llama antes de cargar la clave de ese radicado en el mismo contexto: una ya
+    /// cargada no se refresca.
+    /// </summary>
+    Task<(SupportTicket Ticket, SupportTicketAccess Access)?> LockByNumberAsync(
+        Guid tenantId, long number, CancellationToken cancellationToken);
+
     void Add(SupportTicketAccess access);
 }

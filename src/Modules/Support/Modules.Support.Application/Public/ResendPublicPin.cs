@@ -35,19 +35,37 @@ public sealed class ResendPublicPinHandler(
         }
 
         var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
-        if (!SupportTicketNumber.TryParse(command.Number, out var number)
-            || await accesses.FindByNumberAsync(tenant.TenantId, number, cancellationToken) is not { } match)
+        if (!SupportTicketNumber.TryParse(command.Number, out var number))
         {
             return false;
         }
 
-        var (ticket, access) = match;
-        var now = (await tenantClock.GetAsync(tenant.TenantId, cancellationToken)).UtcNow;
-        if (!SupportOpeningSender.HasDestination(ticket) || !access.CanResend(now))
+        // Revisión del Bloque B (Minor 4): el enfriamiento se mira y se reclama con la fila de la clave tomada (FOR UPDATE), y el
+        // reclamo (el intento anotado ya) se confirma antes de mandar: un segundo reenvío a la vez lo encuentra y no manda nada. El
+        // candado no se sostiene durante el envío, que es una llamada afuera.
+        SupportTicket ticket;
+        SupportTicketAccess access;
+        DateTimeOffset now;
+        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
-            return false;
+            if (await accesses.LockByNumberAsync(tenant.TenantId, number, cancellationToken) is not { } match)
+            {
+                return false;
+            }
+
+            (ticket, access) = match;
+            now = (await tenantClock.GetAsync(tenant.TenantId, cancellationToken)).UtcNow;
+            if (!SupportOpeningSender.HasDestination(ticket) || !access.CanResend(now))
+            {
+                return false;
+            }
+
+            access.RecordDelivery(SupportOpeningSender.ChannelOf(ticket), null, now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
 
+        // El segundo guardado toca sólo el PIN y el resultado del envío: columnas que la consulta (contador y bloqueo) no escribe.
         var pin = SupportPin.Generate();
         var outcome = await openingSender.SendAsync(
             ticket, pin, SupportOpeningSender.ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber), cancellationToken);
