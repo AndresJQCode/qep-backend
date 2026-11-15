@@ -42,14 +42,43 @@ public sealed class AgentSessionProcessorTests
 
         public FakeAudit Audit { get; } = new();
 
+        /// <summary>El modelo de mentira: cada respuesta encolada se entrega una vez; una llamada de más falla la prueba.</summary>
+        public ScriptedModel Model { get; } = new();
+
+        public FakeDrafts Drafts { get; } = new();
+
         public AiInboxProcessor Inbound() => new(
             UnitOfWork, Sessions, Jobs, Inbox, Conversations, Hours, Modules, Credentials, Outbound, AiSessionTimings.Default, Clock,
             NullLogger<AiInboxProcessor>.Instance);
 
-        public AgentSessionJobProcessor Worker() => new(
-            UnitOfWork, Sessions, Conversations, Outbound, Modules, Credentials, null!, null!, null!, null!,
-            new AgentTurnRunner(null!, [], null!, Credentials, null!, Clock, NullLogger<AgentTurnRunner>.Instance), Clock,
-            NullLogger<AgentSessionJobProcessor>.Instance, Audit);
+        public AgentSessionJobProcessor Worker()
+        {
+            var limits = new AiRunLimits(16_000, TimeSpan.FromSeconds(120), 6, 8, 30, null);
+            var runner = new AgentTurnRunner(
+                new SingleResolver(Model), [new CreateQuotationDraftTool(Drafts, new FakeAdvisors())], new NoLedger(), Credentials, limits, Clock,
+                NullLogger<AgentTurnRunner>.Instance);
+            return new(
+                UnitOfWork, Sessions, Jobs, Conversations, Outbound, Modules, Credentials, new EmptyCatalog(), new NoQuickReplies(),
+                new UtcTenantClock(), new AgentPromptBuilder(limits), runner, Clock, NullLogger<AgentSessionJobProcessor>.Instance, Audit);
+        }
+    }
+
+    private static readonly Guid Customer = Guid.CreateVersion7();
+    private static readonly Guid Advisor = Guid.CreateVersion7();
+
+    /// <summary>Un agente con <c>create_quotation_draft</c> activo, su asesora y su cuenta de cobro.</summary>
+    private static Agent QuotingAgent()
+    {
+        var config = AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")) with
+        {
+            Instructions = "Cotiza.",
+            Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: true),
+            QuotationDraft = new AgentQuotationDraft(Advisor, new AgentBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP")),
+        };
+        var agent = Agent.Create(Tenant, "Cotizador", config, By, Now);
+        agent.SetConnections([Connection], Now);
+        agent.Publish([], By, Now);
+        return agent;
     }
 
     private static Agent PublishedAgent(string provider = "anthropic", string? greeting = null, int maxReplies = 20, string trigger = "NewConversation")
@@ -70,8 +99,9 @@ public sealed class AgentSessionProcessorTests
     private static AiInboxItem Inbound(bool opened = true) =>
         new(Guid.CreateVersion7(), Tenant, Connection, Conversation, opened, Now, 1, ReleaseRun: false);
 
-    private static AiConversationState State(string automation = "None", string? bot = null, Guid? agentId = null, bool windowOpen = true) =>
-        new("Open", null, automation, bot, agentId, Connection, "WhatsApp", null, null, false, windowOpen, TimeSpan.FromHours(20), 4096);
+    private static AiConversationState State(
+        string automation = "None", string? bot = null, Guid? agentId = null, bool windowOpen = true, Guid? customerId = null) =>
+        new("Open", null, automation, bot, agentId, Connection, "WhatsApp", customerId, null, false, windowOpen, TimeSpan.FromHours(20), 4096);
 
     [Fact]
     public async Task ANewConversationStartsASessionWithItsGreetingAndAJob()
@@ -370,6 +400,105 @@ public sealed class AgentSessionProcessorTests
         Assert.Empty(world.Audit.Entries);
     }
 
+    // Revisión final, hallazgo 2: un entrante que llega mientras se confirma sube conversations.version y el traspaso de Mensajería sale como
+    // RequestConcurrencyException. El commit se deshace y el trabajo se retoma pronto con la respuesta guardada, sin quedar colgado.
+    [Fact]
+    public async Task AConcurrencyConflictOnTheHandoffRetriesTheStoredResultSoon()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = HeldJob(session, """{"type":"handed_off","reason":"customer_asked"}""");
+        world.Conversations.NextHandoffFailure = new RequestConcurrencyException("concurrency.conflict", "The conversation changed.");
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Equal([(job.Id, Now + AgentSessionJobProcessor.LockedRetryDelay)], world.Jobs.HeldRetries);
+        Assert.Empty(world.Conversations.Handoffs);
+        Assert.Equal(ModelJobStatus.Pending, job.Status);
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HandoffCauseKind.AgentRequested, Assert.Single(world.Conversations.Handoffs).Cause.Kind);
+        Assert.Equal((AgentSessionStatus.HandedOff, ModelJobStatus.Done), (session.Status, job.Status));
+    }
+
+    // Revisión final, hallazgo 2: la respuesta del modelo se guarda antes del commit. El borrador ya se escribió en Quotations y el commit
+    // falló: el trabajo retomado no vuelve a llamar al modelo (ni a pagar, ni a crear otro borrador) y termina el traspaso a la asesora.
+    [Fact]
+    public async Task ARerunAfterTheDraftWasWrittenNeverCallsTheModelAgain()
+    {
+        var world = new World();
+        var agent = QuotingAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id, customerId: Customer);
+        world.Credentials.Available.Add("anthropic");
+        world.Model.Enqueue(DraftCall());
+        world.Conversations.NextHandoffFailure = new RequestConcurrencyException("concurrency.conflict", "The conversation changed.");
+        var job = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, session.NextSeq - 1, Now, Now);
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(job.ResultJson);
+        Assert.Single(world.Jobs.HeldRetries);
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Single(world.Model.Requests);
+        Assert.Single(world.Drafts.Requests);
+        var handoff = Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal((AgentHandoffCodes.QuotationDraftCreated, (Guid?)Advisor), (handoff.Cause.Code, handoff.AssignTo));
+        Assert.Equal(ModelJobStatus.Done, job.Status);
+    }
+
+    // Revisión final, hallazgo 2: un trabajo que se reclamó más de MaxClaims veces (falla siempre, o el proceso muere siempre) no se retoma
+    // más: traspaso, sin llamar al modelo.
+    [Fact]
+    public async Task AJobClaimedTooManyTimesHandsOffWithoutCallingTheModel()
+    {
+        var world = new World();
+        var agent = PublishedAgent(provider: "openai");
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, session.NextSeq - 1, Now, Now);
+        typeof(ModelJob).GetProperty(nameof(ModelJob.Attempts))!.SetValue(job, ModelJob.MaxClaims + 1);
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Empty(world.Model.Requests);
+        var handoff = Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal((HandoffCauseKind.AgentFailed, AgentHandoffCodes.JobTimedOut, "openai"), (handoff.Cause.Kind, handoff.Cause.Code, handoff.Cause.Provider));
+        Assert.Equal((AgentSessionStatus.Failed, ModelJobStatus.Failed), (session.Status, job.Status));
+    }
+
+    // Revisión final, hallazgo 4: el agente se borró con la sesión viva (la carrera con DeleteAgentHandler). El trabajo no se descarta en
+    // silencio: la conversación pasa a una persona y la sesión termina.
+    [Fact]
+    public async Task AJobWhoseAgentWasDeletedHandsOff()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Sessions.Forget(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, session.NextSeq - 1, Now, Now);
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Empty(world.Model.Requests);
+        Assert.Equal(HandoffCauseKind.AgentFailed, Assert.Single(world.Conversations.Handoffs).Cause.Kind);
+        Assert.Equal((AgentSessionStatus.Failed, ModelJobStatus.Failed), (session.Status, job.Status));
+    }
+
+    private static AiModelResponse DraftCall() =>
+        new(
+            null,
+            [new AiToolCall(
+                "call_q", AgentToolNames.CreateQuotationDraft,
+                System.Text.Json.JsonSerializer.Serialize(new { lines = new[] { new { variantId = Guid.CreateVersion7(), quantity = 1 } }, note = (string?)null }))],
+            [new AiOpaqueBlock("opaque")], AiStopReason.ToolUse, new AiModelUsage(100, 20, null, null), "claude-opus-5-5", "req_1");
+
     private static ModelJob HeldJob(AgentSession session, string resultJson)
     {
         var job = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, session.NextSeq - 1, Now, Now);
@@ -426,6 +555,16 @@ public sealed class AgentSessionProcessorTests
 
         private readonly List<Agent> _agents = [];
 
+        /// <summary>El agente deja de existir (se borró) y sus sesiones quedan.</summary>
+        public void Forget(Agent agent)
+        {
+            _agents.Remove(agent);
+            if (Serving == agent)
+            {
+                Serving = null;
+            }
+        }
+
         public AgentSession Live(Agent agent)
         {
             _agents.Add(agent);
@@ -478,9 +617,82 @@ public sealed class AgentSessionProcessorTests
     {
         public List<ModelJob> Added { get; } = [];
 
+        public List<(Guid JobId, DateTimeOffset RetryAt)> HeldRetries { get; } = [];
+
         public void Add(ModelJob job) => Added.Add(job);
 
         public Task<ModelJob?> ClaimAsync(DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken) => Task.FromResult<ModelJob?>(null);
+
+        public Task RetryHeldAsync(Guid jobId, DateTimeOffset retryAt, CancellationToken cancellationToken)
+        {
+            HeldRetries.Add((jobId, retryAt));
+            return Task.CompletedTask;
+        }
+    }
+
+    internal sealed class ScriptedModel : IAiModelClient
+    {
+        private readonly Queue<AiModelResponse> _script = new();
+
+        public List<AiModelRequest> Requests { get; } = [];
+
+        public void Enqueue(AiModelResponse response) => _script.Enqueue(response);
+
+        public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return Task.FromResult(_script.Dequeue());
+        }
+    }
+
+    internal sealed class SingleResolver(IAiModelClient client) : IAiModelClientResolver
+    {
+        public IAiModelClient For(AiProvider provider) => client;
+    }
+
+    internal sealed class NoLedger : IAiRunLedger
+    {
+        public Task RecordUsageAsync(AiUsageRecord record, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task RecordToolCallAsync(AiToolCallRecord record, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    internal sealed class FakeDrafts : IAiQuotationDrafts
+    {
+        public List<AiQuotationDraftRequest> Requests { get; } = [];
+
+        public Task<AiQuotationDraftResult> CreateAsync(AiQuotationDraftRequest request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return Task.FromResult(AiQuotationDraftResult.Created("COT-0001", Advisor));
+        }
+    }
+
+    internal sealed class FakeAdvisors : IAiQuotationAdvisors
+    {
+        public Task<IReadOnlyList<AiMemberRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AiMemberRef>>([new AiMemberRef(Advisor, "Ana")]);
+
+        public Task<bool> CanQuoteAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) => Task.FromResult(true);
+    }
+
+    internal sealed class EmptyCatalog : IAiModelCatalog
+    {
+        public AiProvider DefaultProvider => AiProviders.Anthropic;
+
+        public IReadOnlyList<AiProviderModels> Providers => [];
+    }
+
+    internal sealed class NoQuickReplies : IAiQuickReplies
+    {
+        public Task<IReadOnlyList<AiQuickReply>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AiQuickReply>>([]);
+    }
+
+    internal sealed class UtcTenantClock : Modules.Tenancy.Application.ITenantClock
+    {
+        public Task<Modules.Tenancy.Application.TenantCalendar> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult(new Modules.Tenancy.Application.TenantCalendar(Now, TimeZoneInfo.Utc));
     }
 
     internal sealed class FakeInbox : IAiInbox
@@ -524,8 +736,17 @@ public sealed class AgentSessionProcessorTests
             return Task.CompletedTask;
         }
 
+        /// <summary>Lo que lanza el próximo traspaso, una sola vez (una carrera con Mensajería).</summary>
+        public Exception? NextHandoffFailure { get; set; }
+
         public Task HandoffAsync(Guid tenantId, Guid conversationId, AgentHandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken)
         {
+            if (NextHandoffFailure is { } failure)
+            {
+                NextHandoffFailure = null;
+                throw failure;
+            }
+
             Handoffs.Add((cause, assignToMemberId));
             return Task.CompletedTask;
         }

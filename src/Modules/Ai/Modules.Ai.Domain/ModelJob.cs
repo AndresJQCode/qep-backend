@@ -18,6 +18,12 @@ public sealed class ModelJob
     /// <summary>D-A17: hasta tres reintentos de un error transitorio del proveedor; el cuarto intento fallido termina en traspaso.</summary>
     public const int MaxAttempts = 4;
 
+    /// <summary>Revisión final, hallazgo 2: tope de reclamos de un trabajo de sesión. Cada reclamo suma un intento, también los que no llaman
+    /// al modelo (el candado ocupado, la carrera con Mensajería, la respuesta guardada), así que el tope es mayor que
+    /// <see cref="MaxAttempts"/>. Pasado el tope, el trabajo se cierra con traspaso: uno que falla siempre (un error del código, no del
+    /// proveedor) ya no se reclama para siempre.</summary>
+    public const int MaxClaims = 10;
+
     private ModelJob()
     {
     }
@@ -83,6 +89,14 @@ public sealed class ModelJob
     {
         ResultJson = resultJson;
         LeaseUntil = retryAt;
+    }
+
+    /// <summary>Revisión final, hallazgo 2: la respuesta del modelo se guarda apenas vuelve, antes de enviar nada. Si el commit corto falla o
+    /// el proceso muere, el trabajo retomado la usa y nunca vuelve a pagar el modelo. No toca el lease.</summary>
+    public void RememberResult(string resultJson)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(resultJson);
+        ResultJson = resultJson;
     }
 
     public static ModelJob ForTest(Guid id, Guid tenantId, Guid testId, int upToSeq, DateTimeOffset now) =>

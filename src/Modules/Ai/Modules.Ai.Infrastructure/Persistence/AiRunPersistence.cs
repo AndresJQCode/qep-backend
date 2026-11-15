@@ -77,6 +77,10 @@ internal sealed class AiModelJobs(AiDbContext dbContext) : IAiModelJobs
             """).ToListAsync(cancellationToken);
         return claimed.Count == 0 ? null : await dbContext.ModelJobs.SingleAsync(job => job.Id == claimed[0], cancellationToken);
     }
+
+    public Task RetryHeldAsync(Guid jobId, DateTimeOffset retryAt, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlAsync(
+            $"UPDATE ai.model_jobs SET lease_until = {retryAt} WHERE id = {jobId} AND status = 'Running'", cancellationToken);
 }
 
 /// <summary>

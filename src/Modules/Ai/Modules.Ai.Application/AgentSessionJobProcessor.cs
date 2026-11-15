@@ -23,6 +23,7 @@ namespace Modules.Ai.Application;
 public sealed partial class AgentSessionJobProcessor(
     IAiSessionUnitOfWork unitOfWork,
     IAgentSessionRepository sessions,
+    IAiModelJobs jobs,
     IAiConversations conversations,
     IAiBotOutbound outbound,
     IAiModuleStatus modules,
@@ -39,6 +40,9 @@ public sealed partial class AgentSessionJobProcessor(
     /// <summary>§6.3 paso 4: el candado estaba tomado; la respuesta guardada se reintenta en 2 s sin llamar al modelo otra vez.</summary>
     internal static readonly TimeSpan LockedRetryDelay = TimeSpan.FromSeconds(2);
 
+    /// <summary>El <c>error_code</c> de un trabajo que espera el candado de la conversación.</summary>
+    private const string LockedErrorCode = "conversation_locked";
+
     /// <summary>§6.3: una respuesta que pasa el tope del canal se parte en hasta tres mensajes.</summary>
     public const int MaxReplyParts = 3;
 
@@ -54,23 +58,103 @@ public sealed partial class AgentSessionJobProcessor(
     {
         ArgumentNullException.ThrowIfNull(job);
         var session = job.SessionId is { } sessionId ? await sessions.FindAsync(job.TenantId, sessionId, cancellationToken) : null;
-        var agent = session is null ? null : await sessions.FindAgentAsync(job.TenantId, session.AgentId, cancellationToken);
-        var version = agent?.Versions.FirstOrDefault(candidate => candidate.Id == session!.AgentVersionId);
-        if (session is null || !session.IsLive || version is null)
+        if (session is null || !session.IsLive)
         {
             await CloseAsync(job, ModelJobStatus.Discarded, "session_ended", null);
             return;
         }
 
-        var config = AgentConfig.FromJson(version.ConfigJson);
-        var outcome = job.ResultJson is { } held ? StoredOutcome.Read(held) : await RunAsync(job, session, version, config, cancellationToken);
-        if (outcome is null)
+        var agent = await sessions.FindAgentAsync(job.TenantId, session.AgentId, cancellationToken);
+        var version = agent?.Versions.FirstOrDefault(candidate => candidate.Id == session.AgentVersionId);
+        if (version is null)
         {
-            // Reprogramado por un error transitorio (D-A17).
+            // Revisión final, hallazgo 4: el agente (o su versión) se borró con la sesión viva. No hay con qué responder, y descartar en
+            // silencio dejaba la conversación asignada a un agente que no existe.
+            await GiveUpAsync(job, session.ConversationId, new AgentHandoffCause(HandoffCauseKind.AgentFailed, null, null), null, cancellationToken);
             return;
         }
 
-        await CommitAsync(job, session.ConversationId, version, config, outcome, cancellationToken);
+        var config = AgentConfig.FromJson(version.ConfigJson);
+        if (job.Attempts > ModelJob.MaxClaims)
+        {
+            // Revisión final, hallazgo 2: un trabajo que se reclamó demasiadas veces no se retoma más; una persona sigue.
+            await GiveUpAsync(
+                job, session.ConversationId, new AgentHandoffCause(HandoffCauseKind.AgentFailed, AgentHandoffCodes.JobTimedOut, version.Provider),
+                DestinationOf(config.Handoff), cancellationToken);
+            return;
+        }
+
+        AgentTurnOutcome outcome;
+        if (job.ResultJson is { } held)
+        {
+            outcome = StoredOutcome.Read(held);
+        }
+        else
+        {
+            var computed = await RunAsync(job, session, version, config, cancellationToken);
+            if (computed is null)
+            {
+                // Reprogramado por un error transitorio (D-A17), o descartado antes de llamar al modelo.
+                return;
+            }
+
+            // Revisión final, hallazgo 2: guardada antes de enviar nada. Un commit que se deshace o un proceso que muere retoman con ella y el
+            // modelo (pagado) no se llama otra vez. Sin cancelación: los tokens ya se gastaron.
+            outcome = computed;
+            job.RememberResult(StoredOutcome.Write(outcome));
+            await unitOfWork.SaveChangesAsync(CancellationToken.None);
+        }
+
+        try
+        {
+            await CommitAsync(job, session.ConversationId, version, config, outcome, cancellationToken);
+        }
+        catch (RequestConcurrencyException exception)
+        {
+            // La conversación cambió en Mensajería mientras se confirmaba (un entrante que llegó a la vez, P2: conversations.version), o la
+            // sesión cambió en Ai. La transacción se deshizo; el trabajo se retoma pronto con la respuesta guardada.
+            await jobs.RetryHeldAsync(job.Id, clock.UtcNow + LockedRetryDelay, CancellationToken.None);
+            LogRescheduled(logger, job.TenantId, job.Id, exception.Code, job.Attempts);
+        }
+    }
+
+    private static Guid? DestinationOf(AgentHandoff handoff) => handoff.Destination == AgentHandoff.ToMember ? handoff.MemberId : null;
+
+    /// <summary>Cierra el trabajo con traspaso sin llamar al modelo (un agente que ya no existe, un trabajo que se reclamó demasiadas veces).
+    /// Con el candado de la conversación, como el commit corto; ocupado, se reintenta en 2 s.</summary>
+    private async Task GiveUpAsync(
+        ModelJob job, Guid conversationId, AgentHandoffCause cause, Guid? assignTo, CancellationToken cancellationToken)
+    {
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (!await unitOfWork.TryLockConversationAsync(conversationId, cancellationToken))
+        {
+            job.RetryAt(clock.UtcNow + LockedRetryDelay, LockedErrorCode);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        var session = await sessions.FindLiveForUpdateAsync(job.TenantId, conversationId, cancellationToken);
+        if (session is null || session.Id != job.SessionId)
+        {
+            await CloseAsync(job, ModelJobStatus.Discarded, "session_ended", null);
+            return;
+        }
+
+        var conversation = await conversations.GetAsync(job.TenantId, conversationId, cancellationToken);
+        if (conversation is not null && conversation.IsAttendedBy(session.AgentId))
+        {
+            try
+            {
+                await conversations.HandoffAsync(job.TenantId, conversationId, cause, assignTo, cancellationToken);
+            }
+            catch (DomainException)
+            {
+                // Una persona la tomó en el medio: ya tiene humano.
+            }
+        }
+
+        session.Finish(AgentSessionStatus.Failed, cause.Kind.ToString(), cause.Code, clock.UtcNow);
+        await CloseAsync(job, ModelJobStatus.Failed, "agent_failed", cause.Code);
     }
 
     /// <summary>La etapa larga: sin transacción ni candado. <c>null</c> si el trabajo quedó reprogramado.</summary>
@@ -309,8 +393,7 @@ public sealed partial class AgentSessionJobProcessor(
         try
         {
             await conversations.HandoffAsync(
-                turn.Job.TenantId, turn.Session.ConversationId, cause,
-                memberId ?? (handoff.Destination == AgentHandoff.ToMember ? handoff.MemberId : null), cancellationToken);
+                turn.Job.TenantId, turn.Session.ConversationId, cause, memberId ?? DestinationOf(handoff), cancellationToken);
         }
         catch (DomainException)
         {

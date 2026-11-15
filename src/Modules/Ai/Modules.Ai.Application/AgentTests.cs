@@ -31,6 +31,11 @@ public interface IAiModelJobs
     /// <summary>Un trabajo vencido (pendiente, o en curso con el lease vencido) pasa a <c>Running</c> con <paramref name="lease"/> y un intento
     /// más, con <c>SKIP LOCKED</c>: dos workers nunca toman el mismo. De pruebas y de sesiones.</summary>
     Task<ModelJob?> ClaimAsync(DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken);
+
+    /// <summary>Revisión final, hallazgo 2: acorta el lease de un trabajo <c>Running</c> para que se retome en <paramref name="retryAt"/>, en su
+    /// propio comando y sin pasar por el change tracker. Es para después de un commit corto que se deshizo: lo que quedó a medio cambiar en
+    /// el contexto (la sesión, los turnos) no se guarda.</summary>
+    Task RetryHeldAsync(Guid jobId, DateTimeOffset retryAt, CancellationToken cancellationToken);
 }
 
 public sealed record CreateAgentTestCommand(Guid TenantId, Guid AgentId, Guid? CustomerId) : ICommand<AgentTestDto>;
