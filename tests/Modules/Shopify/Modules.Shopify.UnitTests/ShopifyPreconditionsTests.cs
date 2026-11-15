@@ -105,7 +105,7 @@ public sealed class ShopifyPreconditionsTests
         var outcome = await world.ImportAsync(row, snapshot);
 
         // C-3 existe pero está inactivo: también es product_unmatched (§6.2.2), y se evaluaron todas las líneas.
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["A-1","B-2","C-3"]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["A-1","B-2","C-3"],"customTitles":[]}""");
         Assert.Equal(["A-1", "CAM-001", "B-2", "C-3"], Assert.Single(world.Products.Requests));
         Assert.Empty(world.Writer.Creates);
         // El cliente se crea sólo cuando ninguna precondición frena: un pedido que espera un producto no deja una ficha suelta.
@@ -148,7 +148,7 @@ public sealed class ShopifyPreconditionsTests
 
         var outcome = await world.ImportAsync(row, snapshot);
 
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["cam-m","CAM-XL"]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["cam-m","CAM-XL"],"customTitles":[]}""");
         Assert.Empty(world.Writer.Creates);
     }
 
@@ -161,7 +161,7 @@ public sealed class ShopifyPreconditionsTests
 
         var outcome = await world.ImportAsync(row, snapshot);
 
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":[null]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":[null],"customTitles":[]}""");
     }
 
     [Fact]

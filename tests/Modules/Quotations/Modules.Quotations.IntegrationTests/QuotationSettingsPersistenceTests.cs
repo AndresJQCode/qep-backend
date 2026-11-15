@@ -12,15 +12,14 @@ namespace Modules.Quotations.IntegrationTests;
 /// a 500 with the constraint name inside. Same shape as
 /// OrdersExportLayoutPersistenceTests.TwoFirstSavesForTheSameTenantEndInAConcurrencyConflict.
 /// </summary>
-public sealed class QuotationSettingsPersistenceTests
+public sealed class QuotationSettingsPersistenceTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task TwoInsertsOfTheSameSettingsRowEndInAConcurrencyConflict(bool minimumTotal)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory);
         using var _ = client;
         await using var first = factory.Services.CreateAsyncScope();
@@ -50,8 +49,7 @@ public sealed class QuotationSettingsPersistenceTests
     [Fact]
     public async Task OrderSettingsRoundTripAndDefaultWithoutRow()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory);
         using var _ = client;
 

@@ -27,6 +27,8 @@ public sealed record ShopifyStoreSummaryDto(
 /// <c>null</c> si su id lo es, o si ya no existe). <see cref="Version"/> es lo que el formulario manda en <c>If-Match</c>; la misma
 /// versión sale en el <c>ETag</c>. Una tienda sin configurar trae los ids en <c>null</c> y las claves por defecto
 /// (<c>Documento</c>, <c>Tipo de documento</c>, <c>CC</c>), que es lo que el formulario pinta de entrada.
+/// <see cref="HistoryDays"/> (spec 2026-10-21) son los días antes del enlace que trae «Sincronizar ahora»; <c>null</c> es sin
+/// historial, y viaja siempre, también en <c>null</c>, para que el campo del formulario arranque vacío.
 /// </summary>
 public sealed record ShopifyStoreDto(
     Guid ConnectionId,
@@ -44,9 +46,22 @@ public sealed record ShopifyStoreDto(
     string DocumentAttributeKey,
     string DocumentTypeAttributeKey,
     string DefaultIdentificationType,
+    int? HistoryDays,
     DateTimeOffset? LastReconciledAt,
     DateTimeOffset UpdatedAt,
     long Version);
+
+/// <summary>
+/// <c>GET /stores/{connectionId}/document-sources</c>: las opciones del select «Atributo del documento», en el orden en que se
+/// dibujan. BFF: el select no puede saber qué atributos manda el checkout de la tienda (eso sólo lo ve el espejo de pedidos) ni
+/// cómo los resuelve el importador, así que cada valor ya es una clave que el <c>PUT</c> de la tienda acepta y
+/// <see cref="ShopifyDocumentSources.Read"/> resuelve, tal cual va en <c>documentAttributeKey</c>: primero la ruta
+/// <c>shipping_address.company</c> (siempre, aunque la tienda no tenga pedidos) y después los nombres de atributo, sin repetir y
+/// ordenados. El texto de cada opción lo pone el frontend: la ruta tiene su etiqueta en el diccionario y un atributo se muestra por
+/// su nombre. Va envuelto en un objeto y no como arreglo suelto para poder sumar campos sin romper el contrato. La clave guardada
+/// en la tienda no se agrega si ya no aparece en los pedidos: la trae <c>GET /stores/{connectionId}</c>.
+/// </summary>
+public sealed record ShopifyDocumentSourcesDto(IReadOnlyList<string> Sources);
 
 /// <summary>
 /// Spec 2026-10-15 §5.4 y §7: una fila de la bandeja, igual en la lista, en el reintento y en «Marcar como revisado» (las dos
@@ -57,7 +72,9 @@ public sealed record ShopifyStoreDto(
 /// <see cref="WaitReason"/> con el código de §6.2 (<c>store_not_configured</c>, …, <c>order_rejected</c>); los textos los tiene
 /// el diccionario del frontend.</item>
 /// <item><see cref="WaitDetail"/> es el JSON que guardó el importador, o <c>null</c>. Con <c>product_unmatched</c> es
-/// <c>{"skus":[…]}</c>, y una línea sin SKU llega como <c>null</c> dentro del arreglo: <c>{"skus":[null]}</c>. Con
+/// <c>{"skus":[…],"customTitles":[…]}</c>, las dos llaves siempre presentes: <c>skus</c> trae los SKU sin resolver (una línea sin SKU
+/// llega como <c>null</c> dentro del arreglo: <c>{"skus":[null],"customTitles":[]}</c>) y <c>customTitles</c> los nombres de líneas
+/// personalizadas sin asociación, que la bandeja ofrece asociar a un producto. Con
 /// <c>currency_mismatch</c>, <c>{"orderCurrency","billingCurrency"}</c>; con <c>customer_inactive</c>, <c>{"customerId"}</c>;
 /// con <c>order_rejected</c>, <c>{"code"}</c>; con los del envío, <c>{"shippingTitle","amount"}</c>. Una fila
 /// <c>Cancelled</c> después de facturar trae <c>{"reason":"invoiced_before_cancel"}</c>.</item>

@@ -457,6 +457,7 @@ public sealed class ShopifyCustomerResolverTests
             documentKey,
             documentTypeKey,
             defaultIdentificationType,
+            null,
             AdvisorId,
             Now.AddDays(-1));
         return store;

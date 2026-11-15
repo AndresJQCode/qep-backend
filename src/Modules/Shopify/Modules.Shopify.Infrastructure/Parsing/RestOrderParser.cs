@@ -62,13 +62,17 @@ public static class RestOrderParser
             .Select((line, index) =>
             {
                 var field = $"line_items[{index}]";
+                var sku = OptionalString(line, "sku", $"{field}.sku");
                 return new ShopifyLine(
-                    OptionalString(line, "sku", $"{field}.sku"),
+                    sku,
                     Find(line, "quantity") is { } quantity ? Decimal(quantity, $"{field}.quantity") : 0m,
                     OptionalAmount(line, $"{field}.price", "price_set.shop_money.amount", "price") ?? 0m,
                     Items(line, "discount_allocations", $"{field}.discount_allocations")
                         .Select((allocation, i) => OptionalAmount(allocation, $"{field}.discount_allocations[{i}].amount", "amount_set.shop_money.amount", "amount") ?? 0m)
-                        .Sum());
+                        .Sum(),
+                    OptionalString(line, "title", $"{field}.title"),
+                    // Una custom nunca tiene SKU: con SKU es una línea de producto cuya variante ya no existe.
+                    IsExplicitNull(line, "product_id") && IsExplicitNull(line, "variant_id") && string.IsNullOrWhiteSpace(sku));
             })
             .ToArray();
 

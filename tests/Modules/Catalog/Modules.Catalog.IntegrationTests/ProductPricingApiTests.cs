@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -19,9 +19,9 @@ namespace Modules.Catalog.IntegrationTests;
 /// traían <c>PriceScales</c>, así que el `GET` volvía vacío y un `PUT` habría dejado las
 /// escalas viejas huérfanas en la base en vez de reemplazarlas.
 /// </summary>
-public sealed class ProductPricingApiTests
+public sealed class ProductPricingApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000041";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000042";
 
     // Los empaques viajan en el precio del producto desde el 2026-10-01, no dentro de la escala.
@@ -36,8 +36,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task CreateWithScalesPersistsAndGetReturnsThem()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", pricing: new
@@ -106,8 +105,8 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task UpdateReplacesTheScalesInsteadOfAccumulatingThem()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", pricing: new
@@ -172,8 +171,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task CreateProductRoundTripsTheGroupingFlagOnAMultipleScale()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-AGR-001", pricing: new
@@ -198,8 +196,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task CreateProductRejectsGroupingOnAPackagingUnitScale()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-AGR-002", pricing: new
@@ -234,8 +231,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task CreateProductRejectsAPackagingScaleWithoutPackagingUnits()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
@@ -261,8 +257,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task CreateProductRejectsDuplicatedPackagingUnits()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
@@ -284,8 +279,8 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task PackagingUnitsRoundTripThroughTheDatabase()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
@@ -342,8 +337,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task CreateWithPricesInThreeCurrenciesReturnsThemWithDerivedFinals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var product = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-EUR", pricing: new
@@ -361,8 +355,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task CreateWithAnUnknownCurrencyIsA422OnThatPriceRow()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
@@ -379,8 +372,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task CreateWithoutAnyPriceIsA422PriceRequired()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
@@ -396,8 +388,7 @@ public sealed class ProductPricingApiTests
     [Fact]
     public async Task UpdateDropsAPriceThatIsNoLongerSent()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create(
             "Vela de soja",
@@ -432,17 +423,6 @@ public sealed class ProductPricingApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(product);
         return product;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

@@ -349,6 +349,98 @@ public sealed class ShopifySyncApiTests
         Assert.Equal("updated_at:>='2026-10-18T09:55:00Z'", list.RootElement.GetProperty("variables").GetProperty("query").GetString());
     }
 
+    // Spec 2026-10-21: con días de historial, «Sincronizar ahora» trae el pedido creado antes del enlace (desde LinkedAt − N), y
+    // volver a pulsar lo relee sin duplicarlo ni tocar lo ya importado.
+    [Fact]
+    public async Task SyncWithHistoryDaysImportsAnOrderFromBeforeTheLinkOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        // El fixture se actualizó el 2026-10-01T15:05:30Z; la tienda se enlaza dos días después.
+        var shopify = new FakeShopifyAdmin { FilterBySince = true }.WithOrder(Shop, GraphQlFixture("taxes-included"));
+        using var factory = shopify.Factory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await LinkedAtAsync(connectionString, world.ConnectionId, "2026-10-03 15:00:00+00");
+        await world.ConfigureStoreAsync(factory, historyDays: 3);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderManage);
+
+        var first = await client.PostAsync(SyncRoute(world.TenantId, world.ConnectionId), content: null, Ct);
+        var firstBody = await first.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        var orderId = await QepOrderIdAsync(connectionString, world.ConnectionId);
+        var second = await client.PostAsync(SyncRoute(world.TenantId, world.ConnectionId), content: null, Ct);
+        var secondBody = await second.Content.ReadFromJsonAsync<JsonObject>(Ct);
+
+        Assert.Equal((HttpStatusCode.OK, HttpStatusCode.OK), (first.StatusCode, second.StatusCode));
+        Assert.Equal((1, 1, 0), (Int(firstBody!, "fetched"), Int(firstBody!, "imported"), Int(firstBody!, "waiting")));
+        Assert.Equal((1, 1, 0), (Int(secondBody!, "fetched"), Int(secondBody!, "imported"), Int(secondBody!, "waiting")));
+        using var list = JsonDocument.Parse(shopify.Requests[0].Body);
+        Assert.Equal("updated_at:>='2026-09-30T15:00:00Z'", list.RootElement.GetProperty("variables").GetProperty("query").GetString());
+        // Un solo pedido en QEP, el mismo de la primera pulsación.
+        Assert.Equal(orderId, await QepOrderIdAsync(connectionString, world.ConnectionId));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM quotations.orders WHERE tenant_id = @t", ("t", world.TenantId)));
+    }
+
+    // Sin días de historial, todo como antes (D-S4): el pedido anterior al enlace no entra y la respuesta es cero sin error.
+    [Fact]
+    public async Task SyncWithoutHistoryDaysDoesNotBringOrdersFromBeforeTheLink()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var shopify = new FakeShopifyAdmin { FilterBySince = true }.WithOrder(Shop, GraphQlFixture("taxes-included"));
+        using var factory = shopify.Factory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await LinkedAtAsync(connectionString, world.ConnectionId, "2026-10-03 15:00:00+00");
+        await world.ConfigureStoreAsync(factory);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderManage);
+
+        var response = await client.PostAsync(SyncRoute(world.TenantId, world.ConnectionId), content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal((0, 0), (Int(body!, "fetched"), Int(body!, "imported")));
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM shopify.orders"));
+    }
+
+    // El objetivo es importar lo que faltaba: un pedido del historial que quedó en espera se importa al corregir su causa y
+    // volver a pulsar, porque el historial se aplica en cada pulsación.
+    [Fact]
+    public async Task SyncWithHistoryDaysImportsAWaitingOrderOnceItsCauseIsFixed()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var order = GraphQlFixture("taxes-included");
+        order["lineItems"]!["nodes"]![0]!["sku"] = "HIS-001";
+        var shopify = new FakeShopifyAdmin { FilterBySince = true }.WithOrder(Shop, order);
+        using var factory = shopify.Factory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await LinkedAtAsync(connectionString, world.ConnectionId, "2026-10-03 15:00:00+00");
+        await world.ConfigureStoreAsync(factory, historyDays: 3);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderManage);
+
+        var waiting = await client.PostAsync(SyncRoute(world.TenantId, world.ConnectionId), content: null, Ct);
+        var waitingBody = await waiting.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        await CreateProductAsync(world.Tenant.Seeder, world.TenantId, "HIS-001", "Camiseta histórica", 50_000m, world.Tax19);
+        var imported = await client.PostAsync(SyncRoute(world.TenantId, world.ConnectionId), content: null, Ct);
+        var importedBody = await imported.Content.ReadFromJsonAsync<JsonObject>(Ct);
+
+        Assert.Equal((HttpStatusCode.OK, HttpStatusCode.OK), (waiting.StatusCode, imported.StatusCode));
+        Assert.Equal((1, 0, 1), (Int(waitingBody!, "fetched"), Int(waitingBody!, "imported"), Int(waitingBody!, "waiting")));
+        Assert.Equal((1, 1, 0), (Int(importedBody!, "fetched"), Int(importedBody!, "imported"), Int(importedBody!, "waiting")));
+        Assert.Equal(
+            "Imported",
+            await ScalarAsync<string>(connectionString, "SELECT import_state FROM shopify.orders WHERE connection_id = @c", ("c", world.ConnectionId)));
+    }
+
+    private static Task LinkedAtAsync(string connectionString, Guid connectionId, string linkedAt) =>
+        ExecuteAsync(
+            connectionString,
+            $"UPDATE integrations.connections SET created_at = timestamptz '{linkedAt}' WHERE id = @c",
+            ("c", connectionId));
+
+    private static Task<Guid> QepOrderIdAsync(string connectionString, Guid connectionId) =>
+        ScalarAsync<Guid>(connectionString, "SELECT qep_order_id FROM shopify.orders WHERE connection_id = @c", ("c", connectionId));
+
     private static string SyncRoute(Guid tenantId, Guid connectionId) =>
         $"/api/v1/tenants/{tenantId}/shopify/stores/{connectionId}/sync";
 
@@ -383,6 +475,10 @@ internal sealed class FakeShopifyAdmin : HttpMessageHandler
     private readonly Dictionary<string, List<JsonObject>> orders = new(StringComparer.Ordinal);
 
     public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
+
+    /// <summary>Con <c>true</c>, <c>orders(first: 50)</c> devuelve sólo los pedidos con <c>updatedAt</c> desde el
+    /// <c>updated_at:&gt;=</c> de la búsqueda, como Shopify. Sin eso, devuelve todos.</summary>
+    public bool FilterBySince { get; init; }
 
     public List<(Uri Uri, string? Token, string Body)> Requests { get; } = [];
 
@@ -435,6 +531,15 @@ internal sealed class FakeShopifyAdmin : HttpMessageHandler
         var variables = document.RootElement.GetProperty("variables");
         if (body.Contains("orders(", StringComparison.Ordinal))
         {
+            if (FilterBySince)
+            {
+                var query = variables.GetProperty("query").GetString()!;
+                var since = DateTimeOffset.Parse(
+                    query["updated_at:>='".Length..^1], System.Globalization.CultureInfo.InvariantCulture);
+                shop = [.. shop.Where(order => DateTimeOffset.Parse(
+                    order["updatedAt"]!.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture) >= since)];
+            }
+
             var nodes = new JsonArray([.. shop.Select(order => (JsonNode)new JsonObject { ["id"] = order["id"]!.DeepClone() })]);
             return Json(HttpStatusCode.OK, new JsonObject
             {

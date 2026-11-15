@@ -9,7 +9,7 @@ namespace Modules.Customers.IntegrationTests;
 
 /// <summary>Borrar clientes (spec 2026-11-10): el consentimiento de datos es prueba legal y sobrevive al cliente, así que
 /// <c>customers.data_consents</c> pierde su FK a <c>customers.customers</c> y gana dos columnas con la foto del titular.</summary>
-public sealed class DataConsentDetachMigrationTests
+public sealed class DataConsentDetachMigrationTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     private static readonly Guid Tenant = Guid.Parse(TenantId);
 
@@ -29,12 +29,11 @@ public sealed class DataConsentDetachMigrationTests
     [Fact]
     public async Task TheConsentForeignKeyIsGone()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         _ = factory.Services;
 
         var found = await ScalarAsync(
-            database.GetConnectionString(),
+            sharedHost.Database.GetConnectionString(),
             "SELECT 1 FROM pg_constraint WHERE conname = 'FK_data_consents_customers_customer_id'");
 
         Assert.Null(found);
@@ -43,16 +42,15 @@ public sealed class DataConsentDetachMigrationTests
     [Fact]
     public async Task TheSnapshotColumnsExistAndAreNullable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         _ = factory.Services;
 
         var name = await ScalarAsync(
-            database.GetConnectionString(),
+            sharedHost.Database.GetConnectionString(),
             "SELECT character_maximum_length || ':' || is_nullable FROM information_schema.columns "
             + "WHERE table_schema = 'customers' AND table_name = 'data_consents' AND column_name = 'customer_name'");
         var phone = await ScalarAsync(
-            database.GetConnectionString(),
+            sharedHost.Database.GetConnectionString(),
             "SELECT character_maximum_length || ':' || is_nullable FROM information_schema.columns "
             + "WHERE table_schema = 'customers' AND table_name = 'data_consents' AND column_name = 'customer_phone_e164'");
 
@@ -63,10 +61,9 @@ public sealed class DataConsentDetachMigrationTests
     [Fact]
     public async Task AConsentSurvivesItsCustomer()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         _ = factory.Services;
-        var connectionString = database.GetConnectionString();
+        var connectionString = sharedHost.Database.GetConnectionString();
         var customerId = Guid.CreateVersion7();
         await ScalarAsync(
             connectionString,

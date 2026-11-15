@@ -15,7 +15,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// handler del <c>DELETE</c>, y <see cref="NothingPersistsWhenTheCatalogTransactionIsNotCommitted"/> es la
 /// prueba de que Quotations quedó enrolado en ella.
 /// </summary>
-public sealed class ProductDeletionCleanupTests
+public sealed class ProductDeletionCleanupTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsUpdate = "tenancy.settings.update";
 
@@ -167,8 +167,7 @@ public sealed class ProductDeletionCleanupTests
     [Fact]
     public async Task ADraftWhoseGroupedTierDropsIsRepriced()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -193,8 +192,7 @@ public sealed class ProductDeletionCleanupTests
     [Fact]
     public async Task ADraftThatFallsUnderTheMinimumPurchaseIsRepriced()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ManagerPermissions, SettingsUpdate]);
         using var _ = client;
         var settings = await client.PutAsJsonAsync(
@@ -283,8 +281,7 @@ public sealed class ProductDeletionCleanupTests
     [Fact]
     public async Task ApplyingOutsideACatalogTransactionThrows()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         await using var scope = factory.Services.CreateAsyncScope();
         var cleanup = scope.ServiceProvider.GetRequiredService<IProductDeletionCleanup>();
 

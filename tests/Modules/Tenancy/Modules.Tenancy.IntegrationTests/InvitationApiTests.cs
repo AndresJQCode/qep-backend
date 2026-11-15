@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -322,7 +322,7 @@ public sealed class InvitationApiTests
     }
 
     private static async Task<string> GetTokenAsync(
-        PostgreSqlContainer database,
+        TestDatabase database,
         Guid membershipId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -360,7 +360,7 @@ public sealed class InvitationApiTests
     }
 
     private static async Task LapseInvitationAsync(
-        PostgreSqlContainer database,
+        TestDatabase database,
         Guid membershipId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -401,17 +401,6 @@ public sealed class InvitationApiTests
 
         var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         return Convert.ToInt64(result, CultureInfo.InvariantCulture);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

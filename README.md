@@ -2590,7 +2590,7 @@ ya pasa (`maxSurge: 1`); con dos, son dos pods viejos contra el esquema nuevo. P
    «Despliegue»). El PDB no lo impide: sólo frena desalojos, no un `scale` ni un `Recreate`.
 3. **El handoff de cada spec dice si su migración es aditiva.** Si no lo dice, asume que no.
 
-**El candado de arranque.** Las 24 inicializaciones (migraciones de cada módulo y siembras) y `RunQepSeedAsync` corren
+**El candado de arranque.** Las 25 inicializaciones (migraciones de cada módulo y siembras) y `RunQepSeedAsync` corren
 dentro de `RunUnderStartupLockAsync` (`src/Api/Program.cs`, `src/Bootstrapper/Startup/StartupLock.cs`): una
 transacción sobre una conexión propia, directa a Postgres y sin pool, que toma `pg_advisory_xact_lock(20261113, 1)`.
 Así dos pods nunca migran ni siembran a la vez; el segundo espera al primero, y cuando le toca, las migraciones ya
@@ -4469,7 +4469,12 @@ prendido, al importador:
   (`store_not_configured`, `advisor_inactive`, `billing_account_missing`, `currency_mismatch`, `customer_inactive`,
   `product_unmatched`, `freight_tax_rate_missing`, `order_rejected`). La tienda se configura con
   `PUT /tenants/{tenantId}/shopify/stores/{connectionId}` (`If-Match`): asesor, cuenta de cobro, clasificación por
-  defecto y las claves del atributo del documento.
+  defecto, `historyDays` (ver «Sincronizar ahora» más abajo) y de dónde sale el documento: `documentAttributeKey` es
+  una ruta, `shipping_address.company` (el campo
+  «Empresa» de la dirección de envío) o el nombre de un atributo del checkout. Las opciones del select las da
+  `GET /tenants/{tenantId}/shopify/stores/{connectionId}/document-sources` (`integrations.connection.read`):
+  `{ "sources": ["shipping_address.company", …] }`, con los nombres de atributo de los 500 pedidos más recientes de esa
+  tienda en el espejo.
 - El comprador se busca por documento, por el cliente de Shopify ya visto en el espejo, por teléfono y por correo; si no
   aparece, nace completo (con CUC) cuando hay documento, clasificación, dirección y ciudad, e incompleto si no. El
   cliente nunca detiene la importación salvo que exista y esté inactivo.
@@ -4485,10 +4490,21 @@ prendido, al importador:
   facturado queda `Cancelled` con `invoiced_before_cancel` para anularlo a mano). Un pedido cancelado que llega sin fila del espejo
   pero con su pedido en QEP también se anula.
 - `ShopifyReconcileWorker` corre cada `Shopify:Reconcile:IntervalMinutes` por tienda operativa: trae por GraphQL lo
-  actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: no se importa historial) y
+  actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: el cron no importa historial) y
   reintenta hasta 200 `Waiting`. Así, crear el producto que faltaba o prender el módulo otra vez surte efecto sin tocar
   nada más. `POST …/shopify/stores/{connectionId}/sync` hace lo mismo en el request; `POST …/shopify/orders/{id}/retry`,
   una sola fila.
+- **Días de historial de «Sincronizar ahora»** (spec `2026-10-21-shopify-historial-dias-design.md`). Un pedido creado en
+  Shopify **antes** de enlazar la tienda no entra nunca por la ventana normal, y el sync responde `fetched = 0` sin error.
+  Para traerlo, la tienda guarda `historyDays` (columna `shopify.stores.history_days`, `null` o de 1 a 30, con `CHECK`):
+  viaja siempre en `GET|PUT …/shopify/stores/{connectionId}` (`null` = sin historial) y el `PUT` lo reemplaza como al
+  resto, así que un cuerpo sin `historyDays` lo apaga. Fuera de rango responde 422 `validation.failed` con
+  `errors.historyDays`, y su cambio queda en `shopify.store.updated` por nombre. Con valor, **sólo** el `POST …/sync` trae
+  desde `min(ventana normal, enlace − historyDays)` (`ReconcileStore.ComputeSince`): cuenta desde el enlace (la creación
+  de la conexión), no desde hoy, y nunca acorta la ventana. Se aplica en **cada** pulsación, para importar lo que quedó
+  `Waiting` o falló después de corregir su causa; releer lo ya importado no duplica ni cambia nada (el espejo acepta el
+  snapshot igual y `IX_orders_tenant_external_key` deja un solo pedido). El cron no lo usa, y `last_reconciled_at` se
+  mueve igual que siempre. Sin fecha de enlace, el historial se ignora.
 
 **La bandeja.** `GET /tenants/{tenantId}/shopify/orders` pagina el espejo (tope 50, más recientes primero) con
 `state` (repetible o separado por comas; sin él, `Waiting`), `connectionId`, `withWarnings=true` (avisos sin revisar;
@@ -4507,6 +4523,25 @@ nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibl
 `shopify.order.invalid_payload` y `shopify.order.sync_failed`; el texto de cada uno lo tiene el diccionario del frontend
 (`features/shopify`), y uno que no conozca se muestra con un mensaje genérico. La normalización está en
 `ShopifyLastErrorCodes`.
+
+**Líneas personalizadas** (spec `2026-11-13-shopify-lineas-personalizadas-design.md`). Una línea personalizada es la que el
+comercio escribe a mano en el pedido de Shopify, sin producto: llega con `product_id` y `variant_id` en `null` y sólo trae su
+`title` (Shopify lo limita a 255 caracteres). El importador la marca `isCustom` sólo si esas dos llaves vienen presentes y en
+`null` (una llave ausente no cuenta) y la línea no trae SKU (una variante borrada también deja los ids en `null`, pero
+conserva el SKU: es de producto) y la resuelve por **nombre exacto** —recortado, ordinal, sensible a mayúsculas y
+emojis— contra las asociaciones de su tienda (`shopify.custom_line_mappings`: `connection_id + title → variant_id`); una
+línea de producto real nunca casa por nombre, y una asociación nunca aplica fuera de su tienda. Sin asociación (o con una
+variante inexistente o inactiva) el pedido queda `Waiting` con `product_unmatched` y su `wait_detail` es
+`{"skus":[…],"customTitles":[…]}`, siempre con las dos llaves: `skus` lleva los SKU sin resolver (`null` para una línea sin
+SKU) y `customTitles` los nombres que faltan por asociar. Los pedidos que ya estaban en espera antes del despliegue no traen
+el nombre hasta que Shopify los vuelva a mandar (webhook `orders/updated` o conciliación).
+
+Desde la bandeja, «Asociar a un producto» hace `POST /tenants/{tenantId}/shopify/stores/{connectionId}/custom-line-mappings
+{ title, variantId }` (`quotations.order.manage`; 201 con la fila, 409 `shopify.custom_line.already_mapped` si el nombre ya
+está asociado, 422 `shopify.custom_line.variant_not_found` o `variant_inactive`) y luego `POST …/shopify/orders/{id}/retry`.
+`GET` de la misma ruta (`quotations.order.read`) lista las asociaciones por título con el nombre y el código de la variante,
+y `DELETE …/custom-line-mappings/{id}` (204, también si ya no existe) la quita. Si Catalog borró la variante, el `GET` la
+sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`, para poder quitarla.
 
 **Configuración.**
 
@@ -4713,7 +4748,7 @@ misma respuesta: `401 external.auth.invalid_key`.
 | Método y ruta | Devuelve |
 | --- | --- |
 | `GET /connections` | Los números que la clave puede usar: `id`, nombre y teléfono |
-| `GET /connections/{connectionId}/templates` | Las plantillas enviables: nombre, idioma, categoría y parámetros |
+| `GET /connections/{connectionId}/templates` | Las plantillas enviables: nombre, idioma, categoría, `header` (`null` o `{ "type": "image" \| "video" \| "document" }`) y parámetros |
 | `POST /messages` | `201` al enviar, `200` si es un reintento de un envío ya hecho |
 
 Cuerpo de `POST /messages`, en un archivo, porque PowerShell rompe las comillas dobles al pasarlas a un `.exe`:
@@ -4734,9 +4769,44 @@ curl.exe -s https://<host>/api/v1/external/whatsapp/connections/<connectionId>/t
 curl.exe -s -X POST https://<host>/api/v1/external/whatsapp/messages -H "X-Api-Key: $env:QEP_API_KEY" -H "Content-Type: application/json" -d "@cuerpo.json"
 ```
 
+**Encabezado multimedia.** Una plantilla aprobada con encabezado de imagen, video o documento (`header` distinto de `null` en el listado)
+exige que el envío lo lleve, por enlace: QEP **no descarga** el archivo, le entrega el enlace a Meta tal cual.
+
+```powershell
+@'
+{
+  "idempotencyKey": "0192f3a4-7b1c-7e2a-9d4f-3a5b6c7d8e9f",
+  "connectionId": "0192f3a4-7b1c-7e2a-9d4f-000000000001",
+  "to": "573001234567",
+  "template": {
+    "name": "aviso_logo",
+    "language": "es_CO",
+    "header": { "type": "image", "link": "https://cdn.example.com/logo.png" },
+    "parameters": { "1": "1014853", "2": "Pendiente" }
+  }
+}
+'@ | Set-Content -Encoding utf8 cuerpo-imagen.json
+```
+
+Reglas de `template.header` (el `422 validation.failed` marca `template.header.type`, `.link` o `.filename`):
+
+- `type`: `image`, `video` o `document` (en minúsculas; al leer no distingue mayúsculas).
+- `link`: obligatorio. URL absoluta `https`, de máximo 2048 caracteres, sin espacios ni caracteres de control y sin credenciales
+  (`https://usuario:clave@host` se rechaza). `http` se rechaza. Si el enlace lleva un token en la query, QEP no lo escribe en logs ni en el
+  registro de llamadas; sí queda en el mensaje y el hilo lo muestra.
+- `filename`: opcional y solo con `document`; es el nombre que ve quien recibe el archivo. Máximo 240 caracteres, no puede ser solo
+  espacios ni llevar `/`, `\` ni caracteres de control. Con `image` o `video` es error.
+- El `header` debe coincidir con la plantilla: si la plantilla lo pide y falta, si sobra, o si es de otro tipo (un `video` para una
+  plantilla de imagen), responde `422 messaging.template.header_mismatch` y el `detail` dice qué pide la plantilla.
+
+Un enlace que Meta no puede bajar (404, un tipo o tamaño que no acepta) **no** da error en el `POST`: Meta acepta el envío y el mensaje
+queda `Failed` después, por webhook. Se ve en `GET /messages/{id}` con `failureCode` y `failureReason`.
+
 Respuesta de envío: `{ "messageId": "…", "conversationId": "…", "status": "Sent" }`; en un reintento, `status` trae el estado actual del mensaje, que puede ser posterior a `Sent` (por ejemplo `Read`). El `idempotencyKey` es obligatorio, lo genera el sistema
-externo y es la llave de idempotencia **por tenant**: repetirlo con el mismo destino, plantilla, idioma y parámetros devuelve `200` con lo
-guardado, sin volver a enviar; con otra cosa, `409`. `to` lleva indicativo de país (se aceptan `+`, espacios y guiones); sin él responde
+externo y es la llave de idempotencia **por tenant**: repetirlo con el mismo destino, plantilla, idioma, parámetros y `header` (tipo, enlace
+y `filename`) devuelve `200` con lo guardado, sin volver a enviar; con otra cosa, `409`, y mandar un `header` donde el primer envío no lo
+llevaba (o al revés) también es otra cosa. La excepción es un mensaje que quedó `Failed`: repetir su `idempotencyKey` lo reenvía con el cuerpo
+nuevo, así que si Meta no pudo bajar el enlace, corrígelo y reintenta con la misma clave. Esa excepción no cubre al `Failed` cuyo fallo es `Unconfirmed` (el `502 external.send_unconfirmed`): ahí Meta pudo haber aceptado el mensaje, así que repetir la clave devuelve el estado guardado y no reenvía. `to` lleva indicativo de país (se aceptan `+`, espacios y guiones); sin él responde
 `422`, porque no se adivina el país. Solo las plantillas `MARKETING` heredan las reglas de campañas (opt-out del cliente, cliente inactivo);
 una conversación bloqueada rechaza cualquier categoría.
 
@@ -4750,10 +4820,11 @@ viene por campo en `errors`.
 | 403 | `external.auth.scope_missing` | La clave no tiene el scope |
 | 403 | `external.connection_not_allowed` | Número fuera de la clave o de otro tenant |
 | 403 | `tenancy.module_not_enabled` | `developer` o `messaging` apagados |
-| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro destino o plantilla |
+| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro cuerpo (destino, plantilla, idioma, parámetros o `header`) |
 | 422 | `validation.failed` | Con el mapa `errors` |
 | 422 | `messaging.template.not_available` | Plantilla inexistente, no aprobada o no enviable |
 | 422 | `messaging.template.parameters_mismatch` | Parámetros que no coinciden |
+| 422 | `messaging.template.header_mismatch` | Falta el encabezado, sobra o es de otro tipo; `detail` dice cuál pide la plantilla |
 | 422 | `messaging.connection_unavailable` | La conexión está pausada, necesita atención o Meta rechazó sus credenciales |
 | 422 | `messaging.templates.unavailable` | Meta no contestó la lista de plantillas; reintentar es seguro |
 | 422 | `messaging.channel_unsupported` | La conexión es de Instagram: no tiene plantillas |

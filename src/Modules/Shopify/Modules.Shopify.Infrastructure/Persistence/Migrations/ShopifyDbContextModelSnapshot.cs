@@ -296,6 +296,47 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyCustomLineMapping", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("title");
+
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId", "Title")
+                        .IsUnique()
+                        .HasDatabaseName("IX_custom_line_mappings_connection_title");
+
+                    b.ToTable("custom_line_mappings", "shopify");
+                });
+
             modelBuilder.Entity("Modules.Shopify.Domain.ShopifyOrderMirror", b =>
                 {
                     b.Property<Guid>("Id")
@@ -474,6 +515,10 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("document_type_attribute_key");
 
+                    b.Property<int?>("HistoryDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("history_days");
+
                     b.Property<DateTimeOffset?>("LastReconciledAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_reconciled_at");
@@ -513,7 +558,10 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_stores_tenant");
 
-                    b.ToTable("stores", "shopify");
+                    b.ToTable("stores", "shopify", t =>
+                        {
+                            t.HasCheckConstraint("CK_stores_history_days", "history_days IS NULL OR history_days BETWEEN 1 AND 30");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Shopify.Infrastructure.Persistence.ShopifyInboxMessage", b =>

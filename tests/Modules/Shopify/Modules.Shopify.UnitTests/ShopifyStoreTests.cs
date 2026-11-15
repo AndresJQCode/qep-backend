@@ -65,12 +65,12 @@ public sealed class ShopifyStoreTests
         var classification = Guid.CreateVersion7();
         var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "cop");
 
-        store.Configure(advisor, billing, classification, " Cédula ", "Tipo", " nit ", advisor, LinkedAt.AddHours(1));
+        store.Configure(advisor, billing, classification, " Cédula ", "Tipo", " nit ", 7, advisor, LinkedAt.AddHours(1));
 
         Assert.True(store.IsConfigured);
         Assert.Equal((advisor, billing with { Currency = "COP" }, classification), (store.AdvisorMembershipId!.Value, store.Billing, store.DefaultClassificationId));
         Assert.Equal(("Cédula", "Tipo", "NIT"), (store.DocumentAttributeKey, store.DocumentTypeAttributeKey, store.DefaultIdentificationType));
-        Assert.Equal((2L, LinkedAt.AddHours(1), (Guid?)advisor), (store.Version, store.UpdatedAt, store.UpdatedBy));
+        Assert.Equal((2L, LinkedAt.AddHours(1), (Guid?)advisor, (int?)7), (store.Version, store.UpdatedAt, store.UpdatedBy, store.HistoryDays));
     }
 
     [Fact]
@@ -80,7 +80,36 @@ public sealed class ShopifyStoreTests
         var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
 
         Assert.Throws<ArgumentException>(
-            () => store.Configure(Guid.CreateVersion7(), billing, null, " ", "Tipo", "CC", Guid.CreateVersion7(), LinkedAt));
+            () => store.Configure(Guid.CreateVersion7(), billing, null, " ", "Tipo", "CC", null, Guid.CreateVersion7(), LinkedAt));
         Assert.Equal(1L, store.Version);
+    }
+
+    // Spec 2026-10-21: los días de historial de «Sincronizar ahora» van de 1 a 30, o nada (sin historial, D-S4).
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    [InlineData(-1)]
+    public void ConfigureRejectsHistoryDaysOutsideOneToThirty(int historyDays)
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+        var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => store.Configure(Guid.CreateVersion7(), billing, null, "Documento", "Tipo", "CC", historyDays, Guid.CreateVersion7(), LinkedAt));
+        Assert.Equal((1L, (int?)null), (store.Version, store.HistoryDays));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    [InlineData(ShopifyStore.HistoryDaysMax)]
+    public void ConfigureAcceptsHistoryDaysInRangeOrNone(int? historyDays)
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+        var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
+
+        store.Configure(Guid.CreateVersion7(), billing, null, "Documento", "Tipo", "CC", historyDays, Guid.CreateVersion7(), LinkedAt);
+
+        Assert.Equal((2L, historyDays), (store.Version, store.HistoryDays));
     }
 }

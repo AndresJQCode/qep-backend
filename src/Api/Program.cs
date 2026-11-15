@@ -12,6 +12,8 @@ using Bootstrapper.Startup;
 using Bootstrapper.Valkey.RateLimiting;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
+using Modules.Ai.Api;
+using Modules.Ai.Infrastructure;
 using Modules.ApiAccess.Api;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
@@ -325,6 +327,8 @@ app.MapInstagramWebhook(RateLimiterPolicies.Webhook);
 app.MapShopifyWebhook(RateLimiterPolicies.Webhook);
 // Spec 2026-10-15 §7: las rutas por tenant de Shopify: la configuración de la tienda, la bandeja y «Sincronizar ahora».
 app.MapShopifyEndpoints();
+// Spec 2026-11-13: las asociaciones de líneas personalizadas de cada tienda (nombre exacto → variante de Catalog).
+app.MapShopifyCustomLineMappingEndpoints();
 app.MapMessagingEndpoints();
 // Spec 2026-10-30 §5.2: la API externa, autenticada con X-Api-Key. Después de Messaging, de cuyos handlers depende.
 app.MapExternalApi();
@@ -332,6 +336,8 @@ app.MapMessagingHub();
 app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();
+// Spec 2026-10-29 y plan 2026-11-12: los agentes IA, con el proveedor que elige el tenant.
+app.MapAiEndpoints();
 app.MapSupplierEndpoints();
 // Spec 2026-10-30: administración de claves de API.
 app.MapApiKeyEndpoints();
@@ -423,6 +429,11 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Automations (spec 2026-10-21 §4.1): después de Messaging e Integrations, cuyas conexiones y conversaciones referencia sin FK, y de
     // Audit (escribe en audit.entries).
     await services.InitializeAutomationsDatabaseAsync(
+        cancellationToken);
+
+    // Ai (spec 2026-10-29 §4.1): después de Messaging (escribe en messaging.connection_bots desde Bootstrapper) e Integrations, cuyas
+    // conexiones referencia sin FK, y de Audit (escribe en audit.entries).
+    await services.InitializeAiDatabaseAsync(
         cancellationToken);
 
     // ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.

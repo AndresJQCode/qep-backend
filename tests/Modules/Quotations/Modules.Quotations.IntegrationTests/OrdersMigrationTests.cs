@@ -75,7 +75,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task TheRenameKeepsEveryOrderProofAndCounterUnderTheNewNames()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -108,7 +108,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task RevertingTheRenameBringsBackTheOldNamesWithTheRows()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -183,7 +183,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderOwnDataCopiesTheQuotationIntoTheOrder()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -215,7 +215,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderOwnDataRefusesAnOrderWhoseQuotationHasNoLines()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -249,7 +249,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task PendingOrderExportsKeepTheirKindAndTheirNumberFilter()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -276,7 +276,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task RevertingPutsBackTheOldKindAndKey()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -300,7 +300,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderExternalKeyLeavesExistingOrdersWithoutKeyOrTitle()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -329,7 +329,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderBuyerAccountAddsTheColumnAndTheIndex()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -355,7 +355,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderBuyerNotesAddsANullableTextColumnAndLeavesExistingOrdersNull()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();

@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -13,11 +13,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// with <c>If-Match</c>, and the register's quick access replaced whole. Mirrors
 /// <see cref="CategoryApiTests"/>, which covers list and create.
 /// </summary>
-public sealed class CategoryAdminApiTests
+public sealed class CategoryAdminApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] ManagePermissions =
@@ -28,8 +28,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task UpdateRenamesAndMovesAndBumpsTheVersion()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var calzado = await CreateAsync(client, "Calzado", null);
         var botas = await CreateAsync(client, "Botas", null);
@@ -50,8 +49,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task UpdateToANullParentMakesItARootAndAnswersItsProductCount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
         var gaseosas = await CreateAsync(client, "Gaseosas", bebidas.Id);
@@ -67,8 +65,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task WritesWithoutIfMatchArePreconditionRequired()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
 
@@ -83,8 +80,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task WritesWithAStaleVersionArePreconditionFailed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
         Assert.Equal(HttpStatusCode.OK, (await UpdateAsync(client, bebidas.Id, "Bebidas frías", null, 1)).StatusCode);
@@ -101,8 +97,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task AWeakIfMatchIsAccepted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
 
@@ -119,8 +114,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task WritesOnAnUnknownOrForeignCategoryAreNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
         var foreign = await CreateAsync(other, "Ajena", null, OtherTenantId);
@@ -139,8 +133,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task MovingUnderItselfOrADescendantIsACycle()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
         var gaseosas = await CreateAsync(client, "Gaseosas", bebidas.Id);
@@ -160,8 +153,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task MovingUnderAnUnknownOrForeignParentIsParentNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
@@ -180,8 +172,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task MovingASubtreeBelowTheTenthLevelIsTooDeep()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         Guid? parentId = null;
         var chain = new List<CategoryResponse>();
@@ -208,8 +199,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task RenamingOrMovingOntoASiblingNameIsNameTaken()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var calzado = await CreateAsync(client, "Calzado", null);
         var ropa = await CreateAsync(client, "Ropa", null);
@@ -229,8 +219,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task UpdateWithABlankOrLongNameReturnsTheFieldMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
 
@@ -250,8 +239,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task DeleteAnEmptyLeafIsNoContentAndItIsGone()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
         var gaseosas = await CreateAsync(client, "Gaseosas", bebidas.Id);
@@ -266,8 +254,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task DeleteACategoryWithProductsIsHasProducts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
         var productId = await CreateProductAsync(client, "Agua", "AG-1", bebidas.Id);
@@ -287,8 +274,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task DeleteACategoryWithChildrenIsHasChildren()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
         await CreateAsync(client, "Gaseosas", bebidas.Id);
@@ -303,8 +289,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task DeleteAPinnedCategoryRecompactsTheQuickAccess()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var a = await CreateAsync(client, "A", null);
         var b = await CreateAsync(client, "B", null);
@@ -324,8 +309,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task ReplaceQuickAccessAnswersTheWholeListWithPositionsInBodyOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
         var gaseosas = await CreateAsync(client, "Gaseosas", bebidas.Id);
@@ -348,8 +332,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task ReplaceQuickAccessReordersUnpinsAndAnEmptyListClearsIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var a = await CreateAsync(client, "A", null);
         var b = await CreateAsync(client, "B", null);
@@ -370,8 +353,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task ReplaceQuickAccessDoesNotBumpTheVersion()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var bebidas = await CreateAsync(client, "Bebidas", null);
 
@@ -388,8 +370,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task ReplaceQuickAccessWithADuplicateIsRejectedAndChangesNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var a = await CreateAsync(client, "A", null);
         var b = await CreateAsync(client, "B", null);
@@ -407,8 +388,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task ReplaceQuickAccessWithAnUnknownOrForeignIdIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
         var a = await CreateAsync(client, "A", null);
@@ -429,8 +409,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task ReplaceQuickAccessWithoutTheListIsAValidationError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await client.PutAsJsonAsync(
@@ -446,8 +425,7 @@ public sealed class CategoryAdminApiTests
     [Fact]
     public async Task EveryWriteNeedsTheManagePermission()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var reader = CreateClient(factory, SubjectId, TenantId, CatalogPermissions.ProductRead);
         using var intruder = CreateClient(factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -494,8 +472,8 @@ public sealed class CategoryAdminApiTests
 
     // ---- Helpers -------------------------------------------------------------------------
 
-    private static string CategoryUrl(Guid categoryId, string tenantId = TenantId) =>
-        $"/api/v1/tenants/{tenantId}/catalog/categories/{categoryId}";
+    private string CategoryUrl(Guid categoryId, string? tenantId = null) =>
+        $"/api/v1/tenants/{tenantId ?? TenantId}/catalog/categories/{categoryId}";
 
     private static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status, string code)
     {
@@ -504,21 +482,21 @@ public sealed class CategoryAdminApiTests
         Assert.Contains(code, body, StringComparison.Ordinal);
     }
 
-    private static async Task<CategoryResponse> CreateAsync(
+    private async Task<CategoryResponse> CreateAsync(
         HttpClient client,
         string name,
         Guid? parentId,
-        string tenantId = TenantId)
+        string? tenantId = null)
     {
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/catalog/categories",
+            $"/api/v1/tenants/{tenantId ?? TenantId}/catalog/categories",
             new { name, parentId },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return await ReadCategoryAsync(response);
     }
 
-    private static async Task<Guid> CreateProductAsync(HttpClient client, string name, string code, Guid categoryId)
+    private async Task<Guid> CreateProductAsync(HttpClient client, string name, string code, Guid categoryId)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
@@ -528,7 +506,7 @@ public sealed class CategoryAdminApiTests
         return (await response.Content.ReadFromJsonAsync<ProductResponse>(TestContext.Current.CancellationToken))!.Id;
     }
 
-    private static Task<HttpResponseMessage> UpdateAsync(
+    private Task<HttpResponseMessage> UpdateAsync(
         HttpClient client,
         Guid categoryId,
         string name,
@@ -547,7 +525,7 @@ public sealed class CategoryAdminApiTests
         return client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    private static Task<HttpResponseMessage> DeleteAsync(HttpClient client, Guid categoryId, long? version)
+    private Task<HttpResponseMessage> DeleteAsync(HttpClient client, Guid categoryId, long? version)
     {
         var request = new HttpRequestMessage(HttpMethod.Delete, CategoryUrl(categoryId));
         if (version is not null)
@@ -558,7 +536,7 @@ public sealed class CategoryAdminApiTests
         return client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    private static Task<HttpResponseMessage> ReplaceQuickAccessAsync(HttpClient client, Guid[] categoryIds) =>
+    private Task<HttpResponseMessage> ReplaceQuickAccessAsync(HttpClient client, Guid[] categoryIds) =>
         client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/categories/pos-quick-access",
             new { categoryIds },
@@ -572,10 +550,10 @@ public sealed class CategoryAdminApiTests
         return category;
     }
 
-    private static async Task<IReadOnlyList<CategoryResponse>> ListAsync(HttpClient client, string tenantId = TenantId)
+    private async Task<IReadOnlyList<CategoryResponse>> ListAsync(HttpClient client, string? tenantId = null)
     {
         var response = await client.GetAsync(
-            $"/api/v1/tenants/{tenantId}/catalog/categories",
+            $"/api/v1/tenants/{tenantId ?? TenantId}/catalog/categories",
             TestContext.Current.CancellationToken);
 
         // The status is asserted here: a 403 or a 500 deserializes too, with Items null.
@@ -610,17 +588,6 @@ public sealed class CategoryAdminApiTests
         }
 
         return payloads;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

@@ -71,7 +71,8 @@ internal sealed partial class ShopifyReconcileWorker(
             await using var scope = scopeFactory.CreateAsyncScope();
             try
             {
-                var result = await scope.ServiceProvider.GetRequiredService<ReconcileStore>().RunAsync(connection, cancellationToken);
+                var result = await scope.ServiceProvider.GetRequiredService<ReconcileStore>()
+                    .RunAsync(connection, ShopifyReconcileMode.Scheduled, cancellationToken);
                 LogReconciled(
                     logger,
                     connection.ConnectionId,

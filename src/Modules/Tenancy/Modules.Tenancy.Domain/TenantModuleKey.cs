@@ -80,8 +80,13 @@ public static class TenantModuleKeys
     /// y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Store = TenantModuleKey.Define("store");
 
+    /// <summary>Spec 2026-10-29 (agentes IA), D-1b: agentes que atienden la bandeja con el modelo del proveedor que elige el
+    /// tenant. Depende sólo de <see cref="Messaging"/>, no de <see cref="Automations"/>: un agente no es un chatbot. Queda
+    /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Ai = TenantModuleKey.Define("ai");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -104,6 +109,8 @@ public static class TenantModuleKeys
         [Loans] = [Customers],
         // Spec 2026-11-03: el checkout de la tienda crea el pedido directo.
         [Store] = [Orders],
+        // Spec 2026-10-29 D-1b: un agente responde por la bandeja; sin messaging no hay conversaciones.
+        [Ai] = [Messaging],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>

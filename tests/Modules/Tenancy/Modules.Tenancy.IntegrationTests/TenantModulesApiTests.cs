@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -16,7 +16,7 @@ namespace Modules.Tenancy.IntegrationTests;
 /// stub sobre un tenant con fila y el endpoint <c>/modules</c>. Corre con el stub de desarrollo; la
 /// cookie real va en <c>RealAuthenticationApiTests</c>.
 /// </summary>
-public sealed class TenantModulesApiTests
+public sealed class TenantModulesApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
     // Es la prueba de que EF ordena el INSERT de tenants antes que el de tenant_modules: los dos
     // salen del mismo SaveChangesAsync de TenantRegistrationService, y sin la FK en el modelo el
@@ -52,8 +52,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task TheStubMasksARegisteredTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerId) = await RegisterAsync(factory);
         using var client = StubClient(factory, ownerId, tenantId, "catalog.product.read", "tenancy.settings.read");
         Assert.Contains("catalog.product.read", await EffectivePermissionsAsync(client, tenantId));
@@ -81,8 +80,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task TheStubLeavesASimulatedTenantAlone()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var tenantId = Guid.CreateVersion7();
         using var client = StubClient(factory, Guid.CreateVersion7(), tenantId, "catalog.product.read");
 
@@ -92,8 +90,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task ModulesListsTheEightInOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerId) = await RegisterAsync(factory);
         using var client = StubClient(factory, ownerId, tenantId);
 
@@ -102,15 +99,15 @@ public sealed class TenantModulesApiTests
         Assert.Equal(tenantId, modules.TenantId);
         // Spec 2026-10-09 §6.2 y spec 2026-10-13 D3: messaging y pipeline van al final y, como pos, no vienen con el signup.
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai"],
             modules.Modules.Select(module => module.Key));
-        Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer" or "loans" or "store")), module =>
+        Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer" or "loans" or "store" or "ai")), module =>
         {
             Assert.True(module.Enabled);
             Assert.True(module.Contracted);
             Assert.Empty(module.MissingDependencies);
         });
-        Assert.All(modules.Modules.Where(module => module.Key is "pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer" or "loans" or "store"), module =>
+        Assert.All(modules.Modules.Where(module => module.Key is "pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer" or "loans" or "store" or "ai"), module =>
         {
             Assert.False(module.Enabled);
             Assert.False(module.Contracted);
@@ -120,8 +117,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task TurningCustomersOffNamesItAsTheRootCause()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerId) = await RegisterAsync(factory);
         using var client = StubClient(factory, ownerId, tenantId);
 
@@ -141,14 +137,13 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task ASimulatedTenantSeesEverythingOn()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var tenantId = Guid.CreateVersion7();
         using var client = StubClient(factory, Guid.CreateVersion7(), tenantId);
 
         var modules = await ModulesAsync(client, tenantId);
 
-        Assert.Equal(16, modules.Modules.Count);
+        Assert.Equal(17, modules.Modules.Count);
         Assert.All(modules.Modules, module =>
         {
             Assert.True(module.Enabled);
@@ -159,8 +154,7 @@ public sealed class TenantModulesApiTests
     [Fact]
     public async Task ModulesOfAnotherTenantAreForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerId) = await RegisterAsync(factory);
         using var client = StubClient(factory, ownerId, tenantId);
 
@@ -279,17 +273,6 @@ public sealed class TenantModulesApiTests
             .Select(module => (module.ModuleKey.Value, module.Source))
             .OrderBy(row => row.Value, StringComparer.Ordinal)
             .ToList();
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private sealed record RegisteredDto(Guid TenantId, Guid OwnerUserId);

@@ -59,7 +59,8 @@ public sealed class FieldDefinition
         int maxLength,
         string? pattern,
         string invalidMessage,
-        bool isInternal = false)
+        bool isInternal = false,
+        int revealSuffix = 0)
     {
         if (!IsValidKey(key))
         {
@@ -69,6 +70,11 @@ public sealed class FieldDefinition
         ArgumentException.ThrowIfNullOrWhiteSpace(label);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLength);
         ArgumentException.ThrowIfNullOrWhiteSpace(invalidMessage);
+        ArgumentOutOfRangeException.ThrowIfNegative(revealSuffix);
+        if (revealSuffix > 0 && kind != FieldKind.Secret)
+        {
+            throw new ArgumentException("Only a secret field reveals a suffix: a public field already travels whole.", nameof(revealSuffix));
+        }
 
         Key = key;
         Label = label;
@@ -78,6 +84,7 @@ public sealed class FieldDefinition
         Pattern = pattern is null ? null : new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant);
         InvalidMessage = invalidMessage;
         Internal = isInternal;
+        RevealSuffix = revealSuffix;
     }
 
     public string Key { get; }
@@ -97,6 +104,10 @@ public sealed class FieldDefinition
     /// <summary>Spec 2026-10-09 §6.1: lo llena el backend (Embedded Signup o el probador). No sale en
     /// <c>GET /catalog</c>, sí en <c>ConnectionResponse</c>, y <c>POST</c>/<c>PUT</c> lo rechazan.</summary>
     public bool Internal { get; }
+
+    /// <summary>Spec 2026-10-29 D-A23: cuántos caracteres del final de un secreto ve la pantalla para reconocerlo (los últimos 4 de
+    /// una clave de API). <c>0</c>, el resto: nunca se ve nada. Se calcula al leer, de la clave descifrada; no hay copia en claro.</summary>
+    public int RevealSuffix { get; }
 
     public bool IsSecret => Kind == FieldKind.Secret;
 

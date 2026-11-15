@@ -16,15 +16,14 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>La exportación de pedidos por correo: mismo contrato que cotizaciones, sobre el listado
 /// de pedidos (SALE-01) y con `OrderRead`.</summary>
-public sealed class OrderExportApiTests
+public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
     [Fact]
     public async Task ExportIsAcceptedAndLeavesAPendingOrdersJob()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await CreateOrderAsync(client, factory, tenantId);
@@ -89,8 +88,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task ExportWithoutDatesIsUnprocessableWithTheFieldErrors()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -107,8 +105,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task ExportWithNoMatchingOrdersIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -124,8 +121,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task PendingQuotationExportsFillTheOrdersQuota()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         await CreateOrderAsync(client, factory, tenantId);
@@ -149,8 +145,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task ExportWithoutTheOrderReadPermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, QuotationsPermissions.QuotationRead);
         using var _ = client;
 
@@ -163,8 +158,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task ExportForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var (_, _, otherOwner) = await RegisterTenantAsync(factory, OrdersPermissions.OrderRead);
@@ -296,8 +290,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task OrdersCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         for (var converted = 0; converted < 3; converted++)
@@ -370,8 +363,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task OrdersThatShareTheConversionInstantComeOutOnceEachByNumber()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         for (var converted = 0; converted < 3; converted++)
@@ -967,8 +959,7 @@ public sealed class OrderExportApiTests
     [Fact]
     public async Task PaymentProofsForTheExportComeInUploadOrderAndOnlyFromTheTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         var (otherTenantId, _, otherClient) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;

@@ -10,6 +10,12 @@
     <Project Path="src/BuildingBlocks/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj" />
   </Folder>
   <Folder Name="/src/Modules/" />
+  <Folder Name="/src/Modules/Ai/">
+    <Project Path="src/Modules/Ai/Modules.Ai.Api/Modules.Ai.Api.csproj" />
+    <Project Path="src/Modules/Ai/Modules.Ai.Application/Modules.Ai.Application.csproj" />
+    <Project Path="src/Modules/Ai/Modules.Ai.Domain/Modules.Ai.Domain.csproj" />
+    <Project Path="src/Modules/Ai/Modules.Ai.Infrastructure/Modules.Ai.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Audit/">
     <Project Path="src/Modules/Audit/Modules.Audit.Application/Modules.Audit.Application.csproj" />
     <Project Path="src/Modules/Audit/Modules.Audit.Domain/Modules.Audit.Domain.csproj" />
@@ -128,6 +134,10 @@
     <Project Path="tests/Bootstrapper/Bootstrapper.UnitTests/Bootstrapper.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/" />
+  <Folder Name="/tests/Modules/Ai/">
+    <Project Path="tests/Modules/Ai/Modules.Ai.IntegrationTests/Modules.Ai.IntegrationTests.csproj" />
+    <Project Path="tests/Modules/Ai/Modules.Ai.UnitTests/Modules.Ai.UnitTests.csproj" />
+  </Folder>
   <Folder Name="/tests/Modules/Audit/">
     <Project Path="tests/Modules/Audit/Modules.Audit.UnitTests/Modules.Audit.UnitTests.csproj" />
     <Project Path="tests/Modules/Audit/Modules.Audit.IntegrationTests/Modules.Audit.IntegrationTests.csproj" />

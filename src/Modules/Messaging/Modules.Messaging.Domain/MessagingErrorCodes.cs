@@ -68,6 +68,10 @@ public static class MessagingErrorCodes
     /// <summary>§5.2: las claves de <c>parameters</c> no son exactamente las de la plantilla.</summary>
     public const string TemplateParametersMismatch = "messaging.template.parameters_mismatch";
 
+    /// <summary>Spec 2026-11-13 §4.2: la API externa mandó un encabezado multimedia que la plantilla no pide, o no lo mandó y la plantilla lo
+    /// pide, o es de otro tipo.</summary>
+    public const string TemplateHeaderMismatch = "messaging.template.header_mismatch";
+
     /// <summary>§5.2: <c>POST /conversations</c> con un cliente que no existe en el tenant o está inactivo (404).</summary>
     public const string CustomerNotFound = "messaging.customer.not_found";
 

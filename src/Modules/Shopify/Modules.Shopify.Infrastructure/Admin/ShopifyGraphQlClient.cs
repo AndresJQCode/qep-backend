@@ -40,7 +40,7 @@ internal sealed partial class ShopifyGraphQlClient(
 
     // Sin fragmentos ni alias a propósito: la prueba de contrato lee la consulta con un analizador mínimo.
     private const string LineFields =
-        "sku quantity originalUnitPriceSet { shopMoney { amount } } discountAllocations { allocatedAmountSet { shopMoney { amount } } }";
+        "sku title quantity variant { id } product { id } originalUnitPriceSet { shopMoney { amount } } discountAllocations { allocatedAmountSet { shopMoney { amount } } }";
 
     private const string ShippingLineFields =
         "code title discountedPriceSet { shopMoney { amount } } taxLines { priceSet { shopMoney { amount } } } isRemoved";

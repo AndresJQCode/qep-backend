@@ -7,7 +7,6 @@ using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
@@ -19,7 +18,7 @@ namespace Modules.Customers.IntegrationTests;
 /// </summary>
 public sealed class CustomerDeletionDatabase : IAsyncLifetime
 {
-    private PostgreSqlContainer? _database;
+    private TestDatabase? _database;
 
     public CommandCounter Counter { get; } = new();
 

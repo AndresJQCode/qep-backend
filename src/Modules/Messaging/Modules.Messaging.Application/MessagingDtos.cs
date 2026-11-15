@@ -247,8 +247,12 @@ public sealed record InteractiveListRowDto(string Id, string Title, string? Desc
 public sealed record InteractiveCtaDto(string DisplayText, string Url);
 
 /// <summary>Spec 2026-10-11 §5.2: con qué plantilla salió un mensaje <c>Template</c>. El texto ya trae las variables
-/// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»).</summary>
-public sealed record MessageTemplateRefDto(string Name, string Language);
+/// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»). Spec 2026-11-13: <c>Header</c> es el encabezado multimedia
+/// que mandó la API externa por enlace, para que la burbuja lo muestre; <c>null</c> si no lo hubo.</summary>
+public sealed record MessageTemplateRefDto(string Name, string Language, MessageTemplateHeaderDto? Header = null);
+
+/// <summary>Spec 2026-11-13: <c>Type</c> es <c>image</c>, <c>video</c> o <c>document</c>; <c>Link</c> la URL https que se entregó a Meta.</summary>
+public sealed record MessageTemplateHeaderDto(string Type, string Link, string? Filename);
 
 public sealed record MessagePageDto(IReadOnlyList<MessageDto> Items, bool HasMore);
 

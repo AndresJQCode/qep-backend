@@ -11,7 +11,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// tiene sus propias líneas y se edita por `PUT /orders/{orderId}` (<see cref="OrderEditsApiTests"/>), así que
 /// esas dos rutas responden `quotation.quotation.not_editable` aunque el pedido siga pendiente.
 /// </summary>
-public sealed class OrderItemEditApiTests
+public sealed class OrderItemEditApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static async Task<(HttpClient Client, Guid TenantId, QuotationResponse Quotation)> ConvertedWithAPendingOrderAsync(
         QepApiFactory factory)
@@ -40,8 +40,7 @@ public sealed class OrderItemEditApiTests
     [Fact]
     public async Task UpdatingAnItemOfAConvertedQuotationIsRejectedEvenWithAPendingOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (client, tenantId, quotation) = await ConvertedWithAPendingOrderAsync(factory);
         using var _ = client;
 
@@ -56,8 +55,7 @@ public sealed class OrderItemEditApiTests
     [Fact]
     public async Task RemovingAnItemOfAConvertedQuotationIsRejectedEvenWithAPendingOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (client, tenantId, quotation) = await ConvertedWithAPendingOrderAsync(factory);
         using var _ = client;
 

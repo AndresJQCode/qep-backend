@@ -10,7 +10,7 @@ using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
 
-public sealed class CustomerStatusAndImportApiTests
+public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     private static Task<HttpResponseMessage> DeactivateAsync(HttpClient client, Guid id) =>
         client.PostAsync(
@@ -949,8 +949,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ImportCustomersWithMissingColumnsIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         var columnsWithoutDepartment = CustomerImportColumns.Ordered
@@ -974,8 +973,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ImportCustomersWithNoDataRowsIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         using var upload = BuildExcelUpload("clientes.xlsx", []);
@@ -996,8 +994,7 @@ public sealed class CustomerStatusAndImportApiTests
     [InlineData("clientes")]
     public async Task ImportRejectsAFileThatIsNotExcel(string fileName)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         using var upload = GarbageUpload(fileName);
@@ -1014,8 +1011,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ImportWithOnlyTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         using var upload = GarbageUpload("clientes.xlsx");
@@ -1031,8 +1027,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task DownloadTemplateReturnsAnExcelWithTheExpectedColumns()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         var response = await client.GetAsync(
@@ -1166,8 +1161,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task DownloadTemplateWithOnlyTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var response = await client.GetAsync(
@@ -1185,8 +1179,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ExportFailedRowsReturnsAnExcelWithTheGivenRowsLoaded()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
         var rowData = new CustomerImportRowData(
             null,
@@ -1232,8 +1225,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ExportFailedRowsWithNoRowsIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateImporter(factory);
 
         var response = await client.PostAsJsonAsync(
@@ -1250,8 +1242,7 @@ public sealed class CustomerStatusAndImportApiTests
     [Fact]
     public async Task ExportFailedRowsWithOnlyTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
         var rowData = new CustomerImportRowData(
             null, "Cliente", null, "NIT", "900.000.000-0", null, null, null, "Antioquia",

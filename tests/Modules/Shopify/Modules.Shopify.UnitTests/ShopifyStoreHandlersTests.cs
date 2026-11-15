@@ -105,6 +105,7 @@ public sealed class ShopifyStoreHandlersTests
             DocumentAttributeKey = new string('d', ShopifyStore.AttributeKeyMaxLength + 1),
             DocumentTypeAttributeKey = null,
             DefaultIdentificationType = "RUT",
+            HistoryDays = ShopifyStore.HistoryDaysMax + 1,
             ExpectedVersion = 0,
         };
 
@@ -114,9 +115,73 @@ public sealed class ShopifyStoreHandlersTests
             [
                 "advisorMembershipId", "billingAccountNumber", "billingBankName", "billingCompanyId", "billingCurrency",
                 "defaultClassificationId", "defaultIdentificationType", "documentAttributeKey", "documentTypeAttributeKey",
-                "expectedVersion",
+                "expectedVersion", "historyDays",
             ],
             result.Errors.Select(error => error.PropertyName).Distinct().Order(StringComparer.Ordinal));
+    }
+
+    // Spec 2026-10-21: los días de historial son entrada del usuario; fuera de 1..30 el validador da el campo (422 con errors).
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    [InlineData(-1)]
+    public void PutHistoryDaysOutOfRangeValidationErrors(int historyDays)
+    {
+        var world = new StoreHandlersWorld();
+
+        var result = new UpdateShopifyStoreValidator().Validate(world.Command() with { HistoryDays = historyDays });
+
+        Assert.Equal(["historyDays"], result.Errors.Select(error => error.PropertyName));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    [InlineData(30)]
+    public void PutHistoryDaysInRangeOrNoneIsValid(int? historyDays)
+    {
+        var world = new StoreHandlersWorld();
+
+        var result = new UpdateShopifyStoreValidator().Validate(world.Command() with { HistoryDays = historyDays });
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public async Task PutSavesAndReturnsTheHistoryDays()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var dto = await world.PutAsync(world.Command() with { HistoryDays = 7 });
+
+        Assert.Equal(((int?)7, (int?)7), (world.Database.Stores[StoreHandlersWorld.ConnectionId].HistoryDays, dto.HistoryDays));
+    }
+
+    // El PUT reemplaza la configuración entera: sin historyDays, el historial se apaga.
+    [Fact]
+    public async Task PutWithoutHistoryDaysTurnsTheHistoryOff()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command() with { HistoryDays = 7 });
+
+        var dto = await world.PutAsync(world.Command() with { HistoryDays = null, ExpectedVersion = 2 });
+
+        Assert.Equal(((int?)null, (int?)null), (world.Database.Stores[StoreHandlersWorld.ConnectionId].HistoryDays, dto.HistoryDays));
+    }
+
+    // Cambiar los días de historial queda en la auditoría del PUT, sólo por nombre.
+    [Fact]
+    public async Task PutChangingHistoryDaysIsAudited()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command());
+
+        await world.PutAsync(world.Command() with { HistoryDays = 10, ExpectedVersion = 2 });
+
+        Assert.Equal("""["historyDays"]""", world.Database.Audit[^1].Fields);
     }
 
     [Fact]
@@ -452,6 +517,7 @@ internal sealed class StoreHandlersWorld
         "Documento",
         "Tipo de documento",
         "CC",
+        null,
         1);
 
     public Task<ShopifyStoreDto> PutAsync(UpdateShopifyStoreCommand command) =>

@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -12,11 +12,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// «Visible en la tienda»: el campo del producto (apagado por defecto), el filtro del listado y el
 /// lote POST /catalog/products/store-visibility, que es todo o nada.
 /// </summary>
-public sealed class ProductStoreVisibilityApiTests
+public sealed class ProductStoreVisibilityApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-0000000000a1";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-0000000000a2";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000b1";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000b2";
 
     private static readonly string[] ManagePermissions =
@@ -25,8 +25,7 @@ public sealed class ProductStoreVisibilityApiTests
     [Fact]
     public async Task PutWithoutVisibleInStoreKeepsIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, "Vela", "V-1"));
@@ -47,8 +46,7 @@ public sealed class ProductStoreVisibilityApiTests
     [Fact]
     public async Task TheBatchFlipsEveryProductAndBumpsTheirVersions()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         var first = await ReadProductAsync(await CreateProductAsync(client, TenantId, "Vela uno", "V-1"));
         var second = await ReadProductAsync(await CreateProductAsync(client, TenantId, "Vela dos", "V-2"));
@@ -68,8 +66,8 @@ public sealed class ProductStoreVisibilityApiTests
     [Fact]
     public async Task TheBatchIsAllOrNothingWithAnotherTenantsProduct()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var mine = CreateClient(factory, SubjectId, TenantId);
         using var theirs = CreateClient(factory, OtherSubjectId, OtherTenantId);
         var own = await ReadProductAsync(await CreateProductAsync(mine, TenantId, "Vela", "V-1"));
@@ -94,8 +92,7 @@ public sealed class ProductStoreVisibilityApiTests
     [Fact]
     public async Task TheBatchRejectsMoreThan200Ids()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await client.PostAsJsonAsync(
@@ -113,8 +110,7 @@ public sealed class ProductStoreVisibilityApiTests
     [Fact]
     public async Task TheListFiltersByVisibleInStore()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         var shown = await ReadProductAsync(await CreateProductAsync(client, TenantId, "Vela uno", "V-1"));
         var hidden = await ReadProductAsync(await CreateProductAsync(client, TenantId, "Vela dos", "V-2"));
@@ -136,8 +132,7 @@ public sealed class ProductStoreVisibilityApiTests
     [Fact]
     public async Task AnEditorWithTheOldVersionGets412AfterTheBatch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId);
         var loaded = await ReadProductAsync(await CreateProductAsync(client, TenantId, "Vela", "V-1"));
 
@@ -171,7 +166,7 @@ public sealed class ProductStoreVisibilityApiTests
         return result;
     }
 
-    private static async Task<ProductsResponse> ListAsync(HttpClient client, string query)
+    private async Task<ProductsResponse> ListAsync(HttpClient client, string query)
     {
         var page = await client.GetFromJsonAsync<ProductsResponse>(
             $"/api/v1/tenants/{TenantId}/catalog/products?{query}",
@@ -196,17 +191,6 @@ public sealed class ProductStoreVisibilityApiTests
         var value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(value);
         return (bool)value;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(QepApiFactory factory, string subjectId, string tenantId)

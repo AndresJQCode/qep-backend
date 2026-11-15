@@ -27,7 +27,7 @@ public sealed class PaidAtMigrationTests
     [Fact]
     public async Task PaidAtBackfillUsesPaidMarkedAtThenConvertedAt()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -64,7 +64,7 @@ public sealed class PaidAtMigrationTests
     [Fact]
     public async Task APaidOrderFromBeforeTheMigrationStaysUncostedWhenMarkedPaidAgain()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using (var context = NewContext(connectionString))
         {

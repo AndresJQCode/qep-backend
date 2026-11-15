@@ -15,6 +15,9 @@ public sealed class ShopifyStore
     public const int IdentificationTypeMaxLength = 16;
     public const int ShopDomainMaxLength = 255;
 
+    /// <summary>Spec 2026-10-21: tope de <see cref="HistoryDays"/> (decisión del owner).</summary>
+    public const int HistoryDaysMax = 30;
+
     private ShopifyStore()
     {
     }
@@ -38,13 +41,18 @@ public sealed class ShopifyStore
     /// <summary>Con ella nace un cliente completo; sin ella, el comprador siempre nace incompleto (§6.2.1).</summary>
     public Guid? DefaultClassificationId { get; private set; }
 
-    /// <summary>Clave en <c>customAttributes</c> del pedido donde viene el documento del comprador.</summary>
+    /// <summary>De dónde sale el documento del comprador: la ruta <c>shipping_address.company</c> o el nombre de un atributo del
+    /// checkout (<c>ShopifyDocumentSources</c> en Application).</summary>
     public string DocumentAttributeKey { get; private set; } = DefaultDocumentAttributeKey;
 
     public string DocumentTypeAttributeKey { get; private set; } = DefaultDocumentTypeAttributeKey;
 
     /// <summary>Se usa cuando el pedido trae documento pero no su tipo.</summary>
     public string DefaultIdentificationType { get; private set; } = DefaultIdentificationTypeCode;
+
+    /// <summary>Spec 2026-10-21: cuántos días antes del enlace trae «Sincronizar ahora», de 1 a <see cref="HistoryDaysMax"/>.
+    /// Nulo es sin historial (D-S4). Se aplica en cada pulsación, nunca en el cron.</summary>
+    public int? HistoryDays { get; private set; }
 
     /// <summary>§5.3: desde dónde trae la próxima conciliación (menos 5 minutos de margen).</summary>
     public DateTimeOffset? LastReconciledAt { get; private set; }
@@ -86,11 +94,18 @@ public sealed class ShopifyStore
         string documentAttributeKey,
         string documentTypeAttributeKey,
         string defaultIdentificationType,
+        int? historyDays,
         Guid updatedBy,
         DateTimeOffset now)
     {
         ArgumentOutOfRangeException.ThrowIfEqual(advisorMembershipId, Guid.Empty);
         ArgumentOutOfRangeException.ThrowIfEqual(updatedBy, Guid.Empty);
+        if (historyDays is { } days)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(days, 1, nameof(historyDays));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(days, HistoryDaysMax, nameof(historyDays));
+        }
+
         if (defaultClassificationId == Guid.Empty)
         {
             throw new ArgumentException("The default classification cannot be the empty id.", nameof(defaultClassificationId));
@@ -108,6 +123,7 @@ public sealed class ShopifyStore
         DocumentAttributeKey = documentKey;
         DocumentTypeAttributeKey = documentTypeKey;
         DefaultIdentificationType = identificationType;
+        HistoryDays = historyDays;
         UpdatedBy = updatedBy;
         UpdatedAt = now;
         Version++;

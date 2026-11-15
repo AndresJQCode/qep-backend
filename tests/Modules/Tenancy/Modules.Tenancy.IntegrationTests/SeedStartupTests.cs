@@ -20,7 +20,7 @@ using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Modules.Tenancy.Infrastructure.Seed;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -58,7 +58,8 @@ public sealed class SeedStartupTests
     public async Task TheHostWaitsForTheStartupLock()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var database = await StartDatabaseAsync();
+        // Vacía y no clon de la plantilla: la prueba mira que la primera migración no haya corrido.
+        await using var database = await StartEmptyDatabaseAsync();
         await using var holder = new NpgsqlConnection(database.GetConnectionString());
         await holder.OpenAsync(ct);
         await using var held = await holder.BeginTransactionAsync(ct);
@@ -105,8 +106,9 @@ public sealed class SeedStartupTests
     public async Task TwoConcurrentStartupsSeedOnce()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var database = await StartDatabaseAsync();
-        using var a = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        // Vacía: los dos pods tienen que migrar y sembrar a la vez, no sólo sembrar.
+        await using var database = await StartEmptyDatabaseAsync();
+        using var a =new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
         using var b = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
 
         var clients = await Task.WhenAll(Task.Run(() => a.CreateClient(), ct), Task.Run(() => b.CreateClient(), ct));
@@ -212,7 +214,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
+            ["ai", "automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -245,7 +247,7 @@ public sealed class SeedStartupTests
             Guid.CreateVersion7(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "quotations", "reporting", "shopify", "store", "suppliers"],
+            ["ai", "automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -307,7 +309,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
+            ["ai", "automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 
@@ -334,7 +336,7 @@ public sealed class SeedStartupTests
         Assert.Equal(ownerUserId, membership.UserId);
         Assert.NotEqual(operatorUserId, membership.UserId);
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
+            ["ai", "automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -414,7 +416,7 @@ public sealed class SeedStartupTests
             membership => membership.TenantId == new TenantId(OperatorTenantId),
             TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
+            ["ai", "automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 
@@ -631,7 +633,7 @@ public sealed class SeedStartupTests
         return rows.Select(row => row.ModuleKey.Value).Order(StringComparer.Ordinal).ToList();
     }
 
-    private static async Task<bool> ScalarIsNullAsync(PostgreSqlContainer database, string sql)
+    private static async Task<bool> ScalarIsNullAsync(TestDatabase database, string sql)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -640,23 +642,12 @@ public sealed class SeedStartupTests
         return value is null or DBNull;
     }
 
-    private static async Task<T> ScalarAsync<T>(PostgreSqlContainer database, string sql)
+    private static async Task<T> ScalarAsync<T>(TestDatabase database, string sql)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
         return (T)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private sealed class QepApiFactory(

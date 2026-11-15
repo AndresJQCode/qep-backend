@@ -170,6 +170,26 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
             .Select(group => new { ConnectionId = group.Key, Count = group.Count() })
             .ToDictionaryAsync(group => group.ConnectionId, group => group.Count, cancellationToken);
 
+    // El payload es el snapshot normalizado (ShopifyOrderIngestion.WritePayload): los atributos del checkout, vengan de REST
+    // (note_attributes) o de GraphQL (customAttributes), quedan en el objeto "attributes". Sólo se miran los pedidos más recientes
+    // de la tienda: una tienda vieja tiene miles de filas, y una clave que dejó de usarse hace cientos de pedidos no le sirve al
+    // select. El jsonb_typeof protege de un payload sin el objeto (jsonb_object_keys falla con otro tipo).
+    public async Task<IReadOnlyList<string>> ListAttributeKeysAsync(
+        Guid tenantId, Guid connectionId, int recentOrders, CancellationToken cancellationToken) =>
+        await dbContext.Database.SqlQuery<string>(
+            $"""
+            SELECT DISTINCT keys.key AS "Value"
+            FROM (
+              SELECT payload -> 'attributes' AS attributes
+              FROM shopify.orders
+              WHERE tenant_id = {tenantId} AND connection_id = {connectionId}
+              ORDER BY shopify_created_at DESC, id DESC
+              LIMIT {recentOrders}
+            ) recent
+            CROSS JOIN LATERAL jsonb_object_keys(
+              CASE WHEN jsonb_typeof(recent.attributes) = 'object' THEN recent.attributes ELSE jsonb_build_object() END) AS keys(key)
+            """).ToListAsync(cancellationToken);
+
     // El resultado de SqlQuery: EF lo llena por nombre de columna.
     private sealed class CountsRow
     {

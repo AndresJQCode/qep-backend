@@ -73,8 +73,10 @@ public sealed record ConnectionResponse(
     bool ProviderEnabled);
 
 /// <summary><c>readable</c> descifra de verdad y descarta el valor: si la llave se retiró o los bytes
-/// se dañaron, la pantalla pide pegar la clave otra vez.</summary>
-public sealed record SecretStateResponse(bool Configured, DateTimeOffset? UpdatedAt, bool Readable);
+/// se dañaron, la pantalla pide pegar la clave otra vez. <c>hint</c> (spec 2026-10-29 D-A23): los últimos caracteres de un secreto
+/// que lo declara (<c>revealSuffix</c>, hoy sólo la clave de Anthropic), para reconocer qué clave está puesta sin verla; <c>null</c> en
+/// cualquier otro, si no descifra o si es tan corto que el final sería casi todo.</summary>
+public sealed record SecretStateResponse(bool Configured, DateTimeOffset? UpdatedAt, bool Readable, string? Hint = null);
 
 /// <summary>El nombre viaja resuelto (nombre de la membresía o correo) para que la lista no pida los
 /// miembros aparte; <c>null</c> si la membresía ya no está en el tenant.</summary>

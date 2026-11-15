@@ -87,7 +87,7 @@ public sealed class CustomerContactAddressMigrationTests
     [Fact]
     public async Task TheBackfillCopiesThePrincipalAddressIntoTheCustomer()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
@@ -132,7 +132,7 @@ public sealed class CustomerContactAddressMigrationTests
     [Fact]
     public async Task ACustomerWithoutAPrincipalAddressStopsTheMigration()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
@@ -152,7 +152,7 @@ public sealed class CustomerContactAddressMigrationTests
     [Fact]
     public async Task RevertingRemovesTheColumnsAndLeavesTheAddressBookIntact()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);

@@ -11,7 +11,7 @@ namespace Modules.Automations.IntegrationTests;
 
 /// <summary>Spec 2026-10-21 §4.4, D-C2, D-C3 y D-M6: lista, creación en blanco, edición y borrador del chatbot por la API, con las
 /// fronteras de tenant, permiso, capacidad y versión.</summary>
-public sealed class ChatbotsApiTests
+public sealed partial class ChatbotsApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -969,7 +969,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(1, published.Published!.Number);
         Assert.Equal((int?)1, published.Chatbot.PublishedVersion);
         Assert.True(published.Chatbot.Version > version);
-        Assert.Equal(new ServedByDto(id, "Servicio técnico"), Assert.Single(published.Connections).ServedBy);
+        Assert.Equal(new ServedByDto(id, "Servicio técnico", "chatbot", id), Assert.Single(published.Connections).ServedBy);
         Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
         Assert.Equal(1L, await CountAsync(connectionString,
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.published'", ("id", id.ToString())));
@@ -1104,7 +1104,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
         var taker = await GetAsync(setup, second);
         Assert.Equal([setup.WhatsAppId], taker.Chatbot.Connections.Select(connection => connection.Id));
-        Assert.Equal(new ServedByDto(second, "Ventas"), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
+        Assert.Equal(new ServedByDto(second, "Ventas", "chatbot", second), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
         var former = await GetAsync(setup, first);
         Assert.Empty(former.Chatbot.Connections);
         Assert.Equal("Active", former.Chatbot.Status);
@@ -1307,7 +1307,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var taker = await GetAsync(setup, second);
         Assert.Equal("Paused", taker.Chatbot.Status);
-        Assert.Equal(new ServedByDto(second, "Ventas"), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
+        Assert.Equal(new ServedByDto(second, "Ventas", "chatbot", second), taker.Connections.Single(connection => connection.Id == setup.WhatsAppId).ServedBy);
         Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
         Assert.Empty((await GetAsync(setup, first)).Chatbot.Connections);
     }

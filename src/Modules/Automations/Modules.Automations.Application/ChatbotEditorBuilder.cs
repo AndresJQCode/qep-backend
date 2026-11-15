@@ -15,9 +15,9 @@ public sealed class ChatbotEditorBuilder(
     IAutomationExternalApis externalApis,
     IAutomationMembers members,
     IAutomationBusinessHours businessHours,
-    IChatbotRepository chatbots,
     IConversationRunQueries runs,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IChatbotConnectionSlots slots)
 {
     /// <summary>Canal que se supone mientras el chatbot no tiene conexiones: hoy el motor sólo atiende WhatsApp (D-M6).</summary>
     private const string DefaultChannel = "WhatsApp";
@@ -77,10 +77,10 @@ public sealed class ChatbotEditorBuilder(
         return ToSelectable(tenantConnections, await ServedByAsync(tenantId, cancellationToken), scheduleNames);
     }
 
+    /// <summary>Spec 2026-10-29 §4.3: quién ocupa cada conexión sale de la tabla neutral de Mensajería, así que también se ve un agente IA.</summary>
     private async Task<IReadOnlyDictionary<Guid, ServedByDto>> ServedByAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        (await chatbots.ListServingConnectionsAsync(tenantId, cancellationToken))
-            .GroupBy(serving => serving.ConnectionId)
-            .ToDictionary(group => group.Key, group => new ServedByDto(group.First().ChatbotId, group.First().Name));
+        (await slots.ListAsync(tenantId, cancellationToken))
+            .ToDictionary(occupant => occupant.ConnectionId, occupant => new ServedByDto(occupant.Id, occupant.Name, occupant.Kind, occupant.Id));
 
     private static IReadOnlyList<SelectableConnectionDto> ToSelectable(
         IReadOnlyList<AutomationConnectionRef> tenantConnections,

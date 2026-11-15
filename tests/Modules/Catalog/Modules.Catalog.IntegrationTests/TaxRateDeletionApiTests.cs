@@ -8,7 +8,7 @@ using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -19,11 +19,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// `FK_products_tax_rates_tax_rate_id` es `RESTRICT`, así que la base ya impone la condición; lo
 /// que agrega el slice es que el llamador reciba un 422 que se entiende en vez de un 500.
 /// </summary>
-public sealed class TaxRateDeletionApiTests
+public sealed class TaxRateDeletionApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000021";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000022";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000dd";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000dc";
 
     private static readonly string[] All =
@@ -44,8 +44,8 @@ public sealed class TaxRateDeletionApiTests
     [Fact]
     public async Task AnUnusedTaxRateIsDeletedAndDisappearsFromTheDatabase()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA que sobra", 19);
@@ -69,8 +69,8 @@ public sealed class TaxRateDeletionApiTests
     [Fact]
     public async Task ATaxRateInUseByAProductIsRejectedAndSurvives()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA en uso", 19);
@@ -101,8 +101,8 @@ public sealed class TaxRateDeletionApiTests
     [Fact]
     public async Task ATaxRateFromAnotherTenantIsNotFoundAndIsNotDeleted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var owner = CreateClient(factory, SubjectId, TenantId, All);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
 
@@ -118,8 +118,7 @@ public sealed class TaxRateDeletionApiTests
     [Fact]
     public async Task AnUnknownTaxRateIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var response = await DeleteTaxRateAsync(client, TenantId, Guid.CreateVersion7());
@@ -131,8 +130,8 @@ public sealed class TaxRateDeletionApiTests
     [Fact]
     public async Task ReadPermissionAloneCannotDelete()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var manager = CreateClient(factory, SubjectId, TenantId, All);
         using var reader = CreateClient(factory, SubjectId, TenantId, ReadOnly);
 
@@ -167,8 +166,8 @@ public sealed class TaxRateDeletionApiTests
     [Fact]
     public async Task AnInactiveTaxRateThatNobodyUsesIsStillDeletable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA viejo", 16);
@@ -259,8 +258,8 @@ public sealed class TaxRateDeletionApiTests
     [Fact]
     public async Task DeletingARateAssignedToACustomerIs422()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
         using var customers = CreateClient(
             factory, SubjectId, TenantId, Modules.Customers.Application.CustomersPermissions.CustomerRead,
@@ -283,8 +282,8 @@ public sealed class TaxRateDeletionApiTests
     [Fact]
     public async Task DeletingARateAssignedOnlyToAMergedCustomerIsAllowed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
         using var customers = CreateClient(
             factory, SubjectId, TenantId, Modules.Customers.Application.CustomersPermissions.CustomerRead,
@@ -329,7 +328,7 @@ public sealed class TaxRateDeletionApiTests
     }
 
     private static async Task<int> CountTaxRateAsync(
-        PostgreSqlContainer database,
+        TestDatabase database,
         Guid taxRateId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -342,8 +341,8 @@ public sealed class TaxRateDeletionApiTests
             System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private static async Task InsertProductWithTaxRateAsync(
-        PostgreSqlContainer database,
+    private async Task InsertProductWithTaxRateAsync(
+        TestDatabase database,
         Guid taxRateId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -388,17 +387,6 @@ public sealed class TaxRateDeletionApiTests
         }
 
         return payloads;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

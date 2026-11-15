@@ -23,6 +23,10 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using Testcontainers.PostgreSql;
 
+// Las clases comparten un servidor de Postgres (ver StartServerAsync): este tope es el que dimensiona su
+// max_connections. Mismo valor que MessagingApiHarness.
+[assembly: CollectionBehavior(MaxParallelThreads = 16)]
+
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
@@ -128,15 +132,99 @@ internal static class QuotationsApiHarness
     public static DateOnly TodayInBogota() =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, BogotaTimeZone).DateTime);
 
-    public static async Task<PostgreSqlContainer> StartDatabaseAsync()
+    private const string TemplateDatabase = "qep_template_quotations";
+
+    // Un solo contenedor por ensamblado, con una plantilla ya migrada: cada prueba clona la plantilla
+    // (CREATE DATABASE … TEMPLATE) y su host sólo comprueba que no hay migraciones pendientes. Copia de
+    // AutomationsApiHarness/MessagingApiHarness: no hay un proyecto de pruebas compartido donde ponerlo.
+    private static readonly Lazy<Task<PostgreSqlContainer>> SharedServer = new(StartServerAsync);
+
+    // Postgres rechaza dos CREATE DATABASE simultáneos desde la misma plantilla: los clones van de a uno.
+    private static readonly SemaphoreSlim CloneGate = new(1, 1);
+
+    /// <summary>Una base limpia y migrada para esta prueba, clonada de la plantilla. Se borra en
+    /// <c>DisposeAsync</c>.</summary>
+    public static async Task<TestDatabase> StartDatabaseAsync()
     {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
+        var server = await SharedServer.Value;
+        var name = $"t_{Guid.CreateVersion7():N}";
+        await CloneGate.WaitAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            await ExecuteAdminAsync(server, $"CREATE DATABASE \"{name}\" TEMPLATE \"{TemplateDatabase}\"");
+        }
+        finally
+        {
+            CloneGate.Release();
+        }
+
+        return new TestDatabase(server, name);
+    }
+
+    /// <summary>Una base vacía, sin migrar, en el mismo servidor. Para las pruebas de migración, que suben
+    /// desde cero hasta una migración puntual (y bajan): un clon de la plantilla ya trae todo.</summary>
+    public static async Task<TestDatabase> StartEmptyDatabaseAsync()
+    {
+        var server = await SharedServer.Value;
+        var name = $"e_{Guid.CreateVersion7():N}";
+        await ExecuteAdminAsync(server, $"CREATE DATABASE \"{name}\"");
+        return new TestDatabase(server, name);
+    }
+
+    private static async Task<PostgreSqlContainer> StartServerAsync()
+    {
+        // Sin el token de una prueba: el servidor es de todas, y cancelar la primera no puede dejar a las
+        // demás sin base.
+        var server = new PostgreSqlBuilder("postgres:18-alpine")
             .WithDatabase("qep")
             .WithUsername("qep")
             .WithPassword("qep-integration")
+            // Las clases corren en paralelo (MaxParallelThreads, arriba), cada prueba con su host y sus pools
+            // de Npgsql por módulo, más los workers: el límite por defecto (100) se agota con 53300. Mismo
+            // margen que MessagingApiHarness. fsync, synchronous_commit y full_page_writes apagados: la base
+            // es desechable y lo que se mide es la lógica, no la durabilidad.
+            .WithCommand(
+                "-c", "max_connections=800",
+                "-c", "fsync=off",
+                "-c", "synchronous_commit=off",
+                "-c", "full_page_writes=off")
             .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
+        await server.StartAsync(CancellationToken.None);
+        await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
+
+        // El host migra al arrancar: arrancarlo una vez contra la plantilla la deja con todo.
+        using (var factory = new QepApiFactory(ConnectionStringFor(server, TemplateDatabase)))
+        using (factory.CreateClient())
+        {
+        }
+
+        // Una conexión viva a la plantilla haría fallar todos los clones.
+        NpgsqlConnection.ClearAllPools();
+        await ExecuteAdminAsync(server, $"ALTER DATABASE \"{TemplateDatabase}\" WITH ALLOW_CONNECTIONS false");
+        return server;
+    }
+
+    private static string ConnectionStringFor(PostgreSqlContainer server, string database) =>
+        new NpgsqlConnectionStringBuilder(server.GetConnectionString()) { Database = database }.ConnectionString;
+
+    private static async Task ExecuteAdminAsync(PostgreSqlContainer server, string sql)
+    {
+        await using var connection = new NpgsqlConnection(server.GetConnectionString());
+        await connection.OpenAsync(CancellationToken.None);
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    /// <summary>La base de una prueba en el servidor compartido.</summary>
+    public sealed class TestDatabase(PostgreSqlContainer server, string name) : IAsyncDisposable
+    {
+        public string GetConnectionString() => ConnectionStringFor(server, name);
+
+        public async ValueTask DisposeAsync()
+        {
+            NpgsqlConnection.ClearPool(new NpgsqlConnection(GetConnectionString()));
+            await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
+        }
     }
 
     public static HttpClient CreateClient(
@@ -1025,11 +1113,30 @@ internal static class QuotationsApiHarness
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
-        return await dbContext.Outbox
+        var messages = await dbContext.Outbox
             .AsNoTracking()
             .Where(message => message.EventName == eventName)
             .OrderBy(message => message.OccurredAt)
             .ToListAsync(TestContext.Current.CancellationToken);
+
+        // En el host compartido de una clase (SharedQuotationsHost) la base trae los eventos de las pruebas
+        // anteriores: se descartan los que ya estaban cuando esta prueba empezó, y quedan los mismos que vería
+        // con una base propia.
+        return factory is QepApiFactory { OutboxBaseline: { } baseline }
+            ? messages.Where(message => !baseline.Contains(message.Id)).ToList()
+            : messages;
+    }
+
+    /// <summary>Los ids del outbox que ya existen: el punto de partida de una prueba en el host compartido.</summary>
+    internal static async Task<HashSet<Guid>> OutboxIdsAsync(WebApplicationFactory<Program> factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return (await dbContext.Outbox
+            .AsNoTracking()
+            .Select(message => message.Id)
+            .ToListAsync(TestContext.Current.CancellationToken))
+            .ToHashSet();
     }
 
     // Los workers de Notifications sí corren en el host de pruebas: el correo sale solo, y se
@@ -1171,6 +1278,10 @@ internal static class QuotationsApiHarness
 
         /// <summary>Lo que el envío le entregó al sender, sin salir a Zenvia.</summary>
         public RecordingWhatsAppSender WhatsAppSender { get; } = new();
+
+        /// <summary>Sólo en el host compartido de una clase: los eventos del outbox que existían cuando empezó la
+        /// prueba en curso, que <see cref="OutboxMessagesAsync"/> descarta. <c>null</c> en un host propio.</summary>
+        internal IReadOnlySet<Guid>? OutboxBaseline { get; set; }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {

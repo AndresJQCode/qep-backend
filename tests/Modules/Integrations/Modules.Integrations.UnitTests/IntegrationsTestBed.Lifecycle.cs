@@ -17,8 +17,10 @@ internal sealed partial class IntegrationsTestBed
     public ResumeConnectionHandler ResumeHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, UnitOfWork, Audit, Events, Protector, Tester, Modules, Providers, AuthorNames, context ?? Context(), Clock);
 
+    public FakeConnectionBotOccupancy BotOccupancy { get; } = new();
+
     public DeleteConnectionHandler DeleteHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, UnitOfWork, Audit, Events, Modules, context ?? Context(), Clock);
+        new(Catalog, Repository, UnitOfWork, Audit, Events, BotOccupancy, Modules, context ?? Context(), Clock);
 }
 
 internal sealed record PublishedEvent(

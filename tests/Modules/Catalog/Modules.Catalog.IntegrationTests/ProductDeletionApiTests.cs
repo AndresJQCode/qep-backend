@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Modules.Storage.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -15,11 +15,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// él, en una sola transacción con su auditoría y el aviso de las fotos que quedan sin dueño. Lo que cruza a
 /// cotizaciones, pedidos y la caja se prueba en Quotations y Pos.
 /// </summary>
-public sealed class ProductDeletionApiTests
+public sealed class ProductDeletionApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000011";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000012";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ee";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000ed";
     private const string PublicBaseUrl = "https://cdn.qep.test";
     private const string ImagesReleased = "catalog.product.images-released.v1";
@@ -50,8 +50,7 @@ public sealed class ProductDeletionApiTests
     [Fact]
     public async Task DeleteWithoutIfMatchIs428()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
         var product = await CreatePlainAsync(client, "VS-001");
 
@@ -64,8 +63,7 @@ public sealed class ProductDeletionApiTests
     [Fact]
     public async Task DeleteWithAStaleVersionIs412()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
         var product = await CreatePlainAsync(client, "VS-001");
 
@@ -79,8 +77,7 @@ public sealed class ProductDeletionApiTests
     [Fact]
     public async Task DeleteOfAnUnknownProductOrOneOfAnotherTenantIs404()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
         var foreign = await CreatePlainAsync(other, "AJ-001", OtherTenantId);
@@ -96,8 +93,7 @@ public sealed class ProductDeletionApiTests
     [Fact]
     public async Task DeleteUnderAnotherTenantRouteIs403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
         var foreign = await CreatePlainAsync(other, "AJ-001", OtherTenantId);
@@ -111,8 +107,7 @@ public sealed class ProductDeletionApiTests
     [Fact]
     public async Task DeleteWithoutManagePermissionIs403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = CreateClient(factory, SubjectId, TenantId, All);
         using var reader = CreateClient(factory, SubjectId, TenantId, CatalogPermissions.ProductRead);
         var product = await CreatePlainAsync(manager, "VS-001");
@@ -126,8 +121,8 @@ public sealed class ProductDeletionApiTests
     [Fact]
     public async Task DeleteRemovesTheProductAndEverythingHangingFromIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
         var (product, _) = await CreateFullAsync(client, database);
         var variants = product.Variants.Select(variant => variant.Id).ToArray();
@@ -153,8 +148,7 @@ public sealed class ProductDeletionApiTests
     [Fact]
     public async Task DeleteAcceptsAWeakEtag()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
         var product = await CreatePlainAsync(client, "VS-001");
 
@@ -217,13 +211,13 @@ public sealed class ProductDeletionApiTests
 
     // ---- Helpers -------------------------------------------------------------------------
 
-    private static string ProductUrl(Guid productId, string tenantId = TenantId) =>
-        $"/api/v1/tenants/{tenantId}/catalog/products/{productId}";
+    private string ProductUrl(Guid productId, string? tenantId = null) =>
+        $"/api/v1/tenants/{tenantId ?? TenantId}/catalog/products/{productId}";
 
-    private static Task<HttpResponseMessage> DeleteAsync(
-        HttpClient client, Guid productId, string? ifMatch, string tenantId = TenantId)
+    private Task<HttpResponseMessage> DeleteAsync(
+        HttpClient client, Guid productId, string? ifMatch, string? tenantId = null)
     {
-        var request = new HttpRequestMessage(HttpMethod.Delete, ProductUrl(productId, tenantId));
+        var request = new HttpRequestMessage(HttpMethod.Delete, ProductUrl(productId, tenantId ?? TenantId));
         if (ifMatch is not null)
         {
             request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
@@ -232,8 +226,8 @@ public sealed class ProductDeletionApiTests
         return client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    private static Task<HttpResponseMessage> GetAsync(HttpClient client, Guid productId, string tenantId = TenantId) =>
-        client.GetAsync(ProductUrl(productId, tenantId), TestContext.Current.CancellationToken);
+    private Task<HttpResponseMessage> GetAsync(HttpClient client, Guid productId, string? tenantId = null) =>
+        client.GetAsync(ProductUrl(productId, tenantId ?? TenantId), TestContext.Current.CancellationToken);
 
     private static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status, string code)
     {
@@ -243,9 +237,9 @@ public sealed class ProductDeletionApiTests
         Assert.Equal(code, problem.RootElement.GetProperty("code").GetString());
     }
 
-    private static async Task<ProductResponse> CreatePlainAsync(HttpClient client, string code, string tenantId = TenantId) =>
+    private async Task<ProductResponse> CreatePlainAsync(HttpClient client, string code, string? tenantId = null) =>
         await ReadProductAsync(await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/catalog/products",
+            $"/api/v1/tenants/{tenantId ?? TenantId}/catalog/products",
             ProductBodies.Create("Vela de soja", code),
             TestContext.Current.CancellationToken));
 
@@ -254,8 +248,8 @@ public sealed class ProductDeletionApiTests
     /// de precio por <c>PUT</c>, para que cada tabla que cuelga del producto tenga filas. Devuelve el producto leído
     /// después del <c>PUT</c> y las dos fotos.
     /// </summary>
-    private static async Task<(ProductResponse Product, Guid[] Photos)> CreateFullAsync(
-        HttpClient client, PostgreSqlContainer database)
+    private async Task<(ProductResponse Product, Guid[] Photos)> CreateFullAsync(
+        HttpClient client, TestDatabase database)
     {
         var option = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/options",
@@ -308,7 +302,7 @@ public sealed class ProductDeletionApiTests
     }
 
     private static async Task<long> CountAsync(
-        PostgreSqlContainer database, string table, string filter, Guid productId, Guid[] variantIds)
+        TestDatabase database, string table, string filter, Guid productId, Guid[] variantIds)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -318,7 +312,7 @@ public sealed class ProductDeletionApiTests
         return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
-    private static async Task<IReadOnlyList<string>> ReadEventPayloadsAsync(PostgreSqlContainer database, string eventName)
+    private static async Task<IReadOnlyList<string>> ReadEventPayloadsAsync(TestDatabase database, string eventName)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -350,7 +344,7 @@ public sealed class ProductDeletionApiTests
 
     // El estado Available se fuerza por SQL: completar la subida exige R2 y el escáner, que no existen en una prueba
     // (ver ProductImageApiTests.UploadFileAsync).
-    private static async Task<Guid> UploadImageAsync(HttpClient client, PostgreSqlContainer database, string name)
+    private async Task<Guid> UploadImageAsync(HttpClient client, TestDatabase database, string name)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/files",
@@ -370,17 +364,6 @@ public sealed class ProductDeletionApiTests
         command.Parameters.AddWithValue("id", fileId);
         Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
         return fileId;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

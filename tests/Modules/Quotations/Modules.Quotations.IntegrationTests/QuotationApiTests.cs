@@ -8,7 +8,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
 
-public sealed class QuotationApiTests
+public sealed class QuotationApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     // Con el reloj en el 31 de diciembre a las 23:00 de Bogotá (2027 en UTC): el consecutivo es del
     // año del tenant y la vigencia por defecto cuenta quince días desde su hoy (spec 2026-09-17,
@@ -80,8 +80,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task CreateShowsTheCustomerAddressAndKeepsThePrincipalFirstInTheAddressBook()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (home, elsewhere) = await EnsureCityIdsInTwoDepartmentsAsync(client);
@@ -106,8 +105,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task BillingPartyPersonTypeAndIdentificationTypeRoundTrip()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -136,8 +134,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task JuridicaBillingWithCcIsA422()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -207,8 +204,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task TheClientBlockCarriesCountryPersonTypeAndIdentificationType()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId, personType: "Juridica");
@@ -242,8 +238,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task AddingAnItemForAVatSurplusCustomerLeavesTheHeaderTaxAtZero()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId, vatSurplus: true);
@@ -276,8 +271,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task AddingAnItemForAWithRetentionCustomerComputesRetentionAndNetTotal()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
@@ -312,8 +306,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task CreateForAnUnknownClientIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -329,8 +322,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task CreateForAnInactiveClientIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -349,8 +341,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task CreateForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
@@ -369,8 +360,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task CreateWithoutTheManagePermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, readOnly) = await RegisterTenantAsync(
             factory, QuotationsPermissions.QuotationRead);
         using var _ = readOnly;
@@ -386,8 +376,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task GetReturnsTheCreatedQuotation()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -410,8 +399,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task GetDoesNotRefreshRetentionOrVatSurplusForAVoidedQuotation()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var identificationNumber = "900.111.222-4";
@@ -441,8 +429,7 @@ public sealed class QuotationApiTests
     [Fact]
     public async Task GetUnknownQuotationReturnsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
