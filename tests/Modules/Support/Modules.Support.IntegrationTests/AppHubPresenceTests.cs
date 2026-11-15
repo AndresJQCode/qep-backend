@@ -94,14 +94,18 @@ public sealed class AppHubPresenceTests(SupportHostWithoutWorkers host) : IClass
         await bruno.Connection.InvokeAsync("Subscribe", room.Topic, Ct);
         await ana.Connection.InvokeAsync("SetPresence", room.Topic, "composing", Ct);
         await anaSecondTab.InvokeAsync("SetPresence", room.Topic, "composing", Ct);
-        await bruno.Received.WaitForPresenceAsync(payload => Members(payload).Count == 1);
-        bruno.Received.Clear();
+        // One announcement per SetPresence: once both reached Bruno nothing from before the stop is still in flight.
+        await bruno.Received.WaitForPresenceAsync(payload => Members(payload).Count == 1, times: 2);
+        var mark = bruno.Received.Count;
 
         await ana.Connection.StopAsync(Ct);
 
-        // The disconnect announces again, and Ana is still there through her second tab.
-        var after = await bruno.Received.WaitForPresenceAsync(_ => true);
+        // The disconnect announces again (an entry after the mark), and Ana is still there through her second tab.
+        var after = await bruno.Received.WaitForPresenceAfterAsync(mark);
         Assert.Equal(ana.MemberId, Assert.Single(Members(after)).GetProperty("memberId").GetGuid());
+        await Task.Delay(TimeSpan.FromSeconds(1), Ct);
+        Assert.All(bruno.Received.PresenceAfter(mark), payload =>
+            Assert.Equal(ana.MemberId, Assert.Single(Members(payload)).GetProperty("memberId").GetGuid()));
         Assert.DoesNotContain(secondTabReceived.Entries, entry => entry.Event == "presenceChanged" && Members(entry.Payload).Count > 0);
     }
 

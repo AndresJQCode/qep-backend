@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Bootstrapper.Startup;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
@@ -12,6 +13,10 @@ namespace Bootstrapper.Realtime;
 /// resolved like the startup lock (<see cref="StartupLockConnectionString"/>): <c>LISTEN</c> does not survive PgBouncer in
 /// <c>transaction</c> mode and fails silently. It does not share Messaging's listener connection, whose internals Bootstrapper must
 /// not open; two <c>LISTEN</c> per pod until Messaging moves to this hub. It reconnects with backoff and never brings the host down.
+///
+/// Notices are delivered in the order Postgres sent them: the notification callback only queues the envelope, and a single consumer
+/// dispatches one at a time. <c>presenceChanged</c> carries the full state, so two of them delivered out of order (composing, then
+/// none, arriving reversed) would leave a phantom until the next change.
 /// </summary>
 internal sealed partial class RealtimeEventsListener(
     IConfiguration configuration,
@@ -22,6 +27,11 @@ internal sealed partial class RealtimeEventsListener(
     [
         TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30),
     ];
+
+    // Unbounded on purpose: the callback runs inside WaitAsync and must never block or drop; notices are small and the consumer only
+    // hands them to SignalR.
+    private readonly Channel<RealtimeEnvelope> _pending = Channel.CreateUnbounded<RealtimeEnvelope>(
+        new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Realtime events listener is listening on channel {Channel} using connection string key {ConnectionStringKey}.")]
     private static partial void LogListening(ILogger logger, string channel, string connectionStringKey);
@@ -37,6 +47,20 @@ internal sealed partial class RealtimeEventsListener(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var consumer = Task.Run(() => ConsumeAsync(stoppingToken), CancellationToken.None);
+        try
+        {
+            await ListenWithBackoffAsync(stoppingToken);
+        }
+        finally
+        {
+            _pending.Writer.TryComplete();
+            await consumer;
+        }
+    }
+
+    private async Task ListenWithBackoffAsync(CancellationToken stoppingToken)
+    {
         var (connectionString, keyName) = StartupLockConnectionString.Resolve(configuration);
         var attempt = 0;
         while (!stoppingToken.IsCancellationRequested)
@@ -44,8 +68,9 @@ internal sealed partial class RealtimeEventsListener(
             try
             {
                 await Task.Yield();
-                await ListenAsync(connectionString, keyName, stoppingToken);
-                attempt = 0;
+                // ListenAsync only returns on cancellation, so the backoff resets as soon as LISTEN succeeds: a connection that
+                // dropped after hours listening starts again from the shortest delay, not from where the last outage left it.
+                await ListenAsync(connectionString, keyName, () => attempt = 0, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -68,7 +93,7 @@ internal sealed partial class RealtimeEventsListener(
         }
     }
 
-    private async Task ListenAsync(string connectionString, string keyName, CancellationToken stoppingToken)
+    private async Task ListenAsync(string connectionString, string keyName, Action onListening, CancellationToken stoppingToken)
     {
         // Own connection, no pool: a connection in LISTEN cannot go back to the pool, and Npgsql requires nobody else to use it
         // while WaitAsync waits.
@@ -82,6 +107,7 @@ internal sealed partial class RealtimeEventsListener(
             await listen.ExecuteNonQueryAsync(stoppingToken);
         }
 
+        onListening();
         LogListening(logger, RealtimeEventJson.Channel, keyName);
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -99,7 +125,23 @@ internal sealed partial class RealtimeEventsListener(
         }
 
         // Off the connection's thread: Notification runs inside WaitAsync, and a slow SignalR send must not hold the next notices.
-        _ = Task.Run(() => DispatchAsync(envelope));
+        // Queued rather than Task.Run: the single consumer keeps the order Postgres delivered.
+        _pending.Writer.TryWrite(envelope);
+    }
+
+    private async Task ConsumeAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await foreach (var envelope in _pending.Reader.ReadAllAsync(stoppingToken))
+            {
+                await DispatchAsync(envelope);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Shutting down: whatever is still queued is for connections that are closing too.
+        }
     }
 
     private async Task DispatchAsync(RealtimeEnvelope envelope)

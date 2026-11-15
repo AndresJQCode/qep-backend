@@ -62,7 +62,8 @@ internal static class AppHubHarness
 
     /// <summary>
     /// The listener may not be in <c>LISTEN</c> yet right after the host starts: a probe published until it arrives confirms the whole
-    /// path (publisher, NOTIFY, listener, group) before the test asserts anything that depends on it.
+    /// path (publisher, NOTIFY, listener, group) before the test asserts anything that depends on it. Earlier copies of the probe can
+    /// still be in flight when this returns, so a test asserts on the ticket it publishes afterwards, never on an empty list.
     /// </summary>
     public static async Task WaitUntilDeliveredAsync(QepApiFactory factory, Guid tenantId, string topic, Received received)
     {
@@ -131,14 +132,26 @@ internal static class AppHubHarness
             throw new TimeoutException($"supportTicketChanged for {ticketId} never arrived.");
         }
 
+        /// <summary>How many entries arrived so far: a mark to read only what arrives after it (<see cref="PresenceAfter"/>).</summary>
+        public int Count => _entries.Count;
+
+        /// <summary>The <c>presenceChanged</c> payloads received after <paramref name="mark"/> (a <see cref="Count"/> taken
+        /// earlier), in arrival order.</summary>
+        public IReadOnlyList<JsonElement> PresenceAfter(int mark) =>
+            [.. Entries.Skip(mark).Where(entry => entry.Event == "presenceChanged").Select(entry => entry.Payload)];
+
         /// <summary>The last <c>presenceChanged</c> received that matches <paramref name="match"/>, waiting up to 10 s.</summary>
-        public async Task<JsonElement> WaitForPresenceAsync(Func<JsonElement, bool> match)
+        public Task<JsonElement> WaitForPresenceAsync(Func<JsonElement, bool> match) => WaitForPresenceAsync(match, times: 1);
+
+        /// <summary>Waits until <paramref name="times"/> <c>presenceChanged</c> matching <paramref name="match"/> arrived (up to
+        /// 10 s) and returns the last one; with one entry per announcement it drains what earlier actions still had in flight.</summary>
+        public async Task<JsonElement> WaitForPresenceAsync(Func<JsonElement, bool> match, int times)
         {
             var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
             while (DateTimeOffset.UtcNow < deadline)
             {
                 var found = _entries.Where(entry => entry.Event == "presenceChanged" && match(entry.Payload)).ToList();
-                if (found.Count > 0)
+                if (found.Count >= times)
                 {
                     return found[^1].Payload;
                 }
@@ -147,6 +160,24 @@ internal static class AppHubHarness
             }
 
             throw new TimeoutException("The expected presenceChanged never arrived.");
+        }
+
+        /// <summary>The first <c>presenceChanged</c> received after <paramref name="mark"/>, waiting up to 10 s.</summary>
+        public async Task<JsonElement> WaitForPresenceAfterAsync(int mark)
+        {
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var after = PresenceAfter(mark);
+                if (after.Count > 0)
+                {
+                    return after[0];
+                }
+
+                await Task.Delay(50, Ct);
+            }
+
+            throw new TimeoutException("No presenceChanged arrived after the mark.");
         }
     }
 }

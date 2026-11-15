@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using BuildingBlocks.Application.Realtime;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 using Modules.Tenancy.Application;
 
 namespace Bootstrapper.Realtime;
@@ -15,7 +16,7 @@ namespace Bootstrapper.Realtime;
 /// clears only that connection's entry, so another tab of the same member keeps it present. Every change is published through
 /// <see cref="IRealtimePublisher"/> so every pod delivers it to its own subscribers.
 /// </summary>
-internal sealed class AppHub : Hub
+internal sealed partial class AppHub : Hub
 {
     // Same claim names as MessagingHub: `qep_sub` from the session cookie, `sub` from the development stub.
     private const string QepSubjectClaim = "qep_sub";
@@ -32,6 +33,7 @@ internal sealed class AppHub : Hub
     private readonly IRealtimePresence _presence;
     private readonly IRealtimeMemberNames _names;
     private readonly IRealtimePublisher _publisher;
+    private readonly ILogger<AppHub> _logger;
 
     public AppHub(
         IMembershipDirectory memberships,
@@ -40,7 +42,8 @@ internal sealed class AppHub : Hub
         AppHubDispatcher dispatcher,
         IRealtimePresence presence,
         IRealtimeMemberNames names,
-        IRealtimePublisher publisher)
+        IRealtimePublisher publisher,
+        ILogger<AppHub> logger)
     {
         _memberships = memberships;
         _authorizers = authorizers;
@@ -49,7 +52,11 @@ internal sealed class AppHub : Hub
         _presence = presence;
         _names = names;
         _publisher = publisher;
+        _logger = logger;
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Clearing the presence of a closed connection on topic {Topic} failed.")]
+    private static partial void LogDisconnectCleanupFailed(ILogger logger, string topic, Exception exception);
 
     public override async Task OnConnectedAsync()
     {
@@ -74,19 +81,50 @@ internal sealed class AppHub : Hub
         await base.OnConnectedAsync();
     }
 
-    /// <summary>Spec §5.3: a closed tab clears its own entries, on every topic it had, and the others see it at once.</summary>
+    /// <summary>
+    /// Spec §5.3: a closed tab clears its own entries, on every topic it had, and the others see it at once. Every entry is cleared
+    /// before any announcement, and each announcement fails on its own: one topic whose names or publish fail must not leave the
+    /// connection's entries on the other topics alive for 45 s, nor skip the base cleanup.
+    /// </summary>
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        var topics = _connections.Remove(Context.ConnectionId);
-        if (TryIdentity(out var tenantId, out var memberId))
+        try
         {
-            foreach (var topic in topics.Where(RealtimePresence.Applies))
+            var topics = _connections.Remove(Context.ConnectionId);
+            if (TryIdentity(out var tenantId, out var memberId))
             {
-                await ClearAndAnnounceAsync(tenantId, memberId, topic);
+                var cleared = new List<(string Topic, IReadOnlyList<Guid> Present)>();
+                foreach (var topic in topics.Where(RealtimePresence.Applies))
+                {
+                    try
+                    {
+                        // On disconnect ConnectionAborted is already cancelled: the cleanup must still run to the end.
+                        var present = await _presence.ClearAsync(tenantId, topic, memberId, Context.ConnectionId, CancellationToken.None);
+                        cleared.Add((topic, present));
+                    }
+                    catch (Exception failure)
+                    {
+                        LogDisconnectCleanupFailed(_logger, topic, failure);
+                    }
+                }
+
+                foreach (var (topic, present) in cleared)
+                {
+                    try
+                    {
+                        await AnnounceAsync(tenantId, topic, present, CancellationToken.None);
+                    }
+                    catch (Exception failure)
+                    {
+                        LogDisconnectCleanupFailed(_logger, topic, failure);
+                    }
+                }
             }
         }
-
-        await base.OnDisconnectedAsync(exception);
+        finally
+        {
+            await base.OnDisconnectedAsync(exception);
+        }
     }
 
     /// <summary>Joins the topic's group; repeating it changes nothing. Refused with a <see cref="HubException"/> whose message is the
@@ -156,7 +194,7 @@ internal sealed class AppHub : Hub
         await AnnounceAsync(tenantId, topic, present, Context.ConnectionAborted);
     }
 
-    // On disconnect ConnectionAborted is already cancelled: the cleanup must still run to the end.
+    // Unsubscribe: a tab closing mid-call cancels ConnectionAborted, and the cleanup must still run to the end.
     private async Task ClearAndAnnounceAsync(Guid tenantId, Guid memberId, string topic)
     {
         var present = await _presence.ClearAsync(tenantId, topic, memberId, Context.ConnectionId, CancellationToken.None);

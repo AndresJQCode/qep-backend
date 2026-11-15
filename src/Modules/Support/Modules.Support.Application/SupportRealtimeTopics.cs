@@ -12,12 +12,20 @@ public static class SupportRealtimeTopics
 
     public static string Ticket(Guid ticketId) => $"{TicketPrefix}{ticketId:D}";
 
-    /// <summary>Exact form only (a <c>D</c>-format Guid): anything else is not a ticket topic, so the hub refuses it.</summary>
+    /// <summary>Exact form only: the topic must be what <see cref="Ticket"/> writes, byte for byte. A <c>D</c>-format Guid in
+    /// uppercase parses, but it would name another SignalR group and another presence key for the same ticket, splitting the room;
+    /// so anything that does not round-trip is not a ticket topic, and the hub refuses it.</summary>
     public static bool TryParseTicket(string topic, out Guid ticketId)
     {
+        if (topic.StartsWith(TicketPrefix, StringComparison.Ordinal)
+            && Guid.TryParseExact(topic.AsSpan(TicketPrefix.Length), "D", out ticketId)
+            && string.Equals(Ticket(ticketId), topic, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         ticketId = Guid.Empty;
-        return topic.StartsWith(TicketPrefix, StringComparison.Ordinal)
-            && Guid.TryParseExact(topic.AsSpan(TicketPrefix.Length), "D", out ticketId);
+        return false;
     }
 }
 

@@ -92,6 +92,21 @@ public sealed class AppHubSupportTests(SupportHostWithoutWorkers host) : IClassF
     }
 
     [Fact]
+    public async Task AnUppercaseTicketTopicIsForbidden()
+    {
+        var (tenant, _, connection, _) = await ConnectMemberAsync(host.Factory);
+        await using var _ = connection;
+        var own = await SupportTicketSeed.SaveAnonymousTicketAsync(host.Factory, Guid.Parse(tenant));
+        var upper = "support:ticket:" + own.Id.Value.ToString("D").ToUpperInvariant();
+
+        var error = await Assert.ThrowsAsync<HubException>(() => connection.InvokeAsync("Subscribe", upper, Ct));
+
+        // Same ticket, other casing: it would be another group and another presence room, so only the exact form is a topic.
+        Assert.Contains(SupportErrorCodes.RealtimeTopicForbidden, error.Message, StringComparison.Ordinal);
+        await connection.InvokeAsync("Subscribe", SupportRealtimeTopics.Ticket(own.Id.Value), Ct);
+    }
+
+    [Fact]
     public async Task WithTheSupportModuleOffNobodySubscribes()
     {
         var tenant = NewTenantId();
@@ -115,14 +130,14 @@ public sealed class AppHubSupportTests(SupportHostWithoutWorkers host) : IClassF
         await theirs.InvokeAsync("Subscribe", SupportRealtimeTopics.Inbox, Ct);
         await WaitUntilDeliveredAsync(host.Factory, Guid.Parse(mineTenant), SupportRealtimeTopics.Inbox, mineReceived);
         await WaitUntilDeliveredAsync(host.Factory, Guid.Parse(theirsTenant), SupportRealtimeTopics.Inbox, theirsReceived);
-        theirsReceived.Clear();
         var ticket = Guid.CreateVersion7();
 
         await PublishTicketChangedAsync(host.Factory, Guid.Parse(mineTenant), SupportRealtimeTopics.Inbox, ticket);
 
         await mineReceived.WaitForTicketAsync(ticket);
         await Task.Delay(TimeSpan.FromSeconds(2), Ct);
-        Assert.Empty(theirsReceived.Entries);
+        // Only the published ticket counts: late probes of the other tenant's own warm-up can still arrive.
+        Assert.False(theirsReceived.HasTicket(ticket));
     }
 
     [Fact]
@@ -134,12 +149,12 @@ public sealed class AppHubSupportTests(SupportHostWithoutWorkers host) : IClassF
         await WaitUntilDeliveredAsync(host.Factory, Guid.Parse(tenant), SupportRealtimeTopics.Inbox, received);
 
         await connection.InvokeAsync("Unsubscribe", SupportRealtimeTopics.Inbox, Ct);
-        received.Clear();
         var ticket = Guid.CreateVersion7();
         await PublishTicketChangedAsync(host.Factory, Guid.Parse(tenant), SupportRealtimeTopics.Inbox, ticket);
 
         await Task.Delay(TimeSpan.FromSeconds(2), Ct);
-        Assert.Empty(received.Entries);
+        // Only the published ticket counts: a probe still in flight from the warm-up may land after the unsubscribe.
+        Assert.False(received.HasTicket(ticket));
         // Unsubscribing never fails, not even from a topic the connection does not have.
         await connection.InvokeAsync("Unsubscribe", "nadie:sabe", Ct);
     }
