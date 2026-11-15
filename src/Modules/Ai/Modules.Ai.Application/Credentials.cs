@@ -11,8 +11,8 @@ public sealed record AiCredential(Guid ConnectionId, string ApiKey)
     public override string ToString() => $"AiCredential {{ ConnectionId = {ConnectionId} }}";
 }
 
-/// <summary>Por qué un proveedor no se puede usar. <see cref="NotConfigured"/> también cubre un proveedor que Integrations todavía no
-/// ofrece (OpenAI hasta la Tarea 6) o que no es visible: para el agente es lo mismo, no hay clave.</summary>
+/// <summary>Por qué un proveedor no se puede usar. <see cref="NotConfigured"/> también cubre un proveedor que Integrations no ofrece o
+/// que no es visible: para el agente es lo mismo, no hay clave.</summary>
 public enum AiCredentialUnavailableReason
 {
     NotConfigured,
@@ -30,8 +30,7 @@ public sealed record AiCredentialResolution(AiCredential? Credential, AiCredenti
     public static AiCredentialResolution Unusable(AiCredentialUnavailableReason reason) => new(null, reason);
 }
 
-/// <param name="Connectable">Si Integrations ofrece hoy ese proveedor: <c>false</c> en OpenAI hasta su adaptador (plan 2026-11-12,
-/// Tarea 6).</param>
+/// <param name="Connectable">Si Integrations ofrece hoy ese proveedor (los dos desde la Tarea 6 del plan 2026-11-12).</param>
 /// <param name="Status">El estado de la conexión (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>) o <c>null</c> sin conexión.</param>
 public sealed record AiProviderConnectionState(AiProvider Provider, bool Connectable, Guid? ConnectionId, string? Status);
 

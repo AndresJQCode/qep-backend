@@ -13,6 +13,10 @@ public sealed class AiOptions
     /// <summary>C-7: los niveles de esfuerzo que acepta la API de Anthropic. Se escriben en minúscula, como viajan.</summary>
     private static readonly string[] AnthropicEfforts = ["low", "medium", "high", "xhigh", "max"];
 
+    /// <summary>Spec 2026-10-29 §9.1, O-6: los niveles de <c>reasoning.effort</c> de la Responses API. Cuáles acepta cada modelo lo dice
+    /// OpenAI; uno no soportado responde 400 (<c>InvalidRequest</c>).</summary>
+    private static readonly string[] OpenAiEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
     /// <summary>spec 2026-10-29 §4.2: <c>ai.agent_versions.model</c> es <c>varchar(64)</c>.</summary>
     private const int ModelIdMaxLength = 64;
 
@@ -101,11 +105,15 @@ public sealed class AiOptions
                 failures.Add($"{at}:Label is required.");
             }
 
-            // C-7: con Claude el esfuerzo va siempre explícito (Opus 5.5 rechaza apagar el pensamiento; el esfuerzo es la palanca). El
-            // de OpenAI lo fija P-1, en la Tarea 6.
+            // C-7: con Claude el esfuerzo va siempre explícito (Opus 5.5 rechaza apagar el pensamiento; el esfuerzo es la palanca). O-6:
+            // con OpenAI es opcional (sin él, el default del modelo), pero si viene tiene que ser un nivel de la API.
             if (key == AiProviders.Anthropic.Value && !AnthropicEfforts.Contains(model.Effort, StringComparer.Ordinal))
             {
                 failures.Add($"{at}:Effort must be one of: {string.Join(", ", AnthropicEfforts)}.");
+            }
+            else if (key == AiProviders.OpenAi.Value && model.Effort is not null && !OpenAiEfforts.Contains(model.Effort, StringComparer.Ordinal))
+            {
+                failures.Add($"{at}:Effort must be empty or one of: {string.Join(", ", OpenAiEfforts)}.");
             }
         }
     }

@@ -103,35 +103,4 @@ public sealed class AnthropicNoLeakTests
 
     // El mensaje de una prueba roja tampoco imprime el centinela entero.
     private static string Mask(string value) => value.Length <= 6 ? "***" : $"{value[..4]}***";
-
-    private sealed class CapturingLoggerProvider : ILoggerProvider
-    {
-        public ConcurrentQueue<string> Lines { get; } = new();
-
-        public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, Lines);
-
-        public void Dispose()
-        {
-        }
-
-        private sealed class CapturingLogger(string category, ConcurrentQueue<string> lines) : ILogger
-        {
-            public IDisposable? BeginScope<TState>(TState state)
-                where TState : notnull
-            {
-                lines.Enqueue($"{category} scope {state}");
-                return null;
-            }
-
-            public bool IsEnabled(LogLevel logLevel) => true;
-
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            {
-                var values = state is IEnumerable<KeyValuePair<string, object?>> pairs
-                    ? string.Join(" ", pairs.Select(pair => $"{pair.Key}={pair.Value}"))
-                    : string.Empty;
-                lines.Enqueue($"{category} {formatter(state, exception)} {values} {exception}");
-            }
-        }
-    }
 }

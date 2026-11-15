@@ -71,7 +71,8 @@ public sealed class AiLayerTests
         }
     }
 
-    // Plan 2026-11-12: el SDK de Anthropic (y el de OpenAI que elija P-1) sólo en Infrastructure.
+    // Plan 2026-11-12: el SDK de Anthropic sólo en Infrastructure. OpenAI va con HttpClient (spec §9.1, O-2); si algún día entra su SDK,
+    // también queda ahí.
     [Theory]
     [InlineData("Anthropic")]
     [InlineData("OpenAI")]

@@ -26,8 +26,11 @@ public sealed class AiModelsApiTests
         Assert.Equal(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"], anthropic.Models.Select(model => model.Id));
         Assert.Equal("claude-opus-5-5", Assert.Single(anthropic.Models, model => model.IsDefault).Id);
         Assert.All(anthropic.Models, model => Assert.True(model.Available));
-        // Tarea 6: hasta que exista el adaptador de OpenAI, sus modelos se listan sin poder elegirse.
-        Assert.All(catalog.Providers[1].Models, model => Assert.False(model.Available));
+        // Tarea 6: con su adaptador, los modelos de OpenAI (D-4a) se pueden elegir.
+        var openAi = catalog.Providers[1];
+        Assert.Equal(["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"], openAi.Models.Select(model => model.Id));
+        Assert.Equal("gpt-6-luna", Assert.Single(openAi.Models, model => model.IsDefault).Id);
+        Assert.All(openAi.Models, model => Assert.True(model.Available));
     }
 
     // El esfuerzo es de la llamada al proveedor, no de la pantalla.

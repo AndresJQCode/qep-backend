@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Ai.Application;
 using Modules.Ai.Infrastructure.Model.Anthropic;
+using Modules.Ai.Infrastructure.Model.OpenAi;
 using static Modules.Ai.IntegrationTests.AiApiHarness;
 
 namespace Modules.Ai.IntegrationTests;
@@ -100,7 +101,10 @@ public sealed class AgentPlaygroundApiTests
     internal static void UseFakeAnthropic(IServiceCollection services, HttpMessageHandler handler) =>
         services.AddHttpClient(ClaudeModelClient.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => handler);
 
-    internal static async Task<Guid> DraftAgentAsync(HttpClient client)
+    internal static void UseFakeOpenAi(IServiceCollection services, HttpMessageHandler handler) =>
+        services.AddHttpClient(OpenAiModelClient.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => handler);
+
+    internal static async Task<Guid> DraftAgentAsync(HttpClient client, string provider = "anthropic", string model = "claude-sonnet-5-5")
     {
         var created = await SendAsync(client, HttpMethod.Post, Agents, new { name = "Asesor virtual", source = new { kind = "blank" } });
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
@@ -120,7 +124,7 @@ public sealed class AgentPlaygroundApiTests
                 tools = new { catalog = true, orderStatus = false, quotationDraft = false },
                 handoff = new { destination = "unassigned", memberId = (Guid?)null, message = (string?)null, maxRepliesWithoutHuman = 20, maxConsecutiveFailures = 2 },
                 trigger = "NewConversation",
-                model = new { provider = "anthropic", id = "claude-sonnet-5-5" },
+                model = new { provider, id = model },
             },
             ifMatch: 1);
         Assert.Equal(HttpStatusCode.OK, draft.StatusCode);

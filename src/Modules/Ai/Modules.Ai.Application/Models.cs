@@ -19,7 +19,7 @@ public interface IAiModelCatalog
 
 public sealed record AiProviderModels(AiProvider Provider, IReadOnlyList<AiModelDefinition> Models);
 
-/// <param name="Effort">C-7: el esfuerzo que se manda al proveedor. Con Anthropic siempre viene; con OpenAI lo decide P-1.</param>
+/// <param name="Effort">C-7: el esfuerzo que se manda al proveedor. Con Anthropic siempre viene; con OpenAI es opcional (spec §9.1, O-6).</param>
 public sealed record AiModelDefinition(string Id, string Label, string Description, bool IsDefault, bool Available, string? Effort);
 
 public sealed record ListAiModelsQuery(Guid TenantId) : IQuery<AiModelCatalogDto>;
@@ -35,8 +35,7 @@ public sealed record AiModelCatalogDto(string DefaultProvider, IReadOnlyList<AiP
 
 public sealed record AiProviderModelsDto(string Provider, IReadOnlyList<AiModelDto> Models);
 
-/// <param name="Available"><c>false</c>: se muestra pero no se puede elegir para publicar (un modelo retirado, o todo OpenAI hasta que
-/// exista su adaptador).</param>
+/// <param name="Available"><c>false</c>: se muestra pero no se puede elegir para publicar (un modelo retirado).</param>
 public sealed record AiModelDto(string Id, string Label, string Description, bool IsDefault, bool Available);
 
 public sealed class ListAiModelsHandler(IExecutionContext executionContext, ITenantModules tenantModules, IAiModelCatalog catalog)

@@ -6,6 +6,7 @@ using Modules.Ai.Application;
 using Modules.Ai.Domain;
 using Modules.Ai.Infrastructure.Model;
 using Modules.Ai.Infrastructure.Model.Anthropic;
+using Modules.Ai.Infrastructure.Model.OpenAi;
 using Modules.Ai.Infrastructure.Options;
 using Modules.Ai.Infrastructure.Persistence;
 
@@ -42,7 +43,11 @@ public static class AiInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
             .RemoveAllLoggers();
         services.AddKeyedScoped<IAiModelClient, ClaudeModelClient>(AiProviders.Anthropic.Value);
-        services.AddKeyedScoped<IAiModelClient, PendingProviderModelClient>(AiProviders.OpenAi.Value);
+        // Spec 2026-10-29 §9.1, O-2: lo mismo para OpenAI, que va con HttpClient directo; el timeout lo pone el adaptador por llamada.
+        services.AddHttpClient(OpenAiModelClient.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .RemoveAllLoggers();
+        services.AddKeyedScoped<IAiModelClient, OpenAiModelClient>(AiProviders.OpenAi.Value);
         services.AddSingleton<IValidateOptions<AiModelClientRegistrationOptions>, AiModelClientRegistrationValidator>();
         services.AddOptions<AiModelClientRegistrationOptions>().ValidateOnStart();
 

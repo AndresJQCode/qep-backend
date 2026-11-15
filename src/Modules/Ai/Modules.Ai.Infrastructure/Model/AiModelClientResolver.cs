@@ -41,12 +41,3 @@ internal sealed class AiModelClientRegistrationValidator(IServiceProviderIsKeyed
     }
 }
 
-/// <summary>
-/// El adaptador de un proveedor que todavía no tiene el suyo (OpenAI hasta la Tarea 6, P-1). Nunca llama a nadie: responde que el modelo no
-/// está disponible. No debería llegar a usarse: sus modelos están con <c>available: false</c> y publicar un agente con ellos ya falla.
-/// </summary>
-internal sealed class PendingProviderModelClient : IAiModelClient
-{
-    public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken) =>
-        throw new AiModelUnavailableException();
-}
