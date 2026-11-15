@@ -19,8 +19,43 @@ public static class SupportEndpoints
         MapTickets(group);
         MapTicketTypes(group);
         MapSettings(group);
+        MapConversations(group);
 
         return endpoints;
+    }
+
+    // Fase 2 (Mensajería): lo que parte de una conversación. La conversación de otro tenant es 404, como un ticket ajeno.
+    private static void MapConversations(RouteGroupBuilder group)
+    {
+        group.MapGet("/conversations/{conversationId:guid}/tickets", ListConversationTicketsAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportConversationTicketsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/conversations/{conversationId:guid}/tickets", CreateTicketFromConversationAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Accepts<CreateTicketFromConversationRequest>("application/json")
+            .Produces<SupportTicketDetailDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
+
+    private static async Task<IResult> ListConversationTicketsAsync(
+        Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListConversationTicketsQuery(tenantId, conversationId), cancellationToken));
+
+    private static async Task<IResult> CreateTicketFromConversationAsync(
+        Guid tenantId,
+        Guid conversationId,
+        CreateTicketFromConversationRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var ticket = await dispatcher.SendAsync(
+            CreateTicketFromConversationCommand.From(tenantId, conversationId, request), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticket.Id}", ticket);
     }
 
     private static void MapTickets(RouteGroupBuilder group)

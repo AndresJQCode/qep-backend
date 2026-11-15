@@ -12,4 +12,7 @@ internal static class SupportNotFound
 
     public static ResourceNotFoundException TicketType(Guid typeId) =>
         new(SupportErrorCodes.TicketTypeNotFound, $"Support ticket type '{typeId}' was not found.");
+
+    public static ResourceNotFoundException Conversation(Guid conversationId) =>
+        new(SupportErrorCodes.ConversationNotFound, $"Conversation '{conversationId}' was not found.");
 }

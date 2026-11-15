@@ -68,7 +68,45 @@ public sealed record SupportTicketDetailDto(
     int ResolutionCount,
     DateTimeOffset ReceivedAt,
     IReadOnlyList<SupportTicketEventDto> Events,
-    long Version);
+    long Version,
+    Guid? ConversationId,
+    string? ConversationChannel,
+    bool FollowsThread,
+    DateTimeOffset? FollowOffAt,
+    int UnclassifiedCount,
+    IReadOnlyList<SupportReplyDto> Replies);
+
+// Fase 2 (Mensajería): el detalle suma la conversación del ticket. FollowOffAt dibuja la franja «Este ticket no sigue el hilo desde …»
+// sin que la pantalla lea la traza; UnclassifiedCount es el aviso «hay mensajes sin clasificar» de esa conversación; Replies trae las
+// respuestas con su estado, porque una fallida se muestra igual que en el hilo.
+
+/// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>;
+/// <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
+/// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló.</summary>
+public sealed record SupportReplyDto(
+    Guid Id,
+    string Channel,
+    string Delivery,
+    string Text,
+    string Status,
+    string? FailureCode,
+    Guid? MessageId,
+    SupportMemberDto? Author,
+    DateTimeOffset CreatedAt);
+
+/// <summary>La pestaña de Soporte de la ficha de una conversación: los tickets de esa conversación y los del mismo cliente por otros
+/// canales (<c>IsThisConversation</c> los distingue). <c>CanCreate</c> y su motivo (<c>messaging_disabled</c>, <c>no_permission</c>)
+/// deciden si la pantalla muestra «Abrir ticket», sin que conozca módulos ni permisos. <c>UnclassifiedCount</c> enciende el aviso de
+/// mensajes sin clasificar.</summary>
+public sealed record SupportConversationTicketsDto(
+    Guid ConversationId,
+    bool CanCreate,
+    string? CannotCreateReason,
+    IReadOnlyList<SupportConversationTicketDto> Items,
+    int UnclassifiedCount);
+
+/// <summary>Una fila de la pestaña: la fila de la bandeja más si es de esta conversación y si la sigue (el ícono «siguiendo»).</summary>
+public sealed record SupportConversationTicketDto(SupportTicketListItemDto Ticket, bool IsThisConversation, bool FollowsThread);
 
 /// <summary>La foto del tipo que guardó el ticket: editar el tipo después no la cambia.</summary>
 public sealed record SupportTicketTypeSnapshotDto(Guid Id, string Name, int? TermBusinessDays, bool TermIsLegal, bool RequiresFormalResponse);
@@ -90,7 +128,13 @@ public sealed record SupportTicketEventDto(
     SupportMemberDto? Assignee,
     string? FromTypeName,
     string? ToTypeName,
-    SupportCustomerRefDto? Customer);
+    SupportCustomerRefDto? Customer,
+    Guid? MessageId,
+    bool? Follow,
+    string? ReplyChannel);
+
+// Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
+// valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
 
 public sealed record SupportMemberDto(Guid Id, string DisplayName);
 
