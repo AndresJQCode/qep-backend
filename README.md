@@ -4731,7 +4731,10 @@ el umbral), `search`, `page` y `pageSize` (25 por defecto, hasta 100). **Un `sea
 nada más**: no busca ese texto en el asunto ni en los nombres. Es radicado (`SupportTicketNumber.TryParse`) si, sin espacios a los
 lados y quitando un `SOP-` inicial sin distinguir mayúsculas, queda sólo de dígitos ASCII que caben en un `long` y valen más de 0
 (`SOP-000127`, `sop-127`, `127`). Un `0`, un `SOP-` sin dígitos o un número que no cabe en un `long` no es radicado y busca como
-texto. Cualquier otro término busca en el asunto, en los nombres del solicitante (nombres, apellidos, razón social) y en el nombre de los clientes vinculados. El resumen (`Summary`) es del
+texto. Cualquier otro término busca en el asunto, en los nombres del solicitante (nombres, apellidos, razón social) y en el nombre de los clientes vinculados.
+La búsqueda por cliente toma como mucho 200 clientes cuyo nombre contiene el término (`ISupportCustomerLookup.SearchLimit`, los
+primeros por nombre y luego id): con un término muy amplio puede quedar fuera el ticket de algún cliente; el asunto y los nombres
+del solicitante se buscan igual. El resumen (`Summary`) es del
 tenant entero, no del filtro: los seis estados siempre, en el orden de arriba e incluso en cero, más los vencidos y los por vencer.
 
 **Alta manual** (`POST /tickets`). Exige un cliente (`customerId`) **o** un solicitante con nombre (`FirstNames`, o `BusinessName`

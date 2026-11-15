@@ -1,8 +1,10 @@
 using System.Text.Json;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
 using Modules.Support.Domain;
+using Npgsql;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 
 namespace Modules.Support.IntegrationTests;
@@ -485,6 +487,62 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal([byCustomer.Id, byRequester.Id, bySubject.Id], await SearchAsync("   "));
         Assert.Equal([byCustomer.Id, byRequester.Id, bySubject.Id], await SearchAsync(null));
     }
+
+    // La búsqueda de la bandeja por cliente tiene tope (revisión final, B2): sus ids viajan como un solo arreglo al filtro de
+    // tickets. Sembrar uno más que el tope con un solo INSERT es barato, así que se prueba el tope real y no uno inyectado.
+    [Fact]
+    public async Task TheCustomerSearchStopsAtTheLimitInNameOrder()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var (_, other) = await NewTenantAsync();
+        await SeedNamedCustomersAsync(factory, tenant, ISupportCustomerLookup.SearchLimit + 1);
+        await SeedNamedCustomersAsync(factory, other, 1);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var found = await scope.ServiceProvider.GetRequiredService<ISupportCustomerLookup>().SearchIdsAsync(tenant, "cliente", Ct);
+
+        Assert.Equal(200, ISupportCustomerLookup.SearchLimit);
+        // El que queda fuera es el último por nombre: «Cliente 201».
+        Assert.Equal((await CustomerIdsAsync(factory, tenant, "Cliente 201")).Order(), found.Order());
+    }
+
+    private static async Task SeedNamedCustomersAsync(QepApiFactory factory, Guid tenant, int count)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var insert = new NpgsqlCommand(
+            """
+            INSERT INTO customers.customers (id, tenant_id, name, is_active, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            SELECT gen_random_uuid(), @tenant, 'Cliente ' || lpad(n::text, 3, '0'), true, 'Incomplete',
+                   'CO.' || replace(gen_random_uuid()::text, '-', ''), false, false, 1, now(), now()
+            FROM generate_series(1, @count) AS n
+            """,
+            connection);
+        insert.Parameters.AddWithValue("tenant", tenant);
+        insert.Parameters.AddWithValue("count", count);
+        await insert.ExecuteNonQueryAsync(Ct);
+    }
+
+    private static async Task<List<Guid>> CustomerIdsAsync(QepApiFactory factory, Guid tenant, string exceptName)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var select = new NpgsqlCommand(
+            "SELECT id FROM customers.customers WHERE tenant_id = @tenant AND name <> @except", connection);
+        select.Parameters.AddWithValue("tenant", tenant);
+        select.Parameters.AddWithValue("except", exceptName);
+        var ids = new List<Guid>();
+        await using var reader = await select.ExecuteReaderAsync(Ct);
+        while (await reader.ReadAsync(Ct))
+        {
+            ids.Add(reader.GetGuid(0));
+        }
+
+        return ids;
+    }
+
+    private static string ConnectionString(QepApiFactory factory) =>
+        factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("QepDatabase")!;
 
     private static SupportTicketFilter Filter(Guid tenant) =>
         new(tenant, Statuses: null, TypeId: null, AssigneeMemberId: null, UnassignedOnly: false, RunningOnly: false, DueBefore: null,

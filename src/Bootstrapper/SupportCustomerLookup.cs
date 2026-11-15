@@ -60,6 +60,10 @@ internal sealed class SupportCustomerLookup(CustomersDbContext customers) : ISup
             .Replace("_", "\\_", StringComparison.Ordinal) + "%";
         var ids = await customers.Customers.AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && EF.Functions.ILike(customer.Name, pattern, LikeEscapeCharacter))
+            // Orden fijo antes del tope: sin él, qué clientes quedan fuera dependería del plan de la consulta.
+            .OrderBy(customer => customer.Name)
+            .ThenBy(customer => customer.Id)
+            .Take(ISupportCustomerLookup.SearchLimit)
             .Select(customer => customer.Id)
             .ToListAsync(cancellationToken);
         return ids.Select(id => id.Value).ToArray();
