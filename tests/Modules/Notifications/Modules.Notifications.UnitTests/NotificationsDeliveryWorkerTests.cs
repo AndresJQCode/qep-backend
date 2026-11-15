@@ -1,0 +1,82 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using Modules.Notifications.Domain;
+using Modules.Notifications.Infrastructure;
+using Modules.Notifications.Infrastructure.Messaging;
+using Modules.Notifications.Infrastructure.Persistence;
+
+namespace Modules.Notifications.UnitTests;
+
+/// <summary>
+/// Spec 2026-11-13 (Valkey), D-7: los trece consumidores de correo dejan de ser trece hosted services que sondean cada uno por su
+/// cuenta y pasan a un solo bucle que drena cada definición en secuencia. Una definición que falla no frena a las demás.
+/// </summary>
+public sealed class NotificationsDeliveryWorkerTests
+{
+    [Fact]
+    public async Task NotificationsDeliveryWorkerDrainsEveryDefinitionInOneTick()
+    {
+        var definitions = Enumerable.Range(0, 13).Select(index => new FakeDefinition($"test.consumer-{index}")).ToList();
+        var worker = new NotificationsDeliveryWorker(definitions, NullLogger<NotificationsDeliveryWorker>.Instance);
+
+        await worker.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.All(definitions, definition => Assert.Equal(1, definition.Drains));
+    }
+
+    [Fact]
+    public async Task AFailingDefinitionDoesNotStopTheOthers()
+    {
+        var first = new FakeDefinition("test.first");
+        var failing = new FakeDefinition("test.failing", new InvalidOperationException("boom"));
+        var last = new FakeDefinition("test.last");
+        var worker = new NotificationsDeliveryWorker([first, failing, last], NullLogger<NotificationsDeliveryWorker>.Instance);
+
+        await worker.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, first.Drains);
+        Assert.Equal(1, failing.Drains);
+        Assert.Equal(1, last.Drains);
+    }
+
+    [Fact]
+    public void OnlyOneNotificationsHostedServiceIsRegistered()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:QepDatabase"] = "Host=localhost;Database=unused",
+            })
+            .Build();
+        var services = new ServiceCollection().AddNotificationsInfrastructure(configuration);
+
+        var hosted = Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IHostedService));
+        Assert.Equal(typeof(NotificationsDeliveryWorker), hosted.ImplementationType);
+        Assert.Equal(13, services.Count(descriptor => descriptor.ServiceType == typeof(OutboxDeliveryWorker)
+            && descriptor.Lifetime == ServiceLifetime.Singleton));
+    }
+
+    private sealed class FakeDefinition(string consumer, Exception? failure = null)
+        : OutboxDeliveryWorker(null!, NullLogger.Instance)
+    {
+        public int Drains { get; private set; }
+
+        protected override string Consumer => consumer;
+
+        protected override string EventName => "test.event.v1";
+
+        protected override string TemplateRef => "test-template";
+
+        internal override Task DrainAsync(CancellationToken stoppingToken)
+        {
+            Drains++;
+            return failure is null ? Task.CompletedTask : Task.FromException(failure);
+        }
+
+        protected override Task<Notification> DeliverAsync(
+            OutboxRecord record, DeliveryContext context, CancellationToken stoppingToken) =>
+            throw new NotSupportedException();
+    }
+}

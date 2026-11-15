@@ -66,7 +66,9 @@ public sealed class OutboxDeliveryWorkerTests
         var timedOut = await InsertOutboxAsync(
             database.GetConnectionString(), EventName, FailedPayload(tenantId, ownerUserId));
 
-        var worker = NewWorker(factory);
+        // El bucle real (spec 2026-11-13, D-7) con esta sola definición.
+        var worker = new NotificationsDeliveryWorker(
+            [NewWorker(factory)], factory.Services.GetRequiredService<ILogger<NotificationsDeliveryWorker>>());
         await worker.StartAsync(TestContext.Current.CancellationToken);
         try
         {

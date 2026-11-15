@@ -47,6 +47,10 @@ public static class ValkeyServiceCollectionExtensions
         AddSessionCaches(services, IsOn(valkey, ValkeyArea.Sessions));
         AddPermissionsCache(services, IsOn(valkey, ValkeyArea.Permissions));
 
+        // El líder del muestreador de colas (D-7, plan P14): se registra siempre y decide en cada vuelta con el
+        // interruptor de Doorbells; apagado, todos los pods muestrean como antes.
+        services.AddSingleton<QueueSamplerLeadership>();
+
         // Los limitadores (D-3): la fábrica decide memoria o Valkey con el interruptor del área, y apagada devuelve
         // exactamente la partición de memoria de antes.
         services.AddSingleton(provider => new SharedRateLimitPartitions(

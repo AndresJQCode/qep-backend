@@ -58,7 +58,8 @@ public sealed record FactoryEntry(string ServiceTypeFullName, string Implementat
 /// </summary>
 public static class MultiReplicaInventory
 {
-    // Verificado contra el código el 2026-11-13, rama feature/replicas-multiples (54 hosted services). Las rutas son
+    // Verificado contra el código el 2026-11-13, rama feature/replicas-multiples (54 hosted services; 42 desde que los trece consumidores de correo
+    // pasaron a un solo bucle, 2026-11-15). Las rutas son
     // relativas a src/.
     public static readonly IReadOnlyList<WorkerEntry> Workers =
     [
@@ -103,19 +104,8 @@ public static class MultiReplicaInventory
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyCityCorrectionRepositories.cs:135 — FOR UPDATE SKIP LOCKED con lease por intento"),
         new("Modules.Shopify.Infrastructure.Workers.ShopifyReconcileWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyRepositories.cs:199-202 — lease por tienda (reconcile_lease_until)"),
-        new("Modules.Notifications.Infrastructure.Messaging.InvitationDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.PasswordResetDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.EmailVerificationDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.ExistingAccountDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.QuotationsExportReadyDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.QuotationsExportFailedDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.ProductExportDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.CustomerExportDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.SupplierExportDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.BuyerVerificationDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.BuyerPasswordResetDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.BuyerExistingAccountDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
-        new("Modules.Notifications.Infrastructure.Messaging.BuyerAccountDeletedDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        // Un solo hosted drena en secuencia los trece consumidores de correo (spec 2026-11-13, D-7); cada uno reclama igual que antes.
+        new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
 
         // --- AdvisoryLock. ---
         new("Modules.Integrations.Infrastructure.Shopify.ShopifyTokenRefreshWorker", WorkerClassification.AdvisoryLock,
@@ -155,7 +145,7 @@ public static class MultiReplicaInventory
         new("Modules.Messaging.Infrastructure.Realtime.MessagingEventsListener", WorkerClassification.PerPod,
             "Modules/Messaging/Modules.Messaging.Infrastructure/Realtime/MessagingEventsListener.cs:83 — LISTEN por pod para los clientes conectados a ese pod"),
         new("Bootstrapper.Observability.QueueSamplerWorker", WorkerClassification.PerPod,
-            "Bootstrapper/Observability/QueueSamplerWorker.cs:18-26 — sólo lee la base y publica el gauge del pod; el dashboard agrega con max/avg"),
+            "Bootstrapper/Observability/QueueSamplerWorker.cs:48-54 — sólo lee la base y publica el gauge del pod; con Valkey:Areas:Doorbells muestrea sólo el líder (Bootstrapper/Valkey/QueueSamplerLeadership.cs); el dashboard agrega con max/avg"),
         new("Bootstrapper.ApiKeys.ExternalApiCallLogWriter", WorkerClassification.PerPod,
             "Bootstrapper/ApiKeys/ExternalApiCallLogWriter.cs:26 — drena el canal en memoria de su propio pod"),
         new("Modules.Tenancy.Infrastructure.OperatorTenantStartupWarning", WorkerClassification.PerPod,

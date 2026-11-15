@@ -1,3 +1,4 @@
+using Bootstrapper.Valkey;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -9,10 +10,15 @@ namespace Bootstrapper.Observability;
 /// Lee una por una, nunca en paralelo, y cada una en su propio scope: <see cref="QueueMetricsSource"/> usa la conexión del
 /// <c>MessagingDbContext</c> del scope, y una lectura que falla a medias (tope de 5 s, conexión caída) no puede dejar rota la conexión
 /// de la siguiente. Una cola que falla se loguea y se salta: su lectura vieja caduca sola a los 60 s y las demás siguen.
+///
+/// Con varios pods sólo muestrea el líder (<see cref="QueueSamplerLeadership"/>, spec 2026-11-13 D-7): la vuelta que no
+/// lidera se salta entera. Con el área de timbres apagada o Valkey caído, todos lideran, como antes. <c>internal</c> porque
+/// el líder es un tipo interno de Bootstrapper; sólo lo registra <c>AddQepPlatform</c>.
 /// </summary>
-public sealed partial class QueueSamplerWorker(
+internal sealed partial class QueueSamplerWorker(
     IServiceScopeFactory scopeFactory,
     QueueGauges gauges,
+    QueueSamplerLeadership leadership,
     ILogger<QueueSamplerWorker> logger) : BackgroundService
 {
     internal static readonly TimeSpan Interval = TimeSpan.FromSeconds(15);
@@ -28,7 +34,7 @@ public sealed partial class QueueSamplerWorker(
         {
             try
             {
-                await SampleAsync(stoppingToken);
+                await RunOnceAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -36,6 +42,15 @@ public sealed partial class QueueSamplerWorker(
             }
         }
         while (await WaitForNextTickAsync(timer, stoppingToken));
+    }
+
+    /// <summary>Una vuelta del bucle: muestrea sólo si este pod lidera. Internal para las pruebas.</summary>
+    internal async Task RunOnceAsync(CancellationToken cancellationToken)
+    {
+        if (await leadership.TryLeadAsync(cancellationToken))
+        {
+            await SampleAsync(cancellationToken);
+        }
     }
 
     /// <summary>Una vuelta: internal para las pruebas, sin el <see cref="PeriodicTimer"/> de por medio. No lanza por una cola que falla.</summary>

@@ -98,10 +98,13 @@ internal static class NotificationsDeliveryHarness
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
-    // Los cinco derivan de OutboxDeliveryWorker (spec 2026-09-13, A6): un worker de correo nuevo queda
-    // afuera de las pruebas sin que nadie tenga que acordarse de agregarlo acá.
+    // Los consumidores de correo ya no son hosted services: los drena un solo bucle, NotificationsDeliveryWorker
+    // (spec 2026-11-13, D-7). Sacar ese hosted deja afuera a todos, también a uno nuevo, sin que nadie tenga que
+    // acordarse de agregarlo acá. Las definiciones (OutboxDeliveryWorker) se siguen reconociendo por si alguna vuelve
+    // a registrarse como hosted.
     public static bool IsDeliveryWorker(Type? type) =>
-        type is not null && typeof(OutboxDeliveryWorker).IsAssignableFrom(type);
+        type is not null
+        && (type == typeof(NotificationsDeliveryWorker) || typeof(OutboxDeliveryWorker).IsAssignableFrom(type));
 
     // register-tenant es la única forma de tener un usuario con correo en identity.users sin la vuelta
     // de Google: el stub toma el correo del header X-Email. Mismo mecanismo que
