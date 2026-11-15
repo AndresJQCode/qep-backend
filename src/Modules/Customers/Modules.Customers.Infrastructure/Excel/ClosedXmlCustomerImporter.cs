@@ -80,7 +80,6 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             var city = Cell(row, indexes, CustomerImportColumns.City);
             var classification = Cell(row, indexes, CustomerImportColumns.Classification);
             var retefuente = Cell(row, indexes, CustomerImportColumns.Retefuente);
-            var reteIca = Cell(row, indexes, CustomerImportColumns.ReteIca);
             var vatSurplus = Cell(row, indexes, CustomerImportColumns.VatSurplus);
             var company = indexes.ContainsKey(CustomerImportColumns.Company)
                 ? Cell(row, indexes, CustomerImportColumns.Company)
@@ -93,7 +92,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 identificationType is null &&
                 identificationNumber is null && phone is null && email is null &&
                 address is null && department is null && city is null &&
-                classification is null && retefuente is null && reteIca is null && vatSurplus is null && company is null)
+                classification is null && retefuente is null && vatSurplus is null && company is null)
             {
                 continue;
             }
@@ -112,7 +111,6 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 city,
                 classification,
                 retefuente,
-                reteIca,
                 vatSurplus,
                 company));
         }

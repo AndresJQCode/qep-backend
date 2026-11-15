@@ -193,6 +193,7 @@ public sealed class RemoveOrderPaymentProofHandlerTests
             defaultCurrency: "COP",
             customerVatSurplus: false,
             customerWithholdings: TestWithholdings.Customer(customerWithRetention),
+            MunicipalContext.None,
             AdvisorId,
             Now);
         quotation.AddItem(

@@ -658,7 +658,9 @@ public sealed class SendOrderHandlerTests
                 customers,
                 new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
                 new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
-                new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>())),
+                new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
+                new StubQuotationWithholdingLookup(),
+                new StubQuotationGeographyLookup(new Dictionary<Guid, string>())),
             new OrderPdfProvider(
                 renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
                 tenant),
@@ -681,5 +683,5 @@ public sealed class SendOrderHandlerTests
         Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod: null, notes: null, QuotationParties.Empty, billingAccount: null, defaultCurrency: "COP",
-            customerVatSurplus: false, customerWithholdings: [], AdvisorId, Now);
+            customerVatSurplus: false, customerWithholdings: [], MunicipalContext.None, AdvisorId, Now);
 }

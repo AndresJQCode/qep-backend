@@ -28,4 +28,8 @@ public sealed record HistoryFormat(string DateFormat, NumberFormatInfo Numbers)
     // se venden fraccionados, pero la mayoría son enteros y el historial se lee mejor así. Con los
     // separadores del tenant (D-R6): "x1.500" en 1.234,56 y "x1,500" en 1,234.56.
     public string Number(decimal value) => value.ToString("#,##0.##", Numbers);
+
+    // Un porcentaje de retención (spec ReteICA por empresa §7.8, plan P10): hasta tres decimales sin ceros de sobra, con el
+    // separador decimal del tenant, más « %». Number redondea a dos y 0,966 necesita tres.
+    public string Percentage(decimal value) => value.ToString("0.###", Numbers) + " %";
 }

@@ -196,6 +196,12 @@ public sealed class Order
     /// <see cref="FromQuotation"/>, <see cref="CreateManual"/> y <see cref="CreateExternal"/> la exigen.</summary>
     public QuotationBillingAccount? BillingAccount { get; private set; }
 
+    /// <summary>
+    /// El municipio de la operación (spec ReteICA por empresa §7.5), el mismo concepto que en la cotización: decide qué
+    /// tasa municipal aplica. Null en un país sin tipos municipales y en un pedido anterior a este trabajo (A8).
+    /// </summary>
+    public Guid? OperationCityId { get; private set; }
+
     public string? PaymentMethod { get; private set; }
 
     public bool IsRetail { get; private set; }
@@ -403,6 +409,9 @@ public sealed class Order
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
             quotation.BillingAccount, paymentStatus: null, notes ?? quotation.Notes, convertedBy, occurredAt);
+        // Spec ReteICA por empresa §7.5: hereda el municipio de la operación junto con la foto, y las filas con su
+        // porcentaje efectivo y el del catálogo (los lleva Rate).
+        order.OperationCityId = quotation.OperationCityId;
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
@@ -617,6 +626,9 @@ public sealed class Order
         }
 
         order.EnsureCreatable();
+        // Spec ReteICA por empresa §7.5 (R5, A10): un pedido que nace sin cotización arranca en el municipio de la
+        // empresa. Las filas municipales del encabezado ya vienen resueltas para ese municipio.
+        order.OperationCityId = OperationCityChoice.Company.ForNewCompany(order.BillingAccount);
         order.RecalculateTotals();
         order.AddProofs(proofs, createdBy, occurredAt);
         if (paymentStatus is null)
@@ -782,42 +794,129 @@ public sealed class Order
 
     // Sin empresa no hay país contra el cual validarlos (D22: fijar la empresa habilita los selectores).
     private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates) =>
-        WithholdingSelectorRules.Ensure(rates, BillingAccount?.Country, "order.billing");
+        WithholdingSelectorRules.Ensure(rates, BillingAccount?.Country, OperationCityId, "order.billing");
 
     /// <summary>
-    /// Fija o cambia la empresa y la cuenta con la que se cobra un pedido <see cref="IsEditable"/> (spec
-    /// impuestos por tipo D22). Con la empresa llega el país, y con el país las retenciones que aplican; una tasa de
-    /// otro país deja de aplicar (D23). La aplicación ya validó la cuenta contra la empresa.
+    /// El municipio de la operación que quedaría con esa cuenta y esa elección: la misma regla que
+    /// <see cref="Quotation.OperationCityFor"/>. Sin cuenta en el cuerpo se conserva la del pedido.
+    /// </summary>
+    public Guid? OperationCityFor(QuotationBillingAccount? billingAccount, OperationCityChoice choice) =>
+        choice.For(billingAccount ?? BillingAccount, BillingAccount?.CompanyId, OperationCityId);
+
+    /// <summary>
+    /// Fija o cambia la empresa y la cuenta con la que se cobra un pedido <see cref="IsEditable"/> (spec impuestos por
+    /// tipo D22) y el municipio de la operación (spec ReteICA por empresa §7.5). Con la empresa llega el país, y con el
+    /// país las retenciones que aplican; una tasa de otro país deja de aplicar (D23). La aplicación ya validó la cuenta
+    /// contra la empresa y armó <paramref name="municipal"/> con <see cref="OperationCityFor"/> (plan P4).
+    /// <paramref name="billingAccount"/> null conserva la cuenta.
     ///
     /// No cambia la moneda (plan P10, aprobado por el owner): cambiarla sin repreciar dejaría los importes rotulados
     /// en otra moneda, y repreciar un pedido externo cambiaría lo que la plataforma cobró. Una cuenta en otra moneda
     /// es <c>order.billing.currency_change_not_allowed</c>.
     ///
-    /// Devuelve si cambió algo; si no, no toca la versión.
+    /// Otra empresa u otro municipio re-resuelven las filas municipales con la regla del cliente (§7.6): una tasa
+    /// aplicada a mano donde el cliente no es agente se quita y vuelve en <see cref="MunicipalReResolution.RemovedManual"/>.
+    /// Reenviar la misma cuenta con el municipio de la empresa que antes no tenía lo completa sin contar como cambio.
+    /// Si nada cambió, no toca la versión.
     /// </summary>
-    public bool SetBillingAccount(
-        QuotationBillingAccount billingAccount,
+    public OrderBillingContextChange ApplyBillingContext(
+        QuotationBillingAccount? billingAccount,
+        MunicipalContext municipal,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
-        ArgumentNullException.ThrowIfNull(billingAccount);
-        EnsureEditable("The billing account can only change while the order is editable.");
-        var normalized = billingAccount.Normalized();
-        if (normalized == BillingAccount)
+        ArgumentNullException.ThrowIfNull(municipal);
+        EnsureEditable("The billing account and the operation city can only change while the order is editable.");
+        var previousCompanyId = BillingAccount?.CompanyId;
+        var accountChanged = false;
+        if (billingAccount is not null)
         {
-            return false;
+            var normalized = billingAccount.Normalized();
+            // El municipio de la empresa no cuenta: una cuenta anterior a este trabajo lo completa en silencio.
+            accountChanged = normalized with { CityId = BillingAccount?.CityId } != BillingAccount;
+            if (accountChanged
+                && !string.Equals(normalized.Currency, Currency, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new QuotationsDomainException(
+                    "order.billing.currency_change_not_allowed",
+                    "The billing account must use the order's currency.");
+            }
+
+            BillingAccount = normalized;
         }
 
-        if (!string.Equals(normalized.Currency, Currency, StringComparison.OrdinalIgnoreCase))
+        var cityAfter = MunicipalReResolver.HasMunicipalTypes(BillingAccount?.Country) ? municipal.OperationCityId : null;
+        if (BillingAccount?.CompanyId == previousCompanyId && cityAfter == OperationCityId)
         {
-            throw new QuotationsDomainException(
-                "order.billing.currency_change_not_allowed",
-                "The billing account must use the order's currency.");
+            if (accountChanged)
+            {
+                Touch(updatedBy, occurredAt);
+            }
+
+            return new OrderBillingContextChange(accountChanged, MunicipalReResolution.None);
         }
 
-        BillingAccount = normalized;
+        var cityBefore = OperationCityId;
+        OperationCityId = cityAfter;
+        var resolved = MunicipalReResolver.ReResolve(
+            [.. _withholdings.OrderBy(row => row.Position).Select(row => row.Rate)],
+            municipal,
+            cityAfter,
+            customerRule: true);
+        ReplaceWithholdings(resolved.Rates);
         Touch(updatedBy, occurredAt);
-        return true;
+        return new OrderBillingContextChange(
+            accountChanged,
+            new MunicipalReResolution(true, cityBefore, cityAfter, resolved.Discarded, resolved.RemovedManual));
+    }
+
+    /// <summary>
+    /// Cambia el porcentaje efectivo de la retención municipal de <paramref name="type"/> (spec ReteICA por empresa §7.7)
+    /// mientras el pedido es <see cref="IsEditable"/>; <c>null</c> vuelve al del catálogo. Devuelve el cambio para el
+    /// historial, o null si ya era ese.
+    /// </summary>
+    public WithholdingPercentageChange? SetWithholdingPercentage(
+        string type,
+        decimal? percentage,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        EnsureEditable("The withholding percentage can only change while the order is editable.");
+        var row = _withholdings.FirstOrDefault(candidate => string.Equals(candidate.Type, type, StringComparison.Ordinal));
+        var target = MunicipalReResolver.EnsureEditablePercentage(row, percentage, "order.billing");
+        if (target == row!.Percentage)
+        {
+            return null;
+        }
+
+        var change = new WithholdingPercentageChange(row.Name, row.Percentage, target, target == row.CatalogPercentage);
+        row.SetPercentage(target);
+        Touch(updatedBy, occurredAt);
+        return change;
+    }
+
+    /// <summary>
+    /// «Sin retención» (owner 2026-11-13, plan P12): quita la fila de cada tipo marcado mientras el pedido es
+    /// <see cref="IsEditable"/>. Sin fila no hace nada. Que los tipos sean municipales lo valida la aplicación. Devuelve las
+    /// filas quitadas que tenían porcentaje editado, para el historial.
+    /// </summary>
+    public IReadOnlyList<WithholdingRate> ClearMunicipalWithholdings(
+        IReadOnlyCollection<string> types,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(types);
+        EnsureEditable("The withholdings can only change while the order is editable.");
+        var current = _withholdings.OrderBy(row => row.Position).Select(row => row.Rate).ToList();
+        var removed = current.Where(rate => types.Contains(rate.Type, StringComparer.Ordinal)).ToList();
+        if (removed.Count == 0)
+        {
+            return [];
+        }
+
+        ReplaceWithholdings([.. current.Except(removed)]);
+        Touch(updatedBy, occurredAt);
+        return [.. removed.Where(rate => rate.Overridden)];
     }
 
     public void AddItem(
@@ -1709,7 +1808,8 @@ public sealed class Order
                 _withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate),
                 BillsToFinalConsumer,
                 BillingAccount,
-                Currency));
+                Currency,
+                OperationCityId));
         DocumentWithholding.SettleAll(_withholdings, WithholdingSource.Document, totals.Withholdings);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;

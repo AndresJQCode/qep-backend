@@ -1599,6 +1599,12 @@ public static class QepServiceCollectionExtensions
         // catálogo, y Catalog sabe si una tasa está asignada a algún cliente. Dos puertos, un adaptador por lado.
         services.AddScoped<ICustomerTaxRateLookup, CustomerTaxRateLookup>();
         services.AddScoped<ITaxRateCustomerUsage, TaxRateCustomerUsage>();
+        // ReteICA por empresa (spec 2026-11-12 §7.2): Catalog valida y pinta el municipio de una tasa municipal.
+        services.AddScoped<ITaxRateGeographyLookup, TaxRateGeographyLookup>();
+        // ReteICA por empresa (spec 2026-11-12 §7.3): Companies valida y pinta las tasas municipales de una empresa contra el
+        // catálogo, y Catalog sabe si una tasa está asignada a alguna empresa. Dos puertos, un adaptador por lado.
+        services.AddScoped<ICompanyTaxRateLookup, CompanyTaxRateLookup>();
+        services.AddScoped<ITaxRateCompanyUsage, TaxRateCompanyUsage>();
         // Lo que el dominio no puede saber del envío (transportadora activa, recaudo, tasa del tenant):
         // lo usan crear, guardar y previsualizar la cotización y el pedido.
         services.AddScoped<ShippingResolver>();

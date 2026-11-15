@@ -18,7 +18,10 @@ public sealed record PreviewOrderEditsQuery(
     ShippingRequest? Shipping = null,
     OrderBillingEditRequest? Billing = null,
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
-    QuotationBillingAccountRequest? BillingAccount = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    QuotationBillingAccountRequest? BillingAccount = null,
+    OperationCityChoice OperationCity = default,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -42,7 +45,8 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationCompanyLookup companyLookup,
     IQuotationWithholdingLookup withholdingLookup,
     ITenantClock tenantClock,
-    IOrderVariantCostLookup costLookup)
+    IOrderVariantCostLookup costLookup,
+    IQuotationGeographyLookup geographyLookup)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -111,7 +115,7 @@ public sealed class PreviewOrderEditsHandler(
         // no muestre una retención que el guardado rechazaría.
         await OrderWithholdingEdits.ApplyAsync(
             order, query,
-            new OrderWithholdingEditsContext(companyLookup, withholdingLookup, tenantClock, query.TenantId),
+            new OrderWithholdingEditsContext(companyLookup, withholdingLookup, geographyLookup, tenantClock, query.TenantId),
             updatedBy, now, cancellationToken);
 
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.

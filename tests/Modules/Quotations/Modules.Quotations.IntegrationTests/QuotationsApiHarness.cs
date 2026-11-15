@@ -541,7 +541,8 @@ internal static class QuotationsApiHarness
         string type,
         decimal percentage,
         decimal? minimumBase = null,
-        string country = "CO")
+        string country = "CO",
+        Guid? cityId = null)
     {
         var id = Guid.CreateVersion7();
         await using var scope = factory.Services.CreateAsyncScope();
@@ -549,11 +550,61 @@ internal static class QuotationsApiHarness
         await dbContext.Database.ExecuteSqlAsync(
             $"""
             INSERT INTO catalog.tax_rates
-                (id, tenant_id, name, percentage, type, country, minimum_base, is_active, version, created_at, updated_at)
-            VALUES ({id}, {tenantId}, {name}, {percentage}, {type}, {country}, {minimumBase}, true, 1, now(), now())
+                (id, tenant_id, name, percentage, type, country, minimum_base, city_id, is_active, version, created_at, updated_at)
+            VALUES ({id}, {tenantId}, {name}, {percentage}, {type}, {country}, {minimumBase}, {cityId}, true, 1, now(), now())
             """,
             TestContext.Current.CancellationToken);
         return id;
+    }
+
+    /// <summary>Asigna una tasa municipal a la empresa (spec ReteICA por empresa §7.3), por SQL como
+    /// <see cref="InsertWithholdingRateAsync"/>: la validación del alta es de las pruebas de Companies.</summary>
+    public static async Task AssignCompanyWithholdingRateAsync(
+        QepApiFactory factory, Guid tenantId, Guid companyId, Guid taxRateId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO companies.company_withholding_tax_rates (company_id, tax_rate_id, tenant_id)
+            VALUES ({companyId}, {taxRateId}, {tenantId})
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Una sentencia SQL suelta contra la base del host (para simular un documento anterior a una migración).
+    /// Devuelve las filas afectadas.</summary>
+    public static async Task<int> ExecuteSqlAsync(QepApiFactory factory, string sql)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return await dbContext.Database.ExecuteSqlRawAsync(sql, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Registra al cliente como agente retenedor de ReteICA en el municipio (spec §7.4), por SQL; con
+    /// <paramref name="remove"/> lo quita.</summary>
+    public static async Task SetWithholdingAgentAsync(
+        QepApiFactory factory, Guid tenantId, Guid customerId, Guid cityId, bool remove = false)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        if (remove)
+        {
+            await dbContext.Database.ExecuteSqlAsync(
+                $"""
+                DELETE FROM customers.customer_withholding_agent_cities
+                WHERE customer_id = {customerId} AND type = 'ReteICA' AND city_id = {cityId}
+                """,
+                TestContext.Current.CancellationToken);
+            return;
+        }
+
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO customers.customer_withholding_agent_cities (customer_id, country, type, city_id, tenant_id)
+            VALUES ({customerId}, 'CO', 'ReteICA', {cityId}, {tenantId})
+            """,
+            TestContext.Current.CancellationToken);
     }
 
     /// <summary>
@@ -880,9 +931,9 @@ internal static class QuotationsApiHarness
     /// antes de copiarla, así que no alcanza con inventar un nombre de banco.
     /// </summary>
     public static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
-        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency = "COP")
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency = "COP", Guid? cityId = null)
     {
-        var cityId = await EnsureCityIdAsync(client);
+        cityId ??= await EnsureCityIdAsync(client);
         const string bankName = "Bancolombia";
         var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
 

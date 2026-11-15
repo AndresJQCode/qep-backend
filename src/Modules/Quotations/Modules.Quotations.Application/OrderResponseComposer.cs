@@ -14,7 +14,9 @@ public sealed class OrderResponseComposer(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IQuotationProductLookup productLookup,
-    IQuotationCompanyLookup companyLookup)
+    IQuotationCompanyLookup companyLookup,
+    IQuotationWithholdingLookup withholdingLookup,
+    IQuotationGeographyLookup geographyLookup)
     : IOrderResponseComposer
 {
     public async Task<OrderDetailResponse> ComposeAsync(
@@ -39,6 +41,19 @@ public sealed class OrderResponseComposer(
             tenantId, order.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
         var clientContacts = await QuotationResponseComposer.ClientContactsAsync(
             customerLookup, tenantId, customer, cancellationToken);
+        // El pedido tiene una sola fuente (sus tasas, en BillingWithholdingTaxRates) y aplica la regla del cliente: el
+        // agente se consulta siempre, también con parte propia (spec ReteICA por empresa §9.4, R11).
+        var municipal = await MunicipalWithholdingExplanation.ExplainAsync(
+            withholdingLookup,
+            geographyLookup,
+            tenantId,
+            order.ClientId,
+            order.BillingAccount,
+            order.OperationCityId,
+            ownBilling: false,
+            order.BillingWithholdingTaxRates,
+            MunicipalWithholdingExplanation.DateOf(order.CreatedAt),
+            cancellationToken);
 
         return new OrderDetailResponse(
             OrderResponses.ToResponse(order),
@@ -62,7 +77,10 @@ public sealed class OrderResponseComposer(
                     entry.Details))
                 .ToArray(),
             QuotationResponseComposer.AvailableFloors(order.Items, products),
-            clientContacts);
+            clientContacts,
+            municipal.OperationCity,
+            municipal.BillingCompanyCity,
+            municipal.Entries);
     }
 }
 

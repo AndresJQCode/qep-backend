@@ -527,9 +527,10 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         await AddCompanyAsync(factory, TenantId, "CO");
         await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var cityId = await FindSeededCityIdAsync(factory);
 
         var response = await PostTaxRateAsync(
-            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4 });
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadTaxRateAsync(response);
@@ -547,9 +548,10 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         await AddCompanyAsync(factory, TenantId, "CO");
+        var cityId = await FindSeededCityIdAsync(factory);
 
         var response = await PostTaxRateAsync(
-            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4 });
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId });
 
         await AssertProblemCodeAsync(response, "catalog.tax_rate.tax_unit_value_missing");
     }
@@ -577,7 +579,8 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         await AddCompanyAsync(factory, TenantId, "CO");
         await PostTaxRateAsync(client, new { name = "IVA general", percentage = 19 });
         await PostTaxRateAsync(client, new { name = "Retefuente 2,5", percentage = 2.5m, type = "Retefuente", country = "CO" });
-        await PostTaxRateAsync(client, new { name = "ReteICA 0,966", percentage = 0.966m, type = "ReteICA", country = "CO" });
+        var cityId = await FindSeededCityIdAsync(factory);
+        await PostTaxRateAsync(client, new { name = "ReteICA 0,966", percentage = 0.966m, type = "ReteICA", country = "CO", cityId });
 
         var filtered = await ListAsync(client, TenantId, "?type=Retefuente&type=ReteICA");
         var all = await ListAsync(client, TenantId);
@@ -594,8 +597,9 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         await AddCompanyAsync(factory, TenantId, "CO");
         await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var cityId = await FindSeededCityIdAsync(factory);
         var created = await ReadTaxRateAsync(await PostTaxRateAsync(
-            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4 }));
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId }));
 
         var response = await PutTaxRateAsync(
             client, created.Id, new { name = "ReteICA renombrada", percentage = 1m, type = "IVA", country = "ES" });
@@ -617,8 +621,9 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         await AddCompanyAsync(factory, TenantId, "CO");
         await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var cityId = await FindSeededCityIdAsync(factory);
         var created = await ReadTaxRateAsync(await PostTaxRateAsync(
-            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4 }));
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId }));
 
         var response = await PutTaxRateAsync(
             client, created.Id, new { name = "ReteICA Bogotá", percentage = 0.966m, minimumBase = (decimal?)null });
@@ -685,6 +690,135 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Percentage", out _));
     }
 
+    // Spec ReteICA por empresa §9.1: la tasa municipal lleva su municipio, y la respuesta lo trae resuelto para que la lista
+    // pinte «Bogotá, D.C.» sin preguntarle a Geography.
+    [Fact]
+    public async Task CreatingAMunicipalRateReturnsItsCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+        await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var city = (await FindSeededCitiesAsync(factory, 1))[0];
+
+        var response = await PostTaxRateAsync(client, new
+        {
+            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId = city.Id,
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await ReadTaxRateAsync(response);
+        Assert.Equal("Municipal", created.Scope);
+        Assert.Equal(city.Id, created.CityId);
+        Assert.NotNull(created.City);
+        Assert.Equal(city.Id, created.City.Id);
+        Assert.Equal(city.Name, created.City.Name);
+        Assert.Equal(city.DepartmentId, created.City.DepartmentId);
+        Assert.Equal(city.DepartmentName, created.City.DepartmentName);
+
+        var read = await ReadTaxRateAsync(await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{created.Id}", TestContext.Current.CancellationToken));
+        Assert.Equal(city.Name, read.City?.Name);
+        Assert.Equal(city.Name, Assert.Single(await ListAsync(client, TenantId)).City?.Name);
+    }
+
+    [Fact]
+    public async Task MunicipalRateWithoutCityIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+
+        var response = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO" });
+
+        await AssertProblemCodeAsync(response, "catalog.tax_rate.city_required");
+    }
+
+    [Fact]
+    public async Task NationalRateWithCityIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+        var cityId = await FindSeededCityIdAsync(factory);
+
+        var response = await PostTaxRateAsync(
+            client, new { name = "Retefuente 2,5", percentage = 2.5m, type = "Retefuente", country = "CO", cityId });
+
+        await AssertProblemCodeAsync(response, "catalog.tax_rate.city_not_allowed");
+    }
+
+    [Fact]
+    public async Task UnknownCityIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+
+        var response = await PostTaxRateAsync(client, new
+        {
+            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId = Guid.NewGuid(),
+        });
+
+        await AssertProblemCodeAsync(response, "catalog.tax_rate.city_invalid");
+    }
+
+    // A1: el municipio no se edita, como el tipo y el país; si el cuerpo lo trae, se ignora.
+    [Fact]
+    public async Task UpdateIgnoresCityId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+        var cities = await FindSeededCitiesAsync(factory, 2);
+        var created = await ReadTaxRateAsync(await PostTaxRateAsync(client, new
+        {
+            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId = cities[0].Id,
+        }));
+
+        var response = await PutTaxRateAsync(
+            client, created.Id, new { name = "ReteICA Bogotá", percentage = 0.8m, cityId = cities[1].Id });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await ReadTaxRateAsync(response);
+        Assert.Equal(cities[0].Id, updated.CityId);
+        Assert.Equal(cities[0].Name, updated.City?.Name);
+    }
+
+    [Fact]
+    public async Task OptionsCarryTheScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+
+        var colombia = Assert.Single((await ReadOptionsAsync(client, TenantId)).Countries);
+
+        Assert.Equal(
+            [("IVA", "National"), ("Retefuente", "National"), ("ReteICA", "Municipal")],
+            colombia.Types.Select(type => (type.Type, type.Scope)).ToArray());
+    }
+
+    [Fact]
+    public async Task NationalRatesHaveNullCity()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var created = await ReadTaxRateAsync(await CreateTaxRateAsync(client, TenantId, "IVA general", 19));
+
+        Assert.Equal("National", created.Scope);
+        Assert.Null(created.CityId);
+        Assert.Null(created.City);
+    }
+
     private Task<HttpResponseMessage> PostTaxRateAsync(HttpClient client, object body) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates", body, TestContext.Current.CancellationToken);
@@ -742,6 +876,34 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         await using var command = new NpgsqlCommand("SELECT id FROM geography.cities LIMIT 1", connection);
         var id = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         return id is Guid cityId ? cityId : throw new InvalidOperationException("No seeded city.");
+    }
+
+    private sealed record SeededCity(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
+
+    // Los valores salen de Geography (el arranque siembra la DIVIPOLA): la respuesta tiene que traer esos mismos.
+    private static async Task<IReadOnlyList<SeededCity>> FindSeededCitiesAsync(QepApiFactory factory, int count)
+    {
+        var connectionString = factory.Services.GetRequiredService<IConfiguration>()["ConnectionStrings:QepDatabase"];
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT c.id, c.name, d.id, d.name
+            FROM geography.cities c
+            JOIN geography.departments d ON d.id = c.department_id
+            ORDER BY c.divipola_code
+            LIMIT @count
+            """,
+            connection);
+        command.Parameters.AddWithValue("count", count);
+        var cities = new List<SeededCity>();
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            cities.Add(new SeededCity(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetString(3)));
+        }
+
+        return cities.Count == count ? cities : throw new InvalidOperationException("Not enough seeded cities.");
     }
 
     private static async Task AddTaxUnitValueAsync(QepApiFactory factory, string country, int year, decimal value)

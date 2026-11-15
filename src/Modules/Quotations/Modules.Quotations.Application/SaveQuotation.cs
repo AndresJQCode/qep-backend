@@ -26,7 +26,10 @@ public sealed record SaveQuotationCommand(
     IReadOnlyList<QuotationItemAddition> Items,
     int? GlobalScaleFloor,
     bool IsRetail,
-    ShippingRequest? Shipping = null) : ICommand<QuotationDto>, IQuotationEdits;
+    ShippingRequest? Shipping = null,
+    OperationCityChoice OperationCity = default,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null) : ICommand<QuotationDto>, IQuotationEdits;
 
 public sealed class SaveQuotationValidator : QuotationEditsValidator<SaveQuotationCommand>;
 
@@ -52,6 +55,7 @@ public sealed class SaveQuotationHandler(
     IQuotationProductLookup productLookup,
     ShippingResolver shippingResolver,
     IQuotationWithholdingLookup withholdingLookup,
+    IQuotationGeographyLookup geographyLookup,
     ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     ITenantDirectory tenantDirectory,
@@ -91,7 +95,7 @@ public sealed class SaveQuotationHandler(
         var outcome = await QuotationEditsApplication.ApplyAsync(
             quotation, command, command.TenantId, companyLookup, pricingLookup, settingsStore, priceRounding,
             shippingResolver,
-            QuotationWithholdingContext.For(withholdingLookup, tenantClock, command.TenantId, quotation),
+            QuotationWithholdingContext.For(withholdingLookup, geographyLookup, tenantClock, command.TenantId, quotation),
             updatedBy, now, cancellationToken);
         // UpdateDetails no lo exige para que el cálculo previo, que comparte ApplyAsync, no falle
         // mientras la persona escribe. El guardado sí: nada se persiste si esto lanza. El
@@ -104,17 +108,29 @@ public sealed class SaveQuotationHandler(
 
         var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         // Guardar sin cambiar el encabezado no deja fila: una lista de "editó" vacíos esconde las
-        // ediciones que sí importan.
-        if (QuotationChangeSummary.HeaderChanged(outcome.HeaderBefore, outcome.HeaderAfter, format) is { } headerSummary)
+        // ediciones que sí importan. El cambio de municipio de la operación y la aplicación a mano de una tasa municipal
+        // van en el mismo resumen (spec ReteICA por empresa §7.8).
+        string[] summaryParts =
+        [
+            .. new[] { QuotationChangeSummary.HeaderChanged(outcome.HeaderBefore, outcome.HeaderAfter, format) }.OfType<string>(),
+            .. await QuotationMunicipalHistory.SummaryPartsAsync(geographyLookup, outcome, cancellationToken),
+        ];
+        if (summaryParts.Length > 0)
         {
             repository.AddHistoryEntry(QuotationHistoryEntry.Create(
                 QuotationHistoryEntryId.New(),
                 quotation.Id,
                 QuotationHistoryEventType.Edited,
                 updatedBy,
-                headerSummary,
+                QuotationChangeSummary.Combine(summaryParts),
                 now));
         }
+
+        // Lo descartado primero y después lo editado en el mismo cuerpo (spec §7.7).
+        QuotationMunicipalHistory.RecordRateEdits(
+            repository, auditPublisher, executionContext.SubjectId, command.TenantId, quotation,
+            [.. outcome.Municipal.DiscardedOverrides, .. outcome.ClearedOverrides], outcome.PercentageChanges, format,
+            updatedBy, now);
 
         auditPublisher.Publish(
             command.TenantId,

@@ -417,7 +417,9 @@ public static class OrderEndpoints
         var detail = await dispatcher.SendAsync(
             new SaveOrderEditsCommand(
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
-                request.IsRetail, request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount),
+                request.IsRetail, request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
+                OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
+                request.ClearedWithholdingTypes),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
@@ -435,7 +437,9 @@ public static class OrderEndpoints
         var detail = await dispatcher.QueryAsync(
             new PreviewOrderEditsQuery(
                 tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail,
-                request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount),
+                request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
+                OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
+                request.ClearedWithholdingTypes),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

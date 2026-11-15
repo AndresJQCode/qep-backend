@@ -55,8 +55,10 @@ public static class CustomerImportColumns
     /// </summary>
     public const string Retefuente = "Retefuente";
 
-    /// <summary>El nombre de la tasa de ReteICA del cliente, o vacia si no tiene. Ver <see cref="Retefuente"/>.</summary>
-    public const string ReteIca = "ReteICA";
+    // Spec ReteICA por empresa §7.4 (A3): la columna «ReteICA» salió. La ReteICA es de la empresa facturadora y del municipio
+    // de la operación, no del cliente; un archivo que todavía la traiga se lee ignorándola, como «Con Retencion». No se
+    // reemplazó por «Municipios ReteICA»: un municipio se identifica por departamento y nombre (hay homónimos) y la lista se
+    // edita en la ficha.
 
     /// <summary>
     /// Si el cliente tiene excedente de IVA: sus cotizaciones no pagan IVA, cualquiera sea la
@@ -89,7 +91,6 @@ public static class CustomerImportColumns
         City,
         Classification,
         Retefuente,
-        ReteIca,
         VatSurplus
     ];
 
@@ -98,7 +99,7 @@ public static class CustomerImportColumns
     /// existieran no las trae y tiene que seguir entrando (en una actualizacion conserva las tasas del cliente). Son parte de
     /// <see cref="Ordered"/> (se escriben en su lugar); <see cref="Optional"/> son las que van después.
     /// </summary>
-    public static readonly IReadOnlyList<string> WithholdingTypes = [Retefuente, ReteIca];
+    public static readonly IReadOnlyList<string> WithholdingTypes = [Retefuente];
 }
 
 /// <summary>
@@ -125,7 +126,6 @@ public sealed record ExcelCustomerRow(
     string? City,
     string? Classification,
     string? Retefuente,
-    string? ReteIca,
     string? VatSurplus,
     // Último y con valor por defecto: null cuando el archivo no trae la cabecera o la celda está vacía.
     string? CompanyIdentificationNumber = null);

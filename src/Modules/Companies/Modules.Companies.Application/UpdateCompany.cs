@@ -17,7 +17,8 @@ public sealed record UpdateCompanyCommand(
     string? CityName,
     string? Phone,
     string? Email,
-    string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    string? Address,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CompanyWriteRules.
 public sealed class UpdateCompanyValidator : AbstractValidator<UpdateCompanyCommand>
@@ -32,7 +33,8 @@ public sealed class UpdateCompanyHandler(
     ICompanyGeographyLookup geographyLookup,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<UpdateCompanyCommand> validator)
+    IValidator<UpdateCompanyCommand> validator,
+    ICompanyTaxRateLookup taxRateLookup)
     : ICommandHandler<UpdateCompanyCommand, CompanyDto>
 {
     public async Task<CompanyDto> HandleAsync(
@@ -65,6 +67,14 @@ public sealed class UpdateCompanyHandler(
                     "The city was not found.");
         }
 
+        // Spec ReteICA por empresa §7.3: ausente o null conserva las guardadas, pero la lista resultante se valida igual
+        // contra el país del cuerpo, que puede haber cambiado. Lo ya guardado e inactivo se tolera (A16).
+        var withholdingTaxRateIds = command.WithholdingTaxRateIds ?? company.WithholdingTaxRateIds;
+        var withholdingTaxRates = await taxRateLookup.FindManyAsync(
+            command.TenantId, withholdingTaxRateIds, cancellationToken);
+        CompanyWithholdingRules.Validate(
+            withholdingTaxRates, withholdingTaxRateIds, company.WithholdingTaxRateIds, command.Country!);
+
         var now = clock.UtcNow;
 
         // Los tres opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -86,6 +96,7 @@ public sealed class UpdateCompanyHandler(
                 Address = command.Address
             },
             now);
+        company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
 
         auditPublisher.Publish(
             command.TenantId,
@@ -96,6 +107,9 @@ public sealed class UpdateCompanyHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return company.ToDto(city);
+        return company.ToDto(
+            city,
+            await CompanyMapping.ResolveWithholdingTaxRatesAsync(
+                company.WithholdingTaxRateIds, withholdingTaxRates, geographyLookup, cancellationToken));
     }
 }

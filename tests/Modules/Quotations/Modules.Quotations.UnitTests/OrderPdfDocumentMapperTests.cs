@@ -31,6 +31,44 @@ public sealed class OrderPdfDocumentMapperTests
         Assert.Equal((thousands, decimals), (document.ThousandsSeparator, document.DecimalSeparator));
     }
 
+    // Spec ReteICA por empresa §7.9 (R13): el PDF del pedido imprime el porcentaje efectivo igual que el de la cotización.
+    [Theory]
+    [InlineData(null, "0,966 %")]
+    [InlineData(Modules.Tenancy.Domain.TenantNumberFormats.DotDecimal, "0.966 %")]
+    public void PercentageLabelUsesTheTenantSeparator(string? numberFormat, string expected)
+    {
+        var document = QuotationPdfDocumentMapper.FromOrder(
+            WithRows(QuotationPdfDocumentMapperTests.WithholdingRow("ReteICA Bogotá", "ReteICA", 966m, 0.966m)),
+            Calendar, logo: null, numberFormat);
+
+        Assert.Equal(expected, Assert.Single(document.Withholdings).PercentageLabel);
+    }
+
+    [Fact]
+    public void PercentageLabelHasNoTrailingZeros()
+    {
+        var document = Map(WithRows(
+            QuotationPdfDocumentMapperTests.WithholdingRow("Retefuente 2,5 %", "Retefuente", 2_500m, 2.5m),
+            QuotationPdfDocumentMapperTests.WithholdingRow("Retefuente 4 %", "Retefuente", 4_000m, 4m)));
+
+        Assert.Equal<string>(["2,5 %", "4 %"], document.Withholdings.Select(row => row.PercentageLabel).ToArray());
+    }
+
+    [Fact]
+    public void EditedPercentageWinsOverCatalog()
+    {
+        var document = Map(WithRows(
+            QuotationPdfDocumentMapperTests.WithholdingRow("ReteICA Bogotá", "ReteICA", 800m, 0.8m, catalog: 0.966m)));
+
+        Assert.Equal("0,8 %", Assert.Single(document.Withholdings).PercentageLabel);
+    }
+
+    private static OrderDetailResponse WithRows(params WithholdingResponse[] rows)
+    {
+        var detail = Detail();
+        return detail with { Order = detail.Order with { Withholdings = rows } };
+    }
+
     [Fact]
     public void AnOrderIsPrintedAsAnOrderWithoutValidity()
     {
@@ -214,6 +252,7 @@ public sealed class OrderPdfDocumentMapperTests
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "BRONCEADOR RITUAL DEL SOL", "BRO-01", null, [], 12m, 35900m,
             15m, 64620m, 30515m, 307714.29m, 19, 58465.71m, 1, nameof(QuotationDiscountOrigin.Own));
 
-        return new OrderDetailResponse(order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], [], []);
+        return new OrderDetailResponse(
+            order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], [], [], null, null, []);
     }
 }

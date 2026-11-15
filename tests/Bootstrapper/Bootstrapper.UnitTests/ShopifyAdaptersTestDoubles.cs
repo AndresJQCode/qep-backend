@@ -672,6 +672,9 @@ internal sealed class FakeCompanyRepository(params Company[] companies) : ICompa
     public Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public void Add(Company company) => throw new NotSupportedException();
 
     public void Remove(Company company) => throw new NotSupportedException();

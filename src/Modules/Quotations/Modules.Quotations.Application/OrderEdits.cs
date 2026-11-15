@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Taxes;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -63,6 +64,16 @@ public interface IOrderEdits
 
     /// <summary>La empresa y la cuenta de cobro (D22). <b>Null es «no la toques»</b>.</summary>
     QuotationBillingAccountRequest? BillingAccount { get; }
+
+    /// <summary>El municipio de la operación (spec ReteICA por empresa §9.4, plan P1): ausente, <c>null</c> (el de la
+    /// empresa) o un id.</summary>
+    OperationCityChoice OperationCity { get; }
+
+    /// <summary>Los porcentajes de las retenciones municipales (§7.7); null conserva todos.</summary>
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages { get; }
+
+    /// <summary>Los tipos municipales con «Sin retención» (owner 2026-11-13); null o vacío = sin marca.</summary>
+    IReadOnlyList<string>? ClearedWithholdingTypes { get; }
 }
 
 /// <summary>Aplica el bloque <c>billing</c> de la edición al pedido. Lo comparten el guardado y el cálculo
@@ -100,23 +111,57 @@ internal static class OrderBillingEdits
     }
 }
 
-/// <summary>Lo que cambió la empresa y las retenciones de la edición: el texto del historial de cada una, o
-/// <c>null</c> si no cambió.</summary>
-internal sealed record OrderWithholdingEditsOutcome(string? BillingAccountSummary, string? WithholdingsSummary);
+/// <summary>Lo que cambió la empresa, el municipio y las retenciones de la edición, para el historial. El guardado lo
+/// redacta (<see cref="OrderMunicipalHistory"/>); el cálculo previo lo descarta.</summary>
+/// <param name="BillingAccountSummary">El texto del cambio de cuenta, o null si no cambió.</param>
+internal sealed record OrderWithholdingEditsOutcome(string? BillingAccountSummary)
+{
+    /// <summary>Las etiquetas de las tasas antes y después de los selectores y de «Sin retención»; null si no cambiaron.</summary>
+    public (string Before, string After)? WithholdingsLabels { get; init; }
 
-/// <summary>Con qué resuelve <see cref="OrderWithholdingEdits"/> la cuenta y los selectores: la empresa, el catálogo y el
-/// calendario del tenant (la fecha del pedido para la UVT).</summary>
+    /// <summary>La tasa municipal elegida a mano para un municipio donde el cliente no es agente (R11), para el sufijo del
+    /// resumen; null si no hubo.</summary>
+    public WithholdingRate? NotAgentManualRate { get; init; }
+
+    /// <summary>La re-resolución por cambio de empresa o de municipio (spec ReteICA por empresa §7.6).</summary>
+    public MunicipalReResolution Municipal { get; init; } = MunicipalReResolution.None;
+
+    /// <summary>Las filas con porcentaje editado que quitó «Sin retención» (plan P12).</summary>
+    public IReadOnlyList<WithholdingRate> ClearedOverrides { get; init; } = [];
+
+    /// <summary>Los porcentajes que cambió el cuerpo (§7.7).</summary>
+    public IReadOnlyList<WithholdingPercentageChange> PercentageChanges { get; init; } = [];
+
+    /// <summary>Se completó en silencio el municipio de la empresa de una cuenta anterior (A12): no es un cambio para el
+    /// historial, pero el guardado tiene que persistirlo.</summary>
+    public bool BillingCompanyCityFilled { get; init; }
+
+    /// <summary>Si algo de esto cambió el pedido.</summary>
+    public bool Changed =>
+        BillingAccountSummary is not null
+        || WithholdingsLabels is not null
+        || Municipal.Triggered
+        || ClearedOverrides.Count > 0
+        || PercentageChanges.Count > 0
+        || BillingCompanyCityFilled;
+}
+
+/// <summary>Con qué resuelve <see cref="OrderWithholdingEdits"/> la cuenta, el municipio y los selectores: la empresa, el
+/// catálogo, Geography (un municipio explícito) y el calendario del tenant (la fecha del pedido para la UVT).</summary>
 internal sealed record OrderWithholdingEditsContext(
     IQuotationCompanyLookup CompanyLookup,
     IQuotationWithholdingLookup WithholdingLookup,
+    IQuotationGeographyLookup GeographyLookup,
     ITenantClock TenantClock,
     Guid TenantId);
 
 /// <summary>
-/// Aplica la empresa (D22) y los selectores de retención (D21) de la edición a un pedido <c>Pending</c> (spec impuestos
-/// por tipo §7.5, §7.7). Lo comparten el guardado y el cálculo previo, para que las retenciones de la vista previa sean
-/// las que el guardado dejaría. Primero la cuenta, después los selectores contra el país de la empresa que quedó (D23):
-/// una tasa de otro país es 422 aunque llegue en la misma edición que cambia la empresa. Nunca escribe en el cliente.
+/// Aplica la empresa (D22), el municipio de la operación, los selectores de retención (D21), «Sin retención» y los
+/// porcentajes de la edición a un pedido editable (spec impuestos por tipo §7.5, §7.7; spec ReteICA por empresa §7.6, §7.7).
+/// Lo comparten el guardado y el cálculo previo, para que las retenciones de la vista previa sean las que el guardado
+/// dejaría. Orden: cuenta → municipio → re-resolución → selectores → «Sin retención» → porcentajes. Los selectores van
+/// contra el país de la empresa que quedó (D23): una tasa de otro país es 422 aunque llegue en la misma edición que cambia
+/// la empresa. Nunca escribe en el cliente.
 /// </summary>
 internal static class OrderWithholdingEdits
 {
@@ -128,49 +173,212 @@ internal static class OrderWithholdingEdits
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        string? accountSummary = null;
         // Con cuerpo, el resolver siempre devuelve la cuenta validada contra la empresa (o lanza).
-        if (await QuotationBillingAccountResolver.ResolveAsync(
-                context.CompanyLookup, context.TenantId, edits.BillingAccount, cancellationToken) is { } account)
+        var account = await QuotationBillingAccountResolver.ResolveAsync(
+            context.CompanyLookup, context.TenantId, edits.BillingAccount, cancellationToken);
+        var target = account ?? order.BillingAccount;
+        // La UVT es la del año del pedido (spec §7.3): la misma fecha con la que nació. Se lee una vez y sólo si hace falta.
+        DateOnly? documentDate = null;
+        async Task<DateOnly> DocumentDateAsync() => documentDate ??= DocumentDates.LocalDate(
+            await context.TenantClock.GetAsync(context.TenantId, cancellationToken), order.CreatedAt);
+
+        // «Sin retención» se valida siempre y antes de tocar el pedido (plan P12).
+        string[] cleared = [.. (edits.ClearedWithholdingTypes ?? []).Distinct(StringComparer.Ordinal)];
+        if (cleared.Length > 0)
         {
-            var before = OrderChangeSummary.BillingAccountLabel(order.BillingAccount);
-            if (order.SetBillingAccount(account, updatedBy, now))
-            {
-                accountSummary = OrderChangeSummary.BillingAccountChanged(
-                    before, OrderChangeSummary.BillingAccountLabel(order.BillingAccount)!);
-            }
+            var selectorTypes = edits.WithholdingTaxRateIds is { Count: > 0 } selectorIds
+                ? await WithholdingSelection.MunicipalTypesOfAsync(
+                    context.WithholdingLookup, context.TenantId, selectorIds, await DocumentDateAsync(), cancellationToken)
+                : [];
+            MunicipalSelectionMarker.Validate(cleared, target?.Country, selectorTypes, edits.WithholdingPercentages, "order");
         }
 
-        string? withholdingsSummary = null;
-        // Los mismos de antes (también los heredados de la cotización): la foto se queda como se congeló, sin volver al
-        // catálogo ni recalcular la UVT con la fecha del pedido.
-        if (edits.WithholdingTaxRateIds is { } ids
-            && !WithholdingSelection.IsUnchanged(
-                ids,
-                order.Withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate),
-                order.BillingAccount?.Country))
+        // El municipio resultante se calcula antes de consultar (plan P4); el contexto también define qué id municipal
+        // aceptan los selectores aunque nada cambie (A4).
+        var municipal = await MunicipalContexts.ResolveAsync(
+            context.WithholdingLookup,
+            context.GeographyLookup,
+            context.TenantId,
+            order.ClientId,
+            target,
+            order.OperationCityFor(account, edits.OperationCity),
+            explicitCity: edits.OperationCity.Kind == OperationCityChoiceKind.Explicit,
+            TaxCountries.MunicipalTypes(target?.Country).Count == 0 ? default : await DocumentDateAsync(),
+            "order",
+            cancellationToken);
+
+        string? accountSummary = null;
+        var accountBefore = OrderChangeSummary.BillingAccountLabel(order.BillingAccount);
+        var companyCityBefore = order.BillingAccount?.CityId;
+        var applied = order.ApplyBillingContext(account, municipal, updatedBy, now);
+        if (applied.AccountChanged)
         {
-            // Vaciar no consulta ni el catálogo ni el calendario. La UVT es la del año del pedido (spec §7.3): la misma
-            // fecha con la que nació.
-            IReadOnlyList<WithholdingRate> rates = ids.Count == 0
+            accountSummary = OrderChangeSummary.BillingAccountChanged(
+                accountBefore, OrderChangeSummary.BillingAccountLabel(order.BillingAccount)!);
+        }
+
+        var reResolution = applied.Municipal;
+        var labelsBefore = OrderChangeSummary.WithholdingsLabel(order);
+        var current = OrderedRates(order);
+
+        // Los mismos de antes (también los heredados de la cotización): la foto se queda como se congeló, sin volver al
+        // catálogo ni recalcular la UVT (Review Focus 1: un porcentaje editado sobrevive al reenvío del mismo selector).
+        if (edits.WithholdingTaxRateIds is { } ids
+            && !WithholdingSelection.IsUnchanged(ids, current, order.BillingAccount?.Country))
+        {
+            // A11 (plan P6): tras un cambio de empresa o de municipio el id elegido contra lo anterior se ignora y queda la
+            // fila de la re-resolución; sin cambio, un id municipal que no es la tasa de la empresa es 422, salvo el de la fila
+            // guardada, que se conserva tal cual (A18, plan P14).
+            var scope = MunicipalSelectorScope.For(municipal, ignoreUnmatched: reResolution.Triggered) with
+            {
+                ReResolved = reResolution.Triggered ? [.. current.Where(IsMunicipal)] : [],
+                Stored = reResolution.Triggered ? [] : current,
+            };
+            IReadOnlyList<WithholdingRate> rates = ids.Count == 0 && scope.ReResolved.Count == 0
                 ? []
                 : await WithholdingSelection.ResolveAsync(
                     context.WithholdingLookup,
                     context.TenantId,
                     ids,
                     order.BillingAccount?.Country,
-                    DocumentDates.LocalDate(
-                        await context.TenantClock.GetAsync(context.TenantId, cancellationToken), order.CreatedAt),
+                    await DocumentDateAsync(),
+                    scope,
                     "order",
-                    cancellationToken);
-            var before = OrderChangeSummary.WithholdingsLabel(order);
-            if (order.SetWithholdings(rates, updatedBy, now))
+                    cancellationToken,
+                    cleared.ToHashSet(StringComparer.Ordinal));
+            order.SetWithholdings(rates, updatedBy, now);
+        }
+
+        // «Sin retención»: quita lo que haya quedado de cada tipo marcado. Si el selector ya lo había quitado, el
+        // porcentaje editado perdido se anota igual (spec §7.6).
+        var afterSelectors = OrderedRates(order);
+        IReadOnlyList<WithholdingRate> clearedOverrides = cleared.Length == 0
+            ? []
+            :
+            [
+                .. current.Where(rate => rate.Overridden && IsMunicipal(rate) && cleared.Contains(rate.Type)
+                    && afterSelectors.All(after => after.TaxRateId != rate.TaxRateId)),
+                .. order.ClearMunicipalWithholdings(cleared, updatedBy, now),
+            ];
+
+        var labelsAfter = OrderChangeSummary.WithholdingsLabel(order);
+        var currentIds = current.Select(rate => rate.TaxRateId).ToHashSet();
+        // R11: una municipal nueva del selector para un municipio donde el cliente no es agente es una aplicación a mano.
+        var notAgentManual = OrderedRates(order).FirstOrDefault(rate =>
+            IsMunicipal(rate)
+            && !currentIds.Contains(rate.TaxRateId)
+            && municipal.Offers.Any(offer => offer.Type == rate.Type && !offer.CustomerIsAgent));
+
+        var percentageChanges = ApplyPercentages(order, edits, reResolution.Triggered, updatedBy, now);
+
+        return new OrderWithholdingEditsOutcome(accountSummary)
+        {
+            WithholdingsLabels = labelsBefore == labelsAfter ? null : (labelsBefore, labelsAfter),
+            NotAgentManualRate = notAgentManual,
+            Municipal = reResolution,
+            ClearedOverrides = clearedOverrides,
+            PercentageChanges = percentageChanges,
+            BillingCompanyCityFilled = !applied.AccountChanged && order.BillingAccount?.CityId != companyCityBefore,
+        };
+    }
+
+    // Spec §7.7: al final. Con cambio de empresa o de municipio en el mismo cuerpo (A11), un porcentaje municipal sin fila
+    // de su tipo se ignora en silencio; sin cambio, la regla es la de siempre (not_editable).
+    private static List<WithholdingPercentageChange> ApplyPercentages(
+        Order order, IOrderEdits edits, bool contextChanged, MemberId updatedBy, DateTimeOffset now)
+    {
+        var changes = new List<WithholdingPercentageChange>();
+        foreach (var entry in edits.WithholdingPercentages ?? [])
+        {
+            if (contextChanged
+                && TaxCountries.IsMunicipal(order.BillingAccount?.Country, entry.Type)
+                && !order.Withholdings.Any(row => string.Equals(row.Type, entry.Type, StringComparison.Ordinal)))
             {
-                withholdingsSummary = OrderChangeSummary.WithholdingsChanged(before, OrderChangeSummary.WithholdingsLabel(order));
+                continue;
+            }
+
+            if (order.SetWithholdingPercentage(entry.Type, entry.Percentage, updatedBy, now) is { } change)
+            {
+                changes.Add(change);
             }
         }
 
-        return new OrderWithholdingEditsOutcome(accountSummary, withholdingsSummary);
+        return changes;
+    }
+
+    private static List<WithholdingRate> OrderedRates(Order order) =>
+        [.. order.Withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate)];
+
+    private static bool IsMunicipal(WithholdingRate rate) => TaxCountries.IsMunicipal(rate.Country, rate.Type);
+}
+
+/// <summary>
+/// El historial de la retención municipal de un pedido (spec ReteICA por empresa §7.8), redactado sólo por el guardado: el
+/// cambio de municipio y el de selectores van como <c>PartiesChanged</c>; cada tarifa descartada, quitada o editada, como
+/// <c>WithholdingRateEdited</c>.
+/// </summary>
+internal static class OrderMunicipalHistory
+{
+    public const string RateEditedAuditAction = "quotation.order.withholding_rate_edited";
+
+    public sealed record Texts(string? OperationCitySummary, string? WithholdingsSummary, IReadOnlyList<string> RateEdited);
+
+    public static async Task<Texts> DescribeAsync(
+        IQuotationGeographyLookup geography, OrderWithholdingEditsOutcome outcome, HistoryFormat format,
+        CancellationToken cancellationToken)
+    {
+        var municipal = outcome.Municipal;
+        // Sólo «de un municipio a otro»: el spec no tiene texto para la primera vez que se fija (ver
+        // QuotationChangeSummary.OperationCityChanged).
+        var cityChanged = municipal.Triggered
+            && municipal.OperationCityBefore is not null
+            && municipal.OperationCityAfter is not null
+            && municipal.OperationCityBefore != municipal.OperationCityAfter;
+        Guid[] cityIds =
+        [
+            .. new[]
+                {
+                    cityChanged ? municipal.OperationCityBefore : null,
+                    cityChanged ? municipal.OperationCityAfter : null,
+                    outcome.NotAgentManualRate?.CityId,
+                }
+                .OfType<Guid>()
+                .Distinct(),
+        ];
+        IReadOnlyDictionary<Guid, string> names = cityIds.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await geography.FindCityNamesAsync(cityIds, cancellationToken);
+
+        string? citySummary = null;
+        if (cityChanged
+            && names.TryGetValue(municipal.OperationCityBefore!.Value, out var from)
+            && names.TryGetValue(municipal.OperationCityAfter!.Value, out var to))
+        {
+            citySummary = QuotationChangeSummary.OperationCityChanged(from, to);
+        }
+
+        string? withholdingsSummary = null;
+        if (outcome.WithholdingsLabels is { } labels)
+        {
+            (string Type, string City)? notAgent = outcome.NotAgentManualRate is { } manual
+                ? (manual.Type, manual.CityId is { } cityId && names.TryGetValue(cityId, out var city) ? city : manual.Name)
+                : null;
+            withholdingsSummary = OrderChangeSummary.WithholdingsChanged(labels.Before, labels.After, notAgent);
+        }
+
+        // Lo descartado y lo quitado primero, después lo editado en el mismo cuerpo (spec §7.7).
+        IReadOnlyList<string> rateEdited =
+        [
+            .. municipal.DiscardedOverrides.Select(rate =>
+                QuotationChangeSummary.WithholdingOverrideDiscarded(rate.Type, rate.Percentage, format)),
+            .. municipal.RemovedManual.Select(rate => OrderChangeSummary.ManualWithholdingRemoved(rate.Type)),
+            .. outcome.ClearedOverrides.Select(rate =>
+                QuotationChangeSummary.WithholdingOverrideDiscarded(rate.Type, rate.Percentage, format)),
+            .. outcome.PercentageChanges.Select(change => change.Restored
+                ? QuotationChangeSummary.WithholdingRateRestored(change.Name, change.To, format)
+                : QuotationChangeSummary.WithholdingRateEdited(change.Name, change.From, change.To, format)),
+        ];
+        return new Texts(citySummary, withholdingsSummary, rateEdited);
     }
 }
 

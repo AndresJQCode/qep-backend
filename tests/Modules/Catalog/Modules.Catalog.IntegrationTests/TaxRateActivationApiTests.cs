@@ -308,6 +308,30 @@ public sealed class TaxRateActivationApiTests(SharedCatalogHost sharedHost) : IC
         Assert.True(await QueryIsActiveFromAsync(database, id));
     }
 
+    // Spec ReteICA por empresa §7.2: una empresa con la tasa municipal asignada también la deja «en uso».
+    [Fact]
+    public async Task ARateAssignedOnlyToACompanyCannotBeDeactivated()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        using var companies = CreateClient(
+            factory, SubjectId, TenantId, Modules.Companies.Application.CompaniesPermissions.CompanyRead,
+            Modules.Companies.Application.CompaniesPermissions.CompanyManage);
+        var id = await TaxRateCompanyFixtures.CreateMunicipalRateAsync(
+            database.GetConnectionString(), TenantId, "ReteICA Bogotá");
+        await TaxRateCompanyFixtures.AssignToANewCompanyAsync(companies, database.GetConnectionString(), TenantId, id);
+
+        var response = await DeactivateAsync(client, TenantId, id);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.in_use",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+        Assert.True(await QueryIsActiveFromAsync(database, id));
+    }
+
     // Un cliente fusionado ya no se edita ni se cotiza: su tasa no deja «en uso» a la del catálogo.
     [Fact]
     public async Task DeactivatingARateAssignedOnlyToAMergedCustomerIsAllowed()

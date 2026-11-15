@@ -7,8 +7,18 @@ public enum TaxBehavior
     Withholds,
 }
 
+/// <summary>Dónde se causa un tipo de impuesto. Viaja como texto (<c>"National"</c>, <c>"Municipal"</c>), como
+/// <see cref="TaxBehavior"/>. Toda regla pregunta el alcance, nunca el nombre del tipo. Regional (comunidades autónomas,
+/// Canarias) entra con el spec de España.</summary>
+public enum TaxScope
+{
+    National,
+    Municipal,
+}
+
 /// <summary>Un tipo de impuesto de un país. <c>Type</c> viaja como texto, nunca como enum de dominio.</summary>
-public sealed record TaxTypeDefinition(string Type, TaxBehavior Behavior, bool AllowsFraction, bool AllowsMinimumBase);
+public sealed record TaxTypeDefinition(
+    string Type, TaxBehavior Behavior, bool AllowsFraction, bool AllowsMinimumBase, TaxScope Scope);
 
 /// <summary>Un país con sus tipos de impuesto.</summary>
 /// <param name="Country">ISO 3166-1 alfa-2, el mismo formato que <c>Company.Country</c>.</param>
@@ -35,9 +45,9 @@ public static class TaxCountries
 
     public static readonly TaxCountryDefinition Colombia = new("CO", "UVT", "COP",
     [
-        new(IvaType, TaxBehavior.Adds, AllowsFraction: false, AllowsMinimumBase: false),
-        new(RetefuenteType, TaxBehavior.Withholds, AllowsFraction: true, AllowsMinimumBase: true),
-        new(ReteIcaType, TaxBehavior.Withholds, AllowsFraction: true, AllowsMinimumBase: true),
+        new(IvaType, TaxBehavior.Adds, AllowsFraction: false, AllowsMinimumBase: false, TaxScope.National),
+        new(RetefuenteType, TaxBehavior.Withholds, AllowsFraction: true, AllowsMinimumBase: true, TaxScope.National),
+        new(ReteIcaType, TaxBehavior.Withholds, AllowsFraction: true, AllowsMinimumBase: true, TaxScope.Municipal),
     ]);
 
     public static IReadOnlyList<TaxCountryDefinition> All { get; } = [Colombia];
@@ -52,4 +62,12 @@ public static class TaxCountries
     /// <summary>Busca el tipo dentro del país; el tipo se compara exacto (<c>Ordinal</c>).</summary>
     public static TaxTypeDefinition? FindType(string? country, string? type) =>
         Find(country)?.Types.FirstOrDefault(t => string.Equals(t.Type, type, StringComparison.Ordinal));
+
+    /// <summary>Los tipos municipales de un país (vacío si el país no está en la tabla).</summary>
+    public static IReadOnlyList<TaxTypeDefinition> MunicipalTypes(string? country) =>
+        Find(country)?.Types.Where(t => t.Scope == TaxScope.Municipal).ToList() ?? [];
+
+    /// <summary>Si el tipo existe en el país y se causa por municipio.</summary>
+    public static bool IsMunicipal(string? country, string? type) =>
+        FindType(country, type)?.Scope == TaxScope.Municipal;
 }

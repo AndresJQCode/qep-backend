@@ -1,3 +1,4 @@
+using System.Globalization;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -53,7 +54,7 @@ public static class QuotationPdfDocumentMapper
             quotation.TaxAmount,
             quotation.Total,
             quotation.RetentionAmount,
-            WithholdingsFor(quotation.Withholdings),
+            WithholdingsFor(quotation.Withholdings, decimals),
             quotation.NetTotal,
             quotation.CustomerVatSurplus,
             logo,
@@ -109,7 +110,7 @@ public static class QuotationPdfDocumentMapper
             header.TaxAmount,
             header.Total,
             header.RetentionAmount,
-            WithholdingsFor(order.Order.Withholdings),
+            WithholdingsFor(order.Order.Withholdings, decimals),
             header.NetTotal,
             header.CustomerVatSurplus,
             logo,
@@ -128,9 +129,19 @@ public static class QuotationPdfDocumentMapper
     }
 
     /// <summary>Las respuestas ya traen sólo las que aplicaron (<c>AppliedWithholdings</c>), en su orden: una fila
-    /// del documento por cada una, rotulada con el nombre de la tasa. Sin ninguna, sin filas.</summary>
-    private static QuotationPdfWithholding[] WithholdingsFor(IReadOnlyList<WithholdingResponse> withholdings) =>
-        [.. withholdings.Select(withholding => new QuotationPdfWithholding(withholding.Name, withholding.Amount))];
+    /// del documento por cada una, rotulada con el nombre de la tasa y su porcentaje efectivo (spec ReteICA por empresa
+    /// §7.9). Sin ninguna, sin filas.</summary>
+    private static QuotationPdfWithholding[] WithholdingsFor(
+        IReadOnlyList<WithholdingResponse> withholdings, string decimalSeparator) =>
+        [
+            .. withholdings.Select(withholding => new QuotationPdfWithholding(
+                withholding.Name, withholding.Amount, PercentageLabel(withholding.Percentage, decimalSeparator))),
+        ];
+
+    // Plan P10: el mismo patrón que HistoryFormat.Percentage, con el separador decimal del tenant. Un porcentaje no lleva
+    // miles, así que basta el decimal.
+    private static string PercentageLabel(decimal percentage, string decimalSeparator) =>
+        percentage.ToString("0.###", new NumberFormatInfo { NumberDecimalSeparator = decimalSeparator }) + " %";
 
     /// <summary>
     /// Los importes que el cliente comprueba con la calculadora.

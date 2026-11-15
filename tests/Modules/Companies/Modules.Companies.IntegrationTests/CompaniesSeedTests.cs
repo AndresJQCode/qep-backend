@@ -33,7 +33,10 @@ public sealed class CompaniesSeedTests
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<CompaniesDbContext>();
 
+        // Con dos colecciones owned (cuentas y tasas municipales) EF no ordena las cuentas por su ordinal: se piden en el
+        // orden guardado, igual que CompanyRepository.
         var companies = await dbContext.Companies
+            .Include(company => company.BankAccounts.OrderBy(account => EF.Property<int>(account, "Id")))
             .OrderBy(company => company.CreatedAt)
             .ToListAsync(TestContext.Current.CancellationToken);
 

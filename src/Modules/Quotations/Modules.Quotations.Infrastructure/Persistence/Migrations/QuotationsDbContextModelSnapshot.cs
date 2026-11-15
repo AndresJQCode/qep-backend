@@ -326,6 +326,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("notes");
 
+                    b.Property<Guid?>("OperationCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("operation_city_id");
+
                     b.Property<string>("OrderNumber")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -906,6 +910,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text")
                         .HasColumnName("notes");
+
+                    b.Property<Guid?>("OperationCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("operation_city_id");
 
                     b.Property<bool?>("PartyVatSurplus")
                         .HasColumnType("boolean")
@@ -1593,6 +1601,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("base_amount");
 
+                            b1.Property<decimal>("CatalogPercentage")
+                                .HasPrecision(6, 3)
+                                .HasColumnType("numeric(6,3)")
+                                .HasColumnName("catalog_percentage");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("city_id");
+
                             b1.Property<string>("Country")
                                 .IsRequired()
                                 .HasMaxLength(2)
@@ -1663,6 +1680,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_city_id");
 
                             b1.Property<Guid>("CompanyId")
                                 .HasColumnType("uuid")
@@ -1801,6 +1822,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("base_amount");
 
+                            b1.Property<decimal>("CatalogPercentage")
+                                .HasPrecision(6, 3)
+                                .HasColumnType("numeric(6,3)")
+                                .HasColumnName("catalog_percentage");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("city_id");
+
                             b1.Property<string>("Country")
                                 .IsRequired()
                                 .HasMaxLength(2)
@@ -1871,6 +1901,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_city_id");
 
                             b1.Property<Guid>("CompanyId")
                                 .HasColumnType("uuid")

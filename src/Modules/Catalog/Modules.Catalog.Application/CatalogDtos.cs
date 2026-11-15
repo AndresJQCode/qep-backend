@@ -357,6 +357,9 @@ public sealed record UpdateProductRequest(
     IReadOnlyList<Guid>? DeletedVariantIds = null,
     bool? VisibleInStore = null);
 
+// Scope viaja como texto ("National" | "Municipal"), como Behavior. CityId es null sólo en una tasa nacional; City trae el
+// municipio resuelto (backend for frontend): la lista de tasas pinta «Bogotá, D.C.» sin preguntarle a Geography. City es
+// null en una tasa nacional o si la ciudad ya no se encontró (spec ReteICA por empresa §9.1).
 public sealed record TaxRateDto(
     Guid Id,
     string Name,
@@ -368,7 +371,10 @@ public sealed record TaxRateDto(
     string Country,
     string Behavior,
     decimal? MinimumBase,
-    string? MinimumBaseUnit);
+    string? MinimumBaseUnit,
+    string Scope,
+    Guid? CityId,
+    TaxRateCityDto? City);
 
 public sealed record TaxRateResponse(
     Guid Id,
@@ -381,7 +387,14 @@ public sealed record TaxRateResponse(
     string Country,
     string Behavior,
     decimal? MinimumBase,
-    string? MinimumBaseUnit);
+    string? MinimumBaseUnit,
+    string Scope,
+    Guid? CityId,
+    TaxRateCityDto? City);
+
+/// <summary>La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y
+/// documentos.</summary>
+public sealed record TaxRateCityDto(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
 
 public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items);
 
@@ -391,14 +404,17 @@ public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items
 //
 // Type y Country son opcionales sólo por compatibilidad con el frontend viejo: sin Type la tasa es IVA
 // y sin Country es CO (spec §9.2). IsActive no viaja acá, por la misma razón que en producto.
+//
+// CityId: obligatorio en un tipo municipal (ReteICA), prohibido en uno nacional (spec ReteICA por empresa §9.1).
 public sealed record CreateTaxRateRequest(
     string Name,
     decimal Percentage,
     string? Type = null,
     string? Country = null,
-    decimal? MinimumBase = null);
+    decimal? MinimumBase = null,
+    Guid? CityId = null);
 
-// Type y Country no se editan: si el cuerpo los trae, se ignoran. MinimumBase es un JsonElement porque
+// Type, Country y CityId no se editan: si el cuerpo los trae, se ignoran. MinimumBase es un JsonElement porque
 // un decimal? no distingue «ausente» (conservar la base) de null (quitarla, «siempre aplica»).
 public sealed record UpdateTaxRateRequest(
     string Name,
@@ -425,7 +441,9 @@ public sealed record TaxRateCountryOptionDto(
     string Currency,
     IReadOnlyList<TaxRateTypeOptionDto> Types);
 
-public sealed record TaxRateTypeOptionDto(string Type, string Behavior, bool AllowsFraction, bool AllowsMinimumBase);
+/// <param name="Scope">"National" o "Municipal": la pantalla pide el municipio sólo en un tipo municipal.</param>
+public sealed record TaxRateTypeOptionDto(
+    string Type, string Behavior, bool AllowsFraction, bool AllowsMinimumBase, string Scope);
 
 public sealed record CategoryDto(
     Guid Id,

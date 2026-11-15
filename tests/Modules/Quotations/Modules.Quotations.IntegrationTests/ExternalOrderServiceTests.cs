@@ -1011,6 +1011,32 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
             setup.Billing, [new ExternalOrderLine(setup.ProductId, setup.ProductId, 2m, 11_900m, 0m, 19)],
             OrderPaymentStatus.PaymentPending, DateTimeOffset.UtcNow, shipping, externalKey, externalShippingTitle);
 
+    // Review Focus 3 (baseline D22): el webhook de Shopify nunca falla por la resolución municipal. La empresa tiene su
+    // ReteICA en otro municipio y la de su municipio inactiva; el cliente es agente en el municipio de la empresa.
+    [Fact]
+    public async Task ExternalOrderNeverFailsOnMunicipalResolution()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var (city, other) = await EnsureCityIdsInTwoDepartmentsAsync(setup.Client);
+        var elsewhere = await InsertWithholdingRateAsync(factory, setup.TenantId, "ReteICA otra", "ReteICA", 1m, cityId: other.CityId);
+        var inactive = await InsertWithholdingRateAsync(factory, setup.TenantId, "ReteICA vieja", "ReteICA", 0.5m, cityId: city.CityId);
+        await ChangeTaxRateAsync(factory, inactive, isActive: false);
+        await AssignCompanyWithholdingRateAsync(factory, setup.TenantId, setup.Billing.CompanyId, elsewhere);
+        await AssignCompanyWithholdingRateAsync(factory, setup.TenantId, setup.Billing.CompanyId, inactive);
+        await SetWithholdingAgentAsync(factory, setup.TenantId, setup.ClientId, city.CityId);
+
+        var result = await CreateAsync(factory, Draft(setup, "#9101"));
+
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{result.OrderId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Empty(detail.Order.Withholdings);
+        Assert.Equal(city.CityId, detail.OperationCity?.Id);
+        Assert.Equal("NoCompanyRate", Assert.Single(detail.MunicipalWithholdings).Status);
+    }
+
     // Las fuentes que no son de una plataforma no entran por el puerto externo: la tienda se toma desde QEP (Store).
     [Theory]
     [InlineData(OrderSource.Quotation)]

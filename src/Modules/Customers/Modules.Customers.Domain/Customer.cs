@@ -14,6 +14,7 @@ public sealed class Customer
 {
     private readonly List<CustomerAddress> _addresses = [];
     private readonly List<CustomerTaxRate> _withholdingTaxRates = [];
+    private readonly List<CustomerWithholdingAgentCity> _withholdingAgentCities = [];
 
     // Espejan los anchos de columna de customers.customers. Guardar aca significa que un valor
     // demasiado largo falla como 422 con codigo de dominio en vez de llegar a PostgreSQL y volver
@@ -287,6 +288,12 @@ public sealed class Customer
     /// <summary>Las tasas de retención que se le aplican a este cliente (ids del catálogo de impuestos).</summary>
     public IReadOnlyCollection<Guid> WithholdingTaxRateIds =>
         _withholdingTaxRates.Select(rate => rate.TaxRateId).ToArray();
+
+    /// <summary>
+    /// Los municipios donde el cliente es agente retenedor de un impuesto municipal (ReteICA), por país y tipo (spec ReteICA
+    /// por empresa §7.4). Que el tipo sea municipal y la ciudad exista lo valida Application.
+    /// </summary>
+    public IReadOnlyCollection<CustomerWithholdingAgentCity> WithholdingAgentCities => _withholdingAgentCities;
 
     public bool VatSurplus { get; private set; }
 
@@ -878,6 +885,47 @@ public sealed class Customer
         Touch(occurredAt);
         return true;
     }
+
+    /// <summary>
+    /// Reemplaza los municipios donde el cliente es agente retenedor. Normaliza el país a mayúsculas y colapsa los
+    /// repetidos; sube la versión y devuelve <c>true</c> sólo si el conjunto cambió, como
+    /// <see cref="SetWithholdingTaxRates"/>.
+    /// </summary>
+    public bool SetWithholdingAgentCities(
+        IReadOnlyCollection<WithholdingAgentCityEntry> entries, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        EnsureNotMerged();
+
+        var wanted = entries
+            .Select(entry => new CustomerWithholdingAgentCity(
+                TenantId, NormalizeAgentCountry(entry.Country), entry.Type, entry.CityId))
+            .ToHashSet();
+        if (wanted.SetEquals(_withholdingAgentCities))
+        {
+            return false;
+        }
+
+        _withholdingAgentCities.RemoveAll(city => !wanted.Contains(city));
+        var kept = _withholdingAgentCities.ToHashSet();
+        _withholdingAgentCities.AddRange(wanted.Where(city => !kept.Contains(city)));
+
+        Touch(occurredAt);
+        return true;
+    }
+
+    /// <summary>Si el cliente está registrado como agente retenedor de ese tipo en ese municipio.</summary>
+    public bool IsWithholdingAgent(string country, string type, Guid cityId)
+    {
+        var normalized = NormalizeAgentCountry(country);
+        return _withholdingAgentCities.Any(city =>
+            city.Country == normalized
+            && string.Equals(city.Type, type, StringComparison.Ordinal)
+            && city.CityId == cityId);
+    }
+
+    private static string NormalizeAgentCountry(string? country) =>
+        country?.Trim().ToUpperInvariant() ?? string.Empty;
 
     // Una direccion nueva o cambiada es un cambio del cliente: mueve su version optimista igual
     // que editar su nombre, asi que dos pestañas que lo editan a la vez chocan como corresponde.

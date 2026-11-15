@@ -57,9 +57,21 @@ public sealed class DocumentWithholding
 
     public decimal? TaxUnitValue { get; private set; }
 
-    /// <summary>La tasa congelada de esta fila.</summary>
+    /// <summary>El municipio de una tasa municipal; null en las nacionales (spec ReteICA por empresa §7.5).</summary>
+    public Guid? CityId { get; private set; }
+
+    /// <summary>El porcentaje del catálogo al congelar; <see cref="Percentage"/> es el efectivo.</summary>
+    public decimal CatalogPercentage { get; private set; }
+
+    /// <summary>Si el asesor editó el porcentaje en este documento.</summary>
+    public bool Overridden => Percentage != CatalogPercentage;
+
+    /// <summary>La tasa congelada de esta fila, con el porcentaje efectivo y el del catálogo.</summary>
     public WithholdingRate Rate =>
-        new(TaxRateId, Name, Type, Country, Percentage, MinimumBase, MinimumBaseUnit, TaxUnitValue);
+        new(TaxRateId, Name, Type, Country, Percentage, MinimumBase, MinimumBaseUnit, TaxUnitValue, CityId)
+        {
+            CatalogPercentage = CatalogPercentage,
+        };
 
     public decimal BaseAmount { get; private set; }
 
@@ -82,6 +94,16 @@ public sealed class DocumentWithholding
         MinimumBase = rate.MinimumBase;
         MinimumBaseUnit = rate.MinimumBaseUnit;
         TaxUnitValue = rate.TaxUnitValue;
+        CityId = rate.CityId;
+        CatalogPercentage = rate.CatalogPercentage;
+        Settle(null);
+    }
+
+    /// <summary>Cambia el porcentaje efectivo de la fila (spec §7.7); el del catálogo no se mueve. Como en
+    /// <see cref="Replace"/>, el cálculo anterior deja de valer hasta el próximo recálculo del agregado.</summary>
+    internal void SetPercentage(decimal percentage)
+    {
+        Percentage = percentage;
         Settle(null);
     }
 

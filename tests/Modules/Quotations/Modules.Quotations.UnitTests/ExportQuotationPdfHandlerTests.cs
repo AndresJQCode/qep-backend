@@ -61,6 +61,7 @@ public sealed class ExportQuotationPdfHandlerTests
             QuotationParties.Empty,
             billingAccount: null,
             repricing: null, isRetail: false, globalScaleFloor: null,
+            MunicipalContext.None,
             AdvisorId,
             Now.AddHours(1));
 
@@ -213,6 +214,7 @@ public sealed class ExportQuotationPdfHandlerTests
             defaultCurrency: "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
         CurrentQuotationId = quotation.Id.Value;

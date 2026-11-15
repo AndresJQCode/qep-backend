@@ -29,7 +29,11 @@ public sealed class GetTaxRateOptionsHandler(
                 country.TaxCurrency,
                 country.Types
                     .Select(type => new TaxRateTypeOptionDto(
-                        type.Type, type.Behavior.ToString(), type.AllowsFraction, type.AllowsMinimumBase))
+                        type.Type,
+                        type.Behavior.ToString(),
+                        type.AllowsFraction,
+                        type.AllowsMinimumBase,
+                        type.Scope.ToString()))
                     .ToArray()))
             .ToArray();
 

@@ -36,6 +36,13 @@ public sealed record QuotationBillingAccount
     /// </summary>
     public string? Country { get; init; }
 
+    /// <summary>
+    /// El municipio de la empresa (spec ReteICA por empresa §7.5), congelado con la cuenta: es el municipio de la
+    /// operación por defecto (A6). Null en un documento anterior a este trabajo, hasta que el cuerpo vuelva a traer la
+    /// cuenta, y en una empresa sin municipio.
+    /// </summary>
+    public Guid? CityId { get; init; }
+
     // Espejan los anchos de companies.company_bank_accounts: esto es una copia de esa fila y no
     // puede aceptar más de lo que el original acepta.
     public const int BankNameMaxLength = 120;
@@ -68,7 +75,8 @@ public sealed record QuotationBillingAccount
             "quotation.billing.account_number_too_long",
             $"The billing account number cannot exceed {AccountNumberMaxLength} characters."),
         Currency = NormalizeCurrency(Currency),
-        Country = string.IsNullOrWhiteSpace(Country) ? null : Country.Trim().ToUpperInvariant()
+        Country = string.IsNullOrWhiteSpace(Country) ? null : Country.Trim().ToUpperInvariant(),
+        CityId = CityId,
     };
 
     private static string NormalizeRequired(

@@ -11,6 +11,9 @@ namespace Modules.Quotations.Domain;
 /// <param name="MinimumBase">En unidades tributarias si el país tiene unidad, en dinero si no; null = sin base.</param>
 /// <param name="MinimumBaseUnit">El nombre de la unidad en que estaba la base al congelar ("UVT"), para mostrarla.</param>
 /// <param name="TaxUnitValue">El valor de la unidad tributaria al congelar; null si no había ninguno cargado.</param>
+/// <param name="Percentage">El porcentaje efectivo, el que entra al cálculo (spec ReteICA por empresa §7.5). Es el del
+/// catálogo salvo que el asesor lo haya editado en una tasa municipal.</param>
+/// <param name="CityId">El municipio de una tasa municipal (ReteICA); null en las nacionales.</param>
 public sealed record WithholdingRate(
     Guid TaxRateId,
     string Name,
@@ -19,8 +22,18 @@ public sealed record WithholdingRate(
     decimal Percentage,
     decimal? MinimumBase,
     string? MinimumBaseUnit,
-    decimal? TaxUnitValue)
+    decimal? TaxUnitValue,
+    Guid? CityId = null)
 {
+    /// <summary>
+    /// El porcentaje del catálogo al congelar (plan P3). Arranca igual al efectivo; editar es
+    /// <c>rate with { Percentage = p }</c>, que conserva éste.
+    /// </summary>
+    public decimal CatalogPercentage { get; init; } = Percentage;
+
+    /// <summary>Si el asesor cambió el porcentaje del catálogo en este documento.</summary>
+    public bool Overridden => Percentage != CatalogPercentage;
+
     /// <summary>
     /// Desde qué base aplica: 0 sin base mínima; <c>MinimumBase × TaxUnitValue</c> con unidad tributaria;
     /// <c>MinimumBase</c> en un país sin unidad; null si la base está en unidades y no hay valor, y entonces

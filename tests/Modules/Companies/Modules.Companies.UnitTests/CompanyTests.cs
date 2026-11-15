@@ -433,4 +433,50 @@ public sealed class CompanyTests
         Assert.Equal(CityId, company.CityId);
         Assert.Equal(1, company.Version);
     }
+
+    // Spec ReteICA por empresa §7.3: mismas reglas que Customer.SetWithholdingTaxRates. Guardar lo mismo no es un cambio.
+    [Fact]
+    public void SettingTheSameRatesDoesNotBumpTheVersion()
+    {
+        var company = Create();
+        var a = Guid.CreateVersion7();
+        var b = Guid.CreateVersion7();
+        Assert.True(company.SetWithholdingTaxRates([a, b], Now.AddMinutes(1)));
+        var version = company.Version;
+
+        var changed = company.SetWithholdingTaxRates([b, a], Now.AddMinutes(2));
+
+        Assert.False(changed);
+        Assert.Equal(version, company.Version);
+        Assert.Equal(Now.AddMinutes(1), company.UpdatedAt);
+    }
+
+    [Fact]
+    public void SettingRatesReplacesThem()
+    {
+        var company = Create();
+        var a = Guid.CreateVersion7();
+        var b = Guid.CreateVersion7();
+        var c = Guid.CreateVersion7();
+        company.SetWithholdingTaxRates([a, b], Now.AddMinutes(1));
+        var version = company.Version;
+
+        var changed = company.SetWithholdingTaxRates([b, c], Now.AddMinutes(2));
+
+        Assert.True(changed);
+        Assert.Equal(new HashSet<Guid> { b, c }, company.WithholdingTaxRateIds.ToHashSet());
+        Assert.Equal(version + 1, company.Version);
+        Assert.Equal(Now.AddMinutes(2), company.UpdatedAt);
+    }
+
+    [Fact]
+    public void EmptyListClearsThem()
+    {
+        var company = Create();
+        company.SetWithholdingTaxRates([Guid.CreateVersion7()], Now.AddMinutes(1));
+
+        Assert.True(company.SetWithholdingTaxRates([], Now.AddMinutes(2)));
+
+        Assert.Empty(company.WithholdingTaxRateIds);
+    }
 }

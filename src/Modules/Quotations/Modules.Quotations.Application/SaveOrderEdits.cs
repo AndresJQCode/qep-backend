@@ -23,7 +23,10 @@ public sealed record SaveOrderEditsCommand(
     ShippingRequest? Shipping = null,
     OrderBillingEditRequest? Billing = null,
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
-    QuotationBillingAccountRequest? BillingAccount = null) : ICommand<OrderDetailDto>, IOrderEdits;
+    QuotationBillingAccountRequest? BillingAccount = null,
+    OperationCityChoice OperationCity = default,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
@@ -54,7 +57,8 @@ public sealed class SaveOrderEditsHandler(
     IQuotationCompanyLookup companyLookup,
     IQuotationWithholdingLookup withholdingLookup,
     ITenantClock tenantClock,
-    IOrderVariantCostLookup costLookup)
+    IOrderVariantCostLookup costLookup,
+    IQuotationGeographyLookup geographyLookup)
     : ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -198,10 +202,13 @@ public sealed class SaveOrderEditsHandler(
             // estado de pago: una retención baja el neto que los comprobantes cubren.
             var withholdingEdits = await OrderWithholdingEdits.ApplyAsync(
                 order, command,
-                new OrderWithholdingEditsContext(companyLookup, withholdingLookup, tenantClock, command.TenantId),
+                new OrderWithholdingEditsContext(
+                    companyLookup, withholdingLookup, geographyLookup, tenantClock, command.TenantId),
                 updatedBy, now, cancellationToken);
             var accountChanged = withholdingEdits.BillingAccountSummary is not null;
-            var withholdingsChanged = withholdingEdits.WithholdingsSummary is not null;
+            var municipalTexts = await OrderMunicipalHistory.DescribeAsync(
+                geographyLookup, withholdingEdits, format, cancellationToken);
+            var withholdingsChanged = withholdingEdits.Changed;
 
             // El envío con la moneda y la recogida del pedido, que no cambian después de creado (P5). Antes de
             // RecalculatePaymentStatus, más abajo: un envío cobrado sube el neto que los comprobantes cubren.
@@ -290,14 +297,35 @@ public sealed class SaveOrderEditsHandler(
                     order.Id.ToString(), "success", now);
             }
 
-            if (withholdingsChanged)
+            // Spec ReteICA por empresa §7.8: el cambio de municipio, como el de la cuenta, es un PartiesChanged.
+            if (municipalTexts.OperationCitySummary is { } citySummary)
             {
                 orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                     OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
-                    withholdingEdits.WithholdingsSummary!, now));
+                    citySummary, now));
+            }
+
+            if (municipalTexts.WithholdingsSummary is { } withholdingsSummary)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    withholdingsSummary, now));
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.withholdings_changed",
                     order.Id.ToString(), "success", now);
+            }
+
+            // Una entrada por tarifa descartada, quitada o editada, cada una un microsegundo después de la anterior: el
+            // historial ordena por fecha y el orden es parte de lo que cuenta (spec §7.7).
+            var position = 0;
+            foreach (var text in municipalTexts.RateEdited)
+            {
+                var at = now.AddTicks(TimeSpan.TicksPerMicrosecond * ++position);
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.WithholdingRateEdited, updatedBy, text, at));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, OrderMunicipalHistory.RateEditedAuditAction,
+                    order.Id.ToString(), "success", at);
             }
 
             if (notesChanged)

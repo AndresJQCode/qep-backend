@@ -339,7 +339,8 @@ public static class CustomerEndpoints
             survivor.Contacts ?? [],
             survivor.ContactCount,
             result.DroppedTags,
-            survivor.WithholdingTaxRates));
+            survivor.WithholdingTaxRates,
+            survivor.WithholdingAgentCities));
     }
 
     private static async Task<IResult> CreateCustomerAsync(
@@ -364,7 +365,8 @@ public static class CustomerEndpoints
                 request.ClassificationId,
                 request.VatSurplus,
                 request.PersonType,
-                request.WithholdingTaxRateIds),
+                request.WithholdingTaxRateIds,
+                request.WithholdingAgentCities),
             cancellationToken);
 
         return Results.Created(
@@ -396,7 +398,8 @@ public static class CustomerEndpoints
                 request.ClassificationId,
                 request.VatSurplus,
                 request.PersonType,
-                request.WithholdingTaxRateIds),
+                request.WithholdingTaxRateIds,
+                request.WithholdingAgentCities),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -640,7 +643,8 @@ public static class CustomerEndpoints
         customer.Company,
         customer.Contacts ?? [],
         customer.ContactCount,
-        customer.WithholdingTaxRates);
+        customer.WithholdingTaxRates,
+        customer.WithholdingAgentCities);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,

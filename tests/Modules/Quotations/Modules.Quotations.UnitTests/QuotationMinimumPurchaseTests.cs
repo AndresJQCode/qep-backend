@@ -71,7 +71,7 @@ public sealed class QuotationMinimumPurchaseTests
                 AccountNumber = "12345678",
                 Currency = "COP"
             },
-            "COP", customerVatSurplus: false, customerWithholdings: [], advisor, now);
+            "COP", customerVatSurplus: false, customerWithholdings: [], MunicipalContext.None, advisor, now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 150_000m, 0m, 19, advisor, now);
         quotation.SetShipping(
             new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), advisor, now);
@@ -103,7 +103,9 @@ public sealed class QuotationMinimumPurchaseTests
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            new FixedQuotationSettingsStore(Min200));
+            new FixedQuotationSettingsStore(Min200),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
 
         var response = await composer.ComposeAsync(TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
 

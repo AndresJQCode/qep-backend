@@ -102,6 +102,7 @@ public sealed class QuotationProductSnapshotTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
             validUntil: null, null, null, QuotationParties.Empty, BillingAccount, "COP", false, [],
+            MunicipalContext.None,
             AdvisorId, Now);
         AddLine(quotation, ProductA);
 
@@ -140,7 +141,7 @@ public sealed class QuotationProductSnapshotTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
             new DateOnly(2026, 10, 30), "Transferencia bancaria", null, QuotationParties.Empty,
-            BillingAccount, "COP", false, [], AdvisorId, Now);
+            BillingAccount, "COP", false, [], MunicipalContext.None, AdvisorId, Now);
         foreach (var productId in productIds)
         {
             AddLine(quotation, productId);

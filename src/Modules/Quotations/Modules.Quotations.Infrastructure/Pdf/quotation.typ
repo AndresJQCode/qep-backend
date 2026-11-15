@@ -368,8 +368,10 @@
 // cifra que importa, que no siempre es el total: con retención, lo que el cliente gira es el
 // neto.
 //
-// Cada retención que aplicó va en su propio renglón, rotulado con el nombre de la tasa, entre el IVA y el
-// total (spec impuestos por tipo §9.3). Sin retenciones no hay renglón: no se imprime una fila en cero. Lo
+// Cada retención que aplicó va en su propio renglón, rotulado con el nombre de la tasa y su porcentaje efectivo
+// («ReteICA Bogotá 0,966 %:», spec ReteICA por empresa §7.9), entre el IVA y el total (spec impuestos por tipo §9.3).
+// El porcentaje llega ya escrito con el separador del tenant: la plantilla no lo formatea. No se deduplica con el
+// nombre, que lo pone el tenant. Sin retenciones no hay renglón: no se imprime una fila en cero. Lo
 // que sigue siendo cierto es que no restan del total: `Total inversión` es lo facturado, y sólo cuando hay
 // retención de verdad aparece además `Neto a pagar`, que es lo que el cliente gira. Sin eso, una retención
 // se leería como si ya estuviera descontada del total de arriba, que es falso.
@@ -420,7 +422,7 @@
     ),
     ..filas-envio,
     ..data.withholdings.map(retencion => (
-      retencion.name + ":",
+      retencion.name + " " + retencion.percentageLabel + ":",
       "-" + moneda + importe(retencion.amount),
       0,
     )),
