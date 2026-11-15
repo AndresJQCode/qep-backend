@@ -19,6 +19,7 @@ namespace Modules.Buyers.Infrastructure.Signup;
 /// perdedora descarta lo suyo. Los logs llevan el id del mensaje y nunca el email, el hash ni el token.
 /// </summary>
 internal sealed partial class BuyerSignupRequestedWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     ILogger<BuyerSignupRequestedWorker> logger) : BackgroundService
 {
@@ -54,23 +55,31 @@ internal sealed partial class BuyerSignupRequestedWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(PollInterval);
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Outbox);
+        await DoorbellPolling.RunAsync(
+            listener,
+            PollInterval,
+            DoorbellQueues.SafetyNet(DoorbellQueues.Outbox),
+            async _ =>
             {
-                await DrainAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    await DrainAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 
     // `internal`: el punto de entrada de las pruebas, sin el PeriodicTimer (precedente OutboxDeliveryWorker.DrainAsync).

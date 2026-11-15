@@ -73,6 +73,7 @@ namespace Modules.Identity.Infrastructure.Messaging;
 // el intento ErrorAfterAttempts la falla se loguea en Error, así que un mensaje trabado aparece
 // cada 15 minutos hasta que alguien arregle la causa, y el reintento siguiente lo procesa solo.
 internal sealed partial class OrphanUserCleanupWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     ILogger<OrphanUserCleanupWorker> logger) : BackgroundService
 {
@@ -138,23 +139,31 @@ internal sealed partial class OrphanUserCleanupWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(PollInterval);
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Outbox);
+        await DoorbellPolling.RunAsync(
+            listener,
+            PollInterval,
+            DoorbellQueues.SafetyNet(DoorbellQueues.Outbox),
+            async _ =>
             {
-                await TickAsync(stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    await TickAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 
     /// <summary>Un tick: un lote. Interno para que las pruebas lo corran cuando lo necesitan en vez de

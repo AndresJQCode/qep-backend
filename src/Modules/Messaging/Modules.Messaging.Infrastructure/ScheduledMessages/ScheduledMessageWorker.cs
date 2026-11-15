@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -19,6 +20,7 @@ namespace Modules.Messaging.Infrastructure.ScheduledMessages;
 /// </para>
 /// </summary>
 internal sealed partial class ScheduledMessageWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     IOptions<MessagingWorkerOptions> options,
     TimeProvider time,
@@ -53,23 +55,31 @@ internal sealed partial class ScheduledMessageWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, options.Value.ScheduledPollSeconds)));
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Scheduled);
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromSeconds(Math.Max(1, options.Value.ScheduledPollSeconds)),
+            DoorbellQueues.SafetyNet(DoorbellQueues.Scheduled),
+            async _ =>
             {
-                await DrainAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    await DrainAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 
     /// <summary>Una pasada: internal para las pruebas (P10). Sólo la cancelación del host sube; cualquier otra falla se anota por fase.</summary>

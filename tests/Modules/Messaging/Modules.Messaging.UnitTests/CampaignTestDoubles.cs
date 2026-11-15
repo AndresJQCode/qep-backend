@@ -180,6 +180,16 @@ internal sealed class FakeUnitOfWork : IMessagingUnitOfWork
 }
 
 /// <summary>Los handlers de campañas sobre el banco de Messaging: el mismo tenant, miembro, conexión, catálogo, clientes y reloj.</summary>
+/// <summary>Los timbres que tocó un handler (spec 2026-11-13, D-7).</summary>
+internal sealed class RecordingDoorbell : BuildingBlocks.Application.IQueueDoorbell
+{
+    public List<string> Rings { get; } = [];
+
+    public void Ring(string queue) => Rings.Add(queue);
+
+    public BuildingBlocks.Application.IDoorbellListener Listen(string queue) => throw new NotSupportedException();
+}
+
 internal sealed class CampaignBed
 {
     public CampaignBed(params string[] permissions)
@@ -207,6 +217,8 @@ internal sealed class CampaignBed
     public FakeMembershipDirectory Membership { get; } = new();
 
     public RecordingAudit Audit { get; } = new();
+
+    public RecordingDoorbell Doorbell { get; } = new();
 
     public FakeUnitOfWork UnitOfWork { get; } = new();
 
@@ -240,7 +252,7 @@ internal sealed class CampaignBed
     public DeleteCampaignHandler DeleteHandler() => new(Repository, UnitOfWork, Bed.TenantModules, Context);
 
     public LaunchCampaignHandler LaunchHandler() =>
-        new(Repository, Queries, UnitOfWork, Audit, Bed.Templates, Mapper, Bed.TenantModules, Context, Clock, new LaunchCampaignValidator());
+        new(Repository, Queries, UnitOfWork, Audit, Bed.Templates, Mapper, Bed.TenantModules, Context, Clock, new LaunchCampaignValidator(), Doorbell);
 
     public CancelCampaignHandler CancelHandler() =>
         new(Repository, Queries, Audit, Mapper, Bed.TenantModules, Context, Clock, new CancelCampaignValidator());

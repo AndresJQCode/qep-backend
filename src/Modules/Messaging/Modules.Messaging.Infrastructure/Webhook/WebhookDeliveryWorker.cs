@@ -16,6 +16,7 @@ namespace Modules.Messaging.Infrastructure.Webhook;
 /// vencer el lease; a los <see cref="MaxAttempts"/> se marca procesada con <c>last_error</c>.
 /// </summary>
 internal sealed partial class WebhookDeliveryWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     IOptions<MessagingWorkerOptions> options,
     ILogger<WebhookDeliveryWorker> logger) : BackgroundService
@@ -68,23 +69,31 @@ internal sealed partial class WebhookDeliveryWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, options.Value.DeliveryPollSeconds)));
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Webhook);
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromSeconds(Math.Max(1, options.Value.DeliveryPollSeconds)),
+            DoorbellQueues.SafetyNet(DoorbellQueues.Webhook),
+            async _ =>
             {
-                await DrainAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    await DrainAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 
     /// <summary>Tope de lotes llenos seguidos en una pasada: con 50 por lote son 1000 entregas por tick. Sin

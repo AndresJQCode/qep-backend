@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -10,6 +11,7 @@ namespace Modules.Notifications.Infrastructure.Messaging;
 /// mensaje siguen en cada definición; acá sólo vive el bucle.
 /// </summary>
 internal sealed partial class NotificationsDeliveryWorker(
+    IQueueDoorbell doorbell,
     IEnumerable<OutboxDeliveryWorker> definitions,
     ILogger<NotificationsDeliveryWorker> logger) : BackgroundService
 {
@@ -18,21 +20,23 @@ internal sealed partial class NotificationsDeliveryWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Delivery tick of {Consumer} failed.")]
     private static partial void LogTickFailed(ILogger logger, string consumer, Exception exception);
 
+    /// <summary>
+    /// Spec 2026-11-13 (Valkey), D-7: espera el timbre de <c>outbox</c> hasta su red de seguridad (30 s); con el área apagada o Valkey
+    /// caído, <see cref="OutboxDeliveryWorker.PollInterval"/> como antes.
+    /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(OutboxDeliveryWorker.PollInterval);
-        do
-        {
-            try
+        using var listener = doorbell.Listen(DoorbellQueues.Outbox);
+        await DoorbellPolling.RunAsync(
+            listener,
+            OutboxDeliveryWorker.PollInterval,
+            DoorbellQueues.SafetyNet(DoorbellQueues.Outbox),
+            async cancellationToken =>
             {
-                await TickAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                await TickAsync(cancellationToken);
+                return false;
+            },
+            stoppingToken);
     }
 
     /// <summary>

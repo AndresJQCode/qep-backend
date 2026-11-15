@@ -1669,6 +1669,8 @@ public static class QepServiceCollectionExtensions
         services.AddQepObservability(configuration, environment, deployment.BuildNumber);
         AddAuthentication(services, configuration, environment);
         AddAuthorization(services);
+        // Último a propósito (spec 2026-11-13, D-7): agrega el interceptor de timbres a cada DbContext ya registrado.
+        Valkey.QueueDoorbellRegistration.AddQueueDoorbellInterceptor(services);
         return services;
     }
 

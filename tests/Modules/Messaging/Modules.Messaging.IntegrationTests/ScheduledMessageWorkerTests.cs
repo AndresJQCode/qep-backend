@@ -414,6 +414,7 @@ public sealed class ScheduledMessageWorkerTests
         var time = new SteppedTimeProvider();
         // Una instancia propia: el reloj es de la prueba y el tick de arranque del host no comparte su estado.
         var worker = new ScheduledMessageWorker(
+            f.Host.Services.GetRequiredService<BuildingBlocks.Application.IQueueDoorbell>(),
             f.Host.Services.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new MessagingWorkerOptions { PurgeIntervalHours = 24 }),
             time,
@@ -452,6 +453,7 @@ public sealed class ScheduledMessageWorkerTests
         }
 
         var worker = new ScheduledMessageWorker(
+            f.Host.Services.GetRequiredService<BuildingBlocks.Application.IQueueDoorbell>(),
             f.Host.Services.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new MessagingWorkerOptions { PurgeIntervalHours = 24 }),
             new SteppedTimeProvider(),

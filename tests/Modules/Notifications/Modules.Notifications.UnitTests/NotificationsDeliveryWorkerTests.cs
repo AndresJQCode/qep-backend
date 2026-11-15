@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -19,7 +20,7 @@ public sealed class NotificationsDeliveryWorkerTests
     public async Task NotificationsDeliveryWorkerDrainsEveryDefinitionInOneTick()
     {
         var definitions = Enumerable.Range(0, 13).Select(index => new FakeDefinition($"test.consumer-{index}")).ToList();
-        var worker = new NotificationsDeliveryWorker(definitions, NullLogger<NotificationsDeliveryWorker>.Instance);
+        var worker = new NotificationsDeliveryWorker(new PollingDoorbell(), definitions, NullLogger<NotificationsDeliveryWorker>.Instance);
 
         await worker.TickAsync(TestContext.Current.CancellationToken);
 
@@ -32,7 +33,7 @@ public sealed class NotificationsDeliveryWorkerTests
         var first = new FakeDefinition("test.first");
         var failing = new FakeDefinition("test.failing", new InvalidOperationException("boom"));
         var last = new FakeDefinition("test.last");
-        var worker = new NotificationsDeliveryWorker([first, failing, last], NullLogger<NotificationsDeliveryWorker>.Instance);
+        var worker = new NotificationsDeliveryWorker(new PollingDoorbell(), [first, failing, last], NullLogger<NotificationsDeliveryWorker>.Instance);
 
         await worker.TickAsync(TestContext.Current.CancellationToken);
 
@@ -56,6 +57,25 @@ public sealed class NotificationsDeliveryWorkerTests
         Assert.Equal(typeof(NotificationsDeliveryWorker), hosted.ImplementationType);
         Assert.Equal(13, services.Count(descriptor => descriptor.ServiceType == typeof(OutboxDeliveryWorker)
             && descriptor.Lifetime == ServiceLifetime.Singleton));
+    }
+
+    private sealed class PollingDoorbell : IQueueDoorbell, IDoorbellListener
+    {
+        public void Ring(string queue)
+        {
+        }
+
+        public IDoorbellListener Listen(string queue) => this;
+
+        public async Task<bool> WaitAsync(TimeSpan poll, TimeSpan safetyNet, CancellationToken cancellationToken)
+        {
+            await Task.Delay(poll, cancellationToken);
+            return false;
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class FakeDefinition(string consumer, Exception? failure = null)

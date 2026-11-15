@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,7 @@ namespace Modules.Messaging.Infrastructure.Campaigns;
 /// (Application, probado con fakes); acá sólo el ciclo, los scopes y el paralelismo. Un envío por scope: un <c>DbContext</c> no es seguro entre hilos.
 /// </summary>
 internal sealed partial class CampaignDispatchWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     IOptions<MessagingWorkerOptions> workerOptions,
     IOptions<MessagingCampaignOptions> campaignOptions,
@@ -35,36 +37,48 @@ internal sealed partial class CampaignDispatchWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Sending campaign recipient {RecipientId} threw; its lease expires and recovery decides what happens next.")]
     private static partial void LogSendFailed(ILogger logger, Exception exception, Guid recipientId);
 
+    /// <summary>
+    /// Spec 2026-11-13 (Valkey), D-7: espera el timbre de <c>campaign</c> (iniciar o reanudar una campaña) hasta su red de seguridad; con el
+    /// área apagada o Valkey caído, <c>CampaignPollSeconds</c> como antes. Una pasada que se cortó por tiempo mientras seguía enviando
+    /// repite sin esperar (plan P11: es su «próximo vencimiento conocido»); una que esperaba presupuesto espera el timbre o la red.
+    /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, workerOptions.Value.CampaignPollSeconds)));
-        do
-        {
-            try
+        using var listener = doorbell.Listen(DoorbellQueues.Campaign);
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromSeconds(Math.Max(1, workerOptions.Value.CampaignPollSeconds)),
+            DoorbellQueues.SafetyNet(DoorbellQueues.Campaign),
+            async _ =>
             {
-                await DrainAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    return await DrainAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                    return false;
+                }
+            },
+            stoppingToken);
     }
 
     /// <summary>Una pasada: internal para las pruebas (P10). Una falla en un paso la deja subir; la del envío de un destinatario sólo se anota.
     /// Decisión del owner 2026-10-12 (P3): el cubo de la conexión guarda un segundo de ráfaga, así que un tick cada 2 s no alcanzaría el ritmo.
     /// La pasada reclama y envía en rondas, esperando lo que el presupuesto indique, hasta gastar un intervalo del worker; ahí corren la
-    /// recuperación y el cierre y el siguiente tick arranca enseguida.</summary>
-    internal async Task DrainAsync(CancellationToken cancellationToken)
+    /// recuperación y el cierre y el siguiente tick arranca enseguida: devuelve <c>true</c> si la pasada se cortó por tiempo con destinatarios
+    /// todavía reclamables y sin una espera de presupuesto más larga que un intervalo (spec 2026-11-13, D-7).</summary>
+    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
         var span = TimeSpan.FromSeconds(Math.Max(1, workerOptions.Value.CampaignPollSeconds));
         var first = true;
+        var more = false;
         while (true)
         {
             IReadOnlyList<ClaimedRecipient> claimed;
@@ -95,8 +109,15 @@ internal sealed partial class CampaignDispatchWorker(
             }
 
             var remaining = span - time.GetElapsedTime(started);
-            if (claimed.Count == 0 || remaining <= TimeSpan.Zero)
+            if (claimed.Count == 0)
             {
+                break;
+            }
+
+            if (remaining <= TimeSpan.Zero)
+            {
+                // Sólo si la última ronda mandó algo: reclamar sin poder admitir a nadie no es «más trabajo» y no puede girar sin pausa.
+                more = admission.Admitted.Count > 0;
                 break;
             }
 
@@ -105,6 +126,7 @@ internal sealed partial class CampaignDispatchWorker(
                 var pause = wait > MinimumPause ? wait : MinimumPause;
                 if (pause >= remaining)
                 {
+                    more = pause < span;
                     break;
                 }
 
@@ -116,6 +138,8 @@ internal sealed partial class CampaignDispatchWorker(
         {
             await scope.ServiceProvider.GetRequiredService<CampaignDispatcher>().FinishTickAsync(cancellationToken);
         }
+
+        return more;
     }
 
     private async ValueTask SendOneAsync(ClaimedRecipient recipient, CancellationToken cancellationToken)

@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,6 +32,7 @@ public static class AuditInfrastructureExtensions
         services.AddSingleton<IValidateOptions<AuditOptions>, AuditOptionsValidator>();
 
         services.AddHostedService(sp => new AuditProjectionWorker(
+            sp.GetRequiredService<IQueueDoorbell>(),
             sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetRequiredService<ILogger<AuditProjectionWorker>>()));
 

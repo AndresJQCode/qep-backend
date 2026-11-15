@@ -272,11 +272,17 @@ internal sealed class RecordingEmailChannel : IEmailChannel
 internal sealed class NotificationsApiFactory(
     string connectionString,
     IEmailChannel? emailChannel = null,
-    bool runDeliveryWorkers = false)
+    bool runDeliveryWorkers = false,
+    IReadOnlyDictionary<string, string>? settings = null)
     : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+        {
+            builder.UseSetting(key, value);
+        }
+
         builder.UseEnvironment("Development");
         builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
         builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);

@@ -410,7 +410,8 @@ public sealed class LaunchCampaignHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<LaunchCampaignCommand> validator)
+    IValidator<LaunchCampaignCommand> validator,
+    IQueueDoorbell doorbell)
     : ICommandHandler<LaunchCampaignCommand, CampaignDetailDto>
 {
     public async Task<CampaignDetailDto> HandleAsync(LaunchCampaignCommand command, CancellationToken cancellationToken)
@@ -441,6 +442,13 @@ public sealed class LaunchCampaignHandler(
         campaign.Launch(now);
         audit.RecordCampaign(command.TenantId, executionContext.SubjectId, bySystem: false, MessagingAuditActions.CampaignLaunched, campaign.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        // Spec 2026-11-13 (Valkey), D-7; plan P10: lanzar es un UPDATE, que el interceptor no ve. Timbra después del guardado, sólo si
+        // sale ya: una programada la activa el worker a su hora.
+        if (campaign.Status == CampaignStatus.Sending)
+        {
+            doorbell.Ring(DoorbellQueues.Campaign);
+        }
+
         return await CampaignSupport.DetailAsync(queries, mapper, command.TenantId, campaign.Id, cancellationToken);
     }
 }

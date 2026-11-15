@@ -246,6 +246,20 @@ public sealed class CampaignHandlersTests
 
         Assert.Equal("Scheduled", dto.Status);
         Assert.Null(dto.StartedAt);
+        // Spec 2026-11-13 (Valkey), D-7: la programada la activa el worker a su hora; no hay nada que despertar.
+        Assert.Empty(bed.Doorbell.Rings);
+    }
+
+    // Spec 2026-11-13 (Valkey), D-7; plan P10: lanzar es un UPDATE que el interceptor no ve, así que el handler timbra a mano tras guardar.
+    [Fact]
+    public async Task LaunchingNowRingsTheCampaignDoorbellAfterSaving()
+    {
+        var bed = new CampaignBed();
+        var campaign = bed.SeedDraft();
+
+        await bed.LaunchHandler().HandleAsync(new LaunchCampaignCommand(bed.Bed.TenantId, campaign.Id, 1), Ct);
+
+        Assert.Equal([BuildingBlocks.Application.DoorbellQueues.Campaign], bed.Doorbell.Rings);
     }
 
     [Fact]

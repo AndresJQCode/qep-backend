@@ -13,6 +13,7 @@ namespace Modules.Messaging.Infrastructure.Media;
 /// 6 min, 10 min, 30 min, 2 h, 6 h, 6 h…), y copia cada uno en su scope. Varias réplicas pueden correrlo a
 /// la vez: el reclamo da un solo ganador por fila.</summary>
 internal sealed partial class MediaCopyWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     IOptions<MessagingWorkerOptions> options,
     ILogger<MediaCopyWorker> logger) : BackgroundService
@@ -37,23 +38,31 @@ internal sealed partial class MediaCopyWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, options.Value.MediaPollSeconds)));
-        do
-        {
-            try
+        // Spec 2026-11-13 (Valkey), D-7: espera el timbre de su cola hasta la red de seguridad; con el área apagada o
+        // Valkey caído, su intervalo de hoy. Sólo el apagado sale del bucle; cualquier otra falla se loguea y sigue.
+        using var listener = doorbell.Listen(DoorbellQueues.Media);
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromSeconds(Math.Max(1, options.Value.MediaPollSeconds)),
+            DoorbellQueues.SafetyNet(DoorbellQueues.Media),
+            async _ =>
             {
-                await DrainAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    await DrainAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                }
+
+                return false;
+            },
+            stoppingToken);
     }
 
     /// <summary>Una pasada: internal para las pruebas (P10).</summary>

@@ -556,9 +556,20 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
             services.AddScoped(_ => Processor);
             var provider = services.BuildServiceProvider();
             return new ShopifyWebhookDeliveryWorker(
+                new SilentDoorbell(),
                 provider.GetRequiredService<IServiceScopeFactory>(),
                 Options.Create(new ShopifyWebhookOptions()),
                 NullLogger<ShopifyWebhookDeliveryWorker>.Instance);
         }
     }
+}
+
+/// <summary>Sólo DrainAsync corre en estas pruebas: el timbre no se usa.</summary>
+internal sealed class SilentDoorbell : IQueueDoorbell
+{
+    public void Ring(string queue)
+    {
+    }
+
+    public IDoorbellListener Listen(string queue) => throw new NotSupportedException();
 }

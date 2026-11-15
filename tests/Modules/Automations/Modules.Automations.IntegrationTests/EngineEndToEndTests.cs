@@ -59,7 +59,7 @@ public sealed partial class EngineEndToEndTests
 
     private static async Task<Fixture> ArrangeAsync(
         TestDatabase database, string trigger = "NewConversation", string[]? keywords = null, bool enqueue = true, string flowJson = FlowJson,
-        int? inboxBatchSize = null)
+        int? inboxBatchSize = null, IReadOnlyDictionary<string, string>? settings = null)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString, enqueueAutomation: enqueue);
@@ -74,6 +74,11 @@ public sealed partial class EngineEndToEndTests
             if (inboxBatchSize is { } size)
             {
                 builder.UseSetting("Automations:Workers:InboxBatchSize", size.ToString(CultureInfo.InvariantCulture));
+            }
+
+            foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+            {
+                builder.UseSetting(key, value);
             }
         });
         var tenant = await RegisterTenantAsync(host);
