@@ -275,9 +275,16 @@ public sealed partial class AgentTurnRunner(
 
             var results = new List<AiToolResult>();
             AgentToolHandoff? handoff = null;
+            var wrote = false;
             foreach (var call in response.ToolCalls)
             {
-                var (result, requested) = await ExecuteAsync(context, offered, call, cancellationToken);
+                // Una sola herramienta que escribe por respuesta: dos create_quotation_draft en paralelo serían dos borradores. La segunda no
+                // corre; vuelve con error y queda anotada.
+                var writes = AgentToolNames.Writes(call.Name);
+                var (result, requested) = writes && wrote
+                    ? await RejectAsync(context, call, AgentToolErrors.OneWritePerResponse, cancellationToken)
+                    : await ExecuteAsync(context, offered, call, cancellationToken);
+                wrote |= writes;
                 results.Add(result);
                 handoff ??= requested;
                 callIds.Add(call.Id);
@@ -394,6 +401,19 @@ public sealed partial class AgentTurnRunner(
                 result.IsError ? AiRunOutcomes.Error : AiRunOutcomes.Ok, result.ErrorCode, (int)watch.ElapsedMilliseconds, clock.UtcNow),
             cancellationToken);
         return (new AiToolResult(call.Id, result.ResultJson, result.IsError), result.Handoff);
+    }
+
+    /// <summary>Una llamada que no se ejecuta: se anota con su error, como cualquier herramienta que falla.</summary>
+    private async Task<(AiToolResult Result, AgentToolHandoff? Handoff)> RejectAsync(
+        AgentTurnContext context, AiToolCall call, string errorCode, CancellationToken cancellationToken)
+    {
+        var result = AgentToolResult.Error(errorCode);
+        await ledger.RecordToolCallAsync(
+            new AiToolCallRecord(
+                context.TenantId, context.JobId, call.Id, call.Name, call.ArgumentsJson, result.ResultJson, AiRunOutcomes.Error, errorCode, 0,
+                clock.UtcNow),
+            cancellationToken);
+        return (new AiToolResult(call.Id, result.ResultJson, true), null);
     }
 
     private async Task<AgentTurnOutcome> ProviderFailureAsync(

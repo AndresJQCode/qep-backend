@@ -16,6 +16,9 @@ public static class AgentToolNames
 
     /// <summary>Herramienta final: el traspaso a una persona.</summary>
     public const string HandoffToHuman = "handoff_to_human";
+
+    /// <summary>Las herramientas que escriben fuera de Ai. El bucle corre a lo sumo una por respuesta del modelo.</summary>
+    public static bool Writes(string name) => name == CreateQuotationDraft;
 }
 
 /// <summary>
@@ -354,15 +357,12 @@ public interface IAiQuotationAdvisors
 
 /// <summary>
 /// §8.2, P-4 y P-4b: <c>create_quotation_draft</c> en un canal real. Escribe un borrador en Quotations con el cliente de la conversación (nunca
-/// uno de un argumento), la asesora y la cuenta del agente y la clave <c>ai:{jobId}:{callId}</c> (D-A16), y termina el turno con un
+/// uno de un argumento), la asesora y la cuenta del agente y la clave <c>ai:{jobId}</c> (D-A16), y termina el turno con un
 /// traspaso: a la asesora de la cotización si la creó, al destino configurado si el cliente no se puede cotizar. Una asesora que ya no puede
 /// cotizar bloquea la herramienta: el modelo lo lee como error y sigue.
 /// </summary>
 public sealed class CreateQuotationDraftTool(IAiQuotationDrafts drafts, IAiQuotationAdvisors advisors) : IAgentTool
 {
-    /// <summary><c>Quotation.ExternalKeyMaxLength</c>: <c>ai:</c>, el id del trabajo, <c>:</c> y lo que quepa del id de la llamada.</summary>
-    internal const int ExternalKeyMaxLength = 128;
-
     public AiToolDefinition Definition => QuotationDraftArguments.Definition;
 
     public string Capability => AiServicePrincipal.QuotationsDraftCreate;
@@ -408,13 +408,10 @@ public sealed class CreateQuotationDraftTool(IAiQuotationDrafts drafts, IAiQuota
 
     private static AgentToolHandoff CustomerNotReady => new(AgentHandoffCodes.QuotationCustomerNotReady, null);
 
-    /// <summary>D-A16: el mismo trabajo y la misma llamada dan la misma clave, así un trabajo retomado no crea otro borrador.</summary>
-    internal static string ExternalKey(AgentToolInvocation invocation)
-    {
-        var prefix = $"ai:{invocation.JobId:D}:";
-        var room = ExternalKeyMaxLength - prefix.Length;
-        return prefix + (invocation.CallId.Length <= room ? invocation.CallId : invocation.CallId[..room]);
-    }
+    /// <summary>D-A16: la clave es <b>del trabajo</b>, no de la llamada. El id de la llamada lo inventa el modelo y cambia si el trabajo se
+    /// retoma (lease vencido, proceso caído) y el modelo corre otra vez: con él en la clave, cada reintento creaba otro borrador. Un trabajo
+    /// crea a lo sumo un borrador; el segundo intento con la misma clave devuelve el que ya existe.</summary>
+    internal static string ExternalKey(AgentToolInvocation invocation) => $"ai:{invocation.JobId:D}";
 }
 
 /// <summary>Los códigos de error que lee el modelo en un resultado de herramienta (y que guarda <c>ai.tool_calls.error_code</c>).</summary>
@@ -436,6 +433,9 @@ public static class AgentToolErrors
 
     /// <summary>P-4: el agente no tiene asesora o cuenta de cobro (publicar ya lo exige; queda por una versión vieja).</summary>
     public const string QuotationNotConfigured = "quotation_not_configured";
+
+    /// <summary>La respuesta del modelo traía más de una herramienta que escribe; sólo corrió la primera.</summary>
+    public const string OneWritePerResponse = "one_write_per_response";
 }
 
 internal static class AgentToolArguments

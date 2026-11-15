@@ -42,7 +42,43 @@ public sealed class CreateQuotationDraftToolTests
         Assert.Equal((Tenant, Customer, Advisor, Account), (request.TenantId, request.CustomerId, request.AdvisorMemberId, request.BillingAccount));
         Assert.Equal([new AiQuotationDraftLine(VariantA, 2), new AiQuotationDraftLine(VariantB, 1)], request.Lines);
         Assert.Equal("Quiere entrega el lunes.", request.Note);
-        Assert.Equal($"ai:{JobId}:call_q", request.ExternalKey);
+        Assert.Equal($"ai:{JobId}", request.ExternalKey);
+    }
+
+    // Revisión final, hallazgo 1: el id de la llamada lo inventa el modelo y cambia si el trabajo se retoma y el modelo corre otra vez. La
+    // clave es del trabajo, así el segundo intento encuentra el borrador del primero en vez de crear otro.
+    [Fact]
+    public async Task ARerunOfTheSameJobAsksForTheSameDraftKey()
+    {
+        _model.Enqueue(Call("call_first_run", Lines()));
+        _model.Enqueue(Call("call_second_run", Lines()));
+
+        await RunAsync(Context());
+        await RunAsync(Context());
+
+        Assert.Equal([$"ai:{JobId}", $"ai:{JobId}"], _drafts.Requests.Select(request => request.ExternalKey));
+    }
+
+    // Revisión final, hallazgo 1: dos create_quotation_draft en la misma respuesta (llamadas en paralelo) crean un solo borrador; la segunda
+    // vuelve con error y queda anotada.
+    [Fact]
+    public async Task TwoDraftCallsInOneResponseCreateOneDraft()
+    {
+        _model.Enqueue(new AiModelResponse(
+            null,
+            [
+                new AiToolCall("call_a", AgentToolNames.CreateQuotationDraft, JsonSerializer.Serialize(Lines())),
+                new AiToolCall("call_b", AgentToolNames.CreateQuotationDraft, JsonSerializer.Serialize(Lines())),
+            ],
+            [new AiOpaqueBlock("opaque")], AiStopReason.ToolUse, new AiModelUsage(100, 20, null, null), "claude-opus-5-5", "req_1"));
+
+        var outcome = await RunAsync(Context());
+
+        Assert.Single(_drafts.Requests);
+        Assert.Equal(new AgentHandedOff(AgentHandoffCodes.QuotationDraftCreated, null, Advisor), outcome);
+        Assert.Equal(
+            [("call_a", AiRunOutcomes.Ok, (string?)null), ("call_b", AiRunOutcomes.Error, AgentToolErrors.OneWritePerResponse)],
+            _calls.Select(call => (call.CallId, call.Outcome, call.ErrorCode)));
     }
 
     // P-4b: creado el borrador, el agente pasa la conversación a la asesora de la cotización para que la revise y la envíe.
