@@ -36,6 +36,17 @@ public sealed class ValkeyRegistrationTests
                 && descriptor.ImplementationType == typeof(PresenceHeartbeatWorker));
     }
 
+    [Theory]
+    [InlineData("true", typeof(ValkeyQueueDoorbell))]
+    [InlineData("false", typeof(NullQueueDoorbell))]
+    public void TheDoorbellFollowsItsArea(string on, Type expected)
+    {
+        var services = Register(("Valkey:Areas:Doorbells", on));
+        using var provider = services.BuildServiceProvider();
+
+        Assert.IsType(expected, provider.GetRequiredService<BuildingBlocks.Application.IQueueDoorbell>());
+    }
+
     [Fact]
     public void WithRateLimitingOnThePartitionsUseValkey()
     {

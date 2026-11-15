@@ -56,11 +56,96 @@ internal sealed partial class ValkeyGateway(
         }
     }
 
+    /// <summary>El multiplexer existe y está conectado ahora mismo.</summary>
+    public bool IsConnected => connection.Multiplexer is { IsConnected: true };
+
+    /// <summary>
+    /// <c>PUBLISH</c> sin esperar la respuesta (<see cref="CommandFlags.FireAndForget"/>), para que un timbre nunca alargue el
+    /// commit de quien lo toca (D-7, plan P8). Sin conexión o con cualquier excepción cuenta el respaldo del área. Nunca lanza.
+    /// </summary>
+    public void Publish(ValkeyArea area, RedisChannel channel)
+    {
+        if (connection.Multiplexer is not { IsConnected: true } multiplexer)
+        {
+            RecordFallback(area, NotConnected);
+            return;
+        }
+
+        try
+        {
+            multiplexer.GetSubscriber().Publish(channel, RedisValue.EmptyString, CommandFlags.FireAndForget);
+        }
+        catch (Exception exception)
+        {
+            RecordFallback(area, exception.GetType().Name);
+        }
+    }
+
+    /// <summary>
+    /// <c>SUBSCRIBE</c> con el tope de <c>OperationTimeoutMs</c>. <c>false</c> sin conexión o con error (cuenta el respaldo),
+    /// y en ese caso suelta el handler, para que un reintento no deje dos. StackExchange.Redis vuelve a suscribir solo al
+    /// reconectar.
+    /// </summary>
+    public async Task<bool> TrySubscribeAsync(
+        ValkeyArea area,
+        RedisChannel channel,
+        Action handler,
+        CancellationToken cancellationToken)
+    {
+        if (connection.Multiplexer is not { IsConnected: true } multiplexer)
+        {
+            RecordFallback(area, NotConnected);
+            return false;
+        }
+
+        var subscriber = multiplexer.GetSubscriber();
+        Action<RedisChannel, RedisValue> onMessage = (_, _) => handler();
+        Task? pending = null;
+        try
+        {
+            pending = subscriber.SubscribeAsync(channel, onMessage);
+            await pending
+                .WaitAsync(TimeSpan.FromMilliseconds(options.Value.OperationTimeoutMs), cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Observe(pending);
+            Unsubscribe(subscriber, channel, onMessage);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            Observe(pending);
+            Unsubscribe(subscriber, channel, onMessage);
+            RecordFallback(area, exception.GetType().Name);
+            return false;
+        }
+    }
+
+    private static void Unsubscribe(ISubscriber subscriber, RedisChannel channel, Action<RedisChannel, RedisValue> handler)
+    {
+        try
+        {
+            subscriber.Unsubscribe(channel, handler, CommandFlags.FireAndForget);
+        }
+        catch (Exception)
+        {
+            // Sin conexión no hay nada que soltar en el servidor; el handler local ya no recibe nada.
+        }
+    }
+
     private ValkeyAttempt<T> Fallback<T>(ValkeyArea area, string reason)
+    {
+        RecordFallback(area, reason);
+        return new ValkeyAttempt<T>(false, default);
+    }
+
+    private void RecordFallback(ValkeyArea area, string reason)
     {
         metrics.RecordFallback(area);
         LogFallback(logger, area, reason);
-        return new ValkeyAttempt<T>(false, default);
     }
 
     // La operación que se soltó por tope sigue viva: si después falla, su excepción no tiene que quedar sin observar.

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using BuildingBlocks.Application;
 using Bootstrapper.Valkey.Permissions;
 using Bootstrapper.Valkey.Presence;
 using Bootstrapper.Valkey.RateLimiting;
@@ -47,6 +48,8 @@ public static class ValkeyServiceCollectionExtensions
         AddSessionCaches(services, IsOn(valkey, ValkeyArea.Sessions));
         AddPermissionsCache(services, IsOn(valkey, ValkeyArea.Permissions));
 
+        AddDoorbells(services, IsOn(valkey, ValkeyArea.Doorbells));
+
         // El líder del muestreador de colas (D-7, plan P14): se registra siempre y decide en cada vuelta con el
         // interruptor de Doorbells; apagado, todos los pods muestrean como antes.
         services.AddSingleton<QueueSamplerLeadership>();
@@ -61,6 +64,22 @@ public static class ValkeyServiceCollectionExtensions
     // Lo que se registra se decide con la configuración al arrancar (V3 del plan): un área cuenta prendida sólo con el
     // interruptor general también prendido, igual que en ValkeyGateway.IsEnabled.
     private static bool IsOn(ValkeyOptions valkey, ValkeyArea area) => valkey.Enabled && ValkeyAreas.IsOn(valkey.Areas, area);
+
+    /// <summary>
+    /// Los timbres de las colas (D-7). Apagados, el nulo: nadie publica y cada worker espera su intervalo de hoy (plan P9).
+    /// Prendidos (<c>Valkey:Areas:Doorbells</c>), los productores publican en <c>qep:wake:{cola}</c> después del commit y los
+    /// workers esperan hasta su red de seguridad o el primer aviso.
+    /// </summary>
+    private static void AddDoorbells(IServiceCollection services, bool shared)
+    {
+        if (!shared)
+        {
+            services.AddSingleton<IQueueDoorbell, NullQueueDoorbell>();
+            return;
+        }
+
+        services.AddSingleton<IQueueDoorbell, ValkeyQueueDoorbell>();
+    }
 
     /// <summary>
     /// La caché de sesión (D-4). Apagada, el nulo: nunca acierta y cada request lee Postgres como antes. Prendida

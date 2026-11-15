@@ -159,6 +159,33 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
         Assert.DoesNotContain(logs, entry => entry.Contains("valkey-sentinel-host", StringComparison.Ordinal));
     }
 
+    // Los timbres (D-7): sin conexión, publicar no espera ni lanza, y cuenta el respaldo del área.
+    [Fact]
+    public async Task PublishWithoutConnectionCountsAFallbackAndDoesNotThrow()
+    {
+        await using var harness = await Harness.StartAsync("127.0.0.1:1,connectTimeout=500");
+
+        harness.Gateway.Publish(ValkeyArea.Doorbells, StackExchange.Redis.RedisChannel.Literal("qep:wake:test"));
+
+        Assert.False(harness.Gateway.IsConnected);
+        Assert.Equal(1, harness.Recorder.Fallbacks("doorbells"));
+    }
+
+    [Fact]
+    public async Task TrySubscribeWithoutConnectionReturnsFalse()
+    {
+        await using var harness = await Harness.StartAsync("127.0.0.1:1,connectTimeout=500");
+
+        var subscribed = await harness.Gateway.TrySubscribeAsync(
+            ValkeyArea.Doorbells,
+            StackExchange.Redis.RedisChannel.Literal("qep:wake:test"),
+            () => { },
+            TestContext.Current.CancellationToken);
+
+        Assert.False(subscribed);
+        Assert.Equal(1, harness.Recorder.Fallbacks("doorbells"));
+    }
+
     [Fact]
     public void KeysArePrefixedAndLowercase()
     {

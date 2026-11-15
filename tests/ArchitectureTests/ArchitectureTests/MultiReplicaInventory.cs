@@ -177,6 +177,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Observability/QueueGauges.cs:20 — la última lectura del pod; el dashboard agrega con max/avg"),
         new("Bootstrapper.Valkey.ValkeyConnection", StateClassification.PerPodByDesign,
             "Bootstrapper/Valkey/ValkeyConnection.cs:31 — el multiplexer de cada pod"),
+        new("Bootstrapper.Valkey.ValkeyQueueDoorbell", StateClassification.PerPodByDesign,
+            "Bootstrapper/Valkey/ValkeyQueueDoorbell.cs:21 — los oyentes de los workers de este pod; el aviso viaja entre pods por pub/sub (qep:wake:{cola})"),
         new("Modules.Messaging.Infrastructure.Webhook.WebhookRouting", StateClassification.PerPodByDesign,
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookRouting.cs:12 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
         new("Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus", StateClassification.PerPodByDesign,
