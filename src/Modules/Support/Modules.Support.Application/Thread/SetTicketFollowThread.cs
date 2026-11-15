@@ -27,8 +27,9 @@ public sealed class SetTicketFollowThreadValidator : AbstractValidator<SetTicket
 
 /// <summary>
 /// «Seguir el hilo» (spec §8.2, plan E4): apagarlo sella la fecha de la franja; prenderlo abre una ventana nueva desde ahora. El mismo
-/// valor no hace nada. Prenderlo en un ticket cerrado es 422 <c>support.ticket.follow_closed</c> (ruling A-c2: no podría vincular nada) y
-/// en uno sin conversación, 422 <c>support.ticket.no_conversation</c>.
+/// valor no hace nada. En un ticket cerrado, prenderlo o apagarlo es 422 <c>support.ticket.not_editable</c>, lo guarda el agregado (R9
+/// extendida, owner 2026-11-15; antes del ruling era <c>follow_closed</c>, ruling A-c2); en uno resuelto se permite. Sin conversación,
+/// 422 <c>support.ticket.no_conversation</c>.
 /// </summary>
 public sealed class SetTicketFollowThreadHandler(
     IExecutionContext executionContext,
@@ -51,11 +52,6 @@ public sealed class SetTicketFollowThreadHandler(
         var follow = command.Follow ?? throw new InvalidOperationException("Follow passed validation but is null.");
         var (ticket, actor) = await SupportTicketActions.LoadAsync(
             executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
-        if (follow && ticket.Status is SupportTicketStatus.Closed)
-        {
-            throw new SupportDomainException(SupportErrorCodes.FollowClosed, "A closed ticket cannot follow its thread again.");
-        }
-
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var version = ticket.Version;
         ticket.SetFollowThread(follow, actor, context.Now);

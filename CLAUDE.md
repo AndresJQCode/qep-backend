@@ -894,7 +894,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Un ticket `Resolved` o `Closed` no cambia de responsable, tipo ni cliente: `422 support.ticket.not_editable`** (R9, owner
   2026-11-15). La guarda está en el agregado (`SupportTicket.EnsureEditable`), no en los handlers, para que la cumpla todo camino
   nuevo; rechaza aunque el valor sea el mismo. La fusión de clientes (`CustomerMergeReferences`, SQL crudo) sigue moviendo tickets en
-  cualquier estado, a propósito: es el sistema, no un asesor.
+  cualquier estado, a propósito: es el sistema, no un asesor. **Extendida (owner, 2026-11-15):** fijar o soltar un mensaje y «Seguir el
+  hilo» se permiten `Resolved` y dan el mismo `422 support.ticket.not_editable` en `Closed`, también apagar un hilo ya apagado
+  (`SupportTicket.EnsureNotClosed`, desde `RecordMessageEvent` para `MessagePinned`/`MessageReleased` y desde `SetFollowThread`).
+  Reemplazó a `support.ticket.follow_closed`, que ya no existe. Responder se permite en cualquier estado. Los caminos del sistema no pasan
+  por esa guarda: el worker del hilo vincula entrantes (`SupportThreadFollower`), la fusión y el borrado de clientes son SQL crudo, y
+  clasificar desde «sin clasificar» o «De ninguno» (`MessageClassified`, `MessageDismissed`) tampoco la toman.
 - **Las pruebas de plazos de Soporte comparten un host por clase con el reloj movible: `ClockedSupportHost`** (`SupportTicketsApiTests`,
   `SupportTicketActionsApiTests`, `SupportInboxApiTests`). Rompe a propósito la regla de «una prueba que toca el reloj levanta su host»:
   el `ITenantClock` del host es un `MutableTenantClock` y lo comparten sólo las pruebas de esa clase. Hoy es seguro porque xUnit corre

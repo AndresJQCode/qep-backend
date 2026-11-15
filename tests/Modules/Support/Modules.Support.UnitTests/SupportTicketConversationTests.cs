@@ -220,4 +220,58 @@ public sealed class SupportTicketConversationTests
         Assert.False(ticket.CoversInbound(Later(16)));
         Assert.Equal(SupportTicketEventKind.ConversationLinked, ticket.Events[^1].Kind);
     }
+
+    // R9 extendida (owner, 2026-11-15, E3): resuelto, el asesor todavía fija, suelta y prende o apaga «Seguir el hilo».
+    [Fact]
+    public void AResolvedTicketStillPinsReleasesAndTogglesFollow()
+    {
+        var ticket = FromConversation();
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, Later(10), Clock);
+        var message = Guid.CreateVersion7();
+
+        ticket.RecordMessageEvent(SupportTicketEventKind.MessagePinned, message, Actor, Later(11));
+        ticket.RecordMessageEvent(SupportTicketEventKind.MessageReleased, message, Actor, Later(12));
+        ticket.SetFollowThread(false, Actor, Later(13));
+        ticket.SetFollowThread(true, Actor, Later(14));
+
+        Assert.True(ticket.FollowThread);
+        Assert.Equal(Later(14), ticket.FollowSince);
+        Assert.Equal(
+            [
+                SupportTicketEventKind.MessagePinned, SupportTicketEventKind.MessageReleased,
+                SupportTicketEventKind.FollowThreadChanged, SupportTicketEventKind.FollowThreadChanged,
+            ],
+            ticket.Events.TakeLast(4).Select(item => item.Kind));
+    }
+
+    // Cerrado, no: 422 support.ticket.not_editable, también con el mismo valor de «Seguir el hilo», y nada cambia.
+    [Fact]
+    public void AClosedTicketRejectsPinReleaseAndFollow()
+    {
+        var ticket = FromConversation();
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, Later(10), Clock);
+        ticket.ChangeStatus(SupportTicketStatus.Closed, Actor, Later(11), Clock);
+        var version = ticket.Version;
+        var events = ticket.Events.Count;
+        var message = Guid.CreateVersion7();
+
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(
+                () => ticket.RecordMessageEvent(SupportTicketEventKind.MessagePinned, message, Actor, Later(12))).Code);
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(
+                () => ticket.RecordMessageEvent(SupportTicketEventKind.MessageReleased, message, Actor, Later(12))).Code);
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(() => ticket.SetFollowThread(true, Actor, Later(12))).Code);
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(() => ticket.SetFollowThread(false, Actor, Later(12))).Code);
+        Assert.False(ticket.FollowThread);
+        Assert.Equal(Later(11), ticket.FollowOffAt);
+        Assert.Equal(version, ticket.Version);
+        Assert.Equal(events, ticket.Events.Count);
+    }
 }

@@ -376,9 +376,10 @@ public sealed class SupportTicket
 
     /// <summary>«Seguir el hilo» (spec §8.2). Apagar sella <see cref="FollowOffAt"/>; prender abre una ventana nueva desde ahora,
     /// así lo que llegó con el interruptor apagado no se vincula (plan E4). El mismo valor no hace nada. Sin conversación no hay
-    /// hilo que seguir.</summary>
+    /// hilo que seguir. Cerrado, 422 <c>support.ticket.not_editable</c> aunque el valor sea el mismo (R9 extendida); resuelto, sí.</summary>
     public void SetFollowThread(bool follow, Guid actorMemberId, DateTimeOffset now)
     {
+        EnsureNotClosed();
         if (follow == FollowThread)
         {
             return;
@@ -437,13 +438,20 @@ public sealed class SupportTicket
         && since <= occurredAt
         && (FollowOffAt is not { } off || occurredAt < off);
 
-    /// <summary>Fijar, soltar, clasificar desde «sin clasificar» o «De ninguno» (plan E7 y E8). Null es el sistema.</summary>
+    /// <summary>Fijar, soltar, clasificar desde «sin clasificar» o «De ninguno» (plan E7 y E8). Null es el sistema. Fijar y soltar en un
+    /// ticket cerrado es 422 <c>support.ticket.not_editable</c> (R9 extendida); resuelto, sí. Es la única entrada de dominio de esas dos
+    /// acciones: el handler cambia el vínculo y llama acá antes de guardar, así un rechazo no deja nada escrito.</summary>
     public void RecordMessageEvent(SupportTicketEventKind kind, Guid messageId, Guid? actorMemberId, DateTimeOffset now)
     {
         if (kind is not (SupportTicketEventKind.MessagePinned or SupportTicketEventKind.MessageReleased
             or SupportTicketEventKind.MessageClassified or SupportTicketEventKind.MessageDismissed))
         {
             throw new ArgumentException($"'{kind}' is not a message event.", nameof(kind));
+        }
+
+        if (kind is SupportTicketEventKind.MessagePinned or SupportTicketEventKind.MessageReleased)
+        {
+            EnsureNotClosed();
         }
 
         AddEvent(kind, actorMemberId, now, new { messageId });
@@ -507,6 +515,18 @@ public sealed class SupportTicket
         {
             throw new SupportDomainException(
                 SupportErrorCodes.NotEditable, $"A ticket in status '{Status}' cannot be reassigned, retyped or relinked.");
+        }
+    }
+
+    /// <summary>R9 extendida [owner 2026-11-15]: fijar o soltar un mensaje y «Seguir el hilo» se permiten resuelto, no cerrado. Responder
+    /// no pasa por acá (se permite en cualquier estado), ni los caminos del sistema: el worker del hilo vincula con su propio repositorio y
+    /// la fusión y el borrado de clientes son SQL crudo.</summary>
+    private void EnsureNotClosed()
+    {
+        if (Status is SupportTicketStatus.Closed)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.NotEditable, "A closed ticket cannot pin or release messages nor change whether it follows its thread.");
         }
     }
 

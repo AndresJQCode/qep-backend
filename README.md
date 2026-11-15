@@ -4856,7 +4856,11 @@ fuera de la tabla es `422 support.ticket.transition_invalid`. Ningún estado vue
 reabrirse a `Open` (`ResolutionCount` cuenta las resoluciones). **Un ticket `Resolved` o `Closed` no se edita** (owner, 2026-11-15):
 `PUT …/assignee`, `…/type` y `…/customer` responden `422 support.ticket.not_editable`, aunque el valor sea el mismo. Lo guarda el
 agregado (`SupportTicket.Assign`, `ChangeType`, `LinkCustomer`), así que vale para cualquier camino nuevo; para editarlo hay que
-reabrirlo (`Resolved` → `Open`). La fusión de clientes no pasa por ahí: mueve tickets en cualquier estado.
+reabrirlo (`Resolved` → `Open`). La fusión de clientes no pasa por ahí: mueve tickets en cualquier estado. **El expediente se cura
+hasta resolver:** fijar o soltar un mensaje (`POST …/messages/{messageId}/pin` · `/release`) y «Seguir el hilo» (`PUT …/follow-thread`)
+se permiten en `Resolved` y responden el mismo `422 support.ticket.not_editable` en `Closed`, también apagar un hilo que ya estaba
+apagado (antes era `support.ticket.follow_closed`, que ya no existe). Responder se permite en cualquier estado, y el worker del hilo, la
+fusión y el borrado de clientes no pasan por esa guarda.
 
 **Reloj de resolución.** Los términos cuentan **de lunes a viernes** (owner, 2026-11-15, spec §13.4): en un tenant cuyo país (ajustes
 regionales) es `CO` se descuentan además los festivos nacionales de Colombia; en cualquier otro país, sólo lunes a viernes. **No usa

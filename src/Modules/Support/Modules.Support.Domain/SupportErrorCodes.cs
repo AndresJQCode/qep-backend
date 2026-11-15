@@ -12,7 +12,8 @@ public static class SupportErrorCodes
 
     public const string RequesterRequired = "support.ticket.requester_required";
 
-    /// <summary>R9 [owner 2026-11-15]: un ticket resuelto o cerrado no se reasigna, no cambia de tipo ni de cliente.</summary>
+    /// <summary>R9 [owner 2026-11-15]: un ticket resuelto o cerrado no se reasigna, no cambia de tipo ni de cliente; cerrado, tampoco
+    /// fija ni suelta mensajes ni cambia «Seguir el hilo» (R9 extendida).</summary>
     public const string NotEditable = "support.ticket.not_editable";
 
     public const string ReplyChannelUnavailable = "support.ticket.reply_channel_unavailable";
@@ -43,9 +44,6 @@ public static class SupportErrorCodes
     public const string TicketNotCandidate = "support.unclassified.ticket_not_candidate";
 
     public const string NoConversation = "support.ticket.no_conversation";
-
-    /// <summary>Ruling A-c2: un ticket cerrado no vuelve a seguir el hilo; no podría vincular nada.</summary>
-    public const string FollowClosed = "support.ticket.follow_closed";
 
     public const string ReplyWindowClosed = "support.reply.window_closed";
 
