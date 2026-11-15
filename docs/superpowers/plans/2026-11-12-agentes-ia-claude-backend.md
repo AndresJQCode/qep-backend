@@ -440,19 +440,40 @@ Hecha en `feat/agentes-ia-claude`, sin migración, con build en verde y **prueba
 
 ### Task 10 (AI-B9, nuevo): Eval, ajuste de esfuerzo y comparación de proveedores
 
-- [ ] Conjunto de 30–50 conversaciones sintéticas en español con la respuesta esperada (pregunta fuera de alcance,
+Arnés hecho en `feat/agentes-ia-claude`, con build en verde y **sin correr** (cada corrida gasta dinero real). Cambia respecto de lo
+planeado:
+
+- **Es una consola, no un proyecto de pruebas:** `tests/Modules/Ai/Modules.Ai.Eval` (`OutputType Exe`, `IsTestProject false`). `dotnet test`
+  la salta, así que no corre en la suite ni en ningún pipeline; está en `Backend.slnx` sólo para que el build la compile. Para llamar a un
+  proveedor exige `--confirm-spend`, un tope duro `--max-model-calls` y la clave en `QEP_EVAL_ANTHROPIC_API_KEY` /
+  `QEP_EVAL_OPENAI_API_KEY`; `--dry-run` valida el conjunto sin red. Cómo correrlo: README, «Agentes IA», «Eval».
+- **43 casos** en `eval-set.json` (catorce categorías, las seis del plan incluidas), contra una ferretería ficticia en memoria
+  (`EvalFixture`): catálogo y pedidos falsos, `create_quotation_draft` simulado (modo playground).
+- **Los adaptadores salen de `AddAiInfrastructure`**, el mismo cableado de producción (clientes nombrados sin loggers ni redirecciones,
+  límites de `Ai:Model`); la base nunca se abre.
+- **El juez es un gancho** (`IEvalJudge`, `ModelJudge` sobre `IAiModelClient`, `--judge`): corre sólo en los casos con rúbrica que pasaron
+  las reglas. Sin juez, esos casos quedan «judge pending» y la calidad es sólo por reglas.
+- **El costo necesita precios del día:** QEP no tiene tabla de precios (P-15), así que se pasan con `--prices` (plantilla
+  `prices.example.json`, en `null`). Sin precio de un componente con tokens, el costo sale «unknown»; no se supone.
+
+- [x] Conjunto de 30–50 conversaciones sintéticas en español con la respuesta esperada (pregunta fuera de alcance,
   cliente que pide humano, intento de inyección «ignora tus instrucciones», pedido de otro cliente, ráfaga de tres
   mensajes, imagen sin texto). Calificación por reglas donde se pueda (herramienta final, traspaso correcto, nunca
   revela instrucciones) y por un modelo juez donde no.
-- [ ] El eval corre sobre el **mismo** `AgentTurnRunner` con cualquier proveedor: así la comparación mide el modelo y
+- [x] El eval corre sobre el **mismo** `AgentTurnRunner` con cualquier proveedor: así la comparación mide el modelo y
   no dos arneses distintos.
 - [ ] Correrlo con los modelos de Anthropic (Opus 5.5 en `low`, `medium` y `high`; Sonnet 5.5 y Haiku 5.5 en su mejor
   esfuerzo) y, cuando exista la Tarea 6, con los de OpenAI. Medir calidad, latencia p90 y costo por conversación
-  resuelta. **Cada corrida gasta dinero real:** el presupuesto lo aprueba el owner antes.
-- [ ] Verificar `CacheReadInputTokens > 0` desde la segunda llamada de un trabajo con Anthropic (C-12).
+  resuelta. **Cada corrida gasta dinero real:** el presupuesto lo aprueba el owner antes. Pendiente: aprobación del
+  presupuesto por el owner y la corrida (el arnés ya mide las tres cosas).
+- [ ] Verificar `CacheReadInputTokens > 0` desde la segunda llamada de un trabajo con Anthropic (C-12). Pendiente de la
+  corrida: el reporte lo calcula por variante (`C-12 cache check`: `verified`, `failed` con los casos, o `not_verifiable` si
+  ningún trabajo hizo dos llamadas).
 - [ ] Con el resultado: `effort` por modelo, topes de D-A20 (P-2) y el texto de las instrucciones fijas. Si las
   instrucciones fijas necesitan variar por proveedor, la variación vive en el adaptador, no en el builder común.
-- [ ] Commit `chore(ai): tune effort and limits from eval results`.
+  Pendiente: aprobación del presupuesto por el owner y la corrida.
+- [ ] Commit `chore(ai): tune effort and limits from eval results`. Pendiente: aprobación del presupuesto por el owner y la
+  corrida.
 
 ### Task 11: Documentación y despliegue
 

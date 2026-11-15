@@ -135,6 +135,7 @@
   </Folder>
   <Folder Name="/tests/Modules/" />
   <Folder Name="/tests/Modules/Ai/">
+    <Project Path="tests/Modules/Ai/Modules.Ai.Eval/Modules.Ai.Eval.csproj" />
     <Project Path="tests/Modules/Ai/Modules.Ai.IntegrationTests/Modules.Ai.IntegrationTests.csproj" />
     <Project Path="tests/Modules/Ai/Modules.Ai.UnitTests/Modules.Ai.UnitTests.csproj" />
   </Folder>
