@@ -262,12 +262,24 @@ public interface IShopifyGeographyLookup
     Task<ShopifyCityLookup> LookupCityAsync(string departmentName, string cityName, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-11-14 §5: los nombres de QEP (DIVIPOLA) de una ciudad y su departamento, para mandarlos a Shopify; <c>null</c>
-    /// si alguno no existe.</summary>
+    /// si alguno no existe o la ciudad es de otro departamento (owner 2026-11-15).</summary>
     Task<ShopifyCityName?> DescribeCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+
+    /// <summary>Owner 2026-11-15: la corrección del pedido valida que el departamento exista y que la ciudad exista y sea de él.</summary>
+    Task<ShopifyCityCheck> CheckCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken);
 }
 
 /// <summary>Una ciudad de Geography por sus nombres, como los guarda la semilla (mayúsculas y con tildes).</summary>
 public sealed record ShopifyCityName(string City, string Department);
+
+/// <summary>El resultado de <see cref="IShopifyGeographyLookup.CheckCityAsync"/>: cada falla marca un campo distinto del formulario
+/// (el departamento se elige primero, la ciudad después).</summary>
+public enum ShopifyCityCheck
+{
+    Matches,
+    DepartmentNotFound,
+    CityNotInDepartment,
+}
 
 /// <summary>Spec 2026-11-14 §5 y plan D12: la dirección de envío de <c>orderUpdate</c> (<c>MailingAddressInput</c>, que no tiene
 /// <c>name</c>): el nombre de QEP en <see cref="FirstName"/> y la dirección en <see cref="Address1"/>, con <see cref="LastName"/> y
