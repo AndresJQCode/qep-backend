@@ -131,6 +131,27 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         Assert.True(await RetainsAsync(factory, textUser));
     }
 
+    // Spec 2026-11-15 §5.4 (plan N23): ticket_notes.author_member_id is a membership id, so the note's author keeps the user.
+    [Fact]
+    public async Task ANoteAuthorKeepsTheUser()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var actor = await SeedMemberAsync(factory, $"actor-{Guid.CreateVersion7():N}@example.com", "Beto", "admin", tenantId: tenant.ToString());
+        var author = await SeedMemberAsync(factory, $"note-{Guid.CreateVersion7():N}@example.com", "Hugo", "admin", tenantId: tenant.ToString());
+        var authorUser = await UserOfAsync(factory, author);
+        var ticketId = await SaveTicketAsync(factory, tenant, assignee: null, actor);
+        Assert.False(await RetainsAsync(factory, authorUser));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ISupportTicketNoteRepository>().Add(SupportTicketNote.Create(
+                Guid.CreateVersion7(), tenant, ticketId, author, "Nota interna.", [], Now.AddMinutes(5)));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        Assert.True(await RetainsAsync(factory, authorUser));
+    }
+
     private async Task<(QepApiFactory Factory, Guid Tenant)> NewTenantAsync()
     {
         var factory = await sharedHost.StartTestAsync();

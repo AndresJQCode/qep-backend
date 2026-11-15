@@ -43,6 +43,7 @@ public static class SupportInfrastructureExtensions
         services.AddSingleton<ISupportPinHasher, Pbkdf2SupportPinHasher>();
         // Plan F35 y F36: los adjuntos del formulario, y la sonda que le dice al barrido de Storage cuáles ya reclamó un ticket.
         services.AddScoped<ISupportTicketAttachmentRepository, SupportTicketAttachmentRepository>();
+        services.AddScoped<ISupportTicketNoteRepository, SupportTicketNoteRepository>();
         services.AddScoped<IFileReferenceProbe, SupportAttachmentReferenceProbe>();
         // Spec 2026-11-15 §5.2: the ticket notices of the app hub, after each commit.
         services.AddScoped<ISupportRealtime, SupportRealtimeNotifier>();

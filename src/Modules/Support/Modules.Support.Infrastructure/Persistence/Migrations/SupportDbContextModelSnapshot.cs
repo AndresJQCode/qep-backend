@@ -753,6 +753,93 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AuthorMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_member_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)")
+                        .HasColumnName("text");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.HasKey("Id")
+                        .HasName("PK_ticket_notes");
+
+                    b.HasIndex("AuthorMemberId")
+                        .HasDatabaseName("IX_ticket_notes_author");
+
+                    b.HasIndex("TicketId");
+
+                    b.HasIndex("TenantId", "TicketId", "CreatedAt", "Id")
+                        .IsDescending(false, false, true, true)
+                        .HasDatabaseName("IX_ticket_notes_tenant_ticket_created");
+
+                    b.ToTable("ticket_notes", "support");
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketNoteFile", b =>
+                {
+                    b.Property<Guid>("NoteId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("note_id");
+
+                    b.Property<Guid>("FileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("file_id");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("character varying(260)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("mime_type");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.HasKey("NoteId", "FileId");
+
+                    b.HasIndex("FileId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ticket_note_files_file");
+
+                    b.ToTable("ticket_note_files", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_note_files_position", "position BETWEEN 0 AND 4");
+
+                            t.HasCheckConstraint("CK_ticket_note_files_size", "size_bytes > 0");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketReply", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1084,6 +1171,24 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketNote", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketNoteFile", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicketNote", null)
+                        .WithMany("Files")
+                        .HasForeignKey("NoteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketReply", b =>
                 {
                     b.HasOne("Modules.Support.Domain.SupportTicket", null)
@@ -1096,6 +1201,11 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Modules.Support.Domain.SupportTicket", b =>
                 {
                     b.Navigation("Events");
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketNote", b =>
+                {
+                    b.Navigation("Files");
                 });
 #pragma warning restore 612, 618
         }

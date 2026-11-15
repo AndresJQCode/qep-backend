@@ -22,8 +22,45 @@ public static class SupportEndpoints
         MapConversations(group);
         MapThread(group);
         MapReplies(group);
+        MapNotes(group);
 
         return endpoints;
+    }
+
+    // Spec 2026-11-15 §5.4: internal notes. Adding one takes no If-Match and does not change the ticket's version nor its ETag.
+    private static void MapNotes(RouteGroupBuilder group)
+    {
+        group.MapGet("/tickets/{ticketId:guid}/notes", ListNotesAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportTicketNotesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/tickets/{ticketId:guid}/notes", AddNoteAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Accepts<AddTicketNoteRequest>("application/json")
+            .Produces<SupportTicketNoteDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
+
+    private static async Task<IResult> ListNotesAsync(
+        Guid tenantId,
+        Guid ticketId,
+        string? before,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        int take = ListTicketNotesQuery.DefaultTake) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListTicketNotesQuery(tenantId, ticketId, before, take), cancellationToken));
+
+    private static async Task<IResult> AddNoteAsync(
+        Guid tenantId, Guid ticketId, AddTicketNoteRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var note = await dispatcher.SendAsync(AddTicketNoteCommand.From(tenantId, ticketId, request), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticketId}/notes", note);
     }
 
     // Fase 2: responder desde el ticket. Una respuesta que Meta o el correo rechazan también es 201, con la fila en Failed (plan E17).

@@ -114,6 +114,20 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
     }
 
     [Fact]
+    public async Task ANoteAnnouncesTheTicket()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync();
+        var before = Publisher.Of(scenario.TenantId).Count;
+
+        var response = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/notes", new { clientId = Guid.CreateVersion7(), text = "Llamar el lunes." }, null);
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
+        AssertAnnounced(Since(scenario.TenantId, before), Id(ticket));
+    }
+
+    [Fact]
     public async Task ClassifyingAnnouncesTheChosenTicketAndDismissingAnnouncesEveryCandidate()
     {
         var scenario = await StartAsync(Factory);

@@ -84,6 +84,16 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
 
     public DbSet<SupportTicketAttachment> TicketAttachments => Set<SupportTicketAttachment>();
 
+    /// <summary>The note's PK is the screen's clientId (plan N15): two requests with the same one race here, and the loser gets 409.</summary>
+    public const string TicketNoteKey = "PK_ticket_notes";
+
+    /// <summary>Unique Storage file of a note (spec 2026-11-15 §5.4): one file never sits in two notes.</summary>
+    public const string TicketNoteFileIndex = "IX_ticket_note_files_file";
+
+    public DbSet<SupportTicketNote> TicketNotes => Set<SupportTicketNote>();
+
+    public DbSet<SupportTicketNoteFile> TicketNoteFiles => Set<SupportTicketNoteFile>();
+
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -102,6 +112,58 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureLegalTextVersion(modelBuilder);
         ConfigureConsent(modelBuilder);
         ConfigureTicketAttachment(modelBuilder);
+        ConfigureTicketNote(modelBuilder);
+    }
+
+    // Spec 2026-11-15 §5.4: two insert-only tables. The ticket cascades like the other ticket tables; the author is a soft reference
+    // to tenancy, listed in SupportUserReferenceProbe (plan N23). The files keep the snapshot of name, type and size (plan N17) and a
+    // unique file_id that the Storage probe and CountPendingAsync use.
+    private static void ConfigureTicketNote(ModelBuilder modelBuilder)
+    {
+        var note = modelBuilder.Entity<SupportTicketNote>();
+        note.ToTable("ticket_notes", Schema);
+        note.HasKey(value => value.Id).HasName(TicketNoteKey);
+        note.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        note.Property(value => value.TenantId).HasColumnName("tenant_id");
+        note.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        note.Property(value => value.AuthorMemberId).HasColumnName("author_member_id");
+        note.Property(value => value.Text).HasColumnName("text").HasMaxLength(SupportTicketReply.TextMaxLength);
+        note.Property(value => value.CreatedAt).HasColumnName("created_at");
+        note.HasOne<SupportTicket>()
+            .WithMany()
+            .HasForeignKey(value => value.TicketId)
+            .OnDelete(DeleteBehavior.Cascade);
+        note.HasMany(value => value.Files)
+            .WithOne()
+            .HasForeignKey(file => file.NoteId)
+            .OnDelete(DeleteBehavior.Cascade);
+        note.Navigation(value => value.Files).UsePropertyAccessMode(PropertyAccessMode.Field);
+        note.HasIndex(value => new { value.TenantId, value.TicketId, value.CreatedAt, value.Id })
+            .IsDescending(false, false, true, true)
+            .HasDatabaseName("IX_ticket_notes_tenant_ticket_created");
+        // For SupportUserReferenceProbe, which searches by membership alone.
+        note.HasIndex(value => value.AuthorMemberId).HasDatabaseName("IX_ticket_notes_author");
+
+        var file = modelBuilder.Entity<SupportTicketNoteFile>();
+        file.ToTable("ticket_note_files", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_ticket_note_files_size", "size_bytes > 0");
+            table.HasCheckConstraint("CK_ticket_note_files_position", $"position BETWEEN 0 AND {SupportTicketNote.MaxFiles - 1}");
+        });
+        file.HasKey(value => new { value.NoteId, value.FileId });
+        file.Property(value => value.NoteId).HasColumnName("note_id");
+        file.Property(value => value.FileId).HasColumnName("file_id");
+        file.Property(value => value.Position).HasColumnName("position");
+        file.Property(value => value.FileName)
+            .HasColumnName("file_name")
+            .HasMaxLength(SupportPublicAttachmentRules.NameMaxLength);
+        file.Property(value => value.MimeType)
+            .HasColumnName("mime_type")
+            .HasMaxLength(SupportPublicAttachmentRules.MimeTypeMaxLength);
+        file.Property(value => value.SizeBytes).HasColumnName("size_bytes");
+        file.HasIndex(value => value.FileId).IsUnique().HasDatabaseName(TicketNoteFileIndex);
     }
 
     // Plan F35: el archivo es una referencia blanda a storage.file_resources (otro esquema, sin FK); el ticket sí, con cascada. El

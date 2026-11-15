@@ -105,6 +105,20 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
         {
             throw new SupportDomainException(SupportErrorCodes.PublicAttachmentInvalid, "The attachment is not valid.");
         }
+        // Spec 2026-11-15 §5.4 (plan N15): two notes with the same clientId at once. The loser cannot tell whether the winner was its
+        // own retry, so it answers the conflict and the screen rereads.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketNoteKey))
+        {
+            throw new ResourceConflictException(
+                "concurrency.conflict",
+                "A note with this client id was created at the same time.",
+                exception);
+        }
+        // Another note claimed the same file first: the same 422 as any file that is not valid for this note.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketNoteFileIndex))
+        {
+            throw new SupportDomainException(SupportErrorCodes.NoteFileInvalid, "The note file is not valid.");
+        }
     }
 
     // Copia de CustomersUnitOfWork.BeginTransactionAsync. Los SaveChanges que corran dentro siguen pasando por la traducción de
