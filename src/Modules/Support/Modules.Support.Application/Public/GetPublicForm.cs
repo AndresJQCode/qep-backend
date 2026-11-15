@@ -52,7 +52,8 @@ public sealed class GetPublicFormHandler(
                 [OtherCountries] = DocumentTypesByCountry.AllowedFor(OtherCountries),
             },
             new SupportPublicLegalDto(legal.Version, legal.AuthorizationText, legal.PolicyText, legal.PolicyUrl, legal.TermsText),
-            form.Version);
+            form.Version,
+            form.AllowAttachments);
     }
 
     private static List<SupportPublicFieldDto> Fields(SupportFormVariant variant, SupportFormVersion form) =>

@@ -5,14 +5,16 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Support.Application;
 
-/// <summary>Los cinco interruptores son obligatorios (null es un 422 en el campo, no «sin cambio»): el formulario manda la
-/// configuración completa. Un texto vacío o con sólo espacios queda en null.</summary>
+/// <summary>Los seis interruptores son obligatorios (null es un 422 en el campo, no «sin cambio»): el formulario manda la
+/// configuración completa. Un texto vacío o con sólo espacios queda en null. <c>AllowAttachments</c> dice si la página ofrece
+/// adjuntos (spec §9.3).</summary>
 public sealed record UpdateFormSettingsRequest(
     bool? IsPublished,
     bool? ShowDocument,
     bool? ShowAddress,
     bool? ShowLandline,
     bool? BusinessNameRequired,
+    bool? AllowAttachments,
     string? AccentColor,
     string? IntroText,
     string? SuccessMessage);
@@ -25,6 +27,7 @@ public sealed record UpdateFormSettingsCommand(
     bool? ShowAddress,
     bool? ShowLandline,
     bool? BusinessNameRequired,
+    bool? AllowAttachments,
     string? AccentColor,
     string? IntroText,
     string? SuccessMessage,
@@ -39,6 +42,7 @@ public sealed record UpdateFormSettingsCommand(
             request.ShowAddress,
             request.ShowLandline,
             request.BusinessNameRequired,
+            request.AllowAttachments,
             request.AccentColor,
             request.IntroText,
             request.SuccessMessage,
@@ -56,6 +60,7 @@ public sealed class UpdateFormSettingsValidator : AbstractValidator<UpdateFormSe
         RuleFor(command => command.ShowAddress).NotNull();
         RuleFor(command => command.ShowLandline).NotNull();
         RuleFor(command => command.BusinessNameRequired).NotNull();
+        RuleFor(command => command.AllowAttachments).NotNull();
         RuleFor(command => command.AccentColor)
             .Must(color => string.IsNullOrWhiteSpace(color) || SupportFormVersion.IsValidAccentColor(color.Trim()))
             .WithMessage("The accent color must be '#' followed by six hexadecimal digits.");
@@ -119,6 +124,7 @@ public sealed class UpdateFormSettingsHandler(
             command.ShowAddress!.Value,
             command.ShowLandline!.Value,
             command.BusinessNameRequired!.Value,
+            command.AllowAttachments!.Value,
             command.AccentColor,
             command.IntroText,
             command.SuccessMessage,
@@ -163,6 +169,7 @@ public sealed class UpdateFormSettingsHandler(
         Add(changed, "showAddress", current.ShowAddress != candidate.ShowAddress);
         Add(changed, "showLandline", current.ShowLandline != candidate.ShowLandline);
         Add(changed, "businessNameRequired", current.BusinessNameRequired != candidate.BusinessNameRequired);
+        Add(changed, "allowAttachments", current.AllowAttachments != candidate.AllowAttachments);
         Add(changed, "accentColor", !string.Equals(current.AccentColor, candidate.AccentColor, StringComparison.Ordinal));
         Add(changed, "introText", !string.Equals(current.IntroText, candidate.IntroText, StringComparison.Ordinal));
         Add(changed, "successMessage", !string.Equals(current.SuccessMessage, candidate.SuccessMessage, StringComparison.Ordinal));

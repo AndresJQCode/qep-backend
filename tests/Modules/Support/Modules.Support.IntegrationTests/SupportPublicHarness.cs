@@ -82,7 +82,7 @@ internal static class SupportPublicHarness
     /// <summary>
     /// Un tenant con el formulario publicado: su fila y sus módulos, los tipos por defecto (todos publicados), la versión 1 de los
     /// textos legales y la versión 1 del formulario. Por SQL de dominio y no por la consola: el host puede tener la autenticación real.
-    /// Devuelve el slug.
+    /// Sin adjuntos salvo <paramref name="allowAttachments"/>, como el formulario por defecto (spec §9.3). Devuelve el slug.
     /// </summary>
     public static async Task<string> SeedPublishedTenantAsync(
         QepApiFactory factory,
@@ -92,7 +92,8 @@ internal static class SupportPublicHarness
         bool showDocument = true,
         bool showAddress = true,
         bool showLandline = true,
-        bool businessNameRequired = true)
+        bool businessNameRequired = true,
+        bool allowAttachments = false)
     {
         await SeedTenantAsync(factory, tenantId, modules);
         var tenant = Guid.Parse(tenantId);
@@ -109,7 +110,7 @@ internal static class SupportPublicHarness
                 "https://example.com/politica", "Términos, versión 1.", Guid.CreateVersion7(), now));
             scope.ServiceProvider.GetRequiredService<ISupportFormRepository>().Add(SupportFormVersion.Create(
                 Guid.CreateVersion7(), tenant, 1, published, showDocument, showAddress, showLandline, businessNameRequired,
-                "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.", Guid.CreateVersion7(), now));
+                allowAttachments, "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.", Guid.CreateVersion7(), now));
             await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         }
 

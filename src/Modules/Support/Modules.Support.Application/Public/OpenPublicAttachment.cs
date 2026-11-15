@@ -35,7 +35,8 @@ public sealed class OpenPublicAttachmentValidator : AbstractValidator<OpenPublic
 /// Abrir una subida desde el formulario público (plan F32 y F33). Sin Turnstile —el token es de un solo uso y se gasta al radicar—,
 /// con su propio limitador por IP. El <c>uploadKey</c> es un <see cref="Guid.NewGuid"/> (v4, aleatorio) y no un v7 como los ids de
 /// Storage, que se adivinan por la hora: es lo único que ata la subida a esta persona, y sólo viaja en esta respuesta. No lee el
-/// contexto de ejecución ni la sesión.
+/// contexto de ejecución ni la sesión. Si el formulario no permite adjuntos (spec §9.3), 422 <c>support.public.attachments_disabled</c>
+/// sin abrir nada en Storage.
 /// </summary>
 public sealed class OpenPublicAttachmentHandler(
     SupportPublicResolver resolver,
@@ -47,6 +48,7 @@ public sealed class OpenPublicAttachmentHandler(
         OpenPublicAttachmentCommand command, CancellationToken cancellationToken)
     {
         var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
+        CompletePublicAttachmentHandler.EnsureAllowed(tenant.Form);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var uploadKey = Guid.NewGuid();

@@ -81,6 +81,7 @@ internal static class SupportFormSettings
             form.ShowAddress,
             form.ShowLandline,
             form.BusinessNameRequired,
+            form.AllowAttachments,
             form.AccentColor,
             form.IntroText,
             form.SuccessMessage,

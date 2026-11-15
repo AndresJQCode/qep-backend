@@ -26,7 +26,8 @@ public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonB
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
 /// formulario por defecto, sin publicar) y va en el <c>If-Match</c> del <c>PUT</c>. <c>PublishBlockers</c> dice por qué no se puede
 /// publicar (<c>legal_texts_required</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
-/// <c>PublicUrl</c> es el enlace que el tenant comparte.
+/// <c>PublicUrl</c> es el enlace que el tenant comparte. <c>AllowAttachments</c> dice si la página ofrece adjuntos (spec §9.3; apagado
+/// por defecto).
 /// </summary>
 public sealed record SupportFormSettingsDto(
     int Version,
@@ -35,6 +36,7 @@ public sealed record SupportFormSettingsDto(
     bool ShowAddress,
     bool ShowLandline,
     bool BusinessNameRequired,
+    bool AllowAttachments,
     string? AccentColor,
     string? IntroText,
     string? SuccessMessage,

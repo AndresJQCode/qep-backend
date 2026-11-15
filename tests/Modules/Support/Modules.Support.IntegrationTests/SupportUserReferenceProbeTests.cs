@@ -120,7 +120,7 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             scope.ServiceProvider.GetRequiredService<ISupportFormRepository>().Add(SupportFormVersion.Create(
-                Guid.CreateVersion7(), tenant, 1, false, true, true, true, true, null, null, null, formAuthor, Now));
+                Guid.CreateVersion7(), tenant, 1, false, true, true, true, true, false, null, null, null, formAuthor, Now));
             scope.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>().Add(SupportLegalTextVersion.Create(
                 Guid.CreateVersion7(), tenant, 1, "Autorizo el tratamiento de mis datos.", null, "https://example.com/politica", null,
                 textAuthor, Now));

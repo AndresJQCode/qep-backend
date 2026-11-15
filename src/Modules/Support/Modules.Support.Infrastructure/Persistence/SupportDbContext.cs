@@ -161,6 +161,7 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         form.Property(value => value.ShowAddress).HasColumnName("show_address");
         form.Property(value => value.ShowLandline).HasColumnName("show_landline");
         form.Property(value => value.BusinessNameRequired).HasColumnName("business_name_required");
+        form.Property(value => value.AllowAttachments).HasColumnName("allow_attachments").HasDefaultValue(false);
         form.Property(value => value.AccentColor).HasColumnName("accent_color").HasMaxLength(SupportFormVersion.AccentColorLength);
         form.Property(value => value.IntroText).HasColumnName("intro_text").HasMaxLength(SupportFormVersion.IntroTextMaxLength);
         form.Property(value => value.SuccessMessage)

@@ -12,7 +12,7 @@ public sealed class SupportFormFieldsTests
         bool showDocument = true, bool showAddress = true, bool showLandline = true, bool businessNameRequired = true) =>
         SupportFormVersion.Create(
             Guid.CreateVersion7(), TenantId, 1, isPublished: true, showDocument, showAddress, showLandline, businessNameRequired,
-            accentColor: null, introText: null, successMessage: null, Guid.CreateVersion7(), Now);
+            allowAttachments: false, accentColor: null, introText: null, successMessage: null, Guid.CreateVersion7(), Now);
 
     private static Dictionary<string, bool> Fields(SupportFormVariant variant, SupportFormVersion form) =>
         SupportFormFields.For(variant, form).ToDictionary(field => field.Key, field => field.Required);
@@ -120,6 +120,15 @@ public sealed class SupportFormFieldsTests
         Assert.True(form.ShowLandline);
         Assert.True(form.BusinessNameRequired);
         Assert.Null(form.AccentColor);
+        // Spec §9.3: los adjuntos los prende el tenant; mientras no guarde, el formulario no los ofrece.
+        Assert.False(form.AllowAttachments);
+    }
+
+    [Fact]
+    public void AVersionKeepsWhetherItAllowsAttachments()
+    {
+        Assert.True(Create(allowAttachments: true).AllowAttachments);
+        Assert.False(Create(allowAttachments: false).AllowAttachments);
     }
 
     [Theory]
@@ -149,8 +158,12 @@ public sealed class SupportFormFieldsTests
     }
 
     private static SupportFormVersion Create(
-        int version = 1, string? accentColor = null, string? introText = null, string? successMessage = null) =>
+        int version = 1,
+        string? accentColor = null,
+        string? introText = null,
+        string? successMessage = null,
+        bool allowAttachments = false) =>
         SupportFormVersion.Create(
-            Guid.CreateVersion7(), TenantId, version, false, true, true, true, true, accentColor, introText, successMessage,
-            Guid.CreateVersion7(), Now);
+            Guid.CreateVersion7(), TenantId, version, false, true, true, true, true, allowAttachments, accentColor, introText,
+            successMessage, Guid.CreateVersion7(), Now);
 }

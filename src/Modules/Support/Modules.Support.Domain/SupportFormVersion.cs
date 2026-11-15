@@ -38,6 +38,10 @@ public sealed partial class SupportFormVersion
     /// <summary>Con NIT, si la razón social es obligatoria: el único obligatorio que configura el tenant (spec §9.3).</summary>
     public bool BusinessNameRequired { get; private set; }
 
+    /// <summary>Spec §9.3 «Adjuntos: el tenant los permite o no». Apagado, la página esconde el control y el backend responde 422
+    /// <c>support.public.attachments_disabled</c> a abrir, completar y radicar con adjuntos. Arranca apagado: el tenant lo prende.</summary>
+    public bool AllowAttachments { get; private set; }
+
     /// <summary><c>#</c> y seis hexadecimales; null usa el color por defecto de la página.</summary>
     public string? AccentColor { get; private set; }
 
@@ -61,6 +65,7 @@ public sealed partial class SupportFormVersion
         bool showAddress,
         bool showLandline,
         bool businessNameRequired,
+        bool allowAttachments,
         string? accentColor,
         string? introText,
         string? successMessage,
@@ -83,6 +88,7 @@ public sealed partial class SupportFormVersion
             ShowAddress = showAddress,
             ShowLandline = showLandline,
             BusinessNameRequired = businessNameRequired,
+            AllowAttachments = allowAttachments,
             AccentColor = ValidAccentColor(accentColor),
             IntroText = OptionalText(introText, IntroTextMaxLength, nameof(introText)),
             SuccessMessage = OptionalText(successMessage, SuccessMessageMaxLength, nameof(successMessage)),
@@ -91,8 +97,8 @@ public sealed partial class SupportFormVersion
         };
     }
 
-    /// <summary>El formulario de un tenant sin versiones (plan F14): sin publicar, todo visible y la razón social obligatoria. Versión
-    /// 0, sin id: no se guarda.</summary>
+    /// <summary>El formulario de un tenant sin versiones (plan F14): sin publicar, todo visible, la razón social obligatoria y sin
+    /// adjuntos. Versión 0, sin id: no se guarda.</summary>
     public static SupportFormVersion Default(Guid tenantId) =>
         new()
         {
@@ -103,6 +109,7 @@ public sealed partial class SupportFormVersion
             ShowAddress = true,
             ShowLandline = true,
             BusinessNameRequired = true,
+            AllowAttachments = false,
         };
 
     public static bool IsValidAccentColor(string? value) => value is not null && AccentColorPattern().IsMatch(value);

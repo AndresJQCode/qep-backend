@@ -7,7 +7,8 @@ namespace Modules.Support.Application;
 /// Lo que la página necesita para dibujar el formulario. <see cref="Fields"/> sale de <c>SupportFormFields</c> y
 /// <see cref="DocumentTypesByCountry"/> de la tabla compartida (<c>CO</c>, <c>ES</c> y <c>*</c> para el resto): la pantalla no conoce
 /// ninguna de las dos reglas. <see cref="FormVersion"/> y <see cref="SupportPublicLegalDto.Version"/> vuelven en el radicado para
-/// detectar que algo cambió mientras la persona escribía.
+/// detectar que algo cambió mientras la persona escribía. Con <see cref="AllowAttachments"/> en false la página no dibuja el control de
+/// adjuntos: el tenant no los recibe (spec §9.3) y las rutas de adjuntos responden 422 <c>support.public.attachments_disabled</c>.
 /// </summary>
 public sealed record SupportPublicFormDto(
     string TenantName,
@@ -19,7 +20,8 @@ public sealed record SupportPublicFormDto(
     SupportPublicFieldsDto Fields,
     IReadOnlyDictionary<string, IReadOnlyList<string>> DocumentTypesByCountry,
     SupportPublicLegalDto Legal,
-    int FormVersion);
+    int FormVersion,
+    bool AllowAttachments);
 
 /// <summary>Un tipo activo y publicado, en el orden de la consola.</summary>
 public sealed record SupportPublicTypeDto(Guid Id, string Name, int? TermBusinessDays);

@@ -233,11 +233,51 @@ public sealed class SupportPublicAttachmentsApiTests(SupportPublicAttachmentsHos
         Assert.Equal(HttpStatusCode.Created, (await PostJsonAsync(rig.Client, rig.TicketsUrl, AnonymousBody(rig.TypeId))).StatusCode);
     }
 
-    private async Task<Rig> RigAsync()
+    // Spec §9.3 «Adjuntos: el tenant los permite o no». La página lo lee del formulario para esconder el control, y el backend lo exige
+    // igual: abrir, completar y radicar con adjuntos responden 422 support.public.attachments_disabled. Sin adjuntos se radica normal.
+    [Fact]
+    public async Task WithAttachmentsOffTheFormSaysSoAndEveryAttachmentPathIs422()
+    {
+        var rig = await RigAsync(allowAttachments: false);
+
+        var form = await JsonAsync(await rig.Client.GetAsync(PublicUrl(rig.Slug, "/form"), Ct));
+        var open = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, "/attachments"), new { name = "acta.pdf", mimeType = "application/pdf", sizeBytes = 10 });
+        var complete = await PostJsonAsync(
+            rig.Client, PublicUrl(rig.Slug, $"/attachments/{Guid.CreateVersion7()}/complete"), new { uploadKey = Guid.NewGuid() });
+        var filed = await PostJsonAsync(
+            rig.Client, rig.TicketsUrl,
+            WithAttachments(AnonymousBody(rig.TypeId), new Attachment(Guid.CreateVersion7(), Guid.NewGuid())));
+
+        Assert.False(form.GetProperty("allowAttachments").GetBoolean());
+        foreach (var response in new[] { open, complete, filed })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("support.public.attachments_disabled", await CodeOfAsync(response));
+        }
+
+        Assert.Equal(0L, await TicketCountAsync(rig));
+        Assert.Equal(0L, await ScalarAsync(
+            rig.Factory, "SELECT count(*) FROM storage.file_resources WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+        Assert.Equal(HttpStatusCode.Created, (await PostJsonAsync(rig.Client, rig.TicketsUrl, AnonymousBody(rig.TypeId))).StatusCode);
+    }
+
+    [Fact]
+    public async Task WithAttachmentsOnTheFormSaysSo()
+    {
+        var rig = await RigAsync();
+
+        var form = await JsonAsync(await rig.Client.GetAsync(PublicUrl(rig.Slug, "/form"), Ct));
+
+        Assert.True(form.GetProperty("allowAttachments").GetBoolean());
+    }
+
+    // Las demás pruebas de la clase usan un formulario que permite adjuntos: el que no los permite lo prueba la de arriba.
+    private async Task<Rig> RigAsync(bool allowAttachments = true)
     {
         var factory = await host.StartTestAsync();
         var tenantId = NewTenantId();
-        var slug = await SeedPublishedTenantAsync(factory, tenantId);
+        var slug = await SeedPublishedTenantAsync(factory, tenantId, allowAttachments: allowAttachments);
         return new Rig(
             factory,
             Guid.Parse(tenantId),

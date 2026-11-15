@@ -188,7 +188,7 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
 
 /// <summary>
 /// Radicar desde el formulario público (spec §9.3 y §9.4, plan F17 y F21 a F23). Orden: resolver el tenant → Turnstile → validador →
-/// versiones del formulario y de los textos legales → tipo activo y publicado → foto del solicitante (con la ciudad de Geography) →
+/// versiones del formulario (y si permite adjuntos, spec §9.3) y de los textos legales → tipo activo y publicado → foto del solicitante (con la ciudad de Geography) →
 /// adjuntos disponibles con su <c>uploadKey</c> (plan F35) → provisión → cliente por documento → transacción (candado del cliente,
 /// radicado, ticket, clave, consentimiento, adjuntos, auditoría del sistema) → confirmar → correo de apertura → su resultado en un segundo guardado de la clave. Todo lo que puede responder 422 va antes
 /// de la transacción, así un rechazo no gasta un radicado. El correo va después de confirmar: el radicado no depende de él (F23). Nada de
@@ -236,6 +236,12 @@ public sealed class FilePublicTicketHandler(
         if (validated.FormVersion != tenant.Form.Version)
         {
             throw new SupportDomainException(SupportErrorCodes.PublicFormOutdated, "The form changed after it was loaded.");
+        }
+
+        // Spec §9.3: con la versión con la que radica (ya igual a la vigente), si no permite adjuntos una lista no vacía es 422.
+        if (validated.Attachments is { Count: > 0 })
+        {
+            CompletePublicAttachmentHandler.EnsureAllowed(tenant.Form);
         }
 
         var legal = await legalTexts.CurrentAsync(tenant.TenantId, cancellationToken) ?? throw SupportPublicResolver.NotFound();

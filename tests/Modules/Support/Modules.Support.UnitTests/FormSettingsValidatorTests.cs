@@ -9,7 +9,7 @@ public sealed class FormSettingsValidatorTests
     private static readonly Guid Tenant = Guid.CreateVersion7();
 
     private static UpdateFormSettingsRequest Form(string? accentColor = null, string? introText = null, string? successMessage = null) =>
-        new(true, true, true, true, true, accentColor, introText, successMessage);
+        new(true, true, true, true, true, true, accentColor, introText, successMessage);
 
     private static List<string> FormErrors(UpdateFormSettingsRequest request, long version = 0) =>
         new UpdateFormSettingsValidator().Validate(UpdateFormSettingsCommand.From(Tenant, request, version))
@@ -54,10 +54,11 @@ public sealed class FormSettingsValidatorTests
     [Fact]
     public void EveryFlagIsRequiredAndTheVersionIsNotNegative()
     {
-        var errors = FormErrors(new UpdateFormSettingsRequest(null, null, null, null, null, null, null, null), version: -1);
+        var errors = FormErrors(new UpdateFormSettingsRequest(null, null, null, null, null, null, null, null, null), version: -1);
 
         Assert.Equal(
-            ["IsPublished", "ShowDocument", "ShowAddress", "ShowLandline", "BusinessNameRequired", "ExpectedVersion"], errors);
+            ["IsPublished", "ShowDocument", "ShowAddress", "ShowLandline", "BusinessNameRequired", "AllowAttachments", "ExpectedVersion"],
+            errors);
     }
 
     [Fact]

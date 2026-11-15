@@ -108,6 +108,10 @@ public static class SupportErrorCodes
     /// </summary>
     public const string PublicAttachmentInvalid = "support.public.attachment_invalid";
 
+    /// <summary>Spec §9.3: la versión vigente del formulario no permite adjuntos. Lo responden abrir y completar una subida, y radicar
+    /// con una lista de adjuntos no vacía.</summary>
+    public const string PublicAttachmentsDisabled = "support.public.attachments_disabled";
+
     /// <summary>Revisión final, I1: un ticket anónimo no guarda cliente (spec §9.4). Lo rechaza el agregado, para todo camino.</summary>
     public const string AnonymousHasNoCustomer = "support.ticket.anonymous_has_no_customer";
 

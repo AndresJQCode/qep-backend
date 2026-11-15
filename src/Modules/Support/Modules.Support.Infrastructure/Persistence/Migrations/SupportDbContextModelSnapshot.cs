@@ -164,6 +164,12 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(7)")
                         .HasColumnName("accent_color");
 
+                    b.Property<bool>("AllowAttachments")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("allow_attachments");
+
                     b.Property<bool>("BusinessNameRequired")
                         .HasColumnType("boolean")
                         .HasColumnName("business_name_required");

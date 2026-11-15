@@ -93,6 +93,20 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         Assert.Equal(SupportReplyChannel.Email, foundFirst.ReplyChannel);
     }
 
+    // Spec §9.3: si la versión ofrece adjuntos viaja en la fila (allow_attachments), no en una configuración aparte.
+    [Fact]
+    public async Task AFormVersionKeepsWhetherItAllowsAttachments()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var saved = await SaveFormAsync(factory, tenant, 1);
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var found = await read.ServiceProvider.GetRequiredService<ISupportFormRepository>().CurrentAsync(tenant, Ct);
+
+        Assert.Equal(saved.Id, found!.Id);
+        Assert.True(found.AllowAttachments);
+    }
+
     [Fact]
     public async Task AnAnonymousTicketRoundTripsWithoutRequester()
     {
@@ -259,7 +273,8 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
     {
         var form = SupportFormVersion.Create(
             Guid.CreateVersion7(), tenant, version, isPublished: true, showDocument: true, showAddress: true, showLandline: false,
-            businessNameRequired: true, "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.", Guid.CreateVersion7(), Now);
+            businessNameRequired: true, allowAttachments: true, "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.",
+            Guid.CreateVersion7(), Now);
         await using var scope = factory.Services.CreateAsyncScope();
         scope.ServiceProvider.GetRequiredService<ISupportFormRepository>().Add(form);
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);

@@ -17,7 +17,7 @@ public sealed class FilePublicTicketValidatorTests
     private static SupportFormVersion Form(bool showDocument = true, bool businessNameRequired = true) =>
         SupportFormVersion.Create(
             Guid.CreateVersion7(), Guid.CreateVersion7(), 1, isPublished: true, showDocument, showAddress: true, showLandline: true,
-            businessNameRequired, null, null, null, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+            businessNameRequired, allowAttachments: false, null, null, null, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
 
     private static SupportPublicRequesterRequest Natural(
         string? documentType = "CC",

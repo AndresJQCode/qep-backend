@@ -56,7 +56,7 @@ internal static class SupportTicketSeed
         var current = await forms.CurrentAsync(tenantId, Ct);
         var form = current ?? SupportFormVersion.Create(
             Guid.CreateVersion7(), tenantId, 1, isPublished: true, showDocument: true, showAddress: true, showLandline: true,
-            businessNameRequired: true, null, null, null, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+            businessNameRequired: true, allowAttachments: false, null, null, null, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
         if (current is null)
         {
             forms.Add(form);

@@ -23,6 +23,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         showAddress = false,
         showLandline = true,
         businessNameRequired = false,
+        allowAttachments = true,
         accentColor = "#00B4FF",
         introText = "Cuéntanos tu caso.",
         successMessage = "Recibimos tu caso.",
@@ -51,6 +52,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         Assert.True(body.GetProperty("showAddress").GetBoolean());
         Assert.True(body.GetProperty("showLandline").GetBoolean());
         Assert.True(body.GetProperty("businessNameRequired").GetBoolean());
+        Assert.False(body.GetProperty("allowAttachments").GetBoolean());
         Assert.Equal(JsonValueKind.Null, body.GetProperty("accentColor").ValueKind);
         Assert.EndsWith("/" + await SlugAsync(tenant), body.GetProperty("publicUrl").GetString(), StringComparison.Ordinal);
         Assert.StartsWith("https://", body.GetProperty("publicUrl").GetString(), StringComparison.Ordinal);
@@ -82,7 +84,12 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         var read = await JsonAsync(await client.GetAsync(FormUrl(tenant), Ct));
         var publish = await PutFormAsync(client, tenant, PublishedForm, version: 0);
         var saveUnpublished = await PutFormAsync(
-            client, tenant, new { isPublished = false, showDocument = false, showAddress = true, showLandline = true, businessNameRequired = true },
+            client, tenant,
+            new
+            {
+                isPublished = false, showDocument = false, showAddress = true, showLandline = true, businessNameRequired = true,
+                allowAttachments = false,
+            },
             version: 0);
 
         Assert.Equal(["no_published_types"], Blockers(read));
@@ -112,6 +119,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
                 showAddress = false,
                 showLandline = true,
                 businessNameRequired = false,
+                allowAttachments = true,
                 accentColor = "#00B4FF",
                 introText = "Cuéntanos tu caso con detalle.",
                 successMessage = "Recibimos tu caso.",
@@ -142,6 +150,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
                 showAddress = true,
                 showLandline = false,
                 businessNameRequired = true,
+                allowAttachments = false,
                 accentColor = (string?)null,
                 introText = (string?)null,
                 successMessage = "Gracias por escribirnos.",
@@ -149,12 +158,17 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
             version: 1);
 
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.True((await JsonAsync(first)).GetProperty("allowAttachments").GetBoolean());
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
         Assert.Equal("\"2\"", second.Headers.ETag?.Tag);
         var body = await JsonAsync(second);
         Assert.Equal(2, body.GetProperty("version").GetInt32());
         Assert.True(body.GetProperty("isPublished").GetBoolean());
         Assert.False(body.GetProperty("showDocument").GetBoolean());
+        Assert.False(body.GetProperty("allowAttachments").GetBoolean());
+        Assert.Equal("true", await TextAsync(
+            factory, "SELECT allow_attachments::text FROM support.form_versions WHERE tenant_id = @tenant AND version = 1",
+            ("tenant", Guid.Parse(tenant))));
         Assert.Equal("Gracias por escribirnos.", body.GetProperty("successMessage").GetString());
         Assert.Empty(Blockers(body));
         Assert.Equal(2L, await CountFormVersionsAsync(tenant));
@@ -297,6 +311,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         showAddress = true,
         showLandline = true,
         businessNameRequired = true,
+        allowAttachments = false,
         accentColor = (string?)null,
         introText = (string?)null,
         successMessage = (string?)null,
