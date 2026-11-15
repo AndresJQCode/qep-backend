@@ -176,6 +176,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<CompleteUploadCommand, FileResourceDto>,
             CompleteUploadHandler>();
+        // Soporte fase 3 (plan F31): la subida sin miembro. No es un handler ni tiene endpoint en Storage: la usa sólo el adaptador de
+        // Soporte en Bootstrapper (SupportAttachmentStorage).
+        services.AddScoped<IStorageSystemUploads, StorageSystemUploads>();
         services.AddScoped<
             ICommandHandler<CancelUploadCommand, CancelUploadResult>,
             CancelUploadHandler>();

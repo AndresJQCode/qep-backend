@@ -20,8 +20,22 @@ public static class FileUploadPolicy
             [".png"] = ["image/png"],
         };
 
-    public static void ValidateDeclaration(string name, string mimeType, long sizeBytes)
+    /// <summary>Las extensiones permitidas con sus tipos MIME, de sólo lectura. Lo lee la prueba de paridad de los adjuntos de Soporte
+    /// (<c>SupportAttachmentParityTests</c>), que no puede ver la tabla de otra forma.</summary>
+    public static IReadOnlyDictionary<string, IReadOnlyList<string>> AllowedMimeTypesByExtension { get; } =
+        AllowedTypes.ToDictionary(
+            pair => pair.Key, pair => (IReadOnlyList<string>)pair.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
+
+    public static void ValidateDeclaration(string name, string mimeType, long sizeBytes) =>
+        ValidateDeclaration(name, mimeType, sizeBytes, MaxSizeBytes);
+
+    /// <summary>La misma regla con un tope más chico que el general: el de quien abre la sesión sin miembro (Soporte, 10 MB). Un tope
+    /// por encima de <see cref="MaxSizeBytes"/> es un error de programación.</summary>
+    public static void ValidateDeclaration(string name, string mimeType, long sizeBytes, long maxSizeBytes)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxSizeBytes, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxSizeBytes, MaxSizeBytes);
+
         var safeName = Path.GetFileName(name?.Trim());
         if (string.IsNullOrWhiteSpace(safeName) || !string.Equals(safeName, name?.Trim(), StringComparison.Ordinal))
         {
@@ -52,11 +66,11 @@ public static class FileUploadPolicy
                 "The media type does not match the file extension.");
         }
 
-        if (sizeBytes is <= 0 or > MaxSizeBytes)
+        if (sizeBytes <= 0 || sizeBytes > maxSizeBytes)
         {
             throw new StorageDomainException(
                 "storage.file.size_invalid",
-                $"The file must be between 1 byte and {MaxSizeBytes} bytes.");
+                $"The file must be between 1 byte and {maxSizeBytes} bytes.");
         }
     }
 }

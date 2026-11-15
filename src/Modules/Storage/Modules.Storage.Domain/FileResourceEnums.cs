@@ -39,5 +39,10 @@ public enum FileOwnerType
     // Spec de la tienda en línea, 2026-11-03: el banner de la tienda pública. Sube por el mismo pipeline (POST /files, PUT prefirmado,
     // complete) y se publica con PUT /files/{fileId}/publication; OwnerId es el tenantId. Se persiste por nombre en character
     // varying(20), así que no hay migración.
-    Store = 7
+    Store = 7,
+
+    // Soporte fase 3 (plan F30): un adjunto del formulario público de Soporte. Lo sube un visitante anónimo por IStorageSystemUploads
+    // —nunca por POST /files— y OwnerId es un secreto aleatorio (el uploadKey) que sólo conoce quien abrió la sesión; el vínculo con el
+    // ticket vive en support.ticket_attachments. Se persiste por nombre, así que no hay migración.
+    SupportTicket = 8
 }
