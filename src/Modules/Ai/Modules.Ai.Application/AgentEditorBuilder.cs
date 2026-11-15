@@ -90,8 +90,10 @@ public sealed class AgentEditorBuilder(
             [.. quoting.Select(member => new AiMemberDto(member.Id, member.Name))]);
     }
 
-    public async Task<AgentListResponse> BuildListAsync(Guid tenantId, IReadOnlyList<Agent> agents, CancellationToken cancellationToken)
+    public async Task<AgentListResponse> BuildListAsync(
+        Guid tenantId, IReadOnlyList<Agent> agents, AgentListActivity activity, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(activity);
         var byId = (await connections.ListAsync(tenantId, cancellationToken)).ToDictionary(connection => connection.Id);
         return new AgentListResponse(
         [
@@ -113,9 +115,39 @@ public sealed class AgentEditorBuilder(
                     ],
                     published?.PublishedAt,
                     agent.HasDraftChanges,
-                    agent.Version);
+                    agent.Version,
+                    activity.UsageByAgent.GetValueOrDefault(agent.Id) ?? [],
+                    activity.TodayByAgent.GetValueOrDefault(agent.Id) ?? AgentTodayDto.None);
             }),
+        ],
+        [
+            .. activity.UsageByAgent.Values
+                .SelectMany(usage => usage)
+                .GroupBy(usage => usage.Provider, StringComparer.Ordinal)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => new AgentUsageDto(
+                    group.Key,
+                    group.Sum(usage => usage.Calls),
+                    group.Sum(usage => usage.InputTokens),
+                    group.Sum(usage => usage.OutputTokens),
+                    SumKnown(group.Select(usage => usage.CacheCreationInputTokens)),
+                    SumKnown(group.Select(usage => usage.CacheReadInputTokens)))),
         ]);
+    }
+
+    /// <summary>C-4: <c>null</c> sólo si ningún agente lo reporta; si alguno lo reporta, la suma de los que sí.</summary>
+    private static long? SumKnown(IEnumerable<long?> values)
+    {
+        long? total = null;
+        foreach (var value in values)
+        {
+            if (value is { } known)
+            {
+                total = (total ?? 0) + known;
+            }
+        }
+
+        return total;
     }
 
     public async Task<IReadOnlyList<AiConnectionDto>> ListSelectableAsync(Guid tenantId, CancellationToken cancellationToken) =>

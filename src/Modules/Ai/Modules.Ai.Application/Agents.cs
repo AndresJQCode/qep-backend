@@ -141,14 +141,26 @@ public sealed class SaveAgentDraftValidator : AbstractValidator<SaveAgentDraftCo
     }
 }
 
+/// <summary>Spec §5 y plan 2026-11-12 Tarea 9: la lista con el consumo del mes por proveedor (C-4) y la actividad del día, en el reloj del
+/// tenant.</summary>
 public sealed class ListAgentsHandler(
-    IExecutionContext executionContext, ITenantModules tenantModules, IAgentRepository agents, AgentEditorBuilder builder)
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    IAgentRepository agents,
+    AgentEditorBuilder builder,
+    IAgentActivityReader activity,
+    ITenantClock tenantClock)
     : IQueryHandler<ListAgentsQuery, AgentListResponse>
 {
     public async Task<AgentListResponse> HandleAsync(ListAgentsQuery query, CancellationToken cancellationToken)
     {
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AiPermissions.AgentRead, cancellationToken);
-        return await builder.BuildListAsync(query.TenantId, await agents.ListAsync(query.TenantId, query.Search, cancellationToken), cancellationToken);
+        var window = AgentActivityWindows.For(await tenantClock.GetAsync(query.TenantId, cancellationToken));
+        return await builder.BuildListAsync(
+            query.TenantId,
+            await agents.ListAsync(query.TenantId, query.Search, cancellationToken),
+            await activity.SummarizeAsync(query.TenantId, window, cancellationToken),
+            cancellationToken);
     }
 }
 

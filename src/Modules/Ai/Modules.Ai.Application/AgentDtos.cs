@@ -10,6 +10,9 @@ namespace Modules.Ai.Application;
 /// <param name="ModelRetired">D-A12: el modelo del borrador ya no está en la lista de su proveedor; el agente sigue con él hasta que el tenant lo
 /// cambie, pero no se puede volver a publicar así.</param>
 /// <param name="HasDraftChanges">Hay cambios guardados sin publicar: la lista muestra «Cambios sin publicar» sin pedir el editor.</param>
+/// <param name="UsageThisMonth">Plan 2026-11-12 C-4: los tokens del mes del tenant por proveedor, con caché; vacío si no gastó nada. Incluye
+/// el playground, que gasta la misma clave.</param>
+/// <param name="Today">Spec §5: lo del día del tenant.</param>
 public sealed record AgentSummaryDto(
     Guid Id,
     string Name,
@@ -19,13 +22,16 @@ public sealed record AgentSummaryDto(
     IReadOnlyList<AgentConnectionSummaryDto> Connections,
     DateTimeOffset? PublishedAt,
     bool HasDraftChanges,
-    long Version);
+    long Version,
+    IReadOnlyList<AgentUsageDto> UsageThisMonth,
+    AgentTodayDto Today);
 
 /// <summary>El nombre y el canal viajan con la conexión para que la lista no cruce con <c>GET /connections</c>.</summary>
 public sealed record AgentConnectionSummaryDto(Guid Id, string Name, string Channel);
 
-/// <summary>El consumo del mes y la actividad del día (§5) llegan con las tareas que los producen (plan 2026-11-12, Tareas 5 y 9).</summary>
-public sealed record AgentListResponse(IReadOnlyList<AgentSummaryDto> Items);
+/// <param name="UsageThisMonth">El total del mes de todos los agentes por proveedor (D-A27, «el total de la clave»; C-4: por proveedor, porque
+/// cada uno es una cuenta y una factura distintas). Lo suma el backend para que el total no dependa de los agentes que filtre la búsqueda.</param>
+public sealed record AgentListResponse(IReadOnlyList<AgentSummaryDto> Items, IReadOnlyList<AgentUsageDto> UsageThisMonth);
 
 public sealed record AgentDraftDto(AgentConfig Config, DateTimeOffset UpdatedAt, Guid UpdatedBy);
 

@@ -60,6 +60,8 @@ public static class AiInfrastructureExtensions
         // Spec 2026-10-29 §8.2 y P-4: la real, sólo en canales reales (sus puertos van en Bootstrapper).
         services.AddScoped<IAgentTool, CreateQuotationDraftTool>();
         services.AddScoped<IAiRunLedger, AiRunLedger>();
+        // Plan 2026-11-12 Tarea 9: la actividad, el historial y los conteos de la lista.
+        services.AddScoped<IAgentActivityReader, AgentActivityReader>();
 
         // Spec 2026-10-29 §7: el playground, con la cola ai.model_jobs y su worker.
         services.AddScoped<IAgentTestRepository, AgentTestRepository>();

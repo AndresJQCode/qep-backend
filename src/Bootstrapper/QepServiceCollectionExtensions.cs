@@ -1202,6 +1202,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<PauseAgentCommand, AgentEditorDto>, PauseAgentHandler>();
         services.AddScoped<ICommandHandler<ResumeAgentCommand, AgentEditorDto>, ResumeAgentHandler>();
         services.AddScoped<ICommandHandler<DeleteAgentCommand, bool>, DeleteAgentHandler>();
+        // Plan 2026-11-12 Tarea 9: el historial de sesiones y la actividad del agente en una conversación.
+        services.AddScoped<IQueryHandler<ListAgentSessionsQuery, AgentSessionListResponse>, ListAgentSessionsHandler>();
+        services.AddScoped<IQueryHandler<GetConversationAgentActivityQuery, AgentActivityDto>, GetConversationAgentActivityHandler>();
         // Spec 2026-10-29 §7: el playground.
         services.AddScoped<ICommandHandler<CreateAgentTestCommand, AgentTestDto>, CreateAgentTestHandler>();
         services.AddScoped<ICommandHandler<SendAgentTestMessageCommand, AgentTestDto>, SendAgentTestMessageHandler>();

@@ -30,6 +30,19 @@ public static class AiEndpoints
             .Produces<IReadOnlyList<AiConnectionDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // Spec §5 y plan 2026-11-12 Tarea 9: el historial de sesiones y la actividad del agente en una conversación. Lectura con
+        // ai.agent.read; si la actividad también la ve todo asesor de la conversación es DECISIÓN-PENDIENTE P-10.
+        group.MapGet("/sessions", ListSessionsAsync)
+            .RequireAuthorization(AiPermissions.AgentRead)
+            .Produces<AgentSessionListResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/conversations/{conversationId:guid}/agent-activity", GetConversationActivityAsync)
+            .RequireAuthorization(AiPermissions.AgentRead)
+            .Produces<AgentActivityDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         var agents = group.MapGroup("/agents");
 
         agents.MapGet("/", ListAgentsAsync)
@@ -174,6 +187,14 @@ public static class AiEndpoints
 
     private static async Task<IResult> ListConnectionsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListAiConnectionsQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> ListSessionsAsync(
+        Guid tenantId, Guid? agentId, DateTimeOffset? from, DateTimeOffset? to, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListAgentSessionsQuery(tenantId, agentId, from, to), cancellationToken));
+
+    private static async Task<IResult> GetConversationActivityAsync(
+        Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetConversationAgentActivityQuery(tenantId, conversationId), cancellationToken));
 
     private static async Task<IResult> ListAgentsAsync(
         Guid tenantId, string? search, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

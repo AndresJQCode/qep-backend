@@ -415,10 +415,28 @@ correr** (las corre el owner). Cambia respecto de lo planeado:
 - [x] RED/GREEN `CreateQuotationDraftToolTests`, `AgentConfigValidatorTests`, `AgentEditorBuilderTests`, `AgentSessionProcessorTests` (Ai),
   `AiQuotationDraftsTests` (Bootstrapper), `ExternalQuotationServiceTests` (Quotations, integración).
 
-### Task 9 (AI-B8): Actividad del agente, historial y conteos
+### Task 9 (AI-B8): Actividad del agente, historial y conteos — hecha
 
 Como el spec. La actividad de cada respuesta muestra proveedor y `served_model`; la lista de agentes suma tokens por
 proveedor, con caché (C-4).
+
+Hecha en `feat/agentes-ia-claude`, sin migración, con build en verde y **pruebas escritas sin correr**. Cambia respecto de lo planeado:
+
+- **`GET /ai/conversations/{conversationId}/agent-activity`**: las sesiones de la conversación y, por cada **trabajo** (respuesta, traspaso o
+  descarte, porque todos gastaron tokens), `provider` de la versión, `servedModels` (sin repetir: con C-9 pueden ser dos), consumo con caché,
+  mensajes enviados, herramientas y fuentes **resueltas** (`faq` con la pregunta, `tool` con el nombre, `quickReply` con el atajo de hoy o
+  `null` si se borró). Permiso `ai.agent.read`; **P-10 sigue abierta** (si también la ve todo asesor de la conversación). Una conversación de
+  otro tenant responde vacía tras el 403 de ruta.
+- **`GET /ai/sessions?agentId=&from=&to=`**: de la más reciente a la más vieja, `from` inclusivo y `to` exclusivo sobre el inicio; `to ≤ from`
+  es 422. El spec no pagina: se devuelven las **200 más recientes** (`ListAgentSessionsHandler.MaxSessions`). `replies` cuenta trabajos con
+  respuesta, no mensajes.
+- **Lista de agentes:** cada agente trae `usageThisMonth` (por proveedor, mes del reloj del tenant, **incluye el playground**, que gasta la
+  misma clave) y `today { handled, handedOff, quotationDrafts }` de las sesiones que empezaron hoy; `handedOff` cuenta `HandedOff`, `Failed` y
+  `WindowClosed` (los caminos de traspaso), no `Interrupted`. La respuesta suma además `usageThisMonth` del tenant por proveedor (D-A27, «el
+  total de la clave»). La caché suma `null` sólo cuando ninguna llamada la reportó.
+- `GET /ai/settings` sigue sin `usageThisMonth` (el spec lo lista; esta tarea no lo pedía).
+
+- [x] RED/GREEN `AgentActivityHandlersTests` (Ai unit) y `AgentActivityApiTests` (Ai integración).
 
 ### Task 10 (AI-B9, nuevo): Eval, ajuste de esfuerzo y comparación de proveedores
 
