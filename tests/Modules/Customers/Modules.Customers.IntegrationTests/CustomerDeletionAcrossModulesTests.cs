@@ -198,6 +198,8 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         { "charge", [CustomerDeletionBlockReasons.ServiceContracts] },
         { "blockedConversation", [CustomerDeletionBlockReasons.BlockedContact] },
         { "quotation+order", [CustomerDeletionBlockReasons.Quotations, CustomerDeletionBlockReasons.Orders] },
+        { "supportTicket", [CustomerDeletionBlockReasons.SupportTickets] },
+        { "loan+supportTicket", [CustomerDeletionBlockReasons.Loans, CustomerDeletionBlockReasons.SupportTickets] },
     };
 
     // §4.2: cada motivo, con el orden del contrato. El otro cliente del lote, con una conversación sin bloquear, no aparece.
@@ -902,6 +904,18 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                     """
                     INSERT INTO billing.charges (id, tenant_id, service_id, customer_id, amount, currency, due_date, status, version, created_at)
                     VALUES (gen_random_uuid(), @tenant, gen_random_uuid(), @customer, 100, 'COP', DATE '2026-12-01', 'Paid', 1, now());
+                    """,
+                    ("tenant", tenant), ("customer", customer));
+                break;
+            case "supportTicket":
+                // D4 (spec de soporte 2026-11-14): cualquier estado bloquea, también un ticket cerrado.
+                await SeedAsync(
+                    """
+                    INSERT INTO support.tickets (id, tenant_id, number, ticket_type_id, type_name, term_is_legal, requires_formal_response,
+                        subject, description, intake, reply_channel, status, customer_id, received_at, received_on, last_event_ordinal,
+                        created_at, updated_at, version)
+                    VALUES (gen_random_uuid(), @tenant, 1, gen_random_uuid(), 'Queja', true, true, 'Pedido incompleto', 'Faltó una caja.',
+                        'Manual', 'Email', 'Closed', @customer, now(), CURRENT_DATE, 1, now(), now(), 1);
                     """,
                     ("tenant", tenant), ("customer", customer));
                 break;
