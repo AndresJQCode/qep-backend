@@ -843,9 +843,9 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans` y `store`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai` y `support`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers` y `store` exige `orders`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -4661,6 +4661,112 @@ importadas conservan el monto que trae el Excel: no se recalculan con la tasa ni
 - Después de cargar se verifica que `loans.loans.outstanding_principal` sea igual al `balance_after` del último abono vigente de
   cada préstamo (o a `principal_amount` si no tiene abonos); si no coinciden, el saldo que ve la pantalla y el interés que cobra el
   worker divergen.
+
+### Soporte
+
+Módulo `Modules.Support.{Domain,Application,Infrastructure,Api}`, esquema `support`, clave de módulo `support` (sin dependencias,
+fuera de `DefaultForNewTenants`: nace apagado y se prende por tenant). Es la fase 1 («núcleo») del spec
+`docs/superpowers/specs/2026-11-14-support-tickets-pqrs-design.md`: tickets creados a mano, bandeja con plazos en días hábiles,
+estados, responsable, tipo y cliente con traza y auditoría, y los tipos de ticket del tenant. Mensajería, el formulario público y la
+encuesta llegan en las fases siguientes. Soporte no referencia Mensajería ni Customers: el calendario, los clientes y los miembros
+entran por puertos con adaptador en Bootstrapper (`SupportBusinessCalendarSource`, `SupportCustomerLookup`, `SupportMemberDirectory`).
+
+**Permisos y roles.** `support.ticket.read`, `support.ticket.manage` y `support.settings.manage` (`SupportPermissions`, categoría
+«Soporte», los tres exigen el módulo `support`). `admin` tiene los tres; `advisor`, `read` y `manage`; `billing` y `cashier`, ninguno.
+Las lecturas usan dos políticas que aceptan más de un permiso (`SupportPolicies`): `support.ticket.view` (`read` o `manage`) y
+`support.settings.view` (`read`, `manage` o `settings.manage`). Quien ve tickets ve **todos** los del tenant: no hay «sólo los míos».
+Con el módulo apagado, toda ruta responde 403.
+
+**Rutas**, bajo `/api/v1/tenants/{tenantId}/support`. Un id de otro tenant en la ruta da `403 authorization.denied`; un ticket o tipo
+que no es del tenant, 404. Todo `PUT` de un ticket, de un tipo o de los ajustes exige `If-Match` con la `version` (sin él, `428
+precondition.if_match_required`; vieja, `412 concurrency.conflict`).
+
+| Método y ruta | Política | Qué hace |
+| --- | --- | --- |
+| `GET /tickets` | `support.ticket.view` | Bandeja paginada con el resumen del tenant (`SupportTicketPageDto`) |
+| `POST /tickets` | `support.ticket.manage` | Alta manual (`201` + `Location`, `SupportTicketDetailDto`) |
+| `GET /tickets/{ticketId}` | `support.ticket.view` | Detalle con la traza y las transiciones permitidas |
+| `PUT /tickets/{ticketId}/status` · `/assignee` · `/type` · `/customer` | `support.ticket.manage` | Cambia estado, responsable, tipo o cliente |
+| `GET /assignees` | `support.ticket.view` | Miembros activos que pueden ser responsables (tienen `manage`) |
+| `GET /ticket-types` | `support.ticket.view` | Todos los tipos, también los inactivos (el selector los marca), para el ticket |
+| `GET` · `POST /settings/ticket-types` | `support.settings.manage` | Los mismos tipos para la tabla de ajustes, y alta de uno |
+| `PUT /settings/ticket-types/{typeId}` | `support.settings.manage` | Edita un tipo (`If-Match`) |
+| `PUT /settings/ticket-types/order` | `support.settings.manage` | Reordena todos los tipos |
+| `GET /settings` · `PUT /settings` | `support.settings.view` · `support.settings.manage` | Umbral de «por vencer» (con `ETag`) |
+
+**Siembra perezosa.** Tenancy no avisa cuando se prende un módulo, así que la fila `support.tenant_settings` del tenant nace en su
+primer acceso (`SupportProvisioner`, `INSERT … ON CONFLICT (tenant_id) DO NOTHING RETURNING`): sólo quien la inserta siembra los
+ocho tipos, en este orden y todos activos y publicados: Petición general (15 días hábiles), Petición de documentos o información (10),
+Consulta (30), Queja (15), Reclamo (15), Sugerencia (15), Felicitación (15) y Soporte técnico (sin término). Los siete primeros son
+«legales»; los cinco primeros piden respuesta formal. Una consulta directa a `support.ticket_types` de un tenant que nunca abrió
+Soporte devuelve cero filas: no es un error. Un tipo no se borra (no hay `DELETE`): se desactiva. Un tipo sin término no vence y no
+puede ser legal; el nombre es único por tenant sin distinguir mayúsculas (`409 support.ticket_type.name_taken`).
+
+**Radicado.** `SOP-` más seis dígitos, por tenant (`SOP-000001` el primero). El contador es `next_ticket_number` de
+`support.tenant_settings` y avanza en la misma transacción del alta: un alta que falla no gasta número.
+
+**Estados.** `New`, `Open` («En gestión»), `WaitingOnCustomer`, `WaitingInternal`, `Resolved` y `Closed`, persistidos y enviados por
+nombre. Las transiciones salen de la tabla del dominio (`SupportTicketStatuses`) y el detalle las manda en `AllowedTransitions`; una
+fuera de la tabla es `422 support.ticket.transition_invalid`. Ningún estado vuelve a `New`, `Closed` es final y `Resolved` puede
+reabrirse a `Open` (`ResolutionCount` cuenta las resoluciones). Cambiar responsable, tipo o cliente se permite en cualquier estado,
+también en `Resolved` y `Closed`.
+
+**Reloj de resolución.** Usa el calendario de la bandeja: el horario **predeterminado** del tenant (se lee aunque `messaging` esté
+apagado). Un día es hábil si su día de la semana tiene franjas, no es festivo y ninguna excepción de fecha lo cierra; una excepción
+de fecha manda sobre el día de la semana y sobre el festivo. Los festivos son los de Colombia si el país del horario (o, sin él, el
+del tenant) es `CO`; con otro país no hay festivos. Sin horario, o con un horario sin ningún día con franjas, cuenta de lunes a
+viernes con los festivos. El plazo corre desde el día hábil **siguiente** a la radicación, en la zona horaria del tenant, y vence al
+final del día hábil (`due_on`). Se detiene en `WaitingOnCustomer`, `Resolved` y `Closed` (no en `WaitingInternal`); al reanudar, el
+vencimiento se corre por los días hábiles detenidos estrictamente entre la pausa y la reanudación (pausar y reanudar el mismo día
+suma cero). Cambiar el tipo recalcula desde la radicación con el término nuevo más las pausas; editar un tipo o el horario no mueve
+vencimientos ya calculados. El estado del plazo (`DueState`) es `NoTerm`, `OnTrack`, `DueSoon`, `Overdue`, `Paused` o `Finished`.
+
+**Umbral de «por vencer».** `due_soon_business_days` en `support.tenant_settings`, 3 días hábiles por defecto, de 0 a 30; con 0 no
+hay «por vencer» (un ticket pasa de `OnTrack` a `Overdue`). Lo usan el filtro `due=dueSoon`, el resumen de la bandeja y el
+`DueState` del ticket. Guardarlo audita `support.settings.updated`.
+
+**Bandeja** (`GET /tickets`). Filtros: `status` (uno o varios nombres separados por coma), `typeId`, `assignee` (`me`, `unassigned`
+o el id de una membresía), `due` (`overdue`: reloj corriendo y vencido antes de hoy; `dueSoon`: reloj corriendo y vence entre hoy y
+el umbral), `search`, `page` y `pageSize` (25 por defecto, hasta 100). **Un `search` de sólo dígitos, con o sin `SOP-`, se toma
+como radicado y nada más**: no busca ese texto en el asunto ni en los nombres. Cualquier otro término busca en el asunto, en los
+nombres del solicitante (nombres, apellidos, razón social) y en el nombre de los clientes vinculados. El resumen (`Summary`) es del
+tenant entero, no del filtro: los seis estados siempre, en el orden de arriba e incluso en cero, más los vencidos y los por vencer.
+
+**Alta manual** (`POST /tickets`). Exige un cliente (`customerId`) **o** un solicitante con nombre (`FirstNames`, o `BusinessName`
+con documento `NIT`); si no, `422 support.ticket.requester_required`. El celular del solicitante va en E.164 y el tipo de documento
+tiene que valer para su país (por defecto, el del tenant). Vincular un cliente, al crear o con `PUT …/customer`, exige el módulo
+`customers` prendido (`403 tenancy.module_not_enabled`) y un cliente activo del tenant (`422 support.ticket.customer_not_found` o
+`support.ticket.customer_inactive`; un fusionado está inactivo). El canal de respuesta `Thread` no está disponible en un alta manual
+(`422 support.ticket.reply_channel_unavailable`), `Email` exige correo y `WhatsAppTemplate` exige celular.
+
+**Traza y auditoría.** La traza del ticket son sus eventos (`Created`, `StatusChanged`, `AssigneeChanged`, `TypeChanged`,
+`CustomerChanged`), ordenados por un ordinal que asigna el agregado, no por hora. Cada cambio audita en la misma transacción:
+`support.ticket.created`, `.status_changed`, `.assigned`, `.type_changed` y `.customer_changed`; en los tipos,
+`support.ticket_type.created`, `.updated` y `.reordered`. Un cambio que no cambia nada no sube `version` ni audita. En esta fase no hay
+notas internas.
+
+**Clientes.** Cualquier ticket del cliente, en cualquier estado, bloquea su borrado (motivo `supportTickets`), y la fusión mueve
+`support.tickets.customer_id` al cliente que queda, sin subir la `version` del ticket. La vista previa de la fusión no cuenta tickets.
+Escribir `customer_id` toma el candado compartido del cliente (`CustomerReferenceLock`): un alta que llega mientras se borra su
+cliente espera al borrado y falla con 422.
+
+**Retención de usuarios:** `SupportUserReferenceProbe` impide borrar a un usuario cuya membresía sea responsable de un ticket o haya
+actuado en su traza.
+
+**Migraciones:** `Tenancy` `AddSupportModuleKey` (el CHECK de `tenant_modules` admite `support`; su `Down` borra las filas `support`
+antes de volver al CHECK anterior) y `Support` `InitialSupport` (esquema `support`: `tenant_settings`, `ticket_types`, `tickets` y
+`ticket_events`).
+
+**Avisos para quien opera:**
+
+- **Orden de despliegue: primero backend y migración, después frontend.** El frontend consume estas rutas y el motivo de bloqueo
+  `supportTickets` en el borrado de clientes.
+- **Un `INSERT` a mano en `support.tickets` tiene que llenar todas las columnas `NOT NULL`** (el tipo va copiado en `type_name`,
+  `term_is_legal` y `requires_formal_response`; `received_on`, `last_event_ordinal`, `version`) y un `number` libre del tenant: el
+  índice único es `(tenant_id, number)` y el contador de `tenant_settings` no se entera.
+
+**Pendiente del owner:** si cambiar responsable, tipo o cliente debe seguir permitido en un ticket `Resolved` o `Closed`. Hoy se
+permite (ver «Estados»).
 
 ### API externa
 
