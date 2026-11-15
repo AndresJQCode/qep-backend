@@ -2,12 +2,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Bootstrapper.Valkey.Permissions;
 using Bootstrapper.Valkey.Presence;
 using Bootstrapper.Valkey.RateLimiting;
 using Bootstrapper.Valkey.Sessions;
+using Modules.Authorization.Application;
 using Modules.Buyers.Application;
 using Modules.Identity.Application;
 using Modules.Messaging.Application;
+using Modules.Tenancy.Application;
 
 namespace Bootstrapper.Valkey;
 
@@ -42,6 +45,7 @@ public static class ValkeyServiceCollectionExtensions
         var valkey = configuration.GetSection(ValkeyOptions.SectionName).Get<ValkeyOptions>() ?? new ValkeyOptions();
         AddPresence(services, IsOn(valkey, ValkeyArea.Presence));
         AddSessionCaches(services, IsOn(valkey, ValkeyArea.Sessions));
+        AddPermissionsCache(services, IsOn(valkey, ValkeyArea.Permissions));
 
         // Los limitadores (D-3): la fábrica decide memoria o Valkey con el interruptor del área, y apagada devuelve
         // exactamente la partición de memoria de antes.
@@ -70,6 +74,26 @@ public static class ValkeyServiceCollectionExtensions
 
         services.AddSingleton<ISessionCache, ValkeySessionCache>();
         services.AddSingleton<IBuyerSessionCache, ValkeyBuyerSessionCache>();
+    }
+
+    /// <summary>
+    /// La caché de permisos (D-5; plan P5). <see cref="AuthorizationService"/> se registra siempre como clase concreta (scoped,
+    /// como antes). Apagada, es también el <see cref="IAuthorizationService"/> y la versión de acceso del tenant es el nulo.
+    /// Prendida (<c>Valkey:Areas:Permissions</c>), <see cref="CachedAuthorizationService"/> la decora y los casos de uso que
+    /// cambian permisos suben <c>qep:tenantver:{tenantId}</c>.
+    /// </summary>
+    private static void AddPermissionsCache(IServiceCollection services, bool shared)
+    {
+        services.AddScoped<AuthorizationService>();
+        if (!shared)
+        {
+            services.AddScoped<IAuthorizationService>(provider => provider.GetRequiredService<AuthorizationService>());
+            services.AddSingleton<ITenantAccessVersion, NullTenantAccessVersion>();
+            return;
+        }
+
+        services.AddScoped<IAuthorizationService, CachedAuthorizationService>();
+        services.AddSingleton<ITenantAccessVersion, ValkeyTenantAccessVersion>();
     }
 
     /// <summary>

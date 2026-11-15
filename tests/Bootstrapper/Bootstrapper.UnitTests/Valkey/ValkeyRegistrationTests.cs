@@ -1,12 +1,18 @@
 using System.Threading.RateLimiting;
 using Bootstrapper.Valkey;
+using Bootstrapper.Valkey.Permissions;
 using Bootstrapper.Valkey.Presence;
 using Bootstrapper.Valkey.RateLimiting;
+using Bootstrapper.Valkey.Sessions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Modules.Authorization.Application;
+using Modules.Buyers.Application;
+using Modules.Identity.Application;
 using Modules.Messaging.Application;
+using Modules.Tenancy.Application;
 
 namespace Bootstrapper.UnitTests.Valkey;
 
@@ -54,6 +60,35 @@ public sealed class ValkeyRegistrationTests
 
         using var limiter = partition.Factory(partition.PartitionKey);
         Assert.IsType<FixedWindowRateLimiter>(limiter);
+    }
+
+    // D-4: la caché de sesión de Identity y la del comprador siguen el mismo interruptor.
+    [Theory]
+    [InlineData("true", typeof(ValkeySessionCache), typeof(ValkeyBuyerSessionCache))]
+    [InlineData("false", typeof(NullSessionCache), typeof(NullBuyerSessionCache))]
+    public void TheSessionCachesFollowTheSessionsArea(string on, Type identity, Type buyer)
+    {
+        var services = Register(("Valkey:Areas:Sessions", on));
+        using var provider = services.BuildServiceProvider();
+
+        Assert.IsType(identity, provider.GetRequiredService<ISessionCache>());
+        Assert.IsType(buyer, provider.GetRequiredService<IBuyerSessionCache>());
+    }
+
+    // D-5: apagada, IAuthorizationService es AuthorizationService tal cual (V3); prendida, el decorador. Se mira el registro y no
+    // la resolución: AuthorizationService necesita el resto de la composición.
+    [Theory]
+    [InlineData("true", typeof(ValkeyTenantAccessVersion), true)]
+    [InlineData("false", typeof(NullTenantAccessVersion), false)]
+    public void ThePermissionsCacheFollowsThePermissionsArea(string on, Type version, bool decorated)
+    {
+        var services = Register(("Valkey:Areas:Permissions", on));
+        using var provider = services.BuildServiceProvider();
+
+        Assert.IsType(version, provider.GetRequiredService<ITenantAccessVersion>());
+        var descriptor = Assert.Single(services, service => service.ServiceType == typeof(IAuthorizationService));
+        Assert.Equal(decorated, descriptor.ImplementationType == typeof(CachedAuthorizationService));
+        Assert.Contains(services, service => service.ServiceType == typeof(AuthorizationService));
     }
 
     internal static ServiceCollection Register(params (string Key, string Value)[] settings)

@@ -1689,9 +1689,8 @@ public static class QepServiceCollectionExtensions
         // por request sea correcto — el scope dura lo que el request.
         services.AddScoped<ITenantRoleCatalog, TenantRoleCatalog>();
         services.AddAuthorizationInfrastructure(configuration);
-        services.AddScoped<
-            Modules.Authorization.Application.IAuthorizationService,
-            AuthorizationService>();
+        // IAuthorizationService lo registra AddQepValkey (spec 2026-11-13, D-5): AuthorizationService tal cual con
+        // Valkey:Areas:Permissions apagado, o decorado por la caché de permisos con el área prendida.
         services.AddScoped<IRolePermissionChecker, RolePermissionChecker>();
         services.AddScoped<IRoleReferenceValidator, RoleReferenceValidator>();
         // Las claves de rol van en inglés y sin prefijo de módulo: a diferencia de un permiso,
