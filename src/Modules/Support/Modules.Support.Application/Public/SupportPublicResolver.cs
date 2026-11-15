@@ -21,9 +21,11 @@ public sealed record SupportPublicConsultTenant(Guid TenantId, string Slug, stri
 /// «Reenviar PIN».</item>
 /// </list>
 /// En las dos, un slug que no es de nadie, un tenant inactivo, el módulo apagado y (en la del formulario) un formulario sin publicar dan
-/// el mismo 404 <c>support.public.not_found</c>, con el mismo cuerpo: quien sondea slugs no distingue un tenant en preparación de uno que
-/// no existe. Falla CERRADO: un tenant sin fila de módulos tampoco se sirve. No lee el contexto de ejecución ni la sesión: el grupo es
-/// anónimo.
+/// el mismo 404 <c>support.public.not_found</c>, con el mismo cuerpo. En la entrada del formulario, quien sondea slugs no distingue un
+/// tenant en preparación de uno que no existe. La de la consulta sí lo revela, por decisión del owner (E1): <c>GET /consult</c> responde
+/// 200 con el nombre a todo tenant activo con Soporte prendido, publique o no su formulario, porque la página de consulta tiene que
+/// funcionar desde el primer día. Falla CERRADO: un tenant sin fila de módulos tampoco se sirve. No lee el contexto de ejecución ni la
+/// sesión: el grupo es anónimo.
 /// </summary>
 public sealed class SupportPublicResolver(
     ITenantSlugDirectory slugs,

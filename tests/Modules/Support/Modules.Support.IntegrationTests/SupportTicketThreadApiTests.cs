@@ -176,6 +176,33 @@ public sealed class SupportTicketThreadApiTests(SupportHostWithoutWorkers host) 
         Assert.Equal(0, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketMessageReleased, Id(ticket).ToString()));
     }
 
+    // Block E (E-2): fijar lo ya fijado y soltar lo ya soltado en un cerrado también es 422, como «Seguir el hilo» con el mismo valor: la
+    // respuesta no depende de lo que se mande.
+    [Fact]
+    public async Task RepinningOrReleasingAgainOnAClosedTicketIs422()
+    {
+        var scenario = await StartAsync(host.Factory);
+        var conversation = await SeedConversationAsync(scenario.Factory, scenario.TenantId);
+        var ticket = await scenario.CreateFromConversationAsync(conversation);
+        var pinnedMessage = await SeedMessageAsync(scenario.Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow.AddDays(-2));
+        var releasedMessage = await SeedMessageAsync(scenario.Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow.AddDays(-3));
+        var pin = await scenario.PostActionAsync($"tickets/{Id(ticket)}/messages/{pinnedMessage}/pin", null, Version(ticket));
+        Assert.True(pin.StatusCode == HttpStatusCode.OK, await BodyAsync(pin));
+        var pinOther = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/messages/{releasedMessage}/pin", null, Version(await JsonAsync(pin)));
+        Assert.True(pinOther.StatusCode == HttpStatusCode.OK, await BodyAsync(pinOther));
+        var release = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/messages/{releasedMessage}/release", null, Version(await JsonAsync(pinOther)));
+        Assert.True(release.StatusCode == HttpStatusCode.OK, await BodyAsync(release));
+        var closed = await scenario.MoveAsync(await scenario.MoveAsync(await JsonAsync(release), "Resolved"), "Closed");
+
+        var repin = await scenario.PostActionAsync($"tickets/{Id(ticket)}/messages/{pinnedMessage}/pin", null, Version(closed));
+        await AssertNotEditableAndUnchangedAsync(scenario, repin, closed);
+        var rerelease = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/messages/{releasedMessage}/release", null, Version(closed));
+        await AssertNotEditableAndUnchangedAsync(scenario, rerelease, closed);
+    }
+
     // Apagar en un cerrado ya apagado también es 422: R9 rechaza aunque el valor sea el mismo.
     [Fact]
     public async Task FollowThreadOnAClosedTicketIs422AndChangesNothing()

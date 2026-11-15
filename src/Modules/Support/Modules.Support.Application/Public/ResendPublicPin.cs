@@ -61,7 +61,9 @@ public sealed class ResendPublicPinHandler(
                 return false;
             }
 
-            access.RecordDelivery(SupportOpeningSender.ChannelOf(ticket), null, now);
+            // Triage #8 del Bloque F: el reclamo confirma el enfriamiento (last_sent_at) y un envío en curso, no un envío exitoso. Si el
+            // proceso muere antes del segundo guardado, la consola ve send_pending y no un correo que nunca salió.
+            access.RecordDelivery(SupportOpeningSender.ChannelOf(ticket), SupportChannelReasons.SendPending, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }

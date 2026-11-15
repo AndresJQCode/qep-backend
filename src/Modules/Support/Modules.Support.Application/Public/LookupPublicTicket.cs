@@ -44,20 +44,23 @@ public sealed partial class LookupPublicTicketHandler(
         // cuentan N y el quinto bloquea. Sólo se toma la fila de ticket_access: el ticket sigue sin tracking y sin versión nueva.
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
-            var found = SupportTicketNumber.TryParse(command.Number, out var number) && PinFormat().IsMatch(pin)
-                ? await accesses.LockByNumberAsync(tenant.TenantId, number, cancellationToken)
-                : null;
-            if (found is not { } match)
+            // Triage #4 del Bloque F: las mismas lecturas en los tres caminos, para que el tiempo tampoco diga si el radicado existe. El
+            // contexto (un solo reloj para el bloqueo y para el plazo que se muestra) se lee siempre, y la clave se busca siempre: un
+            // radicado mal escrito busca el 0, que nunca existe (los radicados empiezan en 1). Un PIN mal formado sobre un radicado que
+            // existe no cuenta como intento, como antes. Un tenant que nunca abrió Soporte no tiene fila de ajustes ni tickets: no se
+            // aprovisiona desde acá, y su contexto es null.
+            var readContext = await composer.TryReadContextAsync(tenant.TenantId, cancellationToken);
+            var parsed = SupportTicketNumber.TryParse(command.Number, out var number);
+            var found = await accesses.LockByNumberAsync(tenant.TenantId, parsed ? number : 0, cancellationToken);
+            if (!parsed || !PinFormat().IsMatch(pin) || found is not { } match || readContext is null)
             {
                 // El señuelo iguala el tiempo de un radicado que no existe con el de uno con el PIN errado.
                 pinHasher.Verify(null, pin);
                 throw LookupFailed();
             }
 
+            context = readContext;
             (ticket, var access) = match;
-
-            // Un solo reloj para el bloqueo y para el plazo que se muestra.
-            context = await composer.ReadContextAsync(tenant.TenantId, cancellationToken);
             if (access.IsLocked(context.Now))
             {
                 // Bloqueado: no se verifica contra su hash ni cuenta otro fallo, pero se paga el mismo PBKDF2 con el señuelo.
@@ -84,6 +87,9 @@ public sealed partial class LookupPublicTicketHandler(
 
         var (dueState, _) = SupportDueStates.Evaluate(
             ticket.Status, ticket.DueOn, context.Today, context.Clock.Calendar, context.DueSoonBusinessDays);
+        // La hora de envío es UpdatedAt (triage #6 del Bloque F): la respuesta no tiene columna propia y no hace falta. MarkSent es la
+        // última escritura de una respuesta Sent (EnsurePending impide marcarla otra vez), y el borrado de clientes sólo pone message_id
+        // en NULL sin tocar updated_at. Un camino nuevo que modifique una respuesta ya enviada tiene que sumar sent_at antes.
         var sent = (await replies.ListAsync(tenant.TenantId, ticket.Id, cancellationToken))
             .Where(reply => reply.Status is SupportReplyStatus.Sent)
             .OrderBy(reply => reply.UpdatedAt)

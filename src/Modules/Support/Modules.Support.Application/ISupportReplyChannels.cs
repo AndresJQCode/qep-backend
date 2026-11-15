@@ -50,7 +50,8 @@ public abstract record SupportChannelSendResult
 /// <summary>
 /// Tarea 8a: el único vocabulario de los códigos que la pantalla lee de Soporte: el <c>failureCode</c> de una respuesta
 /// (<c>ticket_replies.failure_code</c>), el de la información con el PIN (<c>ticket_access.last_failure_code</c>, en
-/// <c>ConsultAccess.FailureCode</c>) y el <c>reason</c> de <c>reply-options</c>. Los motivos de
+/// <c>ConsultAccess.FailureCode</c>), el <c>reason</c> de <c>reply-options</c> y el <c>cannotCreateReason</c> de la pestaña de Soporte de
+/// una conversación (<c>ListConversationTicketsHandler</c>). Los motivos de
 /// <see cref="SupportChannelSendResult.Rejected"/> que vienen de Mensajería son copias por nombre de <c>SupportReplyReasons</c> (Soporte
 /// no ve Mensajería); <c>SupportFailureCodeParityTests</c> los amarra. Un código nuevo va acá, y el frontend lo traduce por esta lista.
 /// </summary>
@@ -119,6 +120,15 @@ public static class SupportChannelReasons
     /// Motivo de <c>reply-options</c>.</summary>
     public const string PortalUnavailable = "portal_unavailable";
 
+    /// <summary>Quien mira no tiene <c>support.ticket.manage</c>. Motivo de <c>cannotCreateReason</c> en la pestaña de Soporte de una
+    /// conversación (triage #19 del Bloque F: antes era un literal del handler).</summary>
+    public const string NoPermission = "no_permission";
+
+    /// <summary>«Reenviar PIN» reclamó el envío y todavía no sabe cómo terminó: se anota antes de mandar y el segundo guardado lo reemplaza
+    /// por el resultado real (triage #8 del Bloque F). Si el proceso muere en el medio, queda así: la consola ve que no salió, nunca un
+    /// envío exitoso que no ocurrió. Falla de la información con el PIN.</summary>
+    public const string SendPending = "send_pending";
+
     /// <summary>Todos los códigos de esta lista.</summary>
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -141,6 +151,8 @@ public static class SupportChannelReasons
         NoAuthor,
         PortalOnly,
         PortalUnavailable,
+        NoPermission,
+        SendPending,
     };
 }
 

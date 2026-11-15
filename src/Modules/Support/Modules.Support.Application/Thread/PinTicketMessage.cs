@@ -11,7 +11,8 @@ public sealed record PinTicketMessageCommand(Guid TenantId, Guid TicketId, Guid 
 /// <summary>
 /// Fijar un mensaje en el expediente (plan E9): cualquier mensaje de la conversación del ticket, entrante o saliente, también anterior al
 /// ticket o uno que se había soltado. Ticket sin conversación: 422 <c>support.ticket.no_conversation</c>; mensaje de otra conversación:
-/// 422 <c>support.message.not_in_conversation</c>. Fijar uno ya fijado no hace nada (ni evento ni versión). Fijar un entrante que
+/// 422 <c>support.message.not_in_conversation</c>. Fijar uno ya fijado no hace nada (ni evento ni versión), salvo en un
+/// ticket cerrado, que responde 422 <c>support.ticket.not_editable</c> antes de mirar nada más. Fijar un entrante que
 /// esperaba en «sin clasificar» lo deja <c>Assigned</c> a este ticket en el mismo guardado (revisión final, M6): el asesor ya decidió.
 /// </summary>
 public sealed class PinTicketMessageHandler(
@@ -35,6 +36,9 @@ public sealed class PinTicketMessageHandler(
             executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
         var (ticket, actor) = await SupportTicketActions.LoadAsync(
             executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+
+        // Block E (E-2): antes que cualquier otra regla y que el no-op de abajo; un cerrado es 422 aunque el mensaje ya esté fijado.
+        ticket.EnsureMessagesCanChange();
         if (ticket.ConversationId is not { } conversationId)
         {
             throw new SupportDomainException(SupportErrorCodes.NoConversation, "The ticket has no conversation to pin messages from.");

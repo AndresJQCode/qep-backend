@@ -92,14 +92,24 @@ public sealed class SupportPublicFilingApiTests(SupportPublicLoggedHost host) : 
         var email = Email();
         host.Emails.BeforeSend[email] = () => ExecuteAsync(
             rig.Factory, "DELETE FROM support.ticket_access WHERE tenant_id = @tenant", ("tenant", rig.TenantId));
+        host.Logs.Entries.Clear();
 
         var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, NamedBody(rig.TypeId, rig.CityId, email));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await JsonAsync(response);
-        Assert.Matches("^[0-9]{6}$", body.GetProperty("pin").GetString());
+        var pin = body.GetProperty("pin").GetString()!;
+        Assert.Matches("^[0-9]{6}$", pin);
         Assert.Equal("SOP-000001", body.GetProperty("number").GetString());
         Assert.Equal(1L, await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant"));
+        // Triage #10 (Bloque F): la anotación perdida deja su aviso, con el id del ticket y sin el PIN.
+        var ticketId = await TicketIdAsync(rig);
+        var warning = Assert.Single(
+            host.Logs.Entries,
+            entry => entry.Contains($"The opening delivery of support ticket {ticketId} could not be recorded", StringComparison.Ordinal));
+        var standalone = new Regex($"(?<![0-9A-Fa-f]){pin}(?![0-9A-Fa-f])", RegexOptions.None, TimeSpan.FromSeconds(1));
+        Assert.DoesNotMatch(standalone, warning);
+        Assert.DoesNotContain(host.Logs.Entries, standalone.IsMatch);
     }
 
     // Review Focus 5: un anónimo no deja cliente, foto del solicitante, IP ni consentimiento. Se responde por la página.

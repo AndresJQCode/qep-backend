@@ -164,6 +164,34 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
         Assert.Equal(HttpStatusCode.OK, (await LookupAsync(rig, filed.Number, emails[^1].Pin, NextIp())).StatusCode);
     }
 
+    // Triage #8 (Bloque F): el reclamo del reenvío se confirma antes de mandar, y lo que confirma es el enfriamiento y un envío en curso
+    // (send_pending), no un envío exitoso. Si el proceso muere entre los dos guardados, la consola ve que no salió; el segundo guardado
+    // escribe el resultado real.
+    [Fact]
+    public async Task WhileTheResendIsInFlightTheAccessReadsSendPending()
+    {
+        var rig = await RigAsync();
+        var email = Email();
+        var filed = await FileNamedAsync(rig, email: email);
+        string? channelInFlight = null;
+        string? failureInFlight = null;
+        host.Emails.BeforeSend[email] = async () =>
+        {
+            channelInFlight = await AccessColumnAsync(rig, "last_sent_channel");
+            failureInFlight = await AccessColumnAsync(rig, "last_failure_code");
+        };
+        host.Clock.UtcNow = ClockedSupportHost.Reception + SupportTicketAccess.ResendCooldown + TimeSpan.FromMinutes(1);
+
+        var response = await ResendAsync(rig, filed.Number);
+        host.Emails.BeforeSend.TryRemove(email, out _);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal("Email", channelInFlight);
+        Assert.Equal(SupportChannelReasons.SendPending, failureInFlight);
+        Assert.Equal("Email", await AccessColumnAsync(rig, "last_sent_channel"));
+        Assert.Null(await AccessColumnAsync(rig, "last_failure_code"));
+    }
+
     [Fact]
     public async Task TheNumberAcceptsWithAndWithoutPrefix()
     {
@@ -360,6 +388,9 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
             rig.Factory,
             "SELECT id::text FROM support.tickets WHERE tenant_id = @tenant AND number = @number",
             ("tenant", rig.TenantId), ("number", NumberOf(number))))!);
+
+    private static Task<string?> AccessColumnAsync(Rig rig, string column) =>
+        TextAsync(rig.Factory, $"SELECT {column} FROM support.ticket_access WHERE tenant_id = @tenant", ("tenant", rig.TenantId));
 
     private static Task<long> VersionAsync(Rig rig, string number) =>
         ScalarAsync(

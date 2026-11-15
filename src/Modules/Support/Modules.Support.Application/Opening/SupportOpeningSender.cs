@@ -95,11 +95,13 @@ public sealed class SupportOpeningSender(
     }
 
     /// <summary>El <c>ClientId</c> del mensaje: el mismo para el mismo ticket y la misma emisión del PIN, y nunca el de una respuesta
-    /// (esos son GUID v7 de su fila).</summary>
+    /// (esos son GUID v7 de su fila). La emisión se trunca a microsegundos, que es lo que guarda <c>pin_issued_at</c> (timestamptz): el
+    /// instante en memoria y el que vuelve de la base dan el mismo id (triage #20 del Bloque F).</summary>
     public static Guid ClientIdFor(SupportTicketId ticketId, DateTimeOffset issuedAt)
     {
+        var microsecondTicks = issuedAt.UtcTicks - (issuedAt.UtcTicks % TimeSpan.TicksPerMicrosecond);
         var seed = Encoding.UTF8.GetBytes(string.Create(
-            CultureInfo.InvariantCulture, $"support.opening:{ticketId.Value:N}:{issuedAt.UtcTicks}"));
+            CultureInfo.InvariantCulture, $"support.opening:{ticketId.Value:N}:{microsecondTicks}"));
         var bytes = SHA256.HashData(seed).AsSpan(0, 16).ToArray();
         // Versión 8 (definida por la aplicación) y la variante RFC 9562, en el orden de bytes de System.Guid.
         bytes[7] = (byte)((bytes[7] & 0x0F) | 0x80);

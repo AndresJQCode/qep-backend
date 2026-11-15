@@ -192,6 +192,19 @@ public sealed class SupportOpeningSenderTests
         Assert.NotEqual(Guid.Empty, ids[0]);
     }
 
+    // Triage #20 (Bloque F): pin_issued_at se guarda en microsegundos (timestamptz). El instante en memoria y el que vuelve de la base dan
+    // el mismo ClientId, así un reintento armado desde la fila no manda un segundo mensaje.
+    [Fact]
+    public void TheClientIdIgnoresTheSubMicrosecondTicksThatTheDatabaseDrops()
+    {
+        var id = SupportTicketId.New();
+        var inMemory = Received.AddTicks(7);
+        var fromDatabase = Received;
+
+        Assert.Equal(SupportOpeningSender.ClientIdFor(id, fromDatabase), SupportOpeningSender.ClientIdFor(id, inMemory));
+        Assert.NotEqual(SupportOpeningSender.ClientIdFor(id, fromDatabase), SupportOpeningSender.ClientIdFor(id, Received.AddTicks(10)));
+    }
+
     [Fact]
     public async Task AFailedThreadSendIsRecordedWithItsCode()
     {

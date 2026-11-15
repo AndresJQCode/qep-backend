@@ -11,7 +11,8 @@ public sealed record ReleaseTicketMessageCommand(Guid TenantId, Guid TicketId, G
 /// <summary>
 /// Soltar un mensaje del expediente (plan E9): sale de la página y el seguimiento del hilo nunca lo vuelve a vincular (la fila queda
 /// <see cref="SupportTicketMessageState.Released"/>). Sólo un mensaje que tiene fila en este ticket: si no, 422
-/// <c>support.message.not_linked</c>. Soltar uno ya soltado no hace nada.
+/// <c>support.message.not_linked</c>. Soltar uno ya soltado no hace nada, salvo en un ticket cerrado, que
+/// responde 422 <c>support.ticket.not_editable</c> antes de mirar nada más.
 /// </summary>
 public sealed class ReleaseTicketMessageHandler(
     IExecutionContext executionContext,
@@ -32,6 +33,9 @@ public sealed class ReleaseTicketMessageHandler(
             executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
         var (ticket, actor) = await SupportTicketActions.LoadAsync(
             executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+
+        // Block E (E-2): antes que cualquier otra regla y que el no-op de abajo; un cerrado es 422 aunque el mensaje ya esté suelto.
+        ticket.EnsureMessagesCanChange();
         var link = await links.FindAsync(command.TenantId, ticket.Id, command.MessageId, cancellationToken)
             ?? throw new SupportDomainException(SupportErrorCodes.MessageNotLinked, "The message is not linked to this ticket.");
 

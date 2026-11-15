@@ -23,7 +23,7 @@ public sealed class ListConversationTicketsHandler(
 {
     public const string MessagingDisabled = SupportChannelReasons.MessagingDisabled;
 
-    public const string NoPermission = "no_permission";
+    public const string NoPermission = SupportChannelReasons.NoPermission;
 
     public async Task<SupportConversationTicketsDto> HandleAsync(
         ListConversationTicketsQuery query, CancellationToken cancellationToken)

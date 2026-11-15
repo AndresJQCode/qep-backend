@@ -46,6 +46,20 @@ public sealed class SupportChannelReasonsTests
         Assert.Equal("no_author", SupportChannelReasons.NoAuthor);
     }
 
+    // Triage #19 (Bloque F): el cannotCreateReason de la pestaña de Soporte de una conversación sale del mismo vocabulario.
+    [Fact]
+    public void TheConversationTabReasonsAreInTheVocabulary()
+    {
+        Assert.Equal("no_permission", SupportChannelReasons.NoPermission);
+        Assert.Equal(SupportChannelReasons.NoPermission, ListConversationTicketsHandler.NoPermission);
+        Assert.Equal(SupportChannelReasons.MessagingDisabled, ListConversationTicketsHandler.MessagingDisabled);
+    }
+
+    // Triage #8 (Bloque F): el reclamo de «Reenviar PIN» se anota como envío en curso hasta que el canal responde.
+    [Fact]
+    public void TheResendClaimCodeIsInTheVocabulary() =>
+        Assert.Equal("send_pending", SupportChannelReasons.SendPending);
+
     // Owner, 2026-11-15 (E1): la página de consulta funciona sin el formulario publicado, así que la apertura sale siempre que el canal
     // lo permita y ya no existe el motivo «formulario sin publicar».
     [Fact]

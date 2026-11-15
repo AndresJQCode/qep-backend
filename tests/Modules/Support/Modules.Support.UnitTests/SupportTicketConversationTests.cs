@@ -274,4 +274,22 @@ public sealed class SupportTicketConversationTests
         Assert.Equal(version, ticket.Version);
         Assert.Equal(events, ticket.Events.Count);
     }
+
+    // Block E (E-2): fijar lo ya fijado o soltar lo ya soltado no llega a RecordMessageEvent; el handler pregunta antes del no-op, así
+    // un cerrado responde 422 aunque nada fuera a cambiar, igual que «Seguir el hilo» con el mismo valor.
+    [Fact]
+    public void EnsureMessagesCanChangeRejectsOnlyAClosedTicket()
+    {
+        var ticket = FromConversation();
+        ticket.EnsureMessagesCanChange();
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, Later(10), Clock);
+        ticket.EnsureMessagesCanChange();
+        ticket.ChangeStatus(SupportTicketStatus.Closed, Actor, Later(11), Clock);
+        var version = ticket.Version;
+
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(ticket.EnsureMessagesCanChange).Code);
+        Assert.Equal(version, ticket.Version);
+    }
 }

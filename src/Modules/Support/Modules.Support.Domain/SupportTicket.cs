@@ -457,6 +457,11 @@ public sealed class SupportTicket
         AddEvent(kind, actorMemberId, now, new { messageId });
     }
 
+    /// <summary>Block E (E-2): la guarda de fijar y soltar, para que el handler la pida <b>antes</b> de su no-op (fijar lo ya fijado,
+    /// soltar lo ya soltado). Cerrado responde 422 <c>support.ticket.not_editable</c> aunque nada fuera a cambiar, igual que
+    /// <see cref="SetFollowThread"/> con el mismo valor; resuelto, sí.</summary>
+    public void EnsureMessagesCanChange() => EnsureNotClosed();
+
     /// <summary>Anota una respuesta en la traza con su canal, cómo terminó (<c>status</c>, y <c>failureCode</c> si falló) y, si salió
     /// por Mensajería, su mensaje (plan E16). Se llama después de marcarla.</summary>
     public void RecordReply(SupportTicketReply reply, DateTimeOffset now)

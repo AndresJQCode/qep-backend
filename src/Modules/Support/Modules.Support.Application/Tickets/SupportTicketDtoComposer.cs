@@ -42,6 +42,22 @@ public sealed class SupportTicketDtoComposer(
         return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays);
     }
 
+    /// <summary>Las mismas lecturas que <see cref="ReadContextAsync"/>, sin exigir la fila de ajustes: <c>null</c> si el tenant nunca se
+    /// aprovisionó (entonces tampoco tiene tickets). La usa la consulta pública, que no aprovisiona y lee el contexto también cuando el
+    /// radicado no existe, para que el tiempo no lo delate (triage #4 del Bloque F).</summary>
+    public async Task<SupportReadContext?> TryReadContextAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var tenantCalendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        var clock = await calendars.GetAsync(tenantId, tenantCalendar.TimeZone, cancellationToken);
+        if (await settings.FindAsync(tenantId, cancellationToken) is not { } tenantSettings)
+        {
+            return null;
+        }
+
+        var now = tenantCalendar.UtcNow;
+        return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays);
+    }
+
     public async Task<SupportTicketDetailDto> ComposeDetailAsync(SupportTicket ticket, CancellationToken cancellationToken) =>
         await ComposeDetailAsync(ticket, await ReadContextAsync(ticket.TenantId, cancellationToken), cancellationToken);
 
