@@ -50,6 +50,17 @@ public sealed class SupportReplyParityTests
     public void TheInstagramTextLimitMatchesMessaging() =>
         Assert.Equal(SendMessageValidator.InstagramTextMaxLength, SupportReplyTextRules.InstagramTextMaxLength);
 
+    // Tarea 11: el adjunto de una respuesta pasa por la sesión de subida y la confirmación de Mensajería. El nombre, el pie y el permiso
+    // que pide la sesión son copias: si divergen, Soporte aceptaría un adjunto que Mensajería rechaza o la pantalla ofrecería uno que no
+    // se puede subir.
+    [Fact]
+    public void TheAttachmentRulesMatchMessaging()
+    {
+        Assert.Equal(CreateMediaUploadSessionValidator.MaxFileNameLength, SupportReplyAttachmentRules.FileNameMaxLength);
+        Assert.Equal(SendMediaMessageValidator.MaxCaptionLength, SupportReplyAttachmentRules.CaptionMaxLength);
+        Assert.Equal(MessagingPermissions.ConversationManage, SupportReplyAttachmentRules.UploadPermission);
+    }
+
     // CustomerNotFound es sólo de Soporte: lo pone el adaptador cuando abrir la conversación choca con un cliente borrado.
     [Fact]
     public void TheRejectionReasonsMatchMessaging()

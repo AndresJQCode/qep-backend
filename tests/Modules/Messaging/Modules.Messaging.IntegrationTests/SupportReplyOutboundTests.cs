@@ -1,5 +1,8 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -589,5 +592,105 @@ public sealed class SupportReplyOutboundTests
             "SELECT status || '|' || sent_by_member_id FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
         // Instagram corta en 1000 caracteres: el texto del asesor que pasa de ahí no sale.
         Assert.Equal(new SupportReplySendResult.Rejected("text_invalid"), tooLong);
+    }
+
+    private sealed record MediaFixture(
+        QepApiFactory Factory, WebApplicationFactory<Program> Host, FakeMessagingBucket Bucket, string ConnectionString, RegisteredTenant Tenant,
+        Guid ConversationId, Guid MemberId);
+
+    /// <summary>Como <see cref="ArrangeAsync"/>, con el bucket de <c>SendMediaMessageApiTests</c> como staging y R2 a la vez, y Graph
+    /// contestando la subida del medio y el envío.</summary>
+    private static async Task<MediaFixture> ArrangeMediaAsync(TestDatabase database)
+    {
+        var connectionString = database.GetConnectionString();
+        var factory = new QepApiFactory(connectionString);
+        var bucket = new FakeMessagingBucket();
+        var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.AddSingleton<IMessagingMediaStore>(bucket);
+            services.AddSingleton<IMessagingUploadStaging>(bucket);
+        }));
+        var tenant = await RegisterTenantAsync(host);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Ventas", "111", "222");
+        using (var anonymous = host.CreateClient())
+        {
+            await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", Phone, "w1", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, "hola"));
+            await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", "573005556677", "w2", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, "hola"));
+            await DrainDeliveriesAsync(host);
+        }
+
+        var conversationId = await ScalarAsync<Guid>(connectionString, "SELECT id FROM messaging.conversations WHERE wa_id = @phone", ("phone", Phone));
+        var memberId = await OwnerMembershipIdAsync(connectionString, tenant);
+        factory.MetaHandler.Respond("/111/media$", HttpStatusCode.OK, """{"id":"media.support"}""");
+        ScriptMetaOk(factory.MetaHandler);
+        return new MediaFixture(factory, host, bucket, connectionString, tenant, conversationId, memberId);
+    }
+
+    /// <summary>Deja el archivo en el staging de quien lo subió para esa conversación, con la clave que arma la sesión de subida.</summary>
+    private static Guid Stage(MediaFixture f, Guid conversationId, string fileName, byte[] bytes)
+    {
+        var uploadId = Guid.CreateVersion7();
+        f.Bucket.Objects[MessagingMediaKeys.Staging(f.Tenant.TenantId, conversationId, f.MemberId, uploadId, Path.GetExtension(fileName))] =
+            (bytes, "application/octet-stream");
+        return uploadId;
+    }
+
+    private static byte[] Pdf() => Encoding.ASCII.GetBytes("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n");
+
+    private static async Task<SupportReplySendResult> SendThreadAsync(MediaFixture f, SupportThreadReplySend send)
+    {
+        using var scope = f.Host.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<ISupportReplyOutbound>().SendThreadAsync(send, Ct);
+    }
+
+    // Tarea 11 (plan E19): el adjunto de la respuesta sale por el camino del adjunto del asesor; el texto de la respuesta va como pie.
+    [Fact]
+    public async Task AThreadReplyWithAnUploadSendsTheMedia()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var pdf = Pdf();
+        var uploadId = Stage(f, f.ConversationId, "contrato.pdf", pdf);
+
+        var sent = Assert.IsType<SupportReplySendResult.Sent>(await SendThreadAsync(f, new SupportThreadReplySend(
+            f.Tenant.TenantId, f.ConversationId, Guid.CreateVersion7(), f.MemberId, "Te adjunto el contrato", uploadId, FileName: "contrato.pdf")));
+
+        Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/media");
+        var send = Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/messages" && !IsReadReceipt(request));
+        Assert.Contains("\"filename\":\"contrato.pdf\"", send.Body, StringComparison.Ordinal);
+        Assert.Contains("\"caption\":\"Te adjunto el contrato\"", send.Body, StringComparison.Ordinal);
+        Assert.Equal($"5|1|{f.MemberId}|Te adjunto el contrato|contrato.pdf|media.support", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT m.kind || '|' || m.status || '|' || m.sent_by_member_id || '|' || m.caption || '|' || mm.file_name || '|' || mm.meta_media_id
+            FROM messaging.messages m JOIN messaging.message_media mm ON mm.message_id = m.id WHERE m.id = @id
+            """,
+            ("id", sent.MessageId)));
+        Assert.Equal(pdf, f.Bucket.Objects[$"messaging/{f.Tenant.TenantId}/{sent.MessageId}"].Bytes);
+        Assert.DoesNotContain(f.Bucket.Objects.Keys, key => key.StartsWith("messaging/staging/", StringComparison.Ordinal));
+    }
+
+    // La clave del staging lleva la conversación: un uploadId de otra conversación (o vencido) no existe para esta.
+    [Fact]
+    public async Task AnUploadOfAnotherConversationIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var other = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations WHERE wa_id = '573005556677'");
+        var uploadId = Stage(f, other, "contrato.pdf", Pdf());
+
+        var result = await SendThreadAsync(f, new SupportThreadReplySend(
+            f.Tenant.TenantId, f.ConversationId, Guid.CreateVersion7(), f.MemberId, "Te adjunto el contrato", uploadId, FileName: "contrato.pdf"));
+        var withoutName = await SendThreadAsync(f, new SupportThreadReplySend(
+            f.Tenant.TenantId, other, Guid.CreateVersion7(), f.MemberId, "Te adjunto el contrato", uploadId, FileName: null));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("attachment_unavailable"), result);
+        Assert.Equal(new SupportReplySendResult.Rejected("attachment_unavailable"), withoutName);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.DoesNotContain(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal) && !IsReadReceipt(request));
     }
 }

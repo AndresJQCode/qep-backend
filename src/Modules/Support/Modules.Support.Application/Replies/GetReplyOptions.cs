@@ -39,9 +39,14 @@ public sealed class GetReplyOptionsHandler(
         else
         {
             var availability = await SupportReplyRules.ThreadAsync(channels, ticket, now, cancellationToken);
-            // Los adjuntos llegan con la Tarea 11: hasta entonces el envío los rechaza, así que la pantalla no los ofrece.
+            // Plan E19: un adjunto sólo sale como texto en el hilo (la plantilla no lo lleva), y se sube por la sesión de subida de
+            // Mensajería, que exige su permiso: sin él, la pantalla no ofrece adjuntar. Responder además exige gestionar tickets.
+            var canAttach = availability.Route is { Delivery: SupportReplyDelivery.Text }
+                && executionContext.HasPermission(SupportPermissions.Manage)
+                && executionContext.HasPermission(SupportReplyAttachmentRules.UploadPermission);
             thread = new SupportThreadOptionDto(
-                availability.Route is not null, availability.Reason, availability.Route?.Delivery.ToString(), availability.WindowClosesAt, false);
+                availability.Route is not null, availability.Reason, availability.Route?.Delivery.ToString(), availability.WindowClosesAt,
+                canAttach);
             template = ticket.ConversationId is not null
                 ? new SupportChannelOptionDto(availability.Route is not null, availability.Reason, [])
                 : await TemplateWithoutConversationAsync(ticket, cancellationToken);

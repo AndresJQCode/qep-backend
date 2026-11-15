@@ -79,7 +79,11 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.True(Available(inside, "thread"));
         Assert.Equal("Text", inside.GetProperty("thread").GetProperty("delivery").GetString());
         Assert.Equal(JsonValueKind.String, inside.GetProperty("thread").GetProperty("windowClosesAt").ValueKind);
+        // Tarea 11 (E19): sin permiso de Mensajería no se puede abrir la sesión de subida, así que la pantalla no ofrece el adjunto.
         Assert.False(inside.GetProperty("thread").GetProperty("canAttach").GetBoolean());
+        var withMessaging = CreateClient(
+            Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read, SupportPermissions.Manage, SupportReplyAttachmentRules.UploadPermission);
+        Assert.True((await OptionsAsync(withMessaging, scenario, Id(open))).GetProperty("thread").GetProperty("canAttach").GetBoolean());
         Assert.Equal("Thread", inside.GetProperty("defaultChannel").GetString());
 
         var (closed, closedConversation) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(-1), connection: Guid.CreateVersion7());
@@ -88,6 +92,8 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         var outside = await OptionsAsync(scenario, Id(closed));
         Assert.True(Available(outside, "thread"));
         Assert.Equal("Template", outside.GetProperty("thread").GetProperty("delivery").GetString());
+        // Fuera de la ventana sale la plantilla, que no lleva adjunto: tampoco con permiso de Mensajería.
+        Assert.False((await OptionsAsync(withMessaging, scenario, Id(closed))).GetProperty("thread").GetProperty("canAttach").GetBoolean());
 
         var (blocked, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5), blocked: true);
         Assert.Equal("contact_blocked", Reason(await OptionsAsync(scenario, Id(blocked)), "thread"));
@@ -373,6 +379,41 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
     }
 
+    // Tarea 11 (E19): el adjunto viaja con su nombre hasta el canal, y el texto de la respuesta es su pie.
+    [Fact]
+    public async Task AThreadReplyWithAnAttachmentCarriesItToTheChannel()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, conversation) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var uploadId = Guid.CreateVersion7();
+
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = "Te adjunto la factura", uploadId, fileName = "factura.pdf" });
+
+        var send = Assert.Single(_channels.ThreadSends);
+        Assert.Equal((conversation, uploadId, "factura.pdf", "Te adjunto la factura"), (send.ConversationId, send.UploadId, send.FileName, send.Text));
+        Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+    }
+
+    // E19: un adjunto sólo sale por el hilo dentro de la ventana. Fuera, la respuesta sería la plantilla, que no lo lleva: 422 sin fila.
+    [Fact]
+    public async Task AnAttachmentOutsideTheWindowIs422()
+    {
+        var scenario = await StartAsync(Factory);
+        var connection = Guid.CreateVersion7();
+        _channels.ApprovedConnections[connection] = "Soporte";
+        var (ticket, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(-2), connection: connection);
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = "Te adjunto la factura", uploadId = Guid.CreateVersion7(), fileName = "factura.pdf" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.attachment_unavailable", await CodeOfAsync(response));
+        Assert.Empty(_channels.ThreadSends);
+        Assert.Empty(_channels.TemplateSends);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+    }
+
     // Un ticket desde una conversación sembrada, y el estado del hilo que el doble devuelve para ella.
     private async Task<(JsonElement Ticket, Guid Conversation)> TicketWithThreadAsync(
         SupportTicketScenario scenario,
@@ -389,9 +430,12 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         return (await scenario.CreateFromConversationAsync(conversation), conversation);
     }
 
-    private static async Task<JsonElement> OptionsAsync(SupportTicketScenario scenario, Guid ticketId)
+    private static Task<JsonElement> OptionsAsync(SupportTicketScenario scenario, Guid ticketId) =>
+        OptionsAsync(scenario.Client, scenario, ticketId);
+
+    private static async Task<JsonElement> OptionsAsync(HttpClient client, SupportTicketScenario scenario, Guid ticketId)
     {
-        var response = await scenario.Client.GetAsync($"{scenario.Url}/tickets/{ticketId}/reply-options", Ct);
+        var response = await client.GetAsync($"{scenario.Url}/tickets/{ticketId}/reply-options", Ct);
         Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
         return await JsonAsync(response);
     }

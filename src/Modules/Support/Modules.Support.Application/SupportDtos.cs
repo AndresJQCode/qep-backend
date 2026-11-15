@@ -202,7 +202,8 @@ public sealed record SupportReplyOptionsDto(
 /// <summary>El hilo de la conversación del ticket. <c>Delivery</c> ∈ <c>Text</c> (dentro de la ventana) o <c>Template</c> (fuera, en
 /// WhatsApp: sale «Aviso de respuesta»), para que la pantalla avise antes de enviar. <c>Reason</c> cuando no está disponible:
 /// <c>no_conversation</c>, <c>messaging_disabled</c>, <c>contact_blocked</c>, <c>window_closed</c> (Instagram) o
-/// <c>template_not_approved</c>. <c>CanAttach</c> enciende el adjunto; en esta fase es siempre falso (Tarea 11).</summary>
+/// <c>template_not_approved</c>. <c>CanAttach</c> enciende el adjunto: sólo con entrega <c>Text</c> y si quien llama puede gestionar
+/// tickets y abrir la sesión de subida de Mensajería (<c>messaging.conversation.manage</c>); la pantalla no conoce esos permisos.</summary>
 public sealed record SupportThreadOptionDto(
     bool Available, string? Reason, string? Delivery, DateTimeOffset? WindowClosesAt, bool CanAttach);
 

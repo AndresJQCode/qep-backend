@@ -9,9 +9,10 @@ namespace Modules.Support.Application;
 
 /// <summary>El cuerpo de <c>POST /tickets/{id}/replies</c>. <c>ClientId</c> lo genera la pantalla: el reintento de la misma respuesta
 /// lo repite y recibe la misma fila sin volver a enviar. <c>ConnectionId</c> sólo con <c>WhatsAppTemplate</c> (la conexión del selector
-/// de <c>reply-options</c>) y <c>UploadId</c> sólo por el hilo. <c>Resolve</c> es «Enviar y marcar Resuelto».</summary>
+/// de <c>reply-options</c>) y <c>UploadId</c> sólo por el hilo, con <c>FileName</c>: el nombre del archivo que la pantalla mandó a la
+/// sesión de subida de Mensajería (de su extensión sale la clave del staging). <c>Resolve</c> es «Enviar y marcar Resuelto».</summary>
 public sealed record SupportReplyRequest(
-    Guid? ClientId, string? Channel, string? Text, Guid? ConnectionId, Guid? UploadId, bool Resolve);
+    Guid? ClientId, string? Channel, string? Text, Guid? ConnectionId, Guid? UploadId, bool Resolve, string? FileName = null);
 
 /// <param name="ExpectedVersion">La versión del ticket que la pantalla cargó; llega por <c>If-Match</c>.</param>
 public sealed record SendTicketReplyCommand(
@@ -23,12 +24,13 @@ public sealed record SendTicketReplyCommand(
     Guid? ConnectionId,
     Guid? UploadId,
     bool Resolve,
-    long ExpectedVersion)
+    long ExpectedVersion,
+    string? FileName = null)
     : ICommand<SupportReplyResultDto>
 {
     public static SendTicketReplyCommand From(Guid tenantId, Guid ticketId, SupportReplyRequest request, long expectedVersion) => new(
         tenantId, ticketId, request.ClientId, request.Channel, request.Text, request.ConnectionId, request.UploadId, request.Resolve,
-        expectedVersion);
+        expectedVersion, request.FileName);
 }
 
 /// <summary>
@@ -57,6 +59,20 @@ public sealed class SendTicketReplyValidator : AbstractValidator<SendTicketReply
             .When(command => command.Channel != nameof(SupportReplyChannel.Thread))
             .WithMessage("UploadId only goes with the Thread channel.");
         RuleFor(command => command.UploadId).NotEqual(Guid.Empty).When(command => command.UploadId is not null);
+
+        // Tarea 11: el adjunto necesita su nombre, y el texto de la respuesta viaja como su pie, que Mensajería corta en 1024.
+        RuleFor(command => command.FileName)
+            .Must(name => !string.IsNullOrWhiteSpace(name) && name.Trim().Length <= SupportReplyAttachmentRules.FileNameMaxLength)
+            .When(command => command.UploadId is not null)
+            .WithMessage($"Escribe el nombre del archivo, de hasta {SupportReplyAttachmentRules.FileNameMaxLength} caracteres.");
+        RuleFor(command => command.FileName)
+            .Null()
+            .When(command => command.UploadId is null)
+            .WithMessage("FileName only goes with an UploadId.");
+        RuleFor(command => command.Text)
+            .Must(text => text is null || text.Trim().Length <= SupportReplyAttachmentRules.CaptionMaxLength)
+            .When(command => command.UploadId is not null)
+            .WithMessage($"Con un adjunto, la respuesta puede tener hasta {SupportReplyAttachmentRules.CaptionMaxLength} caracteres.");
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -164,7 +180,7 @@ public sealed class SendTicketReplyHandler(
             }
         }
 
-        var outcome = await SendAsync(ticket, route, reply, actor, command.UploadId, cancellationToken);
+        var outcome = await SendAsync(ticket, route, reply, actor, command.UploadId, command.FileName?.Trim(), cancellationToken);
         if (outcome is SupportChannelSendResult.Rejected rejected)
         {
             replies.Remove(reply);
@@ -260,11 +276,11 @@ public sealed class SendTicketReplyHandler(
     }
 
     private async Task<SupportChannelSendResult> SendAsync(
-        SupportTicket ticket, SupportReplyRoute route, SupportTicketReply reply, Guid actor, Guid? uploadId,
+        SupportTicket ticket, SupportReplyRoute route, SupportTicketReply reply, Guid actor, Guid? uploadId, string? fileName,
         CancellationToken cancellationToken) => route.Delivery switch
         {
             SupportReplyDelivery.Text => await channels.SendThreadAsync(
-                new SupportChannelThreadSend(ticket.TenantId, route.ConversationId!.Value, reply.Id, actor, reply.Text, uploadId),
+                new SupportChannelThreadSend(ticket.TenantId, route.ConversationId!.Value, reply.Id, actor, reply.Text, uploadId, fileName),
                 cancellationToken),
             SupportReplyDelivery.Template => await channels.SendTemplateAsync(
                 new SupportChannelTemplateSend(

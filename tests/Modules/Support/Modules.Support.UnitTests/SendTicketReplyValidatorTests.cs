@@ -25,7 +25,7 @@ public sealed class SendTicketReplyValidatorTests
         Assert.Empty(Errors(Valid()));
         Assert.Empty(Errors(Valid("Email")));
         Assert.Empty(Errors(Valid("WhatsAppTemplate") with { ConnectionId = Guid.CreateVersion7() }));
-        Assert.Empty(Errors(Valid() with { UploadId = Guid.CreateVersion7() }));
+        Assert.Empty(Errors(Valid() with { UploadId = Guid.CreateVersion7(), FileName = "contrato.pdf" }));
         Assert.Empty(Errors(Valid() with { Text = "Línea uno\nLínea dos\tcon tabulador" }));
     }
 
@@ -63,6 +63,20 @@ public sealed class SendTicketReplyValidatorTests
         Assert.Equal(["ConnectionId"], Errors(Valid("WhatsAppTemplate") with { ConnectionId = Guid.Empty }));
         Assert.Equal(["UploadId"], Errors(Valid("Email") with { UploadId = Guid.CreateVersion7() }));
         Assert.Equal(["UploadId"], Errors(Valid("WhatsAppTemplate") with { UploadId = Guid.CreateVersion7() }));
-        Assert.Equal(["UploadId"], Errors(Valid() with { UploadId = Guid.Empty }));
+        Assert.Equal(["UploadId"], Errors(Valid() with { UploadId = Guid.Empty, FileName = "contrato.pdf" }));
+    }
+
+    // Tarea 11: el staging se reconstruye con la extensión del nombre, y el texto de la respuesta viaja como pie del adjunto (≤ 1024).
+    [Fact]
+    public void TheAttachmentNeedsItsFileNameAndAShortText()
+    {
+        var upload = Valid() with { UploadId = Guid.CreateVersion7(), FileName = "contrato.pdf" };
+
+        Assert.Equal(["FileName"], Errors(upload with { FileName = null }));
+        Assert.Equal(["FileName"], Errors(upload with { FileName = "   " }));
+        Assert.Equal(["FileName"], Errors(upload with { FileName = new string('a', SupportReplyAttachmentRules.FileNameMaxLength + 1) }));
+        Assert.Equal(["FileName"], Errors(Valid() with { FileName = "contrato.pdf" }));
+        Assert.Equal(["Text"], Errors(upload with { Text = new string('a', SupportReplyAttachmentRules.CaptionMaxLength + 1) }));
+        Assert.Empty(Errors(upload with { Text = new string('a', SupportReplyAttachmentRules.CaptionMaxLength) }));
     }
 }

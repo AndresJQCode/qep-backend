@@ -14,10 +14,11 @@ public sealed record SupportThreadStatus(
 /// <summary>Una conexión de WhatsApp por la que se puede mandar la plantilla «Aviso de respuesta» (plan E14).</summary>
 public sealed record SupportConnectionOption(Guid Id, string Name);
 
-/// <summary>Una respuesta como texto en el hilo. <c>ClientId</c> es el id de la fila de respuesta de Soporte: un reintento con el mismo
-/// no manda dos veces.</summary>
+/// <summary>Una respuesta en el hilo. <c>ClientId</c> es el id de la fila de respuesta de Soporte: un reintento con el mismo no manda dos
+/// veces. Con <c>UploadId</c> sale el adjunto que el asesor subió por la sesión de subida de Mensajería, con <c>FileName</c> (el nombre que
+/// vio al elegirlo) y <c>Text</c> como pie (plan E19).</summary>
 public sealed record SupportChannelThreadSend(
-    Guid TenantId, Guid ConversationId, Guid ClientId, Guid AuthorMemberId, string Text, Guid? UploadId);
+    Guid TenantId, Guid ConversationId, Guid ClientId, Guid AuthorMemberId, string Text, Guid? UploadId, string? FileName = null);
 
 /// <summary>Una respuesta por la plantilla «Aviso de respuesta»: a <c>ConversationId</c> o, sin conversación, a <c>WaId</c> (sólo
 /// dígitos) por la conexión <c>ConnectionId</c>.</summary>

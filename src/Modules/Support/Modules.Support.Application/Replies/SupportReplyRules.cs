@@ -91,6 +91,22 @@ internal static class SupportReplyRules
 }
 
 /// <summary>
+/// Tarea 11 (plan E19): el adjunto de una respuesta se sube por la sesión de subida de Mensajería y sale por su camino. Copias de
+/// Mensajería, que Soporte no ve, amarradas por <c>SupportReplyParityTests</c> (Bootstrapper.UnitTests): el largo del nombre
+/// (<c>CreateMediaUploadSessionValidator.MaxFileNameLength</c>), el del pie, que es el texto de la respuesta
+/// (<c>SendMediaMessageValidator.MaxCaptionLength</c>), y el permiso que exige la sesión de subida
+/// (<c>MessagingPermissions.ConversationManage</c>): sin él la pantalla no ofrece adjuntar.
+/// </summary>
+public static class SupportReplyAttachmentRules
+{
+    public const int FileNameMaxLength = 256;
+
+    public const int CaptionMaxLength = 1024;
+
+    public const string UploadPermission = "messaging.conversation.manage";
+}
+
+/// <summary>
 /// Las reglas del texto de una respuesta que dependen del canal. Son copias de Mensajería, que Soporte no ve: el valor de un parámetro de
 /// plantilla de Meta (<c>TemplateParameterRules.IsValid</c>: de 1 a 1 024, sin saltos de línea ni tabulaciones ni más de cuatro espacios
 /// seguidos) y el tope de Instagram (<c>SendMessageValidator.InstagramTextMaxLength</c>). Las amarra <c>SupportReplyParityTests</c>

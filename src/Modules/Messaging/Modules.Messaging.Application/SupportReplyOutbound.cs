@@ -3,10 +3,12 @@ using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Application;
 
-/// <summary>Soporte fase 2 (plan E13): una respuesta de un ticket como texto en el hilo de su conversación, dentro de la ventana de 24 h.
-/// <c>ClientId</c> es el id de la fila de respuesta de Soporte: un reintento con el mismo no vuelve a mandar nada. <c>UploadId</c> es el
-/// adjunto (Tarea 11); en esta fase todavía no se envía.</summary>
-public sealed record SupportThreadReplySend(Guid TenantId, Guid ConversationId, Guid ClientId, Guid AuthorMemberId, string Text, Guid? UploadId);
+/// <summary>Soporte fase 2 (plan E13 y E19): una respuesta de un ticket en el hilo de su conversación, dentro de la ventana de 24 h.
+/// <c>ClientId</c> es el id de la fila de respuesta de Soporte: un reintento con el mismo no vuelve a mandar nada. Con <c>UploadId</c>
+/// sale el adjunto que el asesor subió por la sesión de subida de Mensajería para esa conversación, y <c>Text</c> va como su pie;
+/// <c>FileName</c> es el nombre que vio al elegir el archivo, del que sale la extensión de la clave del staging.</summary>
+public sealed record SupportThreadReplySend(
+    Guid TenantId, Guid ConversationId, Guid ClientId, Guid AuthorMemberId, string Text, Guid? UploadId, string? FileName = null);
 
 /// <summary>Soporte fase 2 (plan E13 y E14): una respuesta de un ticket por la plantilla «Aviso de respuesta». A una conversación existente
 /// (<c>ConversationId</c>) o, sin conversación, a <c>WaId</c> (sólo dígitos, con indicativo) por la conexión <c>ConnectionId</c> que eligió el
@@ -52,7 +54,9 @@ public static class SupportReplyReasons
     /// <summary>La conversación no existe en el tenant, o el número no sirve para abrir una.</summary>
     public const string ConversationNotFound = "conversation_not_found";
 
-    /// <summary>El adjunto todavía no se puede enviar desde Soporte (llega con la Tarea 11).</summary>
+    /// <summary>El adjunto no existe en el staging de quien responde para esa conversación (de otra conversación, vencido o ya usado),
+    /// falta su nombre, el canal no acepta ese tipo o ese tamaño, su contenido no es el que dice ser, es un audio (no lleva pie y la
+    /// respuesta siempre tiene texto) o no se pudo guardar.</summary>
     public const string AttachmentUnavailable = "attachment_unavailable";
 
     /// <summary>La conversación es de Instagram, que no tiene plantillas.</summary>
@@ -71,7 +75,7 @@ public interface ISupportReplyOutbound
     /// <summary><c>null</c> si la conversación no existe o es de otro tenant.</summary>
     Task<SupportThreadState?> FindThreadAsync(Guid tenantId, Guid conversationId, CancellationToken ct);
 
-    /// <summary>Dentro de la ventana, el texto; fuera, <c>Rejected(window_closed)</c> sin fila.</summary>
+    /// <summary>Dentro de la ventana, el texto (o el adjunto con el texto como pie); fuera, <c>Rejected(window_closed)</c> sin fila.</summary>
     Task<SupportReplySendResult> SendThreadAsync(SupportThreadReplySend send, CancellationToken ct);
 
     Task<SupportReplySendResult> SendTemplateAsync(SupportTemplateReplySend send, CancellationToken ct);
@@ -97,7 +101,10 @@ public sealed class SupportReplyOutbound(
     IClock clock,
     IConversationOpener opener,
     ISupportReplyTemplateReadiness templateReadiness,
-    TemplateSenderValues senderValues) : ISupportReplyOutbound
+    TemplateSenderValues senderValues,
+    IMessagingMediaStore store,
+    IMessagingUploadStaging staging,
+    IMessagingImageCompressor compressor) : ISupportReplyOutbound
 {
     public async Task<SupportThreadState?> FindThreadAsync(Guid tenantId, Guid conversationId, CancellationToken ct)
     {
@@ -129,14 +136,10 @@ public sealed class SupportReplyOutbound(
             return Rejected(SupportReplyReasons.ContactBlocked);
         }
 
-        if (send.UploadId is not null)
-        {
-            return Rejected(SupportReplyReasons.AttachmentUnavailable);
-        }
-
         var isInstagram = conversation.Channel == ConversationChannel.Instagram;
         if (!SendMessageValidator.IsAcceptableText(send.Text)
-            || (isInstagram && send.Text.Trim().Length > SendMessageValidator.InstagramTextMaxLength))
+            || (isInstagram && send.Text.Trim().Length > SendMessageValidator.InstagramTextMaxLength)
+            || (send.UploadId is not null && send.Text.Trim().Length > SendMediaMessageValidator.MaxCaptionLength))
         {
             return Rejected(SupportReplyReasons.TextInvalid);
         }
@@ -146,6 +149,11 @@ public sealed class SupportReplyOutbound(
         if (conversation.LastInboundAt is not { } lastInbound || lastInbound.Add(Conversation.WindowLength) <= now)
         {
             return Rejected(SupportReplyReasons.WindowClosed);
+        }
+
+        if (send.UploadId is { } uploadId)
+        {
+            return await SendThreadMediaAsync(send, conversation, uploadId, now, ct);
         }
 
         var text = send.Text.Trim();
@@ -316,18 +324,183 @@ public sealed class SupportReplyOutbound(
         return await SettleAsync(send.TenantId, conversation, claim, result);
     }
 
+    /// <summary>
+    /// Tarea 11 (plan E19): el adjunto de la respuesta, por el camino de <see cref="SendMediaMessageHandler"/> sin sus guardas de bandeja.
+    /// El staging es el de quien responde para esta conversación (la clave lleva tenant, conversación, membresía, <c>uploadId</c> y
+    /// extensión), así que un <c>uploadId</c> de otra conversación, vencido o ya usado no existe: <c>attachment_unavailable</c>, como
+    /// cualquier problema del archivo, todo antes del reclamo y sin fila. Lo lento (leer, comprobar, comprimir, subir a Meta) va antes del
+    /// reclamo; dentro, la escritura en R2 y el envío. <c>Sent</c> consume el staging; <c>Failed</c> lo conserva para el reintento.
+    /// </summary>
+    private async Task<SupportReplySendResult> SendThreadMediaAsync(
+        SupportThreadReplySend send, ConversationRow conversation, Guid uploadId, DateTimeOffset now, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(send.FileName))
+        {
+            return Rejected(SupportReplyReasons.AttachmentUnavailable);
+        }
+
+        // Un audio no lleva pie (spec 2026-10-20 D7) y la respuesta de Soporte siempre tiene texto: no se manda uno que se vería distinto.
+        var fileName = Path.GetFileName(send.FileName.Trim());
+        var extension = OutboundMediaPolicy.ExtensionOf(fileName);
+        var channel = conversation.Channel;
+        if (OutboundMediaPolicy.FormatOf(extension) is not { } declared
+            || !OutboundMediaPolicy.IsAllowed(declared, channel)
+            || !OutboundMediaPolicy.AcceptsCaption(declared))
+        {
+            return Rejected(SupportReplyReasons.AttachmentUnavailable);
+        }
+
+        var stagingKey = MessagingMediaKeys.Staging(send.TenantId, conversation.Id, send.AuthorMemberId, uploadId, extension);
+        var staged = await staging.StatAsync(stagingKey, ct);
+        if (staged is null)
+        {
+            // Dos requests con el mismo clientId: el primero ya envió y consumió el staging. Gana la idempotencia.
+            return await AlreadySentAsync(conversation.Id, send.ClientId, ct) ?? Rejected(SupportReplyReasons.AttachmentUnavailable);
+        }
+
+        if (staged.SizeBytes <= 0 || staged.SizeBytes > OutboundMediaPolicy.MaxBytesOf(declared, channel)!.Value)
+        {
+            await DiscardAsync(stagingKey);
+            return Rejected(SupportReplyReasons.AttachmentUnavailable);
+        }
+
+        var isInstagram = channel == ConversationChannel.Instagram;
+        MessagingSender? sender = null;
+        InstagramSender? igSender = null;
+        if (isInstagram)
+        {
+            igSender = await connections.ResolveInstagramSenderAsync(send.TenantId, conversation.ConnectionId, ct);
+        }
+        else
+        {
+            sender = (await connections.ResolveSenderWithReasonAsync(send.TenantId, conversation.ConnectionId, ct)).Sender;
+        }
+
+        if (sender is null && igSender is null)
+        {
+            return Rejected(SupportReplyReasons.ConnectionUnavailable);
+        }
+
+        PreparedOutboundMedia prepared;
+        try
+        {
+            prepared = await new OutboundMediaPreparer(meta, store, compressor).PrepareAsync(
+                sender, stagingKey, staged.SizeBytes, fileName, extension, () => DiscardAsync(stagingKey), ct);
+        }
+        catch (MessagingDomainException)
+        {
+            // El contenido no es el que dice la extensión, la imagen no se lee o el objeto ya no está: nada salió.
+            return Rejected(SupportReplyReasons.AttachmentUnavailable);
+        }
+
+        var caption = send.Text.Trim();
+        var kind = OutboundMediaPolicy.KindOf(declared);
+        var draft = new OutboundDraft(
+            Guid.CreateVersion7(), conversation.Id, send.TenantId, conversation.ConnectionId, send.ClientId, Text: null, send.AuthorMemberId, now,
+            Kind: kind, Media: new OutboundMedia(prepared.MimeType, prepared.SizeBytes, prepared.Sha256Hex, prepared.FileName), Caption: caption);
+        await using var claim = await outbound.ClaimAsync(draft, ct);
+        if (await OutboundGuards.TakeInFlightAsync(claim) is { } inFlight)
+        {
+            return new SupportReplySendResult.Sent(inFlight.Id, conversation.Id);
+        }
+
+        // R2 con la clave del reclamo: el reintento de un Failed reutiliza el messageId y sobrescribe el mismo objeto.
+        var finalKey = MessagingMediaKeys.For(send.TenantId, claim.MessageId);
+        try
+        {
+            if (prepared.Compressed is { } bytes)
+            {
+                using var content = new MemoryStream(bytes, writable: false);
+                await store.UploadAsync(finalKey, content, bytes.Length, OutboundMediaPreparer.ImageMimeType, ct);
+            }
+            else
+            {
+                await staging.PromoteAsync(stagingKey, finalKey, staged.ETag, ct);
+            }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException && !ct.IsCancellationRequested)
+        {
+            // No se envió nada y la fila no queda: reintentar con el mismo clientId es seguro (el staging sigue ahí).
+            await claim.RollbackAsync(CancellationToken.None);
+            return Rejected(SupportReplyReasons.AttachmentUnavailable);
+        }
+
+        // Desde acá todo va con CancellationToken.None: si Meta ya aceptó, cortar borraría la fila y el reintento mandaría dos veces.
+        string? mediaId = null;
+        SendResult result;
+        if (isInstagram)
+        {
+            // Instagram baja el adjunto desde una URL firmada de R2 y no lleva pie: el texto queda guardado y se ve en QEP.
+            result = await SendInstagramAttachmentAsync(
+                igSender!, conversation.UserId!, finalKey, OutboundMediaPolicy.InstagramAttachmentType(declared));
+        }
+        else
+        {
+            mediaId = prepared.Upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
+            var callback = SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D");
+            var recipient = SendTarget.For(conversation.UserId, conversation.WaId);
+            result = mediaId is null
+                ? SendAudioMessageHandler.FromUploadFailure(prepared.Upload?.Failure)
+                : kind switch
+                {
+                    MessageKind.Image => await meta.SendImageAsync(sender!, recipient, mediaId, caption, callback, null, CancellationToken.None),
+                    MessageKind.Video => await meta.SendVideoAsync(sender!, recipient, mediaId, caption, callback, null, CancellationToken.None),
+                    _ => await meta.SendDocumentAsync(sender!, recipient, mediaId, prepared.FileName, caption, callback, null, CancellationToken.None),
+                };
+        }
+
+        var settled = await SettleAsync(
+            send.TenantId, conversation, claim, result, mediaId, claim.Inserted ? () => DiscardAsync(finalKey) : null);
+        if (settled is SupportReplySendResult.Sent)
+        {
+            await DiscardAsync(stagingKey);
+        }
+
+        return settled;
+    }
+
+    private async Task<SendResult> SendInstagramAttachmentAsync(InstagramSender sender, string recipientId, string key, string attachmentType)
+    {
+        Uri url;
+        try
+        {
+            url = await store.CreateDownloadUrlAsync(key, SendMediaMessageHandler.InstagramDownloadLifetime, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return new SendResult(SendOutcome.NotSent, null, null, null);
+        }
+
+        return await instagram.SendAttachmentAsync(sender, recipientId, attachmentType, url, CancellationToken.None);
+    }
+
+    // Best effort, como en el adjunto del asesor: lo que no se borre lo limpia el lifecycle del bucket.
+    private async Task DiscardAsync(string key)
+    {
+        try
+        {
+            await store.DeleteAsync(key, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Ver comentario.
+        }
+    }
+
     private async Task<SupportReplySendResult?> AlreadySentAsync(Guid conversationId, Guid clientId, CancellationToken ct) =>
         await outbound.FindByClientIdAsync(conversationId, clientId, ct) is { Status: not MessageStatus.Failed } sent
             ? new SupportReplySendResult.Sent(sent.Id, conversationId)
             : null;
 
     /// <summary>La tabla de respuestas de Meta, con <c>seen: 0</c>: nadie leyó el hilo para responder desde Soporte.</summary>
-    private async Task<SupportReplySendResult> SettleAsync(Guid tenantId, ConversationRow conversation, IOutboundClaim claim, SendResult result)
+    private async Task<SupportReplySendResult> SettleAsync(
+        Guid tenantId, ConversationRow conversation, IOutboundClaim claim, SendResult result, string? metaMediaId = null,
+        Func<Task>? afterRollback = null)
     {
         try
         {
             await new OutboundSettlement(repository, connections, notifier, receipts, clock)
-                .SettleAsync(tenantId, conversation.ConnectionId, claim, result, clock.UtcNow, metaMediaId: null, afterRollback: null, seen: 0);
+                .SettleAsync(tenantId, conversation.ConnectionId, claim, result, clock.UtcNow, metaMediaId, afterRollback, seen: 0);
         }
         catch (MessagingDomainException exception) when (exception.Code == MessagingErrorCodes.ConnectionUnavailable)
         {

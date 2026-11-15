@@ -55,7 +55,8 @@ internal sealed class SupportReplyChannels(
     {
         ArgumentNullException.ThrowIfNull(send);
         return Translate(await outbound.SendThreadAsync(
-            new SupportThreadReplySend(send.TenantId, send.ConversationId, send.ClientId, send.AuthorMemberId, send.Text, send.UploadId),
+            new SupportThreadReplySend(
+                send.TenantId, send.ConversationId, send.ClientId, send.AuthorMemberId, send.Text, send.UploadId, send.FileName),
             cancellationToken));
     }
 
