@@ -116,7 +116,7 @@ local y por variable de entorno en k8s
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                     | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase` |
 | `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                               | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente |
-| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`). Un área apagada usa exactamente las clases de antes |
+| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
 | `Valkey:OperationTimeoutMs`                            | `100`                                                                                         | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
@@ -2710,6 +2710,32 @@ pasar sin límite. El limitador de concurrencia del webhook se queda en memoria 
 - **Métricas.** Con el área prendida, la métrica `aspnetcore.rate_limiting` de requests en cola cuenta **todos** los
   requests como encolados. El middleware los manda a `AcquireAsync`, porque el camino síncrono siempre niega: no es una
   cola real.
+
+**Prender las áreas en producción (paso 3 del despliegue del spec de Valkey).** Lo hace el owner, de a un área por vez.
+`Valkey__Enabled: "true"` ya lo pone el paso 2, con todas las áreas apagadas. Después de `Presence` y `RateLimiting`, en
+este orden: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
+`Valkey__Areas__ApiKeyTouch`. Cada uno va en `"true"` en `k8s/prod-configMap.yaml`, en su propio commit
+(`chore(k8s): enable valkey <area> area`), y entre un área y la siguiente pasa un día de logs sin fallbacks inesperados.
+El presupuesto de envío de campañas no está en la lista: se queda en Postgres (`messaging.connection_send_budgets`) por
+decisión del owner del 2026-11-13.
+
+Después de cada área, en PowerShell, siempre con `--context contabo-prod` y nunca con `get secret -o yaml` ni `-o json`:
+
+```powershell
+kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-config -o jsonpath='{.data}' | Select-String -Pattern "Valkey__"
+kubectl --context contabo-prod -n prod-qep-backend logs <pod> --since=1h | Select-String -Pattern "fallback"
+```
+
+| Área          | Qué se verifica                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `Sessions`    | Cierra sesión y repite un request con la cookie vieja: tiene que dar 401 al instante. Prueba que el `DEL` corre     |
+| `Permissions` | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente, no en 60 s     |
+| `Doorbells`   | La edad de la cola `automation` baja en el dashboard                                                               |
+| `ApiKeyTouch` | `qep_valkey_fallbacks_total{area="api_key_touch"}` no sube en condiciones normales                                  |
+
+En las cuatro, `qep_valkey_fallbacks_total` del área queda quieto en condiciones normales. Si sube sin que Valkey esté
+caído, revisa primero la ACL del usuario `qep` (`ValkeyAclCompatibilityTests` dice qué comandos usa cada área). Rollback
+por área: el flag a `"false"` y redeploy; las claves tienen TTL y mueren solas.
 
 ### Infraestructura local
 
