@@ -65,6 +65,11 @@ internal sealed partial class StagingCleanupProcessor(
         Message = "Support attachment {FileId} could not be purged; the next tick retries it.")]
     private static partial void LogSupportAttachmentFailed(ILogger logger, Guid fileId, Exception exception);
 
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Support attachment {FileId} was purged but one of its objects could not be deleted; it stays orphaned in the bucket.")]
+    private static partial void LogSupportAttachmentObjectLeft(ILogger logger, Guid fileId, Exception exception);
+
     /// <summary>
     /// Soporte fase 3 (plan F36): hasta dónde mira atrás el barrido de adjuntos sin reclamar. Un adjunto reclamado sigue
     /// <c>Available</c> para siempre y nada en Storage lo marca, así que sin este tope cada tick le preguntaría a las sondas por todos
@@ -131,16 +136,12 @@ internal sealed partial class StagingCleanupProcessor(
                 return false;
             }
 
-            // La purga del dominio primero, en memoria: si la rechaza, ningún objeto se borra. En la base nada se guarda hasta después
-            // de los borrados.
+            // Triage #14 (Bloque F): la fila se guarda antes de borrar los objetos, al revés que los comprobantes. Si guardar falla, no
+            // se borró nada y el tick siguiente lo intenta otra vez; si un borrado falla después, el archivo ya está Purged y lo que
+            // queda es un objeto huérfano en el bucket (se loguea), nunca una fila Available que apunta a un objeto que no existe y que
+            // un radicado podría reclamar.
             var now = clock.UtcNow;
             file.PurgeUnclaimedSupportAttachment(now);
-            await objectStorage.DeleteAsync(file.StorageKey, cancellationToken);
-            foreach (var variant in file.Variants)
-            {
-                await objectStorage.DeleteAsync(variant.StorageKey, cancellationToken);
-            }
-
             auditPublisher.PublishSystem(
                 file.TenantId,
                 "storage.file.purged",
@@ -149,8 +150,6 @@ internal sealed partial class StagingCleanupProcessor(
                 "support_attachment_not_claimed",
                 now);
             await dbContext.SaveChangesAsync(cancellationToken);
-            LogSupportAttachmentPurged(logger, fileId);
-            return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -161,6 +160,30 @@ internal sealed partial class StagingCleanupProcessor(
             LogSupportAttachmentFailed(logger, fileId, exception);
             DiscardPendingChanges();
             return false;
+        }
+
+        await DeletePurgedObjectsAsync(file, cancellationToken);
+        LogSupportAttachmentPurged(logger, fileId);
+        return true;
+    }
+
+    // Después del guardado: cada clave por separado, para que una que falla no deje las demás en el bucket.
+    private async Task DeletePurgedObjectsAsync(FileResource file, CancellationToken cancellationToken)
+    {
+        foreach (var key in file.Variants.Select(variant => variant.StorageKey).Prepend(file.StorageKey))
+        {
+            try
+            {
+                await objectStorage.DeleteAsync(key, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                LogSupportAttachmentObjectLeft(logger, file.Id.Value, exception);
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
+using Npgsql;
 using static Modules.Storage.IntegrationTests.PaymentProofStorageHarness;
 
 namespace Modules.Storage.IntegrationTests;
@@ -78,6 +79,71 @@ public sealed class StorageSystemUploadsApiTests
         await RunStagingCleanupAsync(factory);
 
         Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), fileId)).Status);
+    }
+
+    // Triage #14 (Bloque F): la fila se guarda antes de borrar el objeto. Si el borrado falla después, el archivo ya está Purged y lo
+    // que queda es un objeto huérfano en el bucket, nunca una fila Available que apunta a un objeto borrado.
+    [Fact]
+    public async Task AFailedObjectDeleteLeavesTheRowPurgedNotAvailable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        var fileId = await UploadAvailableAsync(factory, database.GetConnectionString(), Guid.NewGuid());
+        var finalKey = (await ReadFileAsync(database.GetConnectionString(), fileId)).StorageKey;
+        await BackdateAsync(database.GetConnectionString(), fileId, OlderThanTheRetention);
+        factory.ObjectStorage.FailingDeleteKey = finalKey;
+
+        await RunStagingCleanupAsync(factory);
+
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), fileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(finalKey));
+        Assert.Single(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+    }
+
+    // Triage #15 (Bloque F): la purga de adjuntos sin reclamar mira sólo el dueño SupportTicket. Otro dueño Available, igual de viejo y
+    // sin sonda que lo retenga, no se toca.
+    [Fact]
+    public async Task AnAvailableFileOfAnotherOwnerIsNeverPurgedByTheSupportSweep()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        var fileId = await UploadAvailableAsync(factory, database.GetConnectionString(), Guid.NewGuid());
+        var finalKey = (await ReadFileAsync(database.GetConnectionString(), fileId)).StorageKey;
+        await SetOwnerTypeAsync(database.GetConnectionString(), fileId, nameof(FileOwnerType.Entity));
+        await BackdateAsync(database.GetConnectionString(), fileId, OlderThanTheRetention);
+
+        await RunStagingCleanupAsync(factory);
+
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), fileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(finalKey));
+    }
+
+    // Triage #15 (Bloque F): el barrido mira sólo la última semana pasada la retención (SupportAttachmentLookback). Uno más viejo queda
+    // sin tocar: es el residual documentado, y sin el tope cada tick le preguntaría a las sondas por toda la historia.
+    [Fact]
+    public async Task ASupportAttachmentOlderThanTheLookbackIsNotTouched()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        var fileId = await UploadAvailableAsync(factory, database.GetConnectionString(), Guid.NewGuid());
+        var finalKey = (await ReadFileAsync(database.GetConnectionString(), fileId)).StorageKey;
+        await BackdateAsync(database.GetConnectionString(), fileId, OlderThanTheRetention + TimeSpan.FromDays(8));
+
+        await RunStagingCleanupAsync(factory);
+
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), fileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(finalKey));
+    }
+
+    private static async Task SetOwnerTypeAsync(string connectionString, Guid fileId, string ownerType)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(Ct);
+        await using var command = new NpgsqlCommand(
+            "UPDATE storage.file_resources SET owner_type = @ownerType WHERE id = @id", connection);
+        command.Parameters.AddWithValue("ownerType", ownerType);
+        command.Parameters.AddWithValue("id", fileId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(Ct));
     }
 
     private static async Task<Guid> UploadAvailableAsync(StorageApiFactory factory, string connectionString, Guid ownerId)
