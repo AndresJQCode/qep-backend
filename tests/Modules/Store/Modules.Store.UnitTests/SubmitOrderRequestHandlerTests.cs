@@ -290,7 +290,7 @@ public sealed class SubmitOrderRequestHandlerTests
         Assert.Equal(
             [
                 "orders.find", "captcha", "orders.count", "orders.quote", "customers.find", "customers.create", "customers.addresses",
-                "orders.create", "consents.add", "audit.anonymous", "outbox.add", "uow.save",
+                "buyers.find-verified", "orders.create", "consents.add", "audit.anonymous", "outbox.add", "uow.save",
             ],
             rig.Log.Entries);
     }
