@@ -885,6 +885,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
   `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
   nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
+- **El calendario de Soporte no es el de la bandeja** (owner, 2026-11-15, spec §13.4, revierte la decisión del 2026-11-14). Es lunes a
+  viernes, menos los festivos de Colombia si el país del tenant es `CO` (`SupportBusinessCalendar`, en Bootstrapper por
+  `ColombianHolidays`); no lee el horario de atención ni sus excepciones. No lo «unifiques» con `BusinessHoursSchedule`: un horario
+  que abre los sábados correría los términos legales. Lo amarra
+  `SupportBusinessCalendarTests.TheCalendarIsMondayToFridayLessColombianHolidaysOnEveryDayOfAYear`.
+- **Un ticket `Resolved` o `Closed` no cambia de responsable, tipo ni cliente: `422 support.ticket.not_editable`** (R9, owner
+  2026-11-15). La guarda está en el agregado (`SupportTicket.EnsureEditable`), no en los handlers, para que la cumpla todo camino
+  nuevo; rechaza aunque el valor sea el mismo. La fusión de clientes (`CustomerMergeReferences`, SQL crudo) sigue moviendo tickets en
+  cualquier estado, a propósito: es el sistema, no un asesor.
 - **Las pruebas de plazos de Soporte comparten un host por clase con el reloj movible: `ClockedSupportHost`** (`SupportTicketsApiTests`,
   `SupportTicketActionsApiTests`, `SupportInboxApiTests`). Rompe a propósito la regla de «una prueba que toca el reloj levanta su host»:
   el `ITenantClock` del host es un `MutableTenantClock` y lo comparten sólo las pruebas de esa clase. Hoy es seguro porque xUnit corre

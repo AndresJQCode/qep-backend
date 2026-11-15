@@ -4845,18 +4845,19 @@ puede ser legal; el nombre es único por tenant sin distinguir mayúsculas (`409
 **Estados.** `New`, `Open` («En gestión»), `WaitingOnCustomer`, `WaitingInternal`, `Resolved` y `Closed`, persistidos y enviados por
 nombre. Las transiciones salen de la tabla del dominio (`SupportTicketStatuses`) y el detalle las manda en `AllowedTransitions`; una
 fuera de la tabla es `422 support.ticket.transition_invalid`. Ningún estado vuelve a `New`, `Closed` es final y `Resolved` puede
-reabrirse a `Open` (`ResolutionCount` cuenta las resoluciones). Cambiar responsable, tipo o cliente se permite en cualquier estado,
-también en `Resolved` y `Closed`.
+reabrirse a `Open` (`ResolutionCount` cuenta las resoluciones). **Un ticket `Resolved` o `Closed` no se edita** (owner, 2026-11-15):
+`PUT …/assignee`, `…/type` y `…/customer` responden `422 support.ticket.not_editable`, aunque el valor sea el mismo. Lo guarda el
+agregado (`SupportTicket.Assign`, `ChangeType`, `LinkCustomer`), así que vale para cualquier camino nuevo; para editarlo hay que
+reabrirlo (`Resolved` → `Open`). La fusión de clientes no pasa por ahí: mueve tickets en cualquier estado.
 
-**Reloj de resolución.** Usa el calendario de la bandeja: el horario **predeterminado** del tenant (se lee aunque `messaging` esté
-apagado). Un día es hábil si su día de la semana tiene franjas, no es festivo y ninguna excepción de fecha lo cierra; una excepción
-de fecha manda sobre el día de la semana y sobre el festivo. Los festivos son los de Colombia si el país del horario (o, sin él, el
-del tenant) es `CO`; con otro país no hay festivos. Sin horario, o con un horario sin ningún día con franjas, cuenta de lunes a
-viernes con los festivos. El plazo corre desde el día hábil **siguiente** a la radicación, en la zona horaria del tenant, y vence al
+**Reloj de resolución.** Los términos cuentan **de lunes a viernes** (owner, 2026-11-15, spec §13.4): en un tenant cuyo país (ajustes
+regionales) es `CO` se descuentan además los festivos nacionales de Colombia; en cualquier otro país, sólo lunes a viernes. **No usa
+el horario de atención** de Mensajería: ni sus días, ni sus excepciones de fecha, ni su país de festivos (`SupportBusinessCalendar`, en
+Bootstrapper). El plazo corre desde el día hábil **siguiente** a la radicación, en la zona horaria del tenant, y vence al
 final del día hábil (`due_on`). Se detiene en `WaitingOnCustomer`, `Resolved` y `Closed` (no en `WaitingInternal`); al reanudar, el
 vencimiento se corre por los días hábiles detenidos estrictamente entre la pausa y la reanudación (pausar y reanudar el mismo día
-suma cero). Cambiar el tipo recalcula desde la radicación con el término nuevo más las pausas; editar un tipo o el horario no mueve
-vencimientos ya calculados. El estado del plazo (`DueState`) es `NoTerm`, `OnTrack`, `DueSoon`, `Overdue`, `Paused` o `Finished`.
+suma cero; no hay pausa parcial). Cambiar el tipo recalcula desde la radicación con el término nuevo más las pausas; editar un tipo no
+mueve vencimientos ya calculados. El estado del plazo (`DueState`) es `NoTerm`, `OnTrack`, `DueSoon`, `Overdue`, `Paused` o `Finished`.
 
 **Umbral de «por vencer».** `due_soon_business_days` en `support.tenant_settings`, 3 días hábiles por defecto, de 0 a 30; con 0 no
 hay «por vencer» (un ticket pasa de `OnTrack` a `Overdue`). Lo usan el filtro `due=dueSoon`, el resumen de la bandeja y el
@@ -4913,8 +4914,10 @@ sonda de usuarios, y los CHECK `CK_tickets_manual_medium` y `CK_ticket_events_ki
   `term_is_legal` y `requires_formal_response`; `received_on`, `last_event_ordinal`, `version`) y un `number` libre del tenant: el
   índice único es `(tenant_id, number)` y el contador de `tenant_settings` no se entera.
 
-**Pendiente del owner:** si cambiar responsable, tipo o cliente debe seguir permitido en un ticket `Resolved` o `Closed`. Hoy se
-permite (ver «Estados»).
+**Retención** (owner, 2026-11-15, spec §13.10; el abogado confirma): los tickets se conservan 10 años desde el cierre (Código de
+Comercio art. 60; Ley 962 de 2005 art. 28); después se anonimizan los datos personales del solicitante y el ticket queda para
+estadística. Los consentimientos se conservan mientras dure el tratamiento más ese mismo término. Todavía no hay purga: en esta fase
+ningún ticket se borra.
 
 ### API externa
 

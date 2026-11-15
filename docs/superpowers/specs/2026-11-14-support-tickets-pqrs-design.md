@@ -123,7 +123,8 @@ Lo siguiente se leyó en el repo el 2026-11-14; las rutas son de `qep-backend` s
 - **Horario y festivos.** `IBusinessHoursRepository.FindDefaultAsync`
   (`Modules.Messaging.Application/BusinessHoursPorts.cs:7`), `BusinessHoursClock.BusinessSeconds`
   (`Modules.Messaging.Domain/BusinessHoursClock.cs:9`, cuenta **segundos hábiles**, no días) y
-  `ColombianHolidays.For(year)` (`Modules.Messaging.Domain/ColombianHolidays.cs:12`).
+  `ColombianHolidays.For(year)` (`Modules.Messaging.Domain/ColombianHolidays.cs:12`). Desde D2d (2026-11-15) Soporte usa
+  sólo `ColombianHolidays`; el horario no se lee.
 - **Plantillas de WhatsApp del sistema.** `MessageTemplateKind` (`Modules.Messaging.Domain/MessageTemplate.cs:6`
   a `20`: `Free`, `Quotation`, `External`, `BillingReminder`, `BillingOverdue`, `Order`),
   `SystemTemplateVariables.cs:9`, `SystemTemplateSend.cs:8` y el puerto de salida
@@ -170,18 +171,21 @@ defecto; el contenido legal que ve el solicitante es del tenant, no de QEP.
 - **Ley 1755 de 2015, art. 14.** Peticiones en general: 15 días hábiles. Peticiones de documentos o
   información: 10 días hábiles. Consultas a las autoridades: 30 días hábiles. Cuando no sea posible
   resolver en el plazo, se informa antes de que venza, con los motivos, y se señala un nuevo plazo
-  razonable, que **no puede exceder el doble** del inicial (prórroga única). Una petición
-  incompleta se puede requerir para que se complete; si el solicitante no lo hace en el plazo que la
-  ley fija, se entiende desistida. **DECISIÓN PENDIENTE (verificación):** el artículo exacto de ese
-  requerimiento y su plazo (la investigación previa anotó 10 días para requerir y un mes para
-  completar) no están confirmados contra el texto de la ley; hay que validarlos con el abogado antes
-  de fijar los valores por defecto.
+  razonable, que **no puede exceder el doble** del inicial (prórroga única).
+- **Petición incompleta (Ley 1755 de 2015, art. 17)** [owner, 2026-11-15; el abogado confirma el texto]:
+  se requiere la información que falta dentro de los **10 días** siguientes a la radicación; el
+  solicitante tiene **un mes** para completarla, prorrogable **una vez** hasta por otro mes si lo
+  pide; mientras tanto el término se suspende y se reanuda el día siguiente a que la complete; si no
+  la completa, se entiende **desistida** (desistimiento tácito). Aplica a todo tenant con país `CO`;
+  en otros países sólo cuenta el término configurable del tipo. **Sin código en la fase 1:** lo
+  construye la fase del flujo de requerimiento.
 - **A quién aplica.** Que un tenant privado esté obligado a estos términos, y para qué tipos de ticket,
   **DECISIÓN PENDIENTE** de confirmar con el abogado del owner. Por eso los términos son
   configurables por tipo de ticket (§7.5), y cada tipo dice si su término es legal o sólo interno.
 - **Ley 1480 de 2011 (Estatuto del Consumidor).** La reclamación directa al proveedor precede a la
-  queja ante la SIC. El plazo de respuesta de 15 días **no está confirmado**: queda como parámetro
-  configurable sin valor impuesto por QEP.
+  queja ante la SIC. La reclamación directa se responde en **15 días hábiles** [owner, 2026-11-15;
+  el abogado confirma el texto], en todo tenant con país `CO`; en otros países sólo cuenta el término
+  configurable del tipo. Sin código en la fase 1: lo construye la fase del flujo de requerimiento.
 - **Ley 1581 de 2012 (protección de datos).** Sólo contexto: quien recoge datos personales necesita
   autorización previa, expresa e informada y debe poder probarla. El diseño guarda esa prueba (§9.5);
   el texto lo redacta el tenant.
@@ -220,8 +224,9 @@ owner para la primera versión) o **formulario fijo con parámetros** [owner]. V
 | # | Decisión |
 | --- | --- |
 | D1 | PQRSF y soporte técnico en **un solo módulo**. |
-| D2 | Términos por defecto **15 / 10 / 30 días hábiles**, reutilizando el horario de atención (`business_hours`) de Mensajería para saber qué días son hábiles. |
-| D2b | (2026-11-14) Festivos y excepciones de fecha del **horario predeterminado** del tenant; país de los festivos: el del horario, y si no tiene o no hay horario, `Tenant.Country`. Soporte y la bandeja nunca muestran un calendario distinto (§7.2). |
+| D2 | Términos por defecto **15 / 10 / 30 días hábiles**. ~~Reutilizando el horario de atención (`business_hours`) de Mensajería para saber qué días son hábiles~~: lo reemplaza D2d. |
+| D2b | ~~(2026-11-14) Festivos y excepciones de fecha del horario predeterminado del tenant~~. **Revertida** el 2026-11-15 por D2d. |
+| D2d | (2026-11-15) Los términos legales cuentan **de lunes a viernes**, no con el horario de atención: hábil es lunes a viernes, menos los festivos nacionales (`ColombianHolidays`) si el país del tenant (ajustes regionales) es `CO`; en cualquier otro país, sólo lunes a viernes. El horario del tenant, sus excepciones y su país de festivos no se leen (§7.2). |
 | D2c | (2026-11-14) El umbral de **«por vencer»** es configurable por tenant, **3 días hábiles** si el tenant no lo ha fijado. Lo edita quien tiene `support.settings.manage` y lo leen quienes ven los tickets (§7.2). |
 | D3 | La **respuesta de fondo** se envía como PDF; su contenido es el de §8.3. |
 | D4 | Un ticket **bloquea el borrado del cliente** («lo bloquea»). Cualquier ticket, abierto o cerrado, como cotizaciones y pedidos; la fusión mueve los tickets al cliente que queda. |
@@ -288,25 +293,22 @@ Seis estados: `nuevo`, `abierto` (se muestra «En gestión»), `espera_cliente`,
 ### 7.2 Reloj de resolución
 
 - Cada ticket tiene un vencimiento calculado en **días hábiles** a partir del término de su
-  tipo, fotografiado al radicar (§4, §7.5 y D2). Un día es hábil si el horario predeterminado del tenant atiende ese día
-  de la semana, no es festivo y ninguna excepción de fecha lo cierra. Sin horario configurado se usan lunes a viernes.
-  [diseñador]
-- **Mismo calendario que la bandeja** [owner, 2026-11-14, D2b]: Soporte toma los festivos **y** las excepciones de fecha
-  del horario predeterminado del tenant (`BusinessHoursSchedule`: `HolidayCountry` y `Exceptions`). Soporte y la bandeja
-  nunca muestran un calendario distinto para el mismo tenant.
-  - **País de los festivos:** el `HolidayCountry` del horario; si el horario no tiene, o no hay horario, `Tenant.Country`.
-    Con `CO` se usa `ColombianHolidays`; con otro país no hay festivos, hasta que exista un calendario de ese país.
-  - **Excepciones de fecha:** salen del horario predeterminado y mandan sobre el día de la semana y sobre el festivo, en el
-    mismo orden que la bandeja (`BusinessHoursSchedule.RangesFor`): una excepción sin franjas cierra el día; una con franjas
-    lo abre.
-  - **Sin horario:** lunes a viernes más los festivos de `Tenant.Country`.
-- **Inicio y fin** [coordinador]: el plazo cuenta desde el **día hábil siguiente** a la radicación
+  tipo, fotografiado al radicar (§4, §7.5 y D2).
+- **Lunes a viernes** [owner, 2026-11-15, D2d; §13.4]: un día es hábil si es de lunes a viernes y, en un tenant cuyo país
+  (ajustes regionales, `Tenant.Country`) es `CO`, no es festivo nacional (`ColombianHolidays`). En cualquier otro país,
+  lunes a viernes sin festivos, hasta que exista un calendario de ese país. **No** se lee el horario de atención de
+  Mensajería: ni sus días, ni sus excepciones de fecha, ni su país de festivos. Un horario que abre los sábados o cierra un
+  martes no mueve un término legal. Reemplaza a D2b («mismo calendario que la bandeja»), que el owner revirtió.
+- **Inicio y fin** [owner, 2026-11-15, §13.1 confirmado]: el plazo cuenta desde el **día hábil siguiente** a la radicación
   (Ley 1755 art. 14, «siguientes a su recepción») y vence al **final del día hábil**, en la zona
   horaria del tenant (`Tenant.TimeZone`).
 - **Cuándo se detiene** [coordinador]: en `espera_cliente`, `resuelto` y `cerrado`.
   `espera_interna` **no** lo detiene [owner]: la espera es del tenant, y es justo el caso en el que
   el plazo sigue corriendo. Al salir de una pausa (incluido reabrir desde `resuelto`) el reloj se
   reanuda **desde donde quedó**: el vencimiento se corre por los días hábiles que estuvo detenido.
+  **No hay pausa parcial** [owner, 2026-11-15]: sólo se descuentan los días hábiles completos que estuvo detenido (los
+  estrictamente entre el día en que se pausó y el día en que se reanudó); ni el día de la pausa ni el de la reanudación
+  cuentan como detenidos.
 - **Cambio de tipo**: recalcula el vencimiento con el término del tipo nuevo [owner], contado
   **desde la radicación**, más las pausas acumuladas [coordinador]. Editar un tipo no mueve los
   vencimientos ya calculados (§7.5) [owner].
@@ -314,16 +316,11 @@ Seis estados: `nuevo`, `abierto` (se muestra «En gestión»), `espera_cliente`,
   hábiles o menos como el umbral del tenant, y «vencido» cuando pasó el final del día hábil del vencimiento. El umbral es
   configurable en los ajustes de Soporte y vale **3 días hábiles** si el tenant no lo ha fijado. El plan fija el rango (de 0
   a 30, con 0 para apagar «por vencer»). La bandeja, su resumen y el estado del plazo de cada ticket leen el valor del tenant.
-- **Prórroga** [coordinador]: única, con motivo obligatorio y aviso al solicitante antes de que
-  venza el plazo; el nuevo plazo **no excede el doble del término inicial**. Es una interpretación
-  a validar con el abogado, así que el tope es configurable. Queda en la traza.
-- `BusinessHoursClock.BusinessSeconds` cuenta segundos, no días. El cálculo en días hábiles es
-  código nuevo; el adaptador de Bootstrapper expone a Soporte sólo «¿es hábil esta fecha?» y
-  «suma N días hábiles». Soporte no referencia Mensajería.
-- **DECISIÓN PENDIENTE:** si el tenant no atiende sábados pero la ley cuenta los días hábiles
-  según el calendario general, el horario de la bandeja puede no ser el calendario legal correcto.
-  El owner eligió reutilizarlo (D2); el abogado debe confirmar que los términos pueden contarse con
-  el horario del tenant y no con lunes a viernes.
+- **Prórroga** [owner, 2026-11-15, §13.1 confirmado]: única, con motivo obligatorio y aviso al solicitante antes de que
+  venza el plazo; el nuevo plazo **no excede el doble del término inicial**. Queda en la traza. La fase 1 no la construye.
+- El cálculo en días hábiles es código de Soporte (`SupportBusinessDays`); el adaptador de Bootstrapper
+  (`SupportBusinessCalendar`) expone sólo «¿es hábil esta fecha?» y toma `ColombianHolidays` de `Modules.Messaging.Domain`.
+  Soporte no referencia Mensajería.
 
 ### 7.3 Ticket
 
@@ -807,16 +804,22 @@ Resumen para el owner. El detalle está en la sección indicada. Ninguna bloquea
 bloqueaban se cerraron en §6. Entre corchetes, si bloquea el **despliegue** (un valor, un
 texto o una confirmación legal que el diseño ya deja configurable) o **ninguno**.
 
-1. [despliegue] Validar con el abogado la interpretación del reloj: inicio al día hábil siguiente, fin al
-    final del día hábil y tope de la prórroga en el doble del término inicial (§7.2).
-2. [despliegue] Artículo y plazo del requerimiento por petición incompleta, y a qué tenants aplica (§4).
-3. [despliegue] Plazo de la reclamación directa (Ley 1480): sin confirmar (§4).
-4. [despliegue] Si los términos pueden contarse con el horario del tenant y no con lunes a viernes (§7.2).
+1. **Decidida** [owner, 2026-11-15]: inicio al día hábil siguiente, fin al final del día hábil y tope de la prórroga en
+    el doble del término inicial (§7.2). El código de la fase 1 ya cuenta así; la prórroga no está construida.
+2. **Decidida** [owner, 2026-11-15; el abogado confirma el texto]: petición incompleta por Ley 1755 art. 17 —requerir en
+    10 días, un mes para completar prorrogable una vez por otro mes, término suspendido hasta el día siguiente a
+    completarla, desistimiento tácito si no la completa—, en todo tenant con país `CO` (§4). Sin código en la fase 1.
+3. **Decidida** [owner, 2026-11-15; el abogado confirma el texto]: reclamación directa (Ley 1480) en 15 días hábiles, en
+    todo tenant con país `CO`; los demás países usan sólo el término del tipo (§4). Sin código en la fase 1.
+4. **Decidida** [owner, 2026-11-15]: los términos cuentan de lunes a viernes, con los festivos de Colombia si el tenant
+    es `CO`; no con el horario de atención (§7.2, D2d). Revierte D2b.
 5. [despliegue] Clave y configuración de `qcode-pdf` propias de Soporte (§8.3).
 6. [despliegue] Contenido legal del «paso siguiente» del PDF por tipo de ticket (§8.3).
 7. [despliegue] Clave del sitio de Turnstile y su configuración en producción (§9.4).
 8. [despliegue] Texto y categoría de Meta de las plantillas de Soporte, incluida la de encuesta (§8.4, §8.5).
 9. [ninguno hasta que haya consumidor] Eventos de integración (`support.ticket.*`) y consumidores (§10).
-10. [despliegue] Retención: los tickets no se borran en la primera versión; la política de conservación de datos
-     personales y de los consentimientos la define el owner con el abogado.
+10. **Decidida** [owner, 2026-11-15; el abogado confirma]: los tickets se conservan **10 años desde el cierre** (Código de
+     Comercio art. 60; Ley 962 de 2005 art. 28); después se anonimizan los datos personales del solicitante y el ticket
+     queda para estadística. Los consentimientos se conservan mientras dure el tratamiento más ese mismo término. Sin código
+     todavía: no hay purga.
 11. [lo resuelve el implementador al planear] No verificado: cómo abre el frontend el panel global del negocio (§3).

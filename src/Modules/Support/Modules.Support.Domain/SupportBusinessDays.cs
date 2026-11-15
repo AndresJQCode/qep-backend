@@ -1,11 +1,11 @@
 namespace Modules.Support.Domain;
 
 /// <summary>Aritmética de días hábiles sobre un <see cref="ISupportBusinessCalendar"/>. Recorre día por día: los términos son de
-/// decenas de días y el calendario no tiene forma cerrada (festivos y excepciones de fecha).</summary>
+/// decenas de días y el calendario no tiene forma cerrada (festivos).</summary>
 public static class SupportBusinessDays
 {
-    /// <summary>Diez años: un calendario sin días hábiles en ese tramo está roto, y seguir buscando colgaría el alta (plan D12,
-    /// Review Focus 1).</summary>
+    /// <summary>Diez años: un calendario sin días hábiles en ese tramo está roto, y seguir buscando colgaría el alta (Review Focus
+    /// 1). El de lunes a viernes nunca llega acá; la guarda es del dominio, que no sabe qué calendario le pasan.</summary>
     public const int MaxScanDays = 3660;
 
     /// <summary>El <paramref name="businessDays"/>-ésimo día hábil estrictamente después de <paramref name="from"/>; con 0, el

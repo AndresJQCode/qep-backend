@@ -12,6 +12,9 @@ public static class SupportErrorCodes
 
     public const string RequesterRequired = "support.ticket.requester_required";
 
+    /// <summary>R9 [owner 2026-11-15]: un ticket resuelto o cerrado no se reasigna, no cambia de tipo ni de cliente.</summary>
+    public const string NotEditable = "support.ticket.not_editable";
+
     public const string ReplyChannelUnavailable = "support.ticket.reply_channel_unavailable";
 
     public const string CustomerNotFound = "support.ticket.customer_not_found";
