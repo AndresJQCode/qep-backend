@@ -1595,6 +1595,16 @@ public static class QepServiceCollectionExtensions
             provider => provider.GetRequiredService<SupportPhoneNormalizer>());
         services.AddScoped<Modules.Support.Application.ISupportGeography, SupportGeography>();
         services.AddScoped<Modules.Support.Application.SupportPublicResolver>();
+        services.AddScoped<Modules.Support.Application.ISupportTenantBranding, SupportTenantBranding>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetPublicFormQuery, Modules.Support.Application.SupportPublicFormDto>,
+            Modules.Support.Application.GetPublicFormHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListPublicSupportDepartmentsQuery, Modules.Support.Application.SupportPublicGeoListDto>,
+            Modules.Support.Application.ListPublicSupportDepartmentsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListPublicSupportCitiesQuery, Modules.Support.Application.SupportPublicGeoListDto>,
+            Modules.Support.Application.ListPublicSupportCitiesHandler>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno

@@ -31,7 +31,11 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
         var moduleOff = await SeedPublishedTenantAsync(
             factory, NewTenantId(), modules: TenantModuleKeys.All.Where(key => key != TenantModuleKeys.Support).ToList());
         var unpublished = await SeedPublishedTenantAsync(factory, NewTenantId(), published: false);
+        var control = await SeedPublishedTenantAsync(factory, NewTenantId());
         using var client = VisitorClient(factory);
+
+        // El control: el mismo formulario, con el tenant activo, el módulo prendido y publicado, sí se sirve.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(PublicUrl(control, "/form"), Ct)).StatusCode);
 
         var responses = new List<HttpResponseMessage>();
         foreach (var slug in new[] { "no-existe-este-slug", inactive, moduleOff, unpublished })

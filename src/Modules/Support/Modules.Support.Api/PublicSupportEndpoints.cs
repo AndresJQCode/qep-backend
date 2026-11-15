@@ -52,6 +52,17 @@ public static class PublicSupportEndpoints
             .RequireRateLimiting(readPolicy);
 
         group.MapGet("/form", GetFormAsync)
+            .Produces<SupportPublicFormDto>()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapGet("/geography/departments", ListDepartmentsAsync)
+            .Produces<SupportPublicGeoListDto>()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapGet("/geography/departments/{departmentId:guid}/cities", ListCitiesAsync)
+            .Produces<SupportPublicGeoListDto>()
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
@@ -66,13 +77,17 @@ public static class PublicSupportEndpoints
         return endpoints;
     }
 
-    // Task 4: el grupo y su fontanería. La configuración pública llega en la Task 5; hasta entonces todo tenant responde 404.
     private static async Task<IResult> GetFormAsync(
-        string tenantSlug, SupportPublicResolver resolver, CancellationToken cancellationToken)
-    {
-        _ = await resolver.ResolveAsync(tenantSlug, cancellationToken);
-        throw new ResourceNotFoundException(SupportErrorCodes.PublicNotFound, "The support form was not found.");
-    }
+        string tenantSlug, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetPublicFormQuery(tenantSlug), cancellationToken));
+
+    private static async Task<IResult> ListDepartmentsAsync(
+        string tenantSlug, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListPublicSupportDepartmentsQuery(tenantSlug), cancellationToken));
+
+    private static async Task<IResult> ListCitiesAsync(
+        string tenantSlug, Guid departmentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListPublicSupportCitiesQuery(tenantSlug, departmentId), cancellationToken));
 
     // Task 4: lee el cuerpo con su tope y resuelve el tenant. La consulta llega en la Task 7.
     private static async Task<IResult> LookupAsync(
