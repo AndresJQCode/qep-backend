@@ -73,8 +73,9 @@ internal static class SupportTicketRules
     /// <summary>
     /// Plan D8 y spec §8.3, para un ticket manual: no hay hilo abierto, así que <c>Thread</c> no está disponible; <c>Email</c> exige
     /// el correo de la foto del solicitante y <c>WhatsAppTemplate</c> su celular. Con cliente vinculado, el alta ya copió en la foto
-    /// el correo y el celular del cliente que el solicitante dejó vacíos (<see cref="TicketRequesterNormalizer.WithCustomerContact"/>,
-    /// owner 2026-11-14), así que acá basta mirar la foto.
+    /// el correo del cliente que el solicitante dejó vacío y su teléfono en el fijo, nunca en el celular
+    /// (<see cref="TicketRequesterNormalizer.WithCustomerContact"/>, owner 2026-11-14 y P3 2026-11-15), así que acá basta mirar la foto:
+    /// <c>WhatsAppTemplate</c> sale sólo con el celular que trajo el solicitante.
     /// </summary>
     public static void EnsureReplyChannel(SupportReplyChannel channel, TicketRequester? requester)
     {

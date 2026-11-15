@@ -181,27 +181,30 @@ internal static class TicketRequesterNormalizer
     }
 
     /// <summary>
-    /// El contacto del cliente vinculado como respaldo (owner, 2026-11-14): su correo y su celular llenan sólo los campos que el
-    /// solicitante dejó vacíos; lo que trae el solicitante siempre gana. Sin solicitante, la foto queda con sólo ese contacto y el
-    /// país <paramref name="country"/> (el cliente vinculado ya cumple <c>requester_required</c>); sin contacto que copiar, no hay
-    /// foto. Un valor del cliente que no cabe en la foto (correo de más de <see cref="TicketRequester.EmailMaxLength"/> o sin el formato
-    /// que se le exige al del solicitante, celular que no es E.164) no se copia: recortarlo o guardarlo daría un contacto que no
-    /// existe.
+    /// El contacto del cliente vinculado como respaldo (owner, 2026-11-14): su correo y su teléfono llenan sólo los campos que el
+    /// solicitante dejó vacíos; lo que trae el solicitante siempre gana. El teléfono del cliente (<c>PhoneE164</c>) puede ser fijo, así
+    /// que va al <b>fijo</b> de la foto y nunca al celular (owner, 2026-11-15, P3): una plantilla de WhatsApp a un fijo la rechaza Meta y
+    /// la respuesta queda <c>Failed</c>. Sin celular, <c>reply-options</c> dice <c>no_mobile</c> y el asesor elige otro canal. Sin
+    /// solicitante, la foto queda con sólo ese contacto y el país <paramref name="country"/> (el cliente vinculado ya cumple
+    /// <c>requester_required</c>); sin contacto que copiar, no hay foto. Un valor del cliente que no cabe en la foto (correo de más de
+    /// <see cref="TicketRequester.EmailMaxLength"/> o sin el formato que se le exige al del solicitante, teléfono que no es E.164) no se
+    /// copia: recortarlo o guardarlo daría un contacto que no existe.
     /// </summary>
     public static TicketRequester? WithCustomerContact(TicketRequester? requester, SupportCustomerContact customer, string country)
     {
         var email = Clean(customer.Email) is { Length: <= TicketRequester.EmailMaxLength } fittingEmail && IsEmail(fittingEmail)
             ? fittingEmail
             : null;
-        var mobile = Clean(customer.MobilePhone) is { } phone && IsMobile(phone) ? phone : null;
+        // IsMobile es la regla E.164 de la foto; el número va al fijo igual.
+        var landline = Clean(customer.Phone) is { } phone && IsMobile(phone) ? phone : null;
         if (requester is null)
         {
-            return email is null && mobile is null
+            return email is null && landline is null
                 ? null
-                : new TicketRequester(null, null, null, null, null, email, mobile, null, country, null);
+                : new TicketRequester(null, null, null, null, null, email, null, landline, country, null);
         }
 
-        return requester with { Email = requester.Email ?? email, MobilePhone = requester.MobilePhone ?? mobile };
+        return requester with { Email = requester.Email ?? email, LandlinePhone = requester.LandlinePhone ?? landline };
     }
 
     private static string? Clean(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();

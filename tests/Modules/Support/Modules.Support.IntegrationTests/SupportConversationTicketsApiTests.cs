@@ -37,8 +37,10 @@ public sealed class SupportConversationTicketsApiTests(SharedSupportHost sharedH
         Assert.Equal(JsonValueKind.Null, ticket.GetProperty("followOffAt").ValueKind);
         Assert.Equal(0, ticket.GetProperty("unclassifiedCount").GetInt32());
         Assert.Empty(ticket.GetProperty("replies").EnumerateArray());
-        // El contacto del cliente llena la foto (regla F1 de la fase 1).
+        // El contacto del cliente llena la foto (regla F1 de la fase 1): su teléfono va al fijo (owner, 2026-11-15, P3) y el celular
+        // es el wa_id de la conversación.
         Assert.Equal("ana@example.com", ticket.GetProperty("requester").GetProperty("email").GetString());
+        Assert.Equal("+573001234567", ticket.GetProperty("requester").GetProperty("landlinePhone").GetString());
         Assert.Equal("+573001234567", ticket.GetProperty("requester").GetProperty("mobilePhone").GetString());
         Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketCreated, Id(ticket).ToString()));
     }

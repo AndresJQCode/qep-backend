@@ -3,11 +3,12 @@ namespace Modules.Support.Application;
 /// <summary>Un cliente visto desde la bandeja y el detalle: sólo lo que dibujan (nombre y si está activo).</summary>
 public sealed record SupportCustomerRef(Guid Id, string Name, bool IsActive);
 
-/// <summary>Un cliente visto desde el alta y la vinculación. <c>Email</c> y <c>MobilePhone</c> son su contacto (el teléfono ya en
-/// E.164): el alta manual los copia en la foto del solicitante cuando éste no los trae (owner, 2026-11-14). Es un registro aparte de
+/// <summary>Un cliente visto desde el alta y la vinculación. <c>Email</c> y <c>Phone</c> son su contacto (<c>Phone</c> es su
+/// <c>PhoneE164</c>, que puede ser fijo): el alta los copia en la foto del solicitante cuando éste no los trae, el teléfono en el fijo
+/// y nunca en el celular (owner, 2026-11-14 y 2026-11-15, P3). Es un registro aparte de
 /// <see cref="SupportCustomerRef"/> para que la bandeja, que resuelve decenas de clientes por página, no lea un contacto que descarta
 /// (revisión final, FU3).</summary>
-public sealed record SupportCustomerContact(Guid Id, string Name, bool IsActive, string? Email, string? MobilePhone);
+public sealed record SupportCustomerContact(Guid Id, string Name, bool IsActive, string? Email, string? Phone);
 
 /// <summary>Clientes vistos desde Soporte (copia recortada de <c>ILoansCustomerLookup</c>); el adaptador vive en Bootstrapper, sobre
 /// <c>CustomersDbContext</c>. Un cliente fusionado está inactivo.</summary>

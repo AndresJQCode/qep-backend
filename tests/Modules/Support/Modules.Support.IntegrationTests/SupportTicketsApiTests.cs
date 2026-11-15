@@ -199,21 +199,48 @@ public sealed class SupportTicketsApiTests(ClockedSupportHost host) : IClassFixt
         Assert.Equal("Ana", requester.GetProperty("firstNames").GetString());
     }
 
+    // Owner, 2026-11-15 (P3): el teléfono del cliente puede ser fijo, así que va al fijo de la foto y nunca al celular. Sin celular,
+    // reply-options dice no_mobile para la plantilla y el asesor elige otro canal; dar de alta por WhatsAppTemplate con sólo ese
+    // teléfono no tiene a dónde responder.
     [Fact]
-    public async Task ALinkedCustomerMobileEnablesWhatsAppTemplate()
+    public async Task ALinkedCustomerPhoneGoesToTheLandlineAndNeverToTheMobile()
     {
         var scenario = await StartAsync(await host.StartTestAsync());
-        var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS", phoneE164: "+573001234567");
+        var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS", phoneE164: "+5716012345");
+        var typeId = await scenario.TypeIdAsync("Queja");
 
         var ticket = await scenario.CreateAsync(Body(
-            await scenario.TypeIdAsync("Queja"), requester: new { firstNames = "Ana" }, customerId: customer,
-            replyChannel: "WhatsAppTemplate"));
+            typeId, requester: new { firstNames = "Ana", email = "ana@example.com" }, customerId: customer));
+        var byTemplate = await scenario.PostAsync(Body(
+            typeId, requester: new { firstNames = "Ana" }, customerId: customer, replyChannel: "WhatsAppTemplate"));
 
-        Assert.Equal("WhatsAppTemplate", ticket.GetProperty("replyChannel").GetString());
         var requester = ticket.GetProperty("requester");
-        Assert.Equal("+573001234567", requester.GetProperty("mobilePhone").GetString());
-        Assert.Equal(JsonValueKind.Null, requester.GetProperty("email").ValueKind);
-        Assert.Equal("Ana", requester.GetProperty("firstNames").GetString());
+        Assert.Equal("+5716012345", requester.GetProperty("landlinePhone").GetString());
+        Assert.Equal(JsonValueKind.Null, requester.GetProperty("mobilePhone").ValueKind);
+        var options = await scenario.Client.GetAsync($"{scenario.Url}/tickets/{Id(ticket)}/reply-options", Ct);
+        Assert.True(options.StatusCode == HttpStatusCode.OK, await BodyAsync(options));
+        var template = (await JsonAsync(options)).GetProperty("whatsAppTemplate");
+        Assert.False(template.GetProperty("available").GetBoolean());
+        Assert.Equal("no_mobile", template.GetProperty("reason").GetString());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, byTemplate.StatusCode);
+        Assert.Equal("support.ticket.reply_channel_unavailable", await CodeOfAsync(byTemplate));
+    }
+
+    // Lo que trae el solicitante gana: su fijo no se pisa con el teléfono del cliente.
+    [Fact]
+    public async Task TheRequesterLandlineWinsOverTheCustomerPhone()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS", phoneE164: "+5716012345");
+
+        var ticket = await scenario.CreateAsync(Body(
+            await scenario.TypeIdAsync("Queja"),
+            requester: new { firstNames = "Ana", email = "ana@example.com", landlinePhone = "6014445566" },
+            customerId: customer));
+
+        var requester = ticket.GetProperty("requester");
+        Assert.Equal("6014445566", requester.GetProperty("landlinePhone").GetString());
+        Assert.Equal(JsonValueKind.Null, requester.GetProperty("mobilePhone").ValueKind);
     }
 
     /// <summary>Sin contacto en el cliente ni en el solicitante no hay a dónde responder: el respaldo no inventa un canal.</summary>

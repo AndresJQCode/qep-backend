@@ -4893,13 +4893,17 @@ tiene que valer para su país (por defecto, el del tenant). Vincular un cliente,
 `customers` prendido (`403 tenancy.module_not_enabled`) y un cliente activo del tenant (`422 support.ticket.customer_not_found` o
 `support.ticket.customer_inactive`; un fusionado está inactivo). El canal de respuesta `Thread` no está disponible en un alta manual
 (`422 support.ticket.reply_channel_unavailable`), `Email` exige correo y `WhatsAppTemplate` exige celular. **Con un cliente
-vinculado, su contacto es el respaldo** (owner, 2026-11-14): el alta copia en la foto del solicitante el `email` y el `phone_e164`
-del cliente (nunca el `phone` crudo) sólo en los campos que `requester` dejó vacíos, y después valida el canal contra esa foto. Lo
-que trae `requester` siempre gana. Sin `requester`, la foto queda con sólo ese contacto y el país del tenant; un valor del cliente
-que no cabe en la foto (correo de más de 254 o que no cumple el formato de correo que se le exige al de `requester`, celular que
-no es E.164) no se copia. Sin correo ni celular en ninguno de los dos,
-todo canal responde ese 422 (`TicketRequesterNormalizer.WithCustomerContact`, amarrado por
-`ALinkedCustomerEmailIsCopiedIntoAnEmptyRequesterForEmail` y `ALinkedCustomerWithoutContactAndNoRequesterContactIs422ForEmail`).
+vinculado, su contacto es el respaldo** (owner, 2026-11-14): el alta copia en la foto del solicitante el `email` del cliente en el
+correo y su `phone_e164` (nunca el `phone` crudo) en el **fijo** (`landlinePhone`), sólo en los campos que `requester` dejó vacíos, y
+después valida el canal contra esa foto. **El teléfono del cliente nunca va al celular** (owner, 2026-11-15): puede ser fijo, y una
+plantilla de WhatsApp a un fijo la rechaza Meta y la respuesta queda `Failed`. Por eso `WhatsAppTemplate` sale sólo con el
+`mobilePhone` que trae `requester` (o, en un ticket desde una conversación, el `wa_id`); sin él, `reply-options` dice `no_mobile` y el
+asesor elige otro canal. Lo que trae `requester` siempre gana. Sin `requester`, la foto queda con sólo ese contacto y el país del
+tenant; un valor del cliente que no cabe en la foto (correo de más de 254 o que no cumple el formato de correo que se le exige al de
+`requester`, teléfono que no es E.164) no se copia. Sin correo en ninguno de los dos, `Email` responde ese 422; sin celular del
+solicitante, `WhatsAppTemplate` también (`TicketRequesterNormalizer.WithCustomerContact`, amarrado por
+`ALinkedCustomerEmailIsCopiedIntoAnEmptyRequesterForEmail`, `ALinkedCustomerWithoutContactAndNoRequesterContactIs422ForEmail` y
+`ALinkedCustomerPhoneGoesToTheLandlineAndNeverToTheMobile`).
 Vincular el cliente después, con `PUT …/customer`, no toca la foto ni el canal.
 
 **Traza y auditoría.** La traza del ticket son sus eventos (`Created`, `StatusChanged`, `AssigneeChanged`, `TypeChanged`,
