@@ -91,6 +91,8 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
         }
     }
 
+    public void DiscardChanges() => dbContext.ChangeTracker.Clear();
+
     private static SupportDomainException CustomerNotFound(CustomerReferenceToHold reference) =>
         new(reference.NotFoundCode, $"Customer '{reference.CustomerId}' was not found.");
 

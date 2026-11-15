@@ -34,6 +34,15 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<ISupportReplyRepository, SupportReplyRepository>();
         services.AddScoped<ISupportAuditPublisher, SupportAuditPublisher>();
 
+        // Fase 2 (plan E2): el seguimiento del hilo sondea los entrantes de Mensajería. Apagable por configuración para que las pruebas
+        // lo llamen a mano sin que el worker se lleve los entrantes por detrás.
+        services.AddScoped<SupportThreadFollower>();
+        services.AddOptions<SupportWorkerOptions>().Bind(configuration.GetSection(SupportWorkerOptions.SectionName));
+        if (configuration.GetValue($"{SupportWorkerOptions.SectionName}:Enabled", true))
+        {
+            services.AddHostedService<SupportThreadFollowWorker>();
+        }
+
         return services;
     }
 }
