@@ -485,6 +485,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
             Modules.Support.Application.UpdateSupportSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.CreateTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetTicketQuery, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.GetTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListSupportAssigneesQuery, Modules.Support.Application.SupportAssigneesDto>,
+            Modules.Support.Application.ListSupportAssigneesHandler>();
+        services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<

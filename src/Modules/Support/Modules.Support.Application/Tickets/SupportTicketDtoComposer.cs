@@ -1,0 +1,218 @@
+using System.Text.Json;
+using Modules.Support.Domain;
+using Modules.Tenancy.Application;
+
+namespace Modules.Support.Application;
+
+/// <summary>Lo que una petición necesita para evaluar plazos: el calendario y la zona del tenant, su «hoy» local y su umbral de «por
+/// vencer». Se lee una vez por petición.</summary>
+public sealed record SupportReadContext(SupportClockContext Clock, DateOnly Today, int DueSoonBusinessDays);
+
+/// <summary>
+/// Arma las respuestas de ticket del contrato: el <see cref="SupportTicketDetailDto"/> de leer, crear y operar, y las filas de la
+/// bandeja. Lo que la pantalla necesita saber (transiciones permitidas, cómo va el plazo, nombres de miembros y clientes) se
+/// deriva acá y nunca se escribe: Backend for Frontend. Clientes y miembros se resuelven en lote.
+/// </summary>
+public sealed class SupportTicketDtoComposer(
+    ISupportCustomerLookup customers,
+    ISupportMemberDirectory members,
+    ISupportTicketRepository tickets,
+    ISupportBusinessCalendarSource calendars,
+    ISupportSettingsRepository settings,
+    ITenantClock tenantClock)
+{
+    /// <summary>Lo que el contrato muestra de un miembro o cliente que ya no se resuelve (un miembro removido, un cliente borrado).</summary>
+    internal const string UnknownName = "Sin nombre";
+
+    /// <summary>Exige la fila de ajustes del tenant: quien llama ya pasó por <see cref="ISupportProvisioner.EnsureAsync"/>.</summary>
+    public async Task<SupportReadContext> ReadContextAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var clock = await calendars.GetAsync(tenantId, cancellationToken);
+        var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
+        var tenantSettings = await settings.GetAsync(tenantId, cancellationToken);
+        return new SupportReadContext(clock, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays);
+    }
+
+    public async Task<SupportTicketDetailDto> ComposeDetailAsync(SupportTicket ticket, CancellationToken cancellationToken) =>
+        await ComposeDetailAsync(ticket, await ReadContextAsync(ticket.TenantId, cancellationToken), cancellationToken);
+
+    /// <summary>Se llama después de guardar: la traza se lee de la base, no del agregado.</summary>
+    public async Task<SupportTicketDetailDto> ComposeDetailAsync(
+        SupportTicket ticket, SupportReadContext context, CancellationToken cancellationToken)
+    {
+        var events = await tickets.ListEventsAsync(ticket.TenantId, ticket.Id, cancellationToken);
+        var details = events.Select(item => (Event: item, Details: EventDetails.Parse(item))).ToList();
+
+        var memberIds = details
+            .SelectMany(item => new[] { item.Event.ActorMemberId, item.Details.ToMember })
+            .Append(ticket.AssigneeMemberId)
+            .OfType<Guid>();
+        var customerIds = details
+            .Select(item => item.Details.ToCustomer)
+            .Append(ticket.CustomerId)
+            .OfType<Guid>();
+        var membersById = await FindMembersAsync(ticket.TenantId, memberIds, cancellationToken);
+        var customersById = await FindCustomersAsync(ticket.TenantId, customerIds, cancellationToken);
+        var (dueState, daysLeft) = Evaluate(ticket, context);
+
+        return new SupportTicketDetailDto(
+            ticket.Id.Value,
+            ticket.DisplayNumber,
+            ticket.Subject,
+            ticket.Description,
+            ticket.Status.ToString(),
+            SupportTicketStatuses.AllowedFrom(ticket.Status).Select(status => status.ToString()).ToList(),
+            new SupportTicketTypeSnapshotDto(
+                ticket.TypeId.Value, ticket.TypeName, ticket.TermBusinessDays, ticket.TermIsLegal, ticket.RequiresFormalResponse),
+            new SupportClockDto(
+                ticket.DueOn, dueState.ToString(), daysLeft, ticket.TermBusinessDays, ticket.TermIsLegal, ticket.PausedBusinessDays),
+            ticket.Intake.ToString(),
+            ticket.ManualMedium?.ToString(),
+            ticket.ReplyChannel.ToString(),
+            ticket.CustomerId is { } customerId ? ToCustomerDto(customerId, customersById) : null,
+            ticket.Requester is { } requester ? ToRequesterDto(requester) : null,
+            ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById) : null,
+            ticket.ResolutionCount,
+            ticket.ReceivedAt,
+            details.Select(item => ToEventDto(item.Event, item.Details, membersById, customersById)).ToList(),
+            ticket.Version);
+    }
+
+    public async Task<IReadOnlyList<SupportTicketListItemDto>> ComposeListAsync(
+        Guid tenantId, IReadOnlyList<SupportTicket> page, SupportReadContext context, CancellationToken cancellationToken)
+    {
+        var membersById = await FindMembersAsync(
+            tenantId, page.Select(ticket => ticket.AssigneeMemberId).OfType<Guid>(), cancellationToken);
+        var customersById = await FindCustomersAsync(
+            tenantId, page.Select(ticket => ticket.CustomerId).OfType<Guid>(), cancellationToken);
+
+        return page.Select(ticket =>
+            {
+                var (dueState, daysLeft) = Evaluate(ticket, context);
+                return new SupportTicketListItemDto(
+                    ticket.Id.Value,
+                    ticket.DisplayNumber,
+                    ticket.Subject,
+                    ticket.Status.ToString(),
+                    ticket.TypeName,
+                    RequesterDisplayName(ticket, customersById),
+                    ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById) : null,
+                    ticket.ReceivedAt,
+                    ticket.DueOn,
+                    dueState.ToString(),
+                    daysLeft);
+            })
+            .ToList();
+    }
+
+    private static (SupportDueState State, int? DaysLeft) Evaluate(SupportTicket ticket, SupportReadContext context) =>
+        SupportDueStates.Evaluate(ticket.Status, ticket.DueOn, context.Today, context.Clock.Calendar, context.DueSoonBusinessDays);
+
+    // Cliente vinculado; si no, la foto del solicitante (nombres, razón social o «NIT número»). Un cliente vinculado que ya no se
+    // encuentra cae a la foto, y sin foto a «Sin nombre».
+    private static string RequesterDisplayName(SupportTicket ticket, IReadOnlyDictionary<Guid, SupportCustomerRef> customersById)
+    {
+        if (ticket.CustomerId is { } customerId && customersById.TryGetValue(customerId, out var customer))
+        {
+            return customer.Name;
+        }
+
+        var display = ticket.Requester?.DisplayName();
+        return string.IsNullOrEmpty(display) ? UnknownName : display;
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, SupportMemberRef>> FindMembersAsync(
+        Guid tenantId, IEnumerable<Guid> memberIds, CancellationToken cancellationToken)
+    {
+        var ids = memberIds.Distinct().ToArray();
+        return ids.Length == 0
+            ? new Dictionary<Guid, SupportMemberRef>()
+            : (await members.FindAsync(tenantId, ids, cancellationToken)).ToDictionary(member => member.MemberId);
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, SupportCustomerRef>> FindCustomersAsync(
+        Guid tenantId, IEnumerable<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        var ids = customerIds.Distinct().ToArray();
+        return ids.Length == 0
+            ? new Dictionary<Guid, SupportCustomerRef>()
+            : (await customers.FindManyAsync(tenantId, ids, cancellationToken)).ToDictionary(customer => customer.Id);
+    }
+
+    private static SupportMemberDto ToMemberDto(Guid memberId, IReadOnlyDictionary<Guid, SupportMemberRef> membersById) =>
+        new(memberId, membersById.TryGetValue(memberId, out var member) ? member.DisplayName : UnknownName);
+
+    private static SupportCustomerRefDto ToCustomerDto(Guid customerId, IReadOnlyDictionary<Guid, SupportCustomerRef> customersById) =>
+        customersById.TryGetValue(customerId, out var customer)
+            ? new SupportCustomerRefDto(customer.Id, customer.Name, customer.IsActive)
+            : new SupportCustomerRefDto(customerId, UnknownName, false);
+
+    private static SupportRequesterDto ToRequesterDto(TicketRequester requester) => new(
+        requester.FirstNames,
+        requester.LastNames,
+        requester.BusinessName,
+        requester.DocumentType,
+        requester.DocumentNumber,
+        requester.Email,
+        requester.MobilePhone,
+        requester.LandlinePhone,
+        requester.CountryCode,
+        requester.Address);
+
+    private static SupportTicketEventDto ToEventDto(
+        SupportTicketEvent item,
+        EventDetails details,
+        IReadOnlyDictionary<Guid, SupportMemberRef> membersById,
+        IReadOnlyDictionary<Guid, SupportCustomerRef> customersById) =>
+        new(
+            item.Ordinal,
+            item.Kind.ToString(),
+            item.OccurredAt,
+            item.ActorMemberId is { } actorId ? ToMemberDto(actorId, membersById) : null,
+            details.FromStatus,
+            details.ToStatus,
+            details.ToMember is { } memberId ? ToMemberDto(memberId, membersById) : null,
+            details.FromTypeName,
+            details.ToTypeName,
+            details.ToCustomer is { } customerId ? ToCustomerDto(customerId, customersById) : null);
+
+    /// <summary>
+    /// Los campos de <see cref="SupportTicketEvent.Details"/> según su <see cref="SupportTicketEvent.Kind"/>, con la forma que escribe
+    /// <c>SupportTicket</c>: <c>Created</c> <c>{"to": estado}</c>; <c>StatusChanged</c> <c>{"from","to"}</c> estados;
+    /// <c>AssigneeChanged</c> y <c>CustomerChanged</c> <c>{"from","to"}</c> ids o null; <c>TypeChanged</c>
+    /// <c>{"from":{"id","name"},"to":{"id","name"}}</c>.
+    /// </summary>
+    private sealed record EventDetails(
+        string? FromStatus, string? ToStatus, Guid? ToMember, string? FromTypeName, string? ToTypeName, Guid? ToCustomer)
+    {
+        private static readonly EventDetails Empty = new(null, null, null, null, null, null);
+
+        public static EventDetails Parse(SupportTicketEvent item)
+        {
+            using var document = JsonDocument.Parse(item.Details);
+            var root = document.RootElement;
+            return item.Kind switch
+            {
+                SupportTicketEventKind.Created => Empty with { ToStatus = Text(root, "to") },
+                SupportTicketEventKind.StatusChanged => Empty with { FromStatus = Text(root, "from"), ToStatus = Text(root, "to") },
+                SupportTicketEventKind.AssigneeChanged => Empty with { ToMember = Id(root, "to") },
+                SupportTicketEventKind.CustomerChanged => Empty with { ToCustomer = Id(root, "to") },
+                SupportTicketEventKind.TypeChanged => Empty with
+                {
+                    FromTypeName = Text(Child(root, "from"), "name"),
+                    ToTypeName = Text(Child(root, "to"), "name"),
+                },
+                _ => Empty,
+            };
+        }
+
+        private static JsonElement Child(JsonElement element, string name) =>
+            element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var child) ? child : default;
+
+        private static string? Text(JsonElement element, string name) =>
+            Child(element, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
+
+        private static Guid? Id(JsonElement element, string name) =>
+            Child(element, name) is { ValueKind: JsonValueKind.String } value && value.TryGetGuid(out var id) ? id : null;
+    }
+}

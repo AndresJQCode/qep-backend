@@ -16,10 +16,32 @@ public static class SupportEndpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/support")
             .WithTags("Support");
 
+        MapTickets(group);
         MapTicketTypes(group);
         MapSettings(group);
 
         return endpoints;
+    }
+
+    private static void MapTickets(RouteGroupBuilder group)
+    {
+        group.MapPost("/tickets", CreateTicketAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Accepts<CreateTicketRequest>("application/json")
+            .Produces<SupportTicketDetailDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/tickets/{ticketId:guid}", GetTicketAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportTicketDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapGet("/assignees", ListAssigneesAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportAssigneesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
     }
 
     private static void MapTicketTypes(RouteGroupBuilder group)
@@ -78,6 +100,21 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
+
+    private static async Task<IResult> CreateTicketAsync(
+        Guid tenantId, CreateTicketRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var ticket = await dispatcher.SendAsync(CreateTicketCommand.From(tenantId, request), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticket.Id}", ticket);
+    }
+
+    private static async Task<IResult> GetTicketAsync(
+        Guid tenantId, Guid ticketId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetTicketQuery(tenantId, ticketId), cancellationToken));
+
+    private static async Task<IResult> ListAssigneesAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListSupportAssigneesQuery(tenantId), cancellationToken));
 
     private static async Task<IResult> ListTicketTypesAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
