@@ -20,4 +20,8 @@ internal sealed class AutomationInboxRecord
 
     /// <summary>Spec 2026-11-03: <see cref="Modules.Messaging.Application.AutomationInboxKinds"/>; las filas anteriores son <c>Engine</c>.</summary>
     public string Kind { get; set; } = Modules.Messaging.Application.AutomationInboxKinds.Engine;
+
+    /// <summary>Spec 2026-10-29 §6.1: qué procesador la reclama (smallint de <see cref="Domain.BotKind"/>: 1 el motor de chatbots, 2 el de
+    /// agentes). Las filas anteriores son de chatbot.</summary>
+    public short BotKind { get; set; } = (short)Domain.BotKind.Chatbot;
 }

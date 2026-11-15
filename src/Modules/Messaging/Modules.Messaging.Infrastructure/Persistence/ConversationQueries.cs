@@ -16,7 +16,8 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel, conversation.ResolutionReasonId, conversation.LastActivityAt,
         conversation.AutomationStatus, conversation.AutomationStartedAt, conversation.AutomationPausedAt, conversation.AutomationPausedByMemberId, conversation.AutomationPauseReason,
         conversation.AutomationChatbotId, conversation.AutomationStep, conversation.AutomationResumedAt,
-        conversation.BlockedAt, conversation.BlockedByMemberId, conversation.Imported, conversation.LastInboundWamid);
+        conversation.BlockedAt, conversation.BlockedByMemberId, conversation.Imported, conversation.LastInboundWamid,
+        conversation.AutomationBotKind, conversation.AutomationAgentId);
 
     public async Task<IReadOnlyList<ConversationRow>> ListAsync(
         Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken)

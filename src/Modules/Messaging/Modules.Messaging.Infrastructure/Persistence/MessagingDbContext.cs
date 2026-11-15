@@ -51,20 +51,28 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>I-2 (D-A5): una resuelta no la atiende nadie. Sólo <c>Resolve()</c> lo garantiza en el código; el CHECK es la red.</summary>
     public const string AutomationResolvedCheck = "status <> 'Resolved' OR automation_status = 'None'";
 
-    /// <summary>Spec 2026-10-21 §4.2: un asistente en curso (o pausado) siempre sabe qué chatbot es.</summary>
-    public const string AutomationChatbotCheck = "automation_status = 'None' OR automation_chatbot_id IS NOT NULL";
+    /// <summary>Spec 2026-10-29 §4.4 (reemplaza <c>CK_conversations_automation_chatbot</c>): un asistente en curso (o pausado) siempre sabe qué
+    /// bot es, y es uno solo: un chatbot o un agente de IA.</summary>
+    public const string AutomationBotCheck =
+        "automation_status = 'None' "
+        + "OR (automation_bot_kind = 1 AND automation_chatbot_id IS NOT NULL AND automation_agent_id IS NULL) "
+        + "OR (automation_bot_kind = 2 AND automation_agent_id IS NOT NULL AND automation_chatbot_id IS NULL)";
 
     /// <summary>Spec 2026-10-26 §3.1: el bloqueo son tres columnas que se escriben y se borran juntas.</summary>
     public const string BlockCheck =
         "(blocked_at IS NULL AND blocked_by_member_id IS NULL AND blocked_wa_id IS NULL) OR (blocked_at IS NOT NULL AND blocked_by_member_id IS NOT NULL AND blocked_wa_id IS NOT NULL)";
 
-    public const string SentByKindCheck = "sent_by_kind IN (1,2,4)";
+    /// <summary>Spec 2026-10-29 §4.4: el 3 es un agente de IA.</summary>
+    public const string SentByKindCheck = "sent_by_kind IN (1,2,3,4)";
 
     /// <summary>El autor es chatbot si y sólo si hay chatbot.</summary>
     public const string SentByChatbotCheck = "(sent_by_kind = 2) = (sent_by_chatbot_id IS NOT NULL)";
 
-    /// <summary>Un mensaje del chatbot o de una clave de API no lleva miembro.</summary>
-    public const string SentByOneCheck = "sent_by_kind NOT IN (2,4) OR sent_by_member_id IS NULL";
+    /// <summary>Spec 2026-10-29 §4.4: el autor es un agente si y sólo si hay agente.</summary>
+    public const string SentByAgentCheck = "(sent_by_kind = 3) = (sent_by_agent_id IS NOT NULL)";
+
+    /// <summary>Sólo un mensaje de un miembro lleva miembro: el del chatbot, el del agente y el de una clave de API no.</summary>
+    public const string SentByOneCheck = "sent_by_kind = 1 OR sent_by_member_id IS NULL";
 
     /// <summary>Spec 2026-10-30 §4.4: el autor es una clave si y sólo si hay clave, y el id y el nombre se escriben juntos.</summary>
     public const string SentByApiKeyCheck =
@@ -227,7 +235,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_conversations_automation_reason", AutomationReasonCheck);
             table.HasCheckConstraint("CK_conversations_automation_assignment", AutomationAssignmentCheck);
             table.HasCheckConstraint("CK_conversations_automation_resolved", AutomationResolvedCheck);
-            table.HasCheckConstraint("CK_conversations_automation_chatbot", AutomationChatbotCheck);
+            table.HasCheckConstraint("CK_conversations_automation_bot", AutomationBotCheck);
             table.HasCheckConstraint("CK_conversations_block", BlockCheck);
         });
         conversation.HasKey(value => value.Id);
@@ -276,6 +284,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.AutomationPausedByMemberId).HasColumnName("automation_paused_by_member_id");
         conversation.Property(value => value.AutomationPauseReason).HasColumnName("automation_pause_reason").HasConversion<string>().HasMaxLength(32);
         conversation.Property(value => value.AutomationChatbotId).HasColumnName("automation_chatbot_id");
+        // Spec 2026-10-29 §4.4: smallint con los valores de BotKind (1 Chatbot, 2 Agent); el agente es referencia blanda a Ai.
+        conversation.Property(value => value.AutomationBotKind).HasColumnName("automation_bot_kind").HasColumnType("smallint")
+            .HasConversion<short?>();
+        conversation.Property(value => value.AutomationAgentId).HasColumnName("automation_agent_id");
         conversation.Property(value => value.AutomationStep).HasColumnName("automation_step").HasMaxLength(120);
         conversation.Property(value => value.AutomationResumedAt).HasColumnName("automation_resumed_at");
         // Spec 2026-10-26 §3.1: el bloqueo del contacto. blocked_by_member_id es referencia blanda a la membresía (sin FK, como
@@ -341,6 +353,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_messages_event_shape", EventShapeCheck);
             table.HasCheckConstraint("CK_messages_sent_by_kind", SentByKindCheck);
             table.HasCheckConstraint("CK_messages_sent_by_chatbot", SentByChatbotCheck);
+            table.HasCheckConstraint("CK_messages_sent_by_agent", SentByAgentCheck);
             table.HasCheckConstraint("CK_messages_sent_by_one", SentByOneCheck);
             table.HasCheckConstraint("CK_messages_sent_by_api_key", SentByApiKeyCheck);
         });
@@ -367,6 +380,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         message.Property(value => value.SentByChatbotId).HasColumnName("sent_by_chatbot_id");
         message.Property(value => value.SentByApiKeyId).HasColumnName("sent_by_api_key_id");
         message.Property(value => value.SentByApiKeyName).HasColumnName("sent_by_api_key_name").HasMaxLength(80);
+        message.Property(value => value.SentByAgentId).HasColumnName("sent_by_agent_id");
         message.Property(value => value.ReplyToMessageId).HasColumnName("reply_to_message_id");
         message.Property(value => value.ReplyToWamid).HasColumnName("reply_to_wamid");
         message.Property(value => value.FailureCode).HasColumnName("failure_code");
@@ -612,7 +626,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     private static void ConfigureAutomationInbox(ModelBuilder modelBuilder)
     {
         var inbox = modelBuilder.Entity<AutomationInboxRecord>();
-        inbox.ToTable("automation_inbox", Schema, table => table.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')"));
+        inbox.ToTable("automation_inbox", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')");
+            table.HasCheckConstraint("CK_automation_inbox_bot_kind", "bot_kind IN (1,2)");
+        });
         inbox.HasKey(value => value.MessageId);
         inbox.Property(value => value.MessageId).HasColumnName("message_id").ValueGeneratedNever();
         inbox.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -627,6 +645,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         inbox.Property(value => value.Kind).HasColumnName("kind").HasMaxLength(16).HasDefaultValue(Modules.Messaging.Application.AutomationInboxKinds.Engine);
         inbox.HasIndex(value => value.NextAttemptAt, "IX_automation_inbox_pending").HasFilter("processed_at IS NULL");
         inbox.HasIndex(value => new { value.ConversationId, value.CreatedAt }, "IX_automation_inbox_conversation").HasFilter("processed_at IS NULL");
+        // Spec 2026-10-29 §6.1: cada procesador reclama sólo las suyas.
+        inbox.Property(value => value.BotKind).HasColumnName("bot_kind").HasDefaultValue((short)BotKind.Chatbot);
+        inbox.HasIndex(value => new { value.BotKind, value.NextAttemptAt }, "IX_automation_inbox_pending_kind").HasFilter("processed_at IS NULL");
     }
 
     /// <summary>Spec 2026-10-29 §4.3: la clave primaria es la conexión, así que una conexión tiene un solo bot.</summary>

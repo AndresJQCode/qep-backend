@@ -16,9 +16,11 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
     /// para terminar antes de que otra réplica retome la fila.</summary>
     internal static readonly TimeSpan[] Leases = [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(10)];
 
-    public async Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(
+        DateTimeOffset now, int batch, BotKind botKind, CancellationToken cancellationToken)
     {
         var leases = Leases;
+        var kind = (short)botKind;
         // Una fila que ya gastó sus intentos y cuyo lease venció es un worker que se cayó o se colgó sin llamar a RetryLaterAsync:
         // se cierra acá, o se reclamaría para siempre y frenaría su conversación. Con el lease vigente todavía puede estar en curso.
         await dbContext.Database.ExecuteSqlAsync(
@@ -28,13 +30,15 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             """, cancellationToken);
         // El NOT EXISTS mira también las filas en lease: una pendiente más vieja de la misma conversación frena a las demás hasta que se
         // cierre. created_at es distinto y creciente por mensaje (el procesador del webhook suma un microsegundo por posición); message_id sólo desempata filas de entregas distintas con el mismo instante.
+        // Spec 2026-10-29 §6.1: cada procesador reclama sólo su bot_kind, pero el NOT EXISTS mira todas las filas, de cualquier bot: un
+        // cambio de bot en la conexión no adelanta mensajes de la misma conversación.
         return await dbContext.Database.SqlQuery<AutomationInboxItem>(
             $"""
             UPDATE messaging.automation_inbox AS inbox
                SET next_attempt_at = {now} + ({leases})[LEAST(inbox.attempts + 1, cardinality({leases}))],
                    attempts = inbox.attempts + 1
               FROM (SELECT i.message_id FROM messaging.automation_inbox AS i
-                     WHERE i.processed_at IS NULL AND i.next_attempt_at <= {now}
+                     WHERE i.processed_at IS NULL AND i.bot_kind = {kind} AND i.next_attempt_at <= {now}
                        AND NOT EXISTS (SELECT 1 FROM messaging.automation_inbox AS o
                                         WHERE o.conversation_id = i.conversation_id AND o.processed_at IS NULL
                                           AND (o.created_at, o.message_id) < (i.created_at, i.message_id))

@@ -403,7 +403,7 @@ public sealed partial class EngineEndToEndTests
         await ExecuteAsync(f.ConnectionString,
             """
             UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = coalesce(automation_started_at, now()),
-                   automation_chatbot_id = @chatbot, automation_paused_at = now(), automation_pause_reason = @reason, version = version + 1
+                   automation_chatbot_id = @chatbot, automation_bot_kind = 1, automation_paused_at = now(), automation_pause_reason = @reason, version = version + 1
             """,
             ("chatbot", f.ChatbotId), ("reason", reason));
 
@@ -475,7 +475,7 @@ public sealed partial class EngineEndToEndTests
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeStartableAsync(database);
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, version = version + 1",
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, version = version + 1",
             ("c", f.ChatbotId));
 
         var response = await StartAsync(f);

@@ -206,4 +206,28 @@ public sealed class MessageMappingTests
         Assert.Equal([Andres], MessageMapping.MemberIdsOf([CustomerChangedRow()]));
         Assert.Equal(new[] { CustomerA, CustomerB }.Order(), MessageMapping.CustomerIdsOf([CustomerChangedRow()]).Order());
     }
+
+    // Spec 2026-10-29 §4.4: un mensaje de agente de IA (sent_by_kind = 3) no tiene miembro; un join al miembro lo perdería en silencio.
+    [Fact]
+    public void AnAgentMessageIsSignedByTheAgentAndNeverByAMember()
+    {
+        var agent = Guid.CreateVersion7();
+        var row = Row(MessageDirection.Outbound, MessageKind.Text, "hola") with { SentByAgentId = agent };
+
+        var dto = MessageMapping.ToDto(row, TenantId, Names, NoTargets, chatbotNames: new Dictionary<Guid, string> { [agent] = "Sofía" });
+
+        Assert.Equal(new AgentRefDto(agent, "Sofía"), dto.SentByAgent);
+        Assert.Null(dto.SentBy);
+        Assert.Null(dto.SentByChatbot);
+        Assert.Contains(agent, MessageMapping.ChatbotIdsOf([row]));
+        Assert.Empty(MessageMapping.MemberIdsOf([row]));
+    }
+
+    [Fact]
+    public void ADeletedAgentSignsAsAgenteIa()
+    {
+        var row = Row(MessageDirection.Outbound, MessageKind.Text, "hola") with { SentByAgentId = Guid.CreateVersion7() };
+
+        Assert.Equal(MessageMapping.DeletedAgentName, MessageMapping.ToDto(row, TenantId, Names, NoTargets).SentByAgent!.Name);
+    }
 }

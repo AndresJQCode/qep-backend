@@ -102,6 +102,14 @@ public sealed partial class Conversation
     /// <see cref="AutomationStatus"/> no sea <c>None</c> (<c>CK_conversations_automation_chatbot</c>).</summary>
     public Guid? AutomationChatbotId { get; private set; }
 
+    /// <summary>Spec 2026-10-29 §4.4: qué tipo de bot atiende; <c>null</c> en <c>None</c>. Una conversación termina con el bot con que empezó,
+    /// así que la cola rutea sus entrantes por este valor mientras el bot esté <c>Active</c>.</summary>
+    public BotKind? AutomationBotKind { get; private set; }
+
+    /// <summary>Spec 2026-10-29 §4.4: el agente de IA que atiende (referencia blanda a Ai). Con <see cref="BotKind.Agent"/> reemplaza a
+    /// <see cref="AutomationChatbotId"/>, que queda <c>null</c> (<c>CK_conversations_automation_bot</c>).</summary>
+    public Guid? AutomationAgentId { get; private set; }
+
     /// <summary>El paso del flujo donde va la conversación; lo escribe el motor.</summary>
     public string? AutomationStep { get; private set; }
 
@@ -367,8 +375,13 @@ public sealed partial class Conversation
     /// Spec 2026-10-26 D-3b: una pausa automática (<c>AdvisorTook</c>, <c>AdvisorReplied</c>, <c>AdvisorTransferred</c>) sin asesor, que
     /// es lo que deja un asesor que la tomó y la liberó, sí se puede arrancar: la pausa se borra. No toca <c>AutomationResumedAt</c>:
     /// el motor lo compara con el arranque de la corrida (P2-R25) y una hora posterior mataría la corrida nueva.</summary>
-    public void StartAutomation(Guid chatbotId, DateTimeOffset now)
+    public void StartAutomation(Guid chatbotId, DateTimeOffset now) => StartAutomation(BotRef.Chatbot(chatbotId), now);
+
+    /// <summary>Spec 2026-10-29 §4.4: lo mismo para cualquier bot. Con un agente la conversación guarda <see cref="AutomationAgentId"/> y no
+    /// un chatbot, y no tiene paso de flujo: el que quedara de una pausa anterior se borra.</summary>
+    public void StartAutomation(BotRef bot, DateTimeOffset now)
     {
+        ArgumentNullException.ThrowIfNull(bot);
         EnsureOpenForAutomation();
         if (AssignedMemberId is not null)
         {
@@ -387,11 +400,22 @@ public sealed partial class Conversation
 
         AutomationStatus = ConversationAutomationStatus.Active;
         AutomationStartedAt = now;
-        AutomationChatbotId = chatbotId;
+        SetBot(bot);
         AutomationPausedAt = null;
         AutomationPausedByMemberId = null;
         AutomationPauseReason = null;
         Touch(now);
+    }
+
+    private void SetBot(BotRef bot)
+    {
+        AutomationBotKind = bot.Kind;
+        AutomationChatbotId = bot.Kind == BotKind.Chatbot ? bot.Id : null;
+        AutomationAgentId = bot.Kind == BotKind.Agent ? bot.Id : null;
+        if (bot.Kind == BotKind.Agent)
+        {
+            AutomationStep = null;
+        }
     }
 
     /// <summary>Spec 2026-10-21 D-M14: el paso del flujo donde va la conversación. No hace <c>Touch</c>: lo escribe el motor en cada
@@ -543,7 +567,7 @@ public sealed partial class Conversation
 
         AutomationStatus = ConversationAutomationStatus.Active;
         AutomationStartedAt = now;
-        AutomationChatbotId = chatbotId;
+        SetBot(BotRef.Chatbot(chatbotId));
         AutomationPausedAt = null;
         AutomationPausedByMemberId = null;
         AutomationPauseReason = null;
@@ -666,6 +690,8 @@ public sealed partial class Conversation
         AutomationPausedByMemberId = null;
         AutomationPauseReason = null;
         AutomationChatbotId = null;
+        AutomationBotKind = null;
+        AutomationAgentId = null;
         AutomationStep = null;
         AutomationResumedAt = null;
     }

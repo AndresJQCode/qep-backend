@@ -18,7 +18,9 @@ public sealed class AutomationInboxTests
 
     private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, string ConnectionString, RegisteredTenant Tenant, HttpClient Client);
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool enqueue = true)
+    /// <param name="occupant">Spec 2026-10-29 §6.1: quién atiende la conexión en <c>connection_bots</c> (1 chatbot, 2 agente); sin ocupante
+    /// la ingesta no encola.</param>
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool enqueue = true, short? occupant = 1)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString, enqueue);
@@ -26,8 +28,41 @@ public sealed class AutomationInboxTests
         var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services => services.AddSingleton<IMessagingMediaStore>(new MemoryMediaStore())));
         var tenant = await RegisterTenantAsync(host);
         await EnableMessagingAsync(connectionString, tenant.TenantId);
-        await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Ventas", "111", "222");
+        var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Ventas", "111", "222");
+        if (occupant is { } kind)
+        {
+            await ExecuteAsync(
+                connectionString,
+                "INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at) VALUES (@c, @t, @k, gen_random_uuid(), 'Bot', now())",
+                ("c", connectionId), ("t", tenant.TenantId), ("k", kind));
+        }
+
         return new Fixture(factory, host, connectionString, tenant, host.CreateClient());
+    }
+
+    [Fact]
+    public async Task WithoutAnOccupantTheInboundIsNotEnqueued()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, occupant: null);
+
+        await PostTextAsync(f, "wamid.no-bot");
+
+        Assert.Equal(0, await InboxCountAsync(f));
+    }
+
+    [Fact]
+    public async Task AnAgentOccupantRoutesTheRowToTheAgentAndTheChatbotEngineDoesNotClaimIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, occupant: 2);
+
+        await PostTextAsync(f, "wamid.agent");
+
+        Assert.Equal(1, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.automation_inbox WHERE bot_kind = 2"));
+        var later = DateTimeOffset.UtcNow.AddMinutes(5);
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
+        Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Agent, Ct)));
     }
 
     private sealed class MemoryMediaStore : IMessagingMediaStore
@@ -137,7 +172,7 @@ public sealed class AutomationInboxTests
         using var _ = f.Factory;
         await PostTextAsync(f, "w1");
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_chatbot_id = @c, automation_paused_at = now(), automation_pause_reason = 'Manual'",
+            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, automation_paused_at = now(), automation_pause_reason = 'Manual'",
             ("c", Guid.CreateVersion7()));
 
         await PostTextAsync(f, "w2", 10);
@@ -217,7 +252,7 @@ public sealed class AutomationInboxTests
         var first = await ScalarAsync<Guid>(f.ConnectionString, "SELECT message_id FROM messaging.automation_inbox ORDER BY created_at, message_id LIMIT 1");
         var later = DateTimeOffset.UtcNow.AddMinutes(5);
 
-        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct));
+        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct));
 
         var item = Assert.Single(claimed);
         Assert.Equal(first, item.MessageId);
@@ -225,10 +260,10 @@ public sealed class AutomationInboxTests
         Assert.True(item.Opened);
         Assert.Equal(1, item.Attempts);
         // Mientras la primera sigue pendiente (aunque esté en lease) la segunda espera.
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, BotKind.Chatbot, Ct)));
 
         Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first, item.Attempts, "handled", Ct)));
-        var next = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var next = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
 
         Assert.NotEqual(first, next.MessageId);
         Assert.False(next.Opened);
@@ -251,12 +286,12 @@ public sealed class AutomationInboxTests
         await EnqueueManualStartAsync(f, connectionId, conversationId, later.AddMinutes(-1));
 
         // Mientras el entrante anterior siga pendiente, la manual espera.
-        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
         Assert.Equal(inboundId, first.MessageId);
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, BotKind.Chatbot, Ct)));
         Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "handled", Ct)));
 
-        var manual = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var manual = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
 
         Assert.NotEqual(inboundId, manual.MessageId);
         Assert.False(manual.Opened);
@@ -305,7 +340,7 @@ public sealed class AutomationInboxTests
         await EnqueueManualStartAsync(f, connectionId, Guid.CreateVersion7(), start);
         await EnqueueReleaseRunAsync(f, connectionId, Guid.CreateVersion7(), start.AddSeconds(1));
 
-        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(start.AddMinutes(5), 10, Ct));
+        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(start.AddMinutes(5), 10, BotKind.Chatbot, Ct));
 
         Assert.Equal(["Engine", "Engine", "ReleaseRun"], claimed.OrderBy(item => item.CreatedAt).Select(item => item.Kind));
     }
@@ -335,11 +370,11 @@ public sealed class AutomationInboxTests
         // Un entrante posterior de la misma conversación: una fila Engine más nueva.
         await EnqueueManualStartAsync(f, connectionId, conversationId, now.AddSeconds(1));
 
-        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, Ct)));
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, BotKind.Chatbot, Ct)));
         Assert.Equal(AutomationInboxKinds.ReleaseRun, first.Kind);
         Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "skipped", Ct)));
 
-        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, Ct)));
+        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, BotKind.Chatbot, Ct)));
         Assert.Equal(AutomationInboxKinds.Engine, second.Kind);
     }
 
@@ -385,11 +420,11 @@ public sealed class AutomationInboxTests
         var now = DateTimeOffset.UtcNow.AddMinutes(5);
 
         // El primer reclamo toma un lease de 30 s: antes de que venza, nadie más lo ve.
-        Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now, 10, Ct)));
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(20), 10, Ct)));
-        var claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31), 10, Ct)));
+        Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now, 10, BotKind.Chatbot, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(20), 10, BotKind.Chatbot, Ct)));
+        var claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31), 10, BotKind.Chatbot, Ct)));
         // El segundo es de 2 min.
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31).AddSeconds(100), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31).AddSeconds(100), 10, BotKind.Chatbot, Ct)));
 
         for (var attempt = 3; attempt <= 5; attempt++)
         {
@@ -397,14 +432,14 @@ public sealed class AutomationInboxTests
             Assert.True(await WithInboxAsync(f, inbox => inbox.RetryLaterAsync(f.Tenant.TenantId, id, token, TimeSpan.FromSeconds(1), Ct)));
             Assert.Equal("false", await ScalarAsync<string>(f.ConnectionString, "SELECT (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
             var at = now.AddHours(attempt);
-            claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(at, 10, Ct)));
+            claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(at, 10, BotKind.Chatbot, Ct)));
         }
 
         Assert.Equal(5, claimed.Attempts);
         Assert.True(await WithInboxAsync(f, inbox => inbox.RetryLaterAsync(f.Tenant.TenantId, id, claimed.Attempts, TimeSpan.FromSeconds(1), Ct)));
 
         Assert.Equal("failed|true", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome || '|' || (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddDays(1), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddDays(1), 10, BotKind.Chatbot, Ct)));
     }
 
     /// <summary>M4: un worker que se pasó de su lease no cierra ni reprograma la fila que otra réplica ya volvió a reclamar.</summary>
@@ -415,7 +450,7 @@ public sealed class AutomationInboxTests
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
         await PostTextAsync(f, "w1");
-        var item = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(DateTimeOffset.UtcNow.AddMinutes(5), 10, Ct)));
+        var item = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(DateTimeOffset.UtcNow.AddMinutes(5), 10, BotKind.Chatbot, Ct)));
         Assert.Equal(1, item.Attempts);
         // Otra réplica la reclamó tras vencer el lease: attempts avanzó y el testigo del primer worker quedó viejo.
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.automation_inbox SET attempts = 2");
@@ -545,11 +580,11 @@ public sealed class AutomationInboxTests
         await PostAsync(f, MetaPayloads.InboundTwoTexts("111", "573001234567", ("w1", "primero"), ("w2", "segundo"), DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600));
         var later = DateTimeOffset.UtcNow.AddMinutes(5);
 
-        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
         Assert.Equal("primero", (await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, first.MessageId, Ct)))!.Text);
         await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "handled", Ct));
 
-        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
         Assert.Equal("segundo", (await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, second.MessageId, Ct)))!.Text);
         // M5: el microsegundo por posición sólo corre la cola; los dos mensajes guardan el mismo instante de ingesta.
         Assert.Equal(1L, await ScalarAsync<long>(f.ConnectionString, "SELECT count(DISTINCT created_at) FROM messaging.messages WHERE direction = 1"));
@@ -568,10 +603,10 @@ public sealed class AutomationInboxTests
         // El worker se cuelga: reclama, nunca llama a Complete ni a RetryLater, y el lease vence.
         for (var attempt = 1; attempt <= 5; attempt++)
         {
-            Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(attempt), 10, Ct)));
+            Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(attempt), 10, BotKind.Chatbot, Ct)));
         }
 
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(6), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(6), 10, BotKind.Chatbot, Ct)));
         Assert.Equal("failed|true", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome || '|' || (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
     }
 

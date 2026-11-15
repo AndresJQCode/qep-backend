@@ -65,6 +65,7 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
             $"""
             UPDATE messaging.conversations SET automation_chatbot_id = {chatbotId}
              WHERE id = {conversationId} AND tenant_id = {tenantId} AND automation_status = 'Active'
+               AND automation_bot_kind IS DISTINCT FROM 2
             """, cancellationToken) > 0;
 
     public async Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)

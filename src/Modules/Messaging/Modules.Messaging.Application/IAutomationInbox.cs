@@ -35,8 +35,9 @@ public interface IAutomationInbox
     // Complete y RetryLater toman la hora del reloj; Claim recibe `now` para que los leases y la regla «la más vieja de la conversación» se
     // comparen contra un solo instante, el que el worker usa en toda su pasada.
     /// <summary>Reclama hasta <paramref name="batch"/> filas vencidas con <c>SKIP LOCKED</c>, sólo la más vieja pendiente de cada
-    /// conversación (el orden del cliente importa), y las deja en lease: 30 s el primer intento, 2 min el segundo y 10 min desde el tercero.</summary>
-    Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken);
+    /// conversación (el orden del cliente importa), y las deja en lease: 30 s el primer intento, 2 min el segundo y 10 min desde el tercero.
+    /// Spec 2026-10-29 §6.1: sólo filas de <paramref name="botKind"/>; la regla de «la más vieja» mira las de todos los bots.</summary>
+    Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, BotKind botKind, CancellationToken cancellationToken);
 
     // Complete y RetryLater reciben el Attempts del reclamo como testigo: si el motor se pasó de su lease, otra réplica ya volvió a
     // reclamar la fila (y Attempts avanzó), y el worker atrasado no puede cerrarla ni reprogramarla encima del que la tiene ahora.

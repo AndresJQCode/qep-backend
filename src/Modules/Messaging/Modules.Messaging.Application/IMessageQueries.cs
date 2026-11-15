@@ -24,7 +24,8 @@ public sealed record MessageRow(
     Guid? SentByApiKeyId = null,
     string? SentByApiKeyName = null,
     bool Imported = false,
-    bool RetryDisabled = false);
+    bool RetryDisabled = false,
+    Guid? SentByAgentId = null);
 
 public sealed record MessageMediaRow(string MimeType, string? FileName);
 

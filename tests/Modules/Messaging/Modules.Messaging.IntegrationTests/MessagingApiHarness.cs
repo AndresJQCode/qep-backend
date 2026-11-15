@@ -802,11 +802,11 @@ internal static class MessagingApiHarness
     }
 
     /// <summary>Spec 2026-10-21: deja la conversación abierta y sin asesor con el asistente activo (el motor de bots llega después). Desde
-    /// <c>CK_conversations_automation_chatbot</c> una conversación activa necesita su chatbot.</summary>
+    /// <c>CK_conversations_automation_bot</c> (spec 2026-10-29 §4.4) una conversación activa necesita su chatbot y su tipo de bot.</summary>
     public static async Task ActivateAutomationAsync(string connectionString, Guid conversationId, Guid chatbotId) =>
         Assert.Equal(1, await ExecuteAsync(
             connectionString,
-            "UPDATE messaging.conversations SET automation_status='Active', automation_started_at=now(), automation_chatbot_id=@chatbotId, version=version+1, updated_at=now() WHERE id=@id AND status='Open' AND assigned_member_id IS NULL",
+            "UPDATE messaging.conversations SET automation_status='Active', automation_started_at=now(), automation_chatbot_id=@chatbotId, automation_bot_kind=1, version=version+1, updated_at=now() WHERE id=@id AND status='Open' AND assigned_member_id IS NULL",
             ("id", conversationId), ("chatbotId", chatbotId)));
 
     /// <summary>Un proveedor de logs más: LoggerFactory recibe todos los ILoggerProvider registrados.</summary>

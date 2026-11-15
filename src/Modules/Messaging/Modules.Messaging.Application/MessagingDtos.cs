@@ -65,7 +65,9 @@ public sealed record ConversationSummary(
     /// alcanza, porque una conversación que abrió QEP tampoco tiene ventana. No es <c>history_managed</c>: esa bandera se apaga cuando
     /// el asesor toma, transfiere o marca leída la conversación, o cuando llega un eco, y nada de eso abre la ventana: el aviso se
     /// iría mientras la respuesta sigue exigiendo plantilla.</summary>
-    bool FromHistory = false)
+    bool FromHistory = false,
+    /// <summary>Spec 2026-10-29 §4.4 (BFF): el bot del asistente (chatbot o agente de IA) con su nombre; <c>null</c> sin asistente.</summary>
+    AutomationBotDto? AutomationBot = null)
 {
     /// <summary>Spec 2026-10-24 §4.1 (BFF): los otros clientes del tenant con el número de la conversación, sin el que ella muestra, por
     /// created_at, hasta 10; sin etiquetas. Viaja siempre. Se llena en toda respuesta de una sola conversación (detalle, PUT
@@ -157,10 +159,13 @@ public sealed record MessageEventDto(
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
 /// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>, <c>AttemptsExhausted</c>, <c>DataConsentRejected</c>, <c>DataConsentUnavailable</c>): uno desconocido
 /// lo pinta con el texto genérico. <c>AssignedTo</c> (spec 2026-10-25 D-8): a quién quedó asignada la conversación; <c>null</c> = sin asignar.
-/// Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
+/// Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.
+/// <c>Provider</c> (plan 2026-11-12): sólo en el traspaso de un agente de IA, el proveedor de su modelo (<c>anthropic</c>, <c>openai</c>);
+/// los kinds de agente son <c>AgentRequested</c>, <c>AgentLimitReached</c>, <c>AgentFailed</c>, <c>ProviderFailed</c>, <c>ModuleDisabled</c>
+/// y <c>WindowClosed</c>.</summary>
 public sealed record AutomationHandoffDto(
     string Kind, string? Code, string? NodeId, string? NodeTitle, string? ConnectionName, string? ConnectionReason,
-    AutomationHandoffHttpDto? Http, MemberRefDto? AssignedTo = null);
+    AutomationHandoffHttpDto? Http, MemberRefDto? AssignedTo = null, string? Provider = null);
 
 /// <summary>Spec 2026-10-24 §6: el bloque HTTP fallido que arrancó el paso del traspaso. <c>Status</c> sólo si la API respondió.</summary>
 public sealed record AutomationHandoffHttpDto(
@@ -205,7 +210,18 @@ public sealed record MessageDto(
     bool RetryDisabled = false,
     /// <summary>Las tarjetas de un <c>Contacts</c> (la persona compartió contactos de su agenda); <c>null</c> en todo otro kind o si el
     /// <c>details</c> guardado no se puede leer.</summary>
-    IReadOnlyList<SharedContactDto>? Contacts = null);
+    IReadOnlyList<SharedContactDto>? Contacts = null,
+    /// <summary>Spec 2026-10-29 §4.4: el agente de IA que escribió el saliente; excluyente con <c>SentBy</c>, <c>SentByChatbot</c> y
+    /// <c>SentByApiKey</c>.</summary>
+    AgentRefDto? SentByAgent = null);
+
+/// <summary>Spec 2026-10-29 §4.4: el agente de IA autor de un mensaje o que atiende una conversación, con el nombre que hoy tiene; uno
+/// borrado firma «Agente IA».</summary>
+public sealed record AgentRefDto(Guid Id, string Name);
+
+/// <summary>Spec 2026-10-29 §4.4 (BFF): el bot que atiende o atendió la conversación, para que el chip distinga «Agente IA» de «Chatbot» sin
+/// cruzar con otra pantalla. <c>Kind</c> es <c>chatbot</c> o <c>agent</c>.</summary>
+public sealed record AutomationBotDto(string Kind, Guid Id, string Name);
 
 /// <summary>Un contacto que el cliente compartió desde su agenda (<c>messages[].contacts</c> de Meta). BFF: la burbuja del asesor
 /// necesita los números y correos para llamar o escribir; antes de esto sólo se veía el nombre, que viaja en <c>text</c>.

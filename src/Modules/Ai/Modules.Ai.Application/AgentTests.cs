@@ -315,7 +315,7 @@ public sealed partial class AgentTestJobProcessor(
                 job.Complete(ModelJobStatus.Failed, "provider_failed", exhausted.Code, now);
                 break;
             case AgentTurnFailed failed:
-                var code = failed.Code ?? FailureCodeOf(failed.Reason);
+                var code = failed.Code ?? AgentHandoffCodes.For(failed.Reason);
                 test.RecordHandoff(job.Id, null, code, now);
                 job.Complete(ModelJobStatus.Failed, failed.Kind == AgentFailureKind.ProviderFailed ? "provider_failed" : "agent_failed", code, now);
                 break;
@@ -323,17 +323,6 @@ public sealed partial class AgentTestJobProcessor(
                 throw new InvalidOperationException($"Unknown outcome {outcome.GetType().Name}.");
         }
     }
-
-    /// <summary>Los topes de D-A20 y la respuesta inválida no tienen código en la tabla de errores (lo decide la Tarea 7); en la transcripción
-    /// de la prueba se muestra el motivo interno, en snake_case.</summary>
-    private static string FailureCodeOf(AgentFailureReason reason) => reason switch
-    {
-        AgentFailureReason.InvalidResponse => "invalid_response",
-        AgentFailureReason.ModelCallsExceeded => "model_calls_exceeded",
-        AgentFailureReason.ToolCallsExceeded => "tool_calls_exceeded",
-        AgentFailureReason.JobTimedOut => "job_timed_out",
-        _ => "provider_error",
-    };
 
     private string? EffortOf(AiProvider provider, string model) =>
         catalog.Providers.FirstOrDefault(entry => entry.Provider == provider)?.Models.FirstOrDefault(entry => entry.Id == model)?.Effort;

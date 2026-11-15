@@ -165,7 +165,8 @@ internal sealed partial class WebhookDeliveryProcessor
 
         // Spec 2026-10-14 (tiempo real): ya commiteado; un reenvío de Meta (null) no avisa nada. Un DM suena como uno de WhatsApp;
         // un echo movió la foto de la lista pero no es un entrante, así que sólo avisa que la conversación cambió.
-        // Spec 2026-10-21 D-M6: los chatbots no existen en Instagram; su ingesta nunca encola.
+        // Spec 2026-10-21 D-M6: los chatbots no existen en Instagram. Spec 2026-10-29 §6.1: la ingesta encola sólo lo que le toca a un agente
+        // de IA (bot_kind = 2); una conversación sin agente queda como antes, sin fila.
         var now = clock.UtcNow;
         if (@event.IsEcho)
         {
@@ -177,7 +178,8 @@ internal sealed partial class WebhookDeliveryProcessor
         }
         else
         {
-            var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, enqueueAutomation: false, cancellationToken, ConversationChannel.Instagram);
+            var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, automationOptions.Value.Enqueue, cancellationToken, ConversationChannel.Instagram,
+                onlyBotKind: BotKind.Agent);
             if (ingested is not null)
             {
                 // Sólo el entrante nuevo mide: un reenvío de Meta (null) no. Antes de NotifyAsync, que puede fallar.
