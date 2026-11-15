@@ -4859,7 +4859,8 @@ agregado (`SupportTicket.Assign`, `ChangeType`, `LinkCustomer`), así que vale p
 reabrirlo (`Resolved` → `Open`). La fusión de clientes no pasa por ahí: mueve tickets en cualquier estado. **El expediente se cura
 hasta resolver:** fijar o soltar un mensaje (`POST …/messages/{messageId}/pin` · `/release`) y «Seguir el hilo» (`PUT …/follow-thread`)
 se permiten en `Resolved` y responden el mismo `422 support.ticket.not_editable` en `Closed`, también apagar un hilo que ya estaba
-apagado (antes era `support.ticket.follow_closed`, que ya no existe). Responder se permite en cualquier estado, y el worker del hilo, la
+apagado, fijar uno ya fijado o soltar uno ya suelto (antes era `support.ticket.follow_closed`, que ya no existe). En fijar y soltar la
+guarda va antes que cualquier otra regla: en un cerrado, el 422 sale aunque el ticket no tenga conversación o el mensaje no esté vinculado. Responder se permite en cualquier estado, y el worker del hilo, la
 fusión y el borrado de clientes no pasan por esa guarda.
 
 **Reloj de resolución.** Los términos cuentan **de lunes a viernes** (owner, 2026-11-15, spec §13.4): en un tenant cuyo país (ajustes
@@ -5010,7 +5011,8 @@ correo cuando el canal la rechazó o falló (`send_failed`, `window_closed`, `co
 `support.ticket.reply_channel_unavailable`).
 
 **Códigos de falla.** Todo código que la pantalla lee de Soporte —el `failureCode` de una respuesta, el `ConsultAccess.FailureCode` de la
-información con el PIN y el `reason` de `reply-options`— sale de una sola lista, `SupportChannelReasons`
+información con el PIN, el `reason` de `reply-options` y el `cannotCreateReason` de la pestaña de Soporte de una conversación— sale de
+una sola lista, `SupportChannelReasons`
 (`Modules.Support.Application/ISupportReplyChannels.cs`). Los que vienen de Mensajería son copia de `SupportReplyReasons`, amarrada por
 `SupportFailureCodeParityTests`. El frontend traduce por esta lista.
 
@@ -5035,6 +5037,8 @@ información con el PIN y el `reason` de `reply-options`— sale de una sola lis
 | `no_author` | Ningún miembro activo puede firmar el envío por Mensajería (plan F11) | PIN |
 | `portal_only` | Un anónimo sólo se responde por la página de consulta | `reply-options` |
 | `portal_unavailable` | La página de consulta sólo responde a anónimos | `reply-options` |
+| `no_permission` | Quien mira no tiene `support.ticket.manage` (ya existía como literal; ahora vive en la lista) | Ficha de la conversación |
+| `send_pending` | «Reenviar PIN» reclamó el envío y todavía no sabe cómo terminó; si el proceso muere en el medio, queda así | PIN |
 
 **Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
 la pantalla lo sube con la sesión de subida de Mensajería
@@ -5091,17 +5095,28 @@ transacción, así un rechazo no gasta radicado. Con solicitante se guarda el co
 `customers` prendido y un único cliente con ese documento, el ticket queda vinculado; con cero o varios, el detalle los ofrece como
 candidatos. **Un anónimo** no guarda cliente —tampoco se lo vincula la consola: `PUT …/tickets/{id}/customer` responde `422
 support.ticket.anonymous_has_no_customer` y el detalle no ofrece candidatos—, foto del solicitante, documento, IP ni consentimiento, y sólo se responde por la página de
-consulta (canal `Portal`).
+consulta (canal `Portal`). La base lo respalda con `CK_tickets_anonymous` (migración `AddSupportAnonymousTicketCheck`): un anónimo no
+puede tener `customer_id` ni ninguna columna `requester_*`, tampoco por SQL crudo. Una fila de consentimiento por ticket
+(`IX_consents_ticket`); un segundo consentimiento del mismo ticket es `409 support.public.consent_duplicate`, que hoy ningún camino
+alcanza.
+
+**Turnstile se gasta antes de validar los adjuntos.** El token es de un solo uso y radicar lo verifica primero (anti-abuso: nada más
+corre sin él). Por eso **la página reinicia el widget después de cualquier `422` de `POST /tickets`** —un adjunto inválido, un campo, la
+versión del formulario—, no sólo después de `support.public.captcha_invalid`: reintentar con el mismo token responde
+`captcha_invalid` aunque el resto ya esté bien.
 
 **PIN.** Seis dígitos aleatorios. Todo ticket nace con uno, también el manual y el que se abre desde una conversación, y **sólo se guarda
 su hash** (PBKDF2, `support.ticket_access.pin_hash`). La clave vive en `ticket_access` y no en el ticket, para que un
 intento fallido no le suba la versión. Consultar con radicado y PIN: un radicado que no existe, un PIN errado y un radicado bloqueado
-responden lo mismo, `422 support.public.lookup_failed`, y los tres pagan el mismo PBKDF2. **Cinco fallos seguidos bloquean ese radicado
+responden lo mismo, `422 support.public.lookup_failed`, y los tres pagan el mismo PBKDF2 y hacen las mismas lecturas (el contexto de
+plazos y la búsqueda de la clave; un radicado mal escrito busca el 0, que no existe). **Cinco fallos seguidos bloquean ese radicado
 15 minutos**, también para el PIN correcto; un acierto pone el contador en cero. Mirar el bloqueo y anotar el intento ocurren con la fila
 de `ticket_access` tomada (`SELECT … FOR UPDATE`), así N intentos a la vez cuentan N. «Reenviar PIN» responde siempre `202`: si el ticket
 tiene a dónde (ver abajo) y pasaron 10 minutos desde el último envío, genera un PIN nuevo y lo manda **al destino registrado, nunca a uno
-del visitante**; el nuevo reemplaza al viejo sólo si salió, y reenviar no desbloquea. La consola ve en el detalle (`ConsultAccess`)
-cuándo y por qué canal salió la información y por qué no, nunca el PIN.
+del visitante**; el nuevo reemplaza al viejo sólo si salió, y reenviar no desbloquea. El reenvío reclama el envío antes de mandar
+(enfriamiento y `send_pending`, confirmados) y anota el resultado real después: si el proceso muere entre los dos, la consola ve
+`send_pending`, nunca un envío exitoso que no ocurrió. La consola ve en el detalle (`ConsultAccess`) cuándo y por qué canal salió la
+información y por qué no, nunca el PIN.
 
 **A dónde va la información con el PIN** (`SupportOpeningSender`, plan F10, F11 y F23 a F26). La misma regla al crear el ticket y al
 reenviar el PIN; al crear, sale **después** de confirmar el ticket y anota su resultado en un segundo guardado que toca sólo
@@ -5146,8 +5161,10 @@ si sale `available`, mandar el par al radicar.
 - **Tope por tenant** (owner, 2026-11-15): el limitador por IP no frena a muchas IPs a la vez llenando el bucket. Un tenant tiene a lo
   sumo **200** subidas abiertas en las últimas 24 h que ningún ticket reclamó (`MaxPendingPerTenantPerDay`; las reclamadas no cuentan);
   pasado eso, abrir responde `422 support.public.attachments_busy`, sin tocar Storage, y la página dice «Estamos recibiendo muchos
-  archivos. Intenta más tarde.». Es un tope blando: dos aperturas simultáneas en el borde pueden pasarlo por una. El conteo es SQL crudo
-  en `SupportAttachmentStorage` (Bootstrapper) sobre `storage.file_resources` y `support.ticket_attachments`.
+  archivos. Intenta más tarde.». El tope es exacto: contar y abrir van con un candado de base por tenant
+  (`pg_advisory_xact_lock(20261115, hashtext(tenant_id))`, `SupportPublicAttachmentsLock`), así aperturas a la vez en el borde hacen
+  fila. El conteo es SQL crudo en `SupportAttachmentStorage` (Bootstrapper) sobre `storage.file_resources` (servido por
+  `IX_file_resources_tenant_owner_created`) y `support.ticket_attachments`.
 - **`uploadKey`** es un GUID aleatorio (v4) que sólo recibe quien abrió la sesión y que Storage guarda como `OwnerId` del archivo. Completar
   y radicar exigen el par `(fileId, uploadKey)` del mismo tenant: otra clave, un id que no existe, un archivo sin subir o en cuarentena
   responden lo mismo, `422 support.public.attachment_invalid`. Completar antes de que termine el `PUT` es `428
@@ -5157,6 +5174,10 @@ si sale `available`, mandar el par al radicar.
 - **Lo que nadie reclama se purga.** El barrido de staging de Storage borra, pasada la retención (`Storage:StagingRetentionHours`, 24
   h), el adjunto `Available` que ninguna sonda retiene; la de Soporte (`SupportAttachmentReferenceProbe`) retiene los reclamados. Mira
   sólo los de la última semana pasada la retención: un adjunto sin reclamar más viejo (el worker caído más de siete días) queda sin purgar.
+  La fila se guarda (`Purged`) antes de borrar los objetos: si borrar falla, queda un objeto huérfano en el bucket y un log de error,
+  nunca una fila `Available` que apunta a un objeto borrado. Queda abierta una carrera en el borde de las 24 h: un radicado que reclama
+  el archivo justo después de que la sonda dijo «nadie lo retiene» y antes de que la purga se guarde. Exige que la página espere 24 h
+  entre subir y radicar.
 - **Consola:** el detalle del ticket trae `attachments` (`id`, `fileName`, `mimeType`, `sizeBytes`) y
   `GET /api/v1/tenants/{tenantId}/support/tickets/{ticketId}/attachments/{attachmentId}/download` (`support.ticket.view`) responde `{ url }`
   firmada de 5 minutos, sin pedir `storage.file.read`; audita `support.ticket.attachment_downloaded`. Otro tenant es 403; un adjunto que
@@ -5197,8 +5218,10 @@ tenancy.slug.reserved`). Antes de desplegar se corre la consulta de los avisos d
 (ni al ticket ni a la versión: guarda su propia foto del texto) y el `Down` de `AddSupportPublicForm` no las borra.
 
 **Migraciones:** `Support` `AddSupportPublicForm` (`form_versions`, `legal_text_versions`, `consents`, `ticket_access` y las columnas del
-formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attachments`) y `Support` `AddSupportFormAllowAttachments`
-(`form_versions.allow_attachments`, `true` por defecto). Storage no tiene migración: `SupportTicket` se guarda por nombre en `owner_type`.
+formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attachments`), `Support` `AddSupportFormAllowAttachments`
+(`form_versions.allow_attachments`, `true` por defecto), `Support` `AddSupportAnonymousTicketCheck` (`CK_tickets_anonymous`) y `Storage`
+`AddFileResourceTenantOwnerCreatedIndex` (`IX_file_resources_tenant_owner_created`, para el tope de subidas). `SupportTicket` se guarda
+por nombre en `owner_type`, sin migración.
 
 ### API externa
 

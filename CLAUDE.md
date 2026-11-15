@@ -958,7 +958,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   (cuerpo de `POST …/template-management/support-reply`) tiene la misma restricción en Meta; la aprobación es por conexión.
 - **Un código de falla nuevo de Soporte va a `SupportChannelReasons` y, si sale de Mensajería, también a su copia en
   `SupportReplyOutbound`; `SupportFailureCodeParityTests` los amarra. El frontend traduce por esta lista** (Tarea 8a, owner 2026-11-15).
-  Es el único vocabulario del `failureCode` de una respuesta, del `ConsultAccess.FailureCode` y del `reason` de `reply-options`: un
+  Es el único vocabulario del `failureCode` de una respuesta, del `ConsultAccess.FailureCode`, del `reason` de `reply-options` y del
+  `cannotCreateReason` de la pestaña de Soporte de una conversación (`no_permission`, `messaging_disabled`): un
   literal suelto en `Modules.Support.*` es un código que la pantalla no conoce.
 - **El formulario público de Soporte (`/api/v1/public/support/{tenantSlug}`) no se prueba con el stub de auth** (fase 3). En modo stub
   `RequireCsrfHeaderMiddleware` ni se registra y la cookie no se valida: una prueba con stub pasa aunque la exención por prefijo
@@ -1004,7 +1005,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `SupportAttachmentReferenceProbe` (Support.Infrastructure). Por eso el barrido de staging sólo pregunta por los adjuntos `SupportTicket`
   de la última semana pasada la retención (`StagingCleanupProcessor.SupportAttachmentLookback`): sin el tope, cada tick le preguntaría a
   las sondas por todos los adjuntos de la historia. Un camino nuevo que vincule un archivo `SupportTicket` a algo que no sea
-  `support.ticket_attachments` necesita su propia sonda, o el barrido lo borra a las 24 h.
+  `support.ticket_attachments` necesita su propia sonda, o el barrido lo borra a las 24 h. **Esa purga guarda la fila antes de borrar
+  los objetos**, al revés que la de comprobantes: un guardado fallido no deja una fila `Available` sin objeto que un radicado podría
+  reclamar; un borrado fallido deja un objeto huérfano y un log (`AFailedObjectDeleteLeavesTheRowPurgedNotAvailable`). No lo «alinees»
+  con el orden de los comprobantes.
+- **Abrir una subida anónima va con el candado del tenant** (`SupportPublicAttachmentsLock`, `pg_advisory_xact_lock(20261115,
+  hashtext(tenant_id))`, en `ISupportUnitOfWork.LockPublicAttachmentsAsync`): contar las abiertas sin reclamar y abrir la nueva van con
+  él tomado, y Storage confirma la fila antes de que se suelte. Sin él el tope de 200 se pasa con aperturas a la vez
+  (`ConcurrentOpensAtTheEdgeNeverExceedTheCap`). El número no lo usa ningún otro candado de dos claves; uno nuevo elige otro.
+- **Un ticket anónimo no tiene cliente ni ninguna columna `requester_*`, y la base lo exige** (`CK_tickets_anonymous`). Una columna nueva
+  de la foto del solicitante entra en `SupportDbContext.RequesterColumns` y en una migración que rehaga el CHECK, o el anónimo puede
+  llevarla sin error.
 - **El formulario público no acepta Word ni Excel mientras `Storage:ClamAv:Enabled` esté apagado en producción** (owner 2026-11-15): un
   adjunto anónimo con macros lo abre un asesor. Sumar un tipo de Office exige prender ClamAV primero. La lista vive en
   `SupportPublicAttachmentRules` (PDF, JPEG, PNG, WebP; `image/jpg` se toma como `image/jpeg`) y viaja a la página en
