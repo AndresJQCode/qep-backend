@@ -184,6 +184,9 @@ public static class AiInboxOutcomes
     public const string Interrupted = "interrupted";
     public const string ModuleDisabled = "module_disabled";
     public const string ProviderUnavailable = "provider_unavailable";
+
+    /// <summary>Revisión final, hallazgo 4: la conversación era del agente, que no la puede retomar; pasó a una persona.</summary>
+    public const string HandedOff = "handed_off";
     public const string Retry = "retry";
     public const string Locked = "locked";
 }

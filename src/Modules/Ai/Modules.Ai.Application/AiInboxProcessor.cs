@@ -62,6 +62,9 @@ public sealed partial class AiInboxProcessor(
     [LoggerMessage(Level = LogLevel.Warning, Message = "AI agent {AgentId} of tenant {TenantId} has a published version that cannot be read; it does not take conversation {ConversationId}.")]
     private static partial void LogUnreadableVersion(ILogger logger, Guid tenantId, Guid agentId, Guid conversationId);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "AI agent {AgentId} of tenant {TenantId} cannot take conversation {ConversationId} back (paused, deleted or without a readable version); it is handed off.")]
+    private static partial void LogCannotTakeBack(ILogger logger, Guid tenantId, Guid agentId, Guid conversationId);
+
     public async Task<string> ProcessAsync(AiInboxItem item, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(item);
@@ -174,6 +177,17 @@ public sealed partial class AiInboxProcessor(
             }
 
             agent = await sessions.FindAgentAsync(item.TenantId, attending, cancellationToken);
+
+            // Revisión final, hallazgo 4: la conversación ya es del agente (Active), así que no traspasar la dejaba asignada a un agente que
+            // nunca contesta. Un agente pausado no abre sesiones nuevas (D-A6: sólo terminan las vivas); uno borrado o sin versión que se pueda
+            // leer, tampoco. La conversación pasa a una persona.
+            if (agent is not { Status: AgentStatus.Active, PublishedVersion: { } readable } || !AiProvider.TryParse(readable.Provider, out _))
+            {
+                LogCannotTakeBack(logger, item.TenantId, attending, item.ConversationId);
+                await HandOffAsync(
+                    item, new AgentHandoffCause(HandoffCauseKind.AgentFailed, null, agent?.PublishedVersion?.Provider), null, cancellationToken);
+                return AiInboxOutcomes.HandedOff;
+            }
         }
         else
         {
@@ -201,6 +215,15 @@ public sealed partial class AiInboxProcessor(
             var providerKey = provider!.Value;
             var reason = credential.Unavailable is { } unavailable ? unavailable.ToString() : "unknown";
             LogProviderUnavailable(logger, item.TenantId, agent.Id, item.ConversationId, providerKey, reason);
+            if (returned)
+            {
+                // Revisión final, hallazgo 4: en None la conversación queda en la bandeja como si no hubiera bot (C-19); en Active ya es del
+                // agente y sin traspaso nadie la vería.
+                await HandOffAsync(
+                    item, new AgentHandoffCause(HandoffCauseKind.ProviderFailed, AiErrorCodes.ProviderNotConfigured, providerKey),
+                    DestinationOf(version), cancellationToken);
+            }
+
             return AiInboxOutcomes.ProviderUnavailable;
         }
 
@@ -269,11 +292,40 @@ public sealed partial class AiInboxProcessor(
         jobs.Add(ModelJob.ForSession(Guid.CreateVersion7(), item.TenantId, session.Id, turn.Seq, now + timings.Debounce, now));
     }
 
+    /// <summary>Revisión final, hallazgo 4: el traspaso de una conversación que el agente tiene sin sesión viva. Si una persona la tomó en el
+    /// medio, ya tiene humano.</summary>
+    private async Task HandOffAsync(AiInboxItem item, AgentHandoffCause cause, Guid? assignTo, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await conversations.HandoffAsync(item.TenantId, item.ConversationId, cause, assignTo, cancellationToken);
+        }
+        catch (DomainException)
+        {
+            // Una persona la tomó entre la lectura y el traspaso.
+        }
+    }
+
+    private static Guid? DestinationOf(AgentVersion version)
+    {
+        var handoff = AgentConfig.FromJson(version.ConfigJson).Handoff;
+        return handoff.Destination == AgentHandoff.ToMember ? handoff.MemberId : null;
+    }
+
     private async Task StandDownAsync(
         AiInboxItem item, AiConversationState? conversation, AgentSession? session, DateTimeOffset now, CancellationToken cancellationToken)
     {
         if (session is null)
         {
+            // Revisión final, hallazgo 4: sin sesión viva, una conversación que el agente tiene (una persona se la devolvió) también pasa a
+            // la bandeja; si no, quedaba asignada a un agente que con el módulo apagado nunca contesta.
+            if (conversation?.AutomationAgentId is { } agentId && conversation.IsAttendedBy(agentId))
+            {
+                var agent = await sessions.FindAgentAsync(item.TenantId, agentId, cancellationToken);
+                await HandOffAsync(
+                    item, new AgentHandoffCause(HandoffCauseKind.ModuleDisabled, null, agent?.PublishedVersion?.Provider), null, cancellationToken);
+            }
+
             return;
         }
 

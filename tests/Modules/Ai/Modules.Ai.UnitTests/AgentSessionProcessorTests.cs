@@ -491,6 +491,76 @@ public sealed class AgentSessionProcessorTests
         Assert.Equal((AgentSessionStatus.Failed, ModelJobStatus.Failed), (session.Status, job.Status));
     }
 
+    // Revisión final, hallazgo 4: una conversación que una persona le devolvió al agente (Active, sin sesión viva) ya es del agente. Sin la
+    // cuenta de su proveedor no se abre sesión, y la conversación pasa a una persona en vez de quedar con un agente que no contesta.
+    [Fact]
+    public async Task AReturnedConversationWithoutTheProviderAccountIsHandedOff()
+    {
+        var world = new World();
+        var agent = PublishedAgent(provider: "openai");
+        world.Sessions.Serving = agent;
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+
+        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+
+        Assert.Equal(AiInboxOutcomes.ProviderUnavailable, outcome);
+        Assert.Empty(world.Sessions.All);
+        var handoff = Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal(
+            (HandoffCauseKind.ProviderFailed, AiErrorCodes.ProviderNotConfigured, "openai"), (handoff.Cause.Kind, handoff.Cause.Code, handoff.Cause.Provider));
+    }
+
+    // Revisión final, hallazgo 4: un agente pausado no abre sesiones nuevas (D-A6), tampoco sobre una conversación devuelta.
+    [Fact]
+    public async Task AReturnedConversationOfAPausedAgentIsHandedOffWithoutASession()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        agent.Pause(Now);
+        world.Sessions.Serving = agent;
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        world.Credentials.Available.Add("anthropic");
+
+        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+
+        Assert.Equal(AiInboxOutcomes.HandedOff, outcome);
+        Assert.Empty(world.Sessions.All);
+        Assert.Empty(world.Jobs.Added);
+        Assert.Equal((HandoffCauseKind.AgentFailed, "anthropic"), (Assert.Single(world.Conversations.Handoffs).Cause.Kind, world.Conversations.Handoffs[0].Cause.Provider));
+    }
+
+    // Revisión final, hallazgo 4: el agente que tenía la conversación ya no existe.
+    [Fact]
+    public async Task AReturnedConversationOfADeletedAgentIsHandedOff()
+    {
+        var world = new World();
+        world.Conversations.State = State("Active", "Agent", Guid.CreateVersion7());
+        world.Credentials.Available.Add("anthropic");
+
+        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+
+        Assert.Equal(AiInboxOutcomes.HandedOff, outcome);
+        Assert.Empty(world.Sessions.All);
+        Assert.Equal(HandoffCauseKind.AgentFailed, Assert.Single(world.Conversations.Handoffs).Cause.Kind);
+    }
+
+    // Revisión final, hallazgo 4 (§6.8): con el módulo apagado, la conversación del agente sin sesión viva también pasa a la bandeja.
+    [Fact]
+    public async Task WithTheModuleOffAnAgentConversationWithoutSessionIsHandedOff()
+    {
+        var world = new World();
+        var agent = PublishedAgent(provider: "openai");
+        world.Sessions.Serving = agent;
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        world.Modules.Enabled = false;
+
+        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+
+        Assert.Equal(AiInboxOutcomes.ModuleDisabled, outcome);
+        var handoff = Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal((HandoffCauseKind.ModuleDisabled, "openai"), (handoff.Cause.Kind, handoff.Cause.Provider));
+    }
+
     private static AiModelResponse DraftCall() =>
         new(
             null,
