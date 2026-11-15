@@ -64,7 +64,9 @@ public sealed class QuotationResponseComposerClientContactsTests
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            new FixedQuotationSettingsStore());
+            new FixedQuotationSettingsStore(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 11, 30),
             paymentMethod: null, notes: null, QuotationParties.Empty, billingAccount: null, defaultCurrency: "COP",

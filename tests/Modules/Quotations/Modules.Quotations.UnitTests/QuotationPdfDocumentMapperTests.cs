@@ -132,7 +132,7 @@ public sealed class QuotationPdfDocumentMapperTests
     }
 
     private static WithholdingResponse WithholdingRow(string name, string type, decimal amount) =>
-        new(Guid.CreateVersion7(), name, type, "CO", 2.5m, null, null, null, 300_000m, amount);
+        new(Guid.CreateVersion7(), name, type, "CO", 2.5m, null, null, null, 300_000m, amount, 2.5m, false, null);
 
     // Sin esta bandera el documento tiene un IVA en cero que no explica por que: el lector no
     // puede distinguir "productos exentos" de "error de calculo".
@@ -586,5 +586,9 @@ public sealed class QuotationPdfDocumentMapperTests
         [],
         [],
         // El PDF no imprime los contactos: son del diálogo de envío.
+        [],
+        // Ni la explicación municipal: es de la pantalla.
+        null,
+        null,
         []);
 }

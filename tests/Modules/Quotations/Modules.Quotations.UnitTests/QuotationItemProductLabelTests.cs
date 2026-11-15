@@ -182,7 +182,9 @@ public sealed class QuotationItemProductLabelTests
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(catalog),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            new FixedQuotationSettingsStore());
+            new FixedQuotationSettingsStore(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
 
         return await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
@@ -201,7 +203,9 @@ public sealed class QuotationItemProductLabelTests
                 [ProductId] = new(ProductId, ProductId, liveName, liveCode, ImageUrl: null, Scales: []),
             }),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            new FixedQuotationSettingsStore());
+            new FixedQuotationSettingsStore(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
 
         return await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);

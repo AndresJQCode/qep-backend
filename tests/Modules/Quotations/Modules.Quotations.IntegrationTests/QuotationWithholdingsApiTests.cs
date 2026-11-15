@@ -51,6 +51,31 @@ public sealed class QuotationWithholdingsApiTests
         Assert.Null(quotation.BillingWithRetention);
     }
 
+    // Spec ReteICA por empresa §7.5: la Retefuente del cliente y la ReteICA de la empresa en su municipio (el cliente es agente
+    // ahí) dan dos líneas, y la retención es su suma.
+    [Fact]
+    public async Task TwoWithholdingsGiveTwoLinesAndTheirSum()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var retefuente = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
+        var reteIca = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m, cityId: setup.City.CityId);
+        await AssignCompanyWithholdingRateAsync(factory, setup.TenantId, setup.Account.CompanyId, reteIca);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [retefuente]);
+        await SetWithholdingAgentAsync(factory, setup.TenantId, clientId, setup.City.CityId);
+
+        var quotation = await CreateWithLinesAsync(setup, clientId, quantity: 3m);
+
+        // Base = 300.000: Retefuente 7.500 y ReteICA 2.898 (300.000 ≥ 4 × 50.000).
+        Assert.Equal(
+            new[] { (retefuente, 7_500m), (reteIca, 2_898m) },
+            quotation.Withholdings.Select(row => (row.TaxRateId, row.Amount)).ToArray());
+        Assert.Equal(10_398m, quotation.RetentionAmount);
+        Assert.Equal(quotation.Total - 10_398m, quotation.NetTotal);
+    }
+
     [Fact]
     public async Task SelectorRetefuenteServiciosAppliesFourPercent()
     {

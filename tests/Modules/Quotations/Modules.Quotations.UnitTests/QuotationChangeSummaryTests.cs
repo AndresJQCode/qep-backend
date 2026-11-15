@@ -310,4 +310,37 @@ public sealed class QuotationChangeSummaryTests
         Assert.Contains("retenciones", reordered, StringComparison.Ordinal);
         Assert.Null(same);
     }
+
+    // Spec ReteICA por empresa §7.8: los textos exactos del porcentaje editado, con el separador del tenant y hasta tres
+    // decimales sin ceros de sobra (plan P10).
+    [Fact]
+    public void WithholdingRateTextsFollowTheSpec()
+    {
+        Assert.Equal(
+            "Cambió la tarifa de ReteICA Bogotá de 0,966 % a 0,8 %.",
+            QuotationChangeSummary.WithholdingRateEdited("ReteICA Bogotá", 0.966m, 0.8m, Colombian));
+        Assert.Equal(
+            "Restableció la tarifa de ReteICA Bogotá a 0,966 %.",
+            QuotationChangeSummary.WithholdingRateRestored("ReteICA Bogotá", 0.966m, Colombian));
+        Assert.Equal(
+            "Se volvió a calcular la ReteICA por cambio de municipio o de empresa; se descartó la tarifa editada (0,8 %).",
+            QuotationChangeSummary.WithholdingOverrideDiscarded("ReteICA", 0.8m, Colombian));
+        Assert.Equal(
+            "Cambió el municipio de la operación de Bogotá, D.C. a Medellín.",
+            QuotationChangeSummary.OperationCityChanged("Bogotá, D.C.", "Medellín"));
+        Assert.Equal(
+            "Aplicó ReteICA Bogotá, D.C. por facturación propia",
+            QuotationChangeSummary.ManualMunicipalWithholdingApplied("ReteICA", "Bogotá, D.C."));
+    }
+
+    [Fact]
+    public void PercentagesUseTheTenantSeparator()
+    {
+        var dot = HistoryFormat.For(
+            new("America/Bogota", "dd/MM/yyyy", "COP", Modules.Tenancy.Domain.TenantNumberFormats.DotDecimal));
+
+        Assert.Equal("0.966 %", dot.Percentage(0.966m));
+        Assert.Equal("4 %", Colombian.Percentage(4m));
+        Assert.Equal("2,5 %", Colombian.Percentage(2.5m));
+    }
 }

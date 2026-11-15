@@ -269,7 +269,10 @@ public static class QuotationEndpoints
                 request.Shipping,
                 ToItems(request),
                 request.GlobalScaleFloor,
-                request.IsRetail),
+                request.IsRetail,
+                OperationCityChoices.From(request.OperationCityId, "quotation"),
+                request.WithholdingPercentages,
+                request.ClearedWithholdingTypes),
             cancellationToken);
 
         return Results.Created(
@@ -293,7 +296,10 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
+                OperationCityChoices.From(request.OperationCityId, "quotation"),
+                request.WithholdingPercentages,
+                request.ClearedWithholdingTypes),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -325,7 +331,10 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
+                OperationCityChoices.From(request.OperationCityId, "quotation"),
+                request.WithholdingPercentages,
+                request.ClearedWithholdingTypes),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{quotation.Version}\"";
@@ -349,7 +358,10 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
+                OperationCityChoices.From(request.OperationCityId, "quotation"),
+                request.WithholdingPercentages,
+                request.ClearedWithholdingTypes),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));

@@ -103,7 +103,9 @@ public sealed class QuotationMinimumPurchaseTests
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            new FixedQuotationSettingsStore(Min200));
+            new FixedQuotationSettingsStore(Min200),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
 
         var response = await composer.ComposeAsync(TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
 

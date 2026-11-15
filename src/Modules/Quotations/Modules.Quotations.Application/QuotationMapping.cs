@@ -52,7 +52,8 @@ internal static class QuotationMapping
         [.. quotation.CustomerWithholdings.Select(ToRateDto)],
         [.. quotation.BillingWithholdings.Select(ToRateDto)],
         quotation.GlobalScaleFloor,
-        quotation.IsRetail);
+        quotation.IsRetail,
+        quotation.OperationCityId);
 
     /// <summary>Una retención aplicada tal como viaja (spec impuestos por tipo §9.3). La usa también el pedido.</summary>
     internal static WithholdingDto ToDto(DocumentWithholding withholding) => new(
@@ -65,11 +66,21 @@ internal static class QuotationMapping
         withholding.MinimumBaseUnit,
         withholding.TaxUnitValue,
         withholding.BaseAmount,
-        withholding.Amount);
+        withholding.Amount,
+        withholding.CatalogPercentage,
+        withholding.Overridden,
+        withholding.CityId);
 
     /// <summary>Una tasa congelada, aplique o no: lo que prellena un selector.</summary>
     internal static WithholdingTaxRateDto ToRateDto(DocumentWithholding withholding) => new(
-        withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Country, withholding.Percentage);
+        withholding.TaxRateId,
+        withholding.Name,
+        withholding.Type,
+        withholding.Country,
+        withholding.Percentage,
+        withholding.CatalogPercentage,
+        withholding.Overridden,
+        withholding.CityId);
 
     /// <summary>La entrega por envío con forma fija, también en recogida (spec 2026-10-17 §7).</summary>
     public static ShippingDto ShippingDtoOf(this Quotation quotation) => new(
@@ -88,7 +99,8 @@ internal static class QuotationMapping
         account is null
             ? null
             : new QuotationBillingAccountDto(
-                account.CompanyId, account.BankName, account.AccountNumber, account.Currency);
+                account.CompanyId, account.BankName, account.AccountNumber, account.Currency, account.Country,
+                account.CityId);
 
     private static QuotationPartyDto ToDto(QuotationParty party) => new(
         party.Id.Value,

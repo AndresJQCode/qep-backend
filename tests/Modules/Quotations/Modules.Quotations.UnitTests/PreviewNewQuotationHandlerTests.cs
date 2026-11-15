@@ -153,7 +153,8 @@ public sealed class PreviewNewQuotationHandlerTests
             new FixedTenantPriceRounding(),
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settings),
             new FixedTenantDefaultCurrency(),
-            new StubQuotationWithholdingLookup());
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
     }
 
     private static PreviewNewQuotationHandler Handler(

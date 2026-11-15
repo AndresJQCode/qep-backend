@@ -103,6 +103,30 @@ public static class QuotationChangeSummary
         ? "Marcó la cotización como detal: ninguna línea recibe descuento."
         : "Quitó el detal: las líneas vuelven a su descuento por escala.";
 
+    /// <summary>El asesor cambió el porcentaje de una retención municipal (spec ReteICA por empresa §7.8). Lo comparte el
+    /// historial del pedido: el texto es el mismo.</summary>
+    public static string WithholdingRateEdited(string name, decimal from, decimal to, HistoryFormat format) =>
+        Trim($"Cambió la tarifa de {name} de {format.Percentage(from)} a {format.Percentage(to)}.");
+
+    /// <summary>Volvió al porcentaje del catálogo.</summary>
+    public static string WithholdingRateRestored(string name, decimal catalog, HistoryFormat format) =>
+        Trim($"Restableció la tarifa de {name} a {format.Percentage(catalog)}.");
+
+    /// <summary>Una re-resolución (o «Sin retención») se llevó un porcentaje editado.</summary>
+    public static string WithholdingOverrideDiscarded(string type, decimal percentage, HistoryFormat format) =>
+        Trim($"Se volvió a calcular la {type} por cambio de municipio o de empresa; se descartó la tarifa editada ({format.Percentage(percentage)}).");
+
+    /// <summary>Cambió el municipio de la operación. El llamador no lo escribe cuando no había municipio antes (la primera
+    /// vez que se fija la empresa, o un documento anterior): el spec sólo tiene el texto «de … a …», y la empresa nueva ya
+    /// queda en el resumen como cuenta de cobro.</summary>
+    public static string OperationCityChanged(string from, string to) =>
+        Trim($"Cambió el municipio de la operación de {from} a {to}.");
+
+    /// <summary>Con facturación propia el asesor aplicó a mano la tasa municipal de la empresa (R11). Sin punto: va dentro
+    /// del resumen del <c>Edited</c>.</summary>
+    public static string ManualMunicipalWithholdingApplied(string type, string city) =>
+        Trim($"Aplicó {type} {city} por facturación propia");
+
     public static string Voided() => "Anulada.";
 
     public static string Expired() => "Vencida automáticamente al pasar su vigencia.";
@@ -302,6 +326,9 @@ public static class QuotationChangeSummary
         account.AccountNumber.Length <= 4
             ? $"{account.BankName} {account.Currency}"
             : $"{account.BankName} ···{account.AccountNumber[^4..]} {account.Currency}";
+
+    /// <summary>Varias frases en una sola fila del historial, recortada al ancho de la columna.</summary>
+    public static string Combine(IEnumerable<string> parts) => Trim(string.Join(" ", parts));
 
     private static string Trim(string summary) =>
         summary.Length <= MaxLength ? summary : summary[..(MaxLength - 1)] + "…";

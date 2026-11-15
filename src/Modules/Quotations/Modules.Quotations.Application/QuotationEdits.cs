@@ -55,6 +55,16 @@ public interface IQuotationEdits : IQuotationHeaderEdits
     /// toques"</b>: un frontend viejo no lo borra. Pasar a recoger en tienda lo limpia igual (P4).
     /// </summary>
     ShippingRequest? Shipping { get; }
+
+    /// <summary>El municipio de la operación que pidió el cuerpo (spec ReteICA por empresa §9.4, plan P1): ausente,
+    /// <c>null</c> (el de la empresa) o un id.</summary>
+    OperationCityChoice OperationCity { get; }
+
+    /// <summary>Los porcentajes de las retenciones municipales (§7.7); null conserva todos.</summary>
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages { get; }
+
+    /// <summary>Los tipos municipales con «Sin retención» (owner 2026-11-13); null o vacío = sin marca.</summary>
+    IReadOnlyList<string>? ClearedWithholdingTypes { get; }
 }
 
 /// <summary>

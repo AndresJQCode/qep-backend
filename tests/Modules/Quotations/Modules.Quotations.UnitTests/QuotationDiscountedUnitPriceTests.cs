@@ -65,7 +65,9 @@ public sealed class QuotationDiscountedUnitPriceTests
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new UnknownProductLookup(),
             new UnresolvedCompanyLookup(),
-            new FixedQuotationSettingsStore());
+            new FixedQuotationSettingsStore(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
 
         var response = await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);

@@ -1,3 +1,5 @@
+using Modules.Quotations.Domain;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>
@@ -27,7 +29,9 @@ public sealed class QuotationResponseComposer(
     IQuotationAdvisorLookup advisorLookup,
     IQuotationProductLookup productLookup,
     IQuotationCompanyLookup companyLookup,
-    IQuotationSettingsStore settingsStore)
+    IQuotationSettingsStore settingsStore,
+    IQuotationWithholdingLookup withholdingLookup,
+    IQuotationGeographyLookup geographyLookup)
     : IQuotationResponseComposer
 {
     public async Task<QuotationResponse> ComposeAsync(
@@ -56,6 +60,20 @@ public sealed class QuotationResponseComposer(
         var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
 
         var clientContacts = await ClientContactsAsync(customerLookup, tenantId, customer, cancellationToken);
+
+        // Con parte de facturación propia la fuente vigente son sus selectores (Quotation.ActiveWithholdings).
+        var ownBilling = quotation.Parties.Any(party => party.Role == nameof(QuotationPartyRole.Billing));
+        var municipal = await MunicipalWithholdingExplanation.ExplainAsync(
+            withholdingLookup,
+            geographyLookup,
+            tenantId,
+            quotation.ClientId,
+            quotation.BillingAccount,
+            quotation.OperationCityId,
+            ownBilling,
+            ownBilling ? quotation.BillingWithholdingTaxRates : quotation.CustomerWithholdingTaxRates,
+            MunicipalWithholdingExplanation.DateOf(quotation.CreatedAt),
+            cancellationToken);
 
         return new QuotationResponse(
             quotation.Id,
@@ -109,7 +127,10 @@ public sealed class QuotationResponseComposer(
             [.. quotation.Withholdings.Select(ToWithholdingResponse)],
             [.. quotation.CustomerWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
             [.. quotation.BillingWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
-            clientContacts);
+            clientContacts,
+            municipal.OperationCity,
+            municipal.BillingCompanyCity,
+            municipal.Entries);
     }
 
     /// <summary>Los contactos de la empresa del cliente (spec 2026-11-10 §4.6), en una consulta por documento. Un cliente que no
@@ -137,10 +158,14 @@ public sealed class QuotationResponseComposer(
         withholding.MinimumBaseUnit,
         withholding.TaxUnitValue,
         withholding.Base,
-        withholding.Amount);
+        withholding.Amount,
+        withholding.CatalogPercentage,
+        withholding.PercentageOverridden,
+        withholding.CityId);
 
     internal static WithholdingTaxRateResponse ToWithholdingTaxRateResponse(WithholdingTaxRateDto rate) =>
-        new(rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage);
+        new(rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.CatalogPercentage, rate.PercentageOverridden,
+            rate.CityId);
 
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la
     // respuesta abajo: `ClientId` es una referencia blanda entre módulos, y una cotización
