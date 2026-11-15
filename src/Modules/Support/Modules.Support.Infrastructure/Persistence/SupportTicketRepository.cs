@@ -102,7 +102,8 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
         return Searched(tickets, filter);
     }
 
-    // El radicado, el texto (asunto y solicitante) y los clientes que resolvió quien llama se unen por O: una sola caja de búsqueda.
+    // El radicado, el texto (asunto y nombres del solicitante, no su documento: plan, Tarea 9) y los clientes que resolvió quien
+    // llama se unen por O: una sola caja de búsqueda.
     private static IQueryable<SupportTicket> Searched(IQueryable<SupportTicket> tickets, SupportTicketFilter filter)
     {
         var pattern = LikeSearch.ContainsPattern(filter.SearchTerm);
@@ -123,7 +124,6 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
                 EF.Functions.ILike(ticket.Subject, like, LikeSearch.EscapeCharacter) ||
                 EF.Functions.ILike(ticket.Requester!.FirstNames!, like, LikeSearch.EscapeCharacter) ||
                 EF.Functions.ILike(ticket.Requester!.LastNames!, like, LikeSearch.EscapeCharacter) ||
-                EF.Functions.ILike(ticket.Requester!.BusinessName!, like, LikeSearch.EscapeCharacter) ||
-                EF.Functions.ILike(ticket.Requester!.DocumentNumber!, like, LikeSearch.EscapeCharacter))));
+                EF.Functions.ILike(ticket.Requester!.BusinessName!, like, LikeSearch.EscapeCharacter))));
     }
 }

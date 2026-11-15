@@ -7,7 +7,8 @@ namespace Modules.Support.Application;
 /// corriendo (<c>New</c>, <c>Open</c>, <c>WaitingInternal</c>) y se cruza con <paramref name="Statuses"/>: lo usan «vencidos» y «por
 /// vencer» (pre-flight R1). <paramref name="DueBefore"/> es estricto (<c>due_on &lt; DueBefore</c>); <paramref name="DueBetween"/>
 /// incluye los dos extremos. La búsqueda acepta el radicado (<paramref name="Number"/>), el texto (<paramref name="SearchTerm"/>,
-/// sobre asunto y solicitante) y los clientes que ya resolvió quien llama (<paramref name="SearchCustomerIds"/>), unidos por O.
+/// sobre el asunto y los nombres y la razón social del solicitante, no su documento) y los clientes que ya resolvió quien llama
+/// (<paramref name="SearchCustomerIds"/>), unidos por O.
 /// </summary>
 public sealed record SupportTicketFilter(
     Guid TenantId,

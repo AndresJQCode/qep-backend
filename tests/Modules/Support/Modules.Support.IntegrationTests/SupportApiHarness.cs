@@ -137,6 +137,19 @@ internal static class SupportApiHarness
         await update.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Borra la fila del cliente con SQL, sin pasar por Customers: simula un cliente que ya no se resuelve.</summary>
+    public static async Task DeleteCustomerAsync(QepApiFactory factory, Guid customerId)
+    {
+        var connectionString = factory.Services
+            .GetRequiredService<IConfiguration>()
+            .GetConnectionString("QepDatabase")!;
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var delete = new NpgsqlCommand("DELETE FROM customers.customers WHERE id = @id", connection);
+        delete.Parameters.AddWithValue("id", customerId);
+        await delete.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     /// <summary>
     /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> y <c>advisor</c> conceden
     /// <c>support.ticket.manage</c>, <c>billing</c> no. <paramref name="removed"/> la deja quitada.

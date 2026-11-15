@@ -25,6 +25,12 @@ public static class SupportEndpoints
 
     private static void MapTickets(RouteGroupBuilder group)
     {
+        group.MapGet("/tickets", ListTicketsAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportTicketPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/tickets", CreateTicketAsync)
             .RequireAuthorization(SupportPermissions.Manage)
             .Accepts<CreateTicketRequest>("application/json")
@@ -117,6 +123,20 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
+
+    private static async Task<IResult> ListTicketsAsync(
+        Guid tenantId,
+        string? status,
+        Guid? typeId,
+        string? assignee,
+        string? due,
+        string? search,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        int page = 1,
+        int pageSize = ListTicketsQuery.DefaultPageSize) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, page, pageSize), cancellationToken));
 
     private static async Task<IResult> CreateTicketAsync(
         Guid tenantId, CreateTicketRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)

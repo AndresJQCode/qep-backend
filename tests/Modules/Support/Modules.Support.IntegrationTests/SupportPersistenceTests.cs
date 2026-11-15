@@ -444,6 +444,48 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal([resolved.Id], byNumber.Items.Select(ticket => ticket.Id));
     }
 
+    [Fact]
+    public async Task TheSearchMatchesTheSubjectTheRequesterNamesAndTheGivenCustomers()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var actor = Guid.CreateVersion7();
+        var type = (await TypesAsync(factory, tenant))[0];
+        var customer = await SeedCustomerAsync(factory, tenant, "Novasteel SAS");
+        var bySubject = SupportTicket.CreateManual(
+            SupportTicketId.New(), tenant, 1, type, "Factura de octubre", "Descripción", ManualIntakeMedium.Phone,
+            SupportReplyChannel.Email, null,
+            new TicketRequester("Ana", "Gómez", null, "CC", "1020304050", "ana@example.com", null, null, "CO", null),
+            null, actor, At(11, 2), Clock);
+        var byRequester = SupportTicket.CreateManual(
+            SupportTicketId.New(), tenant, 2, type, "Garantía", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email,
+            null, new TicketRequester("Bruno", "Díaz", "Aceros 50% SAS", null, null, "bruno@example.com", null, null, "CO", null),
+            null, actor, At(11, 3), Clock);
+        var byCustomer = SupportTicket.CreateManual(
+            SupportTicketId.New(), tenant, 3, type, "Pedido incompleto", "Descripción", ManualIntakeMedium.Phone,
+            SupportReplyChannel.Email, customer, null, null, actor, At(11, 4), Clock);
+        foreach (var ticket in new[] { bySubject, byRequester, byCustomer })
+        {
+            await SaveAsync(factory, ticket);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
+        async Task<IEnumerable<SupportTicketId>> SearchAsync(string? term, IReadOnlyCollection<Guid>? customers = null) =>
+            (await tickets.ListAsync(Filter(tenant) with { SearchTerm = term, SearchCustomerIds = customers }, Ct)).Items.Select(item => item.Id);
+
+        Assert.Equal([bySubject.Id], await SearchAsync("FACTURA"));
+        Assert.Equal([byRequester.Id], await SearchAsync("díaz"));
+        Assert.Equal([byRequester.Id], await SearchAsync("bruno"));
+        // Los comodines del usuario son literales: «50%» no es «50 y cualquier cosa».
+        Assert.Equal([byRequester.Id], await SearchAsync("50%"));
+        Assert.Equal([byCustomer.Id], await SearchAsync("sin coincidencias", [customer]));
+        // El documento no entra en la búsqueda de texto (plan, Tarea 9: asunto y nombres del solicitante).
+        Assert.Empty(await SearchAsync("1020304050"));
+        Assert.Equal([byCustomer.Id, byRequester.Id, bySubject.Id], await SearchAsync("   "));
+        Assert.Equal([byCustomer.Id, byRequester.Id, bySubject.Id], await SearchAsync(null));
+    }
+
     private static SupportTicketFilter Filter(Guid tenant) =>
         new(tenant, Statuses: null, TypeId: null, AssigneeMemberId: null, UnassignedOnly: false, RunningOnly: false, DueBefore: null,
             DueBetween: null, Number: null, SearchTerm: null, SearchCustomerIds: null, Page: 1, PageSize: 25);
