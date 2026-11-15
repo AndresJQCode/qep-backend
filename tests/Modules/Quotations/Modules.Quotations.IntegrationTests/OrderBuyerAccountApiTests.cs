@@ -17,7 +17,7 @@ namespace Modules.Quotations.IntegrationTests;
 public sealed class OrderBuyerAccountApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string AuditEvent = "platform.audit.recorded.v1";
-    private const string ChangedAction = "order.buyer_account_changed";
+    private const string ChangedAction = "quotation.order.buyer_account_changed";
 
     private static string OrderUrl(Guid tenantId, Guid orderId) => $"/api/v1/tenants/{tenantId}/orders/{orderId}";
 

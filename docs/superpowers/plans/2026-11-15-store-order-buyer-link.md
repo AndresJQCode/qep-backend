@@ -24,7 +24,7 @@ no ve Buyers). La consola agrega dos escrituras al pedido y la cuenta al detalle
   facturación del pedido. `NULL` o vacío nunca coincide.
 - El enlace automático nunca hace fallar el checkout ni el inicio de sesión; los logs llevan ids, nunca correos.
 - Migración aditiva: `buyer_account_set_by_member boolean NOT NULL DEFAULT false`.
-- Códigos nuevos: `order.buyer_account.not_found` (422). Acción de auditoría nueva: `order.buyer_account_changed`.
+- Códigos nuevos: `order.buyer_account.not_found` (422). Acción de auditoría nueva: `quotation.order.buyer_account_changed`.
 - Español colombiano tuteando en comentarios nuevos.
 
 ## Review Focus
@@ -181,7 +181,7 @@ LoginDoesNotBumpTheOrderVersion()
 Handlers: carga y revalidación de tenant y permiso con `OrderStateAction.LoadAsync(..., OrdersPermissions.OrderManage, ...)`;
 versión distinta → `RequestConcurrencyException` (412, como `SaveOrderEdits`); `PUT` sin cuenta verificada →
 `QuotationsDomainException("order.buyer_account.not_found", …)` (422); si `SetBuyerAccountByMember` devuelve `true`, audita
-`order.buyer_account_changed` con `{ previousBuyerAccountId, buyerAccountId }` (sólo ids) y guarda.
+`quotation.order.buyer_account_changed` con `{ previousBuyerAccountId, buyerAccountId }` (sólo ids) y guarda.
 
 Composer: si `order.BuyerAccountId` no es `null`, `FindAsync`; `null` → `BuyerAccount = null`. El listado no cambia.
 

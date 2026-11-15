@@ -24,7 +24,7 @@ public static class OrderBuyerAccountRules
     /// <summary>Cuenta inexistente o sin verificar: un solo código, porque el asesor no necesita distinguirlos.</summary>
     public const string NotFound = "order.buyer_account.not_found";
 
-    public const string AuditAction = "order.buyer_account_changed";
+    public const string AuditAction = "quotation.order.buyer_account_changed";
 }
 
 public sealed class SetOrderBuyerAccountValidator : AbstractValidator<SetOrderBuyerAccountCommand>

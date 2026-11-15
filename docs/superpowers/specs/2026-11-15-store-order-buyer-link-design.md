@@ -112,7 +112,7 @@ Un correo de facturación `NULL` o vacío nunca coincide; la comparación es `lo
   en su primera compra.
 - `DELETE …/buyer-account`: la quita.
 - Los dos: permiso `quotations.order.manage`, revalidación de tenant y permiso en el handler (403, nunca 404), `If-Match` con la
-  versión del pedido, suben `Version`, marcan §3.3, auditoría (acción nueva, por ejemplo `order.buyer_account_changed`, con el id
+  versión del pedido, suben `Version`, marcan §3.3, auditoría (acción nueva, por ejemplo `quotation.order.buyer_account_changed`, con el id
   anterior y el nuevo, nunca correos) y responden el `OrderDto` completo.
 - Sólo pedidos con `source = 'Store'`; otro origen → 422 `order.order.source_invalid` (código existente).
 - **Casos de borde (decisión de diseño):** `PUT` con la misma cuenta que ya tiene y la marca ya en `true` → 200 sin cambios (no
