@@ -5027,6 +5027,7 @@ información con el PIN y el `reason` de `reply-options`— sale de una sola lis
 | `no_author` | Ningún miembro activo puede firmar el envío por Mensajería (plan F11) | PIN |
 | `portal_only` | Un anónimo sólo se responde por la página de consulta | `reply-options` |
 | `portal_unavailable` | La página de consulta sólo responde a anónimos | `reply-options` |
+| `form_unpublished` | El formulario público del tenant no está publicado: el enlace de consulta daría 404 | PIN |
 
 **Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
 la pantalla lo sube con la sesión de subida de Mensajería
@@ -5076,7 +5077,8 @@ Geography (`cityId`) y fuera, texto libre (`cityName`). `formVersion` y `legalTe
 support.public.form_outdated` o `support.public.legal_texts_outdated` y la página recarga. Todo lo que puede responder 422 va antes de la
 transacción, así un rechazo no gasta radicado. Con solicitante se guarda el consentimiento (foto del texto aceptado e IP) y, con
 `customers` prendido y un único cliente con ese documento, el ticket queda vinculado; con cero o varios, el detalle los ofrece como
-candidatos. **Un anónimo** no guarda cliente, foto del solicitante, documento, IP ni consentimiento, y sólo se responde por la página de
+candidatos. **Un anónimo** no guarda cliente —tampoco se lo vincula la consola: `PUT …/tickets/{id}/customer` responde `422
+support.ticket.anonymous_has_no_customer` y el detalle no ofrece candidatos—, foto del solicitante, documento, IP ni consentimiento, y sólo se responde por la página de
 consulta (canal `Portal`).
 
 **PIN.** Seis dígitos aleatorios. Todo ticket nace con uno, también el manual y el que se abre desde una conversación, y **sólo se guarda
@@ -5092,7 +5094,9 @@ cuándo y por qué canal salió la información y por qué no, nunca el PIN.
 **A dónde va la información con el PIN** (`SupportOpeningSender`, plan F10, F11 y F23 a F26). La misma regla al crear el ticket y al
 reenviar el PIN; al crear, sale **después** de confirmar el ticket y anota su resultado en un segundo guardado que toca sólo
 `ticket_access`: el ticket queda creado pase lo que pase con el envío, y la `version` del `201` sigue valiendo para el siguiente
-`If-Match`.
+`If-Match`. **La información sólo sale mientras el formulario del tenant está publicado**: sin publicar, el enlace de consulta
+respondería 404, así que no se manda nada y queda anotado `form_unpublished` (por el canal que habría usado). El PIN igual se emite (sólo
+su hash): publicado el formulario, «Reenviar PIN» manda uno nuevo.
 
 | Ticket | Canal (`last_sent_channel`) | Qué sale |
 | --- | --- | --- |
@@ -5100,7 +5104,7 @@ reenviar el PIN; al crear, sale **después** de confirmar el ticket y anota su r
 | Del formulario, anónimo | — | Nada: el PIN sólo se ve en la respuesta del radicado |
 | Manual con canal `Email` | `Email` | El correo de apertura al correo de la foto |
 | Manual con canal `WhatsAppTemplate` o `Thread`, sin conversación | — | **Nada** (owner, 2026-11-15): mandar a un celular nuevo pide elegir conexión y no cabe en el alta. El PIN se emite igual |
-| Desde una conversación, o manual que ya vinculó una | `Thread` | Texto por el hilo, sólo con la ventana de 24 h abierta; cerrada, nada (`window_closed`). No hay plantilla de apertura (F24) |
+| Desde una conversación, o manual que ya vinculó una (si su canal no es `Email`) | `Thread` | Texto por el hilo, sólo con la ventana de 24 h abierta; cerrada, nada (`window_closed`). No hay plantilla de apertura (F24) |
 
 El texto por el hilo, tuteando: `Registramos tu caso {radicado} ({tipo}). Fecha límite de respuesta: {fecha}. Consulta su estado en
 {enlace} con la clave {pin}.` La fecha va en el formato regional del tenant y, si el tipo no tiene término, dice `sin fecha límite`. El
@@ -5114,6 +5118,11 @@ barrido— con el dueño `FileOwnerType.SupportTicket`, por la subida sin miembr
 propio) y el adaptador `SupportAttachmentStorage` de Bootstrapper. El flujo de la página: abrir (`POST /attachments`), `PUT` del archivo
 directo al bucket privado de R2 con `uploadUrl` y los `headers` tal cual (`Content-Type` e `If-None-Match: *` van firmados), completar y,
 si sale `available`, mandar el par al radicar.
+
+- **El tenant los permite o no** (spec §9.3). `allow_attachments` es de cada versión del formulario (`PUT /settings/public-form`,
+  `allowAttachments`, obligatorio como los demás interruptores) y arranca **apagado**. `GET /form` lo trae en `allowAttachments` para que
+  la página esconda el control. Apagado, abrir, completar y radicar con una lista de adjuntos no vacía responden `422
+  support.public.attachments_disabled`, antes de tocar Storage; radicar sin adjuntos sigue igual.
 
 - **Límites** (`SupportPublicAttachmentRules`): hasta **5** archivos por ticket, **10 MB** cada uno, nombre simple de hasta 260 y los
   tipos de Storage (pdf, doc, docx, xls, xlsx, jpg, jpeg, png, webp) con su MIME. Abrir fuera de eso es `422 validation.failed` con el
@@ -5167,8 +5176,8 @@ tenancy.slug.reserved`). Antes de desplegar se corre la consulta de los avisos d
 (ni al ticket ni a la versión: guarda su propia foto del texto) y el `Down` de `AddSupportPublicForm` no las borra.
 
 **Migraciones:** `Support` `AddSupportPublicForm` (`form_versions`, `legal_text_versions`, `consents`, `ticket_access` y las columnas del
-formulario en `tickets`) y `Support` `AddSupportTicketAttachments` (`ticket_attachments`). Storage no tiene migración: `SupportTicket` se
-guarda por nombre en `owner_type`.
+formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attachments`) y `Support` `AddSupportFormAllowAttachments`
+(`form_versions.allow_attachments`, `false` por defecto). Storage no tiene migración: `SupportTicket` se guarda por nombre en `owner_type`.
 
 ### API externa
 
