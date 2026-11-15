@@ -27,8 +27,6 @@ public sealed class SupportThreadFollower(
     /// <summary>Entrantes por pasada cuando quien llama no dice otro (<c>Support:Workers:BatchSize</c>).</summary>
     public const int DefaultBatchSize = 200;
 
-    private static readonly string[] StatusFields = ["status"];
-
     public Task<int> ProcessBatchAsync(CancellationToken cancellationToken) => ProcessBatchAsync(DefaultBatchSize, cancellationToken);
 
     /// <summary>Devuelve cuántos entrantes resolvió en esta pasada (vinculados, registrados sin clasificar o pasados solos).</summary>
@@ -112,7 +110,7 @@ public sealed class SupportThreadFollower(
         }
         else
         {
-            ReopenIfWaiting(ticket, context);
+            SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher);
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -123,28 +121,7 @@ public sealed class SupportThreadFollower(
     {
         links.Add(SupportTicketMessage.Link(
             ticket.TenantId, ticket.Id, conversationId, messageId, occurredAt, SupportTicketMessageState.Linked, context.Now));
-        ReopenIfWaiting(ticket, context);
-    }
-
-    /// <summary>Plan E6: sólo <see cref="SupportTicketStatus.WaitingOnCustomer"/> se reabre con la respuesta del cliente; un resuelto no
-    /// (decisión pendiente P4). El cambio lo hace el sistema: el evento no tiene actor y la auditoría sale como sistema.</summary>
-    internal static bool ReopensWith(SupportTicket ticket) => ticket.Status is SupportTicketStatus.WaitingOnCustomer;
-
-    private void ReopenIfWaiting(SupportTicket ticket, SupportReadContext context)
-    {
-        if (!ReopensWith(ticket))
-        {
-            return;
-        }
-
-        ticket.ChangeStatus(SupportTicketStatus.Open, null, context.Now, context.Clock);
-        auditPublisher.PublishSystem(
-            ticket.TenantId,
-            SupportAuditActions.TicketStatusChanged,
-            SupportAuditActions.Resources.Ticket,
-            ticket.Id.ToString(),
-            StatusFields,
-            context.Now);
+        SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher);
     }
 
     // Lo que otra réplica u otra escritura ya ganó no es una falla: se descarta, o se reintenta en la siguiente pasada.

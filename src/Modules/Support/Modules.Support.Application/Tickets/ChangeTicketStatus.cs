@@ -27,7 +27,8 @@ public sealed class ChangeTicketStatusValidator : AbstractValidator<ChangeTicket
 }
 
 /// <summary>Mueve el ticket por la máquina de estados (spec §7.1): fuera de la tabla, 422 <c>support.ticket.transition_invalid</c>.
-/// El dominio detiene y reanuda el reloj, y cuenta los ciclos de resolución.</summary>
+/// El dominio detiene y reanuda el reloj, y cuenta los ciclos de resolución. Fase 2 (plan E11): cerrar un ticket con conversación
+/// escribe <c>TicketClosed</c> en el hilo en la misma transacción, y avisa al tiempo real de Mensajería después de confirmar.</summary>
 public sealed class ChangeTicketStatusHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
@@ -35,6 +36,7 @@ public sealed class ChangeTicketStatusHandler(
     ISupportTicketRepository tickets,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportConversationEvents conversationEvents,
     SupportTicketDtoComposer composer,
     IValidator<ChangeTicketStatusCommand> validator)
     : ICommandHandler<ChangeTicketStatusCommand, SupportTicketDetailDto>
@@ -57,10 +59,25 @@ public sealed class ChangeTicketStatusHandler(
         var now = context.Now;
         var version = ticket.Version;
         ticket.ChangeStatus(status, actor, now, context.Clock);
-        await SupportTicketActions.SaveIfChangedAsync(
-            ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketStatusChanged, ChangedFields, now,
-            cancellationToken);
+        if (status is not SupportTicketStatus.Closed || ticket.ConversationId is not { } conversationId)
+        {
+            await SupportTicketActions.SaveIfChangedAsync(
+                ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketStatusChanged, ChangedFields, now,
+                cancellationToken);
+            return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
+        }
 
+        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
+        {
+            await conversationEvents.AppendAsync(
+                command.TenantId, conversationId, opened: false, ticket.Id.Value, actor, now, cancellationToken);
+            await SupportTicketActions.SaveIfChangedAsync(
+                ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketStatusChanged, ChangedFields, now,
+                cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        await conversationEvents.NotifyChangedAsync(command.TenantId, conversationId, cancellationToken);
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }
 }

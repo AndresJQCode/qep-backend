@@ -20,9 +20,23 @@ public static class SupportAuditActions
 
     public const string SettingsUpdated = "support.settings.updated";
 
+    // Fase 2 (Mensajería).
+    public const string TicketMessagePinned = "support.ticket.message_pinned";
+
+    public const string TicketMessageReleased = "support.ticket.message_released";
+
+    public const string TicketFollowChanged = "support.ticket.follow_changed";
+
+    public const string UnclassifiedAssigned = "support.unclassified.assigned";
+
+    public const string UnclassifiedDismissed = "support.unclassified.dismissed";
+
     public static class Resources
     {
         public const string Ticket = "ticket";
+
+        /// <summary>Un entrante sin clasificar; su id es el del mensaje de Mensajería.</summary>
+        public const string UnclassifiedMessage = "unclassified_message";
 
         public const string TicketType = "ticket_type";
 

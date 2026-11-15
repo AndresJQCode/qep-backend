@@ -112,4 +112,37 @@ internal sealed class SupportTicketScenario
     }
 
     public static Guid Id(JsonElement ticket) => ticket.GetProperty("id").GetGuid();
+
+    /// <summary>Fase 2: abre un ticket desde una conversación por la API y exige el 201.</summary>
+    public async Task<JsonElement> CreateFromConversationAsync(Guid conversation, string subject = "Pedido sin llegar")
+    {
+        var response = await Client.PostAsJsonAsync(
+            $"{Url}/conversations/{conversation}/tickets",
+            new
+            {
+                ticketTypeId = await TypeIdAsync("Petición general"),
+                subject,
+                description = "El pedido de la semana pasada no ha llegado.",
+            },
+            Ct);
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
+        return await JsonAsync(response);
+    }
+
+    /// <summary>Un <c>POST</c> de acción con <c>If-Match</c>; sin versión, sin el header.</summary>
+    public async Task<HttpResponseMessage> PostActionAsync(string path, object? body, long? version)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{Url}/{path}")
+        {
+            Content = body is null ? null : JsonContent.Create(body),
+        };
+        if (version is { } value)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", $"\"{value}\"");
+        }
+
+        return await Client.SendAsync(request, Ct);
+    }
+
+    public static long Version(JsonElement ticket) => ticket.GetProperty("version").GetInt64();
 }

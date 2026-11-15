@@ -41,6 +41,9 @@ public static class SupportErrorCodes
 
     public const string NoConversation = "support.ticket.no_conversation";
 
+    /// <summary>Ruling A-c2: un ticket cerrado no vuelve a seguir el hilo; no podría vincular nada.</summary>
+    public const string FollowClosed = "support.ticket.follow_closed";
+
     public const string ReplyWindowClosed = "support.reply.window_closed";
 
     public const string ReplyContactBlocked = "support.reply.contact_blocked";

@@ -516,6 +516,27 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListConversationTicketsQuery, Modules.Support.Application.SupportConversationTicketsDto>,
             Modules.Support.Application.ListConversationTicketsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketMessagesQuery, Modules.Support.Application.SupportTicketMessagesDto>,
+            Modules.Support.Application.ListTicketMessagesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PinTicketMessageCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.PinTicketMessageHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ReleaseTicketMessageCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ReleaseTicketMessageHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.SetTicketFollowThreadCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.SetTicketFollowThreadHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListUnclassifiedQuery, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.ListUnclassifiedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AssignUnclassifiedCommand, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.AssignUnclassifiedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.DismissUnclassifiedCommand, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.DismissUnclassifiedHandler>();
         services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.

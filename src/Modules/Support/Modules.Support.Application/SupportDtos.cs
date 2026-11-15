@@ -157,6 +157,42 @@ public sealed record SupportRequesterDto(
 /// <summary>Los candidatos a responsable: exactamente los que el backend acepta al asignar.</summary>
 public sealed record SupportAssigneesDto(IReadOnlyList<SupportMemberDto> Items);
 
+/// <summary>Un mensaje del hilo como lo dibuja el expediente del ticket, sin que la pantalla tenga permisos de Mensajería (plan E20):
+/// el texto viaja acá. <c>Direction</c> ∈ <c>Inbound</c>, <c>Outbound</c>; <c>Kind</c> es el tipo de Mensajería por nombre;
+/// <c>AuthorName</c>, el miembro o la clave de API que lo mandó (nulo en un entrante o del asistente). El medio se baja por la ruta de
+/// Mensajería: <c>HasMedia</c> y el tipo y nombre del archivo le dicen a la pantalla qué dibujar antes de pedirlo.</summary>
+public sealed record SupportThreadMessageDto(
+    Guid Id,
+    string Direction,
+    string Kind,
+    string? Text,
+    string? Caption,
+    DateTimeOffset OccurredAt,
+    string? AuthorName,
+    bool HasMedia,
+    string? MediaMimeType,
+    string? MediaFileName);
+
+/// <summary>Una página del expediente, del más nuevo al más viejo. <c>Next</c> es nulo en la última: la pantalla no calcula si hay
+/// más.</summary>
+public sealed record SupportTicketMessagesDto(IReadOnlyList<SupportTicketMessageDto> Items, SupportMessageCursorDto? Next);
+
+/// <summary><c>LinkState</c> ∈ <c>Linked</c> (lo vinculó el seguimiento: se dibuja plegado) o <c>Pinned</c> (lo fijó un asesor: en
+/// línea). Los soltados no salen.</summary>
+public sealed record SupportTicketMessageDto(SupportThreadMessageDto Message, string LinkState);
+
+/// <summary><c>Before</c> es opaco: la pantalla lo devuelve tal cual en <c>?before=</c> para pedir la página siguiente.</summary>
+public sealed record SupportMessageCursorDto(string Before);
+
+/// <summary>Los entrantes de una conversación que cayeron en dos o más tickets y nadie clasificó: la pregunta «¿De qué ticket es?».</summary>
+public sealed record SupportUnclassifiedDto(IReadOnlyList<SupportUnclassifiedMessageDto> Items);
+
+/// <summary>El mensaje y sus opciones: los tickets abiertos que lo cubren, con la versión que asignar manda en el cuerpo. La pantalla
+/// no calcula los candidatos.</summary>
+public sealed record SupportUnclassifiedMessageDto(SupportThreadMessageDto Message, IReadOnlyList<SupportTicketRefDto> Candidates);
+
+public sealed record SupportTicketRefDto(Guid Id, string Number, string Subject, long Version);
+
 internal static class SupportDtoMapping
 {
     public static SupportTicketTypeDto ToDto(SupportTicketType type) => new(
