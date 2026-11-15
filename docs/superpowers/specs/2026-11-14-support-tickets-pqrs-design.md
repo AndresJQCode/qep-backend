@@ -794,7 +794,18 @@ las pruebas de integración que arman cuerpos a mano.
    y clave, configuración del formulario, par de documento y campos según el tipo, textos legales y
    consentimientos.
 4. **Respuesta formal y satisfacción.** PDF de fondo, plantilla de encuesta y su aprobación,
-   prórroga y avisos de vencimiento, reportes.
+   prórroga y avisos de vencimiento, reportes. Suma además cuatro ajustes de la gestión que pidió el
+   owner al revisar las pantallas de la fase 1 (2026-11-15), ninguno cubierto por las fases 1 a 3:
+   - **Alta manual anónima.** El asesor puede radicar sin cliente ni solicitante; sin anónimo, el
+     canal de respuesta sigue obligatorio. Reusa `IsAnonymous` y el canal `Portal` que trae la
+     fase 3 (plan fase 3, F12 y F22), que hoy sólo existen para el formulario.
+   - **Borrar un tipo sin tickets.** `DELETE /settings/ticket-types/{typeId}` con `If-Match`; un tipo
+     con algún ticket responde 422 con un código propio (p. ej. `support.ticket_type.in_use`) y sigue
+     rigiendo «un tipo usado no se borra: se desactiva» (§7).
+   - **«Asignármelo».** Endpoint propio, como «Tomar» de Mensajería, que resuelve el miembro por la
+     sesión, y `IsMe` en `SupportMemberDto`: el SPA no conoce su `memberId`.
+   - **Responsable fijo en `Resolved` y `Closed`.** Cambiar el responsable de un ticket resuelto o
+     cerrado responde 422; hoy se permite. Tipo y cliente no cambian de regla.
 
 Cada fase deja el módulo usable y se mergea a `develop` por separado.
 
