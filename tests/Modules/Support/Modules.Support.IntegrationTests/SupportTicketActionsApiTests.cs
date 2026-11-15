@@ -232,28 +232,39 @@ public sealed class SupportTicketActionsApiTests(ClockedSupportHost host) : ICla
         Assert.Equal("support.ticket.assignee_invalid", await CodeOfAsync(response));
     }
 
-    [Fact]
-    public async Task AClosedTicketCanStillBeAssignedRetypedAndLinked()
+    // R9 [owner 2026-11-15]: resuelto o cerrado, el ticket no se reasigna, no cambia de tipo ni de cliente.
+    [Theory]
+    [InlineData("Resolved")]
+    [InlineData("Closed")]
+    public async Task AFinishedTicketCannotBeAssignedRetypedOrLinked(string finished)
     {
         var scenario = await StartAsync(await host.StartTestAsync());
         var customer = await SeedCustomerAsync(scenario.Factory, scenario.TenantId, "Novasteel SAS");
         var ticket = await scenario.CreateAsync();
         ticket = await scenario.MoveAsync(ticket, "Resolved");
-        ticket = await scenario.MoveAsync(ticket, "Closed");
+        if (finished == "Closed")
+        {
+            ticket = await scenario.MoveAsync(ticket, "Closed");
+        }
+
         var version = ticket.GetProperty("version").GetInt64();
 
         var assigned = await scenario.ActAsync(Id(ticket), "assignee", new AssignTicketRequest(scenario.CallerMemberId), version);
-        var retyped = await scenario.ActAsync(Id(ticket), "type", new ChangeTicketTypeRequest(await scenario.TypeIdAsync("Queja")), version + 1);
-        var linked = await scenario.ActAsync(Id(ticket), "customer", new LinkTicketCustomerRequest(customer), version + 2);
+        var retyped = await scenario.ActAsync(Id(ticket), "type", new ChangeTicketTypeRequest(await scenario.TypeIdAsync("Queja")), version);
+        var linked = await scenario.ActAsync(Id(ticket), "customer", new LinkTicketCustomerRequest(customer), version);
 
-        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, retyped.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, linked.StatusCode);
-        var body = await JsonAsync(linked);
-        Assert.Equal("Closed", body.GetProperty("status").GetString());
-        Assert.Equal("Queja", body.GetProperty("type").GetProperty("name").GetString());
-        Assert.Equal(customer, body.GetProperty("customer").GetProperty("id").GetGuid());
-        Assert.Equal(scenario.CallerMemberId, body.GetProperty("assignee").GetProperty("id").GetGuid());
+        foreach (var response in new[] { assigned, retyped, linked })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("support.ticket.not_editable", await CodeOfAsync(response));
+        }
+
+        var reread = await scenario.DetailAsync(Id(ticket));
+        Assert.Equal(finished, reread.GetProperty("status").GetString());
+        Assert.Equal(version, reread.GetProperty("version").GetInt64());
+        Assert.Equal("Petición general", reread.GetProperty("type").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, reread.GetProperty("customer").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reread.GetProperty("assignee").ValueKind);
     }
 
     [Fact]

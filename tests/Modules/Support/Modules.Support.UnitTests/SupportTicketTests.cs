@@ -394,22 +394,56 @@ public sealed class SupportTicketTests
         Assert.Equal(1L, ticket.Version);
     }
 
-    // Pre-flight R9: asignar, cambiar el tipo y el cliente no cambian el estado y se permiten también resuelto o cerrado.
-    [Fact]
-    public void AClosedTicketCanStillBeReassignedRetypedAndRelinked()
+    // R9 [owner 2026-11-15]: resuelto o cerrado, el ticket no se reasigna, no cambia de tipo ni de cliente; ni siquiera con el
+    // mismo valor, para que la respuesta no dependa de lo que se mande.
+    [Theory]
+    [InlineData(SupportTicketStatus.Resolved)]
+    [InlineData(SupportTicketStatus.Closed)]
+    public void AFinishedTicketCannotBeReassignedRetypedOrRelinked(SupportTicketStatus finished)
     {
         var ticket = NewTicket();
         ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, At(11, 17), Clock);
-        ticket.ChangeStatus(SupportTicketStatus.Closed, Actor, At(11, 18), Clock);
+        if (finished is SupportTicketStatus.Closed)
+        {
+            ticket.ChangeStatus(SupportTicketStatus.Closed, Actor, At(11, 18), Clock);
+        }
+
+        var version = ticket.Version;
+
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(() => ticket.Assign(OtherMember, Actor, At(11, 19))).Code);
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(() => ticket.Assign(null, Actor, At(11, 19))).Code);
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(() => ticket.ChangeType(Documents, Actor, At(11, 19), Clock)).Code);
+        Assert.Equal(
+            SupportErrorCodes.NotEditable,
+            Assert.Throws<SupportDomainException>(() => ticket.LinkCustomer(Customer, Actor, At(11, 19))).Code);
+        Assert.Equal(finished, ticket.Status);
+        Assert.Null(ticket.AssigneeMemberId);
+        Assert.Equal(new DateOnly(2026, 12, 7), ticket.DueOn);
+        Assert.Null(ticket.CustomerId);
+        Assert.Equal(version, ticket.Version);
+    }
+
+    // Reabrir sigue la tabla de transiciones; reabierto, el ticket se vuelve a editar.
+    [Fact]
+    public void AReopenedTicketCanBeEditedAgain()
+    {
+        var ticket = NewTicket();
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, At(11, 17), Clock);
+        ticket.ChangeStatus(SupportTicketStatus.Open, Actor, At(11, 18), Clock);
 
         ticket.Assign(OtherMember, Actor, At(11, 19));
         ticket.ChangeType(Documents, Actor, At(11, 19), Clock);
         ticket.LinkCustomer(Customer, Actor, At(11, 19));
 
-        Assert.Equal(SupportTicketStatus.Closed, ticket.Status);
+        Assert.Equal(SupportTicketStatus.Open, ticket.Status);
         Assert.Equal(OtherMember, ticket.AssigneeMemberId);
-        Assert.Equal(new DateOnly(2026, 11, 30), ticket.DueOn);
+        Assert.Equal(Documents.Name, ticket.TypeName);
         Assert.Equal(Customer, ticket.CustomerId);
-        Assert.Equal(6L, ticket.Version);
     }
 }

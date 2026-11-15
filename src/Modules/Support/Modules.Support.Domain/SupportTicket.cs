@@ -183,9 +183,10 @@ public sealed class SupportTicket
         AddEvent(SupportTicketEventKind.StatusChanged, actorMemberId, now, new { from = from.ToString(), to = target.ToString() });
     }
 
-    /// <summary>Pre-flight R9: se permite en cualquier estado, también resuelto o cerrado; no cambia el estado.</summary>
+    /// <summary>No cambia el estado. Resuelto o cerrado se rechaza (R9).</summary>
     public void Assign(Guid? assigneeMemberId, Guid actorMemberId, DateTimeOffset now)
     {
+        EnsureEditable();
         if (assigneeMemberId == AssigneeMemberId)
         {
             return;
@@ -196,12 +197,14 @@ public sealed class SupportTicket
         AddEvent(SupportTicketEventKind.AssigneeChanged, actorMemberId, now, new { from, to = assigneeMemberId });
     }
 
-    /// <summary>Recalcula el vencimiento desde la radicación con el término nuevo más las pausas ya contadas (spec §7.2).</summary>
+    /// <summary>Recalcula el vencimiento desde la radicación con el término nuevo más las pausas ya contadas (spec §7.2). Resuelto o
+    /// cerrado se rechaza (R9).</summary>
     public void ChangeType(SupportTicketType type, Guid actorMemberId, DateTimeOffset now, SupportClockContext clock)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(clock);
         EnsureSameTenant(TenantId, type);
+        EnsureEditable();
         if (type.Id == TypeId)
         {
             return;
@@ -213,9 +216,11 @@ public sealed class SupportTicket
     }
 
     /// <summary>Desvincular deja la foto del solicitante; si no hay foto con nombre, el ticket quedaría sin nadie y se rechaza
-    /// (pre-flight R11).</summary>
+    /// (pre-flight R11). Resuelto o cerrado se rechaza (R9); la fusión de clientes mueve tickets en cualquier estado, pero por SQL y
+    /// sin pasar por acá (<c>CustomerMergeReferences</c>).</summary>
     public void LinkCustomer(Guid? customerId, Guid actorMemberId, DateTimeOffset now)
     {
+        EnsureEditable();
         if (customerId == CustomerId)
         {
             return;
@@ -253,6 +258,17 @@ public sealed class SupportTicket
         {
             UpdatedAt = now;
             Version++;
+        }
+    }
+
+    /// <summary>R9 [owner 2026-11-15]: resuelto o cerrado, el ticket sólo cambia de estado por la tabla de transiciones (reabrir).
+    /// Se rechaza aunque el valor sea el mismo, para que la respuesta no dependa de lo que se mande.</summary>
+    private void EnsureEditable()
+    {
+        if (Status is SupportTicketStatus.Resolved or SupportTicketStatus.Closed)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.NotEditable, $"A ticket in status '{Status}' cannot be reassigned, retyped or relinked.");
         }
     }
 
