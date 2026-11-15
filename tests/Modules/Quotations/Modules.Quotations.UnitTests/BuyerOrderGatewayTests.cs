@@ -777,6 +777,13 @@ public sealed class BuyerOrderGatewayTests
         public Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
             IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken) => Call();
 
+        public async Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
+            IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
+        {
+            await Call();
+            return new Dictionary<Guid, QuotationCityRef>();
+        }
+
         private Task<IReadOnlyDictionary<Guid, string>> Call() =>
             ++_calls > allowedCalls
                 ? throw new InvalidOperationException("geography down")

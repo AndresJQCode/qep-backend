@@ -72,7 +72,8 @@ public sealed class WithholdingSelectionTests
     [Fact]
     public async Task ValidRatesComeBackInTheOrderTheyArrived()
     {
-        var rates = await ResolveAsync([ReteIca.TaxRateId, RetefuenteServicios.TaxRateId], " co ", "quotation");
+        var rates = await ResolveAsync(
+            [ReteIca.TaxRateId, RetefuenteServicios.TaxRateId], " co ", "quotation", Offered(ReteIca, ignoreUnmatched: false));
 
         Assert.Equal(new[] { ReteIca, RetefuenteServicios }, rates);
     }
@@ -83,7 +84,8 @@ public sealed class WithholdingSelectionTests
         var lookup = Catalog();
 
         var rates = await WithholdingSelection.ResolveAsync(
-            lookup, TenantId, [], companyCountry: null, DocumentDate, "quotation", TestContext.Current.CancellationToken);
+            lookup, TenantId, [], companyCountry: null, DocumentDate, MunicipalSelectorScope.None, "quotation",
+            TestContext.Current.CancellationToken);
 
         Assert.Empty(rates);
         Assert.Empty(lookup.RequestedDates);
@@ -95,15 +97,90 @@ public sealed class WithholdingSelectionTests
         var lookup = Catalog();
 
         await WithholdingSelection.ResolveAsync(
-            lookup, TenantId, [ReteIca.TaxRateId], "CO", DocumentDate, "quotation", TestContext.Current.CancellationToken);
+            lookup, TenantId, [RetefuenteServicios.TaxRateId], "CO", DocumentDate, MunicipalSelectorScope.None,
+            "quotation", TestContext.Current.CancellationToken);
 
         Assert.Equal(new[] { DocumentDate }, lookup.RequestedDates);
     }
 
+    // Spec ReteICA por empresa §7.5: un id municipal sólo vale si es la tasa de la empresa para el municipio de la
+    // operación; sin cambio de empresa ni de municipio, otro es 422 con el código de siempre.
+    [Theory]
+    [InlineData("quotation")]
+    [InlineData("order")]
+    public async Task MunicipalIdNotOfferedIs422(string prefix)
+    {
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => ResolveAsync(
+            [ReteIca.TaxRateId], "CO", prefix, MunicipalSelectorScope.None));
+
+        Assert.Equal($"{prefix}.billing.withholding_tax_rate_invalid", error.Code);
+    }
+
+    // A11 (owner 2026-11-13): con cambio de empresa o de municipio en el mismo cuerpo, el id elegido contra lo anterior
+    // se ignora sin 422 y queda lo que dejó la re-resolución.
+    [Fact]
+    public async Task UnmatchedMunicipalIdIgnoredWhenScopeSaysSo()
+    {
+        var rates = await ResolveAsync(
+            [ReteIca.TaxRateId, RetefuenteServicios.TaxRateId], "CO", "quotation",
+            new MunicipalSelectorScope(new HashSet<Guid>(), IgnoreUnmatched: true));
+
+        Assert.Equal(new[] { RetefuenteServicios }, rates);
+    }
+
+    [Fact]
+    public async Task OfferedMunicipalIdPassesEvenWhenIgnoringUnmatched()
+    {
+        var rates = await ResolveAsync(
+            [RetefuenteServicios.TaxRateId, ReteIca.TaxRateId], "CO", "quotation", Offered(ReteIca, ignoreUnmatched: true));
+
+        Assert.Equal(new[] { RetefuenteServicios, ReteIca }, rates);
+    }
+
+    [Fact]
+    public async Task OfferedMunicipalIdPasses()
+    {
+        var rates = await ResolveAsync([ReteIca.TaxRateId], "CO", "order", Offered(ReteIca, ignoreUnmatched: false));
+
+        Assert.Equal(new[] { ReteIca }, rates);
+    }
+
+    // P6: con la re-resolución, cada tipo sin id aceptado conserva la fila que ella dejó, al final; un id aceptado la
+    // reemplaza.
+    [Fact]
+    public async Task ReResolvedRowIsAppendedForATypeWithoutAnAcceptedId()
+    {
+        var reResolved = ReteIca with { Name = "ReteICA Medellín" };
+        var scope = new MunicipalSelectorScope(new HashSet<Guid>(), IgnoreUnmatched: true) { ReResolved = [reResolved] };
+
+        var rates = await ResolveAsync([ReteIca.TaxRateId, RetefuenteServicios.TaxRateId], "CO", "quotation", scope);
+        var withoutIds = await ResolveAsync([], "CO", "quotation", scope);
+
+        Assert.Equal(new[] { RetefuenteServicios, reResolved }, rates);
+        Assert.Equal(new[] { reResolved }, withoutIds);
+    }
+
+    // P12: un tipo marcado «Sin retención» no recibe la fila re-resuelta.
+    [Fact]
+    public async Task ClearedTypeGetsNoReResolvedRow()
+    {
+        var scope = new MunicipalSelectorScope(new HashSet<Guid>(), IgnoreUnmatched: true) { ReResolved = [ReteIca] };
+
+        var rates = await WithholdingSelection.ResolveAsync(
+            Catalog(), TenantId, [RetefuenteServicios.TaxRateId], "CO", DocumentDate, scope, "quotation",
+            TestContext.Current.CancellationToken, clearedTypes: new HashSet<string>(["ReteICA"]));
+
+        Assert.Equal(new[] { RetefuenteServicios }, rates);
+    }
+
+    private static MunicipalSelectorScope Offered(WithholdingRate rate, bool ignoreUnmatched) =>
+        new(new HashSet<Guid>([rate.TaxRateId]), ignoreUnmatched);
+
     private static Task<IReadOnlyList<WithholdingRate>> ResolveAsync(
-        IReadOnlyCollection<Guid> ids, string? companyCountry, string prefix) =>
+        IReadOnlyCollection<Guid> ids, string? companyCountry, string prefix, MunicipalSelectorScope? scope = null) =>
         WithholdingSelection.ResolveAsync(
-            Catalog(), TenantId, ids, companyCountry, DocumentDate, prefix, TestContext.Current.CancellationToken);
+            Catalog(), TenantId, ids, companyCountry, DocumentDate, scope ?? MunicipalSelectorScope.None, prefix,
+            TestContext.Current.CancellationToken);
 
     private static WithholdingRate Rate(string name, string type, decimal percentage, string country = "CO") =>
         new(Guid.CreateVersion7(), name, type, country, percentage, null, null, null);

@@ -164,6 +164,8 @@ internal static class OrderWithholdingEdits
                     order.BillingAccount?.Country,
                     DocumentDates.LocalDate(
                         await context.TenantClock.GetAsync(context.TenantId, cancellationToken), order.CreatedAt),
+                    // Provisional hasta que la aplicación arme el contexto municipal (plan, Tarea 13).
+                    MunicipalSelectorScope.None,
                     "order",
                     cancellationToken);
             var before = OrderChangeSummary.WithholdingsLabel(order);

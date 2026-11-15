@@ -1338,6 +1338,14 @@ internal sealed class StubQuotationGeographyLookup(
         return Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             cityIds.Where(_coordinadoraNames.ContainsKey).Distinct().ToDictionary(id => id, id => _coordinadoraNames[id]));
     }
+
+    /// <summary>La referencia de municipio sale del nombre del DANE; el departamento no le importa a ninguna prueba
+    /// unitaria, así que va con el id vacío y el mismo nombre.</summary>
+    public Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, QuotationCityRef>>(
+            cityIds.Where(cityNames.ContainsKey).Distinct()
+                .ToDictionary(id => id, id => new QuotationCityRef(id, cityNames[id], Guid.Empty, cityNames[id])));
 }
 
 /// <summary>El puerto de módulos con una respuesta fija; <c>null</c> = tenant simulado por el stub
@@ -1601,6 +1609,40 @@ internal sealed class StubQuotationWithholdingLookup : IQuotationWithholdingLook
             .ToDictionary(entry => entry.Key, entry => entry.Value);
         return Task.FromResult(found);
     }
+
+    private readonly List<(Guid CompanyId, WithholdingRate Rate)> _companyRates = [];
+    private readonly HashSet<(Guid CustomerId, string Type, Guid CityId)> _agents = [];
+
+    /// <summary>Una tasa municipal asignada a la empresa; también entra al catálogo, como en la base.</summary>
+    public StubQuotationWithholdingLookup WithCompanyRate(Guid companyId, WithholdingRate rate)
+    {
+        WithRate(rate);
+        _companyRates.Add((companyId, rate));
+        return this;
+    }
+
+    /// <summary>El cliente es agente retenedor de ese tipo en ese municipio.</summary>
+    public StubQuotationWithholdingLookup WithAgent(Guid customerId, string type, Guid cityId)
+    {
+        _agents.Add((customerId, type, cityId));
+        return this;
+    }
+
+    public Task<IReadOnlyList<WithholdingRate>> ForCompanyMunicipalAsync(
+        Guid tenantId, Guid companyId, string country, Guid cityId, DateOnly documentDate, CancellationToken cancellationToken)
+    {
+        RequestedDates.Add(documentDate);
+        IReadOnlyList<WithholdingRate> rates = [.. _companyRates
+            .Where(entry => entry.CompanyId == companyId
+                && entry.Rate.CityId == cityId
+                && string.Equals(entry.Rate.Country, country, StringComparison.OrdinalIgnoreCase))
+            .Select(entry => entry.Rate)];
+        return Task.FromResult(rates);
+    }
+
+    public Task<bool> IsWithholdingAgentAsync(
+        Guid tenantId, Guid customerId, string country, string type, Guid cityId, CancellationToken cancellationToken) =>
+        Task.FromResult(_agents.Contains((customerId, type, cityId)));
 }
 
 /// <summary>El costo de catálogo (spec costo de producto §4.3): devuelve lo que se le da y anota cada consulta, para

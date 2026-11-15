@@ -144,6 +144,8 @@ internal static class QuotationEditsApplication
                 ids,
                 quotation.BillingAccount?.Country,
                 await withholdings.DocumentDate(cancellationToken),
+                // Provisional hasta que la aplicación arme el contexto municipal (plan, Tarea 12).
+                MunicipalSelectorScope.None,
                 "quotation",
                 cancellationToken);
         quotation.SetBillingWithholdings(rates, updatedBy, now);

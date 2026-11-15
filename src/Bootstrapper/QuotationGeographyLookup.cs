@@ -16,6 +16,35 @@ internal sealed class QuotationGeographyLookup(
     ICityRepository cityRepository, IDepartmentRepository departmentRepository)
     : IQuotationGeographyLookup
 {
+    public async Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
+    {
+        // Sin ids no se consulta: una cotización sin empresa no le cuesta una lectura a Geography.
+        var distinctIds = cityIds.Distinct().Select(id => new CityId(id)).ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return new Dictionary<Guid, QuotationCityRef>();
+        }
+
+        var cities = await cityRepository.ListByIdsAsync(distinctIds, cancellationToken);
+        if (cities.Count == 0)
+        {
+            return new Dictionary<Guid, QuotationCityRef>();
+        }
+
+        var departments = (await departmentRepository.ListByIdsAsync(
+                cities.Select(city => city.DepartmentId).Distinct().ToArray(), cancellationToken))
+            .ToDictionary(department => department.Id);
+
+        // Mismo criterio que TaxRateGeographyLookup: una ciudad sin su departamento no sale.
+        return cities
+            .Where(city => departments.ContainsKey(city.DepartmentId))
+            .ToDictionary(
+                city => city.Id.Value,
+                city => new QuotationCityRef(
+                    city.Id.Value, city.Name, city.DepartmentId.Value, departments[city.DepartmentId].Name));
+    }
+
     public async Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
         IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken)
     {

@@ -1,5 +1,6 @@
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
+using Modules.Companies.Domain;
 using Modules.Customers.Domain;
 
 namespace Bootstrapper.UnitTests;
@@ -14,6 +15,9 @@ public sealed class QuotationWithholdingLookupTests
     private static readonly DateTimeOffset Now = new(2026, 11, 11, 12, 0, 0, TimeSpan.Zero);
     private static readonly Guid TenantId = Guid.Parse("01900000-0000-7000-8000-000000001301");
     private static readonly Guid CityId = Guid.Parse("01900000-0000-7000-8000-000000001310");
+    private static readonly Guid Bogota = Guid.Parse("01900000-0000-7000-8000-000000001311");
+    private static readonly Guid Medellin = Guid.Parse("01900000-0000-7000-8000-000000001312");
+    private static readonly Guid Cali = Guid.Parse("01900000-0000-7000-8000-000000001313");
 
     private static readonly TaxRate Retefuente = TaxRate.Create(
         TaxRateId.New(), TenantId, "Retefuente 2,5 %", 2.5m, "Retefuente", "CO", null, null, Now);
@@ -120,6 +124,78 @@ public sealed class QuotationWithholdingLookupTests
         Assert.Empty(rates);
     }
 
+    // A15: el cliente ya no puede tener municipales; si una quedó asignada, no entra a la foto.
+    [Fact]
+    public async Task ForCustomerAsyncReturnsOnlyNationalRates()
+    {
+        var reteIca = TaxRate.Create(TaxRateId.New(), TenantId, "ReteICA Bogotá", 0.966m, "ReteICA", "CO", null, Bogota, Now);
+        var customer = NewCustomer();
+        customer.SetWithholdingTaxRates([reteIca.Id.Value, Retefuente.Id.Value], Now);
+        var lookup = Lookup(new FakeCustomerRepository(customer), [Retefuente, reteIca]);
+
+        var forCompany = await lookup.ForCustomerAsync(
+            TenantId, customer.Id.Value, "CO", new DateOnly(2026, 6, 1), TestContext.Current.CancellationToken);
+        var anyCountry = await lookup.ForCustomerAsync(
+            TenantId, customer.Id.Value, null, new DateOnly(2026, 6, 1), TestContext.Current.CancellationToken);
+
+        Assert.Equal(Retefuente.Id.Value, Assert.Single(forCompany).TaxRateId);
+        Assert.Equal(Retefuente.Id.Value, Assert.Single(anyCountry).TaxRateId);
+    }
+
+    // Spec ReteICA por empresa §7.5: las tasas municipales de la empresa para ese municipio, activas, ya como foto con su
+    // municipio; las de otro municipio o inactivas no salen.
+    [Fact]
+    public async Task ForCompanyMunicipalAsyncFiltersByCityAndActive()
+    {
+        var bogota = TaxRate.Create(TaxRateId.New(), TenantId, "ReteICA Bogotá", 0.966m, "ReteICA", "CO", 4m, Bogota, Now);
+        var medellin = TaxRate.Create(TaxRateId.New(), TenantId, "ReteICA Medellín", 1m, "ReteICA", "CO", null, Medellin, Now);
+        var inactive = TaxRate.Create(TaxRateId.New(), TenantId, "ReteICA Cali", 0.5m, "ReteICA", "CO", null, Cali, Now);
+        inactive.Deactivate(Now);
+        var notAssigned = TaxRate.Create(TaxRateId.New(), TenantId, "ReteICA Bogotá 2", 0.7m, "ReteICA", "CO", null, Bogota, Now);
+        var company = NewCompany();
+        company.SetWithholdingTaxRates([bogota.Id.Value, medellin.Id.Value, inactive.Id.Value], Now);
+        var lookup = new QuotationWithholdingLookup(
+            new FakeCustomerRepository(), new FakeCompanyRepository(company),
+            new FakeTaxRateRepository(bogota, medellin, inactive, notAssigned, Retefuente),
+            new InMemoryTaxUnitValues(Uvt(2026, 49_799m)));
+        var date = new DateOnly(2026, 6, 1);
+        var ct = TestContext.Current.CancellationToken;
+
+        var inBogota = await lookup.ForCompanyMunicipalAsync(TenantId, company.Id.Value, "CO", Bogota, date, ct);
+        var inCali = await lookup.ForCompanyMunicipalAsync(TenantId, company.Id.Value, "CO", Cali, date, ct);
+        var otherCountry = await lookup.ForCompanyMunicipalAsync(TenantId, company.Id.Value, "ES", Bogota, date, ct);
+        var unknownCompany = await lookup.ForCompanyMunicipalAsync(TenantId, Guid.NewGuid(), "CO", Bogota, date, ct);
+
+        var photo = Assert.Single(inBogota);
+        Assert.Equal(
+            (bogota.Id.Value, "ReteICA", 0.966m, (Guid?)Bogota, (decimal?)49_799m),
+            (photo.TaxRateId, photo.Type, photo.Percentage, photo.CityId, photo.TaxUnitValue));
+        Assert.Equal(0.966m, photo.CatalogPercentage);
+        Assert.Empty(inCali);
+        Assert.Empty(otherCountry);
+        Assert.Empty(unknownCompany);
+    }
+
+    [Fact]
+    public async Task IsWithholdingAgentReadsTheCustomersList()
+    {
+        var customer = NewCustomer();
+        customer.SetWithholdingAgentCities([new WithholdingAgentCityEntry("CO", "ReteICA", Bogota)], Now);
+        var lookup = Lookup(new FakeCustomerRepository(customer), [Retefuente]);
+        var ct = TestContext.Current.CancellationToken;
+
+        Assert.True(await lookup.IsWithholdingAgentAsync(TenantId, customer.Id.Value, "co", "ReteICA", Bogota, ct));
+        Assert.False(await lookup.IsWithholdingAgentAsync(TenantId, customer.Id.Value, "CO", "ReteICA", Medellin, ct));
+        Assert.False(await lookup.IsWithholdingAgentAsync(TenantId, Guid.NewGuid(), "CO", "ReteICA", Bogota, ct));
+    }
+
+    private static Company NewCompany() =>
+        Company.Create(
+            CompanyId.New(), TenantId, "Verde S.A.S.",
+            [new CompanyBankAccount { BankName = "Bancolombia", AccountNumber = "CTA-1", Currency = "COP" }],
+            "900.111.222-3", Company.ColombiaCountryCode, CompanyDocumentType.Nit, Bogota, null,
+            CompanyContactInfo.Empty, Now);
+
     private static async Task<IReadOnlyList<Modules.Quotations.Domain.WithholdingRate>> ForCustomerAsync(
         string? country, DateOnly documentDate, params TaxUnitValue[] uvts)
     {
@@ -133,7 +209,7 @@ public sealed class QuotationWithholdingLookupTests
 
     private static QuotationWithholdingLookup Lookup(
         FakeCustomerRepository customers, TaxRate[] rates, params TaxUnitValue[] uvts) =>
-        new(customers, new FakeTaxRateRepository(rates), new InMemoryTaxUnitValues(uvts));
+        new(customers, new FakeCompanyRepository(), new FakeTaxRateRepository(rates), new InMemoryTaxUnitValues(uvts));
 
     private static TaxUnitValue Uvt(int year, decimal value) =>
         TaxUnitValue.Create("CO", year, value, Guid.NewGuid(), Now, currentYear: 2027);

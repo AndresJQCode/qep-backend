@@ -31,4 +31,15 @@ public interface IQuotationGeographyLookup
     /// </summary>
     Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
         IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// La referencia de municipio de cada ciudad (spec ReteICA por empresa §9.1, plan P11): nombre y departamento, para el
+    /// municipio de la operación y el de la empresa. Un id que no existe no aparece en el diccionario; también es la
+    /// prueba de que un <c>operationCityId</c> explícito existe.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken);
 }
+
+/// <summary>Un municipio con su departamento, la forma de toda referencia de municipio del spec (§9.1).</summary>
+public sealed record QuotationCityRef(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
