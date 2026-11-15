@@ -18,6 +18,7 @@ public sealed class Tenant
     {
     }
 
+    /// <param name="slug">Ya validado y normalizado por <see cref="Create"/>, su único llamador.</param>
     private Tenant(
         TenantId id,
         string slug,
@@ -30,7 +31,7 @@ public sealed class Tenant
     {
         Id = id;
         OwnerMembershipId = ownerMembershipId;
-        Slug = ValidateSlug(slug);
+        Slug = slug;
         DisplayName = ValidateDisplayName(displayName);
         DefaultCulture = ValidateCulture(defaultCulture);
         TimeZone = ValidateTimeZone(timeZone);
@@ -135,9 +136,11 @@ public sealed class Tenant
         MembershipId ownerMembershipId,
         DateTimeOffset createdAt)
     {
-        // La reserva va aquí y no en el constructor: EnsureNotReserved sólo protege lo nuevo.
-        EnsureNotReserved(ValidateSlug(slug));
-        return new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
+        // La reserva va aquí y no en el constructor: EnsureNotReserved sólo protege lo nuevo. El constructor recibe el slug ya
+        // validado y normalizado, así que no lo vuelve a validar.
+        var normalizedSlug = ValidateSlug(slug);
+        EnsureNotReserved(normalizedSlug);
+        return new(id, normalizedSlug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
             createdAt);
     }
 

@@ -74,7 +74,7 @@ public sealed class UpdateFormSettingsValidator : AbstractValidator<UpdateFormSe
 /// <summary>
 /// Guarda la configuración del formulario público (plan F14): crea la versión <c>n+1</c> con <c>If-Match: n</c> y no toca la anterior,
 /// con su auditoría en la misma transacción. Sin cambios frente a la vigente no crea versión ni audita. Publicar con un motivo pendiente
-/// (<see cref="SupportFormSettingsDto.PublishBlockers"/>) responde 422 con su código: <c>support.form.legal_texts_required</c> (plan F15)
+/// (<see cref="SupportFormSettingsDto.PublishBlockers"/>) desde un formulario sin publicar responde 422 con su código: <c>support.form.legal_texts_required</c> (plan F15)
 /// o <c>support.form.no_published_types</c>. Si otro guardó la misma versión a la vez, el índice responde 409
 /// <c>support.form.version_taken</c>.
 /// </summary>
@@ -132,7 +132,9 @@ public sealed class UpdateFormSettingsHandler(
             return await SupportFormSettings.ToDtoAsync(current, blockers, tenantDirectory, publicOptions, cancellationToken);
         }
 
-        if (candidate.IsPublished && blockers.Count > 0)
+        // Sólo frena el paso de sin publicar a publicado: un formulario ya publicado cuyos tipos se despublicaron después se sigue
+        // pudiendo editar (el motivo sale en PublishBlockers), o el tenant tendría que despublicarlo para cambiar un texto.
+        if (!current.IsPublished && candidate.IsPublished && blockers.Count > 0)
         {
             throw new SupportDomainException(
                 SupportFormSettings.ErrorCodeOf(blockers[0]), $"The public form cannot be published yet: {blockers[0]}.");

@@ -92,6 +92,40 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         Assert.Equal(1, (await JsonAsync(saveUnpublished)).GetProperty("version").GetInt32());
     }
 
+    // El 422 sólo frena el paso a publicado: un formulario ya publicado al que después le despublicaron el último tipo se sigue
+    // pudiendo editar, y el motivo queda en PublishBlockers.
+    [Fact]
+    public async Task EditingAPublishedFormAfterItsLastTypeWasUnpublishedSucceeds()
+    {
+        var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        Assert.Equal(HttpStatusCode.Created, (await PostLegalAsync(client, tenant, LegalTexts, version: 0)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutFormAsync(client, tenant, PublishedForm, version: 0)).StatusCode);
+        await ExecuteAsync(
+            factory, "UPDATE support.ticket_types SET is_published = false WHERE tenant_id = @tenant", ("tenant", Guid.Parse(tenant)));
+
+        var edit = await PutFormAsync(
+            client, tenant,
+            new
+            {
+                isPublished = true,
+                showDocument = true,
+                showAddress = false,
+                showLandline = true,
+                businessNameRequired = false,
+                accentColor = "#00B4FF",
+                introText = "Cuéntanos tu caso con detalle.",
+                successMessage = "Recibimos tu caso.",
+            },
+            version: 1);
+
+        Assert.Equal(HttpStatusCode.OK, edit.StatusCode);
+        var body = await JsonAsync(edit);
+        Assert.Equal(2, body.GetProperty("version").GetInt32());
+        Assert.True(body.GetProperty("isPublished").GetBoolean());
+        Assert.Equal(["no_published_types"], Blockers(body));
+        Assert.Equal(2L, await CountFormVersionsAsync(tenant));
+    }
+
     [Fact]
     public async Task SavingCreatesTheNextVersionAndKeepsThePrevious()
     {
