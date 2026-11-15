@@ -15,6 +15,8 @@ public sealed class LoginBuyerHandlerTests
 
         public Exception? Throws { get; set; }
 
+        public List<CancellationToken> Tokens { get; } = [];
+
         public Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -22,6 +24,7 @@ public sealed class LoginBuyerHandlerTests
             Guid tenantId, Guid accountId, string normalizedEmail, CancellationToken cancellationToken)
         {
             EmailLinks.Add((tenantId, accountId, normalizedEmail));
+            Tokens.Add(cancellationToken);
             return Throws is null ? Task.FromResult(1) : throw Throws;
         }
     }
@@ -85,6 +88,21 @@ public sealed class LoginBuyerHandlerTests
         Assert.Equal(43, result.SessionToken.Length);
         Assert.Equal("ana@correo.com", result.Buyer.Email);
         Assert.Single(linker.EmailLinks);
+    }
+
+    // Revisión final: con la sesión ya confirmada, ni el token del request ni una cancelación del enlace hacen fallar el ingreso.
+    [Fact]
+    public async Task TheLinkRunsWithoutTheRequestTokenAndACancellationDoesNotFailTheLogin()
+    {
+        var world = new BuyersWorld();
+        world.AddVerifiedAccount("ana@correo.com", "hash::una-contrasena-larga");
+        var linker = new RecordingOrderLinker { Throws = new OperationCanceledException() };
+
+        var result = await Handler(world, new CountingHasher(), linker)
+            .HandleAsync(Login("ana@correo.com", "una-contrasena-larga"), TestContext.Current.CancellationToken);
+
+        Assert.Equal("ana@correo.com", result.Buyer.Email);
+        Assert.Equal(CancellationToken.None, Assert.Single(linker.Tokens));
     }
 
     [Fact]

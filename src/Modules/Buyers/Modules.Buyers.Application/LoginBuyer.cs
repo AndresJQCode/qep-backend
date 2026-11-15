@@ -55,19 +55,21 @@ public sealed partial class LoginBuyerHandler(
         var login = await BuyerConcurrency.RetryOnceAsync(
             unitOfWork, () => AttemptAsync(command, storefront, cancellationToken));
 
-        await LinkStoreOrdersAsync(storefront.TenantId, login.AccountId, login.Email, cancellationToken);
+        await LinkStoreOrdersAsync(storefront.TenantId, login.AccountId, login.Email);
         return login.Session;
     }
 
-    // Después del commit de la sesión y fuera de su transacción: el enlace nunca hace fallar el ingreso. Se registra sólo el id de la
-    // cuenta y el tipo de la excepción, nunca el correo.
-    private async Task LinkStoreOrdersAsync(Guid tenantId, Guid accountId, string email, CancellationToken cancellationToken)
+    // Después del commit de la sesión y fuera de su transacción: el enlace nunca hace fallar el ingreso. Va sin el token del request,
+    // como ProfileUpdateRejectedAsync del checkout: con la sesión ya confirmada, un cliente que cierra la conexión no puede convertir
+    // el ingreso en un error. Atrapa todo, también la cancelación. Se registra sólo el id de la cuenta y el tipo de la excepción,
+    // nunca el correo.
+    private async Task LinkStoreOrdersAsync(Guid tenantId, Guid accountId, string email)
     {
         try
         {
-            await orderLinker.LinkByEmailAsync(tenantId, accountId, email, cancellationToken);
+            await orderLinker.LinkByEmailAsync(tenantId, accountId, email, CancellationToken.None);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception)
         {
             LogOrderLinkFailed(logger, accountId, exception.GetType().Name);
         }
