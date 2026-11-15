@@ -881,7 +881,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   sólo `manage`, y el handler tiene que revalidar con la misma regla (`SupportAuthorization.EnsureCanViewAsync` /
   `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
 - **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
-  `tickets.assignee_member_id` y `ticket_events.actor_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
+  `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id` y
+  `unclassified_messages.resolved_by_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
   referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
   `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
   nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
@@ -902,6 +903,49 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   que dependen del orden, si una prueba nueva usa el host sin llamar a `StartTestAsync()` (hereda el reloj que dejó la anterior) o si se
   activa el paralelismo dentro de la clase (dos pruebas moverían el mismo reloj). Una prueba que necesite otra configuración del host
   levanta el suyo.
+- **`SupportThreadFeed` lee `messaging.messages` por nombre** (Soporte fase 2, plan 2026-11-15). Es SQL
+  crudo en Bootstrapper sobre la conexión de `SupportDbContext`, igual que los demás lectores cruzados: renombrar `occurred_at`,
+  `direction`, `imported` o `conversation_id` compila y deja el seguimiento del hilo sin vincular nada (el worker sólo loguea). Lo
+  amarra `SupportBootstrapperAdaptersTests`, que corre el adaptador real contra el esquema migrado. Un entrante es `direction = 1` y
+  `NOT imported`: un camino nuevo que escriba entrantes del cliente con otra marca los saca o los mete en Soporte sin error.
+- **`ConversationEventType` y `MessageTemplateKind` ganaron valores al final** (`TicketOpened`, `TicketClosed`; `SupportReply`), y los
+  dos se guardan por nombre (`details->>'type'`, `message_templates.kind`). No los reordenes ni los insertes en el medio. Escribir en el
+  hilo desde Soporte pasa por `IConversationEventAppender`, enrolado en la transacción de Soporte por `SupportConversationEvents`: nunca
+  un `INSERT` de Soporte en `messaging.*`.
+- **Responder desde Soporte no toma la conversación** (plan E12): `ISupportReplyOutbound` no pasa por `OutboundGuards`, no la asigna, no
+  cambia su estado y liquida con `seen: 0`. Lo autoriza Soporte con `support.ticket.manage`. La liquidación sí es la de siempre
+  (`OutboundSettlement`), que es la que apaga `history_managed`: un camino nuevo de envío desde Soporte que se salte `IOutboundMessages`
+  deja que la siguiente parte del historial pise la conversación. Lo amarra `SupportReplyOutboundTests.ASupportReplyTurnsOffHistoryManaged`.
+- **Un vínculo `Linked` del worker no sube la versión del ticket ni escribe evento** (plan E7). Si lo hiciera, cada mensaje del cliente
+  le daría un 412 al asesor que tiene el ticket abierto. Sólo sube cuando cambia el estado (`WaitingOnCustomer` → `Open`); pasar sola
+  una fila de «sin clasificar» (`SupportThreadFollower.ReassignAsync`) tampoco escribe evento. El único `MessageClassified` lo escribe
+  el asesor al asignar. La idempotencia del worker es por índices (`IX_ticket_messages_ticket_message`, `PK_unclassified_messages`,
+  traducidos por nombre), no por candados: no la cambies por una consulta previa.
+- **El retomado de una respuesta `Pending` sale por su fila, nunca por el reintento** (`SendTicketReply`, revisión del bloque C y
+  revisión final). Una `Pending` de más de 60 s se retoma con el canal, la entrega, la conexión, el `target_wa_id`, el adjunto y el texto
+  guardados, sin mirar `If-Match`. La plantilla al celular retomada no vuelve a revisar el celular de la foto, la conexión ni la
+  aprobación de la plantilla: Mensajería, idempotente por `clientId`, devuelve primero lo que ya salió, y esas revisiones la marcarían
+  `Failed` aunque el mensaje sí haya salido. Si el canal la rechaza o ya no tiene ruta, queda `Failed` con el motivo y nunca se borra
+  (sólo una respuesta nueva rechazada antes de enviar se borra). El correo no tiene `clientId` del otro lado: retomar una `Pending` de
+  correo lo manda otra vez, y eso está aceptado (README).
+- **El adjunto de una respuesta de Soporte se guarda en `ticket_replies` (`upload_id`, `file_name`) y viaja hasta
+  `ISupportReplyOutbound`**, que arma la clave del staging con la membresía de quien responde: la sesión de subida tiene que abrirla el
+  mismo asesor, para esa conversación. Un retomado manda el adjunto guardado, nunca el del reintento. Las reglas que Soporte copia de
+  Mensajería (nombre 256, pie 1024, permiso de la sesión) viven en `SupportReplyAttachmentRules` y las amarra `SupportReplyParityTests`.
+- **El feed del seguimiento mira sólo las últimas `Support:Workers:FeedLookbackHours` (24) por `created_at`** (`SupportThreadFeed`,
+  revisión final). Sin el límite recorría cada conversación seguida desde `follow_since` en cada tick, para siempre. Un worker caído más
+  que el lookback deja sin vincular lo que llegó mientras tanto: no lo «arregles» quitando el límite, sube la configuración.
+- **`CustomerDeletionReferences` desvincula la conversación de los tickets que la usaban** (plan E18): `conversation_id` en `NULL`,
+  seguimiento apagado, `ticket_messages` y `unclassified_messages` de esa conversación borrados y `ticket_replies.message_id` en `NULL`,
+  subiendo `version`. El ticket sobrevive (lo bloquea su propio cliente, no la conversación). Una tabla nueva de Soporte con un id de
+  conversación o de mensaje entra ahí y en `CustomerDeletionAcrossModulesTests`.
+- **Las pruebas de integración corren con `SupportThreadFollowWorker` prendido salvo que lo saquen** (`Support:Workers:Enabled`,
+  verdadero si falta). Cada 5 s lee toda la base sin tenant: una prueba que siembra entrantes y espera verlos sin clasificar o sin
+  vincular pierde la carrera contra el worker. `SupportApiHarness.OpenOwnHostAsync` lo apaga y además lo saca del contenedor por
+  `ImplementationType` (si la bandera dejara de leerse, la prueba sigue sin worker); `SupportHostWithoutWorkers` hace lo mismo por clase.
+- **El cuerpo de la plantilla `SupportReply` no termina ni empieza con una variable** (Meta rechaza esos cuerpos). El texto base cierra
+  con «Si tienes dudas, responde este mensaje.» y `TheBaseBodyNeitherStartsNorEndsWithAVariable` lo amarra. Un texto propio de un tenant
+  (cuerpo de `POST …/template-management/support-reply`) tiene la misma restricción en Meta; la aprobación es por conexión.
 
 ## Verificación
 

@@ -32,6 +32,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
         services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
+        // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
+        services.AddScoped<ISupportReplyOutbound, SupportReplyOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
@@ -41,6 +43,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingAuditRecorder, MessagingAuditRecorder>();
         // Spec 2026-10-10 §8.7: los eventos que escriben los handlers, en el mismo SaveChanges que el agregado.
         services.AddScoped<IConversationEvents, ConversationEvents>();
+        // Soporte fase 2 (plan E11): los eventos de ticket del hilo, en la transacción de quien llama.
+        services.AddScoped<IConversationEventAppender, ConversationEventAppender>();
         services.AddScoped<IAutomationInbox, AutomationInbox>();
         // §7.6 y §8.7: las lecturas de la bandeja y el armado de ConversationSummary por página.
         services.AddScoped<IConversationQueries, ConversationQueries>();
@@ -120,6 +124,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IBillingTemplateReadiness, BillingTemplateReadiness>();
         // Spec 2026-11-09 D5: la del pedido, para el directorio de canales y el sender de Meta en Bootstrapper.
         services.AddScoped<IOrderTemplateReadiness, OrderTemplateReadiness>();
+        // Soporte fase 2: la de «Aviso de respuesta», para las opciones de respuesta de un ticket y su envío por plantilla.
+        services.AddScoped<ISupportReplyTemplateReadiness, SupportReplyTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

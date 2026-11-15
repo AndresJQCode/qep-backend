@@ -111,6 +111,32 @@ public sealed class GetOrderTemplateDraftHandler(
     }
 }
 
+/// <summary>Soporte fase 2, <c>GET …/template-management/support-reply/draft</c>: el borrador de la plantilla «Aviso de respuesta» de la conexión.</summary>
+public sealed record GetSupportReplyTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
+
+public sealed class GetSupportReplyTemplateDraftHandler(
+    IMessageTemplateRepository repository,
+    IMessagingConnectionDirectory connections,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetSupportReplyTemplateDraftQuery, SystemTemplateDraftDto>
+{
+    public async Task<SystemTemplateDraftDto> HandleAsync(GetSupportReplyTemplateDraftQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        _ = await connections.ResolveTemplateSourceAsync(query.TenantId, query.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var current = await repository.FindSupportReplyAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var external = current is null
+            ? await repository.FindByNameAsync(
+                query.TenantId, query.ConnectionId, SupportReplyTemplateDefinition.Name, SupportReplyTemplateDefinition.Language, cancellationToken)
+            : null;
+        return SystemTemplateDrafts.For(
+            current, external, SupportReplyTemplateDefinition.BaseBody, SystemTemplateVariables.SupportReply, SupportReplyTemplateDefinition.IsAdoptable);
+    }
+}
+
 /// <summary><c>GET …/template-management/billing/draft</c>: los borradores de las dos plantillas de cobro de la conexión.</summary>
 public sealed record GetBillingTemplatesDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<BillingTemplatesDraftDto>;
 

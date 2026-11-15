@@ -17,7 +17,7 @@ public sealed class SupportTicket
 
     private readonly List<SupportTicketEvent> events = [];
 
-    // EF Core materializa por acá; CreateManual es el único punto de entrada de código.
+    // EF Core materializa por acá; CreateManual y CreateFromConversation son los únicos puntos de entrada de código.
     private SupportTicket()
     {
         TypeName = string.Empty;
@@ -82,6 +82,23 @@ public sealed class SupportTicket
 
     public DateTimeOffset? ClosedAt { get; private set; }
 
+    /// <summary>La conversación de Mensajería del ticket (spec §8.1): con la que nació o la que vinculó una plantilla (plan E14).
+    /// Una vez puesta no cambia.</summary>
+    public Guid? ConversationId { get; private set; }
+
+    /// <summary>El canal de la conversación por nombre: <c>WhatsApp</c> o <c>Instagram</c>.</summary>
+    public string? ConversationChannel { get; private set; }
+
+    /// <summary>«Seguir el hilo» (spec §8.2): si los entrantes de la conversación se vinculan solos.</summary>
+    public bool FollowThread { get; private set; }
+
+    /// <summary>Desde cuándo sigue el hilo: al crear, al vincular la conversación o al prender de nuevo (plan E4). Lo que llegó
+    /// antes no se vincula solo.</summary>
+    public DateTimeOffset? FollowSince { get; private set; }
+
+    /// <summary>Cuándo dejó de seguirlo: al apagar o al cerrar. Null mientras lo sigue.</summary>
+    public DateTimeOffset? FollowOffAt { get; private set; }
+
     public int LastEventOrdinal { get; private set; }
 
     /// <summary>Los eventos de esta instancia: al crear, el <see cref="SupportTicketEventKind.Created"/>; cargado de la base, sólo
@@ -109,12 +126,60 @@ public sealed class SupportTicket
         Guid? assigneeMemberId,
         Guid actorMemberId,
         DateTimeOffset now,
+        SupportClockContext clock) =>
+        Start(
+            id, tenantId, number, type, subject, description, SupportTicketIntake.Manual, medium, replyChannel, conversation: null,
+            customerId, requester, assigneeMemberId, actorMemberId, now, clock);
+
+    /// <summary>Spec §8.1: el ticket que abre un asesor desde una conversación. Entra por
+    /// <see cref="SupportTicketIntake.Conversation"/>, se responde por el hilo y lo sigue desde ya. La regla del solicitante es la
+    /// del manual (plan D6).</summary>
+    public static SupportTicket CreateFromConversation(
+        SupportTicketId id,
+        Guid tenantId,
+        long number,
+        SupportTicketType type,
+        string subject,
+        string description,
+        SupportConversationRef conversation,
+        Guid? customerId,
+        TicketRequester? requester,
+        Guid? assigneeMemberId,
+        Guid actorMemberId,
+        DateTimeOffset now,
+        SupportClockContext clock)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+        return Start(
+            id, tenantId, number, type, subject, description, SupportTicketIntake.Conversation, medium: null,
+            SupportReplyChannel.Thread, conversation, customerId, requester, assigneeMemberId, actorMemberId, now, clock);
+    }
+
+    // El alta común de las dos entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
+    // constructor vacío.
+    private static SupportTicket Start(
+        SupportTicketId id,
+        Guid tenantId,
+        long number,
+        SupportTicketType type,
+        string subject,
+        string description,
+        SupportTicketIntake intake,
+        ManualIntakeMedium? medium,
+        SupportReplyChannel replyChannel,
+        SupportConversationRef? conversation,
+        Guid? customerId,
+        TicketRequester? requester,
+        Guid? assigneeMemberId,
+        Guid actorMemberId,
+        DateTimeOffset now,
         SupportClockContext clock)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
         EnsureSameTenant(tenantId, type);
+        conversation?.EnsureValid();
         if (customerId is null && requester is not { HasName: true })
         {
             throw RequesterRequired();
@@ -127,13 +192,17 @@ public sealed class SupportTicket
             Number = number,
             Subject = Text(subject, SubjectMaxLength, nameof(subject)),
             Description = Text(description, DescriptionMaxLength, nameof(description)),
-            Intake = SupportTicketIntake.Manual,
+            Intake = intake,
             ManualMedium = medium,
             ReplyChannel = replyChannel,
             Status = SupportTicketStatus.New,
             AssigneeMemberId = assigneeMemberId,
             CustomerId = customerId,
             Requester = requester,
+            ConversationId = conversation?.Id,
+            ConversationChannel = conversation?.Channel,
+            FollowThread = conversation is not null,
+            FollowSince = conversation is not null ? now : null,
             ReceivedAt = now,
             ReceivedOn = clock.LocalDate(now),
             CreatedAt = now,
@@ -145,7 +214,9 @@ public sealed class SupportTicket
         return ticket;
     }
 
-    public void ChangeStatus(SupportTicketStatus target, Guid actorMemberId, DateTimeOffset now, SupportClockContext clock)
+    /// <summary><paramref name="actorMemberId"/> null es el sistema: el seguimiento del hilo que reabre un ticket que esperaba al
+    /// cliente (plan E6). Al cerrar deja de seguir el hilo: un ticket cerrado no captura mensajes ni cuenta como candidato.</summary>
+    public void ChangeStatus(SupportTicketStatus target, Guid? actorMemberId, DateTimeOffset now, SupportClockContext clock)
     {
         ArgumentNullException.ThrowIfNull(clock);
         if (!SupportTicketStatuses.AllowedFrom(Status).Contains(target))
@@ -178,6 +249,13 @@ public sealed class SupportTicket
         else if (target is SupportTicketStatus.Closed)
         {
             ClosedAt = now;
+
+            // Si el asesor ya lo había apagado, se conserva esa hora: lo que llegó con el interruptor apagado nunca entró a la ventana.
+            if (FollowThread)
+            {
+                FollowThread = false;
+                FollowOffAt = now;
+            }
         }
 
         AddEvent(SupportTicketEventKind.StatusChanged, actorMemberId, now, new { from = from.ToString(), to = target.ToString() });
@@ -236,6 +314,106 @@ public sealed class SupportTicket
         AddEvent(SupportTicketEventKind.CustomerChanged, actorMemberId, now, new { from, to = customerId });
     }
 
+    /// <summary>«Seguir el hilo» (spec §8.2). Apagar sella <see cref="FollowOffAt"/>; prender abre una ventana nueva desde ahora,
+    /// así lo que llegó con el interruptor apagado no se vincula (plan E4). El mismo valor no hace nada. Sin conversación no hay
+    /// hilo que seguir.</summary>
+    public void SetFollowThread(bool follow, Guid actorMemberId, DateTimeOffset now)
+    {
+        if (follow == FollowThread)
+        {
+            return;
+        }
+
+        if (follow && ConversationId is null)
+        {
+            throw new SupportDomainException(SupportErrorCodes.NoConversation, "The ticket has no conversation to follow.");
+        }
+
+        FollowThread = follow;
+        if (follow)
+        {
+            FollowSince = now;
+            FollowOffAt = null;
+        }
+        else
+        {
+            FollowOffAt = now;
+        }
+
+        AddEvent(SupportTicketEventKind.FollowThreadChanged, actorMemberId, now, new { follow, at = now });
+    }
+
+    /// <summary>La conversación que crea o encuentra una respuesta por plantilla a un ticket sin conversación (plan E14). Empieza
+    /// a seguir el hilo desde ya, salvo que esté cerrado (revisión final, M3): un cerrado no sigue el hilo, así que la ventana nace
+    /// apagada, con <see cref="FollowOffAt"/> en este instante. Un ticket que ya tiene conversación no la cambia: quien llama lo revisa
+    /// antes.</summary>
+    public void LinkConversation(SupportConversationRef conversation, Guid actorMemberId, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+        conversation.EnsureValid();
+        if (ConversationId is not null)
+        {
+            throw new InvalidOperationException($"The ticket '{Id}' already has a conversation.");
+        }
+
+        var closed = Status is SupportTicketStatus.Closed;
+        ConversationId = conversation.Id;
+        ConversationChannel = conversation.Channel;
+        FollowThread = !closed;
+        FollowSince = now;
+        FollowOffAt = closed ? now : null;
+        AddEvent(
+            SupportTicketEventKind.ConversationLinked, actorMemberId, now,
+            new { conversationId = conversation.Id, channel = conversation.Channel });
+    }
+
+    /// <summary>Si un entrante de su conversación con esa hora le corresponde (plan E4 y E5): no cerrado y dentro de la ventana
+    /// <c>[FollowSince, FollowOffAt)</c>. Se mide con la hora del mensaje, no con la de llegada: un reintento de Meta horas
+    /// después con una hora anterior al ticket no entra.</summary>
+    public bool CoversInbound(DateTimeOffset occurredAt) =>
+        Status is not SupportTicketStatus.Closed
+        && ConversationId is not null
+        && FollowSince is { } since
+        && since <= occurredAt
+        && (FollowOffAt is not { } off || occurredAt < off);
+
+    /// <summary>Fijar, soltar, clasificar desde «sin clasificar» o «De ninguno» (plan E7 y E8). Null es el sistema.</summary>
+    public void RecordMessageEvent(SupportTicketEventKind kind, Guid messageId, Guid? actorMemberId, DateTimeOffset now)
+    {
+        if (kind is not (SupportTicketEventKind.MessagePinned or SupportTicketEventKind.MessageReleased
+            or SupportTicketEventKind.MessageClassified or SupportTicketEventKind.MessageDismissed))
+        {
+            throw new ArgumentException($"'{kind}' is not a message event.", nameof(kind));
+        }
+
+        AddEvent(kind, actorMemberId, now, new { messageId });
+    }
+
+    /// <summary>Anota una respuesta en la traza con su canal, cómo terminó (<c>status</c>, y <c>failureCode</c> si falló) y, si salió
+    /// por Mensajería, su mensaje (plan E16). Se llama después de marcarla.</summary>
+    public void RecordReply(SupportTicketReply reply, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(reply);
+        if (reply.TicketId != Id || reply.TenantId != TenantId)
+        {
+            throw new ArgumentException("The reply belongs to another ticket.", nameof(reply));
+        }
+
+        AddEvent(
+            SupportTicketEventKind.ReplySent,
+            reply.AuthorMemberId,
+            now,
+            new
+            {
+                replyId = reply.Id,
+                channel = reply.Channel.ToString(),
+                delivery = reply.Delivery.ToString(),
+                messageId = reply.MessageId,
+                status = reply.Status.ToString(),
+                failureCode = reply.FailureCode,
+            });
+    }
+
     private void CopyType(SupportTicketType type, SupportClockContext clock)
     {
         TypeId = type.Id;
@@ -249,7 +427,7 @@ public sealed class SupportTicket
     private DateOnly? DueOnFor(int? term, SupportClockContext clock) =>
         term is { } days ? SupportBusinessDays.Add(clock.Calendar, ReceivedOn, days + PausedBusinessDays) : null;
 
-    private void AddEvent(SupportTicketEventKind kind, Guid actorMemberId, DateTimeOffset now, object details)
+    private void AddEvent(SupportTicketEventKind kind, Guid? actorMemberId, DateTimeOffset now, object details)
     {
         LastEventOrdinal++;
         events.Add(SupportTicketEvent.Create(

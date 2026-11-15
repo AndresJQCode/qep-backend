@@ -19,8 +19,188 @@ public static class SupportEndpoints
         MapTickets(group);
         MapTicketTypes(group);
         MapSettings(group);
+        MapConversations(group);
+        MapThread(group);
+        MapReplies(group);
 
         return endpoints;
+    }
+
+    // Fase 2: responder desde el ticket. Una respuesta que Meta o el correo rechazan también es 201, con la fila en Failed (plan E17).
+    private static void MapReplies(RouteGroupBuilder group)
+    {
+        group.MapGet("/tickets/{ticketId:guid}/reply-options", GetReplyOptionsAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportReplyOptionsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/tickets/{ticketId:guid}/replies", SendReplyAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Accepts<SupportReplyRequest>("application/json")
+            .Produces<SupportReplyResultDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+    }
+
+    private static async Task<IResult> GetReplyOptionsAsync(
+        Guid tenantId, Guid ticketId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetReplyOptionsQuery(tenantId, ticketId), cancellationToken));
+
+    private static async Task<IResult> SendReplyAsync(
+        Guid tenantId,
+        Guid ticketId,
+        SupportReplyRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync(
+            SendTicketReplyCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticketId}", result);
+    }
+
+    // Fase 2: el expediente del ticket, «Seguir el hilo» y «¿De qué ticket es?». Fijar, soltar y seguir llevan If-Match (428/412,
+    // como las acciones de la fase 1); asignar lleva la versión del ticket elegido en el cuerpo porque la ruta es de la conversación.
+    private static void MapThread(RouteGroupBuilder group)
+    {
+        group.MapGet("/tickets/{ticketId:guid}/messages", ListTicketMessagesAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportTicketMessagesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        MapTicketPost(group, "messages/{messageId:guid}/pin", PinMessageAsync);
+        MapTicketPost(group, "messages/{messageId:guid}/release", ReleaseMessageAsync);
+        MapTicketAction<SetTicketFollowThreadRequest>(group, "follow-thread", SetFollowThreadAsync);
+
+        group.MapGet("/conversations/{conversationId:guid}/unclassified", ListUnclassifiedAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportUnclassifiedDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/conversations/{conversationId:guid}/unclassified/{messageId:guid}/assign", AssignUnclassifiedAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Accepts<AssignUnclassifiedRequest>("application/json")
+            .Produces<SupportUnclassifiedDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/conversations/{conversationId:guid}/unclassified/{messageId:guid}/dismiss", DismissUnclassifiedAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Produces<SupportUnclassifiedDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
+
+    private static void MapTicketPost(RouteGroupBuilder group, string action, Delegate handler) =>
+        group.MapPost($"/tickets/{{ticketId:guid}}/{action}", handler)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Produces<SupportTicketDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+    private static async Task<IResult> ListTicketMessagesAsync(
+        Guid tenantId,
+        Guid ticketId,
+        string? before,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        int take = ListTicketMessagesQuery.DefaultTake) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListTicketMessagesQuery(tenantId, ticketId, before, take), cancellationToken));
+
+    private static async Task<IResult> PinMessageAsync(
+        Guid tenantId,
+        Guid ticketId,
+        Guid messageId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new PinTicketMessageCommand(tenantId, ticketId, messageId, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ReleaseMessageAsync(
+        Guid tenantId,
+        Guid ticketId,
+        Guid messageId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ReleaseTicketMessageCommand(tenantId, ticketId, messageId, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> SetFollowThreadAsync(
+        Guid tenantId,
+        Guid ticketId,
+        SetTicketFollowThreadRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            SetTicketFollowThreadCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ListUnclassifiedAsync(
+        Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListUnclassifiedQuery(tenantId, conversationId), cancellationToken));
+
+    private static async Task<IResult> AssignUnclassifiedAsync(
+        Guid tenantId,
+        Guid conversationId,
+        Guid messageId,
+        AssignUnclassifiedRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            AssignUnclassifiedCommand.From(tenantId, conversationId, messageId, request), cancellationToken));
+
+    private static async Task<IResult> DismissUnclassifiedAsync(
+        Guid tenantId, Guid conversationId, Guid messageId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new DismissUnclassifiedCommand(tenantId, conversationId, messageId), cancellationToken));
+
+    // Fase 2 (Mensajería): lo que parte de una conversación. La conversación de otro tenant es 404, como un ticket ajeno.
+    private static void MapConversations(RouteGroupBuilder group)
+    {
+        group.MapGet("/conversations/{conversationId:guid}/tickets", ListConversationTicketsAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportConversationTicketsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/conversations/{conversationId:guid}/tickets", CreateTicketFromConversationAsync)
+            .RequireAuthorization(SupportPermissions.Manage)
+            .Accepts<CreateTicketFromConversationRequest>("application/json")
+            .Produces<SupportTicketDetailDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
+
+    private static async Task<IResult> ListConversationTicketsAsync(
+        Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListConversationTicketsQuery(tenantId, conversationId), cancellationToken));
+
+    private static async Task<IResult> CreateTicketFromConversationAsync(
+        Guid tenantId,
+        Guid conversationId,
+        CreateTicketFromConversationRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var ticket = await dispatcher.SendAsync(
+            CreateTicketFromConversationCommand.From(tenantId, conversationId, request), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticket.Id}", ticket);
     }
 
     private static void MapTickets(RouteGroupBuilder group)

@@ -148,11 +148,13 @@ public sealed record EventCustomerRefDto(Guid Id, string Name);
 /// CustomerChanged como evento desconocido, sin romperse. <c>handoff</c> sólo en un <c>AutomationPaused</c> con
 /// <c>pauseReason = Handoff</c> (spec 2026-10-24 §6); ausente en eventos viejos. <c>chatbot</c> sólo en un <c>Resolved</c> hecho
 /// por el bot (bloque «Resolver»), con <c>actor</c> null: el hilo dice «El asistente «X» resolvió la conversación» en vez de
-/// «Alguien»; resuelto al leer como <c>SentByChatbot</c>, con «Chatbot» si ya no existe.</summary>
+/// «Alguien»; resuelto al leer como <c>SentByChatbot</c>, con «Chatbot» si ya no existe. <c>ticketId</c> y <c>ticketNumber</c> sólo en
+/// <c>TicketOpened</c>/<c>TicketClosed</c> (Soporte fase 2): el número (<c>SOP-000127</c>) se resuelve al leer para que el hilo diga
+/// «Se abrió el ticket SOP-000127» sin otra consulta; <c>null</c> si el ticket ya no está, y el hilo dibuja el evento sin número.</summary>
 public sealed record MessageEventDto(
     string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null,
     EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null,
-    ChatbotRefDto? Chatbot = null);
+    ChatbotRefDto? Chatbot = null, Guid? TicketId = null, string? TicketNumber = null);
 
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
 /// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>, <c>AttemptsExhausted</c>, <c>DataConsentRejected</c>, <c>DataConsentUnavailable</c>): uno desconocido

@@ -4804,8 +4804,9 @@ importadas conservan el monto que trae el Excel: no se recalculan con la tasa ni
 Módulo `Modules.Support.{Domain,Application,Infrastructure,Api}`, esquema `support`, clave de módulo `support` (sin dependencias,
 fuera de `DefaultForNewTenants`: nace apagado y se prende por tenant). Es la fase 1 («núcleo») del spec
 `docs/superpowers/specs/2026-11-14-support-tickets-pqrs-design.md`: tickets creados a mano, bandeja con plazos en días hábiles,
-estados, responsable, tipo y cliente con traza y auditoría, y los tipos de ticket del tenant. Mensajería, el formulario público y la
-encuesta llegan en las fases siguientes. Soporte no referencia Mensajería ni Customers: el calendario, los clientes y los miembros
+estados, responsable, tipo y cliente con traza y auditoría, y los tipos de ticket del tenant. La fase 2 («Mensajería», ver
+[Soporte y Mensajería](#soporte-y-mensajería-fase-2)) suma tickets desde una conversación, el seguimiento del hilo y las respuestas por
+el hilo, la plantilla «Aviso de respuesta» y el correo. El formulario público y la encuesta llegan en las fases siguientes. Soporte no referencia Mensajería ni Customers: el calendario, los clientes y los miembros
 entran por puertos con adaptador en Bootstrapper (`SupportBusinessCalendarSource`, `SupportCustomerLookup`, `SupportMemberDirectory`).
 
 **Permisos y roles.** `support.ticket.read`, `support.ticket.manage` y `support.settings.manage` (`SupportPermissions`, categoría
@@ -4918,6 +4919,90 @@ sonda de usuarios, y los CHECK `CK_tickets_manual_medium` y `CK_ticket_events_ki
 Comercio art. 60; Ley 962 de 2005 art. 28); después se anonimizan los datos personales del solicitante y el ticket queda para
 estadística. Los consentimientos se conservan mientras dure el tratamiento más ese mismo término. Todavía no hay purga: en esta fase
 ningún ticket se borra.
+
+#### Soporte y Mensajería (fase 2)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-2-messaging-backend.md` (spec §8.1 a §8.3 y §8.5). Soporte sigue sin referenciar
+Mensajería ni Customers: los puertos de `Modules.Support.Application` (`ISupportConversationDirectory`, `ISupportThreadFeed`,
+`ISupportConversationEvents`, `ISupportReplyChannels`, `ISupportReplyEmail`) tienen adaptador en Bootstrapper. Mensajería gana los
+eventos del hilo `TicketOpened` y `TicketClosed` (con `TicketId`; el número se resuelve al leer), el emisor `ISupportReplyOutbound` y la
+plantilla del sistema `SupportReply`.
+
+**Rutas nuevas**, bajo `/api/v1/tenants/{tenantId}/support`. Toda acción que cambia el ticket exige `If-Match`.
+
+| Método y ruta | Política | Qué hace |
+| --- | --- | --- |
+| `GET /conversations/{conversationId}/tickets` | `support.ticket.view` | Los tickets de la conversación y los del mismo cliente por otros canales, con `CanCreate` y su motivo |
+| `POST /conversations/{conversationId}/tickets` | `support.ticket.manage` | Abre un ticket desde la conversación (exige `messaging`; `201`) |
+| `GET /conversations/{conversationId}/unclassified` | `support.ticket.view` | Entrantes sin clasificar con sus tickets candidatos |
+| `POST /conversations/{conversationId}/unclassified/{messageId}/assign` | `support.ticket.manage` | Lo asigna a uno (`{ ticketId, version }`) |
+| `POST /conversations/{conversationId}/unclassified/{messageId}/dismiss` | `support.ticket.manage` | «De ninguno» |
+| `GET /tickets/{ticketId}/messages?before=&take=` | `support.ticket.view` | Mensajes vinculados, del más nuevo al más viejo (50, hasta 100) |
+| `POST /tickets/{ticketId}/messages/{messageId}/pin` · `/release` | `support.ticket.manage` | Fija o suelta un mensaje (`If-Match`) |
+| `PUT /tickets/{ticketId}/follow-thread` | `support.ticket.manage` | Prende o apaga «Seguir el hilo» (`{ follow }`, `If-Match`) |
+| `GET /tickets/{ticketId}/reply-options` | `support.ticket.view` | Qué canal puede usar el asesor y qué va a pasar (texto o plantilla) |
+| `POST /tickets/{ticketId}/replies` | `support.ticket.manage` | Responde (`If-Match`; `201` con la fila, también si quedó `Failed`) |
+
+**Seguimiento del hilo.** Los entrantes no se empujan desde la ingesta: `SupportThreadFollowWorker` lee por sondeo, con
+`Support:Workers` en `appsettings.json` y defaults en código: `Enabled` (verdadero si falta: el worker se registra o no al arrancar),
+`FollowIntervalSeconds` (5), `BatchSize` (200 entrantes por pasada) y `FeedLookbackHours` (24: cada pasada mira sólo los entrantes y
+las filas sin clasificar que llegaron en esas horas, por `created_at`). Un entrante cuenta para un ticket no cerrado si cae en su ventana
+`[follow_since, follow_off_at)`: con un candidato se vincula (`Linked`), con dos o más queda «sin clasificar», y una fila sin clasificar
+pasa sola cuando le queda un único candidato. Un vínculo automático no sube la versión del ticket ni escribe evento; reabre a `Open` un
+ticket `WaitingOnCustomer`. Lo que el worker acepta y no corrige:
+
+- **Un entrante que siempre falla** se registra (sólo ids) y se salta en cada pasada; no frena el resto del lote.
+- **Un ticket que apagó el seguimiento hace más de una hora** (`SupportThreadFeed.FollowOffGrace`) ya no hace recorrer su
+  conversación: un entrante de antes del apagado que el worker no alcanzó a ver en esa hora queda sin vincular.
+- **Un worker caído más de `FeedLookbackHours`** deja sin vincular los entrantes que llegaron mientras tanto (el asesor los fija a
+  mano desde el hilo) y sin pasar solas las filas sin clasificar más viejas que eso (el asesor las asigna o las descarta).
+- **Prender el seguimiento otra vez** abre una ventana nueva desde ese momento: lo que llegó con el interruptor apagado no se vincula,
+  y un entrante de la ventana anterior que el worker todavía no procesaba (unos segundos de retraso) puede quedar fuera.
+- **Una fila sin clasificar cuyos candidatos se cerraron todos** queda pendiente hasta que el asesor la descarte; no ocupa el lote.
+- **Asignar desde «sin clasificar» mientras el worker la reasigna** puede responder `409 support.message.already_linked` al
+  asesor: el mensaje ya quedó en el ticket.
+
+Las pruebas de integración que necesitan controlar el worker lo sacan del host por tipo (`ImplementationType`), además de apagar la bandera.
+
+**Respuestas.** Por el hilo dentro de la ventana de 24 h sale texto (o un adjunto, abajo); fuera, en WhatsApp sale la plantilla «Aviso
+de respuesta» a la misma conversación y en Instagram es `422 support.reply.window_closed`. `WhatsAppTemplate` en un ticket sin
+conversación manda la plantilla al celular de la foto por la conexión elegida, crea la conversación y el ticket empieza a seguirla.
+`Email` va al correo de la foto. Responder no toma la conversación, no cambia su estado ni su asignación y no resta no leídos. Cada
+respuesta es una fila de `support.ticket_replies` que se confirma `Pending` **antes** de llamar afuera; su `id` es el `clientId` que viaja
+a Mensajería, idempotente por él. Un reintento con el mismo `clientId` devuelve la fila guardada sin mirar el `If-Match`; una `Pending` de
+menos de 60 s se devuelve sin enviar (la está mandando otro request) y una más vieja se retoma con exactamente lo que guardó su fila: el
+canal, la entrega, la conexión, el texto, el adjunto (`upload_id`, `file_name`; el del reintento se ignora) y, en una plantilla al
+celular, el `target_wa_id` que se tomó de la foto al crearla (sin volver a revisar el celular, la conexión ni la aprobación de la
+plantilla: Mensajería devuelve primero lo que ya salió con ese `clientId`). Si el canal la rechaza o ya no tiene ruta, queda `Failed`
+con el motivo. La fila trae su `clientId` en el detalle y en el resultado, para que la pantalla retome una que quedó `Pending`. Una
+`Failed` trae `messageId` si Mensajería registró el mensaje (no se fija en el expediente), y un mensaje se fija sólo si salió por la
+conversación del ticket. **El correo no es idempotente**: una `Pending` de correo de más de 60 s se
+vuelve a mandar al retomarla, y el solicitante puede recibirlo dos veces.
+
+**`failureCode` de una respuesta `Failed`** tiene dos orígenes, y la pantalla tiene que traducir los dos: un motivo de Mensajería o del
+correo cuando el canal la rechazó o falló (`send_failed`, `window_closed`, `contact_blocked`, `connection_unavailable`,
+`attachment_unavailable`…), o un código de error de Soporte cuando un retomado ya no tenía ruta (`support.ticket.no_conversation`,
+`support.ticket.reply_channel_unavailable`).
+
+**Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
+la pantalla lo sube con la sesión de subida de Mensajería
+(`POST /api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages/media/upload-session`, que exige
+`messaging.conversation.manage`) y manda `uploadId` y `fileName` en la respuesta. En WhatsApp el texto de la respuesta va como pie (hasta
+1024). Instagram no lleva pie en un adjunto y el texto se perdería, así que ahí no se adjunta: `canAttach = false` y un `uploadId` es
+`422 support.reply.attachment_unavailable`. Sin el permiso de Mensajería, `reply-options` también responde `canAttach = false`. Un
+`uploadId` de otra conversación o que subió otro asesor, vencido o ya usado, sin `fileName`, un tipo que el canal no acepta o un audio
+(no lleva pie) es `422 support.reply.attachment_unavailable`.
+
+**Plantilla «Aviso de respuesta».** `MessageTemplateKind.SupportReply`, nombre `qep_soporte_respuesta` (versiones `_v2`…, prefijo
+reservado), idioma `es`, `UTILITY`, sólo cuerpo, con las variables fijas más `radicado` y `respuesta`. Se aprovisiona **por conexión**:
+`POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/support-reply` (cuerpo opcional `{ body }`) y
+su borrador en `GET …/support-reply/draft`. Hasta que Meta la apruebe en una conexión, fuera de la ventana no sale nada por ella
+(`template_not_approved`). El texto base termina en una frase fija y no en `{{respuesta}}`: Meta rechaza cuerpos que empiezan o terminan
+con una variable.
+
+**Migraciones:** `Support` `AddSupportMessaging` (conversación y ventana de seguimiento en `tickets`, `ticket_messages`,
+`unclassified_messages`, `ticket_replies`) y `Messaging` `AddSupportReplyTemplateKind` (el CHECK de `message_templates.kind` e
+`UX_message_templates_support_reply`).
 
 ### API externa
 

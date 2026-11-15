@@ -166,6 +166,69 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
             deletion.Outcome.StorageKeys[footprint.Customer]);
     }
 
+    // Soporte fase 2 (plan E18): un ticket sin ese cliente (cambió de cliente o nunca lo tuvo) que nació de una de sus conversaciones
+    // sobrevive al borrado, pero deja de apuntar a la conversación que se va: sin conversación, sin seguir el hilo, sin vínculos ni
+    // entrantes sin clasificar, y la respuesta que salió por esa conversación conserva su fila sin el mensaje.
+    [Fact]
+    public async Task DeletingACustomerUnlinksTheTicketsOfItsConversations()
+    {
+        var tenant = Guid.CreateVersion7();
+        var customer = await InsertCustomerAsync(tenant, Name, Phone);
+        var conversation = await InsertConversationAsync(tenant, customer, blocked: false);
+        var now = DateTimeOffset.UtcNow;
+        var message = Guid.CreateVersion7();
+        Modules.Support.Domain.SupportTicketId ticketId;
+        Guid replyId;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var services = scope.ServiceProvider;
+            await services.GetRequiredService<Modules.Support.Application.ISupportProvisioner>().EnsureAsync(tenant, Ct);
+            var type = (await services.GetRequiredService<Modules.Support.Application.ISupportTicketTypeRepository>().ListAsync(tenant, Ct))[0];
+            var calendar = new Modules.Support.Domain.SupportClockContext(
+                new AllDaysCalendar(), TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
+            var ticket = Modules.Support.Domain.SupportTicket.CreateFromConversation(
+                Modules.Support.Domain.SupportTicketId.New(), tenant, 1, type, "Pedido sin llegar", "No ha llegado.",
+                new Modules.Support.Domain.SupportConversationRef(conversation, "WhatsApp"), null,
+                new Modules.Support.Domain.TicketRequester("Beto", null, null, null, null, null, null, null, "CO", null),
+                null, Guid.CreateVersion7(), now, calendar);
+            ticketId = ticket.Id;
+            services.GetRequiredService<Modules.Support.Application.ISupportTicketRepository>().Add(ticket);
+            services.GetRequiredService<Modules.Support.Application.ISupportTicketMessageRepository>().Add(
+                Modules.Support.Domain.SupportTicketMessage.Link(
+                    tenant, ticket.Id, conversation, message, now, Modules.Support.Domain.SupportTicketMessageState.Linked, now));
+            services.GetRequiredService<Modules.Support.Application.ISupportUnclassifiedRepository>().Add(
+                Modules.Support.Domain.SupportUnclassifiedMessage.Create(tenant, conversation, Guid.CreateVersion7(), now, now));
+            var reply = Modules.Support.Domain.SupportTicketReply.Start(
+                tenant, ticket.Id, Guid.CreateVersion7(), Modules.Support.Domain.SupportReplyChannel.Thread,
+                Modules.Support.Domain.SupportReplyDelivery.Text, "Ya lo revisamos.", null, Guid.CreateVersion7(), now);
+            reply.MarkSent(message, now);
+            replyId = reply.Id;
+            services.GetRequiredService<Modules.Support.Application.ISupportReplyRepository>().Add(reply);
+            await services.GetRequiredService<Modules.Support.Application.ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var deletion = await DeleteAsync(tenant, [customer]);
+
+        Assert.Empty(deletion.Blockers);
+        Assert.Equal(
+            "conversation=|channel=|follow=False|off=True|version=2",
+            await TextAsync(
+                """
+                SELECT 'conversation=' || coalesce(conversation_id::text, '') || '|channel=' || coalesce(conversation_channel, '')
+                    || '|follow=' || CASE WHEN follow_thread THEN 'True' ELSE 'False' END
+                    || '|off=' || CASE WHEN follow_off_at IS NOT NULL THEN 'True' ELSE 'False' END || '|version=' || version
+                FROM support.tickets WHERE id = @id
+                """,
+                ("id", ticketId.Value)));
+        Assert.Equal(0, await ScalarAsync("SELECT count(*) FROM support.ticket_messages WHERE ticket_id = @id", ("id", ticketId.Value)));
+        Assert.Equal(
+            0, await ScalarAsync("SELECT count(*) FROM support.unclassified_messages WHERE conversation_id = @id", ("id", conversation)));
+        Assert.Equal(
+            "Sent|",
+            await TextAsync(
+                "SELECT status || '|' || coalesce(message_id::text, '') FROM support.ticket_replies WHERE id = @id", ("id", replyId)));
+    }
+
     // P11: la audiencia nunca queda vacía (CK_campaigns_audience). Si el cliente era lo único, el id se queda.
     [Fact]
     public async Task ADraftCampaignWhoseOnlyAudienceIsTheCustomerKeepsTheId()
@@ -1004,5 +1067,11 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         }
 
         return command;
+    }
+
+    // El plazo del ticket no importa acá: todos los días son hábiles.
+    private sealed class AllDaysCalendar : Modules.Support.Domain.ISupportBusinessCalendar
+    {
+        public bool IsBusinessDay(DateOnly day) => true;
     }
 }

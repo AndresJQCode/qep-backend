@@ -144,6 +144,15 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("closed_at");
 
+                    b.Property<string>("ConversationChannel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("conversation_channel");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -161,6 +170,20 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.Property<DateOnly?>("DueOn")
                         .HasColumnType("date")
                         .HasColumnName("due_on");
+
+                    b.Property<DateTimeOffset?>("FollowOffAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("follow_off_at");
+
+                    b.Property<DateTimeOffset?>("FollowSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("follow_since");
+
+                    b.Property<bool>("FollowThread")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("follow_thread");
 
                     b.Property<string>("Intake")
                         .IsRequired()
@@ -267,6 +290,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.HasIndex("AssigneeMemberId")
                         .HasDatabaseName("IX_tickets_assignee");
 
+                    b.HasIndex("TenantId", "ConversationId")
+                        .HasDatabaseName("IX_tickets_tenant_conversation")
+                        .HasFilter("conversation_id IS NOT NULL");
+
                     b.HasIndex("TenantId", "CustomerId")
                         .HasDatabaseName("IX_tickets_tenant_customer");
 
@@ -283,6 +310,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tickets", "support", t =>
                         {
+                            t.HasCheckConstraint("CK_tickets_conversation_channel", "conversation_channel IN ('WhatsApp','Instagram')");
+
+                            t.HasCheckConstraint("CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
+
                             t.HasCheckConstraint("CK_tickets_intake", "intake IN ('Manual','Conversation','PublicForm')");
 
                             t.HasCheckConstraint("CK_tickets_manual_medium", "manual_medium IN ('Phone','InPerson','Email','Letter','Other')");
@@ -341,7 +372,167 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("ticket_events", "support", t =>
                         {
-                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged')");
+                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("state");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TicketId", "MessageId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ticket_messages_ticket_message");
+
+                    b.HasIndex("TenantId", "ConversationId", "MessageId")
+                        .HasDatabaseName("IX_ticket_messages_conversation");
+
+                    b.HasIndex("TicketId", "OccurredAt", "MessageId")
+                        .IsDescending(false, true, true)
+                        .HasDatabaseName("IX_ticket_messages_ticket_visible")
+                        .HasFilter("state <> 'Released'");
+
+                    b.ToTable("ticket_messages", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_messages_state", "state IN ('Linked','Pinned','Released')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketReply", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AuthorMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_member_id");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("channel");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<Guid?>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Delivery")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("delivery");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_code");
+
+                    b.Property<string>("FileName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("file_name");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TargetWaId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("target_wa_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)")
+                        .HasColumnName("text");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UploadId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("upload_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AuthorMemberId")
+                        .HasDatabaseName("IX_ticket_replies_author");
+
+                    b.HasIndex("TicketId", "ClientId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ticket_replies_ticket_client");
+
+                    b.ToTable("ticket_replies", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_replies_channel", "channel IN ('Thread','WhatsAppTemplate','Email')");
+
+                            t.HasCheckConstraint("CK_ticket_replies_delivery", "delivery IN ('Text','Template','Email')");
+
+                            t.HasCheckConstraint("CK_ticket_replies_status", "status IN ('Pending','Sent','Failed')");
                         });
                 });
 
@@ -405,6 +596,61 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_ticket_types_legal_term", "NOT term_is_legal OR term_business_days IS NOT NULL");
 
                             t.HasCheckConstraint("CK_ticket_types_term", "term_business_days IS NULL OR term_business_days BETWEEN 1 AND 365");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportUnclassifiedMessage", b =>
+                {
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<Guid?>("AssignedTicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assigned_ticket_id");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("Resolution")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("resolution");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<Guid?>("ResolvedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resolved_by_member_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("MessageId")
+                        .HasName("PK_unclassified_messages");
+
+                    b.HasIndex("ResolvedByMemberId")
+                        .HasDatabaseName("IX_unclassified_resolved_by");
+
+                    b.HasIndex("TenantId", "ConversationId")
+                        .HasDatabaseName("IX_unclassified_pending")
+                        .HasFilter("resolution IS NULL");
+
+                    b.ToTable("unclassified_messages", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_unclassified_messages_resolution", "resolution IN ('Assigned','Dismissed','Reassigned')");
                         });
                 });
 
@@ -480,6 +726,24 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("Modules.Support.Domain.SupportTicket", null)
                         .WithMany("Events")
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketMessage", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketReply", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicket", null)
+                        .WithMany()
                         .HasForeignKey("TicketId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

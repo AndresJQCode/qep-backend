@@ -23,6 +23,30 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
             .OrderBy(item => item.Ordinal)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<SupportTicket>> ListOpenByConversationAsync(
+        Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        await dbContext.Tickets
+            .Where(ticket => ticket.TenantId == tenantId
+                && ticket.ConversationId == conversationId
+                && ticket.Status != SupportTicketStatus.Closed)
+            .OrderBy(ticket => ticket.ReceivedAt)
+            .ThenBy(ticket => ticket.Id)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<SupportTicket>> ListByConversationOrCustomerAsync(
+        Guid tenantId, Guid conversationId, Guid? customerId, CancellationToken cancellationToken)
+    {
+        var hasCustomer = customerId is not null;
+        var customer = customerId ?? Guid.Empty;
+        return await dbContext.Tickets
+            .AsNoTracking()
+            .Where(ticket => ticket.TenantId == tenantId
+                && (ticket.ConversationId == conversationId || (hasCustomer && ticket.CustomerId == customer)))
+            .OrderByDescending(ticket => ticket.ReceivedAt)
+            .ThenByDescending(ticket => ticket.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<SupportTicketPage> ListAsync(SupportTicketFilter filter, CancellationToken cancellationToken)
     {
         var tickets = Filtered(filter);

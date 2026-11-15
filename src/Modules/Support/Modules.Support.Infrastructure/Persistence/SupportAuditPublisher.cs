@@ -31,4 +31,23 @@ internal sealed class SupportAuditPublisher(SupportDbContext dbContext) : ISuppo
             JsonSerializer.Serialize(changedFields),
             Source,
             occurredAt));
+
+    public void PublishSystem(
+        Guid tenantId,
+        string action,
+        string resourceType,
+        string resourceId,
+        IReadOnlyCollection<string> changedFields,
+        DateTimeOffset occurredAt) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            Guid.Empty,
+            AuditActorType.System,
+            action,
+            resourceType,
+            resourceId,
+            "success",
+            JsonSerializer.Serialize(changedFields),
+            Source,
+            occurredAt));
 }

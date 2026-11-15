@@ -19,6 +19,10 @@ public interface ISupportUnitOfWork
     /// en la misma transacción eso no espera.
     /// </summary>
     Task HoldCustomerReferenceAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+
+    /// <summary>Olvida todo lo cargado y lo pendiente de guardar. Lo usa el seguimiento del hilo entre un entrante y el siguiente: un
+    /// guardado que choca (otra réplica ganó) deja sus cambios en el contexto, y sin esto el siguiente guardado los volvería a mandar.</summary>
+    void DiscardChanges();
 }
 
 public interface ISupportTransaction : IAsyncDisposable

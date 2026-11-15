@@ -30,4 +30,51 @@ public static class SupportErrorCodes
     public const string TicketTypeNameTaken = "support.ticket_type.name_taken";
 
     public const string TicketTypeOrderIncomplete = "support.ticket_type.order_incomplete";
+
+    // Fase 2, Mensajería (spec §8.1 a §8.3).
+    public const string ConversationNotFound = "support.conversation.not_found";
+
+    public const string MessageNotInConversation = "support.message.not_in_conversation";
+
+    public const string MessageNotLinked = "support.message.not_linked";
+
+    public const string UnclassifiedNotPending = "support.unclassified.not_pending";
+
+    public const string TicketNotCandidate = "support.unclassified.ticket_not_candidate";
+
+    public const string NoConversation = "support.ticket.no_conversation";
+
+    /// <summary>Ruling A-c2: un ticket cerrado no vuelve a seguir el hilo; no podría vincular nada.</summary>
+    public const string FollowClosed = "support.ticket.follow_closed";
+
+    public const string ReplyWindowClosed = "support.reply.window_closed";
+
+    public const string ReplyContactBlocked = "support.reply.contact_blocked";
+
+    public const string ReplyTemplateNotApproved = "support.reply.template_not_approved";
+
+    public const string ReplyTemplateTextInvalid = "support.reply.template_text_invalid";
+
+    public const string ReplyConnectionUnavailable = "support.reply.connection_unavailable";
+
+    public const string ReplyConnectionRequired = "support.reply.connection_required";
+
+    public const string ReplyAttachmentUnavailable = "support.reply.attachment_unavailable";
+
+    /// <summary>El nombre del destinatario o el radicado no cumplen las reglas de un parámetro de plantilla de Meta.</summary>
+    public const string ReplyRecipientInvalid = "support.reply.recipient_invalid";
+
+    /// <summary>La conversación es de un canal sin plantillas (Instagram).</summary>
+    public const string ReplyChannelUnsupported = "support.reply.channel_unsupported";
+
+    /// <summary>El canal rechazó la respuesta por un motivo que Soporte todavía no traduce a uno propio.</summary>
+    public const string ReplyUnavailable = "support.reply.unavailable";
+
+    // Los tres únicos de la fase 2, traducidos por nombre de índice en SupportUnitOfWork (plan E3 y E16). El seguimiento del hilo y
+    // el envío los atrapan: no llegan a la pantalla salvo en una carrera.
+    public const string MessageAlreadyLinked = "support.message.already_linked";
+
+    public const string UnclassifiedAlreadyRecorded = "support.unclassified.already_recorded";
+
+    public const string ReplyDuplicateClientId = "support.reply.duplicate_client_id";
 }

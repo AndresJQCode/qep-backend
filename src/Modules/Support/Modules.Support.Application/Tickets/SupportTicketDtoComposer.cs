@@ -20,7 +20,9 @@ public sealed class SupportTicketDtoComposer(
     ISupportTicketRepository tickets,
     ISupportBusinessCalendarSource calendars,
     ISupportSettingsRepository settings,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ISupportReplyRepository replies,
+    ISupportUnclassifiedRepository unclassified)
 {
     /// <summary>Lo que el contrato muestra de un miembro o cliente que ya no se resuelve (un miembro removido, un cliente borrado).</summary>
     internal const string UnknownName = "Sin nombre";
@@ -45,10 +47,15 @@ public sealed class SupportTicketDtoComposer(
     {
         var events = await tickets.ListEventsAsync(ticket.TenantId, ticket.Id, cancellationToken);
         var details = events.Select(item => (Event: item, Details: EventDetails.Parse(item))).ToList();
+        var ticketReplies = await replies.ListAsync(ticket.TenantId, ticket.Id, cancellationToken);
+        var unclassifiedCount = ticket.ConversationId is { } conversationId
+            ? await unclassified.CountPendingAsync(ticket.TenantId, conversationId, cancellationToken)
+            : 0;
 
         var memberIds = details
             .SelectMany(item => new[] { item.Event.ActorMemberId, item.Details.ToMember })
             .Append(ticket.AssigneeMemberId)
+            .Concat(ticketReplies.Select(reply => (Guid?)reply.AuthorMemberId))
             .OfType<Guid>();
         var customerIds = details
             .Select(item => item.Details.ToCustomer)
@@ -78,8 +85,27 @@ public sealed class SupportTicketDtoComposer(
             ticket.ResolutionCount,
             ticket.ReceivedAt,
             details.Select(item => ToEventDto(item.Event, item.Details, membersById, customersById)).ToList(),
-            ticket.Version);
+            ticket.Version,
+            ticket.ConversationId,
+            ticket.ConversationChannel,
+            ticket.FollowThread,
+            ticket.FollowOffAt,
+            unclassifiedCount,
+            ticketReplies.Select(reply => ToReplyDto(reply, membersById)).ToList());
     }
+
+    /// <summary>Una respuesta como la dibujan el detalle y el resultado de responder.</summary>
+    internal static SupportReplyDto ToReplyDto(SupportTicketReply reply, IReadOnlyDictionary<Guid, string> membersById) => new(
+        reply.Id,
+        reply.ClientId,
+        reply.Channel.ToString(),
+        reply.Delivery.ToString(),
+        reply.Text,
+        reply.Status.ToString(),
+        reply.FailureCode,
+        reply.MessageId,
+        ToMemberDto(reply.AuthorMemberId, membersById),
+        reply.CreatedAt);
 
     public async Task<IReadOnlyList<SupportTicketListItemDto>> ComposeListAsync(
         Guid tenantId, IReadOnlyList<SupportTicket> page, SupportReadContext context, CancellationToken cancellationToken)
@@ -178,16 +204,29 @@ public sealed class SupportTicketDtoComposer(
             details.ToMember is { } memberId ? ToMemberDto(memberId, membersById) : null,
             details.FromTypeName,
             details.ToTypeName,
-            details.ToCustomer is { } customerId ? ToCustomerDto(customerId, customersById) : null);
+            details.ToCustomer is { } customerId ? ToCustomerDto(customerId, customersById) : null,
+            details.MessageId,
+            details.Follow,
+            details.ReplyChannel);
 
     /// <summary>
     /// Los campos de <see cref="SupportTicketEvent.Details"/> según su <see cref="SupportTicketEvent.Kind"/>, con la forma que escribe
     /// <c>SupportTicket</c>: <c>Created</c> <c>{"to": estado}</c>; <c>StatusChanged</c> <c>{"from","to"}</c> estados;
     /// <c>AssigneeChanged</c> y <c>CustomerChanged</c> <c>{"from","to"}</c> ids o null; <c>TypeChanged</c>
-    /// <c>{"from":{"id","name"},"to":{"id","name"}}</c>.
+    /// <c>{"from":{"id","name"},"to":{"id","name"}}</c>. Fase 2: los cuatro de mensajes <c>{"messageId"}</c>;
+    /// <c>FollowThreadChanged</c> <c>{"follow","at"}</c>; <c>ReplySent</c> <c>{"replyId","channel","delivery","messageId"}</c>;
+    /// <c>ConversationLinked</c> <c>{"conversationId","channel"}</c>, que el detalle ya trae arriba.
     /// </summary>
     private sealed record EventDetails(
-        string? FromStatus, string? ToStatus, Guid? ToMember, string? FromTypeName, string? ToTypeName, Guid? ToCustomer)
+        string? FromStatus,
+        string? ToStatus,
+        Guid? ToMember,
+        string? FromTypeName,
+        string? ToTypeName,
+        Guid? ToCustomer,
+        Guid? MessageId = null,
+        bool? Follow = null,
+        string? ReplyChannel = null)
     {
         private static readonly EventDetails Empty = new(null, null, null, null, null, null);
 
@@ -205,6 +244,19 @@ public sealed class SupportTicketDtoComposer(
                 {
                     FromTypeName = Text(Child(root, "from"), "name"),
                     ToTypeName = Text(Child(root, "to"), "name"),
+                },
+                SupportTicketEventKind.MessagePinned or SupportTicketEventKind.MessageReleased or SupportTicketEventKind.MessageClassified
+                    or SupportTicketEventKind.MessageDismissed => Empty with { MessageId = Id(root, "messageId") },
+                SupportTicketEventKind.FollowThreadChanged => Empty with
+                {
+                    Follow = Child(root, "follow") is { ValueKind: JsonValueKind.True or JsonValueKind.False } follow
+                        ? follow.GetBoolean()
+                        : null,
+                },
+                SupportTicketEventKind.ReplySent => Empty with
+                {
+                    MessageId = Id(root, "messageId"),
+                    ReplyChannel = Text(root, "channel"),
                 },
                 _ => Empty,
             };

@@ -4,6 +4,7 @@
     <!-- SupportAuthorization y SupportNotFound son internal: no son API publica del modulo, y las
          reglas que hacen cumplir se prueban unitariamente. Mismo patron que Loans. -->
     <InternalsVisibleTo Include="Modules.Support.UnitTests" />
+    <InternalsVisibleTo Include="Modules.Support.IntegrationTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Modules.Support.Domain\Modules.Support.Domain.csproj" />
@@ -12,5 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FluentValidation" />
+    <!-- El seguimiento del hilo registra y salta el entrante que falla (fase 2), como el motor de Automations. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 </Project>

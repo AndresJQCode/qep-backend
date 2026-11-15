@@ -509,6 +509,40 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
             Modules.Support.Application.ListTicketsHandler>();
+        // Fase 2 (Mensajería).
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTicketFromConversationCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.CreateTicketFromConversationHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListConversationTicketsQuery, Modules.Support.Application.SupportConversationTicketsDto>,
+            Modules.Support.Application.ListConversationTicketsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketMessagesQuery, Modules.Support.Application.SupportTicketMessagesDto>,
+            Modules.Support.Application.ListTicketMessagesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PinTicketMessageCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.PinTicketMessageHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ReleaseTicketMessageCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ReleaseTicketMessageHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.SetTicketFollowThreadCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.SetTicketFollowThreadHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListUnclassifiedQuery, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.ListUnclassifiedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AssignUnclassifiedCommand, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.AssignUnclassifiedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.DismissUnclassifiedCommand, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.DismissUnclassifiedHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetReplyOptionsQuery, Modules.Support.Application.SupportReplyOptionsDto>,
+            Modules.Support.Application.GetReplyOptionsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.SendTicketReplyCommand, Modules.Support.Application.SupportReplyResultDto>,
+            Modules.Support.Application.SendTicketReplyHandler>();
         services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
@@ -1082,6 +1116,9 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-11-09 D3): la plantilla de pedido, calcada de la de cotización; el validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<ICommandHandler<ProvisionOrderTemplateCommand, ManagedTemplateDto>, ProvisionOrderTemplateHandler>();
         services.AddScoped<IQueryHandler<GetOrderTemplateDraftQuery, SystemTemplateDraftDto>, GetOrderTemplateDraftHandler>();
+        // Soporte fase 2: la plantilla «Aviso de respuesta», calcada de la de pedido sin encabezado.
+        services.AddScoped<ICommandHandler<ProvisionSupportReplyTemplateCommand, ManagedTemplateDto>, ProvisionSupportReplyTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetSupportReplyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportReplyTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -1382,6 +1419,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
+        // Soporte fase 2: el número de los tickets que nombran los eventos del hilo, leído de Soporte.
+        services.AddScoped<IMessagingTicketNames, MessagingTicketNames>();
         // Spec 2026-10-31: iniciar el asistente desde el hilo; la decisión es de Automations (ManualRunStarter).
         services.AddScoped<IAutomationManualStart, AutomationManualStart>();
         // Spec 2026-10-21 §5.5: «Datos capturados» del asesor, leído de la corrida más reciente de Automations.
@@ -1521,6 +1560,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
+        // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
+        // Notifications; Soporte sólo declara los puertos.
+        services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();
+        services.AddScoped<Modules.Support.Application.ISupportThreadFeed, SupportThreadFeed>();
+        services.AddScoped<Modules.Support.Application.ISupportConversationEvents, SupportConversationEvents>();
+        services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
+        services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno

@@ -68,7 +68,48 @@ public sealed record SupportTicketDetailDto(
     int ResolutionCount,
     DateTimeOffset ReceivedAt,
     IReadOnlyList<SupportTicketEventDto> Events,
-    long Version);
+    long Version,
+    Guid? ConversationId,
+    string? ConversationChannel,
+    bool FollowsThread,
+    DateTimeOffset? FollowOffAt,
+    int UnclassifiedCount,
+    IReadOnlyList<SupportReplyDto> Replies);
+
+// Fase 2 (Mensajería): el detalle suma la conversación del ticket. FollowOffAt dibuja la franja «Este ticket no sigue el hilo desde …»
+// sin que la pantalla lea la traza; UnclassifiedCount es el aviso «hay mensajes sin clasificar» de esa conversación; Replies trae las
+// respuestas con su estado, porque una fallida se muestra igual que en el hilo.
+
+/// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>;
+/// <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
+/// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló. <c>ClientId</c> es el que mandó la
+/// pantalla: con él retoma una respuesta que quedó <c>Pending</c> (revisión final, I3). <c>MessageId</c> también viene en una fallida si
+/// Mensajería registró el mensaje.</summary>
+public sealed record SupportReplyDto(
+    Guid Id,
+    Guid ClientId,
+    string Channel,
+    string Delivery,
+    string Text,
+    string Status,
+    string? FailureCode,
+    Guid? MessageId,
+    SupportMemberDto? Author,
+    DateTimeOffset CreatedAt);
+
+/// <summary>La pestaña de Soporte de la ficha de una conversación: los tickets de esa conversación y los del mismo cliente por otros
+/// canales (<c>IsThisConversation</c> los distingue). <c>CanCreate</c> y su motivo (<c>messaging_disabled</c>, <c>no_permission</c>)
+/// deciden si la pantalla muestra «Abrir ticket», sin que conozca módulos ni permisos. <c>UnclassifiedCount</c> enciende el aviso de
+/// mensajes sin clasificar.</summary>
+public sealed record SupportConversationTicketsDto(
+    Guid ConversationId,
+    bool CanCreate,
+    string? CannotCreateReason,
+    IReadOnlyList<SupportConversationTicketDto> Items,
+    int UnclassifiedCount);
+
+/// <summary>Una fila de la pestaña: la fila de la bandeja más si es de esta conversación y si la sigue (el ícono «siguiendo»).</summary>
+public sealed record SupportConversationTicketDto(SupportTicketListItemDto Ticket, bool IsThisConversation, bool FollowsThread);
 
 /// <summary>La foto del tipo que guardó el ticket: editar el tipo después no la cambia.</summary>
 public sealed record SupportTicketTypeSnapshotDto(Guid Id, string Name, int? TermBusinessDays, bool TermIsLegal, bool RequiresFormalResponse);
@@ -90,7 +131,13 @@ public sealed record SupportTicketEventDto(
     SupportMemberDto? Assignee,
     string? FromTypeName,
     string? ToTypeName,
-    SupportCustomerRefDto? Customer);
+    SupportCustomerRefDto? Customer,
+    Guid? MessageId,
+    bool? Follow,
+    string? ReplyChannel);
+
+// Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
+// valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
 
 public sealed record SupportMemberDto(Guid Id, string DisplayName);
 
@@ -112,6 +159,67 @@ public sealed record SupportRequesterDto(
 
 /// <summary>Los candidatos a responsable: exactamente los que el backend acepta al asignar.</summary>
 public sealed record SupportAssigneesDto(IReadOnlyList<SupportMemberDto> Items);
+
+/// <summary>Un mensaje del hilo como lo dibuja el expediente del ticket, sin que la pantalla tenga permisos de Mensajería (plan E20):
+/// el texto viaja acá. <c>Direction</c> ∈ <c>Inbound</c>, <c>Outbound</c>; <c>Kind</c> es el tipo de Mensajería por nombre;
+/// <c>AuthorName</c>, el miembro o la clave de API que lo mandó (nulo en un entrante o del asistente). El medio se baja por la ruta de
+/// Mensajería: <c>HasMedia</c> y el tipo y nombre del archivo le dicen a la pantalla qué dibujar antes de pedirlo.</summary>
+public sealed record SupportThreadMessageDto(
+    Guid Id,
+    string Direction,
+    string Kind,
+    string? Text,
+    string? Caption,
+    DateTimeOffset OccurredAt,
+    string? AuthorName,
+    bool HasMedia,
+    string? MediaMimeType,
+    string? MediaFileName);
+
+/// <summary>Una página del expediente, del más nuevo al más viejo. <c>Next</c> es nulo en la última: la pantalla no calcula si hay
+/// más.</summary>
+public sealed record SupportTicketMessagesDto(IReadOnlyList<SupportTicketMessageDto> Items, SupportMessageCursorDto? Next);
+
+/// <summary><c>LinkState</c> ∈ <c>Linked</c> (lo vinculó el seguimiento: se dibuja plegado) o <c>Pinned</c> (lo fijó un asesor: en
+/// línea). Los soltados no salen.</summary>
+public sealed record SupportTicketMessageDto(SupportThreadMessageDto Message, string LinkState);
+
+/// <summary><c>Before</c> es opaco: la pantalla lo devuelve tal cual en <c>?before=</c> para pedir la página siguiente.</summary>
+public sealed record SupportMessageCursorDto(string Before);
+
+/// <summary>Los entrantes de una conversación que cayeron en dos o más tickets y nadie clasificó: la pregunta «¿De qué ticket es?».</summary>
+public sealed record SupportUnclassifiedDto(IReadOnlyList<SupportUnclassifiedMessageDto> Items);
+
+/// <summary>El mensaje y sus opciones: los tickets abiertos que lo cubren, con la versión que asignar manda en el cuerpo. La pantalla
+/// no calcula los candidatos.</summary>
+public sealed record SupportUnclassifiedMessageDto(SupportThreadMessageDto Message, IReadOnlyList<SupportTicketRefDto> Candidates);
+
+public sealed record SupportTicketRefDto(Guid Id, string Number, string Subject, long Version);
+
+/// <summary>Qué canal puede usar el asesor para responder y qué va a pasar (plan E17b): la pantalla no conoce la ventana de 24 h ni la
+/// aprobación de plantillas. <c>DefaultChannel</c> es el canal de respuesta del ticket si está disponible; si no, el primero que lo
+/// esté (hilo, plantilla, correo).</summary>
+public sealed record SupportReplyOptionsDto(
+    SupportThreadOptionDto Thread, SupportChannelOptionDto WhatsAppTemplate, SupportChannelOptionDto Email, string DefaultChannel);
+
+/// <summary>El hilo de la conversación del ticket. <c>Delivery</c> ∈ <c>Text</c> (dentro de la ventana) o <c>Template</c> (fuera, en
+/// WhatsApp: sale «Aviso de respuesta»), para que la pantalla avise antes de enviar. <c>Reason</c> cuando no está disponible:
+/// <c>no_conversation</c>, <c>messaging_disabled</c>, <c>contact_blocked</c>, <c>window_closed</c> (Instagram) o
+/// <c>template_not_approved</c>. <c>CanAttach</c> enciende el adjunto: sólo con entrega <c>Text</c> y si quien llama puede gestionar
+/// tickets y abrir la sesión de subida de Mensajería (<c>messaging.conversation.manage</c>); la pantalla no conoce esos permisos.</summary>
+public sealed record SupportThreadOptionDto(
+    bool Available, string? Reason, string? Delivery, DateTimeOffset? WindowClosesAt, bool CanAttach);
+
+/// <summary>La plantilla o el correo. <c>Reason</c>: <c>messaging_disabled</c>, <c>no_mobile</c>, <c>template_not_approved</c> (no hay
+/// conexión con la plantilla aprobada) o <c>no_email</c>, y los del hilo cuando la plantilla va a la conversación del ticket.
+/// <c>Connections</c> sólo trae algo para la plantilla sin conversación: el selector de conexión.</summary>
+public sealed record SupportChannelOptionDto(bool Available, string? Reason, IReadOnlyList<SupportConnectionOptionDto> Connections);
+
+public sealed record SupportConnectionOptionDto(Guid Id, string Name);
+
+/// <summary>La respuesta recién creada (o la que ya existía con ese <c>clientId</c>) y el detalle del ticket con su traza y su estado
+/// nuevos: la pantalla repinta las dos cosas con una sola llamada.</summary>
+public sealed record SupportReplyResultDto(SupportReplyDto Reply, SupportTicketDetailDto Ticket);
 
 internal static class SupportDtoMapping
 {
