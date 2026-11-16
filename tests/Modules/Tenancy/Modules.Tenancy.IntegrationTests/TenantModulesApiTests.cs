@@ -223,6 +223,35 @@ public sealed class TenantModulesApiTests(SharedTenancyHost host) : IClassFixtur
         Assert.True(roles.Single(role => role.Role == "cashier").Assignable);
     }
 
+    // Spec 2026-11-16: la pantalla de miembros ofrece lo que trae roles[]; sin los custom no se pueden asignar.
+    [Fact]
+    public async Task TheCatalogListsTheTenantCustomRoles()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(
+            factory, ownerId, tenantId, "advisorship.read", "advisorship.roles.manage");
+        await CreateCustomRoleAsync(client, tenantId, "payment-verifier", "Verificador de pagos", "customers.customer.read");
+        await CreateCustomRoleAsync(client, tenantId, "pos-only", "Solo caja", "pos.sale.read");
+
+        var roles = await CatalogRolesAsync(client, tenantId);
+
+        var verifier = roles.Single(role => role.Role == "payment-verifier");
+        Assert.Equal("Verificador de pagos", verifier.DisplayName);
+        Assert.True(verifier.Assignable);
+        Assert.False(roles.Single(role => role.Role == "pos-only").Assignable);
+    }
+
+    private static async Task CreateCustomRoleAsync(
+        HttpClient client, Guid tenantId, string key, string displayName, string permission)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/authorization/roles",
+            new { key, displayName, description = string.Empty, permissions = new[] { permission } },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
     private static async Task<List<CatalogRoleDto>> CatalogRolesAsync(HttpClient client, Guid tenantId)
     {
         var catalog = await client.GetFromJsonAsync<CatalogDto>(
@@ -233,7 +262,7 @@ public sealed class TenantModulesApiTests(SharedTenancyHost host) : IClassFixtur
 
     private sealed record CatalogDto(List<CatalogRoleDto> Roles);
 
-    private sealed record CatalogRoleDto(string Role, string[] Permissions, bool Assignable);
+    private sealed record CatalogRoleDto(string Role, string DisplayName, string[] Permissions, bool Assignable);
 
     private sealed record ModulesDto(Guid TenantId, List<ModuleDto> Modules);
 

@@ -73,6 +73,7 @@ public sealed class TenantRoleCatalog(
         foreach (var definition in systemCatalog.ListRoles())
         {
             catalog[definition.Role] = new TenantRoleDefinition(
+                Id: null,
                 definition.Role,
                 definition.DisplayName,
                 definition.Description,
@@ -92,6 +93,7 @@ public sealed class TenantRoleCatalog(
             // rol de sistema. Se indexa igual por clave —y no se suma a ciegas— para que si
             // una fila vieja se colara, el catalogo siga teniendo una definicion por clave.
             catalog[role.Key] = new TenantRoleDefinition(
+                role.Id.Value,
                 role.Key,
                 role.DisplayName,
                 role.Description,
