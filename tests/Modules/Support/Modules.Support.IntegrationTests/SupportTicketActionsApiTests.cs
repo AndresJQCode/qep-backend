@@ -357,5 +357,86 @@ public sealed class SupportTicketActionsApiTests(ClockedSupportHost host) : ICla
 
     private static DateTimeOffset At(int month, int day) => new(2026, month, day, 15, 0, 0, TimeSpan.Zero);
 
+    // Fase 4a (plan G7): «Asignármelo».
+    [Fact]
+    public async Task TakeAssignsTheTicketToTheCaller()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var response = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, version: 1);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonAsync(response);
+        var assignee = body.GetProperty("assignee");
+        Assert.Equal(scenario.CallerMemberId, assignee.GetProperty("id").GetGuid());
+        Assert.True(assignee.GetProperty("isMe").GetBoolean());
+        Assert.Equal(2L, body.GetProperty("version").GetInt64());
+        var changed = body.GetProperty("events").EnumerateArray().Last();
+        Assert.Equal("AssigneeChanged", changed.GetProperty("kind").GetString());
+        Assert.Equal(scenario.CallerMemberId, changed.GetProperty("assignee").GetProperty("id").GetGuid());
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketAssigned, Id(ticket).ToString()));
+    }
+
+    [Fact]
+    public async Task TakingATicketAlreadyMineKeepsTheVersion()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var first = await JsonAsync(await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, version: 1));
+        var second = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, Version(first));
+
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(Version(first), Version(await JsonAsync(second)));
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketAssigned, Id(ticket).ToString()));
+    }
+
+    [Fact]
+    public async Task TakeWithoutIfMatchIs428AndWithAnOldVersionIs412()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        await scenario.MoveAsync(ticket, "Open");
+
+        var withoutVersion = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, version: null);
+        var stale = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, version: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, withoutVersion.StatusCode);
+        Assert.Equal("precondition.if_match_required", await CodeOfAsync(withoutVersion));
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal("concurrency.conflict", await CodeOfAsync(stale));
+        Assert.Equal(JsonValueKind.Null, (await scenario.DetailAsync(Id(ticket))).GetProperty("assignee").ValueKind);
+    }
+
+    [Theory]
+    [InlineData("Resolved")]
+    public async Task TakingAResolvedTicketIs422NotEditable(string finished)
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.MoveAsync(await scenario.CreateAsync(), finished);
+
+        var response = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, Version(ticket));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket.not_editable", await CodeOfAsync(response));
+        Assert.Equal(Version(ticket), Version(await scenario.DetailAsync(Id(ticket))));
+    }
+
+    [Fact]
+    public async Task AReaderCannotTake()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        using var reader = CreateClient(scenario.Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{scenario.Url}/tickets/{Id(ticket)}/take");
+        request.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
+
+        var response = await reader.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await scenario.DetailAsync(Id(ticket))).GetProperty("assignee").ValueKind);
+    }
+
     private static List<string> Strings(JsonElement array) => array.EnumerateArray().Select(item => item.GetString()!).ToList();
 }

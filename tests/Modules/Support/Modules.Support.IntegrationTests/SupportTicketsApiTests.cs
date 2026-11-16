@@ -409,5 +409,26 @@ public sealed class SupportTicketsApiTests(ClockedSupportHost host) : IClassFixt
             items.Select(item => (item.GetProperty("id").GetGuid(), item.GetProperty("displayName").GetString()!)));
     }
 
+    // Fase 4a (plan G8): el SPA no conoce su memberId; cada referencia a un miembro dice si es quien llama.
+    [Fact]
+    public async Task IsMeIsTrueOnlyForTheCaller()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var advisor = await SeedMemberAsync(
+            scenario.Factory, $"advisor-{scenario.Tenant}@example.com", "Beto Asesor", "advisor", tenantId: scenario.Tenant);
+        var created = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Queja"), assignee: advisor));
+
+        var detail = await scenario.DetailAsync(Id(created));
+        var assignees = (await JsonAsync(await scenario.Client.GetAsync($"{scenario.Url}/assignees", Ct)))
+            .GetProperty("items").EnumerateArray().ToList();
+
+        Assert.Equal(advisor, detail.GetProperty("assignee").GetProperty("id").GetGuid());
+        Assert.False(detail.GetProperty("assignee").GetProperty("isMe").GetBoolean());
+        var createdEvent = detail.GetProperty("events").EnumerateArray().Single(item => item.GetProperty("kind").GetString() == "Created");
+        Assert.True(createdEvent.GetProperty("actor").GetProperty("isMe").GetBoolean());
+        var mine = Assert.Single(assignees, item => item.GetProperty("isMe").GetBoolean());
+        Assert.Equal(scenario.CallerMemberId, mine.GetProperty("id").GetGuid());
+    }
+
     private static List<string> Strings(JsonElement array) => array.EnumerateArray().Select(item => item.GetString()!).ToList();
 }

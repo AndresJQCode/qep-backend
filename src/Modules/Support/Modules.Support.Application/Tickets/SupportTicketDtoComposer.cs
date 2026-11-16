@@ -7,8 +7,10 @@ namespace Modules.Support.Application;
 
 /// <summary>Lo que una petición necesita para evaluar plazos y fechar lo que escribe: el calendario y la zona del tenant, el instante
 /// <paramref name="Now"/> y su «hoy» local, y el umbral de «por vencer». Se lee una vez por petición: el reloj del tenant no se vuelve a
-/// pedir para fechar el cambio (revisión final, B5).</summary>
-public sealed record SupportReadContext(SupportClockContext Clock, DateTimeOffset Now, DateOnly Today, int DueSoonBusinessDays);
+/// pedir para fechar el cambio (revisión final, B5). <paramref name="ViewerMemberId"/> (fase 4a, plan G8) es la membresía de quien
+/// pide, para el <c>IsMe</c> de cada miembro; null fuera de una sesión.</summary>
+public sealed record SupportReadContext(
+    SupportClockContext Clock, DateTimeOffset Now, DateOnly Today, int DueSoonBusinessDays, Guid? ViewerMemberId = null);
 
 /// <summary>
 /// Arma las respuestas de ticket del contrato: el <see cref="SupportTicketDetailDto"/> de leer, crear y operar, y las filas de la
@@ -26,7 +28,8 @@ public sealed class SupportTicketDtoComposer(
     ISupportUnclassifiedRepository unclassified,
     ISupportTicketAccessRepository accesses,
     ISupportTicketAttachmentRepository attachments,
-    ITenantModules tenantModules)
+    ITenantModules tenantModules,
+    ISupportViewer viewer)
 {
     /// <summary>Lo que el contrato muestra de un miembro o cliente que ya no se resuelve (un miembro removido, un cliente borrado).</summary>
     internal const string UnknownName = "Sin nombre";
@@ -39,12 +42,15 @@ public sealed class SupportTicketDtoComposer(
         var clock = await calendars.GetAsync(tenantId, tenantCalendar.TimeZone, cancellationToken);
         var tenantSettings = await settings.GetAsync(tenantId, cancellationToken);
         var now = tenantCalendar.UtcNow;
-        return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays);
+        // Quién mira, una sola vez por petición (plan G8): null sin sesión, así el worker del hilo compone sin lanzar.
+        var viewerMemberId = await viewer.MemberIdAsync(tenantId, cancellationToken);
+        return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays, viewerMemberId);
     }
 
     /// <summary>Las mismas lecturas que <see cref="ReadContextAsync"/>, sin exigir la fila de ajustes: <c>null</c> si el tenant nunca se
     /// aprovisionó (entonces tampoco tiene tickets). La usa la consulta pública, que no aprovisiona y lee el contexto también cuando el
-    /// radicado no existe, para que el tiempo no lo delate (triage #4 del Bloque F).</summary>
+    /// radicado no existe, para que el tiempo no lo delate (triage #4 del Bloque F). No lee quién mira: la consulta pública no tiene
+    /// sesión ni miembros que marcar.</summary>
     public async Task<SupportReadContext?> TryReadContextAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         var tenantCalendar = await tenantClock.GetAsync(tenantId, cancellationToken);
@@ -101,17 +107,17 @@ public sealed class SupportTicketDtoComposer(
             ticket.ReplyChannel.ToString(),
             ticket.CustomerId is { } customerId ? ToCustomerDto(customerId, customersById) : null,
             ticket.Requester is { } requester ? ToRequesterDto(requester) : null,
-            ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById) : null,
+            ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById, context.ViewerMemberId) : null,
             ticket.ResolutionCount,
             ticket.ReceivedAt,
-            details.Select(item => ToEventDto(item.Event, item.Details, membersById, customersById)).ToList(),
+            details.Select(item => ToEventDto(item.Event, item.Details, membersById, customersById, context.ViewerMemberId)).ToList(),
             ticket.Version,
             ticket.ConversationId,
             ticket.ConversationChannel,
             ticket.FollowThread,
             ticket.FollowOffAt,
             unclassifiedCount,
-            ticketReplies.Select(reply => ToReplyDto(reply, membersById)).ToList(),
+            ticketReplies.Select(reply => ToReplyDto(reply, membersById, context.ViewerMemberId)).ToList(),
             ticket.IsAnonymous,
             await CustomerCandidatesAsync(ticket, cancellationToken),
             await accesses.FindAsync(ticket.TenantId, ticket.Id, cancellationToken) is { } access
@@ -152,7 +158,8 @@ public sealed class SupportTicketDtoComposer(
     }
 
     /// <summary>Una respuesta como la dibujan el detalle y el resultado de responder.</summary>
-    internal static SupportReplyDto ToReplyDto(SupportTicketReply reply, IReadOnlyDictionary<Guid, string> membersById) => new(
+    internal static SupportReplyDto ToReplyDto(
+        SupportTicketReply reply, IReadOnlyDictionary<Guid, string> membersById, Guid? viewerMemberId) => new(
         reply.Id,
         reply.ClientId,
         reply.Channel.ToString(),
@@ -161,7 +168,7 @@ public sealed class SupportTicketDtoComposer(
         reply.Status.ToString(),
         reply.FailureCode,
         reply.MessageId,
-        ToMemberDto(reply.AuthorMemberId, membersById),
+        ToMemberDto(reply.AuthorMemberId, membersById, viewerMemberId),
         reply.CreatedAt);
 
     public async Task<IReadOnlyList<SupportTicketListItemDto>> ComposeListAsync(
@@ -182,7 +189,7 @@ public sealed class SupportTicketDtoComposer(
                     ticket.Status.ToString(),
                     ticket.TypeName,
                     RequesterDisplayName(ticket, customersById),
-                    ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById) : null,
+                    ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById, context.ViewerMemberId) : null,
                     ticket.ReceivedAt,
                     ticket.DueOn,
                     dueState.ToString(),
@@ -226,8 +233,10 @@ public sealed class SupportTicketDtoComposer(
             : (await customers.FindManyAsync(tenantId, ids, cancellationToken)).ToDictionary(customer => customer.Id);
     }
 
-    private static SupportMemberDto ToMemberDto(Guid memberId, IReadOnlyDictionary<Guid, string> membersById) =>
-        new(memberId, membersById.TryGetValue(memberId, out var name) ? name : UnknownName);
+    /// <summary>Un miembro del contrato con su <c>IsMe</c> (plan G8). Uno que ya no se resuelve sale «Sin nombre», y también puede ser
+    /// quien mira.</summary>
+    internal static SupportMemberDto ToMemberDto(Guid memberId, IReadOnlyDictionary<Guid, string> membersById, Guid? viewerMemberId) =>
+        new(memberId, membersById.TryGetValue(memberId, out var name) ? name : UnknownName, memberId == viewerMemberId);
 
     private static SupportCustomerRefDto ToCustomerDto(Guid customerId, IReadOnlyDictionary<Guid, SupportCustomerRef> customersById) =>
         customersById.TryGetValue(customerId, out var customer)
@@ -250,15 +259,16 @@ public sealed class SupportTicketDtoComposer(
         SupportTicketEvent item,
         EventDetails details,
         IReadOnlyDictionary<Guid, string> membersById,
-        IReadOnlyDictionary<Guid, SupportCustomerRef> customersById) =>
+        IReadOnlyDictionary<Guid, SupportCustomerRef> customersById,
+        Guid? viewerMemberId) =>
         new(
             item.Ordinal,
             item.Kind.ToString(),
             item.OccurredAt,
-            item.ActorMemberId is { } actorId ? ToMemberDto(actorId, membersById) : null,
+            item.ActorMemberId is { } actorId ? ToMemberDto(actorId, membersById, viewerMemberId) : null,
             details.FromStatus,
             details.ToStatus,
-            details.ToMember is { } memberId ? ToMemberDto(memberId, membersById) : null,
+            details.ToMember is { } memberId ? ToMemberDto(memberId, membersById, viewerMemberId) : null,
             details.FromTypeName,
             details.ToTypeName,
             details.ToCustomer is { } customerId ? ToCustomerDto(customerId, customersById) : null,

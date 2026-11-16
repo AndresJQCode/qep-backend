@@ -233,6 +233,26 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
         Assert.Empty(Since(scenario.TenantId, beforeNotEditable));
     }
 
+    // Fase 4a (plan G7): «Asignármelo» avisa sólo si cambió algo.
+    [Fact]
+    public async Task TakingAnnouncesTheTicket()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync();
+        var before = Publisher.Of(scenario.TenantId).Count;
+
+        var taken = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, Version(ticket));
+
+        Assert.Equal(HttpStatusCode.OK, taken.StatusCode);
+        AssertAnnounced(Since(scenario.TenantId, before), Id(ticket));
+        var beforeAgain = Publisher.Of(scenario.TenantId).Count;
+
+        var again = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, Version(await JsonAsync(taken)));
+
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Empty(Since(scenario.TenantId, beforeAgain));
+    }
+
     [Fact]
     public async Task TheWorkerAnnouncesALinkedInboundWithoutBumpingTheVersion()
     {

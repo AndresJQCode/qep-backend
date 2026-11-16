@@ -204,7 +204,9 @@ public sealed record SupportTicketEventDto(
 // Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
 // valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
 
-public sealed record SupportMemberDto(Guid Id, string DisplayName);
+/// <summary><c>IsMe</c> (fase 4a, plan G8): si el miembro es quien hace la petición. El SPA no conoce su <c>memberId</c>, y sin este
+/// campo no puede decir «tú» ni ocultar «Asignármelo» en un ticket que ya es suyo. Fuera de una sesión siempre es falso.</summary>
+public sealed record SupportMemberDto(Guid Id, string DisplayName, bool IsMe);
 
 /// <summary><c>IsActive</c> falso: el cliente se desactivó o se fusionó; la pantalla lo marca.</summary>
 public sealed record SupportCustomerRefDto(Guid Id, string Name, bool IsActive);

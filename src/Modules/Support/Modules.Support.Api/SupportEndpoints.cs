@@ -314,6 +314,8 @@ public static class SupportEndpoints
 
         MapTicketAction<ChangeTicketStatusRequest>(group, "status", ChangeStatusAsync);
         MapTicketAction<AssignTicketRequest>(group, "assignee", AssignAsync);
+        // Fase 4a (plan G7): «Asignármelo», sin cuerpo; el responsable sale de la sesión.
+        MapTicketPost(group, "take", TakeAsync);
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
         MapTicketAction<LinkTicketCustomerRequest>(group, "customer", LinkCustomerAsync);
 
@@ -528,6 +530,11 @@ public static class SupportEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             AssignTicketCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> TakeAsync(
+        Guid tenantId, Guid ticketId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new TakeTicketCommand(tenantId, ticketId, RequireVersion(httpContext, "ticket")), cancellationToken));
 
     private static async Task<IResult> ChangeTypeAsync(
         Guid tenantId,

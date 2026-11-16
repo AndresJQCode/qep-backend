@@ -530,6 +530,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.AssignTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.AssignTicketHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Support.Application.TakeTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.TakeTicketHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Support.Application.ChangeTicketTypeCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.ChangeTicketTypeHandler>();
         services.AddScoped<
@@ -1610,6 +1613,8 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // Fase 4a (plan G8): el «quién soy» de IsMe; null fuera de una sesión.
+        services.AddScoped<Modules.Support.Application.ISupportViewer, SupportViewer>();
         // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.
         services.AddScoped<Modules.Support.Application.ISupportMemberPermissions, SupportMemberPermissions>();
         Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);
