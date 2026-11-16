@@ -127,6 +127,15 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // «Descargar PDF» (spec 2026-11-16): el mismo documento del envío, como enlace firmado. POST y
+        // no GET porque genera el documento, igual que POST /quotations/{id}/pdf; `OrderRead` porque
+        // exportar es leer el pedido en otro formato.
+        collection.MapPost("/{orderId:guid}/pdf", ExportOrderPdfAsync)
+            .RequireAuthorization(OrdersPermissions.OrderRead)
+            .Produces<OrderPdfExportDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         collection.MapPost("/{orderId:guid}/proofs", AddOrderPaymentProofsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<AddOrderPaymentProofsRequest>("application/json")
@@ -330,6 +339,14 @@ public static class OrderEndpoints
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
+
+    private static async Task<IResult> ExportOrderPdfAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ExportOrderPdfCommand(tenantId, orderId), cancellationToken));
 
     private static async Task<IResult> AddOrderPaymentProofsAsync(
         Guid tenantId,
