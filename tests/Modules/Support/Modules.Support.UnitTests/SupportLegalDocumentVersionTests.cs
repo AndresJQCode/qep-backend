@@ -101,6 +101,24 @@ public sealed class SupportLegalDocumentVersionTests
         Assert.Throws<ArgumentException>(() => Create(question: "¿Autorizas\ta la empresa?"));
     }
 
+    // Spec 2026-11-16 (D-F8): un token que no está en la lista no se publica, ni en el HTML ni en la pregunta; los conocidos se guardan
+    // como token, sin resolver.
+    [Fact]
+    public void AnUnknownVariableIsRejected()
+    {
+        var inContent = Assert.Throws<SupportDomainException>(
+            () => Create(SupportLegalDocumentKind.Terms, content: new SanitizedHtml("<p>{{empresa}} en {{ciudad}}</p>", true)));
+        var inQuestion = Assert.Throws<SupportDomainException>(() => Create(question: "¿Autorizas a {{Empresa}}?"));
+
+        Assert.Equal(SupportErrorCodes.LegalDocumentUnknownVariable, inContent.Code);
+        Assert.Equal("support.legal_document.unknown_variable", inContent.Code);
+        Assert.Equal(SupportErrorCodes.LegalDocumentUnknownVariable, inQuestion.Code);
+
+        var known = Create(content: new SanitizedHtml("<p>{{ empresa }} ({{tipo_documento}})</p>", true), question: "¿Autorizas a {{empresa}}?");
+        Assert.Equal("<p>{{ empresa }} ({{tipo_documento}})</p>", known.ContentHtml);
+        Assert.Equal("¿Autorizas a {{empresa}}?", known.AuthorizationQuestion);
+    }
+
     [Theory]
     [InlineData(SupportLegalDocumentKind.PrivacyNotice)]
     [InlineData(SupportLegalDocumentKind.AnonymousNotice)]

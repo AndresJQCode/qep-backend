@@ -370,6 +370,73 @@ public sealed class SupportLegalDocumentsApiTests(SharedSupportHost sharedHost) 
         Assert.Equal(HttpStatusCode.NotFound, post.StatusCode);
     }
 
+    // Spec 2026-11-16 §3: la consola recibe la lista de variables, con su etiqueta y su ejemplo, en el orden del contrato.
+    [Fact]
+    public async Task TheConsoleGetsTheVariables()
+    {
+        var (_, client, tenant, _) = await NewTenantAsync(SupportPermissions.Read);
+
+        var body = await JsonAsync(await client.GetAsync(DocumentsUrl(tenant), Ct));
+
+        var variables = body.GetProperty("variables").EnumerateArray()
+            .Select(item => (
+                item.GetProperty("name").GetString(), item.GetProperty("label").GetString(), item.GetProperty("example").GetString()))
+            .ToList();
+        Assert.Equal(
+            [
+                ("empresa", "Empresa que responde", "Comercial Andina S.A.S."),
+                ("tipo_documento", "Tipo de documento de la empresa", "NIT"),
+                ("documento_identificacion", "Número de documento de la empresa", "900123456-7"),
+                ("nombre_comercial", "Nombre del negocio", "Comercial Andina"),
+            ],
+            variables);
+    }
+
+    [Fact]
+    public async Task AnUnknownVariableIs422()
+    {
+        var (_, client, tenant, _) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
+
+        var inContent = await PublishAsync(
+            client, tenant, "terms", new { contentHtml = "<p>{{empresa}} atiende en {{ciudad}}.</p>" }, version: 0);
+        var inQuestion = await PublishAsync(
+            client, tenant, "privacy-notice",
+            new { contentHtml = "<p>Aviso de {{empresa}}.</p>", authorizationQuestion = "¿Autorizas a {{Empresa}}?" },
+            version: 0);
+
+        foreach (var response in new[] { inContent, inQuestion })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("support.legal_document.unknown_variable", await CodeOfAsync(response));
+        }
+
+        Assert.Equal(0L, await CountVersionsAsync(tenant));
+    }
+
+    // D-F8: lo guardado es la plantilla; la consola lee los tokens tal como se escribieron.
+    [Fact]
+    public async Task KnownVariablesAreStoredAsTokens()
+    {
+        var (_, client, tenant, _) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
+
+        var response = await PublishAsync(
+            client, tenant, "privacy-notice",
+            new
+            {
+                contentHtml = "<p>{{ empresa }}, {{tipo_documento}} {{documento_identificacion}} ({{nombre_comercial}}).</p>",
+                authorizationQuestion = "¿Autorizas a {{empresa}}?",
+            },
+            version: 0);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        const string Template = "<p>{{ empresa }}, {{tipo_documento}} {{documento_identificacion}} ({{nombre_comercial}}).</p>";
+        Assert.Equal(Template, (await JsonAsync(response)).GetProperty("contentHtml").GetString());
+        Assert.Equal(Template, await StoredHtmlAsync(tenant, "PrivacyNotice", 1));
+        var read = (await JsonAsync(await client.GetAsync(DocumentsUrl(tenant), Ct))).GetProperty("privacyNotice");
+        Assert.Equal(Template, read.GetProperty("contentHtml").GetString());
+        Assert.Equal("¿Autorizas a {{empresa}}?", read.GetProperty("authorizationQuestion").GetString());
+    }
+
     private static string DocumentsUrl(string tenant) => $"{SupportUrl(tenant)}/settings/legal-documents";
 
     private static async Task<HttpResponseMessage> PublishAsync(HttpClient client, string tenant, string kind, object body, long? version)

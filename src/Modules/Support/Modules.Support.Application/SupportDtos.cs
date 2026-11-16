@@ -56,9 +56,17 @@ public sealed record SupportFormSettingsDto(
 /// come in <c>Organization</c> (one chosen and deactivated later), never in <c>OrganizationOptions</c>.</summary>
 public sealed record SupportFormOrganizationDto(Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive);
 
-/// <summary>The current version of each legal document, or its example (spec 2026-11-15 §7).</summary>
+/// <summary>The current version of each legal document, or its example (spec 2026-11-15 §7). <c>Variables</c> es la lista que el
+/// editor ofrece para insertar, en el orden del contrato (spec 2026-11-16 §3); va al final para no mover los campos que ya existían.</summary>
 public sealed record SupportLegalDocumentsDto(
-    SupportLegalDocumentDto PrivacyNotice, SupportLegalDocumentDto AnonymousNotice, SupportLegalDocumentDto Terms);
+    SupportLegalDocumentDto PrivacyNotice,
+    SupportLegalDocumentDto AnonymousNotice,
+    SupportLegalDocumentDto Terms,
+    IReadOnlyList<SupportLegalVariableDto> Variables);
+
+/// <summary>Una variable de los documentos legales: se escribe <c>{{Name}}</c>; <c>Label</c> es lo que muestra el menú y
+/// <c>Example</c> el valor de la vista previa (spec 2026-11-16, V-1).</summary>
+public sealed record SupportLegalVariableDto(string Name, string Label, string Example);
 
 /// <summary>
 /// One version of a legal document: the current one, an old one or the example (<c>Version</c> 0, <c>IsExample</c>, without
