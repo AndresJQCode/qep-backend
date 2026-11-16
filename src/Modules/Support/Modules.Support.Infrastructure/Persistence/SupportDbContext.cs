@@ -433,6 +433,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         // válido (apaga «por vencer»). El DEFAULT 3 de la columna sí existe (migración InitialSupport): lo usa el INSERT del
         // aprovisionador.
         settings.Property(value => value.DueSoonBusinessDays).HasColumnName("due_soon_business_days");
+        // Fase 4b (H6). Nullable y sin default: el INSERT del aprovisionador no la nombra y nace en NULL.
+        settings.Property(value => value.FormalNextStep)
+            .HasColumnName("formal_next_step")
+            .HasMaxLength(SupportTenantSettings.FormalNextStepMaxLength);
         settings.Property<DateTimeOffset>("CreatedAt").HasColumnName("created_at");
         settings.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         settings.Property(value => value.Version)
@@ -462,6 +466,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         type.Property(value => value.TermBusinessDays).HasColumnName("term_business_days");
         type.Property(value => value.TermIsLegal).HasColumnName("term_is_legal");
         type.Property(value => value.RequiresFormalResponse).HasColumnName("requires_formal_response");
+        // Fase 4b (H6). Nullable: la siembra del aprovisionador no la nombra y nace en NULL.
+        type.Property(value => value.FormalNextStep)
+            .HasColumnName("formal_next_step")
+            .HasMaxLength(SupportTicketType.FormalNextStepMaxLength);
         type.Property(value => value.IsPublished).HasColumnName("is_published");
         type.Property(value => value.IsActive).HasColumnName("is_active");
         type.Property(value => value.Position).HasColumnName("position");

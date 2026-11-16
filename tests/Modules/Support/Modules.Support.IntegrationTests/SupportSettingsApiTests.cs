@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Modules.Support.Application;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
+using static Modules.Support.IntegrationTests.SupportMessagingSeed;
 
 namespace Modules.Support.IntegrationTests;
 
@@ -110,6 +111,57 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal((3, 0, 30, 1L), Settings(await JsonAsync(read)));
         Assert.Equal(HttpStatusCode.OK, write.StatusCode);
         Assert.Equal((7, 0, 30, 2L), Settings(await JsonAsync(write)));
+    }
+
+    // Fase 4b (H6): el «siguiente paso» del tenant. El PUT reemplaza todo: mandarlo en null lo borra. La auditoría nombra el campo,
+    // nunca el texto.
+    [Fact]
+    public async Task TheTenantNextStepRoundTripsAndIsAudited()
+    {
+        var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
+        const string text = "Si no estás de acuerdo, puedes acudir a la Superintendencia.\nLínea dos";
+
+        var before = await JsonAsync(await client.GetAsync(SettingsUrl(tenant), Ct));
+        var saved = await PutAsync(
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = $"  {text}  " }, version: 1);
+
+        Assert.Equal(JsonValueKind.Null, before.GetProperty("formalNextStep").ValueKind);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.Equal(text, (await JsonAsync(saved)).GetProperty("formalNextStep").GetString());
+        var read = await JsonAsync(await client.GetAsync(SettingsUrl(tenant), Ct));
+        Assert.Equal(text, read.GetProperty("formalNextStep").GetString());
+        Assert.Equal(2L, read.GetProperty("version").GetInt64());
+        Assert.Equal(
+            "[\"formalNextStep\"]",
+            await TextAsync(
+                factory,
+                "SELECT changed_fields::text FROM audit.entries WHERE action = @action AND resource_id = @tenant",
+                ("action", SupportAuditActions.SettingsUpdated),
+                ("tenant", tenant)));
+        Assert.Equal(
+            0L,
+            await ScalarAsync(
+                factory,
+                "SELECT count(*) FROM audit.entries WHERE resource_id = @tenant AND changed_fields::text LIKE '%Superintendencia%'",
+                ("tenant", tenant)));
+
+        var cleared = await PutAsync(
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = (string?)null }, version: 2);
+
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await JsonAsync(cleared)).GetProperty("formalNextStep").ValueKind);
+    }
+
+    [Fact]
+    public async Task ANextStepOver2000IsRejectedOnTheField()
+    {
+        var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+
+        var response = await PutAsync(
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = new string('a', 2001) }, version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(["FormalNextStep"], await ErrorKeysAsync(response));
     }
 
     private static string SettingsUrl(string tenant) => $"{SupportUrl(tenant)}/settings";

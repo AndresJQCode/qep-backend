@@ -366,7 +366,7 @@ public sealed class SupportTicketTests
         var type = Petition;
         var ticket = NewTicket(type);
 
-        type.Update(type.Name, 30, type.TermIsLegal, type.RequiresFormalResponse, type.IsPublished, type.IsActive, At(11, 18));
+        type.Update(type.Name, 30, type.TermIsLegal, type.RequiresFormalResponse, type.IsPublished, type.IsActive, type.FormalNextStep, At(11, 18));
 
         Assert.Equal(new DateOnly(2026, 12, 7), ticket.DueOn);
         Assert.Equal(15, ticket.TermBusinessDays);

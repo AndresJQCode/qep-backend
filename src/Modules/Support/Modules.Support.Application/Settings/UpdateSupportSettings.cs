@@ -5,15 +5,16 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Support.Application;
 
-public sealed record UpdateSupportSettingsRequest(int? DueSoonBusinessDays);
+/// <summary>El <c>PUT</c> reemplaza los ajustes enteros: <c>FormalNextStep</c> ausente o null borra el «siguiente paso» (fase 4b, H6).</summary>
+public sealed record UpdateSupportSettingsRequest(int? DueSoonBusinessDays, string? FormalNextStep = null);
 
 /// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por <c>If-Match</c>.</param>
-public sealed record UpdateSupportSettingsCommand(Guid TenantId, int DueSoonBusinessDays, long ExpectedVersion)
+public sealed record UpdateSupportSettingsCommand(Guid TenantId, int DueSoonBusinessDays, string? FormalNextStep, long ExpectedVersion)
     : ICommand<SupportSettingsDto>
 {
     /// <summary>Sin valor, −1: el validador lo rechaza en el campo, en vez de que el dominio lance.</summary>
     public static UpdateSupportSettingsCommand From(Guid tenantId, UpdateSupportSettingsRequest request, long expectedVersion) =>
-        new(tenantId, request.DueSoonBusinessDays ?? -1, expectedVersion);
+        new(tenantId, request.DueSoonBusinessDays ?? -1, request.FormalNextStep, expectedVersion);
 }
 
 public sealed class UpdateSupportSettingsValidator : AbstractValidator<UpdateSupportSettingsCommand>
@@ -22,11 +23,13 @@ public sealed class UpdateSupportSettingsValidator : AbstractValidator<UpdateSup
     {
         RuleFor(command => command.DueSoonBusinessDays)
             .InclusiveBetween(SupportTenantSettings.MinDueSoonBusinessDays, SupportTenantSettings.MaxDueSoonBusinessDays);
+        RuleFor(command => command.FormalNextStep).MustBeAFormalNextStep();
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
 
-/// <summary>Guarda el umbral de «por vencer» [owner 2026-11-14] con su auditoría en la misma transacción. Sin cambios, no sube la
+/// <summary>Guarda el umbral de «por vencer» [owner 2026-11-14] y el «siguiente paso» de la respuesta formal (fase 4b, H6) con su
+/// auditoría en la misma transacción. La auditoría nombra sólo los campos que cambiaron, nunca el texto. Sin cambios, no sube la
 /// versión ni audita.</summary>
 public sealed class UpdateSupportSettingsHandler(
     IExecutionContext executionContext,
@@ -39,8 +42,6 @@ public sealed class UpdateSupportSettingsHandler(
     IValidator<UpdateSupportSettingsCommand> validator)
     : ICommandHandler<UpdateSupportSettingsCommand, SupportSettingsDto>
 {
-    private static readonly string[] ChangedFields = ["dueSoonBusinessDays"];
-
     public async Task<SupportSettingsDto> HandleAsync(UpdateSupportSettingsCommand command, CancellationToken cancellationToken)
     {
         await SupportAuthorization.EnsureAsync(
@@ -54,10 +55,23 @@ public sealed class UpdateSupportSettingsHandler(
             throw new RequestConcurrencyException("concurrency.conflict", "The support settings changed after they were loaded.");
         }
 
-        var version = settings.Version;
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        var changedFields = new List<string>();
+        var version = settings.Version;
         settings.ChangeDueSoon(command.DueSoonBusinessDays, now);
         if (settings.Version != version)
+        {
+            changedFields.Add("dueSoonBusinessDays");
+        }
+
+        version = settings.Version;
+        settings.ChangeFormalNextStep(command.FormalNextStep, now);
+        if (settings.Version != version)
+        {
+            changedFields.Add("formalNextStep");
+        }
+
+        if (changedFields.Count > 0)
         {
             auditPublisher.Publish(
                 command.TenantId,
@@ -66,7 +80,7 @@ public sealed class UpdateSupportSettingsHandler(
                 SupportAuditActions.Resources.Settings,
                 command.TenantId.ToString(),
                 "success",
-                ChangedFields,
+                changedFields,
                 now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }

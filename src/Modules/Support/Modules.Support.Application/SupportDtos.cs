@@ -8,7 +8,8 @@ namespace Modules.Support.Application;
 /// <summary>Un tipo de ticket como lo dibujan el selector del alta y la tabla de ajustes. <c>Version</c> va en el <c>If-Match</c> del
 /// <c>PUT</c>; <c>Position</c> es el orden en que la pantalla los lista. <c>InUse</c> (fase 4a, plan G6) dice si algún ticket, en
 /// cualquier estado, usa el tipo: la tabla de ajustes ofrece «Eliminar» sólo si es falso, y si no, sólo «Desactivar», sin probar el
-/// <c>DELETE</c> para enterarse del 422.</summary>
+/// <c>DELETE</c> para enterarse del 422. <c>FormalNextStep</c> (fase 4b, H6) es el «siguiente paso» propio del tipo, que pisa el del
+/// tenant en el PDF de la respuesta formal; null es «usa el del tenant».</summary>
 public sealed record SupportTicketTypeDto(
     Guid Id,
     string Name,
@@ -19,11 +20,14 @@ public sealed record SupportTicketTypeDto(
     bool IsActive,
     int Position,
     long Version,
-    bool InUse);
+    bool InUse,
+    string? FormalNextStep);
 
 /// <summary>El umbral de «por vencer» del tenant [owner 2026-11-14]. Viaja con su rango (<c>Min</c> y <c>Max</c>) para que el
-/// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3.</summary>
-public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonBusinessDays, int MaxDueSoonBusinessDays, long Version);
+/// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3. <c>FormalNextStep</c> (fase 4b, H6) es
+/// el «siguiente paso» del tenant para el PDF de la respuesta formal, null sin texto.</summary>
+public sealed record SupportSettingsDto(
+    int DueSoonBusinessDays, int MinDueSoonBusinessDays, int MaxDueSoonBusinessDays, long Version, string? FormalNextStep);
 
 /// <summary>
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
@@ -387,11 +391,13 @@ internal static class SupportDtoMapping
         type.IsActive,
         type.Position,
         type.Version,
-        inUse);
+        inUse,
+        type.FormalNextStep);
 
     public static SupportSettingsDto ToDto(SupportTenantSettings settings) => new(
         settings.DueSoonBusinessDays,
         SupportTenantSettings.MinDueSoonBusinessDays,
         SupportTenantSettings.MaxDueSoonBusinessDays,
-        settings.Version);
+        settings.Version,
+        settings.FormalNextStep);
 }

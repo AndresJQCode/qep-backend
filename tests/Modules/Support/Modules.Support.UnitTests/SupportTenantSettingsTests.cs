@@ -64,4 +64,50 @@ public sealed class SupportTenantSettingsTests
         Assert.Equal(3, settings.DueSoonBusinessDays);
         Assert.Equal(1L, settings.Version);
     }
+
+    [Fact]
+    public void TheNextStepIsTrimmedAndAnEmptyOneIsNull()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        Assert.Null(settings.FormalNextStep);
+
+        settings.ChangeFormalNextStep("  Puedes acudir a la Superintendencia.\n\tLínea 2  ", Now.AddHours(1));
+        Assert.Equal("Puedes acudir a la Superintendencia.\n\tLínea 2", settings.FormalNextStep);
+        Assert.Equal(2L, settings.Version);
+        Assert.Equal(Now.AddHours(1), settings.UpdatedAt);
+
+        settings.ChangeFormalNextStep("   ", Now.AddHours(2));
+        Assert.Null(settings.FormalNextStep);
+        Assert.Equal(3L, settings.Version);
+    }
+
+    [Fact]
+    public void SettingTheSameNextStepDoesNotBumpTheVersion()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        settings.ChangeFormalNextStep("Texto", Now.AddHours(1));
+
+        settings.ChangeFormalNextStep("  Texto ", Now.AddHours(2));
+        settings.ChangeFormalNextStep("Texto", Now.AddHours(3));
+
+        Assert.Equal(2L, settings.Version);
+        Assert.Equal(Now.AddHours(1), settings.UpdatedAt);
+
+        var empty = SupportTenantSettings.CreateDefault(TenantId, Now);
+        empty.ChangeFormalNextStep(null, Now.AddHours(1));
+        empty.ChangeFormalNextStep("", Now.AddHours(1));
+        Assert.Equal(1L, empty.Version);
+    }
+
+    [Fact]
+    public void ANextStepLongerThan2000Throws()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+
+        Assert.Equal(2000, SupportTenantSettings.FormalNextStepMaxLength);
+        settings.ChangeFormalNextStep($"  {new string('a', 2000)}  ", Now.AddHours(1));
+        Assert.Throws<ArgumentException>(() => settings.ChangeFormalNextStep(new string('b', 2001), Now.AddHours(2)));
+        Assert.Equal(new string('a', 2000), settings.FormalNextStep);
+        Assert.Equal(2L, settings.Version);
+    }
 }

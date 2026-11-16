@@ -447,6 +447,11 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("due_soon_business_days");
 
+                    b.Property<string>("FormalNextStep")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("formal_next_step");
+
                     b.Property<long>("NextTicketNumber")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
@@ -1127,6 +1132,11 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<string>("FormalNextStep")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("formal_next_step");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")

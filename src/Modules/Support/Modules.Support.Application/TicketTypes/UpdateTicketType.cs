@@ -15,6 +15,7 @@ public sealed record UpdateTicketTypeCommand(
     bool? RequiresFormalResponse,
     bool? IsPublished,
     bool? IsActive,
+    string? FormalNextStep,
     long ExpectedVersion)
     : ICommand<SupportTicketTypeDto>
 {
@@ -27,6 +28,7 @@ public sealed record UpdateTicketTypeCommand(
         request.RequiresFormalResponse,
         request.IsPublished,
         request.IsActive,
+        request.FormalNextStep,
         expectedVersion);
 }
 
@@ -40,6 +42,7 @@ public sealed class UpdateTicketTypeValidator : AbstractValidator<UpdateTicketTy
         RuleFor(command => command.RequiresFormalResponse).NotNull();
         RuleFor(command => command.IsPublished).NotNull();
         RuleFor(command => command.IsActive).NotNull();
+        RuleFor(command => command.FormalNextStep).MustBeAFormalNextStep();
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -84,6 +87,7 @@ public sealed class UpdateTicketTypeHandler(
             command.RequiresFormalResponse!.Value,
             command.IsPublished!.Value,
             command.IsActive!.Value,
+            command.FormalNextStep,
             now);
         if (type.Version != before.Version)
         {
@@ -111,6 +115,7 @@ public sealed class UpdateTicketTypeHandler(
         Add(fields, "requiresFormalResponse", before.RequiresFormalResponse != after.RequiresFormalResponse);
         Add(fields, "isPublished", before.IsPublished != after.IsPublished);
         Add(fields, "isActive", before.IsActive != after.IsActive);
+        Add(fields, "formalNextStep", before.FormalNextStep != after.FormalNextStep);
         return fields;
     }
 

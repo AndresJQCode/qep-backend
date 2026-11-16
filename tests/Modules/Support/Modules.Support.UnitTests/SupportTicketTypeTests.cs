@@ -78,7 +78,7 @@ public sealed class SupportTicketTypeTests
         var type = SupportTicketTypeDefaults.For(TenantId, Now)[3];
         var later = Now.AddHours(1);
 
-        type.Update("Queja formal", 20, termIsLegal: true, requiresFormalResponse: false, isPublished: false, isActive: false, later);
+        type.Update("Queja formal", 20, termIsLegal: true, requiresFormalResponse: false, isPublished: false, isActive: false, formalNextStep: null, later);
 
         Assert.Equal("Queja formal", type.Name);
         Assert.Equal(20, type.TermBusinessDays);
@@ -95,7 +95,7 @@ public sealed class SupportTicketTypeTests
     {
         var type = SupportTicketTypeDefaults.For(TenantId, Now)[3];
 
-        type.Update("Queja", 15, termIsLegal: true, requiresFormalResponse: true, isPublished: true, isActive: true, Now.AddHours(1));
+        type.Update("Queja", 15, termIsLegal: true, requiresFormalResponse: true, isPublished: true, isActive: true, formalNextStep: null, Now.AddHours(1));
 
         Assert.Equal(1, type.Version);
         Assert.Equal(Now, type.UpdatedAt);
@@ -107,9 +107,37 @@ public sealed class SupportTicketTypeTests
         var type = SupportTicketTypeDefaults.For(TenantId, Now)[3];
 
         Assert.Throws<ArgumentException>(() =>
-            type.Update("Queja", null, termIsLegal: true, requiresFormalResponse: true, isPublished: true, isActive: true, Now));
+            type.Update("Queja", null, termIsLegal: true, requiresFormalResponse: true, isPublished: true, isActive: true, formalNextStep: null, Now));
         Assert.Equal(15, type.TermBusinessDays);
         Assert.Equal(1, type.Version);
+    }
+
+    [Fact]
+    public void ATypeKeepsItsOwnNextStep()
+    {
+        var type = SupportTicketType.Create(
+            SupportTicketTypeId.New(), TenantId, "Garantía", 15, termIsLegal: true,
+            requiresFormalResponse: true, isPublished: true, position: 9, Now, formalNextStep: "  Puedes acudir a la SIC.  ");
+        Assert.Equal("Puedes acudir a la SIC.", type.FormalNextStep);
+        Assert.Equal(2000, SupportTicketType.FormalNextStepMaxLength);
+        Assert.Null(SupportTicketTypeDefaults.For(TenantId, Now)[0].FormalNextStep);
+
+        type.Update("Garantía", 15, true, true, true, true, "Puedes acudir a la SIC.", Now.AddHours(1));
+        Assert.Equal(1, type.Version);
+
+        type.Update("Garantía", 15, true, true, true, true, "Otro paso", Now.AddHours(2));
+        Assert.Equal("Otro paso", type.FormalNextStep);
+        Assert.Equal(2, type.Version);
+
+        type.Update("Garantía", 15, true, true, true, true, null, Now.AddHours(3));
+        Assert.Null(type.FormalNextStep);
+        Assert.Equal(3, type.Version);
+
+        Assert.Throws<ArgumentException>(() =>
+            type.Update("Garantía", 15, true, true, true, true, new string('a', 2001), Now.AddHours(4)));
+        Assert.Throws<ArgumentException>(() => SupportTicketType.Create(
+            SupportTicketTypeId.New(), TenantId, "Otro", 15, termIsLegal: true,
+            requiresFormalResponse: true, isPublished: true, position: 10, Now, formalNextStep: new string('a', 2001)));
     }
 
     [Fact]

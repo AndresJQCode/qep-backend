@@ -9,6 +9,9 @@ public sealed class SupportTicketType
 
     public const int MaxTermBusinessDays = 365;
 
+    /// <summary>Fase 4b (H6): el «siguiente paso» de la respuesta formal, en texto plano.</summary>
+    public const int FormalNextStepMaxLength = SupportFormalNextStep.MaxLength;
+
     // EF Core materializa por acá; Create es el único punto de entrada de código.
     private SupportTicketType()
     {
@@ -27,6 +30,9 @@ public sealed class SupportTicketType
     public bool TermIsLegal { get; private set; }
 
     public bool RequiresFormalResponse { get; private set; }
+
+    /// <summary>Fase 4b (H6): la sección 7 del PDF de la respuesta formal; pisa la del tenant. Null: usa la del tenant.</summary>
+    public string? FormalNextStep { get; private set; }
 
     public bool IsPublished { get; private set; }
 
@@ -49,10 +55,12 @@ public sealed class SupportTicketType
         bool requiresFormalResponse,
         bool isPublished,
         int position,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string? formalNextStep = null)
     {
         var normalized = NormalizeName(name);
         EnsureTerm(termBusinessDays, termIsLegal);
+        var nextStep = SupportFormalNextStep.Normalize(formalNextStep);
 
         return new SupportTicketType
         {
@@ -62,6 +70,7 @@ public sealed class SupportTicketType
             TermBusinessDays = termBusinessDays,
             TermIsLegal = termIsLegal,
             RequiresFormalResponse = requiresFormalResponse,
+            FormalNextStep = nextStep,
             IsPublished = isPublished,
             IsActive = true,
             Position = position,
@@ -71,7 +80,8 @@ public sealed class SupportTicketType
         };
     }
 
-    /// <summary>Con los mismos valores no cambia nada ni sube la versión.</summary>
+    /// <summary>Reemplaza el tipo entero: <paramref name="formalNextStep"/> en null borra el «siguiente paso». Con los mismos valores
+    /// no cambia nada ni sube la versión.</summary>
     public void Update(
         string name,
         int? termBusinessDays,
@@ -79,13 +89,16 @@ public sealed class SupportTicketType
         bool requiresFormalResponse,
         bool isPublished,
         bool isActive,
+        string? formalNextStep,
         DateTimeOffset now)
     {
         var normalized = NormalizeName(name);
         EnsureTerm(termBusinessDays, termIsLegal);
+        var nextStep = SupportFormalNextStep.Normalize(formalNextStep);
 
         if (normalized == Name && termBusinessDays == TermBusinessDays && termIsLegal == TermIsLegal &&
-            requiresFormalResponse == RequiresFormalResponse && isPublished == IsPublished && isActive == IsActive)
+            requiresFormalResponse == RequiresFormalResponse && isPublished == IsPublished && isActive == IsActive &&
+            nextStep == FormalNextStep)
         {
             return;
         }
@@ -94,6 +107,7 @@ public sealed class SupportTicketType
         TermBusinessDays = termBusinessDays;
         TermIsLegal = termIsLegal;
         RequiresFormalResponse = requiresFormalResponse;
+        FormalNextStep = nextStep;
         IsPublished = isPublished;
         IsActive = isActive;
         Touch(now);
