@@ -78,7 +78,9 @@ public sealed class RoleApiTests(SharedTenancyHost host) : IClassFixture<SharedT
         var list = await client.GetAsync(RolesUrl(), TestContext.Current.CancellationToken);
         var roles = await list.Content.ReadFromJsonAsync<RolePayload[]>(
             TestContext.Current.CancellationToken);
-        Assert.Contains(roles!, item => item.Role == "ventas-junior" && !item.IsSystem);
+        // Con su id: sin él el front no tiene a dónde mandar el PUT ni el DELETE del rol.
+        Assert.Contains(
+            roles!, item => item.Role == "ventas-junior" && !item.IsSystem && item.Id == role.Id);
     }
 
     /// <summary>

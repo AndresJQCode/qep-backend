@@ -145,4 +145,18 @@ public sealed class TenantRoleCatalogTests
         // scope, una pantalla que pregunta tres veces son tres consultas por request.
         Assert.Equal(1, reader.Reads);
     }
+
+    [Fact]
+    public async Task ACustomRoleIsListedWithItsIdAndASystemRoleWithout()
+    {
+        // Sin id, el front no tiene a donde mandar el PUT ni el DELETE de un rol custom: el
+        // editor quedaba sin poder guardar ni borrar lo que acababa de crear.
+        var custom = CustomRole(Tenant, "ventas-junior", "catalog.product.read");
+        var catalog = new TenantRoleCatalog(SystemCatalog(), new StubReader(custom));
+
+        var roles = await catalog.ListRolesAsync(Tenant, TestContext.Current.CancellationToken);
+
+        Assert.Equal(custom.Id.Value, roles.Single(role => role.Role == "ventas-junior").Id);
+        Assert.Null(roles.Single(role => role.Role == SystemRoleKeys.Admin).Id);
+    }
 }
