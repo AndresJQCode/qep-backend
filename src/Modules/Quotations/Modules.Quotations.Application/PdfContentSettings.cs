@@ -179,7 +179,8 @@ public sealed class UpdatePdfContentHandler(
     }
 }
 
-/// <summary>Los límites de una sección (spec §4.1). El título coincide con el <c>varchar(120)</c> de <c>pdf_sections.title</c>.</summary>
+/// <summary>Los límites de una sección (spec §4.1). <see cref="MaxTitleLength"/> es también el <c>varchar</c> de
+/// <c>pdf_sections.title</c> (<c>QuotationsDbContext</c> lo lee de acá): cambiarlo exige una migración.</summary>
 public static class PdfContentRules
 {
     public const int MaxTitleLength = 120;
