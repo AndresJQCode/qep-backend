@@ -198,6 +198,44 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal([1, 2], (await tickets.ListEventsAsync(tenant, ticket.Id, Ct)).Select(item => item.Ordinal));
     }
 
+    // Fase 4a (plan G9): las tres columnas de la prórroga y el evento Extended, que el CHECK de kind tiene que aceptar.
+    [Fact]
+    public async Task AnExtendedTicketRoundTrips()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var type = (await TypesAsync(factory, tenant))[0];
+        var actor = Guid.CreateVersion7();
+        var ticket = NewTicket(tenant, type, 1, Now, actor);
+        await SaveAsync(factory, ticket);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var loaded = await scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().FindAsync(tenant, ticket.Id, Ct);
+            loaded!.Extend(5, "Falta respuesta del proveedor", actor, At(11, 17), Clock);
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
+        var found = await tickets.FindAsync(tenant, ticket.Id, Ct);
+        var events = await tickets.ListEventsAsync(tenant, ticket.Id, Ct);
+
+        Assert.NotNull(found);
+        Assert.Equal(5, found.ExtensionBusinessDays);
+        Assert.Equal("Falta respuesta del proveedor", found.ExtensionReason);
+        Assert.Equal(At(11, 17), found.ExtendedAt);
+        // 15 + 5 días hábiles de lunes a viernes desde el 2026-11-13.
+        Assert.Equal(new DateOnly(2026, 12, 11), found.DueOn);
+        Assert.Equal(2L, found.Version);
+        var extended = events[^1];
+        Assert.Equal(SupportTicketEventKind.Extended, extended.Kind);
+        Assert.Equal(actor, extended.ActorMemberId);
+        using var details = JsonDocument.Parse(extended.Details);
+        Assert.Equal("2026-12-04", details.RootElement.GetProperty("fromDueOn").GetString());
+        Assert.Equal("2026-12-11", details.RootElement.GetProperty("toDueOn").GetString());
+    }
+
     [Fact]
     public async Task AStaleTicketVersionIsAConcurrencyConflict()
     {

@@ -385,6 +385,11 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
                 "CK_tickets_conversation_channel", InList("conversation_channel", SupportConversationRef.Channels));
             table.HasCheckConstraint(
                 "CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
+            // Fase 4a (plan G9): la prórroga se guarda entera o no se guarda; sin prórroga los días quedan en 0.
+            table.HasCheckConstraint(
+                "CK_tickets_extension",
+                "(extended_at IS NULL) = (extension_reason IS NULL) AND extension_business_days >= 0"
+                + " AND (extended_at IS NOT NULL OR extension_business_days = 0)");
             table.HasCheckConstraint(
                 TicketAnonymousCheck,
                 $"NOT is_anonymous OR (customer_id IS NULL AND {string.Join(" AND ", RequesterColumns.Select(column => $"{column} IS NULL"))})");
@@ -461,6 +466,12 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.Property(value => value.PausedSince).HasColumnName("paused_since");
         ticket.Property(value => value.PausedBusinessDays).HasColumnName("paused_business_days").HasDefaultValue(0);
         ticket.Property(value => value.ResolutionCount).HasColumnName("resolution_count").HasDefaultValue(0);
+        // Fase 4a (plan G9): la prórroga única, en días hábiles. Aditivas: los tickets de antes quedan sin prórroga.
+        ticket.Property(value => value.ExtensionBusinessDays).HasColumnName("extension_business_days").HasDefaultValue(0);
+        ticket.Property(value => value.ExtensionReason)
+            .HasColumnName("extension_reason")
+            .HasMaxLength(SupportTicket.ExtensionReasonMaxLength);
+        ticket.Property(value => value.ExtendedAt).HasColumnName("extended_at");
         ticket.Property(value => value.ResolvedAt).HasColumnName("resolved_at");
         ticket.Property(value => value.ClosedAt).HasColumnName("closed_at");
         // La conversación es una referencia blanda a messaging.conversations: otro esquema, sin FK.
