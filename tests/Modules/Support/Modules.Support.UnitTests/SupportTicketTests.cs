@@ -26,10 +26,15 @@ public sealed class SupportTicketTests
     private static SupportTicketType TechSupport => SupportTicketTypeDefaults.For(TenantId, Received)[7];   // sin término
 
     private static SupportTicket NewTicket(
-        SupportTicketType? type = null, DateTimeOffset? receivedAt = null, Guid? customerId = null, TicketRequester? requester = null) =>
+        SupportTicketType? type = null,
+        DateTimeOffset? receivedAt = null,
+        Guid? customerId = null,
+        TicketRequester? requester = null,
+        SupportTicketPriority priority = SupportTicketPriority.Medium) =>
         SupportTicket.CreateManual(
             SupportTicketId.New(), TenantId, 1, type ?? Petition, "No me llegó la factura", "Pedí la factura del pedido 45 y no llegó.",
-            ManualIntakeMedium.Phone, SupportReplyChannel.Email, customerId, customerId is null ? requester ?? Person : requester,
+            priority, ManualIntakeMedium.Phone, SupportReplyChannel.Email, customerId,
+            customerId is null ? requester ?? Person : requester,
             assigneeMemberId: null, Actor, receivedAt ?? Received, Clock);
 
     private static DateTimeOffset At(int month, int day, int hourUtc = 15) => new(2026, month, day, hourUtc, 0, 0, TimeSpan.Zero);
@@ -75,8 +80,8 @@ public sealed class SupportTicketTests
     public void TheSubjectAndDescriptionAreTrimmed()
     {
         var ticket = SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 7, Petition, "  Asunto  ", "  Descripción  ", ManualIntakeMedium.Email,
-            SupportReplyChannel.Email, null, Person, OtherMember, Actor, Received, Clock);
+            SupportTicketId.New(), TenantId, 7, Petition, "  Asunto  ", "  Descripción  ", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Email, SupportReplyChannel.Email, null, Person, OtherMember, Actor, Received, Clock);
 
         Assert.Equal("Asunto", ticket.Subject);
         Assert.Equal("Descripción", ticket.Description);
@@ -109,8 +114,8 @@ public sealed class SupportTicketTests
         var withoutName = Person with { FirstNames = " ", LastNames = null };
 
         var missing = Assert.Throws<SupportDomainException>(() => SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone,
-            SupportReplyChannel.Email, null, null, null, Actor, Received, Clock));
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email, null, null, null, Actor, Received, Clock));
         var nameless = Assert.Throws<SupportDomainException>(() => NewTicket(requester: withoutName));
 
         Assert.Equal(SupportErrorCodes.RequesterRequired, missing.Code);
@@ -351,8 +356,8 @@ public sealed class SupportTicketTests
     {
         var type = Petition;
         var ticket = SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 1, type, "Asunto", "Descripción", ManualIntakeMedium.Phone,
-            SupportReplyChannel.Email, Customer, Person, OtherMember, Actor, Received, Clock);
+            SupportTicketId.New(), TenantId, 1, type, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email, Customer, Person, OtherMember, Actor, Received, Clock);
 
         ticket.Assign(OtherMember, Actor, At(11, 18));
         ticket.LinkCustomer(Customer, Actor, At(11, 18));
@@ -445,5 +450,106 @@ public sealed class SupportTicketTests
         Assert.Equal(OtherMember, ticket.AssigneeMemberId);
         Assert.Equal(Documents.Name, ticket.TypeName);
         Assert.Equal(Customer, ticket.CustomerId);
+    }
+
+    [Fact]
+    public void AManualTicketKeepsThePriorityItWasCreatedWith()
+    {
+        var ticket = NewTicket(priority: SupportTicketPriority.High);
+
+        Assert.Equal(SupportTicketPriority.High, ticket.Priority);
+        Assert.Single(ticket.Events);
+    }
+
+    // Spec §5.1: quien radica en el formulario público no elige prioridad.
+    [Fact]
+    public void APublicFormTicketIsAlwaysMedium()
+    {
+        var ticket = SupportTicket.CreateFromPublicForm(
+            SupportTicketId.New(), TenantId, 3, Petition, "No me llegó la factura", "Pedí la factura del pedido 45.", Person,
+            customerId: null, Guid.CreateVersion7(), Received, Clock);
+
+        Assert.Equal(SupportTicketPriority.Medium, ticket.Priority);
+    }
+
+    [Fact]
+    public void ChangingThePriorityWritesAnEventWithFromAndTo()
+    {
+        var ticket = NewTicket();
+
+        ticket.ChangePriority(SupportTicketPriority.Urgent, Actor, At(11, 18));
+
+        Assert.Equal(SupportTicketPriority.Urgent, ticket.Priority);
+        Assert.Equal(2L, ticket.Version);
+        Assert.Equal(At(11, 18), ticket.UpdatedAt);
+        var changed = ticket.Events[^1];
+        Assert.Equal(SupportTicketEventKind.PriorityChanged, changed.Kind);
+        Assert.Equal(2, changed.Ordinal);
+        Assert.Equal(Actor, changed.ActorMemberId);
+        Assert.Equal("""{"from":"Medium","to":"Urgent"}""", changed.Details);
+    }
+
+    [Fact]
+    public void ChangingToTheSamePriorityDoesNothing()
+    {
+        var ticket = NewTicket(priority: SupportTicketPriority.High);
+
+        ticket.ChangePriority(SupportTicketPriority.High, Actor, At(11, 18));
+
+        Assert.Single(ticket.Events);
+        Assert.Equal(1L, ticket.Version);
+        Assert.Equal(Received, ticket.UpdatedAt);
+    }
+
+    // Spec §5.1: la prioridad no toca el reloj, ni el vencimiento ni las pausas.
+    [Fact]
+    public void ChangingThePriorityKeepsTheDueDateAndThePauses()
+    {
+        var ticket = NewTicket();
+        ticket.ChangeStatus(SupportTicketStatus.Open, Actor, At(11, 16), Clock);
+        ticket.ChangeStatus(SupportTicketStatus.WaitingOnCustomer, Actor, At(11, 17), Clock);
+        var dueOn = ticket.DueOn;
+        var pausedSince = ticket.PausedSince;
+        var pausedDays = ticket.PausedBusinessDays;
+
+        ticket.ChangePriority(SupportTicketPriority.Low, Actor, At(11, 18));
+
+        Assert.Equal(SupportTicketStatus.WaitingOnCustomer, ticket.Status);
+        Assert.Equal(dueOn, ticket.DueOn);
+        Assert.NotNull(ticket.PausedSince);
+        Assert.Equal(pausedSince, ticket.PausedSince);
+        Assert.Equal(pausedDays, ticket.PausedBusinessDays);
+    }
+
+    // Spec §5.1 (owner 2026-11-15): resuelto tampoco se cambia, aunque «Seguir el hilo» sí se permita.
+    [Fact]
+    public void AResolvedTicketRejectsAPriorityChange()
+    {
+        var ticket = NewTicket();
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, At(11, 17), Clock);
+        var version = ticket.Version;
+
+        var exception = Assert.Throws<SupportDomainException>(
+            () => ticket.ChangePriority(SupportTicketPriority.High, Actor, At(11, 18)));
+
+        Assert.Equal(SupportErrorCodes.NotEditable, exception.Code);
+        Assert.Equal(SupportTicketPriority.Medium, ticket.Priority);
+        Assert.Equal(version, ticket.Version);
+    }
+
+    [Fact]
+    public void AClosedTicketRejectsAPriorityChange()
+    {
+        var ticket = NewTicket();
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, At(11, 17), Clock);
+        ticket.ChangeStatus(SupportTicketStatus.Closed, Actor, At(11, 18), Clock);
+        var version = ticket.Version;
+
+        var exception = Assert.Throws<SupportDomainException>(
+            () => ticket.ChangePriority(SupportTicketPriority.High, Actor, At(11, 19)));
+
+        Assert.Equal(SupportErrorCodes.NotEditable, exception.Code);
+        Assert.Equal(SupportTicketPriority.Medium, ticket.Priority);
+        Assert.Equal(version, ticket.Version);
     }
 }

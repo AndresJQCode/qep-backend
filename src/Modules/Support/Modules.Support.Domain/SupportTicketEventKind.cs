@@ -16,4 +16,5 @@ public enum SupportTicketEventKind
     FollowThreadChanged,
     ReplySent,
     ConversationLinked,
+    PriorityChanged,
 }

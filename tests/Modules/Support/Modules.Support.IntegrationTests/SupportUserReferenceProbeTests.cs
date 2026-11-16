@@ -166,7 +166,8 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         await scope.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(tenant, Ct);
         var type = (await scope.ServiceProvider.GetRequiredService<ISupportTicketTypeRepository>().ListAsync(tenant, Ct))[0];
         var ticket = SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, 1, type, "Asunto", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email, null,
+            SupportTicketId.New(), tenant, 1, type, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email, null,
             new TicketRequester("Ana", "Gómez", null, null, null, "ana@example.com", null, null, "CO", null),
             assignee, actor, Now, Clock);
         scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().Add(ticket);

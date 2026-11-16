@@ -114,10 +114,12 @@ public sealed class SupportTicketPublicFormTests
     public void ManualAndConversationStillRejectAMissingRequester()
     {
         var manual = Assert.Throws<SupportDomainException>(() => SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email,
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email,
             customerId: null, requester: null, assigneeMemberId: null, Guid.CreateVersion7(), Received, Clock));
         var conversation = Assert.Throws<SupportDomainException>(() => SupportTicket.CreateFromConversation(
             SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción",
+            SupportTicketPriority.Medium,
             new SupportConversationRef(Guid.CreateVersion7(), "WhatsApp"), customerId: null, requester: null,
             assigneeMemberId: null, Guid.CreateVersion7(), Received, Clock));
 
@@ -129,7 +131,8 @@ public sealed class SupportTicketPublicFormTests
     public void ManualAndConversationTicketsAreNotAnonymous()
     {
         var manual = SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email,
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email,
             null, Person, null, Guid.CreateVersion7(), Received, Clock);
 
         Assert.False(manual.IsAnonymous);

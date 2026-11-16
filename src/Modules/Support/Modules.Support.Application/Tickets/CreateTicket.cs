@@ -323,6 +323,7 @@ public sealed class CreateTicketHandler(
                 type,
                 validated.Subject,
                 validated.Description,
+                SupportTicketPriority.Medium,
                 medium,
                 channel,
                 validated.CustomerId,

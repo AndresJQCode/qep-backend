@@ -188,6 +188,7 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                 new AllDaysCalendar(), TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
             var ticket = Modules.Support.Domain.SupportTicket.CreateFromConversation(
                 Modules.Support.Domain.SupportTicketId.New(), tenant, 1, type, "Pedido sin llegar", "No ha llegado.",
+                Modules.Support.Domain.SupportTicketPriority.Medium,
                 new Modules.Support.Domain.SupportConversationRef(conversation, "WhatsApp"), null,
                 new Modules.Support.Domain.TicketRequester("Beto", null, null, null, null, null, null, null, "CO", null),
                 null, Guid.CreateVersion7(), now, calendar);

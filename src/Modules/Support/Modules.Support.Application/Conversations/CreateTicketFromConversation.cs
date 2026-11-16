@@ -121,6 +121,7 @@ public sealed class CreateTicketFromConversationHandler(
                 type,
                 command.Subject,
                 command.Description,
+                SupportTicketPriority.Medium,
                 new SupportConversationRef(conversation.Id, conversation.Channel),
                 customer?.Id,
                 requester,
