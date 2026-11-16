@@ -257,6 +257,53 @@ public sealed class CompositionRootTests
         Assert.True(unlabeled.Length == 0, "Sin etiqueta: " + string.Join(", ", unlabeled));
     }
 
+    /// <summary>
+    /// Dos entidades de una misma categoría no pueden compartir etiqueta: la matriz las pintaría como
+    /// dos filas indistinguibles.
+    /// </summary>
+    [Fact]
+    public void NoTwoEntitiesOfACategoryShareALabel()
+    {
+        var clashes = RegisteredPermissionDefinitions()
+            .Where(definition => definition.Shape is not null)
+            .Select(definition => (definition.Category, definition.Shape!.Entity, definition.Shape.EntityLabel))
+            .Distinct()
+            .GroupBy(row => (row.Category, row.EntityLabel))
+            .Where(group => group.Select(row => row.Entity).Distinct(StringComparer.Ordinal).Count() > 1)
+            .Select(group => $"{group.Key.Category}/{group.Key.EntityLabel}: "
+                + string.Join(", ", group.Select(row => row.Entity).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(clashes.Length == 0, "Etiqueta repetida en una categoría: " + string.Join(" | ", clashes));
+    }
+
+    /// <summary>La clave de una entidad es <c>módulo.entidad</c> y la de una acción, un verbo en snake_case.</summary>
+    [Fact]
+    public void EveryEntityKeyIsModuleDotEntity()
+    {
+        var shapes = RegisteredPermissionDefinitions()
+            .Where(definition => definition.Shape is not null)
+            .Select(definition => definition.Shape!)
+            .ToArray();
+
+        var badEntities = shapes
+            .Select(shape => shape.Entity)
+            .Where(entity => !System.Text.RegularExpressions.Regex.IsMatch(entity, @"^[a-z]+\.[a-z_]+$"))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var badActions = shapes
+            .Select(shape => shape.Action)
+            .Where(action => !System.Text.RegularExpressions.Regex.IsMatch(action, "^[a-z_]+$"))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(badEntities.Length == 0, "Entidades mal formadas: " + string.Join(", ", badEntities));
+        Assert.True(badActions.Length == 0, "Acciones mal formadas: " + string.Join(", ", badActions));
+    }
+
     /// <summary>Ningún permiso de un rol de sistema sale del fallback de metadata de RoleCatalog.</summary>
     [Fact]
     public void NoSystemRolePermissionComesFromTheMetadataFallback()

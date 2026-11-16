@@ -2572,7 +2572,7 @@ public static class QepServiceCollectionExtensions
             "low",
             RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Orders])
         {
-            Shape = new("reporting.orders", "Pedidos", "read"),
+            Shape = new("reporting.order", "Pedidos", "read"),
         });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.QuotationRead,

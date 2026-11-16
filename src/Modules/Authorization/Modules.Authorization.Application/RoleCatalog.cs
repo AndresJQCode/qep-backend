@@ -99,7 +99,12 @@ public sealed class RoleCatalog : IRoleCatalog
                     RequiredModules: null))
             .OrderBy(permission => permission.Permission, StringComparer.Ordinal)
             .ToArray();
-        CatalogVersion = ComputeCatalogVersion(_roleDefinitions, _permissionDefinitions);
+        CatalogVersion = ComputeCatalogVersion(
+            _roleDefinitions,
+            _permissionDefinitions,
+            PermissionVocabulary.ColumnActions,
+            PermissionVocabulary.ActionLabels,
+            PermissionVocabulary.CategoryLabels);
     }
 
     public IReadOnlyCollection<string> PermissionsFor(string role) =>
@@ -111,9 +116,12 @@ public sealed class RoleCatalog : IRoleCatalog
 
     public bool ContainsRole(string role) => _roles.ContainsKey(role);
 
-    private static string ComputeCatalogVersion(
+    public static string ComputeCatalogVersion(
         IReadOnlyCollection<RoleDefinition> roles,
-        IReadOnlyCollection<PermissionDefinition> permissions)
+        IReadOnlyCollection<PermissionDefinition> permissions,
+        IReadOnlyList<string> columnActions,
+        IReadOnlyDictionary<string, string> actionLabels,
+        IReadOnlyDictionary<string, string> categoryLabels)
     {
         var builder = new StringBuilder();
         foreach (var role in roles)
@@ -141,6 +149,23 @@ public sealed class RoleCatalog : IRoleCatalog
                 .Append(permission.Shape?.EntityLabel).Append('|')
                 .Append(permission.Shape?.Action)
                 .AppendLine();
+        }
+
+        // Spec 2026-11-16: el vocabulario de la matriz (qué acciones son columna y cómo se llaman las
+        // acciones y categorías en uso) también define lo que ve el cliente, aunque ningún permiso cambie.
+        builder.AppendJoin(',', columnActions).AppendLine();
+        var usedActions = permissions
+            .Where(permission => permission.Shape is not null)
+            .Select(permission => permission.Shape!.Action);
+        foreach (var action in usedActions.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            builder.Append(action).Append('=').Append(actionLabels.GetValueOrDefault(action)).AppendLine();
+        }
+
+        foreach (var category in permissions.Select(permission => permission.Category)
+                     .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            builder.Append(category).Append('=').Append(categoryLabels.GetValueOrDefault(category)).AppendLine();
         }
 
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()));
