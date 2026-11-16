@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Infrastructure.Persistence;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
@@ -348,6 +350,93 @@ public sealed class PdfContentApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.DoesNotContain("Terms", audit.PayloadJson, StringComparison.Ordinal);
         Assert.DoesNotContain("DeliveryProcess", audit.PayloadJson, StringComparison.Ordinal);
     }
+
+    // Spec 2026-11-16 pdf-payment-account, decisión 5: la huella del PDF no incluye la cuenta, así que cambiar si la cotización la
+    // imprime vence a mano los PDF cacheados de ese tenant (content_fingerprint en null), en la misma transacción del PUT.
+    [Fact]
+    public async Task PutChangingQuotationAccountVisibilityInvalidatesCachedPdfs()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, client, _) = await TenantWithACachedQuotationPdfAsync(factory);
+        using var _ = client;
+        var (otherTenantId, otherClient, _) = await TenantWithACachedQuotationPdfAsync(factory);
+        using var __ = otherClient;
+        var otherFingerprint = await CachedFingerprintAsync(factory, otherTenantId);
+        Assert.NotNull(otherFingerprint);
+
+        var put = await PutAccountAsync(client, tenantId, AccountOff with { Enabled = true });
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        Assert.Null(await CachedFingerprintAsync(factory, tenantId));
+        Assert.Equal(otherFingerprint, await CachedFingerprintAsync(factory, otherTenantId));
+    }
+
+    // Los pedidos no tienen PDF cacheado: cambiar sólo InOrder no vence nada.
+    [Fact]
+    public async Task PutChangingOnlyInOrderKeepsCachedPdfs()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, client, quotationId) = await TenantWithACachedQuotationPdfAsync(factory);
+        using var _ = client;
+        Assert.Equal(HttpStatusCode.OK, (await PutAccountAsync(client, tenantId, new PdfPaymentAccountDto(true, true, true))).StatusCode);
+        // El primer PUT prendió la cuenta y venció el PDF: se regenera para tener otra vez una huella que cuidar.
+        await ExportQuotationPdfAsync(client, tenantId, quotationId);
+        var fingerprint = await CachedFingerprintAsync(factory, tenantId);
+        Assert.NotNull(fingerprint);
+
+        var put = await PutAccountAsync(client, tenantId, new PdfPaymentAccountDto(true, true, false));
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        Assert.Equal(fingerprint, await CachedFingerprintAsync(factory, tenantId));
+    }
+
+    [Fact]
+    public async Task PutWithoutChangesKeepsCachedPdfs()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, client, _) = await TenantWithACachedQuotationPdfAsync(factory);
+        using var _ = client;
+        var fingerprint = await CachedFingerprintAsync(factory, tenantId);
+        Assert.NotNull(fingerprint);
+
+        var put = await PutAccountAsync(client, tenantId, AccountOff);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        Assert.Equal(fingerprint, await CachedFingerprintAsync(factory, tenantId));
+    }
+
+    private static async Task<(Guid TenantId, HttpClient Client, Guid QuotationId)> TenantWithACachedQuotationPdfAsync(QepApiFactory factory)
+    {
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ManagerPermissions, SettingsRead, SettingsUpdate]);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, customerId);
+        await ExportQuotationPdfAsync(client, tenantId, quotation.Id);
+        return (tenantId, client, quotation.Id);
+    }
+
+    private static async Task ExportQuotationPdfAsync(HttpClient client, Guid tenantId, Guid quotationId)
+    {
+        var export = await client.PostAsync(
+            $"{QuotationsUrl(tenantId)}/{quotationId}/pdf", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
+    }
+
+    private static async Task<string?> CachedFingerprintAsync(QepApiFactory factory, Guid tenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return await dbContext.QuotationPdfs
+            .AsNoTracking()
+            .Where(pdf => pdf.TenantId == tenantId)
+            .Select(pdf => pdf.ContentFingerprint)
+            .SingleAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static Task<HttpResponseMessage> PutAccountAsync(HttpClient client, Guid tenantId, PdfPaymentAccountDto account) =>
+        client.PutAsJsonAsync(
+            Url(tenantId),
+            new { paymentNotice = Disabled, terms = Disabled, deliveryProcess = Disabled, paymentAccount = account },
+            TestContext.Current.CancellationToken);
 
     private static string? ResourceOf(QuotationsOutboxMessage message)
     {

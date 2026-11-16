@@ -1362,6 +1362,34 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.ToTable("order_number_counters", "quotations");
                 });
 
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.PdfPaymentAccountRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<bool>("InOrder")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_order");
+
+                    b.Property<bool>("InQuotation")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_quotation");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("pdf_payment_account", "quotations");
+                });
+
             modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.PdfSectionRow", b =>
                 {
                     b.Property<Guid>("TenantId")

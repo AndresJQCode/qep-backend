@@ -17,6 +17,11 @@ public interface IPdfContentStore
     /// <summary>Upsert de las tres filas, dentro de la transacción del handler (<c>IQuotationsUnitOfWork.BeginTransactionAsync</c>):
     /// así el contenido y la auditoría del outbox confirman juntos.</summary>
     Task SaveAsync(Guid tenantId, PdfContent content, CancellationToken cancellationToken);
+
+    /// <summary>Vence los PDF de cotización guardados del tenant (huella en null), dentro de la misma transacción del handler. La
+    /// huella no incluye la cuenta para el pago (spec 2026-11-16 pdf-payment-account, decisión 5), así que sin esto un PDF cacheado
+    /// seguiría mostrándola, o no, después de cambiarla.</summary>
+    Task InvalidateQuotationPdfsAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 public sealed record PdfSectionDto(bool Enabled, bool InQuotation, bool InOrder, string Title, string ContentHtml);
@@ -128,6 +133,11 @@ public sealed class UpdatePdfContentHandler(
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         var previous = await store.GetAsync(command.TenantId, cancellationToken);
         await store.SaveAsync(command.TenantId, content, cancellationToken);
+        // Sólo la cotización tiene PDF cacheado: un cambio que sólo toca el pedido, o que no cambia nada, no vence ninguno.
+        if (previous.PaymentAccount.PrintsOn(isOrder: false) != content.PaymentAccount.PrintsOn(isOrder: false))
+        {
+            await store.InvalidateQuotationPdfsAsync(command.TenantId, cancellationToken);
+        }
 
         // Sólo los nombres de los campos que cambiaron, nunca el texto (spec §4.2): el contenido lo escribe el tenant y puede traer
         // cualquier cosa. Un PUT que no cambia nada se guarda y responde igual, pero no deja una entrada de auditoría vacía.
