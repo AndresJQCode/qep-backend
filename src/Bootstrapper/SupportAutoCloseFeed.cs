@@ -9,9 +9,10 @@ namespace Bootstrapper;
 /// Fase 4b, Tarea 14 (H22, owner 2026-11-16, Q-4): lo que el cierre automático lee, de todos los tenants, por SQL crudo sobre la conexión
 /// de <see cref="SupportDbContext"/>. La última respuesta del cliente es el <c>occurred_at</c> más reciente, posterior a la resolución, de
 /// un vínculo del ticket que está **ahora** <c>Linked</c> o <c>Pinned</c> (soltarlo lo saca, y la fecha vuelve) sobre un entrante en vivo
-/// (<c>direction</c> entrante, no <c>imported</c>) que no es una respuesta de la encuesta del ticket: ni el toque que cita una encuesta
-/// (<c>kind</c> <c>Interactive</c> con <c>reply_to_message_id</c> = su <c>message_id</c>) ni el que quedó como su calificación o su
-/// comentario. Recorre los vínculos del ticket por <c>IX_ticket_messages_ticket_visible</c> (<c>ticket_id, occurred_at</c>, sin los
+/// (<c>direction</c> entrante, no <c>imported</c>) que no es una respuesta de **ninguna** encuesta del tenant: ni el toque que cita una
+/// encuesta (<c>kind</c> <c>Interactive</c> con <c>reply_to_message_id</c> = su <c>message_id</c>) ni el que quedó como su calificación o
+/// su comentario. De ninguna y no sólo de las del ticket (revisión del bloque D): el seguimiento del hilo vincula cada entrante a todos los
+/// tickets abiertos de la conversación, así que el toque de la encuesta del ticket A también queda vinculado al ticket B. Recorre los vínculos del ticket por <c>IX_ticket_messages_ticket_visible</c> (<c>ticket_id, occurred_at</c>, sin los
 /// soltados).
 ///
 /// **Lo que lee por nombre.** <c>support.tickets</c> (<c>id</c>, <c>tenant_id</c>, <c>status</c>, <c>resolved_at</c>),
@@ -46,7 +47,7 @@ internal sealed class SupportAutoCloseFeed(SupportDbContext support) : ISupportA
                           AND NOT m.imported
                           AND NOT EXISTS (
                               SELECT 1 FROM support.ticket_surveys s
-                              WHERE s.tenant_id = t.tenant_id AND s.ticket_id = t.id
+                              WHERE s.tenant_id = t.tenant_id
                                 AND (s.rating_message_id = m.id
                                      OR s.comment_message_id = m.id
                                      OR (m.kind = {InteractiveKind} AND m.reply_to_message_id = s.message_id)))) AS "LastCustomerReplyAt"
@@ -70,7 +71,7 @@ internal sealed class SupportAutoCloseFeed(SupportDbContext support) : ISupportA
                           AND NOT m.imported
                           AND NOT EXISTS (
                               SELECT 1 FROM support.ticket_surveys s
-                              WHERE s.tenant_id = t.tenant_id AND s.ticket_id = t.id
+                              WHERE s.tenant_id = t.tenant_id
                                 AND (s.rating_message_id = m.id
                                      OR s.comment_message_id = m.id
                                      OR (m.kind = {InteractiveKind} AND m.reply_to_message_id = s.message_id)))) AS "LastCustomerReplyAt"
@@ -103,7 +104,7 @@ internal sealed class SupportAutoCloseFeed(SupportDbContext support) : ISupportA
               AND NOT m.imported
               AND NOT EXISTS (
                   SELECT 1 FROM support.ticket_surveys s
-                  WHERE s.tenant_id = {tenantId} AND s.ticket_id = {ticketId}
+                  WHERE s.tenant_id = {tenantId}
                     AND (s.rating_message_id = m.id
                          OR s.comment_message_id = m.id
                          OR (m.kind = {InteractiveKind} AND m.reply_to_message_id = s.message_id)))

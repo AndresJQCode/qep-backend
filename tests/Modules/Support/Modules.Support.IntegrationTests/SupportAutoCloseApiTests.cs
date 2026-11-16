@@ -165,6 +165,37 @@ public sealed class SupportAutoCloseApiTests : IAsyncLifetime
         Assert.Equal(closeOn, await AutoCloseOnAsync(rig));
     }
 
+    // Revisión del bloque D: el seguimiento del hilo vincula cada entrante a todos los tickets abiertos de la conversación, así que el
+    // toque y el comentario de la encuesta del ticket A quedan vinculados también al ticket B. Tampoco cuentan para B.
+    [Fact]
+    public async Task ASiblingTicketsSurveyAnswerDoesNotHoldTheClose()
+    {
+        var sibling = await ResolvedTicketAsync();
+        var other = await SupportTicketSeed.SaveConversationTicketAsync(
+            Factory, sibling.TenantId, sibling.Conversation, ClockedSupportHost.Reception);
+        await sibling.Scenario.MoveAsync(await sibling.Scenario.DetailAsync(other.Id.Value), "Resolved");
+        var rig = sibling with { TicketId = other.Id.Value };
+        var closeOn = await AutoCloseOnAsync(rig);
+        var surveyMessage = await SeedMessageAsync(
+            Factory, sibling.TenantId, sibling.Conversation, ClockedSupportHost.Reception.AddHours(1), direction: Outbound, text: "Encuesta");
+        var comment = Guid.CreateVersion7();
+        await ExecuteAsync(
+            Factory,
+            """
+            UPDATE support.ticket_surveys
+            SET status = 'Sent', channel = 'WhatsApp', message_id = @message, sent_at = @at, rating = 'Good', answered_via = 'WhatsApp',
+                answered_at = @at, comment = 'Muy amables.', comment_message_id = @comment
+            WHERE ticket_id = @id
+            """,
+            ("message", surveyMessage), ("at", ClockedSupportHost.Reception.AddHours(1)), ("comment", comment), ("id", sibling.TicketId));
+
+        await LinkInboundAsync(
+            rig, ClockedSupportHost.Reception.AddDays(4), "Linked", text: "Buena", kind: InteractiveKind, replyTo: surveyMessage);
+        await LinkInboundAsync(rig, ClockedSupportHost.Reception.AddDays(4).AddMinutes(1), "Linked", text: "Muy amables.", messageId: comment);
+
+        Assert.Equal(closeOn, await AutoCloseOnAsync(rig));
+    }
+
     // H21 (Q-10): la encuesta se sigue respondiendo después del cierre automático.
     [Fact]
     public async Task AClosedTicketCanStillBeRated()
