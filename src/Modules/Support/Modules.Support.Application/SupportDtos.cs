@@ -72,12 +72,14 @@ public sealed record SupportStatusCountDto(string Status, int Count);
 
 /// <summary>Una fila de la bandeja. <c>RequesterDisplayName</c> lo resuelve el backend (cliente vinculado; si no, nombres y
 /// apellidos; si no, razón social; si no, «NIT número») para que la fila no repita la regla. <c>DueState</c> y
-/// <c>BusinessDaysLeft</c> ya vienen evaluados con el calendario y el umbral del tenant.</summary>
+/// <c>BusinessDaysLeft</c> ya vienen evaluados con el calendario y el umbral del tenant. <c>Priority</c> ∈ <c>Low</c>, <c>Medium</c>,
+/// <c>High</c>, <c>Urgent</c>.</summary>
 public sealed record SupportTicketListItemDto(
     Guid Id,
     string Number,
     string Subject,
     string Status,
+    string Priority,
     string TypeName,
     string RequesterDisplayName,
     SupportMemberDto? Assignee,
@@ -96,6 +98,7 @@ public sealed record SupportTicketDetailDto(
     string Subject,
     string Description,
     string Status,
+    string Priority,
     IReadOnlyList<string> AllowedTransitions,
     SupportTicketTypeSnapshotDto Type,
     SupportClockDto Clock,
@@ -217,11 +220,14 @@ public sealed record SupportTicketEventDto(
     int? ExtensionBusinessDays,
     DateOnly? FromDueOn,
     DateOnly? ToDueOn,
-    string? Reason);
+    string? Reason,
+    string? FromPriority,
+    string? ToPriority);
 
 // Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
 // valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
 // Fase 4a (plan G11): ExtensionBusinessDays, FromDueOn, ToDueOn y Reason sólo vienen llenos en Extended.
+// Prioridad (spec 2026-11-15 §5.2): FromPriority y ToPriority son los nombres de PriorityChanged, nulos en los demás.
 
 /// <summary><c>IsMe</c> (fase 4a, plan G8): si el miembro es quien hace la petición. El SPA no conoce su <c>memberId</c>, y sin este
 /// campo no puede decir «tú» ni ocultar «Asignármelo» en un ticket que ya es suyo. Fuera de una sesión siempre es falso.</summary>

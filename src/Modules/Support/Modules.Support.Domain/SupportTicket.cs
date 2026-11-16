@@ -55,6 +55,10 @@ public sealed class SupportTicket
 
     public ManualIntakeMedium? ManualMedium { get; private set; }
 
+    /// <summary>La elige quien radica a mano o desde una conversación; el formulario público entra siempre en
+    /// <see cref="SupportTicketPriority.Medium"/>. No toca el reloj.</summary>
+    public SupportTicketPriority Priority { get; private set; }
+
     public SupportReplyChannel ReplyChannel { get; private set; }
 
     public SupportTicketStatus Status { get; private set; }
@@ -140,6 +144,7 @@ public sealed class SupportTicket
         SupportTicketType type,
         string subject,
         string description,
+        SupportTicketPriority priority,
         ManualIntakeMedium medium,
         SupportReplyChannel replyChannel,
         Guid? customerId,
@@ -153,8 +158,8 @@ public sealed class SupportTicket
         if (!anonymous)
         {
             return Start(
-                id, tenantId, number, type, subject, description, SupportTicketIntake.Manual, medium, replyChannel, conversation: null,
-                customerId, requester, assigneeMemberId, actorMemberId, now, clock);
+                id, tenantId, number, type, subject, description, priority, SupportTicketIntake.Manual, medium, replyChannel,
+                conversation: null, customerId, requester, assigneeMemberId, actorMemberId, now, clock);
         }
 
         if (customerId is not null)
@@ -169,7 +174,7 @@ public sealed class SupportTicket
 
         // El canal se fija: un anónimo no tiene otro (spec §9.4).
         var ticket = Start(
-            id, tenantId, number, type, subject, description, SupportTicketIntake.Manual, medium, SupportReplyChannel.Portal,
+            id, tenantId, number, type, subject, description, priority, SupportTicketIntake.Manual, medium, SupportReplyChannel.Portal,
             conversation: null, customerId: null, requester: null, assigneeMemberId, actorMemberId, now, clock, anonymous: true);
         ticket.IsAnonymous = true;
         return ticket;
@@ -185,6 +190,7 @@ public sealed class SupportTicket
         SupportTicketType type,
         string subject,
         string description,
+        SupportTicketPriority priority,
         SupportConversationRef conversation,
         Guid? customerId,
         TicketRequester? requester,
@@ -195,7 +201,7 @@ public sealed class SupportTicket
     {
         ArgumentNullException.ThrowIfNull(conversation);
         return Start(
-            id, tenantId, number, type, subject, description, SupportTicketIntake.Conversation, medium: null,
+            id, tenantId, number, type, subject, description, priority, SupportTicketIntake.Conversation, medium: null,
             SupportReplyChannel.Thread, conversation, customerId, requester, assigneeMemberId, actorMemberId, now, clock);
     }
 
@@ -236,8 +242,8 @@ public sealed class SupportTicket
         }
 
         var ticket = Start(
-            id, tenantId, number, type, subject, description, SupportTicketIntake.PublicForm, medium: null,
-            anonymous ? SupportReplyChannel.Portal : SupportReplyChannel.Email, conversation: null, customerId, requester,
+            id, tenantId, number, type, subject, description, SupportTicketPriority.Medium, SupportTicketIntake.PublicForm,
+            medium: null, anonymous ? SupportReplyChannel.Portal : SupportReplyChannel.Email, conversation: null, customerId, requester,
             assigneeMemberId: null, actorMemberId: null, now, clock);
         ticket.IsAnonymous = anonymous;
         ticket.FormVersionId = formVersionId;
@@ -253,6 +259,7 @@ public sealed class SupportTicket
         SupportTicketType type,
         string subject,
         string description,
+        SupportTicketPriority priority,
         SupportTicketIntake intake,
         ManualIntakeMedium? medium,
         SupportReplyChannel replyChannel,
@@ -285,6 +292,7 @@ public sealed class SupportTicket
             Description = Text(description, DescriptionMaxLength, nameof(description)),
             Intake = intake,
             ManualMedium = medium,
+            Priority = priority,
             ReplyChannel = replyChannel,
             Status = SupportTicketStatus.New,
             AssigneeMemberId = assigneeMemberId,
@@ -382,6 +390,21 @@ public sealed class SupportTicket
         var from = new { id = TypeId.Value, name = TypeName };
         CopyType(type, clock);
         AddEvent(SupportTicketEventKind.TypeChanged, actorMemberId, now, new { from, to = new { id = TypeId.Value, name = TypeName } });
+    }
+
+    /// <summary>Spec 2026-11-15 §5.1: no toca el vencimiento, el término, las pausas ni el reloj. La misma prioridad no hace nada.
+    /// Resuelto o cerrado se rechaza (R9), aunque el valor sea el mismo.</summary>
+    public void ChangePriority(SupportTicketPriority priority, Guid actorMemberId, DateTimeOffset now)
+    {
+        EnsureEditable();
+        if (priority == Priority)
+        {
+            return;
+        }
+
+        var from = Priority;
+        Priority = priority;
+        AddEvent(SupportTicketEventKind.PriorityChanged, actorMemberId, now, new { from = from.ToString(), to = priority.ToString() });
     }
 
     /// <summary>Desvincular deja la foto del solicitante; si no hay foto con nombre, el ticket quedaría sin nadie y se rechaza

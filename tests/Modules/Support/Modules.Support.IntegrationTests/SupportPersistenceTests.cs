@@ -126,8 +126,9 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         var actor = Guid.CreateVersion7();
         var assignee = Guid.CreateVersion7();
         var ticket = SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, 41, type, "No me llegó la factura", "Pedí la factura y no llegó.", ManualIntakeMedium.Letter,
-            SupportReplyChannel.WhatsAppTemplate, null, requester, assignee, actor, Now, Clock);
+            SupportTicketId.New(), tenant, 41, type, "No me llegó la factura", "Pedí la factura y no llegó.",
+            SupportTicketPriority.Medium, ManualIntakeMedium.Letter, SupportReplyChannel.WhatsAppTemplate, null, requester, assignee,
+            actor, Now, Clock);
         ticket.ChangeStatus(SupportTicketStatus.WaitingOnCustomer, actor, Now.AddDays(1), Clock);
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -198,6 +199,39 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal([1, 2], (await tickets.ListEventsAsync(tenant, ticket.Id, Ct)).Select(item => item.Ordinal));
     }
 
+    // Spec 2026-11-15 §5.4: la prioridad va por nombre y el CHECK de la traza admite PriorityChanged.
+    [Fact]
+    public async Task ATicketPriorityAndItsChangeEventRoundTrip()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var type = (await TypesAsync(factory, tenant))[0];
+        var actor = Guid.CreateVersion7();
+        var ticket = NewTicket(tenant, type, 1, Now, actor, SupportTicketPriority.High);
+        await SaveAsync(factory, ticket);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var loaded = await scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().FindAsync(tenant, ticket.Id, Ct);
+            Assert.Equal(SupportTicketPriority.High, loaded!.Priority);
+            loaded.ChangePriority(SupportTicketPriority.Urgent, actor, Now.AddHours(1));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
+        var found = await tickets.FindAsync(tenant, ticket.Id, Ct);
+        var events = await tickets.ListEventsAsync(tenant, ticket.Id, Ct);
+
+        Assert.Equal(SupportTicketPriority.Urgent, found!.Priority);
+        Assert.Equal(2L, found.Version);
+        Assert.Equal([SupportTicketEventKind.Created, SupportTicketEventKind.PriorityChanged], events.Select(item => item.Kind));
+        Assert.Equal(actor, events[1].ActorMemberId);
+        using var details = JsonDocument.Parse(events[1].Details);
+        Assert.Equal("High", details.RootElement.GetProperty("from").GetString());
+        Assert.Equal("Urgent", details.RootElement.GetProperty("to").GetString());
+    }
+
     // Fase 4a (plan G9): las tres columnas de la prórroga y el evento Extended, que el CHECK de kind tiene que aceptar.
     [Fact]
     public async Task AnExtendedTicketRoundTrips()
@@ -266,7 +300,8 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         await EnsureAsync(factory, tenant);
         var type = (await TypesAsync(factory, tenant))[0];
         var ticket = SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, 1, type, "Asunto", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email,
+            SupportTicketId.New(), tenant, 1, type, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email,
             Guid.CreateVersion7(), null, null, Guid.CreateVersion7(), Now, Clock);
 
         var exception = await Assert.ThrowsAsync<SupportDomainException>(() => SaveAsync(factory, ticket));
@@ -284,7 +319,8 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         var customer = await SeedCustomerAsync(factory, tenant, "Novasteel SAS");
         var type = (await TypesAsync(factory, tenant))[0];
         var ticket = SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, 1, type, "Asunto", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email,
+            SupportTicketId.New(), tenant, 1, type, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email,
             customer, null, null, Guid.CreateVersion7(), Now, Clock);
 
         await SaveAsync(factory, ticket);
@@ -532,17 +568,18 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         var type = (await TypesAsync(factory, tenant))[0];
         var customer = await SeedCustomerAsync(factory, tenant, "Novasteel SAS");
         var bySubject = SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, 1, type, "Factura de octubre", "Descripción", ManualIntakeMedium.Phone,
-            SupportReplyChannel.Email, null,
+            SupportTicketId.New(), tenant, 1, type, "Factura de octubre", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email, null,
             new TicketRequester("Ana", "Gómez", null, "CC", "1020304050", "ana@example.com", null, null, "CO", null),
             null, actor, At(11, 2), Clock);
         var byRequester = SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, 2, type, "Garantía", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email,
+            SupportTicketId.New(), tenant, 2, type, "Garantía", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email,
             null, new TicketRequester("Bruno", "Díaz", "Aceros 50% SAS", null, null, "bruno@example.com", null, null, "CO", null),
             null, actor, At(11, 3), Clock);
         var byCustomer = SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, 3, type, "Pedido incompleto", "Descripción", ManualIntakeMedium.Phone,
-            SupportReplyChannel.Email, customer, null, null, actor, At(11, 4), Clock);
+            SupportTicketId.New(), tenant, 3, type, "Pedido incompleto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email, customer, null, null, actor, At(11, 4), Clock);
         foreach (var ticket in new[] { bySubject, byRequester, byCustomer })
         {
             await SaveAsync(factory, ticket);
@@ -685,10 +722,16 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
 
     private static DateTimeOffset At(int month, int day) => new(2026, month, day, 15, 0, 0, TimeSpan.Zero);
 
-    private static SupportTicket NewTicket(Guid tenant, SupportTicketType type, long number, DateTimeOffset receivedAt, Guid actor) =>
+    private static SupportTicket NewTicket(
+        Guid tenant,
+        SupportTicketType type,
+        long number,
+        DateTimeOffset receivedAt,
+        Guid actor,
+        SupportTicketPriority priority = SupportTicketPriority.Medium) =>
         SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, number, type, $"Asunto {number}", "Descripción", ManualIntakeMedium.Phone,
-            SupportReplyChannel.Email, null,
+            SupportTicketId.New(), tenant, number, type, $"Asunto {number}", "Descripción", priority,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email, null,
             new TicketRequester("Ana", "Gómez", null, null, null, "ana@example.com", null, null, "CO", null),
             null, actor, receivedAt, Clock);
 

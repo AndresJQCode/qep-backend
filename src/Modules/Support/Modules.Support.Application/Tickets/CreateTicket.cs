@@ -23,7 +23,8 @@ public sealed record TicketRequesterRequest(
 
 /// <summary>El cuerpo de <c>POST /tickets</c>, todo anulable para que su ausencia sea un <c>validation.failed</c> con el campo.
 /// Fase 4a (plan G1): <c>Anonymous</c> en <c>true</c> radica un anónimo, sin cliente ni solicitante y con <c>ReplyChannel</c>
-/// <c>Portal</c>; <c>null</c> es <c>false</c>.</summary>
+/// <c>Portal</c>; <c>null</c> es <c>false</c>. <c>Priority</c> es la excepción a «todo ausente es un error»: sin ella el ticket nace
+/// en <c>Medium</c> (spec 2026-11-15 §5.3).</summary>
 public sealed record CreateTicketRequest(
     Guid? TicketTypeId,
     string? Subject,
@@ -33,8 +34,10 @@ public sealed record CreateTicketRequest(
     Guid? CustomerId,
     TicketRequesterRequest? Requester,
     Guid? AssigneeMemberId,
-    bool? Anonymous = null);
+    bool? Anonymous = null,
+    string? Priority = null);
 
+/// <param name="Priority">El nombre exacto del cuerpo; <c>null</c> es <c>Medium</c>.</param>
 public sealed record CreateTicketCommand(
     Guid TenantId,
     Guid TicketTypeId,
@@ -45,7 +48,8 @@ public sealed record CreateTicketCommand(
     Guid? CustomerId,
     TicketRequesterRequest? Requester,
     Guid? AssigneeMemberId,
-    bool Anonymous = false)
+    bool Anonymous = false,
+    string? Priority = null)
     : ICommand<SupportTicketDetailDto>
 {
     /// <summary>El país del tenant, con que se juzga el tipo de documento si el solicitante no trae el suyo. No viaja por el cable:
@@ -62,7 +66,8 @@ public sealed record CreateTicketCommand(
         request.CustomerId,
         request.Requester,
         request.AssigneeMemberId,
-        request.Anonymous ?? false);
+        request.Anonymous ?? false,
+        request.Priority);
 }
 
 /// <summary>
@@ -83,6 +88,7 @@ public sealed class CreateTicketValidator : AbstractValidator<CreateTicketComman
         RuleFor(command => command.ReplyChannel)
             .Must(text => SupportTicketRules.TryParseExact<SupportReplyChannel>(text, out _))
             .WithMessage("ReplyChannel must be Thread, WhatsAppTemplate, Email or Portal.");
+        RuleFor(command => command.Priority).MustBeAPriority();
         // Fase 4a (plan G1): el anónimo se responde sólo por la página de consulta y no lleva cliente ni solicitante; sin anónimo,
         // Portal no es un canal (no habría PIN que dictar).
         When(command => command.Anonymous, () =>
@@ -246,6 +252,24 @@ internal static class SupportTextRules
                 : $"The text cannot exceed {max} characters.");
 }
 
+/// <summary>La prioridad que elige el asesor al crear (spec 2026-11-15 §5.3): opcional, y si viene, uno de los cuatro nombres exactos.
+/// Las fábricas del dominio no acotan el enum, así que nada fuera de esos nombres pasa de acá.</summary>
+internal static class SupportPriorityRules
+{
+    public const string Message = "Priority must be Low, Medium, High or Urgent.";
+
+    public static IRuleBuilderOptions<T, string?> MustBeAPriority<T>(this IRuleBuilder<T, string?> rule) =>
+        rule.Must(text => text is null || SupportTicketRules.TryParseExact<SupportTicketPriority>(text, out _)).WithMessage(Message);
+
+    /// <summary>Sin prioridad, <c>Medium</c>. Se llama después de validar.</summary>
+    public static SupportTicketPriority Parse(string? text) =>
+        text is null
+            ? SupportTicketPriority.Medium
+            : SupportTicketRules.TryParseExact<SupportTicketPriority>(text, out var priority)
+                ? priority
+                : throw new InvalidOperationException($"Priority '{text}' passed validation but is not a ticket priority.");
+}
+
 /// <summary>
 /// El alta manual (spec §8.3, plan D6–D8 y D14). Orden: autorización → membresía de quien actúa → validador → solicitante →
 /// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → transacción → candado del
@@ -283,7 +307,7 @@ public sealed class CreateTicketHandler(
 {
     private static readonly string[] CreatedFields =
         ["ticketTypeId", "subject", "description", "manualMedium", "replyChannel", "customerId", "requester", "assigneeMemberId",
-         "isAnonymous"];
+         "isAnonymous", "priority"];
 
     public async Task<SupportTicketDetailDto> HandleAsync(CreateTicketCommand command, CancellationToken cancellationToken)
     {
@@ -352,6 +376,7 @@ public sealed class CreateTicketHandler(
                 type,
                 validated.Subject,
                 validated.Description,
+                SupportPriorityRules.Parse(validated.Priority),
                 medium,
                 channel,
                 validated.CustomerId,

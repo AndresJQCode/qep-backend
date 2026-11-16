@@ -28,7 +28,7 @@ public sealed class SupportTicketExtensionTests
     private static SupportTicket NewTicket(SupportTicketType? type = null) =>
         SupportTicket.CreateManual(
             SupportTicketId.New(), TenantId, 1, type ?? Petition, "No me llegó la factura", "Pedí la factura del pedido 45 y no llegó.",
-            ManualIntakeMedium.Phone, SupportReplyChannel.Email, null, Person, assigneeMemberId: null, Actor, Received, Clock);
+            SupportTicketPriority.Medium, ManualIntakeMedium.Phone, SupportReplyChannel.Email, null, Person, assigneeMemberId: null, Actor, Received, Clock);
 
     private static DateTimeOffset At(int month, int day, int hourUtc = 15) => new(2026, month, day, hourUtc, 0, 0, TimeSpan.Zero);
 

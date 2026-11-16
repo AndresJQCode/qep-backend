@@ -7,7 +7,7 @@ using static Modules.Support.IntegrationTests.SupportTicketScenario;
 namespace Modules.Support.IntegrationTests;
 
 /// <summary>
-/// Las acciones del ticket: estado (con la máquina, la pausa y los ciclos de resolución), responsable, tipo y cliente, cada una con
+/// Las acciones del ticket: estado (con la máquina, la pausa y los ciclos de resolución), responsable, tipo, cliente y prioridad, cada una con
 /// <c>If-Match</c>, un evento y una entrada de auditoría. Host propio de la clase con el reloj movible
 /// (<see cref="ClockedSupportHost"/>); el alta es el viernes 2026-11-13 a las 10:00 de Bogotá con «Petición general» (vence el
 /// 2026-12-07).
@@ -353,6 +353,144 @@ public sealed class SupportTicketActionsApiTests(ClockedSupportHost host) : ICla
         {
             Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, action, id.ToString()));
         }
+    }
+
+    [Fact]
+    public async Task ChangingThePriorityAnswersTheDetailAndAddsTheEvent()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        var before = host.Publisher.Of(scenario.TenantId).Count;
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("High"), version: 1);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var body = await JsonAsync(response);
+        Assert.Equal("High", body.GetProperty("priority").GetString());
+        Assert.Equal(2L, body.GetProperty("version").GetInt64());
+        var last = body.GetProperty("events").EnumerateArray().Last();
+        Assert.Equal("PriorityChanged", last.GetProperty("kind").GetString());
+        Assert.Equal("Medium", last.GetProperty("fromPriority").GetString());
+        Assert.Equal("High", last.GetProperty("toPriority").GetString());
+        Assert.Equal(scenario.CallerMemberId, last.GetProperty("actor").GetProperty("id").GetGuid());
+        Assert.Equal("High", (await scenario.DetailAsync(Id(ticket))).GetProperty("priority").GetString());
+        Assert.Equal(
+            "[\"priority\"]",
+            await SupportMessagingSeed.TextAsync(
+                scenario.Factory,
+                "SELECT changed_fields::text FROM audit.entries WHERE action = @action AND resource_id = @id",
+                ("action", SupportAuditActions.TicketPriorityChanged),
+                ("id", Id(ticket).ToString())));
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketPriorityChanged, Id(ticket).ToString()));
+        Assert.All(host.Publisher.Of(scenario.TenantId).Skip(before), notice => Assert.Equal(Id(ticket), notice.TicketId));
+        Assert.Equal(2, host.Publisher.Of(scenario.TenantId).Count - before);
+    }
+
+    [Fact]
+    public async Task TheSamePriorityAnswers200WithoutANewVersion()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        var before = host.Publisher.Of(scenario.TenantId).Count;
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("Medium"), version: 1);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var body = await JsonAsync(response);
+        Assert.Equal("Medium", body.GetProperty("priority").GetString());
+        Assert.Equal(1L, body.GetProperty("version").GetInt64());
+        Assert.Single(body.GetProperty("events").EnumerateArray());
+        Assert.Equal(0, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketPriorityChanged, Id(ticket).ToString()));
+        Assert.Equal(before, host.Publisher.Of(scenario.TenantId).Count);
+    }
+
+    [Fact]
+    public async Task AStalePriorityChangeIs412()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        ticket = await scenario.MoveAsync(ticket, "Open");
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("Urgent"), version: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+        Assert.Equal("concurrency.conflict", await CodeOfAsync(response));
+        Assert.Equal("Medium", (await scenario.DetailAsync(Id(ticket))).GetProperty("priority").GetString());
+    }
+
+    [Fact]
+    public async Task APriorityChangeWithoutIfMatchFailsLikeTheTypeChange()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var priority = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("High"), version: null);
+        var type = await scenario.ActAsync(Id(ticket), "type", new ChangeTicketTypeRequest(await scenario.TypeIdAsync("Queja")), version: null);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, type.StatusCode);
+        Assert.Equal(type.StatusCode, priority.StatusCode);
+        Assert.Equal("precondition.if_match_required", await CodeOfAsync(priority));
+        Assert.Equal(1L, (await scenario.DetailAsync(Id(ticket))).GetProperty("version").GetInt64());
+    }
+
+    // Spec §5.1 [owner 2026-11-15]: resuelto o cerrado, la prioridad no cambia.
+    [Theory]
+    [InlineData("Resolved")]
+    [InlineData("Closed")]
+    public async Task AResolvedTicketRejectsThePriorityWith422NotEditable(string finished)
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        ticket = await scenario.MoveAsync(ticket, "Resolved");
+        if (finished == "Closed")
+        {
+            ticket = await scenario.MoveAsync(ticket, "Closed");
+        }
+
+        var version = ticket.GetProperty("version").GetInt64();
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("Urgent"), version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket.not_editable", await CodeOfAsync(response));
+        var reread = await scenario.DetailAsync(Id(ticket));
+        Assert.Equal("Medium", reread.GetProperty("priority").GetString());
+        Assert.Equal(version, reread.GetProperty("version").GetInt64());
+    }
+
+    // Sensible a mayúsculas, como el estado: «urgent» no es «Urgent».
+    [Theory]
+    [InlineData("Foo")]
+    [InlineData("urgent")]
+    [InlineData("2")]
+    [InlineData(null)]
+    public async Task AnUnknownPriorityIs422(string? priority)
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest(priority), version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Equal(["Priority"], await ErrorKeysAsync(response));
+        Assert.Equal(1L, (await scenario.DetailAsync(Id(ticket))).GetProperty("version").GetInt64());
+    }
+
+    [Fact]
+    public async Task ReadingWithoutManageCannotChangeThePriority()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        using var reader = CreateClient(scenario.Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read);
+        var url = $"{scenario.Url}/tickets/{Id(ticket)}";
+
+        var priority = await PutAsync(reader, $"{url}/priority", new ChangeTicketPriorityRequest("High"), version: 1);
+        var type = await PutAsync(reader, $"{url}/type", new ChangeTicketTypeRequest(await scenario.TypeIdAsync("Queja")), version: 1);
+
+        Assert.Equal(HttpStatusCode.Forbidden, type.StatusCode);
+        Assert.Equal(type.StatusCode, priority.StatusCode);
+        Assert.Equal("Medium", (await scenario.DetailAsync(Id(ticket))).GetProperty("priority").GetString());
     }
 
     private static DateTimeOffset At(int month, int day) => new(2026, month, day, 15, 0, 0, TimeSpan.Zero);

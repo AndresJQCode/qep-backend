@@ -542,6 +542,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.LinkTicketCustomerCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.LinkTicketCustomerHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketPriorityCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketPriorityHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
             Modules.Support.Application.ListTicketsHandler>();
         // Fase 2 (Mensajería).

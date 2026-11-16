@@ -146,6 +146,51 @@ public sealed class SupportTicketsApiTests(ClockedSupportHost host) : IClassFixt
     }
 
     [Fact]
+    public async Task CreatingWithAPriorityKeepsIt()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var body = Body(await scenario.TypeIdAsync("Queja"));
+        body["priority"] = "Urgent";
+
+        var ticket = await scenario.CreateAsync(body);
+
+        Assert.Equal("Urgent", ticket.GetProperty("priority").GetString());
+        Assert.Equal("Urgent", (await scenario.DetailAsync(Id(ticket))).GetProperty("priority").GetString());
+    }
+
+    // Spec §5.3: ausente o null es Media, como lo manda un frontend que todavía no conoce el campo.
+    [Fact]
+    public async Task CreatingWithoutAPriorityIsMedium()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var withNull = Body(await scenario.TypeIdAsync("Queja"));
+        withNull["priority"] = null;
+
+        var absent = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Queja")));
+        var nulled = await scenario.CreateAsync(withNull);
+
+        Assert.Equal("Medium", absent.GetProperty("priority").GetString());
+        Assert.Equal("Medium", nulled.GetProperty("priority").GetString());
+    }
+
+    [Theory]
+    [InlineData("urgent")]
+    [InlineData("Foo")]
+    [InlineData("")]
+    public async Task CreatingWithALowercasePriorityIs422(string priority)
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var body = Body(await scenario.TypeIdAsync("Queja"));
+        body["priority"] = priority;
+
+        var response = await scenario.PostAsync(body);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Equal(["Priority"], await ErrorKeysAsync(response));
+    }
+
+    [Fact]
     public async Task WithoutCustomerOrRequesterNameIs422()
     {
         var scenario = await StartAsync(await host.StartTestAsync());

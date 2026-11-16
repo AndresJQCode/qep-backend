@@ -439,6 +439,12 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paused_since");
 
+                    b.Property<string>("Priority")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("priority");
+
                     b.Property<DateTimeOffset>("ReceivedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("received_at");
@@ -548,6 +554,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_tickets_intake", "intake IN ('Manual','Conversation','PublicForm')");
 
                             t.HasCheckConstraint("CK_tickets_manual_medium", "manual_medium IN ('Phone','InPerson','Email','Letter','Other')");
+
+                            t.HasCheckConstraint("CK_tickets_priority", "priority IN ('Low','Medium','High','Urgent')");
 
                             t.HasCheckConstraint("CK_tickets_reply_channel", "reply_channel IN ('Thread','WhatsAppTemplate','Email','Portal')");
 
@@ -708,7 +716,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("ticket_events", "support", t =>
                         {
-                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked','Extended')");
+                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked','Extended','PriorityChanged')");
                         });
                 });
 

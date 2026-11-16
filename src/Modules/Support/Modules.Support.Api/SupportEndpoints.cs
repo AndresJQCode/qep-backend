@@ -320,6 +320,7 @@ public static class SupportEndpoints
         MapTicketPost(group, "extension", ExtendAsync).Accepts<ExtendTicketRequest>("application/json");
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
         MapTicketAction<LinkTicketCustomerRequest>(group, "customer", LinkCustomerAsync);
+        MapTicketAction<ChangeTicketPriorityRequest>(group, "priority", ChangePriorityAsync);
 
         group.MapGet("/assignees", ListAssigneesAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -490,12 +491,14 @@ public static class SupportEndpoints
         string? assignee,
         string? due,
         string? search,
+        string? priority,
+        string? sort,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
         int page = 1,
         int pageSize = ListTicketsQuery.DefaultPageSize) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, page, pageSize), cancellationToken));
+            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, priority, sort, page, pageSize), cancellationToken));
 
     private static async Task<IResult> CreateTicketAsync(
         Guid tenantId, CreateTicketRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -567,6 +570,16 @@ public static class SupportEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             LinkTicketCustomerCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ChangePriorityAsync(
+        Guid tenantId,
+        Guid ticketId,
+        ChangeTicketPriorityRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            ChangeTicketPriorityCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
 
     private static async Task<IResult> ListAssigneesAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

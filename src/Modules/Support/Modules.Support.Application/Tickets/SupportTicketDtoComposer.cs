@@ -98,6 +98,7 @@ public sealed class SupportTicketDtoComposer(
             ticket.Subject,
             ticket.Description,
             ticket.Status.ToString(),
+            ticket.Priority.ToString(),
             SupportTicketStatuses.AllowedFrom(ticket.Status).Select(status => status.ToString()).ToList(),
             new SupportTicketTypeSnapshotDto(
                 ticket.TypeId.Value, ticket.TypeName, ticket.TermBusinessDays, ticket.TermIsLegal, ticket.RequiresFormalResponse),
@@ -197,6 +198,7 @@ public sealed class SupportTicketDtoComposer(
                     ticket.DisplayNumber,
                     ticket.Subject,
                     ticket.Status.ToString(),
+                    ticket.Priority.ToString(),
                     ticket.TypeName,
                     RequesterDisplayName(ticket, customersById),
                     ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById, context.ViewerMemberId) : null,
@@ -288,7 +290,9 @@ public sealed class SupportTicketDtoComposer(
             details.ExtensionBusinessDays,
             details.FromDueOn,
             details.ToDueOn,
-            details.Reason);
+            details.Reason,
+            details.FromPriority,
+            details.ToPriority);
 
     /// <summary>
     /// Los campos de <see cref="SupportTicketEvent.Details"/> según su <see cref="SupportTicketEvent.Kind"/>, con la forma que escribe
@@ -297,7 +301,8 @@ public sealed class SupportTicketDtoComposer(
     /// <c>{"from":{"id","name"},"to":{"id","name"}}</c>. Fase 2: los cuatro de mensajes <c>{"messageId"}</c>;
     /// <c>FollowThreadChanged</c> <c>{"follow","at"}</c>; <c>ReplySent</c> <c>{"replyId","channel","delivery","messageId"}</c>;
     /// <c>ConversationLinked</c> <c>{"conversationId","channel"}</c>, que el detalle ya trae arriba. Fase 4a: <c>Extended</c>
-    /// <c>{"businessDays","reason","fromDueOn","toDueOn"}</c>, con las fechas en <c>yyyy-MM-dd</c>.
+    /// <c>{"businessDays","reason","fromDueOn","toDueOn"}</c>, con las fechas en <c>yyyy-MM-dd</c>. <c>PriorityChanged</c>
+    /// <c>{"from","to"}</c> prioridades por nombre.
     /// </summary>
     private sealed record EventDetails(
         string? FromStatus,
@@ -312,7 +317,9 @@ public sealed class SupportTicketDtoComposer(
         int? ExtensionBusinessDays = null,
         DateOnly? FromDueOn = null,
         DateOnly? ToDueOn = null,
-        string? Reason = null)
+        string? Reason = null,
+        string? FromPriority = null,
+        string? ToPriority = null)
     {
         private static readonly EventDetails Empty = new(null, null, null, null, null, null);
 
@@ -353,6 +360,11 @@ public sealed class SupportTicketDtoComposer(
                     FromDueOn = Date(root, "fromDueOn"),
                     ToDueOn = Date(root, "toDueOn"),
                     Reason = Text(root, "reason"),
+                },
+                SupportTicketEventKind.PriorityChanged => Empty with
+                {
+                    FromPriority = Text(root, "from"),
+                    ToPriority = Text(root, "to"),
                 },
                 _ => Empty,
             };
