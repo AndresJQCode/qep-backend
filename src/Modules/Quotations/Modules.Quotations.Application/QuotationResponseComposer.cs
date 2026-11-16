@@ -47,8 +47,9 @@ public sealed class QuotationResponseComposer(
         var advisor = advisors.GetValueOrDefault(quotation.AdvisorId);
 
         // Sólo cuando la cotización eligió cuenta: una consulta más por pantalla, y ninguna en
-        // el caso normal de un borrador recién creado.
-        var company = quotation.BillingAccount is { } billing
+        // el caso normal de un borrador recién creado. A pending account (previews only) is never answered, and the company
+        // feeds nothing else here (the municipal explanation reads the account's own city), so it is not looked up.
+        var company = quotation.BillingAccount is { IsPending: false } billing
             ? await companyLookup.FindAsync(tenantId, billing.CompanyId, cancellationToken)
             : null;
 

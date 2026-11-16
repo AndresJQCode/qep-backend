@@ -47,8 +47,10 @@ public sealed class OrderResponseComposer(
             .ToArray();
         var members = await advisorLookup.FindAsync(tenantId, memberIds, cancellationToken);
         var advisor = members.GetValueOrDefault(order.AdvisorId);
-        // Sin cuenta sólo llega el cálculo previo, que precia antes de que se elija la empresa que factura.
-        var company = order.BillingAccount is { } billing
+        // Sin cuenta sólo llega el cálculo previo, que precia antes de que se elija la empresa que factura. A pending
+        // account (previews only) is never answered, and the company feeds nothing else here (the municipal explanation
+        // reads the account's own city), so it is not looked up.
+        var company = order.BillingAccount is { IsPending: false } billing
             ? await companyLookup.FindAsync(tenantId, billing.CompanyId, cancellationToken)
             : null;
         var products = await productLookup.FindManyAsync(
