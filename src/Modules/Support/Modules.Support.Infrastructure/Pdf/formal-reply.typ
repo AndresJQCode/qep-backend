@@ -7,6 +7,9 @@
 //
 // El orden es el de la spec §8.3: membrete, radicado y fechas, destinatario, asunto, resumen del caso, análisis y decisión, siguiente
 // paso (si hay) y firma con anexos.
+//
+// `data.termIsLegal` llega pero esta plantilla no lo lee a propósito: el owner quitó la línea del «término legal» el 2026-11-16. No la
+// vuelvas a agregar sin revisarlo con el abogado.
 #let data = json(sys.inputs.data)
 
 #let tinta = rgb("#14181F")
