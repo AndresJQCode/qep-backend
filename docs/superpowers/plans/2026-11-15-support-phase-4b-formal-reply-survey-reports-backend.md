@@ -130,7 +130,7 @@ decided by the owner on 2026-11-16 (see «Owner decisions (2026-11-16)»); the t
 | H19 | Rating link: `{Support:PublicForm:BaseUrl}/{slug}/calificar?token={token}`; token = 32 random bytes base64url, only its SHA-256 is stored (`UX_ticket_surveys_token`). The API takes the token in the **body**, never in the path (no token in access logs): `POST /api/v1/public/support/{slug}/surveys/lookup` and `/surveys/answer`, with the `lookup` limiter, no Turnstile. **(owner, 2026-11-16, Q-12)** | Spec §8.4 «correo: enlace a una página pública»; `calificar` is already reserved (`TenantSlugReservations.cs`). |
 | H20 | Consult page: `lookup` returns `survey` (can rate, current rating), and `POST /api/v1/public/support/{slug}/tickets/rating` takes `{ number, pin, turnstileToken, rating, comment }` with **the same verification as `lookup`** (Turnstile, locked row, five failures lock 15 min). Anonymous tickets rate only here. | Spec §8.4: «formulario público… en la página de consulta», «anónimo: sólo por la página de consulta». |
 | H21 | A survey is answerable when it has no rating, its status is not `Pending` and not `Skipped survey_disabled`, the ticket is `Resolved` or `Closed`, and `ticket.ResolutionCount == survey.ResolutionNumber` (reopened = that resolution is no longer judged). First answer wins (`UPDATE … WHERE rating IS NULL`); a second → `422 support.survey.already_answered`; not answerable → `422 support.survey.closed`. **(owner, 2026-11-16, Q-10)** | Spec «una vez por ciclo de resolución». |
-| H22 | Auto-close: a `Resolved` ticket closes when the tenant's local date is **after** `Add(calendar, max(resolvedOn, lastCustomerReplyOn), N)`; `lastCustomerReplyOn` = the last customer inbound (`messaging.messages.direction = 1`, not imported) after `resolved_at` whose link in `support.ticket_messages` is **currently in state `Linked`**: an advisor «Soltar» (`Released`) removes it from the count and the close date falls back to the previous one (or to the resolution). The survey tap and the survey comment never count. N per tenant, 1–30, default 5. Closes as the system (`ChangeStatus(Closed, null, …)`, `PublishSystem`, `TicketClosed` in the thread). Detail shows `clock.autoCloseOn`, recomputed on every read. **(owner, 2026-11-16, Q-4)** | Spec §8.4 «N días hábiles sin respuesta del cliente», and P4 (an inbound does not reopen a `Resolved`): without the restart, a customer who writes «sigue fallando» is closed for good (`Closed` is terminal). |
+| H22 | Auto-close: a `Resolved` ticket closes when the tenant's local date is **after** `Add(calendar, max(resolvedOn, lastCustomerReplyOn), N)`; `lastCustomerReplyOn` = the last customer inbound (`messaging.messages.direction = 1`, not imported) after `resolved_at` whose link in `support.ticket_messages` is **currently in state `Linked` or `Pinned`** (still in the ticket's record): an advisor «Soltar» (`Released`) removes it from the count and the close date falls back to the previous one (or to the resolution). The survey tap and the survey comment never count. N per tenant, 1–30, default 5. Closes as the system (`ChangeStatus(Closed, null, …)`, `PublishSystem`, `TicketClosed` in the thread). Detail shows `clock.autoCloseOn`, recomputed on every read. **(owner, 2026-11-16, Q-4)** | Spec §8.4 «N días hábiles sin respuesta del cliente», and P4 (an inbound does not reopen a `Resolved`): without the restart, a customer who writes «sigue fallando» is closed for good (`Closed` is terminal). |
 | H23 | Old pods during the rollout run the old `ChangeStatus`: a resolution they make gets no survey row. Accepted; the README says it. | No startup backfill (startup-lock rule) for a non-legal feature. |
 
 ### Reports
@@ -161,7 +161,7 @@ decided by the owner on 2026-11-16 (see «Owner decisions (2026-11-16)»); the t
    `EveryResolutionRequestsOneSurvey`, `ReopeningAndResolvingAgainRequestsASecondSurvey`.
 3. **A WhatsApp tap counts only for the survey it quotes:** a tap on survey 1 after survey 2 was sent rates nothing (survey 1 is no
    longer answerable). Task 12: `ATapOnAnOldSurveyRatesNothing`.
-4. **Auto-close respects the customer, and only while the advisor keeps the message:** a customer reply in state `Linked` after the
+4. **Auto-close respects the customer, and only while the advisor keeps the message:** a customer reply in state `Linked` or `Pinned` after the
    resolution moves `autoCloseOn`; releasing it moves the date back; the survey tap and comment never count. Task 14:
    `ACustomerReplyAfterResolvingRestartsTheCount`, `ReleasingTheReplyMovesTheCloseDateBack`, `ASurveyAnswerDoesNotHoldTheClose`.
 5. **No secret leaks:** the rating token never appears in a route, a log, the audit or an event; the PIN of `tickets/rating` neither.
@@ -818,10 +818,11 @@ public interface ISupportAutoCloseFeed
 public static DateOnly AutoCloseOn(ISupportBusinessCalendar calendar, DateOnly resolvedOn, DateOnly? lastReplyOn, int businessDays);
 ```
 The last customer reply (H22, owner 2026-11-16, Q-4): max `ticket_messages.occurred_at` of the ticket after `resolved_at` whose link
-`state = 'Linked'` **now** (a `Released` link does not count; the date is recomputed every tick and every detail read, so releasing moves
+`state IN ('Linked', 'Pinned')` **now** (a `Released` link does not count; the date is recomputed every tick and every detail read, so releasing moves
 `autoCloseOn` back), whose message is `direction = 1`, not imported, and is not a survey answer (not `Interactive` quoting one of the
 ticket's survey `message_id`s, not a survey `comment_message_id`). Reads `support.ticket_messages.state` by name too. A `Pinned` customer
-message does not count either: the owner's rule is «currently `Linked`» (open point at the end of «Owner decisions»). Closing (H22): reload tracked, still `Resolved` with the same `ResolvedAt`, transaction: `ChangeStatus(Closed,
+message counts as well: the owner's rule is «still in the ticket; releasing it removes it» (2026-11-16). Test:
+`APinnedReplyAlsoHoldsTheClose`. Closing (H22): reload tracked, still `Resolved` with the same `ResolvedAt`, transaction: `ChangeStatus(Closed,
 null, …)`, `TicketClosed` in the thread if there is a conversation, `PublishSystem(status_changed, ["status"])`, commit; then
 `TicketChangedAsync` and `NotifyChangedAsync`. A `RequestConcurrencyException` skips the ticket (logged at `Debug`).
 
@@ -875,7 +876,7 @@ CLAUDE.md gotchas to add, one bullet each:
 6. A survey change never bumps the ticket version, but it notifies the hub.
 7. The rating token travels in the body, never in a route; only its SHA-256 is stored.
 8. The formal reply is signed by the ticket's assignee; `ticket_reply_documents.signer_member_id` is in `SupportUserReferenceProbe`.
-9. Auto-close counts only customer replies whose link is `Linked` right now: releasing one moves the close date back; the survey tap and
+9. Auto-close counts only customer replies whose link is `Linked` or `Pinned` right now: releasing one moves the close date back; the survey tap and
    comment never count.
 10. The comment prompt is sent once per survey with a deterministic `ClientId` through the support reply outbound: it is not an advisor
    reply and never takes the conversation. No survey goes through Instagram.
@@ -944,9 +945,8 @@ The owner answered all twelve blocking questions on 2026-11-16. The plan above a
 - **Q-20** Survey off by default for every tenant.
 - **Q-21** Resolutions made by an old pod during the rollout get no survey (H23).
 
-**Open point raised by the planner (does not block):** with the owner's wording, a customer message the advisor **pinned** (`Pinned`)
-does not hold the auto-close; only `Linked` does. If pinned messages should count too, it is one condition in `SupportAutoCloseFeed`
-(Task 14).
+**Settled (2026-11-16):** «still linked» means the message is still in the ticket's record, so both `Linked` and `Pinned` hold the
+auto-close; only `Released` drops out (Task 14, `APinnedReplyAlsoHoldsTheClose`).
 
 ## Spec discrepancies (spec against code)
 
