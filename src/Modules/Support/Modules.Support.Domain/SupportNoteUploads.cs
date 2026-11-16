@@ -36,3 +36,21 @@ public static class SupportNoteUploads
         return new Guid(key, bigEndian: true);
     }
 }
+
+/// <summary>
+/// Final review S2: the public form's <c>uploadKey</c> (the Storage <c>owner_id</c> of a visitor's upload) is a random v4 UUID by
+/// contract. It is the version that tells it apart from a note's key (<see cref="SupportNoteUploads.OwnerKeyVersion"/>, v8): the
+/// <c>attachments_busy</c> cap counts only v4 owners, and completing or filing with a key of any other version is
+/// <c>support.public.attachment_invalid</c>, the same as an unknown one.
+/// </summary>
+public static class SupportPublicUploads
+{
+    /// <summary>The UUID version of every public upload key: <see cref="Guid.NewGuid"/>'s, RFC 9562 v4.</summary>
+    public const int KeyVersion = 4;
+
+    /// <summary>A fresh public upload key: random, so it cannot be guessed from the time like a v7 Storage id.</summary>
+    public static Guid NewKey() => Guid.NewGuid();
+
+    /// <summary>Whether <paramref name="key"/> can be a public upload key: not empty and v4.</summary>
+    public static bool IsKey(Guid key) => key != Guid.Empty && key.Version == KeyVersion;
+}

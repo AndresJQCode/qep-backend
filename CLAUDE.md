@@ -1103,10 +1103,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   de ella sale por `public/support`. Sus tablas son insert-only. Su `id` es el `clientId` de la pantalla (`PK_ticket_notes`).
 - **Un archivo de nota ya está reclamado**: `ticket_note_files` entra en `SupportAttachmentReferenceProbe` (o el barrido de staging lo
   borra). Su dueño en Storage es `SupportNoteUploads.OwnerKey(ticket, miembro)`, determinista: cambiar la derivación deja huérfanas
-  las subidas abiertas que todavía no están en una nota. **La clave es un UUID v8** y la del formulario público (`Guid.NewGuid()`) un
-  v4: `SupportAttachmentStorage.CountPendingAsync` cuenta sólo `uuid_extract_version(owner_id) = 4`, así que ninguna subida de nota,
-  reclamada o abandonada, cuenta en el tope `attachments_busy` del formulario (revisión del Bloque B). Si la clave pierde el v8, un
-  miembro que abre subidas sin adjuntarlas deja al formulario sin adjuntos.
+  las subidas abiertas que todavía no están en una nota. **La clave es un UUID v8** y la del formulario público
+  (`SupportPublicUploads.NewKey()`) un v4: `SupportAttachmentStorage.CountPendingAsync` cuenta sólo
+  `(get_byte(uuid_send(owner_id), 6) >> 4) = 4`, así que ninguna subida de nota, reclamada o abandonada, cuenta en el tope
+  `attachments_busy` del formulario (revisión del Bloque B). No uses `uuid_extract_version`: exige Postgres 17+ y la versión de
+  producción no está probada en el repo. Completar o radicar con un `uploadKey` que no es v4 es `support.public.attachment_invalid`
+  (`SupportPublicUploads.IsKey`). Si la clave pierde el v8, un miembro que abre subidas sin adjuntarlas deja al formulario sin adjuntos.
 
 ## Verificación
 

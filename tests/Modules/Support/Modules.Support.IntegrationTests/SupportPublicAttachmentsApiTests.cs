@@ -88,6 +88,36 @@ public sealed class SupportPublicAttachmentsApiTests(SupportPublicAttachmentsHos
         Assert.Equal(0L, await TicketCountAsync(rig));
     }
 
+    // Revisión final, S2: el uploadKey del formulario es v4 por contrato. Una clave de otra versión (la v8 de una nota, una v7) se
+    // rechaza al completar y al radicar aunque sea el owner_id que Storage guardó: el par casaría y sólo la versión lo frena.
+    [Fact]
+    public async Task AnUploadKeyThatIsNotVersion4IsRejectedEvenIfItIsTheOwner()
+    {
+        var rig = await RigAsync();
+        var file = await UploadAsync(rig, "acta.pdf");
+        var keys = new[] { SupportNoteUploads.OwnerKey(SupportTicketId.New(), Guid.CreateVersion7()), Guid.CreateVersion7() };
+        Assert.All(keys, key => Assert.False(SupportPublicUploads.IsKey(key)));
+
+        foreach (var key in keys)
+        {
+            await ExecuteAsync(
+                rig.Factory, "UPDATE storage.file_resources SET owner_id = @owner WHERE id = @id", ("owner", key), ("id", file.FileId));
+
+            var complete = await PostJsonAsync(
+                rig.Client, PublicUrl(rig.Slug, $"/attachments/{file.FileId}/complete"), new { uploadKey = key });
+            var filed = await PostJsonAsync(
+                rig.Client, rig.TicketsUrl, WithAttachments(AnonymousBody(rig.TypeId), file with { UploadKey = key }));
+
+            foreach (var response in new[] { complete, filed })
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+                Assert.Equal("support.public.attachment_invalid", await CodeOfAsync(response));
+            }
+        }
+
+        Assert.Equal(0L, await TicketCountAsync(rig));
+    }
+
     // Plan F35: el índice único sobre file_id es lo que impide que dos radicaciones reclamen el mismo archivo, y se traduce por
     // nombre al mismo 422. La segunda no gasta radicado.
     [Fact]

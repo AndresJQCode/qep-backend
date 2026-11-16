@@ -383,8 +383,9 @@ public sealed class FilePublicTicketHandler(
         return matches.Count == 1 ? matches[0] : null;
     }
 
-    // Plan F32 y F35: cada archivo tiene que estar disponible, ser del tenant y haberse subido con ese uploadKey. Antes de la
-    // transacción, para que un rechazo no gaste un radicado; uno que falla responde igual que uno que no existe.
+    // Plan F32 y F35: cada archivo tiene que estar disponible, ser del tenant y haberse subido con ese uploadKey, que además tiene que
+    // ser v4 (revisión final S2: la v8 de una nota nunca pasa por la de un visitante). Antes de la transacción, para que un rechazo no
+    // gaste un radicado; uno que falla responde igual que uno que no existe.
     private async Task<IReadOnlyList<SupportAttachmentFile>> AvailableAttachmentsAsync(
         Guid tenantId, IReadOnlyList<SupportPublicAttachmentRef>? references, CancellationToken cancellationToken)
     {
@@ -396,6 +397,11 @@ public sealed class FilePublicTicketHandler(
         var files = new List<SupportAttachmentFile>(references.Count);
         foreach (var reference in references)
         {
+            if (!SupportPublicUploads.IsKey(reference.UploadKey!.Value))
+            {
+                throw CompletePublicAttachmentHandler.Invalid();
+            }
+
             var file = await attachmentStorage.FindAvailableAsync(
                 tenantId, reference.FileId!.Value, reference.UploadKey!.Value, cancellationToken);
             files.Add(file ?? throw CompletePublicAttachmentHandler.Invalid());

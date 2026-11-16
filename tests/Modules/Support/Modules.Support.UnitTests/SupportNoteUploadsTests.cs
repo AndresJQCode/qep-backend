@@ -47,7 +47,7 @@ public sealed class SupportNoteUploadsTests
     }
 
     // Block B review: the public form's attachments_busy cap counts only v4 keys (Guid.NewGuid, the visitor's uploadKey). A note's key
-    // is a v8 UUID with the RFC variant, so Postgres' uuid_extract_version reads 8 and an abandoned note upload never counts.
+    // is a v8 UUID with the RFC variant, so the version nibble the cap reads (get_byte(uuid_send(owner_id), 6) >> 4) is 8 and an abandoned note upload never counts.
     [Fact]
     public void TheKeyIsAVersion8UuidSoItNeverPassesForAPublicUploadKey()
     {

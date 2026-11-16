@@ -16,17 +16,15 @@ namespace Bootstrapper;
 /// por nombre <c>storage.file_resources</c> (<c>tenant_id</c>, <c>owner_type</c>, <c>created_at</c>, <c>deleted_at</c>, <c>id</c>) y
 /// <c>support.ticket_attachments</c> (<c>file_id</c>, por <c>IX_ticket_attachments_file</c>) y <c>owner_id</c>. Las notas usan el mismo
 /// dueño <see cref="FileOwnerType.SupportTicket"/> con la clave <c>SupportNoteUploads.OwnerKey</c> (plan N18), que es un UUID v8; la
-/// del formulario es <c>Guid.NewGuid()</c>, v4. El tope cuenta sólo las v4 (<c>uuid_extract_version</c>, Postgres 17+): una subida de
-/// nota, reclamada o no, nunca cuenta, y un miembro que abre subidas sin adjuntarlas no deja al formulario en <c>attachments_busy</c>
+/// del formulario es v4 (<c>SupportPublicUploads.KeyVersion</c>). El tope cuenta sólo las v4 —la versión es el nibble alto del byte 6
+/// del UUID, <c>get_byte(uuid_send(owner_id), 6) &gt;&gt; 4</c>, que corre en cualquier Postgres; <c>uuid_extract_version</c> exige 17+ y la
+/// versión de producción no está probada en el repo (revisión final S1)—: una subida de nota, reclamada o no, nunca cuenta, y un miembro que abre subidas sin adjuntarlas no deja al formulario en <c>attachments_busy</c>
 /// (revisión del Bloque B). Renombrar una columna compila y deja
 /// <c>POST …/attachments</c> en 500; lo amarra <c>SupportPublicAttachmentsApiTests</c>, que corre contra el esquema migrado.</para>
 /// </summary>
 internal sealed class SupportAttachmentStorage(IStorageSystemUploads uploads, SupportDbContext support) : ISupportAttachmentStorage
 {
     private static readonly string SupportTicketOwner = nameof(FileOwnerType.SupportTicket);
-
-    // La versión de Guid.NewGuid(), el uploadKey del formulario (OpenPublicAttachmentHandler).
-    private const int PublicUploadKeyVersion = 4;
 
     // La hora es la de la base, la misma que usa la prueba al sembrar; Storage escribe created_at con el reloj de la API, que en
     // producción es el mismo con diferencia de milisegundos.
@@ -38,7 +36,7 @@ internal sealed class SupportAttachmentStorage(IStorageSystemUploads uploads, Su
               AND f.owner_type = {SupportTicketOwner}
               AND f.created_at >= now() - {window}
               AND f.deleted_at IS NULL
-              AND uuid_extract_version(f.owner_id) = {PublicUploadKeyVersion}
+              AND (get_byte(uuid_send(f.owner_id), 6) >> 4) = {SupportPublicUploads.KeyVersion}
               AND NOT EXISTS (SELECT 1 FROM support.ticket_attachments a WHERE a.file_id = f.id)
             """).SingleAsync(cancellationToken);
 
