@@ -1927,6 +1927,75 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
     }
 
+    // Spec 2026-11-16 (tarifa de retención): el import de facturación busca el impuesto por su tarifa. Retefuente
+    // en porcentaje tal cual; ReteICA por mil (el porcentaje guardado × 10). Sin retención aplicada del tipo, 0.
+    [Fact]
+    public async Task ExportHasRatePerWithholdingType()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var bogota = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000027"), "ReteICA Bogotá 11,04 ‰", "ReteICA", "CO", 1.104m, null, null, null);
+        // Base mínima en UVT sin valor de UVT congelado: nunca aplica.
+        var notApplied = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000028"), "ReteICA con base", "ReteICA", "CO", 0.966m, 100m, "UVT", null);
+        var both = NewRow("PED-2026-0001", withholdings: [TestWithholdings.RetefuenteCo, bogota]);
+        var none = NewRow("PED-2026-0002");
+        var belowBase = NewRow("PED-2026-0003", withholdings: [notApplied]);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente_rate", "Retefuente", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_reteica_rate", "ReteICA", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(both, none, belowBase), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Pedido", "Retefuente", "ReteICA"], writer.Columns.Take(3).Select(c => c.Header));
+        var rows = writer.Rows.ToDictionary(cells => cells[0].Text!);
+        Assert.Equal(ExportCell.OfNumber(2.5m), rows["PED-2026-0001"][1]);
+        Assert.Equal(ExportCell.OfNumber(11.04m), rows["PED-2026-0001"][2]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][1]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][2]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
+    }
+
+    // Límite conocido del spec 2026-11-16: con dos aplicadas del mismo tipo sale la primera por orden del pedido.
+    [Fact]
+    public async Task RateUsesTheFirstAppliedWithholdingOfTheType()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var first = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000029"), "ReteICA Bogotá", "ReteICA", "CO", 1.104m, null, null, null);
+        var second = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000030"), "ReteICA Medellín", "ReteICA", "CO", 0.966m, null, null, null);
+        var order = NewRow("PED-2026-0001", withholdings: [first, second]);
+        Assert.Equal(2, order.AppliedWithholdings.Count());
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_reteica_rate", "ReteICA", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(11.04m), cells[1]));
+    }
+
+    // La tarifa es la efectiva, la que dio el monto: si el asesor la editó, sale la editada y no la del catálogo.
+    [Fact]
+    public async Task RateUsesTheOverriddenPercentage()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var order = NewRow("PED-2026-0001", withholdings: [TestWithholdings.RetefuenteCo with { Percentage = 3.5m }]);
+        Assert.True(order.AppliedWithholdings.Single().Overridden);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente_rate", "Retefuente", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(3.5m), cells[1]));
+    }
+
     // Con retención en la fuente el cliente paga NetTotal, pero lo facturado sigue siendo Total: la
     // retención no es un descuento de la factura.
     [Fact]

@@ -92,8 +92,8 @@ public sealed class OrdersExportLayoutTests
         var changed = layout.Replace([Catalog("email", "Correo"), Fixed("Tipo Doc", "FV")], Later);
 
         Assert.True(changed);
-        // 84 del catálogo (notas del cliente, spec 2026-11-14) + 1 fija.
-        Assert.Equal(85, layout.Columns.Count);
+        // 86 del catálogo (tarifas de retención, spec 2026-11-16) + 1 fija.
+        Assert.Equal(87, layout.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal(OrdersExportColumnKind.Fixed, layout.Columns[1].Kind);
         Assert.Equal("company", layout.Columns[2].Key);

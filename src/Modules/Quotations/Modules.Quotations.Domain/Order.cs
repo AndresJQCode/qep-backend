@@ -406,7 +406,8 @@ public sealed class Order
         MemberId convertedBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt,
-        DateOnly orderDate)
+        DateOnly orderDate,
+        IReadOnlyDictionary<string, TaxUnitPhoto>? taxUnits = null)
     {
         ArgumentNullException.ThrowIfNull(quotation);
         if (quotation.BillingAccount is null)
@@ -458,6 +459,14 @@ public sealed class Order
             }
 
             order._items.Add(copy);
+        }
+
+        // Spec alerta UVT §5.2: el pedido nace con la UVT de su año, no con la foto congelada de la cotización. Va
+        // antes de los totales y del estado de pago, que se comparan contra el neto ya refrescado. No pasa por
+        // RefreshTaxUnits del pedido: exige IsEditable y recalcularía otra vez. Null deja la foto como viene.
+        if (taxUnits is not null)
+        {
+            DocumentWithholding.RefreshTaxUnits(order._withholdings, taxUnits);
         }
 
         order.EnsureCreatable();

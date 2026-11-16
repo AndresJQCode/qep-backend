@@ -143,8 +143,8 @@ public sealed class OrdersExportLayoutEffectiveTests
 
         var effective = OrdersExportLayout.Effective(stored, OrdersExportColumnCatalog.Columns);
 
-        var last = effective[^1];
-        Assert.Equal(("buyer_notes", "Notas del cliente", false), (last.Key, last.Header, last.Visible));
+        var buyerNotes = effective[^3];
+        Assert.Equal(("buyer_notes", "Notas del cliente", false), (buyerNotes.Key, buyerNotes.Header, buyerNotes.Visible));
     }
 
     // Lo guardado manda sobre el defecto: el tenant que la prendió la sigue viendo.

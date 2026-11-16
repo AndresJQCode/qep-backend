@@ -76,8 +76,8 @@ public sealed class QuotationResponseComposer(
             ownBilling ? quotation.BillingWithholdingTaxRates : quotation.CustomerWithholdingTaxRates,
             MunicipalWithholdingExplanation.DateOf(quotation.CreatedAt),
             cancellationToken);
-        var documentYear = await DocumentYearAsync(
-            tenantClock, tenantId, quotation.CreatedAt, quotation.WithholdingBreakdown, cancellationToken);
+        var taxUnits = await TaxUnitContextAsync(
+            tenantClock, withholdingLookup, tenantId, quotation.CreatedAt, quotation.WithholdingBreakdown, cancellationToken);
 
         return new QuotationResponse(
             quotation.Id,
@@ -135,7 +135,7 @@ public sealed class QuotationResponseComposer(
             municipal.OperationCity,
             municipal.BillingCompanyCity,
             municipal.Entries,
-            ToBreakdownResponse(quotation.WithholdingBreakdown, documentYear));
+            ToBreakdownResponse(quotation.WithholdingBreakdown, taxUnits));
     }
 
     /// <summary>Los contactos de la empresa del cliente (spec 2026-11-10 §4.6), en una consulta por documento. Un cliente que no
@@ -153,23 +153,51 @@ public sealed class QuotationResponseComposer(
     }
 
     /// <summary>
-    /// El año del documento con el que se decide si su UVT está desactualizada (spec retenciones por UVT §5.2): el de su
-    /// <c>CreatedAt</c> en la zona del tenant, la misma fecha con que se congeló la foto. El 31 de diciembre a las 20:00 en
-    /// Bogotá ya es el año siguiente en UTC. El calendario se lee sólo si alguna fila trae año: null si ninguna.
+    /// Lo que el desglose necesita del calendario y de Catalog para decir si la UVT de cada fila está vieja y cuál tomaría
+    /// hoy. El año del documento (spec retenciones por UVT §5.2) es el de su <c>CreatedAt</c> en la zona del tenant, la
+    /// misma fecha con que se congeló la foto: el 31 de diciembre a las 20:00 en Bogotá ya es el año siguiente en UTC. El
+    /// último año cargado por país (spec alerta UVT §5.4) sale de <see cref="IQuotationWithholdingLookup.TaxUnitsAsync"/>
+    /// con esa misma fecha, la regla del refresco, para que lo que se anuncia sea lo que el guardado aplicaría.
+    ///
+    /// Perezoso: el calendario se lee sólo si alguna fila trae año o unidad, y Catalog sólo si alguna trae unidad, una vez
+    /// por respuesta con los países distintos.
     /// </summary>
-    internal static async Task<int?> DocumentYearAsync(
+    internal static async Task<TaxUnitContext> TaxUnitContextAsync(
         ITenantClock tenantClock,
+        IQuotationWithholdingLookup withholdingLookup,
         Guid tenantId,
         DateTimeOffset createdAt,
         IReadOnlyList<WithholdingVerdictDto>? breakdown,
-        CancellationToken cancellationToken) =>
-        breakdown?.Any(verdict => verdict.TaxUnitYear is not null) == true
-            ? DocumentDates.LocalDate(await tenantClock.GetAsync(tenantId, cancellationToken), createdAt).Year
-            : null;
+        CancellationToken cancellationToken)
+    {
+        var rows = breakdown ?? [];
+        if (!rows.Any(verdict => verdict.TaxUnitYear is not null || verdict.MinimumBaseUnit is not null))
+        {
+            return TaxUnitContext.None;
+        }
 
-    /// <summary>El desglose tal como viaja. Una fila sin año (sin unidad o legada sin casar) nunca está desactualizada.</summary>
+        var documentDate = DocumentDates.LocalDate(await tenantClock.GetAsync(tenantId, cancellationToken), createdAt);
+        string[] countries =
+        [
+            .. rows
+                .Where(verdict => verdict.MinimumBaseUnit is not null)
+                .Select(verdict => verdict.Country)
+                .Distinct(StringComparer.Ordinal),
+        ];
+        if (countries.Length == 0)
+        {
+            return new TaxUnitContext(documentDate.Year, TaxUnitContext.None.LatestYearByCountry);
+        }
+
+        var units = await withholdingLookup.TaxUnitsAsync(countries, documentDate, cancellationToken);
+        return new TaxUnitContext(
+            documentDate.Year, units.ToDictionary(unit => unit.Key, unit => unit.Value.Year, StringComparer.Ordinal));
+    }
+
+    /// <summary>El desglose tal como viaja. Una fila sin año (sin unidad o legada sin casar) nunca está desactualizada, y
+    /// una sin unidad no tiene último año que ofrecer.</summary>
     internal static IReadOnlyList<WithholdingBreakdownResponse> ToBreakdownResponse(
-        IReadOnlyList<WithholdingVerdictDto>? breakdown, int? documentYear) =>
+        IReadOnlyList<WithholdingVerdictDto>? breakdown, TaxUnitContext context) =>
         [
             .. (breakdown ?? []).Select(verdict => new WithholdingBreakdownResponse(
                 verdict.TaxRateId,
@@ -188,7 +216,10 @@ public sealed class QuotationResponseComposer(
                 verdict.MinimumBaseAmount,
                 verdict.TaxUnitValue,
                 verdict.TaxUnitYear,
-                IsOutdated(verdict.TaxUnitYear, documentYear),
+                IsOutdated(verdict.TaxUnitYear, context.DocumentYear),
+                verdict.MinimumBaseUnit is not null && context.LatestYearByCountry.TryGetValue(verdict.Country, out var latest)
+                    ? latest
+                    : null,
                 verdict.Amount)),
         ];
 
@@ -395,4 +426,14 @@ public sealed class QuotationResponseComposer(
         QuotationPriceScaleRestriction.PackagingUnit => "packaging_unit",
         _ => throw new ArgumentOutOfRangeException(nameof(restriction))
     };
+}
+
+/// <summary>
+/// El año del documento y el último año de UVT cargado por país, que <see cref="QuotationResponseComposer.ToBreakdownResponse"/>
+/// necesita y un mapeo estático no puede leer (spec alerta UVT §5.4). <see cref="None"/> es «ninguna fila trae año ni
+/// unidad»: no se leyó nada y no hay nada que decir.
+/// </summary>
+internal sealed record TaxUnitContext(int? DocumentYear, IReadOnlyDictionary<string, int> LatestYearByCountry)
+{
+    public static TaxUnitContext None { get; } = new(null, new Dictionary<string, int>());
 }

@@ -200,6 +200,14 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec alerta UVT §5.3: lo que la conversión daría hoy, sin convertir. No escribe ni toma el contador.
+        group.MapGet("/preview", PreviewQuotationConversionAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Produces<QuotationConversionPreviewResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -303,6 +311,18 @@ public static class OrderEndpoints
         var detail = await dispatcher.QueryAsync(
             new GetOrderQuery(tenantId, quotationId), cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static async Task<IResult> PreviewQuotationConversionAsync(
+        Guid tenantId,
+        Guid quotationId,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var preview = await dispatcher.QueryAsync(
+            new PreviewQuotationConversionQuery(tenantId, quotationId), cancellationToken);
+        return Results.Ok(await composer.ComposeConversionPreviewAsync(tenantId, preview, cancellationToken));
     }
 
     private static async Task<IResult> ConvertQuotationToOrderAsync(

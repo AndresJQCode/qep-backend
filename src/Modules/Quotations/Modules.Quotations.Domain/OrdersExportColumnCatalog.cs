@@ -180,6 +180,12 @@ public static class OrdersExportColumnCatalog
         // «Observaciones» (notes) sigue siendo la del asesor. Oculta también sin layout guardado (D13): un tenant sin
         // layout puede tener un ERP leyendo la hoja por defecto. Su encabezado no choca con la hoja sembrada.
         new("buyer_notes", "Notas del cliente", 40, DefaultVisible: false),
+        // Spec 2026-11-16 (tarifa de retención): la tarifa, no el monto, porque el import del sistema de facturación busca
+        // el impuesto por ella y calcula el monto él mismo. Retefuente en porcentaje (2.5); ReteICA por mil (11.04 en
+        // Bogotá), que es como la nombra Siigo. Ocultas y al final; el tenant las prende y les pone el encabezado que su
+        // import lee. «Tarifa …» no choca con «Retefuente» ni «ReteICA», que la regla de choque escondería.
+        new("withholding_retefuente_rate", "Tarifa Retefuente", 16, DefaultVisible: false),
+        new("withholding_reteica_rate", "Tarifa ReteICA", 16, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.
