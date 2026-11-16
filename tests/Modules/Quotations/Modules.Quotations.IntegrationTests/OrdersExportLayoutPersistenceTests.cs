@@ -68,8 +68,9 @@ public sealed class OrdersExportLayoutPersistenceTests(SharedQuotationsHost shar
             Assert.NotNull(reloaded);
             Assert.Equal(2, reloaded.Version);
             Assert.Equal(Now, reloaded.UpdatedAt);
-            // 84 del catálogo (81 de la reorganización de cliente y facturación, 2026-10-28, + Retefuente, ReteICA y Notas del cliente) + 1 fija.
-            Assert.Equal(85, reloaded.Columns.Count);
+            // 86 del catálogo (81 de la reorganización de cliente y facturación, 2026-10-28, + Retefuente, ReteICA, Notas del cliente
+            // y las dos tarifas de retención) + 1 fija.
+            Assert.Equal(87, reloaded.Columns.Count);
             Assert.Equal(OrdersExportColumnKind.Fixed, reloaded.Columns[0].Kind);
             Assert.Equal("Tipo Doc", reloaded.Columns[0].Header);
             Assert.Equal("FV", reloaded.Columns[0].Value);
