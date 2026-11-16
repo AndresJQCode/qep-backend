@@ -16,7 +16,9 @@ namespace Modules.Support.IntegrationTests;
 /// Spec 2026-11-15 §5.2 and plan N13: every Support write and the thread follower announce <c>supportTicketChanged { ticketId }</c> after
 /// their commit, on the ticket's topic and on the inbox. A write that fails announces nothing, and a broken publisher never fails the
 /// write. One host for the class with the recording publisher, the reply doubles and the fake captcha; the follower is off and runs by
-/// hand. Each test seeds its own tenant and only reads that tenant's notices.
+/// hand. Each test seeds its own tenant and only reads that tenant's notices. Final review S3: an opening that records its delivery in
+/// <c>ticket_access</c> (a ticket with somewhere to send it) announces once more after that second save, and so does «Reenviar PIN», so
+/// other screens never keep a stale <c>consultAccess</c>.
 /// </summary>
 public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost host) : IClassFixture<SupportRealtimeNoticesHost>
 {
@@ -33,7 +35,8 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
 
         var ticket = await scenario.CreateAsync();
 
-        AssertAnnounced(Publisher.Of(scenario.TenantId), Id(ticket));
+        // Ana has an email: the creation, then the recorded delivery of the opening.
+        AssertAnnounced(Publisher.Of(scenario.TenantId), Id(ticket), Id(ticket));
     }
 
     [Fact]
@@ -44,7 +47,8 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
 
         var ticket = await scenario.CreateFromConversationAsync(conversation);
 
-        AssertAnnounced(Publisher.Of(scenario.TenantId), Id(ticket));
+        // The opening goes by the thread: the creation, then its recorded delivery.
+        AssertAnnounced(Publisher.Of(scenario.TenantId), Id(ticket), Id(ticket));
     }
 
     [Fact]
@@ -59,7 +63,37 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
         Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
         var ticketId = Guid.Parse((await TextAsync(
             Factory, "SELECT id::text FROM support.tickets WHERE tenant_id = @tenant LIMIT 1", ("tenant", Guid.Parse(tenant))))!);
+        // Anonymous: nowhere to send the opening, so nothing is recorded and there is no second notice.
         AssertAnnounced(Publisher.Of(Guid.Parse(tenant)), ticketId);
+    }
+
+    [Fact]
+    public async Task FilingANamedTicketAnnouncesItAndThenItsRecordedOpening()
+    {
+        var (tenantId, _, ticketId) = await FileNamedAsync();
+
+        AssertAnnounced(Publisher.Of(tenantId), ticketId, ticketId);
+        Assert.Equal("Email", await TextAsync(
+            Factory, "SELECT last_sent_channel FROM support.ticket_access WHERE ticket_id = @id", ("id", ticketId)));
+    }
+
+    [Fact]
+    public async Task ResendingThePinAnnouncesTheTicket()
+    {
+        var (tenantId, slug, ticketId) = await FileNamedAsync();
+        // No clock double in this host: the cooldown is spent by moving the last attempt back.
+        await ExecuteAsync(
+            Factory,
+            "UPDATE support.ticket_access SET last_sent_at = last_sent_at - make_interval(mins => 11) WHERE ticket_id = @id",
+            ("id", ticketId));
+        var before = Publisher.Of(tenantId).Count;
+        using var visitor = VisitorClient(Factory);
+
+        var response = await PostJsonAsync(
+            visitor, PublicUrl(slug, "/tickets/resend-pin"), new { number = "SOP-000001", turnstileToken = FakeSupportCaptcha.ValidToken });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        AssertAnnounced(Since(tenantId, before), ticketId);
     }
 
     [Fact]
@@ -255,6 +289,23 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
             Assert.Equal(SupportRealtimeTopics.Ticket(ticketIds[i]), own.Topic);
             Assert.Equal(SupportRealtimeTopics.Inbox, inbox.Topic);
         }
+    }
+
+    /// <summary>A named public ticket with an email (SOP-000001 of a fresh tenant): its opening goes out by email.</summary>
+    private async Task<(Guid TenantId, string Slug, Guid TicketId)> FileNamedAsync()
+    {
+        var tenant = NewTenantId();
+        var slug = await SeedPublishedTenantAsync(Factory, tenant);
+        using var visitor = VisitorClient(Factory);
+        var response = await PostJsonAsync(
+            visitor,
+            PublicUrl(slug, "/tickets"),
+            NamedBody(await FirstTypeIdAsync(Factory, tenant), await AnyCityIdAsync(Factory), $"avisos-{Guid.NewGuid():N}@example.com"));
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
+        var ticketId = Guid.Parse((await TextAsync(
+            Factory, "SELECT id::text FROM support.tickets WHERE tenant_id = @tenant LIMIT 1", ("tenant", Guid.Parse(tenant))))!);
+        return (Guid.Parse(tenant), slug, ticketId);
     }
 
     private IReadOnlyList<RecordingRealtimePublisher.Notice> Since(Guid tenantId, int count) =>
