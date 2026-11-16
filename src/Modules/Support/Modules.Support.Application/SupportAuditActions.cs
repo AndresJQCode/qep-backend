@@ -12,6 +12,9 @@ public static class SupportAuditActions
 
     public const string TicketCustomerChanged = "support.ticket.customer_changed";
 
+    /// <summary>Fase 4a (plan G11): la prórroga. Lleva los nombres de campo <c>dueOn</c> y <c>extension</c>, nunca el motivo.</summary>
+    public const string TicketExtended = "support.ticket.extended";
+
     public const string TicketTypeCreated = "support.ticket_type.created";
 
     public const string TicketTypeUpdated = "support.ticket_type.updated";

@@ -180,9 +180,23 @@ public sealed record SupportConversationTicketDto(SupportTicketListItemDto Ticke
 public sealed record SupportTicketTypeSnapshotDto(Guid Id, string Name, int? TermBusinessDays, bool TermIsLegal, bool RequiresFormalResponse);
 
 /// <summary><c>DueState</c> ∈ <c>NoTerm</c>, <c>OnTrack</c>, <c>DueSoon</c>, <c>Overdue</c>, <c>Paused</c>, <c>Finished</c>.
-/// <c>TermIsLegal</c> decide si la pantalla dice «vence el plazo legal» o «vence el objetivo».</summary>
+/// <c>TermIsLegal</c> decide si la pantalla dice «vence el plazo legal» o «vence el objetivo». Fase 4a (plan G9 a G13):
+/// <c>Extension</c> es la prórroga ya hecha (null sin prórroga). <c>MaxExtensionBusinessDays</c> decide si la pantalla ofrece
+/// «Prorrogar» y su tope: es el término del ticket si hoy se puede prorrogar y null si no (ya prorrogado, sin término, esperando al
+/// cliente, vencido, resuelto o cerrado), así la pantalla no repite las reglas. El aviso al solicitante lo manda el asesor como
+/// respuesta (plan G13); <c>Extension</c> sirve para prellenarlo.</summary>
 public sealed record SupportClockDto(
-    DateOnly? DueOn, string DueState, int? BusinessDaysLeft, int? TermBusinessDays, bool TermIsLegal, int PausedBusinessDays);
+    DateOnly? DueOn,
+    string DueState,
+    int? BusinessDaysLeft,
+    int? TermBusinessDays,
+    bool TermIsLegal,
+    int PausedBusinessDays,
+    SupportExtensionDto? Extension,
+    int? MaxExtensionBusinessDays);
+
+/// <summary>La prórroga del ticket. Sin autor: quién la hizo está en la traza, en el evento <c>Extended</c>.</summary>
+public sealed record SupportExtensionDto(int BusinessDays, string Reason, DateTimeOffset ExtendedAt);
 
 /// <summary>Una entrada de la traza, con campos planos y nulos según <c>Kind</c> y los nombres ya resueltos: la pantalla no lee
 /// JSON ni busca miembros. Un miembro o cliente que ya no se encuentra sale como «Sin nombre».</summary>
@@ -199,10 +213,15 @@ public sealed record SupportTicketEventDto(
     SupportCustomerRefDto? Customer,
     Guid? MessageId,
     bool? Follow,
-    string? ReplyChannel);
+    string? ReplyChannel,
+    int? ExtensionBusinessDays,
+    DateOnly? FromDueOn,
+    DateOnly? ToDueOn,
+    string? Reason);
 
 // Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
 // valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
+// Fase 4a (plan G11): ExtensionBusinessDays, FromDueOn, ToDueOn y Reason sólo vienen llenos en Extended.
 
 /// <summary><c>IsMe</c> (fase 4a, plan G8): si el miembro es quien hace la petición. El SPA no conoce su <c>memberId</c>, y sin este
 /// campo no puede decir «tú» ni ocultar «Asignármelo» en un ticket que ya es suyo. Fuera de una sesión siempre es falso.</summary>

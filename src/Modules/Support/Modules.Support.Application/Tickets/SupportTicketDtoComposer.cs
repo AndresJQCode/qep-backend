@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
@@ -101,7 +102,16 @@ public sealed class SupportTicketDtoComposer(
             new SupportTicketTypeSnapshotDto(
                 ticket.TypeId.Value, ticket.TypeName, ticket.TermBusinessDays, ticket.TermIsLegal, ticket.RequiresFormalResponse),
             new SupportClockDto(
-                ticket.DueOn, dueState.ToString(), daysLeft, ticket.TermBusinessDays, ticket.TermIsLegal, ticket.PausedBusinessDays),
+                ticket.DueOn,
+                dueState.ToString(),
+                daysLeft,
+                ticket.TermBusinessDays,
+                ticket.TermIsLegal,
+                ticket.PausedBusinessDays,
+                ticket is { ExtendedAt: { } extendedAt, ExtensionReason: { } reason }
+                    ? new SupportExtensionDto(ticket.ExtensionBusinessDays, reason, extendedAt)
+                    : null,
+                ticket.MaxExtensionBusinessDays(context.Today)),
             ticket.Intake.ToString(),
             ticket.ManualMedium?.ToString(),
             ticket.ReplyChannel.ToString(),
@@ -274,7 +284,11 @@ public sealed class SupportTicketDtoComposer(
             details.ToCustomer is { } customerId ? ToCustomerDto(customerId, customersById) : null,
             details.MessageId,
             details.Follow,
-            details.ReplyChannel);
+            details.ReplyChannel,
+            details.ExtensionBusinessDays,
+            details.FromDueOn,
+            details.ToDueOn,
+            details.Reason);
 
     /// <summary>
     /// Los campos de <see cref="SupportTicketEvent.Details"/> según su <see cref="SupportTicketEvent.Kind"/>, con la forma que escribe
@@ -282,7 +296,8 @@ public sealed class SupportTicketDtoComposer(
     /// <c>AssigneeChanged</c> y <c>CustomerChanged</c> <c>{"from","to"}</c> ids o null; <c>TypeChanged</c>
     /// <c>{"from":{"id","name"},"to":{"id","name"}}</c>. Fase 2: los cuatro de mensajes <c>{"messageId"}</c>;
     /// <c>FollowThreadChanged</c> <c>{"follow","at"}</c>; <c>ReplySent</c> <c>{"replyId","channel","delivery","messageId"}</c>;
-    /// <c>ConversationLinked</c> <c>{"conversationId","channel"}</c>, que el detalle ya trae arriba.
+    /// <c>ConversationLinked</c> <c>{"conversationId","channel"}</c>, que el detalle ya trae arriba. Fase 4a: <c>Extended</c>
+    /// <c>{"businessDays","reason","fromDueOn","toDueOn"}</c>, con las fechas en <c>yyyy-MM-dd</c>.
     /// </summary>
     private sealed record EventDetails(
         string? FromStatus,
@@ -293,7 +308,11 @@ public sealed class SupportTicketDtoComposer(
         Guid? ToCustomer,
         Guid? MessageId = null,
         bool? Follow = null,
-        string? ReplyChannel = null)
+        string? ReplyChannel = null,
+        int? ExtensionBusinessDays = null,
+        DateOnly? FromDueOn = null,
+        DateOnly? ToDueOn = null,
+        string? Reason = null)
     {
         private static readonly EventDetails Empty = new(null, null, null, null, null, null);
 
@@ -325,6 +344,16 @@ public sealed class SupportTicketDtoComposer(
                     MessageId = Id(root, "messageId"),
                     ReplyChannel = Text(root, "channel"),
                 },
+                SupportTicketEventKind.Extended => Empty with
+                {
+                    ExtensionBusinessDays = Child(root, "businessDays") is { ValueKind: JsonValueKind.Number } days
+                        && days.TryGetInt32(out var value)
+                            ? value
+                            : null,
+                    FromDueOn = Date(root, "fromDueOn"),
+                    ToDueOn = Date(root, "toDueOn"),
+                    Reason = Text(root, "reason"),
+                },
                 _ => Empty,
             };
         }
@@ -334,6 +363,12 @@ public sealed class SupportTicketDtoComposer(
 
         private static string? Text(JsonElement element, string name) =>
             Child(element, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
+
+        private static DateOnly? Date(JsonElement element, string name) =>
+            Text(element, name) is { } text
+            && DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+                ? date
+                : null;
 
         private static Guid? Id(JsonElement element, string name) =>
             Child(element, name) is { ValueKind: JsonValueKind.String } value && value.TryGetGuid(out var id) ? id : null;
