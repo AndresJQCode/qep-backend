@@ -26,6 +26,7 @@ public sealed class SupportTicketDtoComposer(
     ISupportUnclassifiedRepository unclassified,
     ISupportTicketAccessRepository accesses,
     ISupportTicketAttachmentRepository attachments,
+    ISupportLegalAcceptanceRepository legalAcceptances,
     ITenantModules tenantModules)
 {
     /// <summary>Lo que el contrato muestra de un miembro o cliente que ya no se resuelve (un miembro removido, un cliente borrado).</summary>
@@ -119,6 +120,10 @@ public sealed class SupportTicketDtoComposer(
                 : null,
             (await attachments.ListAsync(ticket.TenantId, ticket.Id, cancellationToken))
                 .Select(item => new SupportAttachmentDto(item.Id, item.FileName, item.MimeType, item.SizeBytes))
+                .ToList(),
+            // Spec 2026-11-15 §7 (plan L19): a projection without the snapshot, already in the order of the enum.
+            (await legalAcceptances.ListByTicketAsync(ticket.TenantId, ticket.Id, cancellationToken))
+                .Select(item => new SupportLegalAcceptanceDto(item.Kind.ToString(), item.Version, item.AcceptedAt, item.VisitorIp))
                 .ToList());
     }
 

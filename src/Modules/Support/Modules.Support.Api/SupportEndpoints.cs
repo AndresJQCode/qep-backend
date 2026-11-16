@@ -305,6 +305,13 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Spec 2026-11-15 §7 (plan L20): what the requester was shown and accepted when filing. Seeing the ticket is enough.
+        group.MapGet("/tickets/{ticketId:guid}/legal-acceptances/{kind}", GetLegalAcceptanceSnapshotAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportLegalAcceptanceSnapshotDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         // Fase 3 (plan F37): la URL firmada de un adjunto del formulario público. Con ver el ticket alcanza: no pide storage.file.read.
         group.MapGet("/tickets/{ticketId:guid}/attachments/{attachmentId:guid}/download", DownloadAttachmentAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -515,6 +522,10 @@ public static class SupportEndpoints
     private static async Task<IResult> GetTicketAsync(
         Guid tenantId, Guid ticketId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetTicketQuery(tenantId, ticketId), cancellationToken));
+
+    private static async Task<IResult> GetLegalAcceptanceSnapshotAsync(
+        Guid tenantId, Guid ticketId, string kind, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetLegalAcceptanceSnapshotQuery(tenantId, ticketId, kind), cancellationToken));
 
     private static async Task<IResult> DownloadAttachmentAsync(
         Guid tenantId, Guid ticketId, Guid attachmentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

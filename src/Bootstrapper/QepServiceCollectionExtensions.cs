@@ -522,6 +522,11 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Support.Application.GetTicketQuery, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.GetTicketHandler>();
         services.AddScoped<
+            IQueryHandler<
+                Modules.Support.Application.GetLegalAcceptanceSnapshotQuery,
+                Modules.Support.Application.SupportLegalAcceptanceSnapshotDto>,
+            Modules.Support.Application.GetLegalAcceptanceSnapshotHandler>();
+        services.AddScoped<
             ICommandHandler<
                 Modules.Support.Application.GetTicketAttachmentDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
             Modules.Support.Application.GetTicketAttachmentDownloadHandler>();

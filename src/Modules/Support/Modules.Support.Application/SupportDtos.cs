@@ -126,7 +126,30 @@ public sealed record SupportTicketDetailDto(
     bool IsAnonymous,
     IReadOnlyList<SupportCustomerCandidateDto> CustomerCandidates,
     SupportConsultAccessDto? ConsultAccess,
-    IReadOnlyList<SupportAttachmentDto> Attachments);
+    IReadOnlyList<SupportAttachmentDto> Attachments,
+    IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances);
+
+/// <summary>
+/// One legal acceptance of a public filing (spec 2026-11-15 §7, plan L19), in the order <c>PrivacyNotice</c>, <c>AnonymousNotice</c>,
+/// <c>Terms</c>; an empty list if the ticket has none (a manual ticket), never <c>null</c>. No content: it opens with
+/// <c>GET …/tickets/{id}/legal-acceptances/{kind}</c>. On <c>AnonymousNotice</c>, <c>AcceptedAt</c> means «continued after reading it».
+/// <c>VisitorIp</c> is null on both rows of an anonymous ticket.
+/// </summary>
+public sealed record SupportLegalAcceptanceDto(string Kind, int Version, DateTimeOffset AcceptedAt, string? VisitorIp);
+
+/// <summary>
+/// What the requester was shown and accepted (spec 2026-11-15 §7, plan L20): the sanitized HTML as it was served, the question shown,
+/// the policy URL and the characterization notice (the last three only on <c>PrivacyNotice</c>). Never today's document.
+/// </summary>
+public sealed record SupportLegalAcceptanceSnapshotDto(
+    string Kind,
+    int Version,
+    DateTimeOffset AcceptedAt,
+    string? VisitorIp,
+    string ContentHtml,
+    string? AuthorizationQuestion,
+    string? PolicyUrl,
+    string? CharacterizationText);
 
 /// <summary>Un adjunto del formulario público (plan F37), en el orden en que se adjuntó. El archivo se baja con
 /// <c>GET …/tickets/{id}/attachments/{attachmentId}/download</c>: la pantalla no necesita <c>storage.file.read</c>. Una lista vacía
