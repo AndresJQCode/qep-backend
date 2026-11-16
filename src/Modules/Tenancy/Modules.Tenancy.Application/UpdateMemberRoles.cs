@@ -64,6 +64,15 @@ public sealed class UpdateMemberRolesHandler(
         var membership = await MembershipLoader.LoadAsync(
             membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
 
+        // Antes que los roles: role_unavailable compara contra los roles guardados, y con una versión
+        // vieja el cliente no vio esos roles. Una pantalla desactualizada recibe 412, no 422.
+        if (membership.Version != command.ExpectedVersion)
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "Membership roles changed after they were loaded.");
+        }
+
         foreach (var role in requestedRoles)
         {
             var reference = await roleReferenceValidator.CheckAsync(
@@ -84,13 +93,6 @@ public sealed class UpdateMemberRolesHandler(
                     "tenancy.membership.role_unavailable",
                     $"The role '{role}' grants nothing in this tenant: its module is not enabled.");
             }
-        }
-
-        if (membership.Version != command.ExpectedVersion)
-        {
-            throw new RequestConcurrencyException(
-                "concurrency.conflict",
-                "Membership roles changed after they were loaded.");
         }
 
         if (membership.UserId == executionContext.SubjectId)

@@ -1047,6 +1047,25 @@ public sealed class MembershipLifecycleApiTests(SharedTenancyHost host) : IClass
         await AssertRoleUnavailableAsync(response);
     }
 
+    // Revisión final: si otro admin ya quitó Cajero, reenviarlo con la versión vieja es un 412 (la
+    // pantalla se desactualizó), no un role_unavailable por un estado que el cliente nunca vio.
+    [Fact]
+    public async Task AStaleEditThatResendsAHeldRoleIs412NotUnavailable()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), ["advisor", "cashier"]);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: false);
+        var removed = await SendRolesAsync(ownerClient, tenantId, memberId, AdvisorRoles);
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+
+        var stale = await SendRolesAsync(
+            ownerClient, tenantId, memberId, ["advisor", "cashier"], expectedVersion: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+    }
+
     [Fact]
     public async Task AddingTheCashierRoleWithPosIsAllowed()
     {
