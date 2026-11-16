@@ -158,7 +158,10 @@ existe, no inserta nada):
 - `terms`: sin fila.
 
 El HTML de la migración tiene que salir igual del saneador (prueba). La migración es aditiva (tabla y columna nuevas): un pod viejo
-sigue imprimiendo los textos fijos durante el rollout, que es lo de hoy.
+sigue imprimiendo los textos fijos durante el rollout, que es lo de hoy. Pero el caché puede conservarlo después: un pod viejo que
+regenera el PDF de una cotización no escribe `content_fingerprint` y deja en la fila el que había escrito un pod nuevo, así que los
+pods nuevos siguen sirviendo el PDF con los textos fijos cuando el rollout ya terminó. Por eso el deploy (§7) vence el caché una vez
+al final (README § Contenido configurable del PDF, «Despliegue»).
 
 ## 6. Pruebas que amarran el cambio
 
@@ -175,6 +178,10 @@ sigue imprimiendo los textos fijos durante el rollout, que es lo de hoy.
 ## 7. Deploy
 
 Backend primero: sin consola nueva nadie edita, y los tenants quedan como define P-4. La consola sale después y depende del `GET`.
+
+Cuando el rollout del backend termina (no queda ningún pod viejo), se corre una vez
+`UPDATE quotations.quotation_pdfs SET content_fingerprint = NULL WHERE generated_at < '<fin del rollout>';`, para que se regenere
+todo PDF que un pod viejo haya impreso con la plantilla anterior (§5.5). La alternativa es desplegar esta versión con `Recreate`.
 
 ## 8. Lo que queda al builder
 

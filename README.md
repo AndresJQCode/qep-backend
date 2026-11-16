@@ -3201,6 +3201,16 @@ imprime ninguna sección.
   que salieron; cambiarlas regenera el PDF en el siguiente export. Una fila sin fingerprint (anterior a la columna) se regenera.
 - **Origen Botánico** (`slug = 'origen-botanico'`) conserva por la migración `AddPdfSections` el aviso de pago y el proceso de
   entrega que antes estaban fijos en la plantilla para todos los tenants; los demás tenants dejaron de imprimirlos.
+- **Despliegue: al terminar el rollout se vence el caché una vez.** Un pod viejo no conoce `content_fingerprint`: si regenera el PDF
+  de una cotización durante el rollout, lo imprime con la plantilla vieja (el aviso de pago y el proceso de entrega de Origen
+  Botánico para todos los tenants) y deja en la fila el fingerprint que había escrito un pod nuevo, así que los pods nuevos siguen
+  sirviendo ese PDF después del rollout. Cuando ya no quede ningún pod viejo, corre una vez:
+
+  ```sql
+  UPDATE quotations.quotation_pdfs SET content_fingerprint = NULL WHERE generated_at < '<fin del rollout>';
+  ```
+
+  La alternativa es desplegar esta versión con `Recreate` (sin pods viejos y nuevos a la vez).
 
 ### Integraciones (conexiones del tenant)
 
