@@ -64,8 +64,6 @@ public static class MultiReplicaInventory
     public static readonly IReadOnlyList<WorkerEntry> Workers =
     [
         // --- Claimed: FOR UPDATE SKIP LOCKED o lease. ---
-        new("Modules.Support.Infrastructure.SupportAutoCloseWorker", WorkerClassification.Noisy,
-            "Modules/Support/Modules.Support.Application/AutoClose/SupportAutoCloser.cs — relee el ticket y cierra con su Version (token de concurrencia): dos réplicas en el mismo tick, la segunda pierde con RequestConcurrencyException y salta el ticket; TicketClosed va en la misma transacción"),
         new("Modules.Support.Infrastructure.SupportSurveyWorker", WorkerClassification.Claimed,
             "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportSurveyRepository.cs:16-38 — FOR UPDATE SKIP LOCKED + locked_until de 2 minutos confirmado antes de enviar y renovado por encuesta (RenewClaimAsync); el envío es idempotente por ClientId (el id de la encuesta). Las respuestas por WhatsApp (SupportSurveyAnswers) toman la fila con FOR UPDATE (LockAsync, línea 53) y el mensaje que pide el comentario es idempotente por un ClientId fijo por encuesta"),
         new("Modules.Tenancy.Infrastructure.Messaging.OutboxPublisherWorker", WorkerClassification.Claimed,
@@ -140,6 +138,8 @@ public static class MultiReplicaInventory
             "Modules/Support/Modules.Support.Infrastructure/SupportThreadFollowWorker.cs:9-13 — idempotente por índices (IX_ticket_messages_ticket_message, PK_unclassified_messages); el segundo pod choca y no duplica"),
 
         // --- Noisy: el segundo choca con el inbox o con Version y sólo deja log o un tick perdido. ---
+        new("Modules.Support.Infrastructure.SupportAutoCloseWorker", WorkerClassification.Noisy,
+            "Modules/Support/Modules.Support.Application/AutoClose/SupportAutoCloser.cs — relee el ticket y cierra con su Version (token de concurrencia): dos réplicas en el mismo tick, la segunda pierde con RequestConcurrencyException y salta el ticket; TicketClosed va en la misma transacción"),
         new("Modules.Audit.Infrastructure.Messaging.AuditProjectionWorker", WorkerClassification.Noisy,
             "Modules/Audit/Modules.Audit.Infrastructure/Messaging/AuditProjectionWorker.cs:59 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
         new("Modules.Storage.Infrastructure.PaymentProofs.PaymentProofMoveWorker", WorkerClassification.Noisy,
