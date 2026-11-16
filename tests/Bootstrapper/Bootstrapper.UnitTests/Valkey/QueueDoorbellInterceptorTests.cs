@@ -22,6 +22,7 @@ public sealed class QueueDoorbellInterceptorTests(DoorbellDatabase database) : I
     [InlineData("messaging.message_media", DoorbellQueues.Media)]
     [InlineData("messaging.scheduled_messages", DoorbellQueues.Scheduled)]
     [InlineData("quotations.export_jobs", DoorbellQueues.Export)]
+    [InlineData("support.ticket_surveys", DoorbellQueues.SupportSurvey)]
     public async Task InsertIntoEachDoorbellTableRingsItsQueue(string table, string queue)
     {
         var doorbell = new RecordingDoorbell();

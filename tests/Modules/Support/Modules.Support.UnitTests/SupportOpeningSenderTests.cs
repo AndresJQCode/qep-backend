@@ -347,6 +347,9 @@ public sealed class SupportOpeningSenderTests
             Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) =>
             throw new NotSupportedException("A ticket created in memory carries its Created event.");
 
+        public Task<IReadOnlyList<SupportTicketSurvey>> ListSurveysAsync(
+            Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<SupportTicketPage> ListAsync(SupportTicketFilter filter, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

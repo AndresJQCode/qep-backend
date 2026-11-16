@@ -149,7 +149,8 @@ public sealed class SupportTicketDtoComposer(
                 .Select(item => new SupportLegalAcceptanceDto(item.Kind.ToString(), item.Version, item.AcceptedAt, item.VisitorIp))
                 .ToList(),
             // El PIN sólo lo pone el alta anónima, en su 201 (plan G3); toda otra lectura lo deja en null.
-            IssuedPin: null);
+            IssuedPin: null,
+            Surveys: (await tickets.ListSurveysAsync(ticket.TenantId, ticket.Id, cancellationToken)).Select(ToSurveyDto).ToList());
     }
 
     // Plan F21: sin cliente y con documento en la foto, los clientes con ese documento (si customers está prendido): al radicar no se
@@ -178,6 +179,18 @@ public sealed class SupportTicketDtoComposer(
             .Select(id => new SupportCustomerCandidateDto(id, found[id].Name, found[id].IsActive))
             .ToList();
     }
+
+    private static SupportSurveyDto ToSurveyDto(SupportTicketSurvey survey) => new(
+        survey.ResolutionNumber,
+        survey.Status.ToString(),
+        survey.Channel?.ToString(),
+        survey.ReasonCode,
+        survey.SentAt,
+        survey.Rating?.ToString(),
+        survey.Comment,
+        survey.AnsweredAt,
+        survey.AnsweredVia?.ToString(),
+        survey.PromptSentAt is not null);
 
     /// <summary>Una respuesta como la dibujan el detalle y el resultado de responder. Fase 4b: el firmante del documento sale con el nombre
     /// que imprimió el PDF, no con el que tenga hoy.</summary>

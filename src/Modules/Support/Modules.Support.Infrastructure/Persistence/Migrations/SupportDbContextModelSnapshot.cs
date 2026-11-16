@@ -534,6 +534,12 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.Property<int>("AutoCloseBusinessDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(5)
+                        .HasColumnName("auto_close_business_days");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -553,6 +559,12 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(1L)
                         .HasColumnName("next_ticket_number");
 
+                    b.Property<bool>("SurveyEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("survey_enabled");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -568,6 +580,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_settings", "support", t =>
                         {
+                            t.HasCheckConstraint("CK_tenant_settings_auto_close", "auto_close_business_days BETWEEN 1 AND 30");
+
                             t.HasCheckConstraint("CK_tenant_settings_due_soon", "due_soon_business_days BETWEEN 0 AND 30");
                         });
                 });
@@ -1218,6 +1232,154 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketSurvey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("AnsweredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("answered_at");
+
+                    b.Property<string>("AnsweredVia")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("answered_via");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("Channel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("channel");
+
+                    b.Property<string>("Comment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("comment");
+
+                    b.Property<Guid?>("CommentMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("comment_message_id");
+
+                    b.Property<DateTimeOffset?>("CommentUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("comment_until");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<string>("PromptFailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("prompt_failure_code");
+
+                    b.Property<Guid?>("PromptMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("prompt_message_id");
+
+                    b.Property<DateTimeOffset?>("PromptSentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("prompt_sent_at");
+
+                    b.Property<string>("Rating")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("rating");
+
+                    b.Property<Guid?>("RatingMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("rating_message_id");
+
+                    b.Property<string>("ReasonCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("reason_code");
+
+                    b.Property<int>("ResolutionNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("resolution_number");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.Property<byte[]>("TokenHash")
+                        .HasColumnType("bytea")
+                        .HasColumnName("token_hash");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId")
+                        .HasDatabaseName("IX_ticket_surveys_message")
+                        .HasFilter("message_id IS NOT NULL");
+
+                    b.HasIndex("NextAttemptAt")
+                        .HasDatabaseName("IX_ticket_surveys_pending")
+                        .HasFilter("status = 'Pending'");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ticket_surveys_token")
+                        .HasFilter("token_hash IS NOT NULL");
+
+                    b.HasIndex("TenantId", "TicketId")
+                        .HasDatabaseName("IX_ticket_surveys_tenant_ticket");
+
+                    b.HasIndex("TicketId", "ResolutionNumber")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ticket_surveys_ticket_resolution");
+
+                    b.ToTable("ticket_surveys", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_surveys_answered_via", "answered_via IS NULL OR answered_via IN ('WhatsApp','Email','Portal')");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_channel", "channel IS NULL OR channel IN ('WhatsApp','Email','Portal')");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_comment", "comment IS NULL OR char_length(comment) <= 1000");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_rating", "rating IS NULL OR rating IN ('Good','Regular','Bad')");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_sent_channel", "status <> 'Sent' OR channel IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_status", "status IN ('Pending','Sent','Skipped','Failed')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketType", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1497,9 +1659,20 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketSurvey", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicket", null)
+                        .WithMany("Surveys")
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTicket", b =>
                 {
                     b.Navigation("Events");
+
+                    b.Navigation("Surveys");
                 });
 
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketNote", b =>

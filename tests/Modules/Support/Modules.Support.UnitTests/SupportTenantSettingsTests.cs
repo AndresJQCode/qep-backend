@@ -124,4 +124,42 @@ public sealed class SupportTenantSettingsTests
         Assert.Throws<ArgumentException>(() => SupportFormalNextStep.Normalize("Con un \u001b escape"));
         Assert.Equal("Paso uno.\r\n\tPaso dos.", settings.FormalNextStep);
     }
+
+    // Fase 4b (H14, owner 2026-11-16, Q-19 y Q-20): la encuesta nace apagada; el cierre automático va de 1 a 30 días hábiles, 5 por
+    // defecto, y nunca se apaga.
+    [Fact]
+    public void AutoCloseIsBetween1And30AndTheSurveyIsOffByDefault()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+
+        Assert.False(settings.SurveyEnabled);
+        Assert.Equal(5, settings.AutoCloseBusinessDays);
+        Assert.Equal((1, 30, 5), (SupportTenantSettings.MinAutoCloseBusinessDays, SupportTenantSettings.MaxAutoCloseBusinessDays,
+            SupportTenantSettings.DefaultAutoCloseBusinessDays));
+        Assert.Throws<ArgumentOutOfRangeException>(() => settings.ChangeSurvey(true, 0, Now.AddHours(1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => settings.ChangeSurvey(true, 31, Now.AddHours(1)));
+
+        settings.ChangeSurvey(false, 5, Now.AddHours(1));
+        Assert.Equal(1L, settings.Version);
+        settings.ChangeSurvey(true, 30, Now.AddHours(2));
+        Assert.Equal(
+            (true, 30, 2L, Now.AddHours(2)), (settings.SurveyEnabled, settings.AutoCloseBusinessDays, settings.Version, settings.UpdatedAt));
+    }
+
+    [Fact]
+    public void TheSettingsValidatorRequiresTheSurveyToggleAndAutoCloseIn1To30()
+    {
+        static IEnumerable<string> Errors(bool? survey, int? autoClose) =>
+            new Modules.Support.Application.UpdateSupportSettingsValidator()
+                .Validate(Modules.Support.Application.UpdateSupportSettingsCommand.From(
+                    TenantId, new Modules.Support.Application.UpdateSupportSettingsRequest(3, null, survey, autoClose), 1))
+                .Errors.Select(error => error.PropertyName);
+
+        Assert.Empty(Errors(true, 1));
+        Assert.Empty(Errors(false, 30));
+        Assert.Equal(["SurveyEnabled"], Errors(null, 5));
+        Assert.Equal(["AutoCloseBusinessDays"], Errors(true, null));
+        Assert.Equal(["AutoCloseBusinessDays"], Errors(true, 0));
+        Assert.Equal(["AutoCloseBusinessDays"], Errors(true, 31));
+    }
 }

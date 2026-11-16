@@ -31,6 +31,7 @@ public sealed partial class QueueDoorbellInterceptor(IQueueDoorbell doorbell) : 
         ["messaging.message_media"] = DoorbellQueues.Media,
         ["messaging.scheduled_messages"] = DoorbellQueues.Scheduled,
         ["quotations.export_jobs"] = DoorbellQueues.Export,
+        ["support.ticket_surveys"] = DoorbellQueues.SupportSurvey,
     }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     // Las colas pendientes de cada DbContext con transacción abierta; se van con el contexto.

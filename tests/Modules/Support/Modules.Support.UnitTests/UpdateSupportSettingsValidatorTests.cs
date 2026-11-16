@@ -10,7 +10,7 @@ public sealed class UpdateSupportSettingsValidatorTests
 
     private static IEnumerable<string> ErrorsOf(string? nextStep) =>
         new UpdateSupportSettingsValidator()
-            .Validate(UpdateSupportSettingsCommand.From(Tenant, new UpdateSupportSettingsRequest(3, nextStep), 1))
+            .Validate(UpdateSupportSettingsCommand.From(Tenant, new UpdateSupportSettingsRequest(3, nextStep, false, 5), 1))
             .Errors
             .Select(error => error.PropertyName);
 
@@ -32,5 +32,5 @@ public sealed class UpdateSupportSettingsValidatorTests
     public void TheRequestCarriesTheNextStepToTheCommand() =>
         Assert.Equal(
             "Paso",
-            UpdateSupportSettingsCommand.From(Tenant, new UpdateSupportSettingsRequest(3, "Paso"), 1).FormalNextStep);
+            UpdateSupportSettingsCommand.From(Tenant, new UpdateSupportSettingsRequest(3, "Paso", false, 5), 1).FormalNextStep);
 }

@@ -20,6 +20,8 @@ public sealed class SupportTicket
 
     private readonly List<SupportTicketEvent> events = [];
 
+    private readonly List<SupportTicketSurvey> surveys = [];
+
     // EF Core materializa por acá; CreateManual, CreateFromConversation y CreateFromPublicForm son los únicos puntos de entrada de
     // código.
     private SupportTicket()
@@ -132,6 +134,10 @@ public sealed class SupportTicket
     /// <summary>Los eventos de esta instancia: al crear, el <see cref="SupportTicketEventKind.Created"/>; cargado de la base, sólo
     /// los que se agreguen después (el repositorio no los carga).</summary>
     public IReadOnlyList<SupportTicketEvent> Events => events;
+
+    /// <summary>Fase 4b (H15): las encuestas que pidió esta instancia al resolver. Como <see cref="Events"/>, cargado de la base trae sólo
+    /// las nuevas: el repositorio no las carga (las lee <c>ListSurveysAsync</c>).</summary>
+    public IReadOnlyList<SupportTicketSurvey> Surveys => surveys;
 
     public DateTimeOffset CreatedAt { get; private set; }
 
@@ -356,6 +362,10 @@ public sealed class SupportTicket
         {
             ResolutionCount++;
             ResolvedAt = now;
+
+            // Fase 4b (H15, owner 2026-11-16, Q-9): todo camino a Resuelto pide la encuesta de este ciclo, aunque el tenant la tenga
+            // apagada: el worker la salta con survey_disabled. Así nadie tiene que acordarse de pedirla.
+            surveys.Add(SupportTicketSurvey.Request(TenantId, Id, ResolutionCount, now));
         }
         else if (target is SupportTicketStatus.Closed)
         {

@@ -25,9 +25,18 @@ public sealed record SupportTicketTypeDto(
 
 /// <summary>El umbral de «por vencer» del tenant [owner 2026-11-14]. Viaja con su rango (<c>Min</c> y <c>Max</c>) para que el
 /// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3. <c>FormalNextStep</c> (fase 4b, H6) es
-/// el «siguiente paso» del tenant para el PDF de la respuesta formal, null sin texto.</summary>
+/// el «siguiente paso» del tenant para el PDF de la respuesta formal, null sin texto. <c>SurveyEnabled</c> y <c>AutoCloseBusinessDays</c>
+/// (fase 4b, H14) viajan con el rango del cierre automático, por la misma razón que el umbral.</summary>
 public sealed record SupportSettingsDto(
-    int DueSoonBusinessDays, int MinDueSoonBusinessDays, int MaxDueSoonBusinessDays, long Version, string? FormalNextStep);
+    int DueSoonBusinessDays,
+    int MinDueSoonBusinessDays,
+    int MaxDueSoonBusinessDays,
+    long Version,
+    string? FormalNextStep,
+    bool SurveyEnabled,
+    int AutoCloseBusinessDays,
+    int MinAutoCloseBusinessDays,
+    int MaxAutoCloseBusinessDays);
 
 /// <summary>
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
@@ -117,7 +126,8 @@ public sealed record SupportTicketListItemDto(
 /// <summary>El detalle del ticket. <c>AllowedTransitions</c> sale de la máquina de estados del dominio: el selector de estado no la
 /// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones. <c>IssuedPin</c> (fase 4a, plan G3) trae el PIN de consulta sólo
 /// en el <c>201</c> del alta manual anónima, para que el asesor se lo dicte a quien llamó o vino en persona: ese ticket no tiene a dónde
-/// recibirlo. En toda otra respuesta es <c>null</c>.</summary>
+/// recibirlo. En toda otra respuesta es <c>null</c>. <c>Surveys</c> (fase 4b, H15) son las encuestas de satisfacción, una por ciclo de
+/// resolución, en orden.</summary>
 public sealed record SupportTicketDetailDto(
     Guid Id,
     string Number,
@@ -149,7 +159,8 @@ public sealed record SupportTicketDetailDto(
     SupportConsultAccessDto? ConsultAccess,
     IReadOnlyList<SupportAttachmentDto> Attachments,
     IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances,
-    string? IssuedPin);
+    string? IssuedPin,
+    IReadOnlyList<SupportSurveyDto> Surveys);
 
 /// <summary>
 /// One legal acceptance of a public filing (spec 2026-11-15 §7, plan L19), in the order <c>PrivacyNotice</c>, <c>AnonymousNotice</c>,
@@ -200,6 +211,24 @@ public sealed record SupportConsultAccessDto(DateTimeOffset? LastSentAt, string?
 // Fase 2 (Mensajería): el detalle suma la conversación del ticket. FollowOffAt dibuja la franja «Este ticket no sigue el hilo desde …»
 // sin que la pantalla lea la traza; UnclassifiedCount es el aviso «hay mensajes sin clasificar» de esa conversación; Replies trae las
 // respuestas con su estado, porque una fallida se muestra igual que en el hilo.
+
+/// <summary>
+/// Fase 4b (H15 a H21): la encuesta de un ciclo de resolución, como la dibuja el detalle. <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>,
+/// <c>Skipped</c> («sin encuesta», con <c>ReasonCode</c>: <c>survey_disabled</c>, <c>template_not_approved</c>…), <c>Failed</c>;
+/// <c>Channel</c> y <c>AnsweredVia</c> ∈ <c>WhatsApp</c>, <c>Email</c>, <c>Portal</c>; <c>Rating</c> ∈ <c>Good</c>, <c>Regular</c>,
+/// <c>Bad</c>. <c>CommentPromptSent</c> dice si salió el mensaje que pide el comentario por WhatsApp: la pantalla no lee los mensajes.
+/// </summary>
+public sealed record SupportSurveyDto(
+    int ResolutionNumber,
+    string Status,
+    string? Channel,
+    string? ReasonCode,
+    DateTimeOffset? SentAt,
+    string? Rating,
+    string? Comment,
+    DateTimeOffset? AnsweredAt,
+    string? AnsweredVia,
+    bool CommentPromptSent);
 
 /// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>, <c>Portal</c>
 /// (fase 3, F12: publicada en la página de consulta); <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c>, <c>Portal</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
@@ -427,5 +456,9 @@ internal static class SupportDtoMapping
         SupportTenantSettings.MinDueSoonBusinessDays,
         SupportTenantSettings.MaxDueSoonBusinessDays,
         settings.Version,
-        settings.FormalNextStep);
+        settings.FormalNextStep,
+        settings.SurveyEnabled,
+        settings.AutoCloseBusinessDays,
+        SupportTenantSettings.MinAutoCloseBusinessDays,
+        SupportTenantSettings.MaxAutoCloseBusinessDays);
 }

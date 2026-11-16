@@ -32,7 +32,7 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
     {
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
 
-        var response = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 5 }, version: 1);
+        var response = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 5, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal((5, 0, 30, 2L), Settings(await JsonAsync(response)));
@@ -48,7 +48,7 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
     {
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
 
-        var response = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = value }, version: 1);
+        var response = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = value, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("validation.failed", await CodeOfAsync(response));
@@ -62,7 +62,7 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
     {
         var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
 
-        var response = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 0 }, version: 1);
+        var response = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 0, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal((0, 0, 30, 2L), Settings(await JsonAsync(response)));
@@ -73,9 +73,9 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
     {
         var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
 
-        var withoutVersion = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 5 }, version: null);
-        var saved = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 5 }, version: 1);
-        var stale = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 7 }, version: 1);
+        var withoutVersion = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 5, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: null);
+        var saved = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 5, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
+        var stale = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 7, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
 
         Assert.Equal(HttpStatusCode.PreconditionRequired, withoutVersion.StatusCode);
         Assert.Equal("precondition.if_match_required", await CodeOfAsync(withoutVersion));
@@ -91,7 +91,7 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
         var (_, client, tenant) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.Manage);
 
         var read = await client.GetAsync(SettingsUrl(tenant), Ct);
-        var write = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 5 }, version: 1);
+        var write = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 5, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
 
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         Assert.Equal((3, 0, 30, 1L), Settings(await JsonAsync(read)));
@@ -105,7 +105,7 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
         var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
 
         var read = await client.GetAsync(SettingsUrl(tenant), Ct);
-        var write = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 7 }, version: 1);
+        var write = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 7, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
 
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         Assert.Equal((3, 0, 30, 1L), Settings(await JsonAsync(read)));
@@ -123,7 +123,7 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
 
         var before = await JsonAsync(await client.GetAsync(SettingsUrl(tenant), Ct));
         var saved = await PutAsync(
-            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = $"  {text}  " }, version: 1);
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = $"  {text}  ", surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
 
         Assert.Equal(JsonValueKind.Null, before.GetProperty("formalNextStep").ValueKind);
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
@@ -146,7 +146,7 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
                 ("tenant", tenant)));
 
         var cleared = await PutAsync(
-            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = (string?)null }, version: 2);
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = (string?)null, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 2);
 
         Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
         Assert.Equal(JsonValueKind.Null, (await JsonAsync(cleared)).GetProperty("formalNextStep").ValueKind);
@@ -158,11 +158,58 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
         var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
 
         var response = await PutAsync(
-            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = new string('a', 2001) }, version: 1);
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = new string('a', 2001), surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 1);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal(["FormalNextStep"], await ErrorKeysAsync(response));
     }
+
+    // Fase 4b (H14, owner 2026-11-16, Q-19 y Q-20): la encuesta nace apagada y el cierre automático en 5 días hábiles, con su rango
+    // en la respuesta. La auditoría nombra los dos campos.
+    [Fact]
+    public async Task TheSurveyToggleAndTheAutoCloseDaysRoundTrip()
+    {
+        var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
+
+        var before = await JsonAsync(await client.GetAsync(SettingsUrl(tenant), Ct));
+        var saved = await PutAsync(
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, surveyEnabled = true, autoCloseBusinessDays = 8 }, version: 1);
+
+        Assert.Equal((false, 5, 1, 30), Survey(before));
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.Equal((true, 8, 1, 30), Survey(await JsonAsync(saved)));
+        Assert.Equal((true, 8, 1, 30), Survey(await JsonAsync(await client.GetAsync(SettingsUrl(tenant), Ct))));
+        Assert.Equal(
+            "[\"surveyEnabled\", \"autoCloseBusinessDays\"]",
+            await TextAsync(
+                factory,
+                "SELECT changed_fields::text FROM audit.entries WHERE action = @action AND resource_id = @tenant",
+                ("action", SupportAuditActions.SettingsUpdated),
+                ("tenant", tenant)));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    public async Task AutoCloseOutOfRangeIs422(int value)
+    {
+        var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+
+        var outOfRange = await PutAsync(
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, surveyEnabled = true, autoCloseBusinessDays = value }, version: 1);
+        var missing = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3 }, version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, outOfRange.StatusCode);
+        Assert.Equal(["AutoCloseBusinessDays"], await ErrorKeysAsync(outOfRange));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, missing.StatusCode);
+        Assert.Equal(["AutoCloseBusinessDays", "SurveyEnabled"], (await ErrorKeysAsync(missing)).Order(StringComparer.Ordinal));
+    }
+
+    private static (bool Enabled, int AutoClose, int Min, int Max) Survey(JsonElement body) => (
+        body.GetProperty("surveyEnabled").GetBoolean(),
+        body.GetProperty("autoCloseBusinessDays").GetInt32(),
+        body.GetProperty("minAutoCloseBusinessDays").GetInt32(),
+        body.GetProperty("maxAutoCloseBusinessDays").GetInt32());
 
     private static string SettingsUrl(string tenant) => $"{SupportUrl(tenant)}/settings";
 

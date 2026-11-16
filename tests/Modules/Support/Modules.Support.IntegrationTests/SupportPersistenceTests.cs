@@ -756,6 +756,63 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         return (reply, document);
     }
 
+    // Fase 4b (H15): resolver un ticket cargado guarda su encuesta en el mismo SaveChanges, con el número de resolución, y se lee por
+    // tenant y ticket.
+    [Fact]
+    public async Task ASurveyRoundTrips()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var actor = Guid.CreateVersion7();
+        var ticket = NewTicket(tenant, (await TypesAsync(factory, tenant))[0], 1, Now, actor);
+        await SaveAsync(factory, ticket);
+
+        await ResolveAsync(factory, tenant, ticket.Id, actor);
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
+        var survey = Assert.Single(await tickets.ListSurveysAsync(tenant, ticket.Id, Ct));
+        Assert.Equal((tenant, ticket.Id, 1, SupportSurveyStatus.Pending), (survey.TenantId, survey.TicketId, survey.ResolutionNumber, survey.Status));
+        Assert.Equal((Now.AddHours(1), 0), (survey.NextAttemptAt, survey.Attempts));
+        Assert.Null(survey.TokenHash);
+        Assert.Empty(await tickets.ListSurveysAsync(Guid.CreateVersion7(), ticket.Id, Ct));
+    }
+
+    // H15: la idempotencia por (ticket, número de resolución) la cierra el índice único, no la consulta.
+    [Fact]
+    public async Task TheResolutionUniqueIndexRejectsADuplicate()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var actor = Guid.CreateVersion7();
+        var ticket = NewTicket(tenant, (await TypesAsync(factory, tenant))[0], 1, Now, actor);
+        await SaveAsync(factory, ticket);
+        await ResolveAsync(factory, tenant, ticket.Id, actor);
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var insert = new NpgsqlCommand(
+            """
+            INSERT INTO support.ticket_surveys (id, tenant_id, ticket_id, resolution_number, status, attempts, next_attempt_at, created_at, updated_at)
+            SELECT gen_random_uuid(), tenant_id, ticket_id, resolution_number, status, attempts, next_attempt_at, created_at, updated_at
+            FROM support.ticket_surveys WHERE ticket_id = @id
+            """,
+            connection);
+        insert.Parameters.AddWithValue("id", ticket.Id.Value);
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => insert.ExecuteNonQueryAsync(Ct));
+
+        Assert.Equal(PostgresErrorCodes.UniqueViolation, exception.SqlState);
+        Assert.Equal("UX_ticket_surveys_ticket_resolution", exception.ConstraintName);
+    }
+
+    private static async Task ResolveAsync(QepApiFactory factory, Guid tenant, SupportTicketId ticketId, Guid actor)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().FindAsync(tenant, ticketId, Ct);
+        loaded!.ChangeStatus(SupportTicketStatus.Resolved, actor, Now.AddHours(1), Clock);
+        await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
     // Revisión final m2: SupportUserReferenceProbe busca por membresía sola, sin tenant, en las dos columnas.
     [Theory]
     [InlineData("IX_tickets_assignee", "tickets", "(assignee_member_id)")]

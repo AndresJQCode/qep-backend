@@ -1,3 +1,5 @@
+using Modules.Support.Domain;
+
 namespace Modules.Support.Application;
 
 /// <summary>El estado de la conversación de un ticket para decidir cómo responderle (plan E13): el canal por nombre, si el contacto
@@ -170,6 +172,10 @@ public static class SupportChannelReasons
     /// (<c>formal.blockedReason</c>).</summary>
     public const string SignerRequired = "signer_required";
 
+    /// <summary>Fase 4b (H14, H15, Q-9): el tenant tenía la encuesta apagada cuando el worker la procesó. Motivo de una encuesta sin enviar
+    /// (<c>ticket_surveys.reason_code</c>); esa encuesta no se responde.</summary>
+    public const string SurveyDisabled = SupportTicketSurvey.DisabledReasonCode;
+
     /// <summary>Todos los códigos de esta lista.</summary>
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -196,6 +202,7 @@ public static class SupportChannelReasons
         SendPending,
         OrganizationRequired,
         SignerRequired,
+        SurveyDisabled,
     };
 }
 

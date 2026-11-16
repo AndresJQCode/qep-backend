@@ -79,7 +79,7 @@ public sealed class SupportInboxApiTests(ClockedSupportHost host) : IClassFixtur
     {
         var scenario = await StartAsync(await host.StartTestAsync());
         var ticket = await scenario.CreateAsync();
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(scenario.Client, $"{scenario.Url}/settings", new { dueSoonBusinessDays = 5 }, 1)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(scenario.Client, $"{scenario.Url}/settings", new { dueSoonBusinessDays = 5, surveyEnabled = false, autoCloseBusinessDays = 5 }, 1)).StatusCode);
         host.Clock.UtcNow = At(12, 1);
 
         var page = await ListAsync(scenario, "due=dueSoon");
@@ -96,7 +96,7 @@ public sealed class SupportInboxApiTests(ClockedSupportHost host) : IClassFixtur
     {
         var scenario = await StartAsync(await host.StartTestAsync());
         var ticket = await scenario.CreateAsync();
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(scenario.Client, $"{scenario.Url}/settings", new { dueSoonBusinessDays = 0 }, 1)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(scenario.Client, $"{scenario.Url}/settings", new { dueSoonBusinessDays = 0, surveyEnabled = false, autoCloseBusinessDays = 5 }, 1)).StatusCode);
         host.Clock.UtcNow = At(12, 7);
 
         var page = await ListAsync(scenario, "due=dueSoon");

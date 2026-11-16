@@ -118,6 +118,17 @@ public static class SupportErrorCodes
     /// <c>clientId</c>.</summary>
     public const string ReplySendFailed = "support.reply.send_failed";
 
+    // Fase 4b, encuesta de satisfacción (H19 a H21).
+
+    /// <summary>H19: el token del enlace no es de ninguna encuesta del tenant (404, el mismo cuerpo para uno mal formado).</summary>
+    public const string SurveyNotFound = "support.survey.not_found";
+
+    /// <summary>H21: la encuesta ya no se responde (sin procesar, apagada, o el ticket se reabrió) (422).</summary>
+    public const string SurveyClosed = "support.survey.closed";
+
+    /// <summary>H21: la encuesta ya tiene calificación; la primera gana (422).</summary>
+    public const string SurveyAlreadyAnswered = "support.survey.already_answered";
+
     // Fase 3, formulario público (spec §9, plan F1 a F37). Los de support.public.* los ve la página pública; el resto, la consola.
 
     /// <summary>Slug desconocido, tenant inactivo, módulo apagado o formulario sin publicar: el mismo 404 (plan F3).</summary>
