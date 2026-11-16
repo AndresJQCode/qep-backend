@@ -39,6 +39,20 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
         AssertAnnounced(Publisher.Of(scenario.TenantId), Id(ticket), Id(ticket));
     }
 
+    // Fase 4a (plan G1): sin a dónde mandar la apertura, un solo aviso.
+    [Fact]
+    public async Task CreatingAnAnonymousManualTicketAnnouncesIt()
+    {
+        var scenario = await StartAsync(Factory);
+        var body = Body(await scenario.TypeIdAsync("Queja"), replyChannel: "Portal");
+        body["requester"] = null;
+        body["anonymous"] = true;
+
+        var ticket = await scenario.CreateAsync(body);
+
+        AssertAnnounced(Publisher.Of(scenario.TenantId), Id(ticket));
+    }
+
     [Fact]
     public async Task CreatingFromAConversationAnnouncesIt()
     {

@@ -119,7 +119,9 @@ public sealed class SupportTicket
 
     public long Version { get; private set; }
 
-    /// <summary>Plan D6: un ticket manual necesita cliente o solicitante con nombre.</summary>
+    /// <summary>Plan D6: un ticket manual necesita cliente o solicitante con nombre. Fase 4a (plan G2): con
+    /// <paramref name="anonymous"/> es el anónimo del alta manual, como el del formulario público: sin cliente ni foto del solicitante,
+    /// y se responde sólo por <see cref="SupportReplyChannel.Portal"/>. El validador lo ataja antes; el dominio no confía.</summary>
     public static SupportTicket CreateManual(
         SupportTicketId id,
         Guid tenantId,
@@ -134,10 +136,33 @@ public sealed class SupportTicket
         Guid? assigneeMemberId,
         Guid actorMemberId,
         DateTimeOffset now,
-        SupportClockContext clock) =>
-        Start(
-            id, tenantId, number, type, subject, description, SupportTicketIntake.Manual, medium, replyChannel, conversation: null,
-            customerId, requester, assigneeMemberId, actorMemberId, now, clock);
+        SupportClockContext clock,
+        bool anonymous = false)
+    {
+        if (!anonymous)
+        {
+            return Start(
+                id, tenantId, number, type, subject, description, SupportTicketIntake.Manual, medium, replyChannel, conversation: null,
+                customerId, requester, assigneeMemberId, actorMemberId, now, clock);
+        }
+
+        if (customerId is not null)
+        {
+            throw new ArgumentException("An anonymous ticket cannot be linked to a customer.", nameof(customerId));
+        }
+
+        if (requester is not null)
+        {
+            throw new ArgumentException("An anonymous ticket has no requester.", nameof(requester));
+        }
+
+        // El canal se fija: un anónimo no tiene otro (spec §9.4).
+        var ticket = Start(
+            id, tenantId, number, type, subject, description, SupportTicketIntake.Manual, medium, SupportReplyChannel.Portal,
+            conversation: null, customerId: null, requester: null, assigneeMemberId, actorMemberId, now, clock, anonymous: true);
+        ticket.IsAnonymous = true;
+        return ticket;
+    }
 
     /// <summary>Spec §8.1: el ticket que abre un asesor desde una conversación. Entra por
     /// <see cref="SupportTicketIntake.Conversation"/>, se responde por el hilo y lo sigue desde ya. La regla del solicitante es la
@@ -209,7 +234,7 @@ public sealed class SupportTicket
     }
 
     // El alta común de las tres entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
-    // constructor vacío. Sin actor sólo entra el formulario público.
+    // constructor vacío. Sin actor sólo entra el formulario público. Con anonymous no se exige solicitante con nombre.
     private static SupportTicket Start(
         SupportTicketId id,
         Guid tenantId,
@@ -226,14 +251,16 @@ public sealed class SupportTicket
         Guid? assigneeMemberId,
         Guid? actorMemberId,
         DateTimeOffset now,
-        SupportClockContext clock)
+        SupportClockContext clock,
+        bool anonymous = false)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
         EnsureSameTenant(tenantId, type);
         conversation?.EnsureValid();
-        if (intake is not SupportTicketIntake.PublicForm && customerId is null && requester is not { HasName: true })
+        // Un anónimo (formulario público o alta manual, plan G2) no tiene a quién nombrar.
+        if (intake is not SupportTicketIntake.PublicForm && !anonymous && customerId is null && requester is not { HasName: true })
         {
             throw RequesterRequired();
         }

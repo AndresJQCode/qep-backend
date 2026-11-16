@@ -119,7 +119,9 @@ public sealed class SupportTicketDtoComposer(
                 : null,
             (await attachments.ListAsync(ticket.TenantId, ticket.Id, cancellationToken))
                 .Select(item => new SupportAttachmentDto(item.Id, item.FileName, item.MimeType, item.SizeBytes))
-                .ToList());
+                .ToList(),
+            // El PIN sólo lo pone el alta anónima, en su 201 (plan G3); toda otra lectura lo deja en null.
+            IssuedPin: null);
     }
 
     // Plan F21: sin cliente y con documento en la foto, los clientes con ese documento (si customers está prendido): al radicar no se

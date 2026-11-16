@@ -117,6 +117,47 @@ public sealed class SupportTicketTests
         Assert.Equal(SupportErrorCodes.RequesterRequired, nameless.Code);
     }
 
+    // Fase 4a (plan G2): el alta manual anónima no tiene cliente ni foto y se responde por la página de consulta.
+    [Fact]
+    public void AManualAnonymousTicketHasNoCustomerNoRequesterAndRepliesByPortal()
+    {
+        var ticket = SupportTicket.CreateManual(
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.InPerson,
+            SupportReplyChannel.Portal, customerId: null, requester: null, assigneeMemberId: null, Actor, Received, Clock,
+            anonymous: true);
+
+        Assert.True(ticket.IsAnonymous);
+        Assert.Equal(SupportReplyChannel.Portal, ticket.ReplyChannel);
+        Assert.Equal(SupportTicketIntake.Manual, ticket.Intake);
+        Assert.Equal(ManualIntakeMedium.InPerson, ticket.ManualMedium);
+        Assert.Null(ticket.CustomerId);
+        Assert.Null(ticket.Requester);
+        var created = Assert.Single(ticket.Events);
+        Assert.Equal(SupportTicketEventKind.Created, created.Kind);
+        Assert.Equal(Actor, created.ActorMemberId);
+    }
+
+    [Fact]
+    public void AManualAnonymousTicketRejectsACustomerOrARequester()
+    {
+        Assert.Throws<ArgumentException>(() => SupportTicket.CreateManual(
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone,
+            SupportReplyChannel.Portal, Customer, null, null, Actor, Received, Clock, anonymous: true));
+        Assert.Throws<ArgumentException>(() => SupportTicket.CreateManual(
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone,
+            SupportReplyChannel.Portal, null, Person, null, Actor, Received, Clock, anonymous: true));
+    }
+
+    [Fact]
+    public void ANamedManualTicketStillNeedsARequesterName()
+    {
+        var missing = Assert.Throws<SupportDomainException>(() => SupportTicket.CreateManual(
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone,
+            SupportReplyChannel.Email, null, null, null, Actor, Received, Clock, anonymous: false));
+
+        Assert.Equal(SupportErrorCodes.RequesterRequired, missing.Code);
+    }
+
     [Fact]
     public void ACustomerAloneIsEnough()
     {

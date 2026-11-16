@@ -84,7 +84,9 @@ public sealed record SupportTicketListItemDto(
     int? BusinessDaysLeft);
 
 /// <summary>El detalle del ticket. <c>AllowedTransitions</c> sale de la máquina de estados del dominio: el selector de estado no la
-/// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones.</summary>
+/// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones. <c>IssuedPin</c> (fase 4a, plan G3) trae el PIN de consulta sólo
+/// en el <c>201</c> del alta manual anónima, para que el asesor se lo dicte a quien llamó o vino en persona: ese ticket no tiene a dónde
+/// recibirlo. En toda otra respuesta es <c>null</c>.</summary>
 public sealed record SupportTicketDetailDto(
     Guid Id,
     string Number,
@@ -113,7 +115,8 @@ public sealed record SupportTicketDetailDto(
     bool IsAnonymous,
     IReadOnlyList<SupportCustomerCandidateDto> CustomerCandidates,
     SupportConsultAccessDto? ConsultAccess,
-    IReadOnlyList<SupportAttachmentDto> Attachments);
+    IReadOnlyList<SupportAttachmentDto> Attachments,
+    string? IssuedPin);
 
 /// <summary>Un adjunto del formulario público (plan F37), en el orden en que se adjuntó. El archivo se baja con
 /// <c>GET …/tickets/{id}/attachments/{attachmentId}/download</c>: la pantalla no necesita <c>storage.file.read</c>. Una lista vacía
