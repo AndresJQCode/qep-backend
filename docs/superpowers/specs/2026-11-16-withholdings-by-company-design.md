@@ -58,9 +58,21 @@ company from the billing account, so nothing is computed.
   nullable columns, PDF/conversion changes, for documents that are blocked from being created without an
   account anyway.
 
+## Decided while planning (2026-11-16)
+
+The domain reads the company's country and municipality off `QuotationBillingAccount` in 20+ places
+(`Quotation.cs`, `Order.cs`, `WithholdingCandidates`, `MunicipalContexts`, `OrderEdits`, the composers). Threading a
+separate company context through all of them is a refactor the owner did not ask for. So a company-only preview
+builds a **pending** billing account in memory: `QuotationBillingAccount { IsPending = true }` with the company's
+`CompanyId`, `Country`, `CityId`, the tenant default `Currency`, and empty `BankName` / `AccountNumber`.
+
+- It exists only inside a preview handler; previews never save, and no write command accepts `billingCompanyId`.
+- It is never persisted (`IsPending` is ignored by EF) and never answered: the billing block of the response is
+  `null` when the account is pending.
+- Readiness rules treat it as absent: `CanBeConvertedToOrder` (and any other «has an account» check the response
+  exposes) answers what it answers with `billingAccount: null`.
+
 ## Left to the builder
 
-- How the company-only context is threaded (e.g. a company-only billing context from `IQuotationCompanyLookup`
-  that feeds `MunicipalContexts` / `OrderCustomerWithholdings` / the composers), as long as the response's
-  `billingAccount` is `null` and no domain object carries a fake account.
+- The exact threading of `billingCompanyId` from the request to the resolver in each of the four paths.
 - Tests: TDD, RED first. Integration tests filtered by name while iterating (workspace rules).
