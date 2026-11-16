@@ -18,7 +18,8 @@ internal sealed class PdfContentStore(QuotationsDbContext dbContext) : IPdfConte
         return new PdfContent(
             SectionOf(rows, PdfSectionKey.PaymentNotice),
             SectionOf(rows, PdfSectionKey.Terms),
-            SectionOf(rows, PdfSectionKey.DeliveryProcess));
+            SectionOf(rows, PdfSectionKey.DeliveryProcess),
+            PdfPaymentAccount.Empty);
     }
 
     // Un INSERT … ON CONFLICT por sección, y no filas seguidas por EF: dos primeros guardados a la vez chocarían en la PK con un
