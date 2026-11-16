@@ -37,12 +37,14 @@ public sealed class SupportFormalReplyTemplateDefinitionTests
     public void TheBaseBodyNeitherStartsNorEndsWithAVariable()
     {
         Assert.Equal(
-            "Hola {{nombre_contacto}}, te enviamos la respuesta formal a tu caso {{radicado}}: {{respuesta}}. Si tienes dudas, responde este mensaje.",
+            "Hola {{nombre_contacto}}, adjuntamos la respuesta formal a tu caso {{radicado}}. {{respuesta}} Si tienes dudas, responde este mensaje.",
             SupportFormalReplyTemplateDefinition.BaseBody);
         var body = SupportFormalReplyTemplateDefinition.BaseBody.Trim();
 
         Assert.DoesNotMatch(@"^\{\{[a-z0-9_]+\}\}", body);
         Assert.DoesNotMatch(@"\{\{[a-z0-9_]+\}\}[.!?]?$", body);
+        // Revisión del Bloque B: el texto del asesor suele terminar en punto; un signo pegado a {{respuesta}} daría «..».
+        Assert.DoesNotMatch(@"\{\{respuesta\}\}\p{P}", body);
         Assert.Equal(["nombre_contacto", "radicado", "respuesta"], TemplateComponentsBuilder.VariablesOf(body));
     }
 

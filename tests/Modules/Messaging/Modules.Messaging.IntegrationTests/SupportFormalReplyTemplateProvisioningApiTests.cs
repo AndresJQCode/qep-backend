@@ -79,7 +79,7 @@ public sealed class SupportFormalReplyTemplateProvisioningApiTests
 
     // El plan dice 409; el código de las plantillas del sistema responde 422 de dominio (MessagingDomainException), y se sigue el código.
     [Fact]
-    public async Task ASecondProvisionIs409()
+    public async Task ASecondProvisionIs422Exists()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);

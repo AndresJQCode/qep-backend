@@ -23,9 +23,10 @@ public static class SupportFormalReplyTemplateDefinition
     public const string Language = "es";
     public const string Category = "UTILITY";
 
-    /// <summary>No empieza ni termina con una variable: Meta rechaza un cuerpo así.</summary>
+    /// <summary>No empieza ni termina con una variable: Meta rechaza un cuerpo así. <c>{{respuesta}}</c> va como una oración propia,
+    /// entre un punto y un espacio: el texto del asesor suele terminar en punto, y un signo pegado a la variable daría «..».</summary>
     public const string BaseBody =
-        "Hola {{nombre_contacto}}, te enviamos la respuesta formal a tu caso {{radicado}}: {{respuesta}}. Si tienes dudas, responde este mensaje.";
+        "Hola {{nombre_contacto}}, adjuntamos la respuesta formal a tu caso {{radicado}}. {{respuesta}} Si tienes dudas, responde este mensaje.";
 
     public const string ExampleFileName = "respuesta-formal-ejemplo.pdf";
     public const string ExampleMimeType = "application/pdf";

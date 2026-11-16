@@ -870,8 +870,8 @@ public sealed class SupportReplyOutboundTests
         await AssertNothingWentOutAsync(f);
     }
 
-    // H10: un reintento con los mismos dos clientId devuelve lo que ya salió, aunque la ventana ya se haya cerrado; dos en vuelo, una
-    // sola llamada.
+    // H10: un reintento secuencial con los mismos dos clientId devuelve lo que ya salió, aunque la ventana ya se haya cerrado: una sola
+    // subida, un solo envío y una sola fila.
     [Fact]
     public async Task RetryingAFormalDocumentWithTheSameClientIdsSendsOnce()
     {
@@ -976,7 +976,7 @@ public sealed class SupportReplyOutboundTests
         var document = header.GetProperty("parameters")[0].GetProperty("document");
         Assert.Equal(("media.support", "Respuesta-SOP-000127.pdf"), (document.GetProperty("id").GetString(), document.GetProperty("filename").GetString()));
         Assert.Equal(
-            $"11|1|{f.MemberId}|Hola Ana Pérez, te enviamos la respuesta formal a tu caso SOP-000127: Revisamos tu caso. Si tienes dudas, responde este mensaje.|application/pdf|Respuesta-SOP-000127.pdf",
+            $"11|1|{f.MemberId}|Hola Ana Pérez, adjuntamos la respuesta formal a tu caso SOP-000127. Revisamos tu caso. Si tienes dudas, responde este mensaje.|application/pdf|Respuesta-SOP-000127.pdf",
             await ScalarAsync<string>(f.ConnectionString,
                 """
                 SELECT m.kind || '|' || m.status || '|' || m.sent_by_member_id || '|' || m.text || '|' || mm.mime_type || '|' || mm.file_name
@@ -1009,6 +1009,172 @@ public sealed class SupportReplyOutboundTests
         Assert.Equal(new SupportReplySendResult.Rejected("template_not_approved"), result);
         await AssertNothingWentOutAsync(f);
         Assert.Empty(f.Bucket.Objects);
+    }
+
+    // ---- Revisión del Bloque B: qué deja cada falla de la respuesta formal ----
+
+    /// <summary>Graph contesta la subida del PDF con un 400 que no es de credencial mientras <paramref name="uploadFails"/> sea verdadero,
+    /// y el envío como siempre.</summary>
+    private static void ScriptMediaUpload(MediaFixture f, Func<bool> uploadFails)
+    {
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.RespondWith("/111/media$", _ => uploadFails()
+            ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(100))
+            : FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"id":"media.support"}"""));
+        ScriptMetaOk(f.Factory.MetaHandler);
+    }
+
+    // La subida del PDF de la plantilla va antes de abrir la conversación y del reclamo: si falla no sale nada, no queda fila ni
+    // conversación nueva, y Soporte puede borrar su respuesta y reintentar (Rejected, no Failed).
+    [Fact]
+    public async Task AFormalTemplateWhoseUploadFailsIsRejectedWithoutARowNorAConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var connectionId = await ConnectionOfAsync(f);
+        await SeedApprovedFormalAsync(f.Host.Services, f.Tenant.TenantId, connectionId, f.MemberId);
+        ScriptMediaUpload(f, () => true);
+        var conversations = await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations");
+
+        var result = await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(
+            new SupportFormalTemplateSend(
+                f.Tenant.TenantId, null, connectionId, "573009998877", null, "Ana Pérez", Guid.CreateVersion7(), f.MemberId, "SOP-000127",
+                "Revisamos tu caso.", FormalPdf(), "Respuesta-SOP-000127.pdf"),
+            Ct));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("send_failed"), result);
+        Assert.Equal(conversations, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations WHERE wa_id = '573009998877'"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.Empty(Sends(f));
+        Assert.Empty(f.Bucket.Objects);
+    }
+
+    // Dentro de la ventana, la subida fallida entra a la tabla del envío: la fila queda Failed, y el reintento con los mismos clientId
+    // reutiliza ese mensaje en vez de crear otro.
+    [Fact]
+    public async Task AFormalDocumentWhoseUploadFailsLeavesAFailedRowThatTheRetryReuses()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var uploadFails = true;
+        ScriptMediaUpload(f, () => uploadFails);
+        var send = Document(f.Tenant, f.ConversationId, f.MemberId);
+
+        var failed = Assert.IsType<SupportReplySendResult.Failed>(
+            await WithOutboundAsync(f.Host.Services, outbound => outbound.SendThreadDocumentAsync(send, Ct)));
+        Assert.Equal("send_failed", failed.Code);
+        Assert.NotNull(failed.MessageId);
+        Assert.Equal("5|4", await ScalarAsync<string>(
+            f.ConnectionString, "SELECT kind || '|' || status FROM messaging.messages WHERE id = @id", ("id", failed.MessageId!.Value)));
+        Assert.Empty(Sends(f));
+
+        uploadFails = false;
+        var retried = Assert.IsType<SupportReplySendResult.Sent>(
+            await WithOutboundAsync(f.Host.Services, outbound => outbound.SendThreadDocumentAsync(send, Ct)));
+
+        Assert.Equal(failed.MessageId, retried.MessageId);
+        Assert.Equal(retried.MessageId, retried.DocumentMessageId);
+        Assert.Single(Sends(f));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.Equal(FormalPdf(), f.Bucket.Objects[$"messaging/{f.Tenant.TenantId}/{retried.MessageId}"].Bytes);
+    }
+
+    // Meta rechaza la plantilla formal: la fila queda Failed. El reintento con el mismo clientId vuelve a subir el PDF y sale sobre esa
+    // misma fila.
+    [Fact]
+    public async Task AFormalTemplateRetriedOverAFailedRowSendsOnThatRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var connectionId = await ConnectionOfAsync(f);
+        await SeedApprovedFormalAsync(f.Host.Services, f.Tenant.TenantId, connectionId, f.MemberId);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET last_inbound_at = now() - interval '25 hours'");
+        var metaRejects = true;
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/media$", HttpStatusCode.OK, """{"id":"media.support"}""");
+        f.Factory.MetaHandler.RespondWith("/111/messages$", _ => metaRejects
+            ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(132015))
+            : FakeMetaGraphHandler.Json(HttpStatusCode.OK,
+                """{"messaging_product":"whatsapp","contacts":[{"input":"573001234567","wa_id":"573001234567"}],"messages":[{"id":"wamid.support"}]}"""));
+        var send = new SupportFormalTemplateSend(
+            f.Tenant.TenantId, f.ConversationId, null, null, null, "Ana Pérez", Guid.CreateVersion7(), f.MemberId, "SOP-000127",
+            "Revisamos tu caso.", FormalPdf(), "Respuesta-SOP-000127.pdf");
+
+        var failed = Assert.IsType<SupportReplySendResult.Failed>(
+            await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(send, Ct)));
+        metaRejects = false;
+        var retried = Assert.IsType<SupportReplySendResult.Sent>(
+            await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(send, Ct)));
+
+        Assert.Equal("send_failed", failed.Code);
+        Assert.Equal(failed.MessageId, retried.MessageId);
+        Assert.Equal(2, Sends(f).Length);
+        Assert.Equal("11|1", await ScalarAsync<string>(
+            f.ConnectionString, "SELECT kind || '|' || status FROM messaging.messages WHERE id = @id", ("id", retried.MessageId)));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.Equal(FormalPdf(), f.Bucket.Objects[$"messaging/{f.Tenant.TenantId}/{retried.MessageId}"].Bytes);
+    }
+
+    // En Instagram el texto sale primero: si el archivo falla después, el resultado es Failed (el texto ya salió) y el reintento manda sólo
+    // el archivo.
+    [Fact]
+    public async Task AnInstagramFileFailingAfterTheTextIsFailedAndTheRetrySendsOnlyTheFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var bucket = new FakeMessagingBucket();
+        using var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.AddSingleton<IMessagingMediaStore>(bucket);
+            services.AddSingleton<IMessagingUploadStaging>(bucket);
+        }));
+        var tenant = await RegisterTenantAsync(host);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        await SeedInstagramConnectionAsync(host, tenant.TenantId, "Instagram Ventas", InstagramPayloads.DefaultAccountId);
+        factory.MetaHandler.Respond($@"^/v24\.0/{InstagramPayloads.DefaultUserId}\?", HttpStatusCode.OK,
+            """{"name":"Laura Pérez","username":"laura.perez","id":"1234567890123456"}""");
+        using (var anonymous = host.CreateClient())
+        {
+            await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Text("m1", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, "hola"));
+            await DrainDeliveriesAsync(host);
+        }
+
+        var sendPath = $"/v24.0/{InstagramPayloads.DefaultAccountId}/messages";
+        var answers = 0;
+        // La segunda llamada (el archivo del primer intento) falla; las demás salen.
+        factory.MetaHandler.RespondWith($"^{sendPath}$", _ => Interlocked.Increment(ref answers) == 2
+            ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(100))
+            : FakeMetaGraphHandler.Json(HttpStatusCode.OK,
+                $$"""{"recipient_id":"{{InstagramPayloads.DefaultUserId}}","message_id":"mid.support.{{answers}}"}"""));
+        var conversationId = await ScalarAsync<Guid>(connectionString, "SELECT id FROM messaging.conversations");
+        var memberId = await OwnerMembershipIdAsync(connectionString, tenant);
+        var send = Document(tenant, conversationId, memberId);
+
+        var failed = Assert.IsType<SupportReplySendResult.Failed>(
+            await WithOutboundAsync(host.Services, outbound => outbound.SendThreadDocumentAsync(send, Ct)));
+        var retried = Assert.IsType<SupportReplySendResult.Sent>(
+            await WithOutboundAsync(host.Services, outbound => outbound.SendThreadDocumentAsync(send, Ct)));
+
+        Assert.Equal("send_failed", failed.Code);
+        Assert.Equal(failed.MessageId, retried.DocumentMessageId);
+        var calls = factory.MetaHandler.Requests.Where(request => request.Uri!.AbsolutePath == sendPath && request.Method == HttpMethod.Post).ToArray();
+        Assert.Equal(3, calls.Length);
+        Assert.Single(calls, call => call.Body!.Contains("Te enviamos la respuesta formal.", StringComparison.Ordinal));
+        Assert.Contains("\"file\"", calls[2].Body, StringComparison.Ordinal);
+        Assert.Equal($"{send.ClientId}|1|{send.DocumentClientId}|1", await ScalarAsync<string>(connectionString,
+            """
+            SELECT t.client_id || '|' || t.status || '|' || d.client_id || '|' || d.status
+            FROM messaging.messages t, messaging.messages d WHERE t.id = @text AND d.id = @document
+            """,
+            ("text", retried.MessageId), ("document", retried.DocumentMessageId!.Value)));
     }
 
     private static SupportSurveyTemplateSend Survey(Fixture f, Guid? clientId = null) =>

@@ -466,7 +466,7 @@ body; the key is never `Quotations:Pdf:ApiKey`; migration additive; the inventor
 - Test: `$MU\SupportFormalReplyTemplateDefinitionTests.cs`, `$MU\SystemTemplateVariablesTests.cs`, `$MI\SupportFormalReplyTemplateProvisioningApiTests.cs`
 
 **Definition:** name by versions like `SupportReply`; `es`; `UTILITY`; header `DOCUMENT`; base body
-`"Hola {{nombre_contacto}}, te enviamos la respuesta formal a tu caso {{radicado}}: {{respuesta}}. Si tienes dudas, responde este mensaje."`
+`"Hola {{nombre_contacto}}, adjuntamos la respuesta formal a tu caso {{radicado}}. {{respuesta}} Si tienes dudas, responde este mensaje."`
 (never starts or ends with a variable); example file `respuesta-formal-ejemplo.pdf`. `IsAdoptable`: a `DOCUMENT` header, no buttons,
 variables from the list or `fullname`. The text is the tenant's to edit (Q-15).
 
