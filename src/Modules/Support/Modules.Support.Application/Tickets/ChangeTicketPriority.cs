@@ -28,7 +28,7 @@ public sealed class ChangeTicketPriorityValidator : AbstractValidator<ChangeTick
 {
     public ChangeTicketPriorityValidator()
     {
-        RuleFor(command => command.Priority).IsInEnum().WithMessage("Priority must be Low, Medium, High or Urgent.");
+        RuleFor(command => command.Priority).IsInEnum().WithMessage(SupportPriorityRules.Message);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }

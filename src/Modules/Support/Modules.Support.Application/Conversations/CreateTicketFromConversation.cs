@@ -8,12 +8,19 @@ namespace Modules.Support.Application;
 
 /// <summary>El cuerpo de <c>POST /conversations/{conversationId}/tickets</c>: el solicitante, el canal y la entrada salen de la
 /// conversación (plan E10), así que sólo viaja lo que el asesor elige. Todo anulable para que su ausencia sea un
-/// <c>validation.failed</c> con el campo.</summary>
+/// <c>validation.failed</c> con el campo; sin <c>Priority</c> el ticket nace en <c>Medium</c> (spec 2026-11-15 §5.3).</summary>
 public sealed record CreateTicketFromConversationRequest(
-    Guid? TicketTypeId, string? Subject, string? Description, Guid? AssigneeMemberId);
+    Guid? TicketTypeId, string? Subject, string? Description, Guid? AssigneeMemberId, string? Priority = null);
 
+/// <param name="Priority">El nombre exacto del cuerpo; <c>null</c> es <c>Medium</c>.</param>
 public sealed record CreateTicketFromConversationCommand(
-    Guid TenantId, Guid ConversationId, Guid TicketTypeId, string Subject, string Description, Guid? AssigneeMemberId)
+    Guid TenantId,
+    Guid ConversationId,
+    Guid TicketTypeId,
+    string Subject,
+    string Description,
+    Guid? AssigneeMemberId,
+    string? Priority = null)
     : ICommand<SupportTicketDetailDto>
 {
     public static CreateTicketFromConversationCommand From(
@@ -23,7 +30,8 @@ public sealed record CreateTicketFromConversationCommand(
         request.TicketTypeId ?? Guid.Empty,
         request.Subject ?? string.Empty,
         request.Description ?? string.Empty,
-        request.AssigneeMemberId);
+        request.AssigneeMemberId,
+        request.Priority);
 }
 
 /// <summary>Cubre las guardas de <see cref="SupportTicket.CreateFromConversation"/> que vienen del cuerpo: ningún cuerpo que lo pase
@@ -35,6 +43,7 @@ public sealed class CreateTicketFromConversationValidator : AbstractValidator<Cr
         RuleFor(command => command.TicketTypeId).NotEqual(Guid.Empty);
         RuleFor(command => command.Subject).MustFit(1, SupportTicket.SubjectMaxLength);
         RuleFor(command => command.Description).MustFit(1, SupportTicket.DescriptionMaxLength);
+        RuleFor(command => command.Priority).MustBeAPriority();
         RuleFor(command => command.AssigneeMemberId).NotEqual(Guid.Empty);
     }
 }
@@ -74,7 +83,8 @@ public sealed class CreateTicketFromConversationHandler(
     IValidator<CreateTicketFromConversationCommand> validator)
     : ICommandHandler<CreateTicketFromConversationCommand, SupportTicketDetailDto>
 {
-    private static readonly string[] CreatedFields = ["ticketTypeId", "subject", "description", "conversationId", "assigneeMemberId"];
+    private static readonly string[] CreatedFields =
+        ["ticketTypeId", "subject", "description", "conversationId", "assigneeMemberId", "priority"];
 
     public async Task<SupportTicketDetailDto> HandleAsync(
         CreateTicketFromConversationCommand command, CancellationToken cancellationToken)
@@ -121,7 +131,7 @@ public sealed class CreateTicketFromConversationHandler(
                 type,
                 command.Subject,
                 command.Description,
-                SupportTicketPriority.Medium,
+                SupportPriorityRules.Parse(command.Priority),
                 new SupportConversationRef(conversation.Id, conversation.Channel),
                 customer?.Id,
                 requester,
