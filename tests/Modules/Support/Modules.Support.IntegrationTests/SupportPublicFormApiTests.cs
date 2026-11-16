@@ -212,6 +212,28 @@ public sealed class SupportPublicFormApiTests(SupportPublicHost host) : IClassFi
         Assert.Equal("<p>a</p>", legal.GetProperty("terms").GetProperty("contentHtml").GetString());
     }
 
+    // Final review N2: a stored document the sanitizer rejects (here, nested deeper than it walks) is a 404 like a missing one, never a
+    // 422 the visitor cannot act on. Only a row written by hand can be like this.
+    [Fact]
+    public async Task AStoredDocumentTheSanitizerRejectsIs404()
+    {
+        var factory = await host.StartTestAsync();
+        var tenant = NewTenantId();
+        var slug = await SeedPublishedTenantAsync(factory, tenant);
+        var tooDeep = string.Concat(Enumerable.Repeat("<blockquote>", 150)) + "x" + string.Concat(Enumerable.Repeat("</blockquote>", 150));
+        await ExecuteAsync(
+            factory,
+            "UPDATE support.legal_document_versions SET content_html = @html WHERE tenant_id = @tenant AND kind = 'Terms'",
+            ("html", tooDeep),
+            ("tenant", Guid.Parse(tenant)));
+        using var client = VisitorClient(factory);
+
+        var response = await client.GetAsync(PublicUrl(slug, "/form"), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("support.public.not_found", await CodeOfAsync(response));
+    }
+
     [Fact]
     public async Task TheDefaultCountryIsTheTenantCountry()
     {

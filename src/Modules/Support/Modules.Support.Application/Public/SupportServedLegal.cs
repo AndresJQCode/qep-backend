@@ -1,3 +1,4 @@
+using FluentValidation;
 using Modules.Support.Domain;
 
 namespace Modules.Support.Application;
@@ -10,7 +11,8 @@ internal sealed record SupportServedDocument(SupportLegalDocumentVersion Version
 /// one place that turns stored versions into what the visitor sees: <c>GET /form</c> sends it and the filing stores it in the snapshot
 /// of each acceptance, so what is recorded is byte for byte what was shown. <b>Every HTML goes through
 /// <see cref="ISupportHtmlSanitizer"/> again</b>, whatever is in the column. A missing kind, or one left without visible text once
-/// sanitized (only a row written by hand can be), is the same <c>404 support.public.not_found</c> as an unpublished form.
+/// sanitized, or one the sanitizer rejects as too large, too deep or unstable (only a row written by hand can be either), is the same
+/// <c>404 support.public.not_found</c> as an unpublished form, never a <c>422</c> the visitor cannot act on (final review N2).
 /// </summary>
 internal sealed record SupportServedLegal(
     SupportServedDocument PrivacyNotice,
@@ -37,7 +39,16 @@ internal sealed record SupportServedLegal(
             // Not cached per version id on purpose (Block B review): the re-sanitizing exists for a row changed by hand, and a cache
             // keyed by id would keep serving what it saw before that change. The sanitizer behind the port caches by the SHA-256 of the
             // stored content instead (final review S1, CachingSupportHtmlSanitizer), so a hand-edited row is sanitized again.
-            var served = sanitizer.Sanitize(version.ContentHtml);
+            SanitizedHtml served;
+            try
+            {
+                served = sanitizer.Sanitize(version.ContentHtml);
+            }
+            catch (ValidationException)
+            {
+                throw SupportPublicResolver.NotFound();
+            }
+
             return served.HasVisibleText ? new SupportServedDocument(version, served.Html) : throw SupportPublicResolver.NotFound();
         }
 
