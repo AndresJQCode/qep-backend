@@ -30,7 +30,16 @@ public sealed record PermissionDefinition(
     string Description,
     string Category,
     string RiskLevel,
-    IReadOnlyCollection<TenantModuleKey>? RequiredModules);
+    IReadOnlyCollection<TenantModuleKey>? RequiredModules)
+{
+    /// <summary>
+    /// Entidad y acción del permiso en la matriz de roles (spec 2026-11-16). Propiedad y no posicional
+    /// para no tocar cada construcción de las pruebas; que nadie la olvide lo verifica
+    /// <c>CompositionRootTests.EveryRegisteredPermissionDeclaresItsShape</c>. <c>null</c> sólo en el
+    /// fallback de metadata de <see cref="RoleCatalog"/>.
+    /// </summary>
+    public PermissionShape? Shape { get; init; }
+}
 
 /// <summary>Resuelve una referencia de rol de una membresía a los permisos que concede.</summary>
 public interface IRoleCatalog
