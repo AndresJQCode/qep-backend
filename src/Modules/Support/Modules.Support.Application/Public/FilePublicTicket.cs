@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using FluentValidation.Results;
+using Microsoft.Extensions.Logging;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -263,6 +264,8 @@ public sealed class FilePublicTicketHandler(
     SupportTicketDtoComposer composer,
     SupportOpeningDelivery openingDelivery,
     ISupportPublicOptions publicOptions,
+    ISupportOrganizationDirectory organizations,
+    ILogger<FilePublicTicketHandler> logger,
     IValidator<FilePublicTicketCommand> validator)
     : ICommandHandler<FilePublicTicketCommand, SupportPublicFiledDto>
 {
@@ -299,7 +302,11 @@ public sealed class FilePublicTicketHandler(
             CompletePublicAttachmentHandler.EnsureAllowed(tenant.Form);
         }
 
-        var legal = await SupportServedLegal.ReadAsync(legalDocuments, sanitizer, tenant.TenantId, tenant.Name, cancellationToken);
+        // Con la misma empresa que GET /form, así la foto de cada aceptación guarda el texto resuelto que la persona vio (spec
+        // 2026-11-16).
+        var organization = await SupportPublicOrganization.OfAsync(organizations, tenant.Form, cancellationToken);
+        var legal = await SupportServedLegal.ReadAsync(
+            legalDocuments, sanitizer, tenant.TenantId, tenant.Name, organization, logger, cancellationToken);
         if (!IsCurrent(validated, legal))
         {
             throw new SupportDomainException(SupportErrorCodes.PublicLegalTextsOutdated, "The legal texts changed after they were loaded.");
@@ -493,7 +500,8 @@ public sealed class FilePublicTicketHandler(
         return access.LastSentChannel != SupportOpeningSender.EmailChannel || access.LastFailureCode is not null;
     }
 
-    // Plan L26: la fecha de radicación y el término salen de la foto del ticket, nunca del tipo vivo.
+    // Plan L26: la fecha de radicación y el término salen de la foto del ticket, nunca del tipo vivo. Owner decision S6 (D-11): el
+    // término es el vigente, con la prórroga; un reintento después de prorrogar responde los valores de ahora.
     private static SupportPublicFiledDto Filed(
         SupportTicket ticket, string? pin, string? successMessage, bool pinEmailed, string consultUrl) =>
         new(
@@ -501,7 +509,8 @@ public sealed class FilePublicTicketHandler(
             pin,
             ticket.ReceivedAt,
             ticket.DueOn,
-            ticket.TermBusinessDays,
+            ticket.CurrentTermBusinessDays,
+            ticket.IsExtended,
             ticket.TermIsLegal,
             successMessage,
             pinEmailed,

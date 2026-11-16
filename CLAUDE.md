@@ -276,6 +276,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
+- **Un rol que no concede ningún permiso ofrecido en el tenant no se agrega ni se invita** (spec 2026-11-15): `422
+  tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false`. Cajero sin `pos` es el caso típico,
+  pero vale también para un rol custom de sólo permisos de un módulo apagado. Quien ya tiene el rol lo conserva: el `PUT`
+  sólo rechaza los roles **agregados**, porque la pantalla reenvía todos al guardar. La regla vive en `RoleAssignability`
+  y la comparten `/authorization/catalog` y `RoleReferenceValidator`; no la copies en un handler. Una prueba que invite o
+  asigne un rol de módulo prende el módulo antes (`PosApiHarness.InviteCashierAsync` ya lo hace).
 - **La cotización por Meta no usa `OutboundGuards` ni `ConversationOpener.OpenAsync`** (spec 2026-10-21). `QuotationTemplateOutbound`
   busca la conversación por teléfono (`OpenByPhoneAsync`) y no por `customer_id`, para no caer en el hilo de otro número (D16b);
   pasa `seen: 0` para no tocar los no leídos (D16a); y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la
@@ -941,10 +947,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   rollout, y al reanudar o cambiar el tipo el código viejo reescribe `due_on` sin la prórroga. Nadie prorroga hasta que no quede un
   pod viejo, y un rollback después de la primera prórroga no se hace (README, «Gestión y plazos de Soporte»). El doble del término se
   mide contra el término vigente al prorrogar: un cambio de tipo a uno más corto conserva la prórroga (P-5), no la recortes.
-- **`IssuedPin` sólo viaja en el `201` del alta manual anónima** (fase 4a, plan G3). `CreateTicketHandler` lo pone con `with` sobre el
-  detalle compuesto; el composer siempre lo deja en `null`, así que el `GET`, las acciones y la auditoría nunca lo llevan. Un camino nuevo
-  que componga el detalle no lo copia: es la única vez que el asesor puede dictárselo al solicitante. Lo amarra
-  `AnAnonymousManualTicketReturnsItsPinOnlyOnCreation`.
+- **`IssuedPin` y `ConsultUrl` sólo viajan en el `201` del alta manual anónima y en el `200` de `POST …/tickets/{id}/pin`** (fase 4a,
+  plan G3; spec 2026-11-16, P-6). `CreateTicketHandler` y `ReissueTicketPinHandler` los ponen con `with` sobre el detalle compuesto; el
+  composer siempre los deja en `null`, así que el `GET`, las demás acciones y la auditoría nunca los llevan. Un camino nuevo que componga
+  el detalle no los copia: es la única vez que el asesor puede dictarle el PIN al solicitante. Lo amarran
+  `AnAnonymousManualTicketReturnsItsPinOnlyOnCreation` y `SupportPinReissueApiTests`. El PIN nuevo de la consola **desbloquea**
+  (`SupportTicketAccess.ReissueByAgent`); `Reissue`, el del reenvío público, no: no los fundas.
 - **El teléfono del cliente vinculado va al fijo de la foto del solicitante, nunca al celular** (owner, 2026-11-15, P3;
   `TicketRequesterNormalizer.WithCustomerContact`). `customers.phone_e164` puede ser fijo, y una plantilla de WhatsApp a un fijo la
   rechaza Meta: la respuesta queda `Failed` sin que el alta lo advierta. El celular de la foto sale sólo del solicitante o del `wa_id`

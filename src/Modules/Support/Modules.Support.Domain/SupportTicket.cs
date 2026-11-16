@@ -93,6 +93,14 @@ public sealed class SupportTicket
 
     public DateTimeOffset? ExtendedAt { get; private set; }
 
+    /// <summary>Owner decision S6 (2026-11-16, spec 2026-11-15 D-11): the term the requester sees, in business days: the type's snapshot
+    /// plus the extension, the same two numbers <see cref="DueOnFor"/> adds before the pauses. Null = the type has no term. Not mapped:
+    /// it has no setter.</summary>
+    public int? CurrentTermBusinessDays => TermBusinessDays is { } days ? days + ExtensionBusinessDays : null;
+
+    /// <summary>Owner decision S6: whether the deadline was extended (<see cref="Extend"/> ran). Not mapped: it has no setter.</summary>
+    public bool IsExtended => ExtendedAt is not null;
+
     /// <summary>Cuántas veces entró a <see cref="SupportTicketStatus.Resolved"/>: reabrir y resolver otra vez es otro ciclo.</summary>
     public int ResolutionCount { get; private set; }
 
@@ -604,6 +612,21 @@ public sealed class SupportTicket
         AddEvent(
             SupportTicketEventKind.Extended, actorMemberId, now,
             new { businessDays, reason = trimmed, fromDueOn, toDueOn = DueOn });
+    }
+
+    /// <summary>Spec 2026-11-16 (P-1, P-3, P-4): anota que un asesor generó un PIN nuevo para este anónimo. El PIN vive en
+    /// <see cref="SupportTicketAccess"/>; el evento va sin detalles para que ni el PIN ni su hash lleguen nunca a la traza. Sube la
+    /// versión como toda escritura: un segundo clic con la versión vieja da 412 y no genera dos PIN sin que la pantalla se entere. Sin
+    /// guarda de estado: es acceso para leer, no edición del caso, así que vale también cerrado.</summary>
+    public void RecordPinReissued(Guid actorMemberId, DateTimeOffset now)
+    {
+        if (!IsAnonymous)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.PinNotAnonymous, "Only an anonymous ticket gets a new PIN from the console.");
+        }
+
+        AddEvent(SupportTicketEventKind.PinReissued, actorMemberId, now, new { });
     }
 
     /// <summary>El tope de la prórroga si hoy se puede prorrogar (el término inicial), o null si alguna guarda de

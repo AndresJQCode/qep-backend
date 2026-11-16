@@ -78,6 +78,42 @@ public sealed class SupportTicketAccessTests
         Assert.Equal(Now + SupportTicketAccess.LockFor, access.LockedUntil);
     }
 
+    // Spec 2026-11-16 P-2: el PIN que genera un asesor desde la consola sí desbloquea; el asesor es la verificación humana.
+    [Fact]
+    public void ReissueByAgentUnlocksAndResetsTheFailures()
+    {
+        var access = NewAccess();
+        for (var attempt = 0; attempt < SupportTicketAccess.MaxFailures; attempt++)
+        {
+            access.RecordFailure(Now);
+        }
+
+        access.RecordFailure(Now.AddMinutes(1));
+        var later = Now.AddMinutes(2);
+
+        access.ReissueByAgent("hash-2", later);
+
+        Assert.Equal("hash-2", access.PinHash);
+        Assert.Equal(later, access.PinIssuedAt);
+        Assert.Equal(0, access.FailedAttempts);
+        Assert.Null(access.LockedUntil);
+        Assert.False(access.IsLocked(later));
+    }
+
+    [Fact]
+    public void ReissueByAgentDoesNotTouchTheLastDelivery()
+    {
+        var access = NewAccess();
+        access.RecordDelivery("Email", "send_failed", Now);
+
+        access.ReissueByAgent("hash-2", Now.AddMinutes(1));
+
+        Assert.Equal(Now, access.LastSentAt);
+        Assert.Equal("Email", access.LastSentChannel);
+        Assert.Equal("send_failed", access.LastFailureCode);
+        Assert.Throws<ArgumentException>(() => access.ReissueByAgent(" ", Now));
+    }
+
     [Fact]
     public void CanResendOnlyAfterTenMinutes()
     {

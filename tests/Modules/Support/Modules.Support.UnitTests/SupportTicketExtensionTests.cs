@@ -57,6 +57,30 @@ public sealed class SupportTicketExtensionTests
         Assert.Equal("2026-12-15", details.RootElement.GetProperty("toDueOn").GetString());
     }
 
+    // Owner decision S6 (spec 2026-11-15 D-11): the current term is the type's snapshot plus the extension.
+    [Fact]
+    public void TheCurrentTermAddsTheExtensionDays()
+    {
+        var ticket = NewTicket();
+        Assert.Equal(15, ticket.CurrentTermBusinessDays);
+        Assert.False(ticket.IsExtended);
+
+        ticket.Extend(5, Reason, Actor, At(11, 17), Clock);
+
+        Assert.Equal(15, ticket.TermBusinessDays);
+        Assert.Equal(20, ticket.CurrentTermBusinessDays);
+        Assert.True(ticket.IsExtended);
+    }
+
+    [Fact]
+    public void ATicketWithoutTermHasNoCurrentTerm()
+    {
+        var ticket = NewTicket(TechSupport);
+
+        Assert.Null(ticket.CurrentTermBusinessDays);
+        Assert.False(ticket.IsExtended);
+    }
+
     [Fact]
     public void ASecondExtensionIsRejected()
     {

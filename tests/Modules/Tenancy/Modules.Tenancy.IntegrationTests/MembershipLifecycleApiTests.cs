@@ -992,6 +992,125 @@ public sealed class MembershipLifecycleApiTests(SharedTenancyHost host) : IClass
         return (Guid)result!;
     }
 
+    // Spec 2026-11-15 (roles asignables): el signup no concede pos, así que Cajero no concede nada
+    // en un tenant recién registrado y no se puede agregar.
+    [Fact]
+    public async Task AddingTheCashierRoleWithoutPosIs422()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, ["advisor", "cashier"]);
+
+        await AssertRoleUnavailableAsync(response);
+    }
+
+    // Quien ya lo tiene lo conserva: la pantalla reenvía todos los roles al guardar.
+    [Fact]
+    public async Task ARoleTheMemberAlreadyHoldsIsKeptWithoutItsModule()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), ["advisor", "cashier"]);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: false);
+
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, ["cashier", "billing"]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemovingAnUnavailableRoleIsAllowed()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), ["advisor", "cashier"]);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: false);
+
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, AdvisorRoles);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task InvitingWithAnUnavailableRoleIs422()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+
+        var response = await SendInviteAsync(
+            ownerClient, tenantId, NewEmail(), ["cashier"], DefaultDisplayName);
+
+        await AssertRoleUnavailableAsync(response);
+    }
+
+    // Revisión final: si otro admin ya quitó Cajero, reenviarlo con la versión vieja es un 412 (la
+    // pantalla se desactualizó), no un role_unavailable por un estado que el cliente nunca vio.
+    [Fact]
+    public async Task AStaleEditThatResendsAHeldRoleIs412NotUnavailable()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), ["advisor", "cashier"]);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: false);
+        var removed = await SendRolesAsync(ownerClient, tenantId, memberId, AdvisorRoles);
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+
+        var stale = await SendRolesAsync(
+            ownerClient, tenantId, memberId, ["advisor", "cashier"], expectedVersion: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddingTheCashierRoleWithPosIsAllowed()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, ["advisor", "cashier"]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static async Task AssertRoleUnavailableAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.role_unavailable", problem!.Code);
+    }
+
+    // Prende o apaga un módulo con el mismo SQL que PosApiHarness.EnablePosAsync / DisablePosAsync:
+    // pos no viene con el signup, y apagar deja la fila inactiva (spec 2026-10-08 §3).
+    private static async Task SetModuleAsync(
+        string connectionString, string tenantId, string moduleKey, bool active)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            active
+                ? """
+                  INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+                  VALUES (@tenantId, @moduleKey, now(), 'manual')
+                  ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
+                  """
+                : """
+                  UPDATE tenancy.tenant_modules SET status = 'inactive', status_changed_at = now()
+                  WHERE tenant_id = @tenantId AND module_key = @moduleKey
+                  """,
+            connection);
+        command.Parameters.AddWithValue("tenantId", Guid.Parse(tenantId));
+        command.Parameters.AddWithValue("moduleKey", moduleKey);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     // Saltea la vuelta de invitar-aceptar (que requiere un login real de Google) para que
     // las pruebas puedan poner una segunda membresía en estado Active directamente.
     private static async Task ActivateMembershipAsync(string connectionString, Guid membershipId)

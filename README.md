@@ -5172,7 +5172,9 @@ menos de 60 s se devuelve sin enviar (la está mandando otro request) y una más
 canal, la entrega, la conexión, el texto, el adjunto (`upload_id`, `file_name`; el del reintento se ignora) y, en una plantilla al
 celular, el `target_wa_id` que se tomó de la foto al crearla (sin volver a revisar el celular, la conexión ni la aprobación de la
 plantilla: Mensajería devuelve primero lo que ya salió con ese `clientId`). Si el canal la rechaza o ya no tiene ruta, queda `Failed`
-con el motivo. La fila trae su `clientId` en el detalle y en el resultado, para que la pantalla retome una que quedó `Pending`. Una
+con el motivo. La fila trae su `clientId` en el detalle y en el resultado, para que la pantalla retome una que quedó `Pending`, y
+`hasAttachment` (`true` si se mandó o se intentó con archivo, leído del `upload_id` guardado), para que «Reintentar» de una fallida no la
+reenvíe como texto solo, también después de recargar. Una
 `Failed` trae `messageId` si Mensajería registró el mensaje (no se fija en el expediente), y un mensaje se fija sólo si salió por la
 conversación del ticket. **El correo no es idempotente**: una `Pending` de correo de más de 60 s se
 vuelve a mandar al retomarla, y el solicitante puede recibirlo dos veces.
@@ -5257,8 +5259,8 @@ del ingress) y cada uno tiene su propia cubeta.
 | `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
 | `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
 | `POST /attachments/{fileId}/complete` | `{ uploadKey }` | `200` `{ status }`: `available` o `rejected` | No | 20 / 10 min |
-| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` y `clientRequestId` opcionales | `201` `{ number, pin, receivedAt, dueOn, termBusinessDays, termIsLegal, successMessage, pinEmailed, consultUrl }` | Sí (no en un reintento, abajo) | 5 / 10 min |
-| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, radicación, plazo (`termIsLegal`, `termBusinessDays`) y respuestas | Sí | 10 / min |
+| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` y `clientRequestId` opcionales | `201` `{ number, pin, receivedAt, dueOn, termBusinessDays, termExtended, termIsLegal, successMessage, pinEmailed, consultUrl }` | Sí (no en un reintento, abajo) | 5 / 10 min |
+| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, radicación, plazo (`termIsLegal`, `termBusinessDays`, `termExtended`) y respuestas | Sí | 10 / min |
 | `POST /tickets/resend-pin` | `{ number, turnstileToken }` | `202` vacío, siempre | Sí | 5 / 10 min |
 
 **Documentos legales del portal** (spec 2026-11-15). `GET /form` trae en `legal` los tres documentos vigentes del tenant, cada uno
@@ -5272,10 +5274,22 @@ escrita a mano), `GET /form` responde el mismo `404 support.public.not_found` qu
 `contentHtml` como HTML y no lo vuelve a sanear. La salida del saneador se guarda en una caché acotada por pod, con clave SHA-256 del
 contenido guardado: una fila cambiada a mano tiene otra clave y se vuelve a sanear.
 
+**Variables de los documentos legales** (spec `2026-11-16-support-legal-document-variables-design.md`). Los tres documentos y la
+pregunta de autorización del tenant aceptan `{{empresa}}`, `{{tipo_documento}}`, `{{documento_identificacion}}` (la empresa que
+responde: `name`, `documentTypeCode` y `documentNumber` de `organization`) y `{{nombre_comercial}}` (el nombre del tenant), con espacios
+opcionales adentro (`{{ empresa }}`). La lista vive en `SupportLegalVariables.All` y la consola la recibe en `variables` de
+`GET …/settings/legal-documents`. Al publicar, todo `{{…}}` que no sea uno de esos nombres, en el HTML saneado o en la pregunta, es
+`422 support.legal_document.unknown_variable` (`{{Empresa}}` y `{{}}` incluidos); lo guardado y lo que lee la consola conserva los
+tokens. **Se resuelven en un solo lugar, `SupportServedLegal.ReadAsync`**, con la empresa de la versión publicada del formulario: en
+`GET /form` y en la foto de cada aceptación, que guarda lo resuelto. En el HTML los valores van codificados (`&` → `&amp;`, `<` →
+`&lt;`…); en la pregunta, tal cual, porque el portal la pinta como texto. La pregunta por defecto no tiene variables. Un token de la
+empresa en un formulario sin empresa (`organization: null`), o un texto que resuelto pasa de 60 000 caracteres (HTML) o de 500
+(pregunta), da el mismo `404 support.public.not_found`. Un token desconocido en una fila escrita a mano se sirve literal.
+
 **La empresa que responde** (NIT del portal, spec 2026-11-15 §9.3, D-6 y D-8). El tenant elige en Ajustes › Formulario público una de sus
 empresas de Companies (`organizationCompanyId` en `PUT /settings/public-form`), y el portal muestra `organization: { name,
 documentTypeCode, documentNumber }` (`Company.Name`, `Company.DocumentType.ToWire()` y `Company.TaxId`) en `GET /form` (versión publicada)
-y en `GET /consult` (versión vigente, publicada o no). **Es obligatoria para publicar** (`organization_required`). Cambiarla a una que no
+y en `GET /consult` (versión vigente, publicada o no). **Es obligatoria para publicar y mientras está publicado** (`organization_required`: tampoco se puede guardar un formulario publicado sin empresa, porque las variables de los documentos la usan; despublicarlo sin empresa sí). Cambiarla a una que no
 existe, es de otro tenant o está inactiva es `422 support.form.organization_unavailable`; una elegida que después se desactiva **se sigue
 mostrando** y no frena editar el formulario (sólo aparece `organization_inactive` en `publishBlockers`, que impide volver a publicar uno
 sin publicar). **Una empresa que alguna versión del formulario eligió no se puede borrar**: `support.form_versions.organization_company_id`
@@ -5306,12 +5320,14 @@ se responde por la página de consulta (canal `Portal`). La base lo respalda con
 **Fecha de radicación y término** (spec 2026-11-15 §9.1, D-6). La respuesta del radicado trae `receivedAt` (la radicación),
 `termBusinessDays` (`null` = el tipo no tiene término) y `termIsLegal` («plazo legal» u «objetivo»); la de `POST /tickets/lookup` suma
 `termBusinessDays`. Los dos salen de la **foto del tipo en el ticket**, nunca del tipo vivo: editar el tipo después no cambia lo que ve el
-solicitante.
+solicitante. **Con prórroga** (D-11, owner 2026-11-16): `termBusinessDays` es el término vigente, la foto más los días hábiles de la
+prórroga (`ExtensionBusinessDays`), y las dos respuestas traen `termExtended` (`true` si el plazo se prorrogó), así cuadran con `dueOn`, que
+ya la incluye.
 
 **Radicado idempotente** (`clientRequestId`, spec 2026-11-15 §9.2, D-7). El portal genera un UUID al empezar a radicar y lo manda en cada
 reintento de ese mismo radicado (timeout, red caída, 5xx). Un reintento con la misma clave en el mismo tenant responde `201` con el mismo
-`number`, `receivedAt`, `dueOn`, `termBusinessDays`, `termIsLegal`, `successMessage` (el de la versión del formulario con que se radicó) y
-`consultUrl`: no crea otro ticket, no gasta número y no vuelve a mandar el correo de apertura. **La clave se mira antes de Turnstile**, del
+`number`, `receivedAt`, `termIsLegal`, `successMessage` (el de la versión del formulario con que se radicó) y `consultUrl`, y con `dueOn`,
+`termBusinessDays` y `termExtended` de ahora (con la prórroga, si la hubo entre los dos intentos): no crea otro ticket, no gasta número y no vuelve a mandar el correo de apertura. **La clave se mira antes de Turnstile**, del
 validador y de las versiones, **y el cuerpo no se compara** (como el checkout de la tienda). Eso salta Turnstile **sólo cuando el primer
 intento ya confirmó**: mientras el original sigue corriendo, la clave todavía no existe, y un reintento con el token ya gastado responde
 `422 support.public.captcha_invalid`. El portal entonces vuelve a correr Turnstile y reenvía con el **mismo** `clientRequestId`.
@@ -5422,9 +5438,9 @@ si sale `available`, mandar el par al radicar.
 | Método y ruta | Política | Qué hace |
 | --- | --- | --- |
 | `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) y la empresa que responde (`organization_required`, `organization_inactive` → `422 support.form.organization_required` / `organization_inactive`). La respuesta trae `organization` (la elegida, con `isActive`) y `organizationOptions` (las activas del tenant, por nombre: el selector no necesita `companies.company.read`); el cuerpo del `PUT` suma `organizationCompanyId` (`null` = sin empresa) |
-| `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`) |
+| `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`). Al final, `variables: [{ name, label, example }]`, las que el editor puede insertar |
 | `GET /settings/legal-documents/{kind}/versions` · `…/versions/{version}` | `support.settings.view` | Historial de un tipo, de la más nueva a la más vieja, y una versión vieja |
-| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada; la respuesta es lo guardado |
+| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada y con sus variables sin resolver; la respuesta es lo guardado. Una variable que no está en la lista es `422 support.legal_document.unknown_variable` |
 | `GET /tickets/{ticketId}/legal-acceptances/{kind}` | `support.ticket.view` | La foto de lo que el solicitante aceptó: HTML servido, pregunta, URL, caracterización e IP. Sin fila, `404 support.legal_acceptance.not_found` |
 | `GET /tickets/{ticketId}/attachments/{attachmentId}/download` | `support.ticket.view` | URL firmada del adjunto (arriba) |
 
@@ -5612,6 +5628,26 @@ default 0`, `extension_reason varchar(1000)`, `extended_at timestamptz`, el CHEC
 - **«El doble del término» se mide contra el término vigente al prorrogar** (P-3 y P-5). Si después le cambias el tipo a uno de
   término menor, la prórroga se conserva y el total puede pasar del doble del término nuevo. Es lo decidido: no lo «arregles»
   recortando la prórroga.
+
+#### PIN nuevo de un ticket anónimo
+
+Spec `docs/superpowers/specs/2026-11-16-support-anonymous-pin-reissue-design.md`. Un anónimo no tiene correo ni hilo, así que
+«Reenviar PIN» del portal nunca le manda nada; si perdió el PIN o quedó bloqueado, el asesor le genera uno nuevo desde la consola.
+
+| Método y ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `POST /tickets/{ticketId}/pin` (`If-Match`) | `support.ticket.manage` | — | `SupportTicketDetailDto` con `issuedPin` y `consultUrl`; 403, 404, 412, `422 support.ticket.pin_not_anonymous`, 428 |
+
+- Sólo anónimos: un ticket con solicitante o cliente usa el reenvío público. Vale en cualquier estado, cerrado incluido.
+- **Desbloquea** la consulta: pone en cero los fallos y quita el bloqueo (el reenvío público sigue sin desbloquear). El PIN viejo deja
+  de servir.
+- Sube la `version`, suma el evento `PinReissued` (sólo el actor) y audita `support.ticket.pin_reissued` con el campo `pinIssuedAt`.
+  El PIN nunca va a la traza, a la auditoría ni a un log.
+- `consultUrl` (`string?`, último campo del detalle) es el enlace de la página de consulta del radicado. Viaja **sólo** junto con
+  `issuedPin`: en este `200` y en el `201` del alta manual anónima. En toda otra lectura los dos son `null`.
+- **Migración:** `Support` `AddSupportPinReissuedEventKind`, que sólo agrega `PinReissued` a `CK_ticket_events_kind`. Durante el
+  rollout un pod viejo no lee `PinReissued` (EF hace `Enum.Parse`) y el detalle de ese ticket le da `500`, como con `Extended`: nadie
+  genera un PIN nuevo hasta que no quede un pod viejo.
 
 #### Respuesta formal, encuesta, cierre automático y reportes de Soporte (fase 4b)
 

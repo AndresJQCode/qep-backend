@@ -18,6 +18,9 @@ public sealed class SupportLegalDocumentVersion
 
     public const int PolicyUrlMaxLength = 500;
 
+    // Cuánto del token desconocido se muestra en el mensaje del 422.
+    private const int UnknownVariableShownLength = 40;
+
     // EF Core materializes through here; Create and Example are the only code entry points.
     private SupportLegalDocumentVersion()
     {
@@ -54,7 +57,9 @@ public sealed class SupportLegalDocumentVersion
     /// The validator already gives the field; the rules are repeated here so the domain does not depend on its caller. Without visible
     /// text it is <see cref="SupportErrorCodes.LegalDocumentsContentEmpty"/>; longer than <see cref="ContentMaxLength"/>,
     /// <see cref="SupportErrorCodes.LegalDocumentsContentTooLong"/>. A question or a URL on another kind, a URL that is not https or a
-    /// question out of bounds is an <see cref="ArgumentException"/>. Blank optional texts are stored as null.
+    /// question out of bounds is an <see cref="ArgumentException"/>. Blank optional texts are stored as null. Un <c>{{…}}</c> que no
+    /// está en <see cref="SupportLegalVariables.All"/>, en el HTML o en la pregunta, es
+    /// <see cref="SupportErrorCodes.LegalDocumentUnknownVariable"/> (spec 2026-11-16).
     /// </summary>
     public static SupportLegalDocumentVersion Create(
         Guid id,
@@ -98,6 +103,16 @@ public sealed class SupportLegalDocumentVersion
         {
             throw new ArgumentException(
                 "Only the privacy notice has an authorization question and a policy URL.", nameof(authorizationQuestion));
+        }
+
+        // Spec 2026-11-16 (D-F8): se guarda la plantilla con sus tokens, así que uno mal escrito tiene que frenarse acá; si no, el
+        // portal lo mostraría literal. Se mira el HTML ya saneado, que es lo que se guarda y lo que se resuelve al servir.
+        if (SupportLegalVariables.UnknownIn(content.Html).Concat(SupportLegalVariables.UnknownIn(question)).FirstOrDefault() is { } unknown)
+        {
+            // Recortado: lo que hay entre llaves puede ser un párrafo entero, y el mensaje viaja en la respuesta y en los logs.
+            var shown = unknown.Length > UnknownVariableShownLength ? unknown[..UnknownVariableShownLength] + "…" : unknown;
+            throw new SupportDomainException(
+                SupportErrorCodes.LegalDocumentUnknownVariable, $"The legal document uses an unknown variable: '{{{{{shown}}}}}'.");
         }
 
         return new SupportLegalDocumentVersion

@@ -143,6 +143,50 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
         Assert.True(ticket.TermIsLegal);
     }
 
+    // Owner decision S6 (spec 2026-11-15 D-11): after an extension the consult shows the current term (15 + 5) and termExtended, and
+    // dueOn is the extended one, so the term and the date the page paints agree.
+    [Fact]
+    public async Task TheConsultOfAnExtendedTicketShowsTheExtendedDaysAndTermExtended()
+    {
+        var rig = await RigAsync();
+        var filed = await FileNamedAsync(rig, typeId: await TypeIdNamedAsync(rig.Factory, rig.TenantId.ToString(), "Petición general"));
+        var before = await ReadTicketAsync(await LookupAsync(rig, filed.Number, filed.Pin));
+        var extendedDueOn = await ExtendTicketAsync(rig.Factory, rig.TenantId, await TicketIdAsync(rig, filed.Number), 5);
+
+        var after = await ReadTicketAsync(await LookupAsync(rig, filed.Number, filed.Pin, NextIp()));
+
+        Assert.Equal(15, before.TermBusinessDays);
+        Assert.False(before.TermExtended);
+        Assert.Equal(20, after.TermBusinessDays);
+        Assert.True(after.TermExtended);
+        Assert.Equal(extendedDueOn, after.DueOn);
+        Assert.True(after.DueOn > before.DueOn);
+
+        static async Task<SupportPublicTicketDto> ReadTicketAsync(HttpResponseMessage message)
+        {
+            Assert.Equal(HttpStatusCode.OK, message.StatusCode);
+            var ticket = await message.Content.ReadFromJsonAsync<SupportPublicTicketDto>(Ct);
+            Assert.NotNull(ticket);
+            return ticket;
+        }
+    }
+
+    // Owner decision S6: a ticket whose deadline was never extended says so, with or without a term.
+    [Theory]
+    [InlineData("Petición general")]
+    [InlineData("Soporte técnico")]
+    public async Task TheConsultOfANotExtendedTicketHasTermExtendedFalse(string typeName)
+    {
+        var rig = await RigAsync();
+        var filed = await FileNamedAsync(rig, typeId: await TypeIdNamedAsync(rig.Factory, rig.TenantId.ToString(), typeName));
+
+        var response = await LookupAsync(rig, filed.Number, filed.Pin);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonAsync(response);
+        Assert.Equal(JsonValueKind.False, body.GetProperty("termExtended").ValueKind);
+    }
+
     // Spec 2026-11-15 §5.4 and Review Focus 5: an internal note never reaches the requester's consult page.
     [Fact]
     public async Task TheConsultNeverShowsANote()

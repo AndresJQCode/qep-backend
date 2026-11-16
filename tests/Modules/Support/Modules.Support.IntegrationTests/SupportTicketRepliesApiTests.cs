@@ -171,7 +171,11 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         var listed = Assert.Single(result.GetProperty("ticket").GetProperty("replies").EnumerateArray());
         Assert.Equal(clientId, listed.GetProperty("clientId").GetGuid());
         var detail = await scenario.DetailAsync(Id(ticket));
-        Assert.Equal(clientId, Assert.Single(detail.GetProperty("replies").EnumerateArray()).GetProperty("clientId").GetGuid());
+        var stored = Assert.Single(detail.GetProperty("replies").EnumerateArray());
+        Assert.Equal(clientId, stored.GetProperty("clientId").GetGuid());
+        // Sin archivo, hasAttachment llega en false: «Reintentar» la reenvía como texto.
+        Assert.False(result.GetProperty("reply").GetProperty("hasAttachment").GetBoolean());
+        Assert.False(stored.GetProperty("hasAttachment").GetBoolean());
     }
 
     // Revisión final (M7): el mensaje se fija sólo si salió por la conversación del ticket. Uno que Mensajería mandó por otra no entra
@@ -620,6 +624,10 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         var send = Assert.Single(_channels.ThreadSends);
         Assert.Equal((conversation, uploadId, "factura.pdf", "Te adjunto la factura"), (send.ConversationId, send.UploadId, send.FileName, send.Text));
         Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+        // Owner 2026-11-15: la respuesta dice que llevaba archivo, en el resultado y en el detalle releído.
+        Assert.True(result.GetProperty("reply").GetProperty("hasAttachment").GetBoolean());
+        var detail = await scenario.DetailAsync(Id(ticket));
+        Assert.True(Assert.Single(detail.GetProperty("replies").EnumerateArray()).GetProperty("hasAttachment").GetBoolean());
         // M2: la fila guarda el adjunto, para que un retomado mande el mismo.
         Assert.Equal(
             $"{uploadId}|factura.pdf",

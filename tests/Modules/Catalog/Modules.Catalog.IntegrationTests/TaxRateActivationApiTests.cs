@@ -206,8 +206,9 @@ public sealed class TaxRateActivationApiTests(SharedCatalogHost sharedHost) : IC
         Assert.True(await QueryUpdatedAfterCreatedAsync(connection, id));
     }
 
-    // CA-CAT-08-09: ancla la afirmación sobre el índice. IX_tax_rates_tenant_name es único **sin
-    // filtro parcial**, así que desactivar nunca liberó el nombre y reactivar no puede colisionar.
+    // CA-CAT-08-09: ancla la afirmación sobre el índice. IX_tax_rates_tenant_name_percentage_base es
+    // único **sin filtro parcial**, así que desactivar nunca liberó la combinación y reactivar no
+    // puede colisionar.
     // Si algún día alguien le agrega un filtro parcial, esta prueba se cae y avisa.
     [Fact]
     public async Task AnInactiveTaxRateNeverReleasedItsName()
@@ -220,7 +221,7 @@ public sealed class TaxRateActivationApiTests(SharedCatalogHost sharedHost) : IC
 
         var duplicate = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates",
-            new { name = "IVA general", percentage = 5 },
+            new { name = "IVA general", percentage = 19 },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, duplicate.StatusCode);
         var body = await duplicate.Content.ReadAsStringAsync(

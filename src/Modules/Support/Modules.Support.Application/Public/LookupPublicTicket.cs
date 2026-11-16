@@ -79,7 +79,8 @@ public sealed class SupportPublicTicketView(
             ticket.DueOn,
             dueState.ToString(),
             ticket.TermIsLegal,
-            ticket.TermBusinessDays,
+            ticket.CurrentTermBusinessDays,
+            ticket.IsExtended,
             sent,
             survey is null
                 ? null

@@ -69,9 +69,17 @@ public sealed record SupportFormSettingsDto(
 /// come in <c>Organization</c> (one chosen and deactivated later), never in <c>OrganizationOptions</c>.</summary>
 public sealed record SupportFormOrganizationDto(Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive);
 
-/// <summary>The current version of each legal document, or its example (spec 2026-11-15 §7).</summary>
+/// <summary>The current version of each legal document, or its example (spec 2026-11-15 §7). <c>Variables</c> es la lista que el
+/// editor ofrece para insertar, en el orden del contrato (spec 2026-11-16 §3); va al final para no mover los campos que ya existían.</summary>
 public sealed record SupportLegalDocumentsDto(
-    SupportLegalDocumentDto PrivacyNotice, SupportLegalDocumentDto AnonymousNotice, SupportLegalDocumentDto Terms);
+    SupportLegalDocumentDto PrivacyNotice,
+    SupportLegalDocumentDto AnonymousNotice,
+    SupportLegalDocumentDto Terms,
+    IReadOnlyList<SupportLegalVariableDto> Variables);
+
+/// <summary>Una variable de los documentos legales: se escribe <c>{{Name}}</c>; <c>Label</c> es lo que muestra el menú y
+/// <c>Example</c> el valor de la vista previa (spec 2026-11-16, V-1).</summary>
+public sealed record SupportLegalVariableDto(string Name, string Label, string Example);
 
 /// <summary>
 /// One version of a legal document: the current one, an old one or the example (<c>Version</c> 0, <c>IsExample</c>, without
@@ -184,8 +192,10 @@ public sealed record SupportTicketListItemDto(
 /// <summary>El detalle del ticket. <c>AllowedTransitions</c> sale de la máquina de estados del dominio: el selector de estado no la
 /// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones. <c>IssuedPin</c> (fase 4a, plan G3) trae el PIN de consulta sólo
 /// en el <c>201</c> del alta manual anónima, para que el asesor se lo dicte a quien llamó o vino en persona: ese ticket no tiene a dónde
-/// recibirlo. En toda otra respuesta es <c>null</c>. <c>Surveys</c> (fase 4b, H15) son las encuestas de satisfacción, una por ciclo de
-/// resolución, en orden.</summary>
+/// recibirlo, y en el <c>200</c> de <c>POST …/tickets/{id}/pin</c> (spec 2026-11-16), el PIN nuevo de un anónimo. <c>ConsultUrl</c>
+/// (spec 2026-11-16, P-6) viaja sólo junto con <c>IssuedPin</c>: el enlace de la página de consulta de ese radicado, para el mismo
+/// diálogo de entrega. En toda otra respuesta los dos son <c>null</c>. <c>Surveys</c> (fase 4b, H15) son las encuestas de satisfacción,
+/// una por ciclo de resolución, en orden.</summary>
 public sealed record SupportTicketDetailDto(
     Guid Id,
     string Number,
@@ -218,7 +228,8 @@ public sealed record SupportTicketDetailDto(
     IReadOnlyList<SupportAttachmentDto> Attachments,
     IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances,
     string? IssuedPin,
-    IReadOnlyList<SupportSurveyDto> Surveys);
+    IReadOnlyList<SupportSurveyDto> Surveys,
+    string? ConsultUrl = null);
 
 /// <summary>
 /// One legal acceptance of a public filing (spec 2026-11-15 §7, plan L19), in the order <c>PrivacyNotice</c>, <c>AnonymousNotice</c>,
@@ -292,7 +303,10 @@ public sealed record SupportSurveyDto(
 /// (fase 3, F12: publicada en la página de consulta); <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c>, <c>Portal</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
 /// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló. <c>ClientId</c> es el que mandó la
 /// pantalla: con él retoma una respuesta que quedó <c>Pending</c> (revisión final, I3). <c>MessageId</c> también viene en una fallida si
-/// Mensajería registró el mensaje.</summary>
+/// Mensajería registró el mensaje. <c>HasAttachment</c> dice si se mandó (o se intentó) con archivo, salido del adjunto que guarda la
+/// fila: «Reintentar» de una fallida no la reenvía como texto solo (owner, 2026-11-15). El PDF de una respuesta formal (fase 4b) no
+/// cuenta como adjunto: viaja en <c>Document</c>, porque el sistema lo genera al enviar y «Reintentar» no lo manda como archivo del
+/// asesor; si <c>HasAttachment</c> lo incluyera, la pantalla ofrecería reenviar un archivo que nadie subió.</summary>
 public sealed record SupportReplyDto(
     Guid Id,
     Guid ClientId,
@@ -304,6 +318,7 @@ public sealed record SupportReplyDto(
     Guid? MessageId,
     SupportMemberDto? Author,
     DateTimeOffset CreatedAt,
+    bool HasAttachment,
     SupportReplyDocumentDto? Document = null);
 
 /// <summary>Fase 4b (H3, H9): el PDF de una respuesta formal. <c>Signer</c> es el responsable que firmó, con el nombre como salió en el

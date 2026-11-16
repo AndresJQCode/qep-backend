@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Identification;
+using Microsoft.Extensions.Logging;
 using Modules.Support.Domain;
 
 namespace Modules.Support.Application;
@@ -19,7 +20,8 @@ public sealed class GetPublicFormHandler(
     ISupportLegalDocumentRepository legalDocuments,
     ISupportHtmlSanitizer sanitizer,
     ISupportTenantBranding branding,
-    ISupportOrganizationDirectory organizations)
+    ISupportOrganizationDirectory organizations,
+    ILogger<GetPublicFormHandler> logger)
     : IQueryHandler<GetPublicFormQuery, SupportPublicFormDto>
 {
     /// <summary>La clave de «cualquier otro país» en <see cref="SupportPublicFormDto.DocumentTypesByCountry"/>.</summary>
@@ -28,7 +30,11 @@ public sealed class GetPublicFormHandler(
     public async Task<SupportPublicFormDto> HandleAsync(GetPublicFormQuery query, CancellationToken cancellationToken)
     {
         var tenant = await resolver.ResolveAsync(query.TenantSlug, cancellationToken);
-        var legal = await SupportServedLegal.ReadAsync(legalDocuments, sanitizer, tenant.TenantId, tenant.Name, cancellationToken);
+        // Una sola lectura de la empresa: la que se muestra en `organization` es la misma con que se resuelven las variables de los
+        // documentos (spec 2026-11-16).
+        var organization = await SupportPublicOrganization.OfAsync(organizations, tenant.Form, cancellationToken);
+        var legal = await SupportServedLegal.ReadAsync(
+            legalDocuments, sanitizer, tenant.TenantId, tenant.Name, organization, logger, cancellationToken);
         var types = (await ticketTypes.ListAsync(tenant.TenantId, cancellationToken))
             .Where(type => type.IsActive && type.IsPublished)
             .OrderBy(type => type.Position)
@@ -61,7 +67,7 @@ public sealed class GetPublicFormHandler(
                 SupportPublicAttachmentRules.MaxFiles,
                 SupportPublicAttachmentRules.MaxSizeBytes,
                 SupportPublicAttachmentRules.MimeTypes),
-            await SupportPublicOrganization.OfAsync(organizations, form, cancellationToken));
+            organization);
     }
 
     private static List<SupportPublicFieldDto> Fields(SupportFormVariant variant, SupportFormVersion form) =>

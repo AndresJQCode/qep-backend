@@ -139,6 +139,42 @@ public sealed class SupportFormOrganizationApiTests(SharedSupportHost sharedHost
         Assert.Equal(0L, await CountFormVersionsAsync(rig));
     }
 
+    // D-8 mientras esté publicado (spec 2026-11-16): quitarle la empresa a un formulario publicado dejaría sin resolver {{empresa}} en
+    // el portal. Despublicarlo sin empresa sí se puede.
+    [Fact]
+    public async Task RemovingTheCompanyOfAPublishedFormIs422()
+    {
+        var rig = await RigAsync(SupportPermissions.SettingsManage);
+        await PublishAllDocumentsAsync(rig);
+        var verde = await SeedCompanyAsync(rig.Factory, rig.Tenant);
+        Assert.Equal(HttpStatusCode.OK, (await PutFormAsync(rig, Form(published: true, verde), version: 0)).StatusCode);
+
+        var removed = await PutFormAsync(rig, Form(published: true, organizationCompanyId: null), version: 1);
+        var unpublished = await PutFormAsync(rig, Form(published: false, organizationCompanyId: null), version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, removed.StatusCode);
+        Assert.Equal("support.form.organization_required", await CodeOfAsync(removed));
+        Assert.Equal(HttpStatusCode.OK, unpublished.StatusCode);
+        Assert.Equal(2L, await CountFormVersionsAsync(rig));
+    }
+
+    // Un formulario publicado antes de D-8, sin empresa: editarlo publicado exige elegirla.
+    [Fact]
+    public async Task EditingALegacyPublishedFormWithoutCompanyIs422()
+    {
+        var rig = await RigAsync(SupportPermissions.SettingsManage);
+        await SeedPublishedTenantAsync(rig.Factory, rig.Tenant, withOrganization: false);
+        var verde = await SeedCompanyAsync(rig.Factory, rig.Tenant);
+
+        var withoutCompany = await PutFormAsync(rig, Form(published: true, organizationCompanyId: null, "Otro texto."), version: 1);
+        var withCompany = await PutFormAsync(rig, Form(published: true, verde, "Otro texto."), version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, withoutCompany.StatusCode);
+        Assert.Equal("support.form.organization_required", await CodeOfAsync(withoutCompany));
+        Assert.Equal(HttpStatusCode.OK, withCompany.StatusCode);
+        Assert.Equal(2L, await CountFormVersionsAsync(rig));
+    }
+
     [Fact]
     public async Task PublishingWithAnInactiveCompanyIs422()
     {

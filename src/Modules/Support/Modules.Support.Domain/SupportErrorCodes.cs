@@ -173,6 +173,10 @@ public static class SupportErrorCodes
     /// <summary>Revisión final, I1: un ticket anónimo no guarda cliente (spec §9.4). Lo rechaza el agregado, para todo camino.</summary>
     public const string AnonymousHasNoCustomer = "support.ticket.anonymous_has_no_customer";
 
+    /// <summary>Spec 2026-11-16 (P-1): sólo un ticket anónimo recibe un PIN nuevo desde la consola; uno con solicitante o cliente usa el
+    /// reenvío público, que va a su correo o a su hilo. También lo responde un ticket sin fila de acceso.</summary>
+    public const string PinNotAnonymous = "support.ticket.pin_not_anonymous";
+
     /// <summary>Completar antes de que el navegador termine el PUT: el archivo todavía no está en el bucket (428).</summary>
     public const string PublicAttachmentNotUploaded = "support.public.attachment_not_uploaded";
 
@@ -209,6 +213,10 @@ public static class SupportErrorCodes
     public const string LegalDocumentsKindNotFound = "support.legal_documents.kind_not_found";
 
     public const string LegalDocumentsVersionNotFound = "support.legal_documents.version_not_found";
+
+    /// <summary>Spec 2026-11-16 (D-F8): el HTML saneado o la pregunta de autorización traen un <c>{{…}}</c> que no es una de
+    /// <c>SupportLegalVariables.All</c> (422). En singular, <c>legal_document</c>, porque así quedó fijado en el contrato con la consola.</summary>
+    public const string LegalDocumentUnknownVariable = "support.legal_document.unknown_variable";
 
     /// <summary>Translated by index name (<c>IX_legal_document_versions_tenant_kind_version</c>): two publications at once (409).</summary>
     public const string LegalDocumentsVersionTaken = "support.legal_documents.version_taken";

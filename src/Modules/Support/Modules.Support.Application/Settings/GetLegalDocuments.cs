@@ -19,6 +19,10 @@ public sealed class GetLegalDocumentsHandler(
     ISupportHtmlSanitizer sanitizer)
     : IQueryHandler<GetLegalDocumentsQuery, SupportLegalDocumentsDto>
 {
+    // La lista sale del dominio, la misma que valida al publicar y resuelve al servir: la consola nunca la arma por su cuenta.
+    private static readonly IReadOnlyList<SupportLegalVariableDto> Variables =
+        SupportLegalVariables.All.Select(variable => new SupportLegalVariableDto(variable.Name, variable.Label, variable.Example)).ToList();
+
     public async Task<SupportLegalDocumentsDto> HandleAsync(GetLegalDocumentsQuery query, CancellationToken cancellationToken)
     {
         await SupportAuthorization.EnsureCanViewSettingsAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
@@ -34,7 +38,8 @@ public sealed class GetLegalDocumentsHandler(
         return new SupportLegalDocumentsDto(
             SupportLegalDocuments.ToDto(documents[0], names, defaultQuestion, me, sanitizer),
             SupportLegalDocuments.ToDto(documents[1], names, defaultQuestion, me, sanitizer),
-            SupportLegalDocuments.ToDto(documents[2], names, defaultQuestion, me, sanitizer));
+            SupportLegalDocuments.ToDto(documents[2], names, defaultQuestion, me, sanitizer),
+            Variables);
     }
 }
 

@@ -85,7 +85,8 @@ internal static class SupportPublicHarness
     /// Un tenant con el formulario publicado: su fila y sus módulos, los tipos por defecto (todos publicados), la versión 1 de los
     /// tres documentos legales (spec 2026-11-15) y la versión 1 del formulario. Por SQL de dominio y no por la consola: el host puede tener la autenticación real.
     /// Con adjuntos salvo <paramref name="allowAttachments"/> en false, como el formulario por defecto (owner, 2026-11-15, E2). Con una
-    /// empresa activa del tenant elegida salvo <paramref name="withOrganization"/> en false (spec 2026-11-15 §15 D-8). Devuelve el slug.
+    /// empresa activa del tenant elegida salvo <paramref name="withOrganization"/> en false (spec 2026-11-15 §15 D-8), con el nombre
+    /// <paramref name="organizationName"/> (las variables de los documentos legales la nombran, spec 2026-11-16). Devuelve el slug.
     /// </summary>
     public static async Task<string> SeedPublishedTenantAsync(
         QepApiFactory factory,
@@ -97,11 +98,12 @@ internal static class SupportPublicHarness
         bool showLandline = true,
         bool businessNameRequired = true,
         bool allowAttachments = true,
-        bool withOrganization = true)
+        bool withOrganization = true,
+        string organizationName = "Verde S.A.S.")
     {
         await SeedTenantAsync(factory, tenantId, modules);
         // Spec 2026-11-15 §15 D-8: a form published from the console always has its company; the seed chooses one too.
-        Guid? organization = withOrganization ? await SeedCompanyAsync(factory, tenantId) : null;
+        Guid? organization = withOrganization ? await SeedCompanyAsync(factory, tenantId, organizationName) : null;
         var tenant = Guid.Parse(tenantId);
         var now = DateTimeOffset.UtcNow;
         await using (var provision = factory.Services.CreateAsyncScope())
@@ -205,6 +207,20 @@ internal static class SupportPublicHarness
             "SELECT id::text FROM support.ticket_types WHERE tenant_id = @tenant AND name = @name",
             ("tenant", Guid.Parse(tenantId)),
             ("name", name)))!);
+
+    /// <summary>Owner decision S6: extends a filed ticket's deadline through the domain (<c>SupportTicket.Extend</c>, the same entry the
+    /// console's <c>POST …/extension</c> uses), with the tenant's own clock and «now». Returns the new due date.</summary>
+    public static async Task<DateOnly?> ExtendTicketAsync(QepApiFactory factory, Guid tenantId, Guid ticketId, int businessDays)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var context = await scope.ServiceProvider.GetRequiredService<SupportTicketDtoComposer>().ReadContextAsync(tenantId, Ct);
+        var ticket = await scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>()
+            .FindAsync(tenantId, new SupportTicketId(ticketId), Ct);
+        Assert.NotNull(ticket);
+        ticket.Extend(businessDays, "Falta respuesta del proveedor", Guid.CreateVersion7(), context.Now, context.Clock);
+        await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        return ticket.DueOn;
+    }
 
     /// <summary>Una ciudad cualquiera de Geography (la sembró su migración).</summary>
     public static async Task<Guid> AnyCityIdAsync(QepApiFactory factory) =>

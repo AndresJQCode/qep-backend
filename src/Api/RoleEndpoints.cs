@@ -148,7 +148,8 @@ public static class RoleEndpoints
         new(
             // Un rol de sistema no tiene fila ni id: se identifica por su clave, que es lo que
             // viaja en la membresía. Inventarle un Guid haría creer que se puede pedir por id.
-            null,
+            // Uno custom sí lo trae, y sin él el front no puede editarlo ni borrarlo.
+            role.Id,
             role.Role,
             role.DisplayName,
             role.Description,

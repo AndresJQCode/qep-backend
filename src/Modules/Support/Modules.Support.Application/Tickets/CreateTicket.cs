@@ -404,12 +404,12 @@ public sealed class CreateTicketHandler(
         }
 
         await realtime.TicketChangedAsync(validated.TenantId, ticket.Id.Value, CancellationToken.None);
-        await openingDelivery.DeliverAsync(
-            ticket, access, pin, SupportOpeningSender.ConsultUrl(publicOptions, slug, ticket.DisplayNumber), context.Now,
-            cancellationToken);
+        var consultUrl = SupportOpeningSender.ConsultUrl(publicOptions, slug, ticket.DisplayNumber);
+        await openingDelivery.DeliverAsync(ticket, access, pin, consultUrl, context.Now, cancellationToken);
         var detail = await composer.ComposeDetailAsync(ticket, context, cancellationToken);
         // Plan G3 (owner, P-1): el anónimo no tiene a dónde recibir el PIN, así que viaja una sola vez, en esta respuesta, para que el
-        // asesor se lo dicte. Ninguna otra lectura lo trae, y nunca va a la auditoría ni a la traza.
-        return ticket.IsAnonymous ? detail with { IssuedPin = pin } : detail;
+        // asesor se lo dicte, junto con el enlace de la página donde se usa (spec 2026-11-16, P-6). Ninguna otra lectura los trae, y el
+        // PIN nunca va a la auditoría ni a la traza.
+        return ticket.IsAnonymous ? detail with { IssuedPin = pin, ConsultUrl = consultUrl } : detail;
     }
 }

@@ -985,7 +985,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("ticket_events", "support", t =>
                         {
-                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked','Extended','PriorityChanged')");
+                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked','Extended','PriorityChanged','PinReissued')");
                         });
                 });
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10, ASP.NET Core minimal APIs, EF Core 10 + Npgsql, FluentValidation, `HtmlSanitizer` (mganss, sobre AngleSharp), xUnit v3, Testcontainers (PostgreSQL).
 
-**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-10 (§15; D-8, L28, D-9 y D-10 confirmadas por el owner el 2026-11-15). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
+**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-11 (§15; D-8, L28, D-9 y D-10 confirmadas por el owner el 2026-11-15; D-11, S6, el 2026-11-16). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
 
 ---
 
@@ -213,8 +213,10 @@ Anónimo, sin credenciales (CORS `support-public`: `GET` y `POST`, sólo `Conten
 | --- | --- |
 | `GET /form` | `legal` cambia de forma; suma `organization` |
 | `GET /consult` | suma `organization` |
-| `POST /tickets` | cuerpo: sale `legalTextVersion`; entran `privacyNoticeVersion`, `anonymousNoticeVersion`, `acceptsTerms`, `termsVersion` y `clientRequestId` (opcional, idempotencia). Respuesta: suma `receivedAt`, `termBusinessDays`, `termIsLegal`; `pin` pasa a anulable |
-| `POST /tickets/lookup` | respuesta: suma `termBusinessDays` |
+| `POST /tickets` | cuerpo: sale `legalTextVersion`; entran `privacyNoticeVersion`, `anonymousNoticeVersion`, `acceptsTerms`, `termsVersion` y `clientRequestId` (opcional, idempotencia). Respuesta: suma `receivedAt`, `termBusinessDays` (vigente, con la prórroga), `termExtended`, `termIsLegal`; `pin` pasa a anulable |
+| `POST /tickets/lookup` | respuesta: suma `termBusinessDays` (vigente, con la prórroga) y `termExtended` |
+
+**Término y prórroga** (D-11, owner 2026-11-16, S6): en las dos respuestas `termBusinessDays` es el término **vigente** en días hábiles: el término del tipo que guardó el ticket más los días de la prórroga (`SupportTicket.TermBusinessDays + ExtensionBusinessDays`, `SupportTicket.CurrentTermBusinessDays`). `termExtended` es `true` si el plazo se prorrogó (`ExtendedAt` no nulo). `dueOn` ya incluye la prórroga, así que término y vencimiento cuadran. Un tipo sin término trae `termBusinessDays: null` y `termExtended: false` (sin término no se puede prorrogar). Las pausas del reloj mueven `dueOn` pero no el término.
 
 ```csharp
 // SupportPublicFormDto suma al final `SupportPublicOrganizationDto? Organization`; SupportPublicConsultDto queda
@@ -246,18 +248,19 @@ public sealed record SupportPublicFileRequest(
     Guid? ClientRequestId = null);               // opcional; un UUID aleatorio por intento de radicar (no por clic)
 
 // Respuesta de POST /tickets (201), primera vez y reintento. Pin null sólo en un reintento cuyo PIN ya salió por correo
-// (L28). TermBusinessDays null = el tipo no tiene término; TermIsLegal decide «plazo legal» u «objetivo».
+// (L28). TermBusinessDays = término vigente con la prórroga (D-11); null = el tipo no tiene término. TermExtended = hubo
+// prórroga (D-11). TermIsLegal decide «plazo legal» u «objetivo».
 public sealed record SupportPublicFiledDto(
-    string Number, string? Pin, DateTimeOffset ReceivedAt, DateOnly? DueOn, int? TermBusinessDays, bool TermIsLegal,
-    string? SuccessMessage, bool PinEmailed, string ConsultUrl);
+    string Number, string? Pin, DateTimeOffset ReceivedAt, DateOnly? DueOn, int? TermBusinessDays, bool TermExtended,
+    bool TermIsLegal, string? SuccessMessage, bool PinEmailed, string ConsultUrl);
 
-// Respuesta de POST /tickets/lookup: suma TermBusinessDays a lo de la fase 3.
+// Respuesta de POST /tickets/lookup: suma TermBusinessDays (vigente, D-11) y TermExtended a lo de la fase 3.
 public sealed record SupportPublicTicketDto(
     string Number, string TypeName, string Status, DateTimeOffset ReceivedAt, DateOnly? DueOn, string? DueState,
-    bool TermIsLegal, int? TermBusinessDays, IReadOnlyList<SupportPublicReplyDto> Replies);
+    bool TermIsLegal, int? TermBusinessDays, bool TermExtended, IReadOnlyList<SupportPublicReplyDto> Replies);
 ```
 
-En JSON: `organization: { name, documentTypeCode, documentNumber } | null` en `GET /form` y en `GET /consult`; `legal.privacyNotice.{version, contentHtml, authorizationQuestion, policyUrl}`, `legal.anonymousNotice.{version, contentHtml}`, `legal.terms.{version, contentHtml}`, `legal.characterizationNotice`; cuerpo del radicado `{ …, anonymous, requester, acceptsDataPolicy, privacyNoticeVersion, anonymousNoticeVersion, acceptsTerms, termsVersion, formVersion, turnstileToken, attachments, clientRequestId }`; respuesta del radicado `{ number, pin, receivedAt, dueOn, termBusinessDays, termIsLegal, successMessage, pinEmailed, consultUrl }`; respuesta de la consulta `{ number, typeName, status, receivedAt, dueOn, dueState, termIsLegal, termBusinessDays, replies }`.
+En JSON: `organization: { name, documentTypeCode, documentNumber } | null` en `GET /form` y en `GET /consult`; `legal.privacyNotice.{version, contentHtml, authorizationQuestion, policyUrl}`, `legal.anonymousNotice.{version, contentHtml}`, `legal.terms.{version, contentHtml}`, `legal.characterizationNotice`; cuerpo del radicado `{ …, anonymous, requester, acceptsDataPolicy, privacyNoticeVersion, anonymousNoticeVersion, acceptsTerms, termsVersion, formVersion, turnstileToken, attachments, clientRequestId }`; respuesta del radicado `{ number, pin, receivedAt, dueOn, termBusinessDays, termExtended, termIsLegal, successMessage, pinEmailed, consultUrl }`; respuesta de la consulta `{ number, typeName, status, receivedAt, dueOn, dueState, termIsLegal, termBusinessDays, termExtended, replies }`.
 
 **La empresa que responde** (spec §9.3, D-6): `organization` es la empresa del tenant elegida en Ajustes › Formulario público. `GET /form` la toma de la versión publicada y `GET /consult` de la vigente aunque no esté publicada (como `accentColor`). La respuesta de `POST /tickets/lookup` no la repite: la página de consulta ya la tiene de `GET /consult`. Con el formulario recién publicado siempre viene (es obligatoria para publicar, D-8); `null` sólo en un formulario publicado antes de este cambio o en la consulta de un tenant que nunca la eligió, y el portal entonces no pinta la línea.
 
@@ -265,7 +268,7 @@ En JSON: `organization: { name, documentTypeCode, documentNumber } | null` en `G
 
 - El portal genera un UUID **v4** (`crypto.randomUUID()`) al empezar a radicar y lo manda en **cada** reintento de ese mismo radicado (timeout, red caída, 5xx). Uno nuevo sólo para otro radicado («Radicar otra solicitud»). Otra versión de UUID (un v7, p. ej.) o el vacío es `422 validation.failed` con `errors.ClientRequestId` (D-10).
 - **Nunca dos radicados en vuelo**: el portal no manda un reintento mientras el anterior no respondió o no venció, y pinta **sólo la última respuesta**. Un reintento de un anónimo rota el PIN, así que el PIN de una respuesta anterior ya no sirve.
-- Un reintento con la misma clave en el mismo tenant responde `201` con el **mismo** `number`, `receivedAt`, `dueOn`, `termBusinessDays`, `termIsLegal`, `successMessage` y `consultUrl`, aunque el cuerpo cambie o el formulario o los documentos hayan cambiado: la clave se mira antes que todo eso. No se crea otro ticket ni se gasta otro número, y el correo de apertura no se vuelve a mandar.
+- Un reintento con la misma clave en el mismo tenant responde `201` con el **mismo** `number`, `receivedAt`, `termIsLegal`, `successMessage` y `consultUrl`, aunque el cuerpo cambie o el formulario o los documentos hayan cambiado: la clave se mira antes que todo eso. `dueOn`, `termBusinessDays` y `termExtended` son los **de ahora**: si el plazo se prorrogó entre los dos intentos, el reintento trae el término y el vencimiento prorrogados (D-11). No se crea otro ticket ni se gasta otro número, y el correo de apertura no se vuelve a mandar.
 - **Turnstile:** el reintento lo salta **sólo si el original ya confirmó** (la clave existe). Mientras el original sigue corriendo, un reintento con el token ya gastado responde `422 support.public.captcha_invalid`: el portal vuelve a correr Turnstile y reenvía con el **mismo** `clientRequestId`.
 - `pin` en un reintento: `null` con `pinEmailed: true` si el PIN ya salió por correo, o si el correo de apertura todavía no se anotó y el PIN se emitió hace 10 minutos o menos (en vuelo; el portal dice que se lo enviamos al correo y ofrece la consulta); un PIN **nuevo** con `pinEmailed: false` si no salió por ningún canal (anónimo, correo fallido, o el correo sigue sin anotarse pasados 10 minutos, L33): el anterior deja de servir y el portal lo muestra como en la primera respuesta. La rotación no tiene ventana de tiempo: sigue disponible en cualquier reintento (D-10).
 - Sin `clientRequestId`, cada `POST` es un radicado nuevo, como en la fase 3. El reintento sigue contando para el limitador `SupportPublicSubmit` (5 cada 10 min por IP).
@@ -634,7 +637,8 @@ Agregadas el 2026-11-15 en la revisión del spec del portal (Bloque C):
 - **D-6 «No omitir datos»:** fecha de radicación y término en días hábiles en el radicado y la consulta (L26, Tarea 8). **NIT, resuelto con la opción (a):** el tenant elige en Ajustes › Formulario público una de sus empresas y el portal muestra su nombre, tipo y número de documento (L29–L32, Tarea 10).
 - **D-8: la empresa es obligatoria para publicar** (`organization_required`). **Confirmada por el owner el 2026-11-15.**
 - **D-7 Radicado idempotente por `clientRequestId`** (L27, Tarea 9), calcado del checkout de la tienda. **La regla del PIN en un reintento (L28) la confirmó el owner el 2026-11-15**: `null` con `pinEmailed: true` si ya salió por correo; uno nuevo, sólo en la respuesta y sin correo, si no salió por ningún canal (el viejo deja de servir).
-- **D-10: el reintento rota el PIN sin ventana de tiempo, y `clientRequestId` es UUID v4** (owner, 2026-11-15, sobre S2 de la revisión final). La rotación de L28 sigue disponible en cualquier reintento, por viejo que sea el radicado. Sólo se suma que la clave sea un UUID v4 (lo que da `crypto.randomUUID()`, como `SupportPublicUploads.IsKey`); otra versión o el vacío es `422 validation.failed`, `errors.ClientRequestId`. S6 (término contra prórroga) sigue pendiente.
+- **D-10: el reintento rota el PIN sin ventana de tiempo, y `clientRequestId` es UUID v4** (owner, 2026-11-15, sobre S2 de la revisión final). La rotación de L28 sigue disponible en cualquier reintento, por viejo que sea el radicado. Sólo se suma que la clave sea un UUID v4 (lo que da `crypto.randomUUID()`, como `SupportPublicUploads.IsKey`); otra versión o el vacío es `422 validation.failed`, `errors.ClientRequestId`. S6 (término contra prórroga) lo resolvió D-11.
+- **D-11: el término del portal es el vigente, con la prórroga** (owner, 2026-11-16, S6 de la revisión final, opción a). `termBusinessDays` del radicado (también en un reintento) y de la consulta es el término del ticket más los días de la prórroga de la fase 4a (`SupportTicket.ExtensionBusinessDays`, que se guarda en días hábiles: no hay que recalcular con el calendario), y las dos respuestas suman `termExtended` (`true` si `ExtendedAt` no es nulo). `dueOn` ya incluía la prórroga; así el término y la fecha cuadran. Pruebas: `SupportPublicLookupApiTests.TheConsultOfAnExtendedTicketShowsTheExtendedDaysAndTermExtended`, `…TheConsultOfANotExtendedTicketHasTermExtendedFalse`, `SupportPublicIdempotencyApiTests.ARetryAfterAnExtensionReturnsTheCurrentValues` y `SupportTicketExtensionTests.TheCurrentTermAddsTheExtensionDays`.
 - **D-9: la IP del visitante en las aceptaciones la ve quien ve el ticket** (owner, 2026-11-15). `legalAcceptances[].visitorIp` del detalle y la foto de `GET …/legal-acceptances/{kind}` siguen con `support.ticket.view`, como dice el spec §7. Sin cambio de código.
 
 ## Desvíos del Bloque C (implementación, 2026-11-15)

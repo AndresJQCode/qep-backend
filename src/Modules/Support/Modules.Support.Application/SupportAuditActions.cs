@@ -17,6 +17,10 @@ public static class SupportAuditActions
     /// <summary>Fase 4a (plan G11): la prórroga. Lleva los nombres de campo <c>dueOn</c> y <c>extension</c>, nunca el motivo.</summary>
     public const string TicketExtended = "support.ticket.extended";
 
+    /// <summary>Spec 2026-11-16 (P-4): un asesor generó un PIN nuevo para un anónimo. Lleva sólo el nombre de campo
+    /// <c>pinIssuedAt</c>, nunca el PIN ni su hash.</summary>
+    public const string TicketPinReissued = "support.ticket.pin_reissued";
+
     public const string TicketTypeCreated = "support.ticket_type.created";
 
     public const string TicketTypeUpdated = "support.ticket_type.updated";
