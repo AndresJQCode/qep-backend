@@ -2,8 +2,11 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Modules.Support.Application;
 using Modules.Support.Infrastructure.Legal;
+using Modules.Support.Infrastructure.Pdf;
 using Modules.Support.Infrastructure.Persistence;
 
 namespace Modules.Support.Infrastructure;
@@ -51,6 +54,19 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<IFileReferenceProbe, SupportAttachmentReferenceProbe>();
         // Spec 2026-11-15 §5.2: the ticket notices of the app hub, after each commit.
         services.AddScoped<ISupportRealtime, SupportRealtimeNotifier>();
+
+        // Fase 4b (H12): el PDF de la respuesta formal, con sección y clave propias de qcode-pdf. Sin la clave en Production el pod no
+        // arranca (ValidateOnStart). Singleton por fábrica con un HttpClient propio y su timeout, como QCodePdfRenderer: sin estado.
+        services.AddOptions<SupportPdfOptions>().Bind(configuration.GetSection(SupportPdfOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<SupportPdfOptions>, SupportPdfOptionsValidator>();
+        services.AddSingleton<ISupportFormalReplyRenderer>(provider =>
+        {
+            var options = provider.GetRequiredService<IOptions<SupportPdfOptions>>();
+            return new SupportPdfRenderer(
+                new HttpClient { Timeout = TimeSpan.FromSeconds(options.Value.TimeoutSeconds) },
+                options,
+                provider.GetRequiredService<ILogger<SupportPdfRenderer>>());
+        });
 
         // Fase 2 (plan E2): el seguimiento del hilo sondea los entrantes de Mensajería. Apagable por configuración para que las pruebas
         // lo llamen a mano sin que el worker se lleve los entrantes por detrás.

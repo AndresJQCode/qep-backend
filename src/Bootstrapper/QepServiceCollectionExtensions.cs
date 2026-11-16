@@ -1648,6 +1648,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportConversationEvents, SupportConversationEvents>();
         services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
         services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();
+        // Soporte fase 4b (H5 y H8): el membrete de la respuesta formal (Companies, Tenancy y Storage) y el PDF en el bucket privado,
+        // bajo support/ y sin regla de ciclo de vida.
+        services.AddScoped<Modules.Support.Application.ISupportLetterhead, SupportLetterhead>();
+        services.AddScoped<Modules.Support.Application.ISupportDocumentStorage, SupportDocumentStorage>();
         // Soporte fase 3: el host del formulario público (plan F28 y F29).
         // Los orígenes del grupo público se validan al arrancar, como Cors:AllowedOrigins (plan F4).
         services.AddOptions<SupportPublicFormOptions>()

@@ -3168,6 +3168,13 @@ cuerpo de cada request. `QCodePdfRenderer` es su único cliente.
 | --- | --- | --- |
 | `Quotations__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
 | `Quotations__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
+| `Support__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `SUPPORT_PDF_BASE_URL` |
+| `Support__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `SUPPORT_PDF_API_KEY` |
+
+La respuesta formal de Soporte (fase 4b) usa el mismo servicio con **su propia clave** (`Support:Pdf`, `SupportPdfRenderer`), nunca
+la de cotizaciones: `qcode-pdf` identifica al cliente por el hash de la clave. `SupportPdfOptionsValidator` la exige en producción
+igual que la de cotizaciones, y un token del pipeline sin resolver (`#{…}#`) cuenta como ausente: **sin `SUPPORT_PDF_API_KEY` en
+`Backend-prod` el pod no arranca.**
 
 **Sin la API key el pod no arranca en producción.** A diferencia de WhatsApp, acá no hay
 fallback: `qcode-pdf` respondería 401 y todo envío moriría con `quotation.pdf.render_failed`.

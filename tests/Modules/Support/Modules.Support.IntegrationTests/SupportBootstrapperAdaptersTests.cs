@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Modules.Storage.Application;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using Testcontainers.PostgreSql;
@@ -16,6 +18,9 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset Since = new(2026, 11, 13, 15, 0, 0, TimeSpan.Zero);
 
+    // Fase 4b (H8): el bucket privado en memoria, para el almacén de documentos. Ninguna otra prueba de la clase toca Storage.
+    private readonly InMemorySupportObjectStorage _storage = new();
+
     private PostgreSqlContainer? _database;
     private QepApiFactory? _factory;
 
@@ -23,7 +28,11 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public async ValueTask InitializeAsync() => (_database, _factory) = await OpenOwnHostAsync();
+    public async ValueTask InitializeAsync() => (_database, _factory) = await OpenOwnHostAsync(services =>
+    {
+        services.RemoveAll<IObjectStorage>();
+        services.AddSingleton<IObjectStorage>(_storage);
+    });
 
     public async ValueTask DisposeAsync()
     {
@@ -273,12 +282,45 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         var inactive = await directory.FindAsync(tenant, off, Ct);
         var options = await directory.ListActiveAsync(tenant, Ct);
 
-        Assert.Equal(new SupportOrganizationRef(verde, "Verde S.A.S.", "NIT", "900123456", true), found);
-        Assert.Equal(new SupportOrganizationRef(off, "Apagada S.A.", "NIT", "700111222", false), inactive);
+        // Fase 4b (H5): la dirección, el correo, el teléfono y la ciudad van al membrete. La siembra no trae contacto, y la ciudad de
+        // una empresa colombiana sale de Geography por su id.
+        Assert.NotNull(found);
+        Assert.Equal((verde, "Verde S.A.S.", "NIT", "900123456", true), (found.Id, found.Name, found.DocumentTypeCode, found.DocumentNumber, found.IsActive));
+        Assert.Equal((null, null, null), (found.Address, found.Email, found.Phone));
+        Assert.False(string.IsNullOrWhiteSpace(found.CityName));
+        Assert.NotNull(inactive);
+        Assert.Equal((off, "Apagada S.A.", "NIT", "700111222", false), (inactive.Id, inactive.Name, inactive.DocumentTypeCode, inactive.DocumentNumber, inactive.IsActive));
         Assert.Null(await directory.FindAsync(tenant, foreign, Ct));
         Assert.Null(await directory.FindAsync(tenant, Guid.CreateVersion7(), Ct));
         Assert.Equal([azul, verde], options.Select(option => option.Id));
         Assert.All(options, option => Assert.True(option.IsActive));
+    }
+
+    // Fase 4b (H8): el PDF de la respuesta formal va al bucket privado bajo support/ (sin regla de ciclo de vida: 10 años de
+    // retención), con una clave nueva por documento, y se lee de vuelta tal cual. La descarga firmada lleva la vida que pide quien llama.
+    [Fact]
+    public async Task TheDocumentStorageSavesUnderTheSupportPrefixAndReadsBack()
+    {
+        var tenant = Guid.CreateVersion7();
+        byte[] content = [0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37];
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var storage = scope.ServiceProvider.GetRequiredService<ISupportDocumentStorage>();
+        var key = await storage.SaveAsync(tenant, content, Ct);
+        var other = await storage.SaveAsync(tenant, content, Ct);
+        var read = await storage.ReadAsync(key, Ct);
+        var url = await storage.CreateDownloadUrlAsync(key, "Respuesta-SOP-000001.pdf", TimeSpan.FromMinutes(5), Ct);
+
+        Assert.Matches($@"^support/tenants/{tenant:N}/replies/\d{{4}}/\d{{2}}/[0-9a-f]{{32}}\.pdf$", key);
+        Assert.NotEqual(key, other);
+        Assert.Equal(content, read);
+        Assert.Contains(key, url.AbsoluteUri, StringComparison.Ordinal);
+        Assert.Equal(TimeSpan.FromMinutes(5), _storage.LastDownloadExpiry);
+
+        await storage.DeleteAsync(key, Ct);
+        // Best effort: borrar lo que ya no existe no lanza.
+        await storage.DeleteAsync(key, Ct);
+        Assert.Null(await _storage.StatAsync(key, Ct));
     }
 
     private async Task<Guid> SeedConnectionAsync(Guid tenant, string status)
