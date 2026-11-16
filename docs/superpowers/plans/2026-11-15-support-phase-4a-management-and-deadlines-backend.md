@@ -45,7 +45,7 @@ Mías (planner) sobre lo que el spec deja al implementador. Las marcadas **(owne
 
 | # | Decisión | Por qué |
 | --- | --- | --- |
-| G1 | Alta anónima: `CreateTicketRequest` suma `bool? Anonymous` (null = `false`). Con `true`: `CustomerId` y `Requester` deben venir `null` y `ReplyChannel` debe ser `"Portal"` (422 `validation.failed` en el campo); `ManualMedium` sigue obligatorio. Sin anónimo, `Portal` sigue rechazado (`support.ticket.reply_channel_unavailable`, como hoy). | Spec §12: «sin anónimo, el canal de respuesta sigue obligatorio» y «reusa `IsAnonymous` y `Portal`». Exigir el canal explícito evita un segundo contrato para el mismo campo. |
+| G1 | Alta anónima: `CreateTicketRequest` suma `bool? Anonymous` (null = `false`). Con `true`: `CustomerId` y `Requester` deben venir `null` y `ReplyChannel` debe ser `"Portal"` (422 `validation.failed` en el campo); `ManualMedium` sigue obligatorio. Sin anónimo, `Portal` sigue rechazado, ahora por el validador: `422 validation.failed` en `ReplyChannel` (no `support.ticket.reply_channel_unavailable`; corregido tras la revisión del bloque A). | Spec §12: «sin anónimo, el canal de respuesta sigue obligatorio» y «reusa `IsAnonymous` y `Portal`». Exigir el canal explícito evita un segundo contrato para el mismo campo. |
 | G2 | Dominio: `SupportTicket.CreateManual` gana `bool anonymous`; con `true` exige `customerId == null` y `requester == null`, fija `IsAnonymous = true` y `ReplyChannel = Portal`, y no exige nombre. `Start` deja de exigir solicitante cuando el ticket es anónimo. | Una sola fábrica para el manual; la regla D6 sigue para el manual con nombre. |
 | G3 | El ticket manual anónimo nace con PIN igual que todos (`SupportTicketAccess.Issue`). La respuesta del `POST /tickets` lo trae **una vez** en `SupportTicketDetailDto.IssuedPin` (último campo, `string?`), sólo en ese alta; en toda otra lectura es `null`. **(owner, P-1)** | Sin el PIN, quien llamó o vino en persona no puede consultar su radicado y el anónimo no se puede responder (su único canal es la página de consulta, §9.4). Es el equivalente de «se muestra una vez en pantalla» del formulario. |
 | G4 | Borrar tipo: `DELETE /settings/ticket-types/{typeId}` con `If-Match`, permiso `support.settings.manage`, 204. Con algún ticket (cualquier estado) → `422 support.ticket_type.in_use`. Versión vieja 412, sin `If-Match` 428, de otro tenant 404 `support.ticket_type.not_found`. Audita `support.ticket_type.deleted`. | Spec §12. |
@@ -90,6 +90,8 @@ Bajo `/api/v1/tenants/{tenantId:guid}/support`:
 - `SupportClockDto(…, int PausedBusinessDays, SupportExtensionDto? Extension, int? MaxExtensionBusinessDays)`; `SupportExtensionDto(int BusinessDays, string Reason, DateTimeOffset ExtendedAt)` (sin autor: está en la traza). `MaxExtensionBusinessDays` = `TermBusinessDays` si hoy se puede prorrogar (G10 entero pasa), `null` si no: la pantalla muestra u oculta «Prorrogar» y su tope sin repetir las reglas.
 - `SupportTicketEventDto` suma al final `int? ExtensionBusinessDays, DateOnly? FromDueOn, DateOnly? ToDueOn, string? Reason`, llenos sólo en `Kind = Extended`.
 - `SupportTicketDetailDto` suma al final `string? IssuedPin`.
+- En un ticket manual anónimo `consultAccess.channel` es `null`: no se manda nada al abrir (no hay a dónde) y el PIN sólo viaja en
+  `issuedPin` del `201`.
 
 ## Estructura de archivos
 

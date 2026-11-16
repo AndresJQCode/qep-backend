@@ -53,6 +53,21 @@ public sealed class SupportViewerTests
         Assert.Equal(1, memberships.Calls);
     }
 
+    // Revisión del bloque A: autenticado pero sin sujeto (una clave de API, más adelante): no es miembro, y no lanza.
+    [Fact]
+    public async Task ItIsNullForAnAuthenticatedCallerWithoutASubject()
+    {
+        var memberships = new RecordingMemberships();
+        var context = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("api_key", "k1")], authenticationType: "ApiKey")),
+        };
+        var viewer = new SupportViewer(new HttpContextAccessor { HttpContext = context }, new ThrowingExecutionContext(), memberships);
+
+        Assert.Null(await viewer.MemberIdAsync(Tenant, Ct));
+        Assert.Equal(0, memberships.Calls);
+    }
+
     private sealed class RecordingMemberships : IMembershipDirectory
     {
         public int Calls { get; private set; }
