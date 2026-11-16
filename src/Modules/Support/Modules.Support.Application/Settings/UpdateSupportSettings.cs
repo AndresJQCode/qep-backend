@@ -5,25 +5,29 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Support.Application;
 
-/// <summary>El <c>PUT</c> reemplaza los ajustes enteros: <c>FormalNextStep</c> ausente o null borra el «siguiente paso» (fase 4b, H6).
-/// <c>SurveyEnabled</c> y <c>AutoCloseBusinessDays</c> (fase 4b, H14) son obligatorios: sin ellos, 422 en su campo.</summary>
+/// <summary>El umbral es obligatorio. <c>FormalNextStep</c> (fase 4b, H6), <c>SurveyEnabled</c> y <c>AutoCloseBusinessDays</c> (fase 4b,
+/// H14) son opcionales porque el frontend publicado manda sólo <c>{ dueSoonBusinessDays }</c> (revisión del bloque C, 2026-11-16):
+/// ausentes o null conservan lo guardado. Para borrar el «siguiente paso» se manda vacío (<c>""</c>).</summary>
 public sealed record UpdateSupportSettingsRequest(
     int? DueSoonBusinessDays, string? FormalNextStep = null, bool? SurveyEnabled = null, int? AutoCloseBusinessDays = null);
 
 /// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por <c>If-Match</c>.</param>
+/// <param name="FormalNextStep">Null conserva el guardado; vacío lo borra.</param>
+/// <param name="SurveyEnabled">Null conserva el guardado.</param>
+/// <param name="AutoCloseBusinessDays">Null conserva el guardado; con valor, de 1 a 30.</param>
 public sealed record UpdateSupportSettingsCommand(
     Guid TenantId,
     int DueSoonBusinessDays,
     string? FormalNextStep,
     long ExpectedVersion,
     bool? SurveyEnabled = null,
-    int AutoCloseBusinessDays = -1)
+    int? AutoCloseBusinessDays = null)
     : ICommand<SupportSettingsDto>
 {
-    /// <summary>Sin valor, −1 (y la encuesta null): el validador lo rechaza en el campo, en vez de que el dominio lance.</summary>
+    /// <summary>Sin umbral, −1: el validador lo rechaza en el campo, en vez de que el dominio lance.</summary>
     public static UpdateSupportSettingsCommand From(Guid tenantId, UpdateSupportSettingsRequest request, long expectedVersion) =>
         new(tenantId, request.DueSoonBusinessDays ?? -1, request.FormalNextStep, expectedVersion, request.SurveyEnabled,
-            request.AutoCloseBusinessDays ?? -1);
+            request.AutoCloseBusinessDays);
 }
 
 public sealed class UpdateSupportSettingsValidator : AbstractValidator<UpdateSupportSettingsCommand>
@@ -33,9 +37,9 @@ public sealed class UpdateSupportSettingsValidator : AbstractValidator<UpdateSup
         RuleFor(command => command.DueSoonBusinessDays)
             .InclusiveBetween(SupportTenantSettings.MinDueSoonBusinessDays, SupportTenantSettings.MaxDueSoonBusinessDays);
         RuleFor(command => command.FormalNextStep).MustBeAFormalNextStep();
-        RuleFor(command => command.SurveyEnabled).NotNull();
         RuleFor(command => command.AutoCloseBusinessDays)
-            .InclusiveBetween(SupportTenantSettings.MinAutoCloseBusinessDays, SupportTenantSettings.MaxAutoCloseBusinessDays);
+            .InclusiveBetween(SupportTenantSettings.MinAutoCloseBusinessDays, SupportTenantSettings.MaxAutoCloseBusinessDays)
+            .When(command => command.AutoCloseBusinessDays is not null);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -76,15 +80,18 @@ public sealed class UpdateSupportSettingsHandler(
             changedFields.Add("dueSoonBusinessDays");
         }
 
-        version = settings.Version;
-        settings.ChangeFormalNextStep(command.FormalNextStep, now);
-        if (settings.Version != version)
+        if (command.FormalNextStep is not null)
         {
-            changedFields.Add("formalNextStep");
+            version = settings.Version;
+            settings.ChangeFormalNextStep(command.FormalNextStep, now);
+            if (settings.Version != version)
+            {
+                changedFields.Add("formalNextStep");
+            }
         }
 
         var (surveyEnabled, autoClose) = (settings.SurveyEnabled, settings.AutoCloseBusinessDays);
-        settings.ChangeSurvey(command.SurveyEnabled!.Value, command.AutoCloseBusinessDays, now);
+        settings.ChangeSurvey(command.SurveyEnabled ?? surveyEnabled, command.AutoCloseBusinessDays ?? autoClose, now);
         if (settings.SurveyEnabled != surveyEnabled)
         {
             changedFields.Add("surveyEnabled");

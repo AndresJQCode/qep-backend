@@ -146,8 +146,10 @@ public sealed class SupportTenantSettingsTests
             (true, 30, 2L, Now.AddHours(2)), (settings.SurveyEnabled, settings.AutoCloseBusinessDays, settings.Version, settings.UpdatedAt));
     }
 
+    // Fase 4b, revisión del bloque C (2026-11-16): el frontend publicado manda sólo el umbral. La encuesta y el cierre automático son
+    // opcionales en el PUT: ausentes conservan el valor guardado, y el rango 1–30 se valida sólo si llegan.
     [Fact]
-    public void TheSettingsValidatorRequiresTheSurveyToggleAndAutoCloseIn1To30()
+    public void TheSettingsValidatorKeepsAnAbsentSurveyAndChecksAutoCloseOnlyWhenPresent()
     {
         static IEnumerable<string> Errors(bool? survey, int? autoClose) =>
             new Modules.Support.Application.UpdateSupportSettingsValidator()
@@ -157,9 +159,19 @@ public sealed class SupportTenantSettingsTests
 
         Assert.Empty(Errors(true, 1));
         Assert.Empty(Errors(false, 30));
-        Assert.Equal(["SurveyEnabled"], Errors(null, 5));
-        Assert.Equal(["AutoCloseBusinessDays"], Errors(true, null));
+        Assert.Empty(Errors(null, 5));
+        Assert.Empty(Errors(true, null));
+        Assert.Empty(Errors(null, null));
         Assert.Equal(["AutoCloseBusinessDays"], Errors(true, 0));
-        Assert.Equal(["AutoCloseBusinessDays"], Errors(true, 31));
+        Assert.Equal(["AutoCloseBusinessDays"], Errors(null, 31));
+    }
+
+    [Fact]
+    public void AnAbsentSurveyOrAutoCloseTravelsAsNullToTheCommand()
+    {
+        var command = Modules.Support.Application.UpdateSupportSettingsCommand.From(
+            TenantId, new Modules.Support.Application.UpdateSupportSettingsRequest(3), 1);
+
+        Assert.True(command.SurveyEnabled is null && command.AutoCloseBusinessDays is null && command.FormalNextStep is null);
     }
 }

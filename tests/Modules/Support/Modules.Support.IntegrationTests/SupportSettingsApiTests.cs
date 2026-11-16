@@ -113,8 +113,8 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal((7, 0, 30, 2L), Settings(await JsonAsync(write)));
     }
 
-    // Fase 4b (H6): el «siguiente paso» del tenant. El PUT reemplaza todo: mandarlo en null lo borra. La auditoría nombra el campo,
-    // nunca el texto.
+    // Fase 4b (H6): el «siguiente paso» del tenant. Mandarlo vacío lo borra; ausente o null lo conserva (revisión del bloque C,
+    // 2026-11-16: el frontend publicado no lo manda). La auditoría nombra el campo, nunca el texto.
     [Fact]
     public async Task TheTenantNextStepRoundTripsAndIsAudited()
     {
@@ -145,8 +145,13 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
                 "SELECT count(*) FROM audit.entries WHERE resource_id = @tenant AND changed_fields::text LIKE '%Superintendencia%'",
                 ("tenant", tenant)));
 
-        var cleared = await PutAsync(
-            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, formalNextStep = (string?)null, surveyEnabled = false, autoCloseBusinessDays = 5 }, version: 2);
+        var kept = await PutAsync(
+            client, SettingsUrl(tenant), new { dueSoonBusinessDays = 4, formalNextStep = (string?)null }, version: 2);
+
+        Assert.Equal(HttpStatusCode.OK, kept.StatusCode);
+        Assert.Equal(text, (await JsonAsync(kept)).GetProperty("formalNextStep").GetString());
+
+        var cleared = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 4, formalNextStep = "" }, version: 3);
 
         Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
         Assert.Equal(JsonValueKind.Null, (await JsonAsync(cleared)).GetProperty("formalNextStep").ValueKind);
@@ -197,12 +202,38 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
 
         var outOfRange = await PutAsync(
             client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, surveyEnabled = true, autoCloseBusinessDays = value }, version: 1);
-        var missing = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3 }, version: 1);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, outOfRange.StatusCode);
         Assert.Equal(["AutoCloseBusinessDays"], await ErrorKeysAsync(outOfRange));
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, missing.StatusCode);
-        Assert.Equal(["AutoCloseBusinessDays", "SurveyEnabled"], (await ErrorKeysAsync(missing)).Order(StringComparer.Ordinal));
+    }
+
+    // Revisión del bloque C (2026-11-16): el frontend publicado manda sólo { dueSoonBusinessDays }. Ese PUT no puede borrar el
+    // «siguiente paso», apagar la encuesta ni devolver el cierre automático al default.
+    [Fact]
+    public async Task APutWithOnlyTheThresholdKeepsTheOtherSettings()
+    {
+        var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
+        var configured = await PutAsync(
+            client,
+            SettingsUrl(tenant),
+            new { dueSoonBusinessDays = 3, formalNextStep = "Puedes acudir a la SIC.", surveyEnabled = true, autoCloseBusinessDays = 9 },
+            version: 1);
+        Assert.Equal(HttpStatusCode.OK, configured.StatusCode);
+
+        var saved = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 6 }, version: 2);
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var body = await JsonAsync(saved);
+        Assert.Equal((6, 0, 30, 3L), Settings(body));
+        Assert.Equal((true, 9, 1, 30), Survey(body));
+        Assert.Equal("Puedes acudir a la SIC.", body.GetProperty("formalNextStep").GetString());
+        Assert.Equal(
+            1L,
+            await ScalarAsync(
+                factory,
+                "SELECT count(*) FROM audit.entries WHERE action = @action AND resource_id = @tenant AND changed_fields::text = '[\"dueSoonBusinessDays\"]'",
+                ("action", SupportAuditActions.SettingsUpdated),
+                ("tenant", tenant)));
     }
 
     private static (bool Enabled, int AutoClose, int Min, int Max) Survey(JsonElement body) => (

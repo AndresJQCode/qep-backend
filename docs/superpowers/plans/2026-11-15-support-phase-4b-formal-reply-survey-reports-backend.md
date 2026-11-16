@@ -305,7 +305,7 @@ public void ChangeFormalNextStep(string? text, DateTimeOffset now);     // Suppo
 public sealed record UpdateSupportSettingsRequest(int? DueSoonBusinessDays, string? FormalNextStep = null);   // Task 10 appends the rest
 // CreateTicketTypeRequest / UpdateTicketTypeRequest: + string? FormalNextStep = null (last). SupportTicketTypeDto: + string? FormalNextStep (last).
 ```
-The `PUT` is a full replacement: `formalNextStep: null` clears it. Audit fields `formalNextStep` (settings) and `formalNextStep` (type).
+The `PUT` is a full replacement: `formalNextStep: null` clears it (**changed 2026-11-16: optional for backward compatibility with the shipped frontend** — absent or null keeps the stored text, `""` clears it). Audit fields `formalNextStep` (settings) and `formalNextStep` (type).
 Validators: ≤ 2000 after trim, no control characters except line break and tab.
 
 - [ ] **Step 1: tests**
@@ -626,7 +626,7 @@ reply is removed with its document (cascade) and its R2 object (best effort). `T
 - Create: `Modules.Support.Domain/{SupportTicketSurvey,SupportSurveyStatus,SupportSurveyChannel,SupportSurveyRating}.cs`, migration `AddSupportSurveys`
 - Modify: `SupportTicket.cs` (`surveys` field + `Surveys` navigation; `ChangeStatus` to `Resolved` adds one), `SupportTenantSettings.cs`
   (`SurveyEnabled`, `AutoCloseBusinessDays`, `Min/MaxAutoCloseBusinessDays = 1/30`, `DefaultAutoCloseBusinessDays = 5`, `ChangeSurvey`),
-  `Settings/*` (request + `bool? SurveyEnabled, int? AutoCloseBusinessDays`, required), `SupportDbContext.cs` (table, CHECKs by
+  `Settings/*` (request + `bool? SurveyEnabled, int? AutoCloseBusinessDays`, required — **changed 2026-11-16: optional for backward compatibility with the shipped frontend**; null keeps the stored value, the 1–30 range is validated only when present), `SupportDbContext.cs` (table, CHECKs by
   `Enum.GetNames`, indexes, navigation like `Events`), `SupportUnitOfWork.cs` (`UX_ticket_surveys_ticket_resolution` → `concurrency.conflict`
   by name: unreachable after the version check, kept as a backstop), `BuildingBlocks.Application/QueueDoorbell.cs`
   (`DoorbellQueues.SupportSurvey = "support_survey"`, `All`, `SafetyNet` 30 s), `BuildingBlocks.Infrastructure/QueueDoorbellInterceptor.cs`
