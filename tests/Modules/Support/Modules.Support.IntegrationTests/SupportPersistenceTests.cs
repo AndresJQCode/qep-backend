@@ -198,6 +198,44 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal([1, 2], (await tickets.ListEventsAsync(tenant, ticket.Id, Ct)).Select(item => item.Ordinal));
     }
 
+    // Fase 4a (plan G9): las tres columnas de la prórroga y el evento Extended, que el CHECK de kind tiene que aceptar.
+    [Fact]
+    public async Task AnExtendedTicketRoundTrips()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var type = (await TypesAsync(factory, tenant))[0];
+        var actor = Guid.CreateVersion7();
+        var ticket = NewTicket(tenant, type, 1, Now, actor);
+        await SaveAsync(factory, ticket);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var loaded = await scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().FindAsync(tenant, ticket.Id, Ct);
+            loaded!.Extend(5, "Falta respuesta del proveedor", actor, At(11, 17), Clock);
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
+        var found = await tickets.FindAsync(tenant, ticket.Id, Ct);
+        var events = await tickets.ListEventsAsync(tenant, ticket.Id, Ct);
+
+        Assert.NotNull(found);
+        Assert.Equal(5, found.ExtensionBusinessDays);
+        Assert.Equal("Falta respuesta del proveedor", found.ExtensionReason);
+        Assert.Equal(At(11, 17), found.ExtendedAt);
+        // 15 + 5 días hábiles de lunes a viernes desde el 2026-11-13.
+        Assert.Equal(new DateOnly(2026, 12, 11), found.DueOn);
+        Assert.Equal(2L, found.Version);
+        var extended = events[^1];
+        Assert.Equal(SupportTicketEventKind.Extended, extended.Kind);
+        Assert.Equal(actor, extended.ActorMemberId);
+        using var details = JsonDocument.Parse(extended.Details);
+        Assert.Equal("2026-12-04", details.RootElement.GetProperty("fromDueOn").GetString());
+        Assert.Equal("2026-12-11", details.RootElement.GetProperty("toDueOn").GetString());
+    }
+
     [Fact]
     public async Task AStaleTicketVersionIsAConcurrencyConflict()
     {
@@ -331,6 +369,45 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
             () => scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct));
 
         Assert.Equal(SupportErrorCodes.TicketTypeNameTaken, exception.Code);
+    }
+
+    // Fase 4a (plan G5, Review Focus 1): la FK RESTRICT cierra la carrera entre borrar un tipo y radicar con él, sin la pregunta previa.
+    [Fact]
+    public async Task TheForeignKeyTurnsADeleteOfAUsedTypeInto422InUse()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var type = (await TypesAsync(factory, tenant))[3];
+        await SaveAsync(factory, NewTicket(tenant, type, 1, Now, Guid.CreateVersion7()));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var types = scope.ServiceProvider.GetRequiredService<ISupportTicketTypeRepository>();
+        types.Remove((await types.FindAsync(tenant, type.Id, Ct))!);
+        var exception = await Assert.ThrowsAsync<SupportDomainException>(
+            () => scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct));
+
+        Assert.Equal(SupportErrorCodes.TicketTypeInUse, exception.Code);
+        Assert.Equal(8, (await TypesAsync(factory, tenant)).Count);
+    }
+
+    [Fact]
+    public async Task TheForeignKeyTurnsATicketOnADeletedTypeInto422Unavailable()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var type = (await TypesAsync(factory, tenant))[6];
+        var ticket = NewTicket(tenant, type, 1, Now, Guid.CreateVersion7());
+        await using (var connection = new NpgsqlConnection(ConnectionString(factory)))
+        {
+            await connection.OpenAsync(Ct);
+            await using var delete = new NpgsqlCommand("DELETE FROM support.ticket_types WHERE id = @id", connection);
+            delete.Parameters.AddWithValue("id", type.Id.Value);
+            Assert.Equal(1, await delete.ExecuteNonQueryAsync(Ct));
+        }
+
+        var exception = await Assert.ThrowsAsync<SupportDomainException>(() => SaveAsync(factory, ticket));
+
+        Assert.Equal(SupportErrorCodes.TicketTypeUnavailable, exception.Code);
     }
 
     [Fact]

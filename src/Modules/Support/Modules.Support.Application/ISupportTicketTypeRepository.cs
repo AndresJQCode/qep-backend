@@ -10,4 +10,8 @@ public interface ISupportTicketTypeRepository
     Task<SupportTicketType?> FindAsync(Guid tenantId, SupportTicketTypeId id, CancellationToken cancellationToken);
 
     void Add(SupportTicketType type);
+
+    /// <summary>Fase 4a (plan G4): el borrado se aplica al guardar. Si un ticket lo usa, la FK <c>RESTRICT</c> lo frena y el unit of
+    /// work responde <c>support.ticket_type.in_use</c>.</summary>
+    void Remove(SupportTicketType type);
 }

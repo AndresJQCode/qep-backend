@@ -25,6 +25,7 @@ public sealed class ReorderTicketTypesHandler(
     ITenantClock tenantClock,
     ISupportProvisioner provisioner,
     ISupportTicketTypeRepository types,
+    ISupportTicketRepository tickets,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher)
     : ICommandHandler<ReorderTicketTypesCommand, IReadOnlyList<SupportTicketTypeDto>>
@@ -70,6 +71,7 @@ public sealed class ReorderTicketTypesHandler(
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
-        return command.TypeIds.Select(id => SupportDtoMapping.ToDto(existing[id])).ToList();
+        var used = await tickets.UsedTypeIdsAsync(command.TenantId, cancellationToken);
+        return command.TypeIds.Select(id => SupportDtoMapping.ToDto(existing[id], used.Contains(existing[id].Id))).ToList();
     }
 }

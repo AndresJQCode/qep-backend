@@ -345,6 +345,12 @@ public sealed class SupportOpeningSenderTests
             Guid tenantId, Guid conversationId, Guid? customerId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<bool> AnyOfTypeAsync(Guid tenantId, SupportTicketTypeId typeId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlySet<SupportTicketTypeId>> UsedTypeIdsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void Add(SupportTicket ticket) => throw new NotSupportedException();
     }
 

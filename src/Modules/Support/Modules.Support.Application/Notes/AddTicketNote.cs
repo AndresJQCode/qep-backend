@@ -46,6 +46,7 @@ public sealed class AddTicketNoteHandler(
     ISupportTicketRepository tickets,
     ISupportTicketNoteRepository notes,
     ISupportMemberDirectory members,
+    ISupportViewer viewer,
     ISupportAttachmentStorage storage,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -76,7 +77,7 @@ public sealed class AddTicketNoteHandler(
                 throw ClientIdTaken();
             }
 
-            return await SupportNoteDtos.ComposeAsync(members, command.TenantId, existing, cancellationToken);
+            return await SupportNoteDtos.ComposeAsync(members, viewer, command.TenantId, existing, cancellationToken);
         }
 
         if (ticket.Status is SupportTicketStatus.Closed)
@@ -99,7 +100,7 @@ public sealed class AddTicketNoteHandler(
         // A race with the same clientId loses on PK_ticket_notes and answers 409 (SupportUnitOfWork, plan N15).
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
-        return await SupportNoteDtos.ComposeAsync(members, command.TenantId, note, cancellationToken);
+        return await SupportNoteDtos.ComposeAsync(members, viewer, command.TenantId, note, cancellationToken);
     }
 
     internal static ResourceConflictException ClientIdTaken() =>
@@ -141,24 +142,32 @@ public sealed class AddTicketNoteHandler(
 internal static class SupportNoteDtos
 {
     public static async Task<SupportTicketNoteDto> ComposeAsync(
-        ISupportMemberDirectory members, Guid tenantId, SupportTicketNote note, CancellationToken cancellationToken) =>
-        (await ComposeAsync(members, tenantId, [note], cancellationToken))[0];
+        ISupportMemberDirectory members,
+        ISupportViewer viewer,
+        Guid tenantId,
+        SupportTicketNote note,
+        CancellationToken cancellationToken) =>
+        (await ComposeAsync(members, viewer, tenantId, [note], cancellationToken))[0];
 
+    /// <summary>Fase 4a (plan G8): el autor lleva <c>IsMe</c> contra quien pide.</summary>
     public static async Task<IReadOnlyList<SupportTicketNoteDto>> ComposeAsync(
-        ISupportMemberDirectory members, Guid tenantId, IReadOnlyList<SupportTicketNote> notes, CancellationToken cancellationToken)
+        ISupportMemberDirectory members,
+        ISupportViewer viewer,
+        Guid tenantId,
+        IReadOnlyList<SupportTicketNote> notes,
+        CancellationToken cancellationToken)
     {
         var authors = notes.Select(note => note.AuthorMemberId).Distinct().ToList();
         IReadOnlyDictionary<Guid, string> names = authors.Count == 0
             ? new Dictionary<Guid, string>()
             : await members.NamesAsync(tenantId, authors, cancellationToken);
+        var me = await viewer.MemberIdAsync(tenantId, cancellationToken);
         return
         [
             .. notes.Select(note => new SupportTicketNoteDto(
                 note.Id,
                 note.Text,
-                new SupportMemberDto(
-                    note.AuthorMemberId,
-                    names.TryGetValue(note.AuthorMemberId, out var name) ? name : SupportTicketDtoComposer.UnknownName),
+                SupportTicketDtoComposer.ToMemberDto(note.AuthorMemberId, names, me),
                 note.CreatedAt,
                 [.. note.Files.Select(file => new SupportNoteFileDto(file.FileId, file.FileName, file.MimeType, file.SizeBytes))])),
         ];

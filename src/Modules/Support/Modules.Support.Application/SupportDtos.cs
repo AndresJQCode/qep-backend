@@ -6,7 +6,9 @@ namespace Modules.Support.Application;
 // de textos lo tiene el frontend.
 
 /// <summary>Un tipo de ticket como lo dibujan el selector del alta y la tabla de ajustes. <c>Version</c> va en el <c>If-Match</c> del
-/// <c>PUT</c>; <c>Position</c> es el orden en que la pantalla los lista.</summary>
+/// <c>PUT</c>; <c>Position</c> es el orden en que la pantalla los lista. <c>InUse</c> (fase 4a, plan G6) dice si algún ticket, en
+/// cualquier estado, usa el tipo: la tabla de ajustes ofrece «Eliminar» sólo si es falso, y si no, sólo «Desactivar», sin probar el
+/// <c>DELETE</c> para enterarse del 422.</summary>
 public sealed record SupportTicketTypeDto(
     Guid Id,
     string Name,
@@ -16,7 +18,8 @@ public sealed record SupportTicketTypeDto(
     bool IsPublished,
     bool IsActive,
     int Position,
-    long Version);
+    long Version,
+    bool InUse);
 
 /// <summary>El umbral de «por vencer» del tenant [owner 2026-11-14]. Viaja con su rango (<c>Min</c> y <c>Max</c>) para que el
 /// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3.</summary>
@@ -84,7 +87,9 @@ public sealed record SupportTicketListItemDto(
     int? BusinessDaysLeft);
 
 /// <summary>El detalle del ticket. <c>AllowedTransitions</c> sale de la máquina de estados del dominio: el selector de estado no la
-/// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones.</summary>
+/// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones. <c>IssuedPin</c> (fase 4a, plan G3) trae el PIN de consulta sólo
+/// en el <c>201</c> del alta manual anónima, para que el asesor se lo dicte a quien llamó o vino en persona: ese ticket no tiene a dónde
+/// recibirlo. En toda otra respuesta es <c>null</c>.</summary>
 public sealed record SupportTicketDetailDto(
     Guid Id,
     string Number,
@@ -113,7 +118,8 @@ public sealed record SupportTicketDetailDto(
     bool IsAnonymous,
     IReadOnlyList<SupportCustomerCandidateDto> CustomerCandidates,
     SupportConsultAccessDto? ConsultAccess,
-    IReadOnlyList<SupportAttachmentDto> Attachments);
+    IReadOnlyList<SupportAttachmentDto> Attachments,
+    string? IssuedPin);
 
 /// <summary>Un adjunto del formulario público (plan F37), en el orden en que se adjuntó. El archivo se baja con
 /// <c>GET …/tickets/{id}/attachments/{attachmentId}/download</c>: la pantalla no necesita <c>storage.file.read</c>. Una lista vacía
@@ -174,9 +180,23 @@ public sealed record SupportConversationTicketDto(SupportTicketListItemDto Ticke
 public sealed record SupportTicketTypeSnapshotDto(Guid Id, string Name, int? TermBusinessDays, bool TermIsLegal, bool RequiresFormalResponse);
 
 /// <summary><c>DueState</c> ∈ <c>NoTerm</c>, <c>OnTrack</c>, <c>DueSoon</c>, <c>Overdue</c>, <c>Paused</c>, <c>Finished</c>.
-/// <c>TermIsLegal</c> decide si la pantalla dice «vence el plazo legal» o «vence el objetivo».</summary>
+/// <c>TermIsLegal</c> decide si la pantalla dice «vence el plazo legal» o «vence el objetivo». Fase 4a (plan G9 a G13):
+/// <c>Extension</c> es la prórroga ya hecha (null sin prórroga). <c>MaxExtensionBusinessDays</c> decide si la pantalla ofrece
+/// «Prorrogar» y su tope: es el término del ticket si hoy se puede prorrogar y null si no (ya prorrogado, sin término, esperando al
+/// cliente, vencido, resuelto o cerrado), así la pantalla no repite las reglas. El aviso al solicitante lo manda el asesor como
+/// respuesta (plan G13); <c>Extension</c> sirve para prellenarlo.</summary>
 public sealed record SupportClockDto(
-    DateOnly? DueOn, string DueState, int? BusinessDaysLeft, int? TermBusinessDays, bool TermIsLegal, int PausedBusinessDays);
+    DateOnly? DueOn,
+    string DueState,
+    int? BusinessDaysLeft,
+    int? TermBusinessDays,
+    bool TermIsLegal,
+    int PausedBusinessDays,
+    SupportExtensionDto? Extension,
+    int? MaxExtensionBusinessDays);
+
+/// <summary>La prórroga del ticket. Sin autor: quién la hizo está en la traza, en el evento <c>Extended</c>.</summary>
+public sealed record SupportExtensionDto(int BusinessDays, string Reason, DateTimeOffset ExtendedAt);
 
 /// <summary>Una entrada de la traza, con campos planos y nulos según <c>Kind</c> y los nombres ya resueltos: la pantalla no lee
 /// JSON ni busca miembros. Un miembro o cliente que ya no se encuentra sale como «Sin nombre».</summary>
@@ -193,12 +213,19 @@ public sealed record SupportTicketEventDto(
     SupportCustomerRefDto? Customer,
     Guid? MessageId,
     bool? Follow,
-    string? ReplyChannel);
+    string? ReplyChannel,
+    int? ExtensionBusinessDays,
+    DateOnly? FromDueOn,
+    DateOnly? ToDueOn,
+    string? Reason);
 
 // Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
 // valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
+// Fase 4a (plan G11): ExtensionBusinessDays, FromDueOn, ToDueOn y Reason sólo vienen llenos en Extended.
 
-public sealed record SupportMemberDto(Guid Id, string DisplayName);
+/// <summary><c>IsMe</c> (fase 4a, plan G8): si el miembro es quien hace la petición. El SPA no conoce su <c>memberId</c>, y sin este
+/// campo no puede decir «tú» ni ocultar «Asignármelo» en un ticket que ya es suyo. Fuera de una sesión siempre es falso.</summary>
+public sealed record SupportMemberDto(Guid Id, string DisplayName, bool IsMe);
 
 /// <summary><c>IsActive</c> falso: el cliente se desactivó o se fusionó; la pantalla lo marca.</summary>
 public sealed record SupportCustomerRefDto(Guid Id, string Name, bool IsActive);
@@ -299,7 +326,7 @@ public sealed record SupportTicketNotesDto(IReadOnlyList<SupportTicketNoteDto> I
 
 internal static class SupportDtoMapping
 {
-    public static SupportTicketTypeDto ToDto(SupportTicketType type) => new(
+    public static SupportTicketTypeDto ToDto(SupportTicketType type, bool inUse) => new(
         type.Id.Value,
         type.Name,
         type.TermBusinessDays,
@@ -308,7 +335,8 @@ internal static class SupportDtoMapping
         type.IsPublished,
         type.IsActive,
         type.Position,
-        type.Version);
+        type.Version,
+        inUse);
 
     public static SupportSettingsDto ToDto(SupportTenantSettings settings) => new(
         settings.DueSoonBusinessDays,

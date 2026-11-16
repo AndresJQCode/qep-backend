@@ -22,6 +22,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
     /// <summary>Único del ordinal de la traza: dos guardados que agregan el mismo ordinal chocan acá.</summary>
     public const string TicketEventOrdinalIndex = "IX_ticket_events_ticket_ordinal";
 
+    /// <summary>Fase 4a (plan G5): <c>tickets.ticket_type_id → ticket_types.id</c> con <c>ON DELETE RESTRICT</c>. Del lado del tipo
+    /// (borrar uno usado) da <c>23001</c>; del lado del ticket (radicar o cambiar a un tipo recién borrado), <c>23503</c>.</summary>
+    public const string TicketTypeForeignKey = "FK_tickets_ticket_types_ticket_type_id";
+
     public DbSet<SupportTicket> Tickets => Set<SupportTicket>();
 
     public DbSet<SupportTicketEvent> TicketEvents => Set<SupportTicketEvent>();
@@ -381,6 +385,11 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
                 "CK_tickets_conversation_channel", InList("conversation_channel", SupportConversationRef.Channels));
             table.HasCheckConstraint(
                 "CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
+            // Fase 4a (plan G9): la prórroga se guarda entera o no se guarda; sin prórroga los días quedan en 0.
+            table.HasCheckConstraint(
+                "CK_tickets_extension",
+                "(extended_at IS NULL) = (extension_reason IS NULL) AND extension_business_days >= 0"
+                + " AND (extended_at IS NULL) = (extension_business_days = 0)");
             table.HasCheckConstraint(
                 TicketAnonymousCheck,
                 $"NOT is_anonymous OR (customer_id IS NULL AND {string.Join(" AND ", RequesterColumns.Select(column => $"{column} IS NULL"))})");
@@ -392,10 +401,16 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             .ValueGeneratedNever();
         ticket.Property(value => value.TenantId).HasColumnName("tenant_id");
         ticket.Property(value => value.Number).HasColumnName("number");
-        // El tipo vive en el mismo esquema, pero el ticket guarda su foto: no hace falta la FK y un tipo nunca se borra.
+        // El ticket guarda su foto del tipo, pero un tipo sin tickets se puede borrar (fase 4a, plan G5): la FK RESTRICT es la que
+        // impide borrar uno usado, también en la carrera contra un alta; SupportUnitOfWork la traduce por nombre.
         ticket.Property(value => value.TypeId)
             .HasColumnName("ticket_type_id")
             .HasConversion(id => id.Value, value => new SupportTicketTypeId(value));
+        ticket.HasOne<SupportTicketType>()
+            .WithMany()
+            .HasForeignKey(value => value.TypeId)
+            .HasConstraintName(TicketTypeForeignKey)
+            .OnDelete(DeleteBehavior.Restrict);
         ticket.Property(value => value.TypeName).HasColumnName("type_name").HasMaxLength(SupportTicketType.NameMaxLength);
         ticket.Property(value => value.TermBusinessDays).HasColumnName("term_business_days");
         ticket.Property(value => value.TermIsLegal).HasColumnName("term_is_legal");
@@ -451,6 +466,12 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.Property(value => value.PausedSince).HasColumnName("paused_since");
         ticket.Property(value => value.PausedBusinessDays).HasColumnName("paused_business_days").HasDefaultValue(0);
         ticket.Property(value => value.ResolutionCount).HasColumnName("resolution_count").HasDefaultValue(0);
+        // Fase 4a (plan G9): la prórroga única, en días hábiles. Aditivas: los tickets de antes quedan sin prórroga.
+        ticket.Property(value => value.ExtensionBusinessDays).HasColumnName("extension_business_days").HasDefaultValue(0);
+        ticket.Property(value => value.ExtensionReason)
+            .HasColumnName("extension_reason")
+            .HasMaxLength(SupportTicket.ExtensionReasonMaxLength);
+        ticket.Property(value => value.ExtendedAt).HasColumnName("extended_at");
         ticket.Property(value => value.ResolvedAt).HasColumnName("resolved_at");
         ticket.Property(value => value.ClosedAt).HasColumnName("closed_at");
         // La conversación es una referencia blanda a messaging.conversations: otro esquema, sin FK.

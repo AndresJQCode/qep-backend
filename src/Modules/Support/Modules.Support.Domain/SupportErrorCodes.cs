@@ -32,6 +32,28 @@ public static class SupportErrorCodes
 
     public const string TicketTypeOrderIncomplete = "support.ticket_type.order_incomplete";
 
+    /// <summary>Fase 4a (plan G4/G5): un tipo con algún ticket, en cualquier estado, no se borra; se desactiva.</summary>
+    public const string TicketTypeInUse = "support.ticket_type.in_use";
+
+    // Fase 4a (spec §7.2, plan G10): la prórroga es única, antes de que venza y no pasa del término inicial. Las guardas del dominio
+    // van en este orden: not_editable, extension_already_used, extension_no_term, extension_clock_stopped, extension_overdue y
+    // extension_too_long.
+
+    /// <summary>El ticket ya usó su única prórroga.</summary>
+    public const string ExtensionAlreadyUsed = "support.ticket.extension_already_used";
+
+    /// <summary>Un ticket de un tipo sin término no tiene plazo que prorrogar.</summary>
+    public const string ExtensionNoTerm = "support.ticket.extension_no_term";
+
+    /// <summary>Con el reloj detenido (esperando al cliente) no se prorroga (owner, P-4).</summary>
+    public const string ExtensionClockStopped = "support.ticket.extension_clock_stopped";
+
+    /// <summary>El plazo ya venció: el mismo día del vencimiento todavía se puede, el siguiente ya no.</summary>
+    public const string ExtensionOverdue = "support.ticket.extension_overdue";
+
+    /// <summary>La prórroga pasa del término inicial, o sea que el plazo total pasaría del doble (owner, P-3).</summary>
+    public const string ExtensionTooLong = "support.ticket.extension_too_long";
+
     // Fase 2, Mensajería (spec §8.1 a §8.3).
     public const string ConversationNotFound = "support.conversation.not_found";
 

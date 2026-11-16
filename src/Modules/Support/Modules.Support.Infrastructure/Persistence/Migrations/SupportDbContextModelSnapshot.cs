@@ -371,6 +371,21 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("date")
                         .HasColumnName("due_on");
 
+                    b.Property<DateTimeOffset?>("ExtendedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("extended_at");
+
+                    b.Property<int>("ExtensionBusinessDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("extension_business_days");
+
+                    b.Property<string>("ExtensionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("extension_reason");
+
                     b.Property<DateTimeOffset?>("FollowOffAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("follow_off_at");
@@ -500,6 +515,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.HasIndex("AssigneeMemberId")
                         .HasDatabaseName("IX_tickets_assignee");
 
+                    b.HasIndex("TypeId");
+
                     b.HasIndex("TenantId", "ConversationId")
                         .HasDatabaseName("IX_tickets_tenant_conversation")
                         .HasFilter("conversation_id IS NOT NULL");
@@ -523,6 +540,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_tickets_anonymous", "NOT is_anonymous OR (customer_id IS NULL AND requester_first_names IS NULL AND requester_last_names IS NULL AND requester_business_name IS NULL AND requester_document_type IS NULL AND requester_document_number IS NULL AND requester_email IS NULL AND requester_mobile_phone IS NULL AND requester_landline_phone IS NULL AND requester_country_code IS NULL AND requester_address IS NULL AND requester_city_id IS NULL AND requester_city_name IS NULL)");
 
                             t.HasCheckConstraint("CK_tickets_conversation_channel", "conversation_channel IN ('WhatsApp','Instagram')");
+
+                            t.HasCheckConstraint("CK_tickets_extension", "(extended_at IS NULL) = (extension_reason IS NULL) AND extension_business_days >= 0 AND (extended_at IS NULL) = (extension_business_days = 0)");
 
                             t.HasCheckConstraint("CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
 
@@ -689,7 +708,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("ticket_events", "support", t =>
                         {
-                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked')");
+                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked','Extended')");
                         });
                 });
 
@@ -1060,6 +1079,13 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Support.Domain.SupportTicket", b =>
                 {
+                    b.HasOne("Modules.Support.Domain.SupportTicketType", null)
+                        .WithMany()
+                        .HasForeignKey("TypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_tickets_ticket_types_ticket_type_id");
+
                     b.OwnsOne("Modules.Support.Domain.TicketRequester", "Requester", b1 =>
                         {
                             b1.Property<Guid>("SupportTicketId")

@@ -62,6 +62,7 @@ public sealed class PublishLegalTextsHandler(
     ISupportProvisioner provisioner,
     ISupportLegalTextRepository legalTexts,
     ISupportMemberDirectory members,
+    ISupportViewer viewer,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     IValidator<PublishLegalTextsCommand> validator)
@@ -108,6 +109,6 @@ public sealed class PublishLegalTextsHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await SupportLegalTexts.ToDtoAsync(text, members, cancellationToken);
+        return await SupportLegalTexts.ToDtoAsync(text, members, viewer, cancellationToken);
     }
 }
