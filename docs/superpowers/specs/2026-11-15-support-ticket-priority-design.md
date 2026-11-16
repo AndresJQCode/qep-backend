@@ -16,7 +16,7 @@ sirva para **filtrar y ordenar** la bandeja y que quede en la traza.
 - Campo `priority` en el ticket, con cuatro niveles fijos: `Low`, `Medium`, `High`, `Urgent` (en pantalla Baja, Media, Alta,
   Urgente).
 - Elegirla al crear a mano y desde la conversación; Media si no viene.
-- Cambiarla con `PUT /tickets/{id}/priority`, salvo con el ticket cerrado.
+- Cambiarla con `PUT /tickets/{id}/priority`, salvo con el ticket resuelto o cerrado.
 - Evento `PriorityChanged` en la traza.
 - Filtro `priority` y orden `sort=received|priority` en `GET /tickets`.
 - `priority` en la fila de la lista y en el detalle.
@@ -32,7 +32,7 @@ sirva para **filtrar y ordenar** la bandeja y que quede en la traza.
 
 - Que el orden por prioridad se arme en el navegador: el backend ordena y pagina.
 - Que cambiar la prioridad pise el cambio de otro asesor sin avisar (`If-Match` siempre).
-- Que un ticket cerrado acepte un cambio de prioridad.
+- Que un ticket resuelto o cerrado acepte un cambio de prioridad.
 
 ## 3. Restricciones verificadas en el código
 
@@ -42,7 +42,8 @@ sirva para **filtrar y ordenar** la bandeja y que quede en la traza.
 - Rutas de acción: `MapTicketAction<TRequest>(group, "<accion>", handler)` en `Modules.Support.Api/SupportEndpoints.cs:315-318`.
 - Los enums del ticket se guardan **por nombre** (`HasConversion<string>().HasMaxLength(24)`, `SupportDbContext.cs:405-407`).
 - Eventos: `SupportTicketEventKind` se persiste por nombre; un valor nuevo no rompe filas viejas.
-- Ticket cerrado: el dominio ya tiene `EnsureNotClosed()` (`SupportTicket.cs:529`) que lanza `SupportErrorCodes.NotEditable`.
+- Ticket cerrado: el dominio ya tiene `EnsureNotClosed()` (`SupportTicket.cs:529`) que lanza `SupportErrorCodes.NotEditable`. No
+  cubre `Resolved` (fijar mensajes y «Seguir el hilo» sí se permiten resuelto), así que la prioridad necesita su propia guarda.
 - La lista ordena hoy por `ReceivedAt` descendente (`SupportTicketRepository.cs:32`; doc de `ListTicketsQuery`).
 - Altas: `CreateManual`, `CreateFromConversation` y `CreateFromPublicForm` en `SupportTicket.cs:123-173`; requests
   `CreateTicketRequest` (`Tickets/CreateTicket.cs:25`) y `CreateTicketFromConversationRequest`
@@ -68,10 +69,11 @@ siempre por prioridad.
 - `SupportTicketPriority { Low, Medium, High, Urgent }` en `Modules.Support.Domain`.
 - `SupportTicket.Priority`, `Medium` por defecto.
 - Las fábricas `CreateManual` y `CreateFromConversation` reciben la prioridad; `CreateFromPublicForm` siempre `Medium`.
-- `ChangePriority(priority, actorMemberId, now)`: con el ticket `Closed` lanza `SupportErrorCodes.NotEditable` (vía
-  `EnsureNotClosed` u otra guarda con el mismo código); con la misma prioridad no hace nada (no sube versión, no escribe evento);
+- `ChangePriority(priority, actorMemberId, now)`: con el ticket `Resolved` o `Closed` lanza `SupportErrorCodes.NotEditable` (guarda
+  propia, no `EnsureNotClosed`, que deja pasar `Resolved`); con la misma prioridad no hace nada (no sube versión, no escribe evento);
   si cambia, escribe `PriorityChanged` con prioridad anterior y nueva y sube versión. No toca el reloj.
-- Se puede cambiar en cualquier estado salvo `Closed` (owner, 2026-11-15). `Resolved` sí.
+- Se puede cambiar en `New`, `Open`, `WaitingOnCustomer` y `WaitingInternal`; **no** en `Resolved` ni `Closed` (owner,
+  2026-11-15). Reabrir un resuelto (`Resolved → Open`) la vuelve editable.
 
 ### 5.2 Traza
 
@@ -85,7 +87,7 @@ siempre por prioridad.
 | --- | --- |
 | `POST /tickets` | `priority` opcional (`Low`·`Medium`·`High`·`Urgent`); ausente o null = `Medium`; otro valor = 422 de validación |
 | `POST /conversations/{id}/tickets` | Igual |
-| `PUT /tickets/{id}/priority` | Cuerpo `{ "priority": "High" }`, `If-Match` obligatorio, `support.ticket.manage`; responde el detalle. 412 si la versión no coincide; 422 `NotEditable` si está cerrado; 422 de validación si falta o es inválida |
+| `PUT /tickets/{id}/priority` | Cuerpo `{ "priority": "High" }`, `If-Match` obligatorio, `support.ticket.manage`; responde el detalle. 412 si la versión no coincide; 422 `NotEditable` si está resuelto o cerrado; 422 de validación si falta o es inválida |
 | `GET /tickets` | `priority` opcional, uno o varios por nombre separados por coma (como `status`); `sort` opcional `received` (default) o `priority` |
 | Lista y detalle | `priority` por nombre en `SupportTicketListItemDto` y `SupportTicketDetailDto` |
 
@@ -105,8 +107,8 @@ que la paginación sea estable. `sort` inválido = 422 de validación.
 
 ## 6. Pruebas
 
-TDD, RED antes que GREEN. Unitarias de dominio (cambio, mismo valor sin evento, cerrado rechaza, públicas en Media) y de
-validación; integración **filtrada por nombre** de las rutas nuevas (`PUT /priority` feliz, 412, cerrado 422; `GET /tickets` con
+TDD, RED antes que GREEN. Unitarias de dominio (cambio, mismo valor sin evento, resuelto y cerrado rechazan, públicas en Media) y de
+validación; integración **filtrada por nombre** de las rutas nuevas (`PUT /priority` feliz, 412, resuelto y cerrado 422; `GET /tickets` con
 `priority` y `sort=priority`; altas con y sin prioridad). **La suite completa de integración no se corre sin pedido del owner**
 (decisión 2026-11-15); antes de mergear se le avisa que falta.
 
@@ -114,8 +116,8 @@ validación; integración **filtrada por nombre** de las rutas nuevas (`PUT /pri
 
 - **Mismo valor:** `PUT /priority` con la prioridad que ya tiene responde 200 con el detalle sin cambios, sin subir versión ni
   escribir evento.
-- **Estados terminales:** sólo `Closed` (los estados son `New`, `Open`, `WaitingOnCustomer`, `WaitingInternal`, `Resolved`,
-  `Closed`).
+- **Estados que bloquean:** `Resolved` y `Closed` (owner). Los estados son `New`, `Open`, `WaitingOnCustomer`,
+  `WaitingInternal`, `Resolved`, `Closed`.
 - **Compatibilidad:** un frontend viejo no manda `priority` al crear (queda `Medium`); un backend viejo ignora `sort` y `priority`
   en la query (`ListTicketsAsync` enlaza parámetros por nombre) y el campo `priority` del cuerpo (no hay
   `UnmappedMemberHandling`).
@@ -127,4 +129,4 @@ validación; integración **filtrada por nombre** de las rutas nuevas (`PUT /pri
 - Cómo ordenar por un enum guardado como texto: `CASE` traducible por EF, o un rango numérico derivado. Que pagine en la base.
 - Si hace falta índice (`tenant_id, priority, received_at`) según el plan de la consulta.
 - Nombre exacto de la migración y de la acción de auditoría.
-- Si la guarda de cerrado reusa `EnsureNotClosed` (cambiando su mensaje) o una propia con el mismo código.
+- El mensaje de la excepción de la guarda nueva.
