@@ -493,7 +493,8 @@ public sealed class FilePublicTicketHandler(
         return access.LastSentChannel != SupportOpeningSender.EmailChannel || access.LastFailureCode is not null;
     }
 
-    // Plan L26: la fecha de radicación y el término salen de la foto del ticket, nunca del tipo vivo.
+    // Plan L26: la fecha de radicación y el término salen de la foto del ticket, nunca del tipo vivo. Owner decision S6 (D-11): el
+    // término es el vigente, con la prórroga; un reintento después de prorrogar responde los valores de ahora.
     private static SupportPublicFiledDto Filed(
         SupportTicket ticket, string? pin, string? successMessage, bool pinEmailed, string consultUrl) =>
         new(
@@ -501,7 +502,8 @@ public sealed class FilePublicTicketHandler(
             pin,
             ticket.ReceivedAt,
             ticket.DueOn,
-            ticket.TermBusinessDays,
+            ticket.CurrentTermBusinessDays,
+            ticket.IsExtended,
             ticket.TermIsLegal,
             successMessage,
             pinEmailed,

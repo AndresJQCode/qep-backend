@@ -153,14 +153,17 @@ public sealed record SupportPublicRequesterRequest(
 /// <summary>El radicado. <see cref="Pin"/> viaja sólo aquí, una vez: después sólo se puede reenviar uno nuevo al correo registrado.
 /// <see cref="PinEmailed"/> dice si el correo de apertura salió; la pantalla lo muestra igual. <see cref="ReceivedAt"/>,
 /// <see cref="TermBusinessDays"/> y <see cref="TermIsLegal"/> son la fecha de radicación y la foto del término del tipo en el ticket
-/// (spec 2026-11-15 §9.1, plan L26): editar el tipo después no los cambia. <see cref="TermBusinessDays"/> null = el tipo no tiene
-/// término. <see cref="Pin"/> null sólo en un reintento cuyo PIN ya salió por correo (plan L28).</summary>
+/// (spec 2026-11-15 §9.1, plan L26): editar el tipo después no los cambia. <see cref="TermBusinessDays"/> es el término vigente, la foto
+/// más los días de la prórroga, y <see cref="TermExtended"/> dice si hubo prórroga (owner decision S6, D-11): así cuadra con
+/// <see cref="DueOn"/>, que ya la incluye; un reintento idempotente responde los valores de ahora. <see cref="TermBusinessDays"/> null =
+/// el tipo no tiene término. <see cref="Pin"/> null sólo en un reintento cuyo PIN ya salió por correo (plan L28).</summary>
 public sealed record SupportPublicFiledDto(
     string Number,
     string? Pin,
     DateTimeOffset ReceivedAt,
     DateOnly? DueOn,
     int? TermBusinessDays,
+    bool TermExtended,
     bool TermIsLegal,
     string? SuccessMessage,
     bool PinEmailed,
@@ -177,7 +180,9 @@ public sealed record SupportPublicResendPinRequest(string? Number, string? Turns
 /// Lo que la consulta muestra (plan F13): el radicado, el tipo, el estado, la radicación, el vencimiento y cómo va el plazo
 /// (<c>DueState</c> como en la consola; <c>TermIsLegal</c> decide si la página dice «plazo legal» u «objetivo»), y todas las
 /// respuestas que salieron, de cualquier canal. Nada más del expediente: ni el solicitante, ni el asunto, ni la traza.
-/// <c>TermBusinessDays</c> es la foto del término en el ticket (spec 2026-11-15 §9.1, plan L26); null = el tipo no tiene término.
+/// <c>TermBusinessDays</c> es el término vigente del ticket: la foto del tipo (spec 2026-11-15 §9.1, plan L26) más los días de la
+/// prórroga, y <c>TermExtended</c> dice si hubo prórroga (owner decision S6, D-11), para que el término cuadre con <c>DueOn</c>, que ya
+/// la incluye. <c>TermBusinessDays</c> null = el tipo no tiene término.
 /// </summary>
 public sealed record SupportPublicTicketDto(
     string Number,
@@ -188,6 +193,7 @@ public sealed record SupportPublicTicketDto(
     string? DueState,
     bool TermIsLegal,
     int? TermBusinessDays,
+    bool TermExtended,
     IReadOnlyList<SupportPublicReplyDto> Replies);
 
 /// <summary>Una respuesta que salió: su texto, cuándo y por qué canal (<c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>,

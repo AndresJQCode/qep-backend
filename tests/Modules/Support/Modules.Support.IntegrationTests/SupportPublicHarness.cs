@@ -206,6 +206,20 @@ internal static class SupportPublicHarness
             ("tenant", Guid.Parse(tenantId)),
             ("name", name)))!);
 
+    /// <summary>Owner decision S6: extends a filed ticket's deadline through the domain (<c>SupportTicket.Extend</c>, the same entry the
+    /// console's <c>POST …/extension</c> uses), with the tenant's own clock and «now». Returns the new due date.</summary>
+    public static async Task<DateOnly?> ExtendTicketAsync(QepApiFactory factory, Guid tenantId, Guid ticketId, int businessDays)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var context = await scope.ServiceProvider.GetRequiredService<SupportTicketDtoComposer>().ReadContextAsync(tenantId, Ct);
+        var ticket = await scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>()
+            .FindAsync(tenantId, new SupportTicketId(ticketId), Ct);
+        Assert.NotNull(ticket);
+        ticket.Extend(businessDays, "Falta respuesta del proveedor", Guid.CreateVersion7(), context.Now, context.Clock);
+        await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        return ticket.DueOn;
+    }
+
     /// <summary>Una ciudad cualquiera de Geography (la sembró su migración).</summary>
     public static async Task<Guid> AnyCityIdAsync(QepApiFactory factory) =>
         Guid.Parse((await TextAsync(factory, "SELECT id::text FROM geography.cities ORDER BY id LIMIT 1"))!);

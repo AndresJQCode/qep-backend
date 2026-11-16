@@ -347,6 +347,9 @@ El portal muestra la fecha de radicación y el término en días hábiles («no 
   `SupportTicket.TermBusinessDays`, `SupportTicket.cs:41`; `null` = el tipo no tiene término).
 - `SupportPublicTicketDto` (consulta) ya trae `ReceivedAt`, `DueOn` y `TermIsLegal`; suma `int? TermBusinessDays`, de la
   misma foto.
+- **Con prórroga, el término es el vigente** (D-11, S6): en las dos respuestas `TermBusinessDays` es la foto del tipo más
+  los días hábiles de la prórroga (`SupportTicket.ExtensionBusinessDays`), y las dos suman `bool TermExtended` (`true` si
+  el plazo se prorrogó). `DueOn` ya incluye la prórroga: término y fecha cuadran.
 - **El NIT del tenant sale de una de sus empresas** (§9.3, D-6 resuelta: opción a). `Tenant` no tiene razón social ni
   documento; el tenant elige en Ajustes › Formulario público cuál de sus empresas (`Modules.Companies`) es la que responde.
 
@@ -560,7 +563,7 @@ se itera, la clase completa una vez por bloque, nunca dos corridas de integraci�
 ## 15. Decisiones del owner (resueltas 2026-11-15)
 
 El owner aprobó D-1 a D-5 tal como se recomendaron, y agregó D-6 y D-7. El cuerpo del spec ya las aplica. D-8, la regla
-del PIN de D-7, D-9 y D-10 los confirmó el owner el 2026-11-15 (abajo).
+del PIN de D-7, D-9 y D-10 los confirmó el owner el 2026-11-15, y D-11 el 2026-11-16 (abajo).
 
 - **D-1 Pregunta de autorización: editable, con una por defecto.** Campo de texto plano opcional en el aviso de
   privacidad (`authorizationQuestion`, 1–500). Sin él, el backend arma la pregunta por defecto con el nombre del tenant
@@ -613,6 +616,16 @@ del PIN de D-7, D-9 y D-10 los confirmó el owner el 2026-11-15 (abajo).
   se suma: la clave tiene que ser un UUID v4 (aleatorio, lo que da `crypto.randomUUID()` en el portal), como las claves de
   subida públicas (`SupportPublicUploads.IsKey`). Otra versión (un v7, que deja adivinar el momento del radicado) o el vacío
   es `422 validation.failed` con `errors.ClientRequestId`, y sólo una clave v4 se busca como reintento.
+
+**Confirmada por el owner el 2026-11-16:**
+
+- **D-11 En el portal, el término de un ticket prorrogado cuadra con su vencimiento** [owner, sobre S6 de la revisión
+  final, opción a]. `termBusinessDays` en `SupportPublicTicketDto` (`POST /tickets/lookup`) y en `SupportPublicFiledDto`
+  (`POST /tickets`, también en un reintento idempotente) es el término **vigente**: el término del ticket más los días
+  hábiles de la prórroga de la fase 4a (`ExtendTicket`), que el ticket guarda en días (`ExtensionBusinessDays`). Las dos
+  respuestas suman `bool TermExtended` (JSON `termExtended`), `true` si el plazo se prorrogó. `dueOn` ya reflejaba la
+  prórroga. Un reintento después de una prórroga responde los valores de ahora, no los del primer intento. Las pausas del
+  reloj mueven `dueOn` sin cambiar el término.
 
 ## 16. Discrepancias encontradas (spec contra código)
 
