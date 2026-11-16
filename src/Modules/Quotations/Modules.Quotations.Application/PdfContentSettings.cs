@@ -104,34 +104,39 @@ public sealed class UpdatePdfContentHandler(
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
         await TenantModuleGuard.EnsureEnabledAsync(
             tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
-        await validator.ValidateAndThrowAsync(command, cancellationToken);
-
-        var failures = new List<ValidationFailure>();
-        var paymentNotice = Sanitize(PdfSectionKey.PaymentNotice, command.PaymentNotice!, failures);
-        var terms = Sanitize(PdfSectionKey.Terms, command.Terms!, failures);
-        var deliveryProcess = Sanitize(PdfSectionKey.DeliveryProcess, command.DeliveryProcess!, failures);
+        // Las fallas del validador y las del saneador van juntas en un solo 422: si el saneador rechaza una sección, el formulario
+        // igual tiene que marcar el título demasiado largo de otra.
+        var failures = (await validator.ValidateAsync(command, cancellationToken)).Errors.ToList();
+        var paymentNotice = Sanitize(PdfSectionKey.PaymentNotice, command.PaymentNotice, failures);
+        var terms = Sanitize(PdfSectionKey.Terms, command.Terms, failures);
+        var deliveryProcess = Sanitize(PdfSectionKey.DeliveryProcess, command.DeliveryProcess, failures);
         if (failures.Count > 0)
         {
             throw new ValidationException(failures);
         }
 
         // Las variables se miran sobre lo saneado: es lo que se guarda y lo que el PDF resuelve.
-        var content = PdfContent.Create(paymentNotice, terms, deliveryProcess);
+        var content = PdfContent.Create(paymentNotice!, terms!, deliveryProcess!);
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         var previous = await store.GetAsync(command.TenantId, cancellationToken);
         await store.SaveAsync(command.TenantId, content, cancellationToken);
 
         // Sólo los nombres de los campos que cambiaron, nunca el texto (spec §4.2): el contenido lo escribe el tenant y puede traer
-        // cualquier cosa.
-        auditPublisher.PublishWithDetails(
-            command.TenantId,
-            executionContext.SubjectId,
-            AuditAction,
-            command.TenantId.ToString(),
-            "success",
-            clock.UtcNow,
-            PdfContentMapping.ChangedFields(previous, content).ToDictionary(path => path, _ => (string?)null, StringComparer.Ordinal));
+        // cualquier cosa. Un PUT que no cambia nada se guarda y responde igual, pero no deja una entrada de auditoría vacía.
+        var changedFields = PdfContentMapping.ChangedFields(previous, content).ToList();
+        if (changedFields.Count > 0)
+        {
+            auditPublisher.PublishWithDetails(
+                command.TenantId,
+                executionContext.SubjectId,
+                AuditAction,
+                command.TenantId.ToString(),
+                "success",
+                clock.UtcNow,
+                changedFields.ToDictionary(path => path, _ => (string?)null, StringComparer.Ordinal));
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
@@ -139,11 +144,27 @@ public sealed class UpdatePdfContentHandler(
     }
 
     // Sanea el HTML con la clave de la sección (Terms.ContentHtml) y suma las fallas que sólo se pueden medir después de sanear: el
-    // largo y que una sección prendida tenga texto que se vea.
-    private PdfSection Sanitize(PdfSectionKey key, PdfSectionDto section, List<ValidationFailure> failures)
+    // largo y que una sección prendida tenga texto que se vea. Una sección que falta o sin HTML ya la marcó el validador: devuelve
+    // null, y también cuando el saneador la rechaza (su falla se suma a las demás en vez de cortar el resto).
+    private PdfSection? Sanitize(PdfSectionKey key, PdfSectionDto? section, List<ValidationFailure> failures)
     {
+        if (section?.ContentHtml is null)
+        {
+            return null;
+        }
+
         var propertyName = $"{key}.{nameof(PdfSectionDto.ContentHtml)}";
-        var sanitized = sanitizer.Sanitize(section.ContentHtml, propertyName);
+        RichTextSanitized sanitized;
+        try
+        {
+            sanitized = sanitizer.Sanitize(section.ContentHtml, propertyName);
+        }
+        catch (ValidationException rejected)
+        {
+            failures.AddRange(rejected.Errors);
+            return null;
+        }
+
         if (sanitized.Html.Length > PdfContentRules.MaxContentHtmlLength)
         {
             failures.Add(new ValidationFailure(
@@ -158,7 +179,8 @@ public sealed class UpdatePdfContentHandler(
     }
 }
 
-/// <summary>Los límites de una sección (spec §4.1). El título coincide con el <c>varchar(120)</c> de <c>pdf_sections.title</c>.</summary>
+/// <summary>Los límites de una sección (spec §4.1). <see cref="MaxTitleLength"/> es también el <c>varchar</c> de
+/// <c>pdf_sections.title</c> (<c>QuotationsDbContext</c> lo lee de acá): cambiarlo exige una migración.</summary>
 public static class PdfContentRules
 {
     public const int MaxTitleLength = 120;

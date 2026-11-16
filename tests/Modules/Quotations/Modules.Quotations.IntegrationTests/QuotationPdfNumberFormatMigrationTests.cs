@@ -61,6 +61,18 @@ public sealed class QuotationPdfNumberFormatMigrationTests
         Assert.Null(pdf.ContentFingerprint);
         Assert.True(pdf.IsStaleFor(4, null, TenantNumberFormats.CommaDecimal, AnyFingerprint));
         Assert.True(pdf.IsStaleFor(4, null, TenantNumberFormats.DotDecimal, AnyFingerprint));
+
+        // Con huella, lo que decide es el formato: el NULL migrado vale colombiano, así que la misma huella deja vigente el PDF
+        // en "1.234,56" y lo vence en "1,234.56". Sin esto, la prueba de arriba pasaría aunque el NULL se leyera con otro formato.
+        await ExecuteAsync(
+            connectionString,
+            $"UPDATE quotations.quotation_pdfs SET content_fingerprint = '{AnyFingerprint}' WHERE quotation_id = '{QuotationId}'");
+        await using var reread = NewContext(connectionString);
+        var fingerprinted = await reread.Set<QuotationPdf>().AsNoTracking().SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Null(fingerprinted.NumberFormat);
+        Assert.Equal(AnyFingerprint, fingerprinted.ContentFingerprint);
+        Assert.False(fingerprinted.IsStaleFor(4, null, TenantNumberFormats.CommaDecimal, AnyFingerprint));
+        Assert.True(fingerprinted.IsStaleFor(4, null, TenantNumberFormats.DotDecimal, AnyFingerprint));
     }
 
     private static QuotationsDbContext NewContext(string connectionString) =>

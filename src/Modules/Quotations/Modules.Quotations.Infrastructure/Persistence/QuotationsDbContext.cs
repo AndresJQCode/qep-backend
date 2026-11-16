@@ -1124,7 +1124,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         section.Property(value => value.Enabled).HasColumnName("enabled");
         section.Property(value => value.InQuotation).HasColumnName("in_quotation");
         section.Property(value => value.InOrder).HasColumnName("in_order");
-        section.Property(value => value.Title).HasColumnName("title").HasMaxLength(120).IsRequired();
+        // El mismo límite que valida el PUT: cambiarlo ahí cambia el varchar, y eso es una migración.
+        section.Property(value => value.Title).HasColumnName("title")
+            .HasMaxLength(Modules.Quotations.Application.PdfContentRules.MaxTitleLength).IsRequired();
         section.Property(value => value.ContentHtml).HasColumnName("content_html").HasColumnType("text").IsRequired();
         section.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
