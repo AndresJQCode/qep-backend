@@ -19,6 +19,8 @@ public sealed class SupportLegalDocumentsBackfillTests(SupportLegalDocumentsBack
     private static readonly Guid TenantWithEverything = Guid.Parse("0193a000-0000-7000-8000-00000000c001");
     private static readonly Guid TenantWithPolicyText = Guid.Parse("0193a000-0000-7000-8000-00000000c002");
     private static readonly Guid TenantWithoutTexts = Guid.Parse("0193a000-0000-7000-8000-00000000c003");
+    private static readonly Guid TenantWithCarriageReturns = Guid.Parse("0193a000-0000-7000-8000-00000000c004");
+    private static readonly Guid TenantWithBlankAuthorization = Guid.Parse("0193a000-0000-7000-8000-00000000c005");
     private static readonly Guid FirstAuthor = Guid.Parse("0193a000-0000-7000-8000-0000000000a1");
     private static readonly Guid CurrentAuthor = Guid.Parse("0193a000-0000-7000-8000-0000000000a2");
     private static readonly DateTimeOffset FirstCreatedAt = new(2026, 11, 13, 15, 0, 0, TimeSpan.Zero);
@@ -76,7 +78,25 @@ public sealed class SupportLegalDocumentsBackfillTests(SupportLegalDocumentsBack
         }
 
         // The legacy rows are untouched.
-        Assert.Equal(3L, await database.ScalarAsync("SELECT count(*) FROM support.legal_text_versions"));
+        Assert.Equal(5L, await database.ScalarAsync("SELECT count(*) FROM support.legal_text_versions"));
+    }
+
+    [Fact]
+    public async Task ALoneCarriageReturnIsALineBreak()
+    {
+        var row = Assert.Single(await database.DocumentsAsync(TenantWithCarriageReturns, "PrivacyNotice"));
+
+        Assert.Equal("<p>Línea uno<br>Línea dos</p><p>Otro párrafo.</p>", row.ContentHtml);
+    }
+
+    [Fact]
+    public async Task AWhitespaceOnlyTextIsNotCopied()
+    {
+        Assert.Empty(await database.DocumentsAsync(TenantWithCarriageReturns, "Terms"));
+        Assert.Empty(await database.DocumentsAsync(TenantWithBlankAuthorization, "PrivacyNotice"));
+
+        var terms = Assert.Single(await database.DocumentsAsync(TenantWithBlankAuthorization, "Terms"));
+        Assert.Equal("<p>Términos.</p>", terms.ContentHtml);
     }
 
     public sealed record DocumentRow(
@@ -148,7 +168,8 @@ public sealed class SupportLegalDocumentsBackfillTests(SupportLegalDocumentsBack
         }
 
         // Tenant 1: v1 (replaced) and v2 (current) with authorization, policy text and URL, and terms; &, <, >, quotes, \r\n and blank
-        // lines. Tenant 2: only v1, with a policy text and no terms. Tenant 3: nothing.
+        // lines. Tenant 2: only v1, with a policy text and no terms. Tenant 3: nothing. Tenant 4: lone \r breaks and whitespace-only
+        // terms. Tenant 5: a whitespace-only authorization (and no policy text) with terms.
         private async Task SeedLegacyTextsAsync()
         {
             await using var connection = new NpgsqlConnection(ConnectionString);
@@ -165,6 +186,12 @@ public sealed class SupportLegalDocumentsBackfillTests(SupportLegalDocumentsBack
                 CurrentAuthor, CurrentCreatedAt);
             await InsertAsync(
                 connection, TenantWithPolicyText, 1, "Autorizo.", "Política propia.", null, null, FirstAuthor, FirstCreatedAt);
+            await InsertAsync(
+                connection, TenantWithCarriageReturns, 1, "Línea uno\rLínea dos\r\rOtro párrafo.", null, "https://d.example.com/p",
+                " \r\n\t ", FirstAuthor, FirstCreatedAt);
+            await InsertAsync(
+                connection, TenantWithBlankAuthorization, 1, "  \r\n ", null, "https://e.example.com/p", "Términos.", FirstAuthor,
+                FirstCreatedAt);
         }
 
         private static async Task InsertAsync(

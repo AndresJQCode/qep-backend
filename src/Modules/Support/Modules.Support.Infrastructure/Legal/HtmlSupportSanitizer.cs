@@ -1,4 +1,6 @@
 using AngleSharp.Dom;
+using FluentValidation;
+using FluentValidation.Results;
 using Ganss.Xss;
 using Modules.Support.Application;
 using Modules.Support.Domain;
@@ -9,6 +11,12 @@ namespace Modules.Support.Infrastructure.Legal;
 /// <see cref="ISupportHtmlSanitizer"/> on <c>HtmlSanitizer</c> (mganss, on AngleSharp), with the allowlist of spec 2026-11-15 §6.2
 /// (plan L2 and L3). Registered as a singleton but stateless: the library exposes events and mutable sets, so each call builds its own
 /// <see cref="HtmlSanitizer"/> (<see cref="Create"/>). At most three documents per request: the cost is negligible.
+/// <para>
+/// Idempotent by construction: the HTML parser can restructure what unwrapping leaves (<c>&lt;h2&gt;&lt;b&gt;&lt;h3&gt;</c> becomes
+/// <c>&lt;h2&gt;&lt;h3&gt;</c> after one pass and <c>&lt;h2&gt;&lt;/h2&gt;&lt;h3&gt;</c> when parsed again), so the pass runs until its
+/// output is a fixed point. Markup that is too large, too deep or does not settle is rejected as <c>validation.failed</c> on
+/// <c>ContentHtml</c>: the library and AngleSharp walk the DOM recursively, and a deep enough document would overflow the stack.
+/// </para>
 /// </summary>
 internal sealed class HtmlSupportSanitizer : ISupportHtmlSanitizer
 {
@@ -24,18 +32,52 @@ internal sealed class HtmlSupportSanitizer : ISupportHtmlSanitizer
     private static readonly HashSet<string> DroppedWithContent = new(StringComparer.OrdinalIgnoreCase)
     {
         "script", "style", "template", "noscript", "iframe", "object", "embed", "svg", "math", "form", "input", "img", "video",
-        "audio",
+        "audio", "textarea", "title", "select", "option", "button", "noembed", "noframes", "xmp", "plaintext", "applet", "frameset",
     };
+
+    // A fixed point is reached in two passes for everything the parser restructures once; a third is the margin.
+    private const int MaxPasses = 3;
+
+    // A legal document is a few levels deep and well under these; the limits keep the recursive DOM walks off the stack's edge.
+    internal const int MaxDepth = 100;
+    internal const int MaxElements = 10_000;
 
     public SanitizedHtml Sanitize(string html)
     {
         ArgumentNullException.ThrowIfNull(html);
+        if (CountStartTags(html) > MaxElements)
+        {
+            throw Rejected($"The content has more than {MaxElements} elements.");
+        }
 
+        var current = Pass(html);
+        for (var pass = 1; pass < MaxPasses; pass++)
+        {
+            var next = Pass(current.Html);
+            if (string.Equals(next.Html, current.Html, StringComparison.Ordinal))
+            {
+                return next;
+            }
+
+            current = next;
+        }
+
+        throw Rejected("The content could not be sanitized to a stable form.");
+    }
+
+    private static SanitizedHtml Pass(string html)
+    {
         var sanitizer = Create();
         // The same document HtmlSanitizer.Sanitize builds, parsed once: the dangerous elements leave the DOM before the library walks
-        // it, and nothing is serialized and parsed again in between.
+        // it, and nothing is serialized and parsed again in between. The tree builder is iterative; the depth is checked before any
+        // recursive walk.
         using var document = sanitizer.HtmlParserFactory().ParseDocument("<!doctype html><html><body>" + html);
         var body = document.Body!;
+        if (DepthOf(body) > MaxDepth)
+        {
+            throw Rejected($"The content is nested more than {MaxDepth} levels deep.");
+        }
+
         DropDangerousNodes(body);
         sanitizer.SanitizeDom(document, body, string.Empty);
 
@@ -47,6 +89,51 @@ internal sealed class HtmlSupportSanitizer : ISupportHtmlSanitizer
 
         return new SanitizedHtml(writer.ToString(), !string.IsNullOrWhiteSpace(body.TextContent));
     }
+
+    // Before parsing: every '<' followed by a letter opens an element (or is text the parser turns into one). An upper bound, cheap.
+    private static int CountStartTags(string html)
+    {
+        var count = 0;
+        for (var index = 0; index < html.Length - 1; index++)
+        {
+            if (html[index] == '<' && char.IsAsciiLetter(html[index + 1]))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    // Iterative on purpose: this is the guard against the recursion.
+    private static int DepthOf(INode root)
+    {
+        var deepest = 0;
+        var pending = new Stack<(INode Node, int Depth)>();
+        pending.Push((root, 0));
+        while (pending.Count > 0)
+        {
+            var (node, depth) = pending.Pop();
+            deepest = Math.Max(deepest, depth);
+            if (deepest > MaxDepth)
+            {
+                return deepest;
+            }
+
+            foreach (var child in node.ChildNodes)
+            {
+                if (child is IElement)
+                {
+                    pending.Push((child, depth + 1));
+                }
+            }
+        }
+
+        return deepest;
+    }
+
+    private static ValidationException Rejected(string message) =>
+        new([new ValidationFailure("ContentHtml", message)]);
 
     // Plan L3: the library's sets are emptied and loaded with the allowlist; no CSS, no classes, no data-*; unknown elements are
     // unwrapped (KeepChildNodes). rel and target are set after sanitizing, so a second pass removes them and puts them back the same.

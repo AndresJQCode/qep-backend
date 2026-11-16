@@ -1,3 +1,4 @@
+using FluentValidation;
 using Modules.Support.Infrastructure.Legal;
 
 namespace Modules.Support.UnitTests;
@@ -23,6 +24,10 @@ public sealed class SupportHtmlSanitizerTests
         Clean("<svg><style><img src=x onerror=alert(1)></style></svg>"),
         Clean("<math><mtext><table><mglyph><style><img src=x onerror=alert(1)>"),
         Clean("<p>a &amp; b &lt; c &gt; d \"e\" 'f'&nbsp;g</p><!-- comment --><p>x<br>y</p>"),
+        // Unwrapping can leave markup the parser restructures when it reads it again: the sanitizer runs to a fixed point.
+        Clean("<h2><b><h3>x</h3></b></h2>"),
+        Clean("<p><a href=\"https://x.co\">uno <span><a href=\"https://y.co\">dos</a></span> tres</a></p>"),
+        Clean("<ul><li>a<span><li>b</li></span></li></ul><p><b><p>c</p></b></p>"),
     ];
 
     private const string EveryAllowedElement =
@@ -132,6 +137,48 @@ public sealed class SupportHtmlSanitizerTests
     [Theory]
     [MemberData(nameof(Outputs))]
     public void SanitizingTwiceGivesTheSameBytes(string once) => Assert.Equal(once, Clean(once));
+
+    [Fact]
+    public void AHeadingInsideAnUnwrappedElementSettlesInOneCall() =>
+        Assert.Equal("<h2></h2><h3>x</h3>", Clean("<h2><b><h3>x</h3></b></h2>"));
+
+    [Fact]
+    public void TooManyElementsAreRejectedNotACrash()
+    {
+        var deep = string.Concat(Enumerable.Repeat("<blockquote>", 20_000)) + "x"
+            + string.Concat(Enumerable.Repeat("</blockquote>", 20_000));
+
+        var error = Assert.Throws<ValidationException>(() => Sanitizer.Sanitize(deep));
+
+        Assert.Equal("ContentHtml", Assert.Single(error.Errors).PropertyName);
+    }
+
+    [Fact]
+    public void TooDeepANestingIsRejected()
+    {
+        var deep = string.Concat(Enumerable.Repeat("<blockquote>", HtmlSupportSanitizer.MaxDepth + 50)) + "x";
+
+        var error = Assert.Throws<ValidationException>(() => Sanitizer.Sanitize(deep));
+
+        Assert.Equal("ContentHtml", Assert.Single(error.Errors).PropertyName);
+    }
+
+    [Theory]
+    [InlineData("textarea", "<textarea>secreto</textarea>")]
+    [InlineData("title", "<title>secreto</title>")]
+    [InlineData("select", "<select><option>secreto</option></select>")]
+    [InlineData("button", "<button>secreto</button>")]
+    [InlineData("noembed", "<noembed>secreto</noembed>")]
+    [InlineData("noframes", "<noframes>secreto</noframes>")]
+    [InlineData("xmp", "<xmp>secreto</xmp>")]
+    [InlineData("applet", "<applet>secreto</applet>")]
+    public void DropsFormAndRawTextElementsWithTheirContent(string tag, string element)
+    {
+        var output = Clean($"<p>antes</p>{element}<p>después</p>");
+
+        Assert.DoesNotContain("secreto", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(tag, output, StringComparison.OrdinalIgnoreCase);
+    }
 
     [Theory]
     [InlineData("<p></p>", false)]

@@ -83,31 +83,44 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
             // if any, policy text; the URL is copied, the question stays null so the default one applies) and, only if it had terms,
             // Terms version 1, with the author and date of the source version. No AnonymousNotice: there is no tenant text to take it
             // from. The conversion gives the sanitizer's canonical form (BackfilledHtmlIsAlreadyCanonical), so GET /form serves these
-            // bytes unchanged.
+            // bytes unchanged. A text with nothing but whitespace is not copied: it would be a document without visible text.
+            //
+            // Escaping can grow a text up to five times (& is &amp;) and the column holds 60 000. The migration stops with the tenant's
+            // id rather than truncate a legal text: that tenant's text is shortened by hand and the deploy runs again.
             migrationBuilder.Sql($@"
-WITH current_text AS (
-    SELECT DISTINCT ON (tenant_id) tenant_id, authorization_text, policy_text, policy_url, created_at, created_by
-    FROM support.legal_text_versions
-    ORDER BY tenant_id, version DESC)
+DO $$
+DECLARE
+    offending uuid;
+BEGIN
+    SELECT current_text.tenant_id INTO offending
+    FROM ({CurrentText}) AS current_text
+    WHERE char_length({PrivacyContent}) > 60000
+       OR char_length({Paragraphs("current_text.terms_text")}) > 60000
+    LIMIT 1;
+    IF offending IS NOT NULL THEN
+        RAISE EXCEPTION 'tenant % legal text exceeds 60000 characters after escaping', offending;
+    END IF;
+END $$;");
+
+            migrationBuilder.Sql($@"
+WITH current_text AS ({CurrentText})
 INSERT INTO support.legal_document_versions
     (id, tenant_id, kind, version, content_html, authorization_question, policy_url, created_at, created_by)
 SELECT gen_random_uuid(), current_text.tenant_id, 'PrivacyNotice', 1,
-       {Paragraphs("current_text.authorization_text")} || {Paragraphs("current_text.policy_text")},
+       {PrivacyContent},
        NULL, current_text.policy_url, current_text.created_at, current_text.created_by
-FROM current_text;");
+FROM current_text
+WHERE {HasText("coalesce(current_text.authorization_text, '') || coalesce(current_text.policy_text, '')")};");
 
             migrationBuilder.Sql($@"
-WITH current_text AS (
-    SELECT DISTINCT ON (tenant_id) tenant_id, terms_text, created_at, created_by
-    FROM support.legal_text_versions
-    ORDER BY tenant_id, version DESC)
+WITH current_text AS ({CurrentText})
 INSERT INTO support.legal_document_versions
     (id, tenant_id, kind, version, content_html, authorization_question, policy_url, created_at, created_by)
 SELECT gen_random_uuid(), current_text.tenant_id, 'Terms', 1,
        {Paragraphs("current_text.terms_text")},
        NULL, NULL, current_text.created_at, current_text.created_by
 FROM current_text
-WHERE current_text.terms_text IS NOT NULL;");
+WHERE current_text.terms_text IS NOT NULL AND {HasText("current_text.terms_text")};");
         }
 
         /// <inheritdoc />
@@ -133,13 +146,25 @@ WHERE current_text.terms_text IS NOT NULL;");
                 table: "legal_document_versions");
         }
 
-        // Plan L12: a plain text as canonical HTML, or '' for NULL. CRLF becomes LF; only &, <, > (in that order) and the no-break space
-        // are escaped, which is what the serializer escapes in text; the text is split on a line break followed by blank lines; each
-        // part is trimmed and empty ones dropped; inside a part a line break becomes <br>; each part is wrapped in <p>.
+        // Each tenant's phase 3 text with the highest version: the one that rules today.
+        private const string CurrentText = @"
+    SELECT DISTINCT ON (tenant_id) tenant_id, authorization_text, policy_text, policy_url, terms_text, created_at, created_by
+    FROM support.legal_text_versions
+    ORDER BY tenant_id, version DESC";
+
+        private static string PrivacyContent =>
+            Paragraphs("current_text.authorization_text") + " || " + Paragraphs("current_text.policy_text");
+
+        // Something other than spaces, tabs, line breaks and no-break spaces.
+        private static string HasText(string expression) => $@"btrim({expression}, E' \t\r\n' || chr(160)) <> ''";
+
+        // Plan L12: a plain text as canonical HTML, or '' for NULL. CRLF and then a lone CR become LF; only &, <, > (in that order) and
+        // the no-break space are escaped, which is what the serializer escapes in text; the text is split on a line break followed by
+        // blank lines; each part is trimmed and empty ones dropped; inside a part a line break becomes <br>; each part is wrapped in <p>.
         private static string Paragraphs(string column) => $@"
        (SELECT coalesce(string_agg('<p>' || replace(btrim(part.chunk, E' \t\r\n'), E'\n', '<br>') || '</p>', '' ORDER BY part.ord), '')
         FROM regexp_split_to_table(
-            replace(replace(replace(replace(replace({column}, E'\r\n', E'\n'), '&', '&amp;'), chr(160), '&nbsp;'), '<', '&lt;'), '>', '&gt;'),
+            replace(replace(replace(replace(replace(replace({column}, E'\r\n', E'\n'), E'\r', E'\n'), '&', '&amp;'), chr(160), '&nbsp;'), '<', '&lt;'), '>', '&gt;'),
             E'\n\\s*\n') WITH ORDINALITY AS part(chunk, ord)
         WHERE btrim(part.chunk, E' \t\r\n') <> '')";
     }
