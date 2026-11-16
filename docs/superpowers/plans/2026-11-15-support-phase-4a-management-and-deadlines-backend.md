@@ -313,6 +313,9 @@ README.md § Soporte, CLAUDE.md (gotchas), spec §12 (corrección)
 
 ## Decisiones pendientes del owner
 
+**Resueltas 2026-11-15:** P-1 sí (el PIN se muestra una vez, G3 tal cual). P-2, P-3, P-4, P-5 y P-7 van con lo que el plan asume;
+P-3 sigue a confirmar con el abogado (es una constante). P-6 queda fuera de 4a.
+
 - **P-1 PIN del anónimo manual** (G3): ¿se le muestra una vez al asesor en el alta para que se lo dicte al solicitante? Sin eso el anónimo manual no se puede consultar ni responder. Alternativa: no ofrecer anónimo en el alta manual. **Bloquea el Paso 1 de la Tarea 1** si responde que no.
 - **P-2 Aviso al solicitante de la prórroga** (G13): el plan lo deja al asesor como respuesta normal. Alternativa: que el backend lo mande solo con un texto fijo (exige copy legal por canal, plantilla de Meta para WhatsApp fuera de ventana y plantilla de correo nueva).
 - **P-3 «No excede el doble del término inicial»** (G10): el plan lo lee como prórroga ≤ término (total ≤ 2×). La otra lectura, prórroga ≤ 2× (total 3×), cambia una constante. Confirmar con el abogado.
