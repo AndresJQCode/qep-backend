@@ -1936,8 +1936,9 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
     }
 
-    // Spec 2026-11-16 (tarifa de retención): el import de facturación busca el impuesto por su tarifa. Retefuente
-    // en porcentaje tal cual; ReteICA por mil (el porcentaje guardado × 10). Sin retención aplicada del tipo, 0.
+    // Spec 2026-11-16 (tarifa de retención): el import de facturación busca el impuesto por su tarifa. Las dos en
+    // porcentaje tal cual, sin escala (owner, 2026-11-16: la ReteICA ya no sale por mil). Sin retención aplicada del
+    // tipo, 0.
     [Fact]
     public async Task ExportHasRatePerWithholdingType()
     {
@@ -1961,7 +1962,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(["Pedido", "Retefuente", "ReteICA"], writer.Columns.Take(3).Select(c => c.Header));
         var rows = writer.Rows.ToDictionary(cells => cells[0].Text!);
         Assert.Equal(ExportCell.OfNumber(2.5m), rows["PED-2026-0001"][1]);
-        Assert.Equal(ExportCell.OfNumber(11.04m), rows["PED-2026-0001"][2]);
+        Assert.Equal(ExportCell.OfNumber(1.104m), rows["PED-2026-0001"][2]);
         Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][1]);
         Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][2]);
         Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
@@ -1985,7 +1986,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(11.04m), cells[1]));
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(1.104m), cells[1]));
     }
 
     // La tarifa es la efectiva, la que dio el monto: si el asesor la editó, sale la editada y no la del catálogo.
