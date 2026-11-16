@@ -11,7 +11,8 @@ namespace Bootstrapper;
 /// Fase 4b, Tarea 12 (H18, owner 2026-11-16, Q-11): lo que el worker de la encuesta lee de las respuestas por WhatsApp, de todos los
 /// tenants, por SQL crudo sobre la conexión de <see cref="SupportDbContext"/> (Mensajería no avisa, como en <see cref="SupportThreadFeed"/>).
 ///
-/// **Toques.** Un toque es un entrante en vivo (<c>direction</c> entrante, no <c>imported</c>) de tipo <c>Interactive</c> cuyo
+/// **Toques.** Un toque es un entrante en vivo (<c>direction</c> entrante, no <c>imported</c>) de tipo <c>Interactive</c>, con el texto
+/// de uno de los tres botones (sin mayúsculas ni espacios en los bordes; uno con otro texto nunca sale, así no ocupa el lote), cuyo
 /// <c>reply_to_message_id</c> es el <c>message_id</c> de una encuesta mandada por WhatsApp y sin calificar (Meta lo cita con
 /// <c>context.id</c> y la ingesta lo resuelve, V-1). Sólo de encuestas que todavía se responden (H21: el ticket Resuelto o Cerrado y en esa
 /// misma resolución), así un toque sobre una encuesta vieja no ocupa el lote en cada tick. Se recorre la conversación del ticket por
@@ -41,6 +42,12 @@ internal sealed class SupportSurveyFeed(SupportDbContext support, IOptions<Suppo
     /// <summary>Cuántos toques por encuesta se leen: el primero cuyo texto es un botón gana, y uno con otro texto no tapa los demás.</summary>
     private const int TapsPerSurvey = 5;
 
+    /// <summary>Revisión del bloque D: los textos de los tres botones, en minúsculas. Un toque con otro texto nunca califica; si saliera
+    /// del feed, volvería en cada tick y llenaría el lote. Meta devuelve el texto exacto del botón (V-1), así que no hace falta plegar
+    /// tildes como <c>SupportSurveyRatings.FromButtonText</c>; los tres botones no las llevan.</summary>
+    private static readonly string[] Labels =
+        [.. Modules.Support.Domain.SupportSurveyRatings.ButtonLabels.Select(item => item.Label.ToLowerInvariant())];
+
     private TimeSpan Lookback => TimeSpan.FromDays(Math.Max(1, options.Value.SurveyAnswerLookbackDays));
 
     public async Task<IReadOnlyList<SupportSurveyTap>> ListTapsAsync(int take, CancellationToken cancellationToken)
@@ -60,6 +67,7 @@ internal sealed class SupportSurveyFeed(SupportDbContext support, IOptions<Suppo
                   AND m.reply_to_message_id = s.message_id
                   AND m.direction = {InboundDirection}
                   AND m.kind = {InteractiveKind}
+                  AND lower(btrim(m.text)) = ANY({Labels})
                   AND NOT m.imported
                 ORDER BY m.occurred_at, m.id
                 LIMIT {TapsPerSurvey}) m ON true

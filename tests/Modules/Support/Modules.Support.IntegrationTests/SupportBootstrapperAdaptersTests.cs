@@ -445,6 +445,51 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         Assert.Empty(await feed.ListCandidatesAsync(50, candidate, Ct));
     }
 
+    // Revisión del bloque D: un toque cuyo texto no es uno de los tres botones nunca califica, así que no vuelve a salir en cada tick ni
+    // le quita el lugar a los demás: con un lote de uno, sale el toque válido de la encuesta mandada después.
+    [Fact]
+    public async Task AnUnrecognisedTapDoesNotTakeTheBatch()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var (_, unknownConversation, unknownMessage) = await SentWhatsAppSurveyAsync(tenant, "573001110000", DateTimeOffset.UtcNow.AddMinutes(-30));
+        var (validSurvey, validConversation, validMessage) = await SentWhatsAppSurveyAsync(tenant, "573002220000", DateTimeOffset.UtcNow.AddMinutes(-20));
+        foreach (var text in new[] { "Excelente", "Hola", "👍" })
+        {
+            await SeedMessageAsync(
+                Factory, tenant, unknownConversation, DateTimeOffset.UtcNow.AddMinutes(-10), text: text, kind: InteractiveKind,
+                replyTo: unknownMessage);
+        }
+
+        var valid = await SeedMessageAsync(
+            Factory, tenant, validConversation, DateTimeOffset.UtcNow.AddMinutes(-5), text: " regular ", kind: InteractiveKind,
+            replyTo: validMessage);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var tap = Assert.Single(await scope.ServiceProvider.GetRequiredService<ISupportSurveyFeed>().ListTapsAsync(1, Ct));
+
+        Assert.Equal((validSurvey, valid), (tap.SurveyId, tap.MessageId));
+    }
+
+    // Un ticket de una conversación nueva, resuelto, con la encuesta mandada por WhatsApp en sentAt.
+    private async Task<(Guid SurveyId, Guid Conversation, Guid SurveyMessage)> SentWhatsAppSurveyAsync(
+        Guid tenant, string waId, DateTimeOffset sentAt)
+    {
+        var conversation = await SeedConversationAsync(Factory, tenant, waId: waId);
+        var ticket = await SupportTicketSeed.SaveConversationTicketAsync(Factory, tenant, conversation, Since);
+        await SupportTicketSeed.UpdateTicketAsync(
+            Factory, tenant, ticket.Id,
+            item => item.ChangeStatus(SupportTicketStatus.Resolved, null, sentAt.AddMinutes(-1), SupportTicketSeed.Clock));
+        var message = await SeedMessageAsync(Factory, tenant, conversation, sentAt, direction: Outbound, text: "Encuesta");
+        await ExecuteAsync(
+            Factory,
+            "UPDATE support.ticket_surveys SET status = 'Sent', channel = 'WhatsApp', message_id = @message, sent_at = @at WHERE ticket_id = @id",
+            ("message", message), ("at", sentAt), ("id", ticket.Id.Value));
+        var survey = Guid.Parse(
+            (await TextAsync(Factory, "SELECT id::text FROM support.ticket_surveys WHERE ticket_id = @id", ("id", ticket.Id.Value)))!,
+            System.Globalization.CultureInfo.InvariantCulture);
+        return (survey, conversation, message);
+    }
+
     // Un mensaje de la conversación vinculado al ticket en el estado pedido, como lo dejaría el seguimiento del hilo.
     private async Task LinkAsync(
         Guid tenant,
