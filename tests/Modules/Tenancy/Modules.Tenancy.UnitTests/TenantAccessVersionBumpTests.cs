@@ -166,8 +166,8 @@ public sealed class TenantAccessVersionBumpTests
 
     private sealed class KnownRoles : IRoleReferenceValidator
     {
-        public Task<bool> IsKnownRoleAsync(TenantId tenantId, string role, CancellationToken cancellationToken) =>
-            Task.FromResult(true);
+        public Task<RoleReference> CheckAsync(TenantId tenantId, string role, CancellationToken cancellationToken) =>
+            Task.FromResult(RoleReference.Known);
     }
 
     private sealed class NullOutbox : IOutboxWriter

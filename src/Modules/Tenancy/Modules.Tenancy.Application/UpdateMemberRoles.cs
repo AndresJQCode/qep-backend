@@ -59,21 +59,32 @@ public sealed class UpdateMemberRolesHandler(
                 "A membership requires at least one role.");
         }
 
+        var tenant = await TenantLoader.LoadAsync(
+            tenantRepository, command.TenantId, cancellationToken);
+        var membership = await MembershipLoader.LoadAsync(
+            membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
+
         foreach (var role in requestedRoles)
         {
-            if (!await roleReferenceValidator.IsKnownRoleAsync(
-                command.TenantId, role, cancellationToken))
+            var reference = await roleReferenceValidator.CheckAsync(
+                command.TenantId, role, cancellationToken);
+            if (reference == RoleReference.Unknown)
             {
                 throw new TenantDomainException(
                     "tenancy.membership.role_unknown",
                     $"The role '{role}' is not part of the authorization catalog.");
             }
-        }
 
-        var tenant = await TenantLoader.LoadAsync(
-            tenantRepository, command.TenantId, cancellationToken);
-        var membership = await MembershipLoader.LoadAsync(
-            membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
+            // Spec 2026-11-15: sólo se rechaza lo que se agrega. Quien ya tiene un rol que dejó de
+            // conceder algo (Cajero con pos apagado) lo conserva, y la pantalla lo reenvía al guardar.
+            if (reference == RoleReference.Unassignable &&
+                !membership.Roles.Contains(role, StringComparer.Ordinal))
+            {
+                throw new TenantDomainException(
+                    "tenancy.membership.role_unavailable",
+                    $"The role '{role}' grants nothing in this tenant: its module is not enabled.");
+            }
+        }
 
         if (membership.Version != command.ExpectedVersion)
         {
