@@ -357,10 +357,29 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
     }
 
-    // CA-CAT-03-11: la violación de IX_tax_rates_tenant_name sale como 422 con su código de
-    // dominio. Sin la traducción por nombre de índice es un 500 — la forma de SDD-CT-06.
+    // CA-CAT-03-11: la violación de IX_tax_rates_tenant_name_percentage_base sale como 422 con su
+    // código de dominio. Sin la traducción por nombre de índice es un 500 — la forma de SDD-CT-06.
+    // Desde 2026-11-15 lo que no se repite es nombre + porcentaje + base mínima, no el nombre solo.
     [Fact]
-    public async Task CreatingTheSameNameTwiceInATenantReturnsNameTaken()
+    public async Task CreatingTheSameNameAndPercentageTwiceInATenantReturnsNameTaken()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var first = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+
+        var second = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
+        var body = await second.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        Assert.Contains("catalog.tax_rate.name_taken", body, StringComparison.Ordinal);
+    }
+
+    // Owner, 2026-11-15: el nombre se puede repetir con otro porcentaje.
+    [Fact]
+    public async Task TheSameNameWithAnotherPercentageIsAccepted()
     {
         var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
@@ -370,10 +389,42 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
 
         var second = await CreateTaxRateAsync(client, TenantId, "IVA general", 5);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
-        var body = await second.Content.ReadAsStringAsync(
-            TestContext.Current.CancellationToken);
-        Assert.Contains("catalog.tax_rate.name_taken", body, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+    }
+
+    // Owner, 2026-11-15: la base mínima también distingue, y sin base cuenta como un valor (el índice
+    // es NULLS NOT DISTINCT): dos «sin base» con el mismo nombre y porcentaje chocan.
+    [Fact]
+    public async Task TheMinimumBaseDistinguishesTwoRatesWithTheSameNameAndPercentage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+        await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var cityId = await FindSeededCityIdAsync(factory);
+
+        var withBase = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId });
+        var withoutBase = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId });
+        var repeatedBase = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId });
+        var repeatedWithoutBase = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId });
+
+        Assert.Equal(HttpStatusCode.Created, withBase.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, withoutBase.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, repeatedBase.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.name_taken",
+            await repeatedBase.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, repeatedWithoutBase.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.name_taken",
+            await repeatedWithoutBase.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
     }
 
     // CA-CAT-03-11, segunda mitad: la unicidad es por tenant, no global.
@@ -415,7 +466,7 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
             [.. ManagePermissions, CatalogPermissions.ProductManage]);
 
         await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
-        var taxRateClash = await CreateTaxRateAsync(client, TenantId, "IVA general", 5);
+        var taxRateClash = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
         var taxRateBody = await taxRateClash.Content.ReadAsStringAsync(
             TestContext.Current.CancellationToken);
 
