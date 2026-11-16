@@ -19,6 +19,15 @@ public interface ISupportSurveyRepository
     Task<bool> RenewClaimAsync(
         Guid surveyId, DateTimeOffset claimedUntil, DateTimeOffset renewedUntil, CancellationToken cancellationToken);
 
+    /// <summary>Fase 4b (H21): toma la fila de la encuesta (<c>FOR UPDATE</c>) y la devuelve con tracking, leída después de tomarla.
+    /// Exige una transacción abierta (<c>ISupportUnitOfWork.BeginTransactionAsync</c>): así la primera respuesta gana y la segunda ve la
+    /// calificación ya guardada. Sin tenant: lo comprueba quien llama.</summary>
+    Task<SupportTicketSurvey?> LockAsync(Guid surveyId, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4b (H18): las encuestas calificadas por WhatsApp cuyo mensaje que pide el comentario no se anotó (ni enviado ni con
+    /// motivo) y cuya ventana sigue abierta en <paramref name="now"/>: un tick que murió entre el envío y la anotación.</summary>
+    Task<IReadOnlyList<Guid>> ListPromptPendingAsync(int take, DateTimeOffset now, CancellationToken cancellationToken);
+
     /// <summary>Con tracking, para guardar cómo terminó. Sin tenant: el id sale del reclamo del worker.</summary>
     Task<SupportTicketSurvey?> FindAsync(Guid surveyId, CancellationToken cancellationToken);
 }

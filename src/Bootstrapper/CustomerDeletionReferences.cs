@@ -27,7 +27,9 @@ namespace Bootstrapper;
 /// <c>billing.customer_profiles.customer_id</c>, <c>support.tickets.customer_id</c>; en <c>support</c>, por las conversaciones que se
 /// borran (plan E18 de la fase 2): <c>tickets</c> (<c>conversation_id</c>, <c>conversation_channel</c>, <c>follow_thread</c>,
 /// <c>follow_off_at</c>, <c>updated_at</c>, <c>version</c>), <c>ticket_messages.conversation_id</c>,
-/// <c>unclassified_messages.conversation_id</c> y <c>ticket_replies</c> (<c>ticket_id</c>, <c>message_id</c>); en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
+/// <c>unclassified_messages.conversation_id</c>, <c>ticket_replies</c> (<c>ticket_id</c>, <c>message_id</c>) y <c>ticket_surveys</c>
+/// (<c>ticket_id</c>, <c>message_id</c>, <c>rating_message_id</c>, <c>comment_message_id</c>, <c>prompt_message_id</c>,
+/// <c>updated_at</c>); en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
 /// <c>blocked_at</c>), <c>messages</c> (<c>conversation_id</c>, <c>direction</c>), <c>message_media.storage_key</c>,
 /// <c>scheduled_messages.media_storage_key</c>, <c>automation_inbox.conversation_id</c>, <c>campaign_recipients</c>
 /// (<c>customer_id</c>, <c>conversation_id</c>, <c>message_id</c>, <c>status</c>, <c>failure_code</c>, <c>failure_reason</c>) y
@@ -309,6 +311,16 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
         await database.ExecuteSqlAsync($"""
             UPDATE support.ticket_replies SET message_id = NULL
             WHERE tenant_id = {tenantId} AND message_id IS NOT NULL
+              AND ticket_id IN (SELECT id FROM support.tickets WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv}))
+            """, cancellationToken);
+        // Fase 4b, Tarea 12: la encuesta conserva su calificación y su comentario, pero suelta los mensajes de esa conversación (la
+        // plantilla, el toque, el comentario y el mensaje que lo pidió): se van con ella. No sube la versión del ticket (la encuesta nunca
+        // lo hace); la de abajo ya la sube.
+        await database.ExecuteSqlAsync($"""
+            UPDATE support.ticket_surveys
+            SET message_id = NULL, rating_message_id = NULL, comment_message_id = NULL, prompt_message_id = NULL, updated_at = now()
+            WHERE tenant_id = {tenantId}
+              AND (message_id IS NOT NULL OR rating_message_id IS NOT NULL OR comment_message_id IS NOT NULL OR prompt_message_id IS NOT NULL)
               AND ticket_id IN (SELECT id FROM support.tickets WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv}))
             """, cancellationToken);
         await database.ExecuteSqlAsync($"""

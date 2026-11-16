@@ -50,6 +50,37 @@ internal sealed class SupportSurveyRepository(SupportDbContext dbContext) : ISup
         return updated == 1;
     }
 
+    public async Task<SupportTicketSurvey?> LockAsync(Guid surveyId, CancellationToken cancellationToken)
+    {
+        // Sin transacción el candado se soltaría al terminar la sentencia y no serializaría nada.
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("Locking a survey needs an open transaction (ISupportUnitOfWork.BeginTransactionAsync).");
+        }
+
+        return (await dbContext.TicketSurveys
+            .FromSql($"SELECT * FROM support.ticket_surveys WHERE id = {surveyId} FOR UPDATE")
+            .ToListAsync(cancellationToken)).SingleOrDefault();
+    }
+
+    public async Task<IReadOnlyList<Guid>> ListPromptPendingAsync(int take, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(take);
+        DateTimeOffset? at = now.ToUniversalTime();
+        return await dbContext.TicketSurveys
+            .AsNoTracking()
+            .Where(survey => survey.Rating != null
+                && survey.AnsweredVia == SupportSurveyChannel.WhatsApp
+                && survey.PromptSentAt == null
+                && survey.PromptFailureCode == null
+                && survey.CommentUntil > at)
+            .OrderBy(survey => survey.AnsweredAt)
+            .ThenBy(survey => survey.Id)
+            .Select(survey => survey.Id)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+    }
+
     public Task<SupportTicketSurvey?> FindAsync(Guid surveyId, CancellationToken cancellationToken) =>
         dbContext.TicketSurveys.FirstOrDefaultAsync(survey => survey.Id == surveyId, cancellationToken);
 }

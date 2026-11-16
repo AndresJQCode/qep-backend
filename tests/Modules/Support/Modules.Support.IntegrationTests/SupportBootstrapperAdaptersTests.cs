@@ -336,6 +336,76 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         return id;
     }
 
+    // Fase 4b, Tarea 12 (Review Focus 6): el feed de la encuesta lee messaging.messages por nombre (reply_to_message_id, kind, text,
+    // direction, imported, occurred_at). Contra el esquema migrado: el toque que cita la encuesta mandada, y después el primer texto del
+    // contacto como comentario. Un saliente, un importado o un texto de otra conversación no cuentan.
+    [Fact]
+    public async Task TheSurveyFeedRunsAgainstTheMigratedSchema()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var conversation = await SeedConversationAsync(Factory, tenant);
+        var otherConversation = await SeedConversationAsync(Factory, tenant, waId: "573009998877");
+        var ticket = await SupportTicketSeed.SaveConversationTicketAsync(Factory, tenant, conversation, Since);
+        await SupportTicketSeed.UpdateTicketAsync(
+            Factory, tenant, ticket.Id,
+            item => item.ChangeStatus(SupportTicketStatus.Resolved, null, DateTimeOffset.UtcNow.AddMinutes(-10), SupportTicketSeed.Clock));
+        var surveyMessage = await SeedMessageAsync(
+            Factory, tenant, conversation, DateTimeOffset.UtcNow.AddMinutes(-5), direction: Outbound, text: "¿Cómo te atendimos?");
+        await ExecuteAsync(
+            Factory,
+            """
+            UPDATE support.ticket_surveys
+            SET status = 'Sent', channel = 'WhatsApp', message_id = @message, sent_at = now() - interval '5 minutes'
+            WHERE ticket_id = @ticket
+            """,
+            ("message", surveyMessage),
+            ("ticket", ticket.Id.Value));
+        var surveyId = Guid.Parse(
+            (await TextAsync(Factory, "SELECT id::text FROM support.ticket_surveys WHERE ticket_id = @ticket", ("ticket", ticket.Id.Value)))!,
+            System.Globalization.CultureInfo.InvariantCulture);
+        var tappedAt = DateTimeOffset.UtcNow.AddMinutes(-4);
+        await SeedMessageAsync(
+            Factory, tenant, conversation, tappedAt.AddSeconds(-1), imported: true, text: "Mala", kind: InteractiveKind, replyTo: surveyMessage);
+        await SeedMessageAsync(
+            Factory, tenant, conversation, tappedAt.AddSeconds(-1), direction: Outbound, text: "Mala", kind: InteractiveKind,
+            replyTo: surveyMessage);
+        var tap = await SeedMessageAsync(
+            Factory, tenant, conversation, tappedAt, text: "Buena", kind: InteractiveKind, replyTo: surveyMessage);
+
+        await using (var scope = Factory.Services.CreateAsyncScope())
+        {
+            var taps = await scope.ServiceProvider.GetRequiredService<ISupportSurveyFeed>().ListTapsAsync(50, Ct);
+
+            var found = Assert.Single(taps);
+            Assert.Equal((tenant, surveyId, tap, "Buena"), (found.TenantId, found.SurveyId, found.MessageId, found.Text));
+            Assert.True((found.OccurredAt - tappedAt).Duration() < TimeSpan.FromMilliseconds(1));
+        }
+
+        await ExecuteAsync(
+            Factory,
+            """
+            UPDATE support.ticket_surveys
+            SET rating = 'Good', answered_via = 'WhatsApp', answered_at = now(), rating_message_id = @tap,
+                comment_until = now() + interval '1 day'
+            WHERE id = @id
+            """,
+            ("tap", tap),
+            ("id", surveyId));
+        await SeedMessageAsync(Factory, tenant, otherConversation, tappedAt.AddSeconds(30), text: "De otra conversación");
+        await SeedMessageAsync(Factory, tenant, conversation, tappedAt.AddSeconds(40), direction: Outbound, text: "Gracias.");
+        await SeedMessageAsync(Factory, tenant, conversation, tappedAt.AddSeconds(45), imported: true, text: "Importado");
+        var comment = await SeedMessageAsync(Factory, tenant, conversation, tappedAt.AddMinutes(1), text: "Muy amables.");
+        await SeedMessageAsync(Factory, tenant, conversation, tappedAt.AddMinutes(2), text: "Otra cosa.");
+
+        await using (var scope = Factory.Services.CreateAsyncScope())
+        {
+            var feed = scope.ServiceProvider.GetRequiredService<ISupportSurveyFeed>();
+
+            Assert.Empty(await feed.ListTapsAsync(50, Ct));
+            Assert.Equal(new SupportSurveyComment(tenant, surveyId, comment, "Muy amables."), Assert.Single(await feed.ListCommentsAsync(50, Ct)));
+        }
+    }
+
     private async Task<Guid> NewSeededTenantAsync()
     {
         var tenant = NewTenantId();

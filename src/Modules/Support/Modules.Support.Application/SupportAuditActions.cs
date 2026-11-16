@@ -65,6 +65,18 @@ public static class SupportAuditActions
     /// <summary>Fase 4b (H16): la encuesta falló en todos sus intentos. Acción del sistema.</summary>
     public const string TicketSurveyFailed = "support.ticket.survey_failed";
 
+    /// <summary>Fase 4b (H18 a H21): el solicitante calificó la encuesta (por WhatsApp, por el enlace o por la página de consulta). Acción del
+    /// sistema; el campo es <c>survey</c>, nunca la calificación ni el comentario.</summary>
+    public const string TicketSurveyAnswered = "support.ticket.survey_answered";
+
+    /// <summary>Fase 4b (H18, Q-11): se anotó el mensaje que pide el comentario después del toque, salido o con su motivo. Acción del
+    /// sistema.</summary>
+    public const string TicketSurveyPrompted = "support.ticket.survey_prompted";
+
+    /// <summary>Fase 4b (H18): el texto del contacto después del toque quedó como comentario de la encuesta. Acción del sistema; nunca el
+    /// texto.</summary>
+    public const string TicketSurveyCommented = "support.ticket.survey_commented";
+
     /// <summary>Spec 2026-11-15 §5.4 (plan N21): an advisor added an internal note. The resource is the ticket; the text is not
     /// recorded.</summary>
     public const string TicketNoteAdded = "support.ticket.note_added";

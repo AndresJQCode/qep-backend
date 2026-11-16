@@ -27,6 +27,9 @@ internal sealed partial class SupportSurveyWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Support survey {SurveyId} could not be moved to its retry ({ExceptionType}); it is claimed again when its claim expires.")]
     private static partial void LogRetryFailed(ILogger logger, Guid surveyId, string exceptionType);
 
+    [LoggerMessage(Level = LogLevel.Error, Message = "Support survey {SurveyId} answer failed with {ExceptionType}; it is read again on the next tick.")]
+    private static partial void LogAnswerFailed(ILogger logger, Guid surveyId, string exceptionType);
+
     [LoggerMessage(Level = LogLevel.Error, Message = "Support survey tick failed; it runs again on the next interval.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
 
@@ -43,7 +46,9 @@ internal sealed partial class SupportSurveyWorker(
             {
                 try
                 {
-                    return await RunOnceAsync(take, stoppingToken) == take;
+                    var full = await RunOnceAsync(take, stoppingToken) == take;
+                    await RunAnswersOnceAsync(stoppingToken);
+                    return full;
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -87,6 +92,68 @@ internal sealed partial class SupportSurveyWorker(
         }
 
         return batch.SurveyIds.Count;
+    }
+
+    /// <summary>
+    /// Fase 4b, Tarea 12 (H18): las respuestas por WhatsApp, después de los envíos. Primero los toques (cada uno califica y pide el
+    /// comentario), después los mensajes que piden el comentario y no se alcanzaron a anotar, y al final los comentarios. Cada elemento en
+    /// su propio scope; uno que falla se loguea con su id y el tipo de la excepción y vuelve a salir en el tick siguiente.
+    /// </summary>
+    internal async Task RunAnswersOnceAsync(CancellationToken cancellationToken)
+    {
+        var window = TimeSpan.FromHours(Math.Max(1, options.Value.SurveyCommentWindowHours));
+        IReadOnlyList<SupportSurveyTap> taps;
+        IReadOnlyList<Guid> prompts;
+        IReadOnlyList<SupportSurveyComment> comments;
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            taps = await scope.ServiceProvider.GetRequiredService<SupportSurveyAnswers>()
+                .ListTapsAsync(SupportSurveyAnswers.DefaultBatchSize, cancellationToken);
+        }
+
+        foreach (var tap in taps)
+        {
+            await EachAsync(tap.SurveyId, answers => answers.RecordTapAsync(tap, window, cancellationToken), cancellationToken);
+        }
+
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            prompts = await scope.ServiceProvider.GetRequiredService<SupportSurveyAnswers>()
+                .ListPendingPromptsAsync(SupportSurveyAnswers.DefaultBatchSize, cancellationToken);
+        }
+
+        foreach (var surveyId in prompts)
+        {
+            await EachAsync(surveyId, answers => answers.SendPromptAsync(surveyId, cancellationToken), cancellationToken);
+        }
+
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            comments = await scope.ServiceProvider.GetRequiredService<SupportSurveyAnswers>()
+                .ListCommentsAsync(SupportSurveyAnswers.DefaultBatchSize, cancellationToken);
+        }
+
+        foreach (var comment in comments)
+        {
+            await EachAsync(comment.SurveyId, answers => answers.RecordCommentAsync(comment, cancellationToken), cancellationToken);
+        }
+    }
+
+    private async Task EachAsync(Guid surveyId, Func<SupportSurveyAnswers, Task> work, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            await work(scope.ServiceProvider.GetRequiredService<SupportSurveyAnswers>());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogAnswerFailed(logger, surveyId, exception.GetType().Name);
+        }
     }
 
     // Revisión del bloque C: en un scope nuevo, la encuesta que lanzó pasa a su reintento (y al final a Failed). Si ni eso se puede, queda

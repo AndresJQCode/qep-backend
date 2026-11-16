@@ -18,6 +18,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
 {
     private readonly RecordingSupportSurveyEmail _email = new();
     private readonly RecordingSupportRealtime _realtime = new();
+    private readonly FakeSupportReplyChannels _channels = new();
     private PostgreSqlContainer? _database;
     private QepApiFactory? _factory;
 
@@ -32,6 +33,10 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
             services.AddSingleton<ISupportSurveyEmail>(_email);
             services.RemoveAll<ISupportRealtime>();
             services.AddSingleton<ISupportRealtime>(_realtime);
+            // Fase 4b, Tarea 12: el canal de WhatsApp es un doble que anota; lo que hace Mensajería con el envío lo amarran
+            // SupportReplyOutboundTests.
+            services.RemoveAll<ISupportReplyChannels>();
+            services.AddSingleton<ISupportReplyChannels>(_channels);
         });
 
     public async ValueTask DisposeAsync()
@@ -208,6 +213,266 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         Assert.Empty(_email.Sent);
     }
 
+    // Tarea 12 (H18): el toque de un botón que cita la encuesta la califica, con ese mensaje, y abre 24 horas para el comentario
+    // contadas desde el toque. La auditoría es del sistema y nombra sólo el campo.
+    [Fact]
+    public async Task ATapOnTheSurveyRatesItWithItsMessage()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var tappedAt = DateTimeOffset.UtcNow;
+        var tap = await TapAsync(sent, "  buena ", tappedAt);
+
+        await AnswersTickAsync();
+
+        Assert.Equal(
+            $"Good|WhatsApp|{tap}|t",
+            await TextAsync(
+                Factory,
+                """
+                SELECT rating || '|' || answered_via || '|' || rating_message_id || '|'
+                    || (abs(extract(epoch FROM comment_until - (@tapped::timestamptz + interval '24 hours'))) < 1)::text
+                FROM support.ticket_surveys WHERE id = @id
+                """,
+                ("tapped", tappedAt),
+                ("id", sent.SurveyId)));
+        Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketSurveyAnswered, sent.TicketId.ToString()));
+    }
+
+    // Review Focus 7 (Q-11): un solo mensaje que pide el comentario, con un ClientId fijo por encuesta. Un tick que se repite no lo manda
+    // otra vez; si el proceso murió antes de anotarlo, el siguiente lo repite con el mismo ClientId (Mensajería devuelve el que ya salió).
+    [Fact]
+    public async Task ThePromptIsSentOnceAfterTheTap()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var prompt = Guid.CreateVersion7();
+        _channels.OnThread = send => new SupportChannelSendResult.Sent(prompt, send.ConversationId);
+        await TapAsync(sent, "Regular", DateTimeOffset.UtcNow);
+
+        await AnswersTickAsync();
+        await AnswersTickAsync();
+
+        var send = Assert.Single(_channels.ThreadSends);
+        Assert.Equal(
+            (sent.Conversation, SupportSurveyPrompt.ClientIdFor(sent.SurveyId), SupportSurveyPrompt.Text, (Guid?)null),
+            (send.ConversationId, send.ClientId, send.Text, send.UploadId));
+        Assert.Equal("Gracias. Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.", send.Text);
+        Assert.Equal(
+            $"{prompt}|t|",
+            await TextAsync(
+                Factory,
+                """
+                SELECT prompt_message_id || '|' || (prompt_sent_at IS NOT NULL)::text || '|' || coalesce(prompt_failure_code, '')
+                FROM support.ticket_surveys WHERE id = @id
+                """,
+                ("id", sent.SurveyId)));
+
+        // El proceso murió entre el envío y la anotación: el siguiente tick lo repite con el mismo ClientId.
+        await ExecuteAsync(
+            Factory,
+            "UPDATE support.ticket_surveys SET prompt_message_id = NULL, prompt_sent_at = NULL WHERE id = @id",
+            ("id", sent.SurveyId));
+        await AnswersTickAsync();
+
+        Assert.Equal(2, _channels.ThreadSends.Count);
+        Assert.All(_channels.ThreadSends, item => Assert.Equal(SupportSurveyPrompt.ClientIdFor(sent.SurveyId), item.ClientId));
+    }
+
+    // Review Focus 7: el mensaje sale por el envío de respuestas de Soporte, no como respuesta del asesor: la conversación sigue sin
+    // asignar, en su estado y con sus no leídos.
+    [Fact]
+    public async Task ThePromptDoesNotTakeTheConversation()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var before = await ConversationStateAsync(sent.Conversation);
+        await TapAsync(sent, "Mala", DateTimeOffset.UtcNow);
+
+        await AnswersTickAsync();
+
+        Assert.Single(_channels.ThreadSends);
+        Assert.Empty(_channels.TemplateSends);
+        Assert.Equal(before, await ConversationStateAsync(sent.Conversation));
+        Assert.Equal("|Open|0", before);
+    }
+
+    // Q-11: sin reintento ni recordatorio. Si el canal no lo manda, queda el motivo y no se vuelve a intentar.
+    [Fact]
+    public async Task AFailedPromptIsNotRetried()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        _channels.OnThread = _ => new SupportChannelSendResult.Rejected(SupportChannelReasons.WindowClosed);
+        await TapAsync(sent, "Buena", DateTimeOffset.UtcNow);
+
+        await AnswersTickAsync();
+        await AnswersTickAsync();
+
+        Assert.Single(_channels.ThreadSends);
+        Assert.Equal(
+            "Good|window_closed|f",
+            await TextAsync(
+                Factory,
+                "SELECT rating || '|' || prompt_failure_code || '|' || (prompt_message_id IS NOT NULL)::text FROM support.ticket_surveys WHERE id = @id",
+                ("id", sent.SurveyId)));
+    }
+
+    // H18: el primer texto del cliente después del toque es el comentario; el siguiente es un entrante cualquiera.
+    [Fact]
+    public async Task TheNextTextIsTheCommentAndALaterOneIsNot()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var tappedAt = DateTimeOffset.UtcNow;
+        await TapAsync(sent, "Regular", tappedAt);
+        await AnswersTickAsync();
+        var comment = await SeedMessageAsync(
+            Factory, sent.TenantId, sent.Conversation, tappedAt.AddMinutes(1), text: "  Tardaron mucho en responder.  ");
+        await SeedMessageAsync(Factory, sent.TenantId, sent.Conversation, tappedAt.AddMinutes(2), text: "Otra cosa: ¿tienen domicilio?");
+
+        await AnswersTickAsync();
+        await AnswersTickAsync();
+
+        Assert.Equal(
+            $"Tardaron mucho en responder.|{comment}",
+            await TextAsync(
+                Factory, "SELECT comment || '|' || comment_message_id FROM support.ticket_surveys WHERE id = @id", ("id", sent.SurveyId)));
+        Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketSurveyCommented, sent.TicketId.ToString()));
+    }
+
+    // H18: pasadas las 24 horas del toque ya no se espera comentario.
+    [Fact]
+    public async Task ACommentAfterTheWindowIsIgnored()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var tappedAt = DateTimeOffset.UtcNow;
+        await TapAsync(sent, "Buena", tappedAt);
+        await AnswersTickAsync();
+        await ExecuteAsync(
+            Factory, "UPDATE support.ticket_surveys SET comment_until = now() - interval '1 minute' WHERE id = @id", ("id", sent.SurveyId));
+        await SeedMessageAsync(Factory, sent.TenantId, sent.Conversation, tappedAt.AddMinutes(1), text: "Muy amables.");
+
+        await AnswersTickAsync();
+
+        Assert.Equal(
+            "Good|",
+            await TextAsync(
+                Factory, "SELECT rating || '|' || coalesce(comment, '') FROM support.ticket_surveys WHERE id = @id", ("id", sent.SurveyId)));
+    }
+
+    // Review Focus 3: el toque cuenta sólo para la encuesta que cita. Reabierto y vuelto a resolver, la primera ya no se responde: un
+    // toque sobre ella no califica nada, ni la primera ni la segunda.
+    [Fact]
+    public async Task ATapOnAnOldSurveyRatesNothing()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var reopened = await sent.Scenario.MoveAsync(await sent.Scenario.DetailAsync(sent.TicketId), "Open");
+        await sent.Scenario.MoveAsync(reopened, "Resolved");
+        await ProcessClaimedAsync();
+        await TapAsync(sent, "Buena", DateTimeOffset.UtcNow);
+
+        await AnswersTickAsync();
+
+        Assert.Equal(
+            "1:|2:",
+            await TextAsync(
+                Factory,
+                """
+                SELECT string_agg(resolution_number || ':' || coalesce(rating, ''), '|' ORDER BY resolution_number)
+                FROM support.ticket_surveys WHERE ticket_id = @id
+                """,
+                ("id", sent.TicketId)));
+        Assert.Empty(_channels.ThreadSends);
+    }
+
+    // Un toque cuyo texto no es uno de los tres botones no califica ni pide comentario.
+    [Fact]
+    public async Task ATapWithAnUnknownTextRatesNothing()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        await TapAsync(sent, "Excelente", DateTimeOffset.UtcNow);
+
+        await AnswersTickAsync();
+
+        Assert.Equal(
+            "", await TextAsync(Factory, "SELECT coalesce(rating, '') FROM support.ticket_surveys WHERE id = @id", ("id", sent.SurveyId)));
+        Assert.Empty(_channels.ThreadSends);
+    }
+
+    // H21: la primera calificación gana; otro toque sobre la misma encuesta no la cambia.
+    [Fact]
+    public async Task ATapRatesOnlyOnce()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var tappedAt = DateTimeOffset.UtcNow;
+        await TapAsync(sent, "Buena", tappedAt);
+        await TapAsync(sent, "Mala", tappedAt.AddSeconds(5));
+
+        await AnswersTickAsync();
+        await AnswersTickAsync();
+
+        Assert.Equal(
+            "Good", await TextAsync(Factory, "SELECT rating FROM support.ticket_surveys WHERE id = @id", ("id", sent.SurveyId)));
+        Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketSurveyAnswered, sent.TicketId.ToString()));
+        Assert.Single(_channels.ThreadSends);
+    }
+
+    // La calificación no sube la versión del ticket, pero avisa por el hub después del commit.
+    [Fact]
+    public async Task AnAnswerAnnouncesTheTicket()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var version = Version(await sent.Scenario.DetailAsync(sent.TicketId));
+        _realtime.Clear();
+        await TapAsync(sent, "Buena", DateTimeOffset.UtcNow);
+
+        await AnswersTickAsync();
+
+        Assert.Contains(sent.TicketId, _realtime.Tickets);
+        Assert.Equal(version, Version(await sent.Scenario.DetailAsync(sent.TicketId)));
+    }
+
+    // Un ticket abierto desde una conversación de WhatsApp, resuelto, con la encuesta ya mandada por la plantilla (el mensaje queda en
+    // el hilo con el id que devolvió el canal).
+    private async Task<SentSurvey> SentWhatsAppSurveyAsync()
+    {
+        var scenario = await StartAsync(Factory);
+        await EnableSurveyAsync(scenario);
+        var connection = Guid.CreateVersion7();
+        var conversation = await SeedConversationAsync(Factory, scenario.TenantId, connectionId: connection);
+        _channels.Threads[conversation] = new SupportThreadStatus(
+            conversation, "WhatsApp", false, DateTimeOffset.UtcNow.AddHours(5), connection);
+        _channels.ApprovedSurveyConnections[connection] = "Ventas";
+        _channels.OnSurvey = send => new SupportChannelSendResult.Sent(Guid.CreateVersion7(), send.ConversationId);
+        var ticket = await scenario.CreateFromConversationAsync(conversation);
+        await scenario.MoveAsync(ticket, "Resolved");
+        await ProcessClaimedAsync();
+        var send = Assert.Single(_channels.SurveySends);
+        var surveyMessage = await TextAsync(
+            Factory, "SELECT message_id::text FROM support.ticket_surveys WHERE id = @id", ("id", send.ClientId));
+        await SeedMessageAsync(
+            Factory, scenario.TenantId, conversation, DateTimeOffset.UtcNow, direction: Outbound, text: "¿Cómo te atendimos?",
+            messageId: Guid.Parse(surveyMessage!, System.Globalization.CultureInfo.InvariantCulture));
+        _channels.ThreadSends.Clear();
+        return new SentSurvey(
+            scenario, scenario.TenantId, Id(ticket), conversation, send.ClientId,
+            Guid.Parse(surveyMessage!, System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private Task<Guid> TapAsync(SentSurvey sent, string text, DateTimeOffset occurredAt) =>
+        SeedMessageAsync(
+            Factory, sent.TenantId, sent.Conversation, occurredAt, text: text, kind: InteractiveKind, replyTo: sent.SurveyMessage);
+
+    private Task<string?> ConversationStateAsync(Guid conversation) =>
+        TextAsync(
+            Factory,
+            "SELECT coalesce(assigned_member_id::text, '') || '|' || status || '|' || unread_count FROM messaging.conversations WHERE id = @id",
+            ("id", conversation));
+
+    // Un tick de las respuestas: los toques, los mensajes que piden el comentario y los comentarios.
+    private async Task AnswersTickAsync() =>
+        await ActivatorUtilities.CreateInstance<Modules.Support.Infrastructure.SupportSurveyWorker>(Factory.Services)
+            .RunAnswersOnceAsync(Ct);
+
+    private sealed record SentSurvey(
+        SupportTicketScenario Scenario, Guid TenantId, Guid TicketId, Guid Conversation, Guid SurveyId, Guid SurveyMessage);
+
     private Task EnableSurveyAsync(SupportTicketScenario scenario) =>
         ExecuteAsync(
             Factory, "UPDATE support.tenant_settings SET survey_enabled = true WHERE tenant_id = @tenant", ("tenant", scenario.TenantId));
@@ -248,6 +513,8 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         private readonly ConcurrentQueue<Guid> _tickets = new();
 
         public IReadOnlyList<Guid> Tickets => [.. _tickets];
+
+        public void Clear() => _tickets.Clear();
 
         public Task TicketChangedAsync(Guid tenantId, Guid ticketId, CancellationToken cancellationToken)
         {

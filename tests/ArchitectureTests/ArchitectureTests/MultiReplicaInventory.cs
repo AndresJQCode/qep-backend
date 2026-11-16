@@ -65,7 +65,7 @@ public static class MultiReplicaInventory
     [
         // --- Claimed: FOR UPDATE SKIP LOCKED o lease. ---
         new("Modules.Support.Infrastructure.SupportSurveyWorker", WorkerClassification.Claimed,
-            "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportSurveyRepository.cs:16-38 — FOR UPDATE SKIP LOCKED + locked_until de 2 minutos confirmado antes de enviar; el envío es idempotente por ClientId (el id de la encuesta)"),
+            "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportSurveyRepository.cs:16-38 — FOR UPDATE SKIP LOCKED + locked_until de 2 minutos confirmado antes de enviar y renovado por encuesta (RenewClaimAsync); el envío es idempotente por ClientId (el id de la encuesta). Las respuestas por WhatsApp (SupportSurveyAnswers) toman la fila con FOR UPDATE (LockAsync, línea 53) y el mensaje que pide el comentario es idempotente por un ClientId fijo por encuesta"),
         new("Modules.Tenancy.Infrastructure.Messaging.OutboxPublisherWorker", WorkerClassification.Claimed,
             "Modules/Tenancy/Modules.Tenancy.Infrastructure/Messaging/OutboxProcessor.cs:27 — FOR UPDATE SKIP LOCKED"),
         new("Modules.Quotations.Infrastructure.Exports.ExportJobWorker", WorkerClassification.Claimed,

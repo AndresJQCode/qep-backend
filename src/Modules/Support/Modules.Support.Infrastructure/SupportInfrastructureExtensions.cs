@@ -75,6 +75,7 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<ISupportSurveyRepository, SupportSurveyRepository>();
         services.AddScoped<SupportSystemAuthor>();
         services.AddScoped<SupportSurveySender>();
+        services.AddScoped<SupportSurveyAnswers>();
         services.AddOptions<SupportWorkerOptions>().Bind(configuration.GetSection(SupportWorkerOptions.SectionName));
         if (configuration.GetValue($"{SupportWorkerOptions.SectionName}:Enabled", true))
         {

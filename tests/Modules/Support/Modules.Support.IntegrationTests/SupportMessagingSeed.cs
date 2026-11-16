@@ -16,6 +16,11 @@ internal static class SupportMessagingSeed
 
     public const short Outbound = 2;
 
+    public const short TextKind = 1;
+
+    /// <summary>El toque de un botón de respuesta rápida (<c>MessageKind.Interactive</c>).</summary>
+    public const short InteractiveKind = 10;
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>Una conversación de WhatsApp (con <paramref name="waId"/>) o de Instagram (con <paramref name="userId"/> y sin
@@ -48,7 +53,9 @@ internal static class SupportMessagingSeed
         return id;
     }
 
-    /// <summary>Un mensaje de texto del hilo. <paramref name="imported"/> es el historial de coexistencia.</summary>
+    /// <summary>Un mensaje del hilo, de texto salvo que se pida otro <paramref name="kind"/> (10 es el toque de un botón).
+    /// <paramref name="imported"/> es el historial de coexistencia; <paramref name="replyTo"/> es el mensaje que cita (el
+    /// <c>context.id</c> de Meta ya resuelto).</summary>
     public static async Task<Guid> SeedMessageAsync(
         QepApiFactory factory,
         Guid tenantId,
@@ -57,18 +64,21 @@ internal static class SupportMessagingSeed
         short direction = Inbound,
         bool imported = false,
         string? text = "Hola, tengo un problema con mi pedido",
-        Guid? messageId = null)
+        Guid? messageId = null,
+        short kind = TextKind,
+        Guid? replyTo = null)
     {
         var id = messageId ?? Guid.CreateVersion7();
         await ExecuteAsync(
             factory,
             """
-            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, imported, created_at)
-            SELECT @id, c.id, c.tenant_id, c.connection_id, @occurred, @direction, 1, 2, @text, @imported, now()
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, imported,
+                created_at, reply_to_message_id)
+            SELECT @id, c.id, c.tenant_id, c.connection_id, @occurred, @direction, @kind, 2, @text, @imported, now(), @replyTo
             FROM messaging.conversations c WHERE c.id = @conversation AND c.tenant_id = @tenant
             """,
             ("id", id), ("conversation", conversationId), ("tenant", tenantId), ("occurred", occurredAt), ("direction", direction),
-            ("text", text), ("imported", imported));
+            ("text", text), ("imported", imported), ("kind", kind), ("replyTo", replyTo));
         return id;
     }
 
