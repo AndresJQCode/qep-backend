@@ -305,7 +305,7 @@ public void ChangeFormalNextStep(string? text, DateTimeOffset now);     // Suppo
 public sealed record UpdateSupportSettingsRequest(int? DueSoonBusinessDays, string? FormalNextStep = null);   // Task 10 appends the rest
 // CreateTicketTypeRequest / UpdateTicketTypeRequest: + string? FormalNextStep = null (last). SupportTicketTypeDto: + string? FormalNextStep (last).
 ```
-The `PUT` is a full replacement: `formalNextStep: null` clears it (**changed 2026-11-16: optional for backward compatibility with the shipped frontend** — absent or null keeps the stored text, `""` clears it). Audit fields `formalNextStep` (settings) and `formalNextStep` (type).
+The `PUT` is a full replacement: `formalNextStep: null` clears it (**changed 2026-11-16: optional for backward compatibility with the shipped frontend** — absent or null keeps the stored text, `""` clears it; **the same rule for the ticket type's `PUT` since the final review**, even though the rest of that body replaces the type). Audit fields `formalNextStep` (settings) and `formalNextStep` (type).
 Validators: ≤ 2000 after trim, no control characters except line break and tab.
 
 - [ ] **Step 1: tests**

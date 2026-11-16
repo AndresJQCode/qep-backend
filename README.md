@@ -5676,7 +5676,9 @@ credenciales, `no-store`, exentas de CSRF por el prefijo, todas con el limitador
 
 **Los ajustes del `PUT /settings` son opcionales, salvo el umbral.** El frontend publicado manda sólo `{ dueSoonBusinessDays }`, así que
 `formalNextStep`, `surveyEnabled` y `autoCloseBusinessDays` ausentes (o `null`) conservan lo guardado; el rango 1–30 del cierre se valida
-sólo si llega. Para borrar el «siguiente paso» se manda vacío (`""`).
+sólo si llega. Para borrar el «siguiente paso» se manda vacío (`""`). La misma regla vale para `formalNextStep` en el
+`PUT /settings/ticket-types/{id}`, aunque el resto de ese cuerpo reemplace el tipo entero: el frontend publicado no manda el campo, y
+editar un tipo no le borra su siguiente paso.
 
 **Respuesta formal.** Una respuesta normal con `formal` en el cuerpo, en cualquier tipo y estado (el tipo sólo la *sugiere*, con
 `requiresFormalResponse`). `text` es el mensaje del canal; `formal.decision` (1 a 20 000 caracteres, con saltos de línea) es el análisis y

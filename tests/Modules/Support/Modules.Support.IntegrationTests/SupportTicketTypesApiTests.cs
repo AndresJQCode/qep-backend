@@ -118,7 +118,8 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
     }
 
     // Fase 4b (H6): el «siguiente paso» del tipo pisa el del tenant. Nace en null en la siembra; el alta y la edición lo guardan
-    // recortado, y la edición lo borra con null (el PUT reemplaza el tipo entero). La auditoría nombra el campo.
+    // recortado. En la edición, ausente o null lo conserva y "" lo borra, la misma regla que el PUT de ajustes: el frontend publicado
+    // no manda el campo y no debe borrarlo (revisión final). Un PUT sin cambios no sube la versión ni audita.
     [Fact]
     public async Task ATypeNextStepRoundTrips()
     {
@@ -139,13 +140,20 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
             },
             Ct);
         var updated = await PutAsync(client, url, NextStepBody("Si no estás de acuerdo, escríbenos."), version: 1);
-        var cleared = await PutAsync(client, url, NextStepBody(null), version: 2);
+        var keptWithoutField = await PutAsync(client, url, BodyWithoutNextStep(), version: 2);
+        var keptWithNull = await PutAsync(client, url, NextStepBody(null), version: 2);
+        var cleared = await PutAsync(client, url, NextStepBody(""), version: 2);
 
         Assert.Equal(JsonValueKind.Null, queja.GetProperty("formalNextStep").ValueKind);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         Assert.Equal("Puedes acudir a la SIC.", (await JsonAsync(created)).GetProperty("formalNextStep").GetString());
         Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
         Assert.Equal("Si no estás de acuerdo, escríbenos.", (await JsonAsync(updated)).GetProperty("formalNextStep").GetString());
+        Assert.Equal(HttpStatusCode.OK, keptWithoutField.StatusCode);
+        Assert.Equal("Si no estás de acuerdo, escríbenos.", (await JsonAsync(keptWithoutField)).GetProperty("formalNextStep").GetString());
+        Assert.Equal(2, (await JsonAsync(keptWithoutField)).GetProperty("version").GetInt64());
+        Assert.Equal(HttpStatusCode.OK, keptWithNull.StatusCode);
+        Assert.Equal("Si no estás de acuerdo, escríbenos.", (await JsonAsync(keptWithNull)).GetProperty("formalNextStep").GetString());
         Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
         Assert.Equal(JsonValueKind.Null, (await TypeNamedAsync(client, tenant, "Queja")).GetProperty("formalNextStep").ValueKind);
         Assert.Equal(2, await CountAuditEntriesAsync(factory, SupportAuditActions.TicketTypeUpdated, queja.GetProperty("id").GetGuid().ToString()));
@@ -167,6 +175,16 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
         Assert.Equal("validation.failed", await CodeOfAsync(response));
         Assert.Equal(["FormalNextStep"], await ErrorKeysAsync(response));
     }
+
+    private static object BodyWithoutNextStep() => new
+    {
+        name = "Queja",
+        termBusinessDays = 15,
+        termIsLegal = true,
+        requiresFormalResponse = true,
+        isPublished = true,
+        isActive = true,
+    };
 
     private static object NextStepBody(string? formalNextStep) => new
     {
