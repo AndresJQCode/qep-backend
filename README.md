@@ -2206,6 +2206,16 @@ Shopify. `Observaciones` (`notes`) sigue saliendo de `Notes`, que es del asesor 
 «Shopify #N» y, si aplica, la dirección cruda). **Nace oculta**, también sin layout guardado: un tenant sin
 layout puede tener un ERP leyendo la hoja por defecto. Su encabezado no choca con ninguno de «MIGRACION 1».
 
+**Tarifas de retención** (spec 2026-11-16): dos columnas más al final, para un sistema de facturación (Siigo) que
+busca el impuesto por su tarifa y calcula el monto él mismo. `Tarifa Retefuente` (`withholding_retefuente_rate`)
+lleva el porcentaje (`2.5`); `Tarifa ReteICA` (`withholding_reteica_rate`), la tarifa **por mil** (`11.04` en
+Bogotá), que es el porcentaje guardado × 10. Es la tarifa efectiva —la editada por el asesor, si la editó—, por
+pedido y repetida en cada fila; `0` si el pedido no tiene retención aplicada de ese tipo. **Nacen ocultas.** El
+tenant las prende y les pone el encabezado que su import lee (por ejemplo `Retefuente`); si ya tenía visibles
+`Retefuente` o `ReteICA` (los montos), tiene que ocultarlas o renombrarlas en el mismo guardado, o el `PUT` responde
+`header_duplicated`. **Límite conocido:** con dos retenciones aplicadas del mismo tipo sale la tarifa de la primera
+por orden del pedido; los selectores ya exigen una por tipo, así que sólo puede pasar con la foto del cliente.
+
 **Aviso para operadores:** la hoja sembrada «MIGRACION 1» conserva su columna fija `valor flete`, vacía, y
 por eso `Valor Flete` del catálogo queda oculta en ella. Para que el ERP reciba el valor real, en
 Configuración › Excel de pedidos cambia la fija por la columna del catálogo «Valor Flete».
