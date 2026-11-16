@@ -6,7 +6,7 @@ namespace Modules.Support.Application;
 /// <summary>
 /// Lo que la página necesita para dibujar el formulario. <see cref="Fields"/> sale de <c>SupportFormFields</c> y
 /// <see cref="DocumentTypesByCountry"/> de la tabla compartida (<c>CO</c>, <c>ES</c> y <c>*</c> para el resto): la pantalla no conoce
-/// ninguna de las dos reglas. <see cref="FormVersion"/> y <see cref="SupportPublicLegalDto.Version"/> vuelven en el radicado para
+/// ninguna de las dos reglas. <see cref="FormVersion"/> y la versión de cada documento de <see cref="Legal"/> vuelven en el radicado para
 /// detectar que algo cambió mientras la persona escribía. <see cref="Attachments"/> dice si se reciben adjuntos y con qué límites.
 /// </summary>
 public sealed record SupportPublicFormDto(
@@ -52,9 +52,25 @@ public sealed record SupportPublicFieldsDto(
 
 public sealed record SupportPublicFieldDto(string Key, bool Required);
 
-/// <summary>La versión vigente de los textos legales: lo que la persona acepta al radicar.</summary>
+/// <summary>
+/// The current version of the three legal documents (spec 2026-11-15 §6.3 and §9): what the visitor reads and accepts when filing. Each
+/// <c>ContentHtml</c> arrives sanitized and is painted as HTML; the portal does not sanitize or transform it again. Each <c>Version</c>
+/// goes back in the filing. <see cref="CharacterizationNotice"/> is plain text, fixed and the same for every tenant, for the foot of the
+/// requester's data step.
+/// </summary>
 public sealed record SupportPublicLegalDto(
-    int Version, string AuthorizationText, string? PolicyText, string? PolicyUrl, string? TermsText);
+    SupportPublicPrivacyNoticeDto PrivacyNotice,
+    SupportPublicLegalDocumentDto AnonymousNotice,
+    SupportPublicLegalDocumentDto Terms,
+    string CharacterizationNotice);
+
+/// <summary>The privacy notice. <see cref="AuthorizationQuestion"/> is already resolved: the tenant's or «¿Autorizas a {tenant name}
+/// para el tratamiento de los datos personales suministrados en este formulario?». <see cref="PolicyUrl"/> null means the step does
+/// not show «Política de tratamiento de datos».</summary>
+public sealed record SupportPublicPrivacyNoticeDto(int Version, string ContentHtml, string AuthorizationQuestion, string? PolicyUrl);
+
+/// <summary>The anonymous notice or the terms: version and sanitized HTML.</summary>
+public sealed record SupportPublicLegalDocumentDto(int Version, string ContentHtml);
 
 public sealed record SupportPublicGeoListDto(IReadOnlyList<SupportPublicGeoItemDto> Items);
 

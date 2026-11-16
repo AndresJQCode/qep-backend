@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Modules.Support.Domain;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 using static Modules.Support.IntegrationTests.SupportMessagingSeed;
 using static Modules.Support.IntegrationTests.SupportPublicHarness;
@@ -98,19 +99,117 @@ public sealed class SupportPublicFormApiTests(SupportPublicHost host) : IClassFi
     }
 
     [Fact]
-    public async Task TheLegalTextsAreTheCurrentVersion()
+    public async Task TheFormServesTheThreeCurrentDocuments()
     {
         var factory = await host.StartTestAsync();
         var tenant = NewTenantId();
         var slug = await SeedPublishedTenantAsync(factory, tenant);
-        await PublishLegalTextsAsync(factory, tenant, 2, "Autorizo, versión 2.");
+        await PublishLegalDocumentAsync(factory, tenant, SupportLegalDocumentKind.Terms, 2, "<p>Términos, versión 2.</p>");
         using var client = VisitorClient(factory);
 
         var legal = (await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct))).GetProperty("legal");
 
-        Assert.Equal(2, legal.GetProperty("version").GetInt32());
-        Assert.Equal("Autorizo, versión 2.", legal.GetProperty("authorizationText").GetString());
-        Assert.Equal("https://example.com/politica", legal.GetProperty("policyUrl").GetString());
+        var privacy = legal.GetProperty("privacyNotice");
+        Assert.Equal(1, privacy.GetProperty("version").GetInt32());
+        Assert.Equal("<p>PrivacyNotice, versión 1.</p>", privacy.GetProperty("contentHtml").GetString());
+        var anonymous = legal.GetProperty("anonymousNotice");
+        Assert.Equal(1, anonymous.GetProperty("version").GetInt32());
+        Assert.Equal("<p>AnonymousNotice, versión 1.</p>", anonymous.GetProperty("contentHtml").GetString());
+        var terms = legal.GetProperty("terms");
+        Assert.Equal(2, terms.GetProperty("version").GetInt32());
+        Assert.Equal("<p>Términos, versión 2.</p>", terms.GetProperty("contentHtml").GetString());
+        // The contract: only version and contentHtml outside the privacy notice.
+        Assert.Equal(["version", "contentHtml"], terms.EnumerateObject().Select(item => item.Name).ToList());
+        Assert.Equal(["version", "contentHtml"], anonymous.EnumerateObject().Select(item => item.Name).ToList());
+    }
+
+    [Fact]
+    public async Task TheCharacterizationNoticeIsTheFixedText()
+    {
+        var factory = await host.StartTestAsync();
+        var slug = await SeedPublishedTenantAsync(factory, NewTenantId());
+        using var client = VisitorClient(factory);
+
+        var legal = (await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct))).GetProperty("legal");
+
+        Assert.Equal(
+            "Los datos solicitados en este formulario serán tratados para caracterizar a los usuarios de la Entidad y procurar una mejora continua en la atención.",
+            legal.GetProperty("characterizationNotice").GetString());
+    }
+
+    [Fact]
+    public async Task TheAuthorizationQuestionIsTheTenantsOrTheDefault()
+    {
+        var factory = await host.StartTestAsync();
+        var tenant = NewTenantId();
+        var slug = await SeedPublishedTenantAsync(factory, tenant);
+        using var client = VisitorClient(factory);
+
+        var byDefault = (await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct))).GetProperty("legal");
+        await PublishLegalDocumentAsync(
+            factory, tenant, SupportLegalDocumentKind.PrivacyNotice, 2, "<p>Aviso, versión 2.</p>",
+            authorizationQuestion: "¿Nos dejas tratar tus datos?");
+        var written = (await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct))).GetProperty("legal");
+
+        Assert.Equal(
+            "¿Autorizas a Support API Tests para el tratamiento de los datos personales suministrados en este formulario?",
+            byDefault.GetProperty("privacyNotice").GetProperty("authorizationQuestion").GetString());
+        Assert.Equal(
+            "¿Nos dejas tratar tus datos?", written.GetProperty("privacyNotice").GetProperty("authorizationQuestion").GetString());
+    }
+
+    [Fact]
+    public async Task ThePolicyUrlIsNullWhenNotSet()
+    {
+        var factory = await host.StartTestAsync();
+        var tenant = NewTenantId();
+        var slug = await SeedPublishedTenantAsync(factory, tenant);
+        using var client = VisitorClient(factory);
+
+        var withoutUrl = (await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct))).GetProperty("legal");
+        await PublishLegalDocumentAsync(
+            factory, tenant, SupportLegalDocumentKind.PrivacyNotice, 2, "<p>Aviso, versión 2.</p>",
+            policyUrl: "https://example.com/politica");
+        var withUrl = (await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct))).GetProperty("legal");
+
+        Assert.Equal(JsonValueKind.Null, withoutUrl.GetProperty("privacyNotice").GetProperty("policyUrl").ValueKind);
+        Assert.Equal("https://example.com/politica", withUrl.GetProperty("privacyNotice").GetProperty("policyUrl").GetString());
+    }
+
+    [Fact]
+    public async Task AFormMissingADocumentIs404()
+    {
+        var factory = await host.StartTestAsync();
+        var tenant = NewTenantId();
+        var slug = await SeedPublishedTenantAsync(factory, tenant);
+        await ExecuteAsync(
+            factory,
+            "DELETE FROM support.legal_document_versions WHERE tenant_id = @tenant AND kind = 'AnonymousNotice'",
+            ("tenant", Guid.Parse(tenant)));
+        using var client = VisitorClient(factory);
+
+        var response = await client.GetAsync(PublicUrl(slug, "/form"), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("support.public.not_found", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task TheFormResanitizesWhatItServes()
+    {
+        var factory = await host.StartTestAsync();
+        var tenant = NewTenantId();
+        var slug = await SeedPublishedTenantAsync(factory, tenant);
+        // A row written by hand, around the publishing path: GET /form sanitizes again what it reads.
+        await ExecuteAsync(
+            factory,
+            "UPDATE support.legal_document_versions SET content_html = '<p>a</p><script>alert(1)</script>' WHERE tenant_id = @tenant AND kind = 'Terms'",
+            ("tenant", Guid.Parse(tenant)));
+        using var client = VisitorClient(factory);
+
+        var legal = (await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct))).GetProperty("legal");
+
+        Assert.Equal("<p>a</p>", legal.GetProperty("terms").GetProperty("contentHtml").GetString());
     }
 
     [Fact]

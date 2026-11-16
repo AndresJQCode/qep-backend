@@ -124,14 +124,21 @@ internal static class SupportPublicHarness
     }
 
     /// <summary>Publica una versión nueva de un documento legal, como si el tenant la publicara desde la consola. El HTML pasa por el
-    /// saneador real, como en <c>PublishLegalDocumentHandler</c>.</summary>
+    /// saneador real, como en <c>PublishLegalDocumentHandler</c>. La pregunta y la URL, sólo con el aviso de privacidad.</summary>
     public static async Task PublishLegalDocumentAsync(
-        QepApiFactory factory, string tenantId, SupportLegalDocumentKind kind, int version, string html)
+        QepApiFactory factory,
+        string tenantId,
+        SupportLegalDocumentKind kind,
+        int version,
+        string html,
+        string? authorizationQuestion = null,
+        string? policyUrl = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var content = scope.ServiceProvider.GetRequiredService<ISupportHtmlSanitizer>().Sanitize(html);
         scope.ServiceProvider.GetRequiredService<ISupportLegalDocumentRepository>().Add(SupportLegalDocumentVersion.Create(
-            Guid.CreateVersion7(), Guid.Parse(tenantId), kind, version, content, null, null, Guid.CreateVersion7(), DateTimeOffset.UtcNow));
+            Guid.CreateVersion7(), Guid.Parse(tenantId), kind, version, content, authorizationQuestion, policyUrl, Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow));
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
     }
 
