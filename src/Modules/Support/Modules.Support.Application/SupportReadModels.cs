@@ -8,7 +8,9 @@ namespace Modules.Support.Application;
 /// vencer» (pre-flight R1). <paramref name="DueBefore"/> es estricto (<c>due_on &lt; DueBefore</c>); <paramref name="DueBetween"/>
 /// incluye los dos extremos. La búsqueda acepta el radicado (<paramref name="Number"/>), el texto (<paramref name="SearchTerm"/>,
 /// sobre el asunto y los nombres y la razón social del solicitante, no su documento) y los clientes que ya resolvió quien llama
-/// (<paramref name="SearchCustomerIds"/>), unidos por O.
+/// (<paramref name="SearchCustomerIds"/>), unidos por O. <paramref name="Priorities"/> deja esos niveles. El orden es por recibido,
+/// el más reciente primero; con <paramref name="ByPriority"/>, primero <c>Urgent</c>, <c>High</c>, <c>Medium</c>, <c>Low</c> y dentro de
+/// cada nivel por recibido (spec 2026-11-15 §5.3). El id desempata siempre, así la paginación es estable.
 /// </summary>
 public sealed record SupportTicketFilter(
     Guid TenantId,
@@ -23,7 +25,9 @@ public sealed record SupportTicketFilter(
     string? SearchTerm,
     IReadOnlyCollection<Guid>? SearchCustomerIds,
     int Page,
-    int PageSize);
+    int PageSize,
+    IReadOnlyCollection<SupportTicketPriority>? Priorities = null,
+    bool ByPriority = false);
 
 public sealed record SupportTicketPage(IReadOnlyList<SupportTicket> Items, int Total);
 

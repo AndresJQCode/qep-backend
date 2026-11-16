@@ -477,12 +477,14 @@ public static class SupportEndpoints
         string? assignee,
         string? due,
         string? search,
+        string? priority,
+        string? sort,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
         int page = 1,
         int pageSize = ListTicketsQuery.DefaultPageSize) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, page, pageSize), cancellationToken));
+            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, priority, sort, page, pageSize), cancellationToken));
 
     private static async Task<IResult> CreateTicketAsync(
         Guid tenantId, CreateTicketRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
