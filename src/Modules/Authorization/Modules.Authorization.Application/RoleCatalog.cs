@@ -135,7 +135,11 @@ public sealed class RoleCatalog : IRoleCatalog
                 .Append(permission.DisplayName).Append('|')
                 .Append(permission.Description).Append('|')
                 .Append(permission.Category).Append('|')
-                .Append(permission.RiskLevel)
+                .Append(permission.RiskLevel).Append('|')
+                // Spec 2026-11-16: mover un permiso de fila o de columna de la matriz cambia el catálogo.
+                .Append(permission.Shape?.Entity).Append('|')
+                .Append(permission.Shape?.EntityLabel).Append('|')
+                .Append(permission.Shape?.Action)
                 .AppendLine();
         }
 

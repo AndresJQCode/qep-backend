@@ -71,4 +71,20 @@ public static class PermissionVocabulary
 
     /// <summary>Sin entrada devuelve la clave: mejor una clave cruda en pantalla que un hueco.</summary>
     public static string LabelOfCategory(string category) => CategoryLabels.GetValueOrDefault(category, category);
+
+    /// <summary>
+    /// Fila y columna del permiso en la matriz. Sin <c>Shape</c> (el fallback de metadata de
+    /// <see cref="RoleCatalog"/>) va a «Otros» de una fila propia, con su nombre como entidad y como
+    /// acción: un permiso sin declarar no rompe el catálogo ni se cuela en una columna que no es suya.
+    /// </summary>
+    public static PermissionPlacement PlacementOf(PermissionDefinition permission) =>
+        permission.Shape is { } shape
+            ? new PermissionPlacement(shape.Entity, shape.EntityLabel, shape.Action, LabelOfAction(shape.Action))
+            : new PermissionPlacement(permission.Permission, permission.DisplayName, OtherAction, permission.DisplayName);
+
+    /// <summary>La acción de un permiso sin <c>Shape</c>. No es columna: cae en «Otros».</summary>
+    public const string OtherAction = "other";
 }
+
+/// <summary>Dónde va un permiso en la matriz de roles y con qué nombres en pantalla.</summary>
+public sealed record PermissionPlacement(string Entity, string EntityLabel, string Action, string ActionLabel);
