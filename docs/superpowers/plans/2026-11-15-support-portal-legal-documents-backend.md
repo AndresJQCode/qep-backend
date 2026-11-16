@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10, ASP.NET Core minimal APIs, EF Core 10 + Npgsql, FluentValidation, `HtmlSanitizer` (mganss, sobre AngleSharp), xUnit v3, Testcontainers (PostgreSQL).
 
-**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-9 (§15; D-8, L28 y D-9 confirmadas por el owner el 2026-11-15). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
+**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-10 (§15; D-8, L28, D-9 y D-10 confirmadas por el owner el 2026-11-15). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
 
 ---
 
@@ -81,15 +81,17 @@ Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-9 del spec e
 | L24 | `appsettings.example.json` documenta `Support:PublicForm:{BaseUrl,Hostname,AllowedOrigins}` y `Support:Workers:{BatchSize,FeedLookbackHours,FollowIntervalSeconds}`. | Pone en verde `ConfigurationExampleTests.EveryBoundConfigurationKeyIsDocumentedInTheExample`, en rojo desde la fase 3 (`docs/estado.md`, «Defectos conocidos»), y deja documentada la clave que esta rama cambia. |
 | L25 | El alias estable de `develop` del portal en Vercel (D-5) **no** entra en código ni en `appsettings*.json`: el proyecto de Vercel todavía no existe. El README dice dónde ponerlo (`Support__PublicForm__AllowedOrigins__N` del backend de desarrollo y CORS del bucket de desarrollo) cuando exista. | No se inventa un origen. |
 | L26 | Datos que no se omiten (D-6): `SupportPublicFiledDto` suma `ReceivedAt` (`SupportTicket.ReceivedAt`), `TermBusinessDays` y `TermIsLegal` (la foto del tipo en el ticket: `SupportTicket.TermBusinessDays`, `SupportTicket.cs:41`, y su `TermIsLegal`); `SupportPublicTicketDto` suma `TermBusinessDays` de la misma foto (`LookupPublicTicket.cs:~103`). Nunca del tipo vivo: editar el tipo después no cambia lo que ve el solicitante. El NIT va por L29–L32. | Spec §9.1. |
-| L27 | Idempotencia (D-7), calcada de `SubmitOrderRequest.cs:227-232` y `KeyedOrderCommit`: columna `support.tickets.client_request_id uuid NULL`, índice único parcial `IX_tickets_tenant_client_request (tenant_id, client_request_id) WHERE client_request_id IS NOT NULL`, migración aparte `AddSupportTicketClientRequestId` (aditiva, sin relleno). `SupportTicket.CreateFromPublicForm` recibe `Guid? clientRequestId`. Orden del handler: resolver → si hay clave, `ISupportTicketRepository.FindByClientRequestAsync(tenantId, key)` → si existe, respuesta de reintento (L28) **antes** de Turnstile, validador y versiones. Sin ticket: el flujo de siempre. Carrera: dentro de la transacción, **después** de `numbers.NextAsync` (el `UPDATE … RETURNING` de `SupportTicketNumberGenerator` serializa las altas del tenant), se vuelve a buscar la clave; si la confirmó otro, se deshace la transacción (el número vuelve con el rollback) y se responde con el ganador. Respaldo: `SupportUnitOfWork` traduce `IX_tickets_tenant_client_request` **por nombre** a `SupportClientRequestTakenException` (Application) y el handler la atrapa igual. El cuerpo no se compara (como la tienda). `ClientRequestId == Guid.Empty` → `validation.failed`. La clave no se audita ni va a `ticket_events`. | Spec §9.2; el doble chequeo bajo el candado del contador hace la carrera determinista sin depender del 23505. |
-| L28 | PIN del reintento (D-7, **confirmada por el owner el 2026-11-15**): con `ticket_access.last_sent_channel = 'Email'` y `last_failure_code IS NULL` → `Pin = null`, `PinEmailed = true`, nada se escribe. Lo mismo si el ticket tiene destino de correo y nada anotado todavía (el correo de apertura del primer intento sigue en vuelo): rotar invalidaría el PIN que va en ese correo (desvío C-2). Si no (anónimo, sin canal, `send_failed`, `send_pending`), `SupportTicketAccess.Reissue(hash nuevo, now)` en una transacción corta y `Pin` = el nuevo, `PinEmailed = false`; no se manda correo ni texto. El reintento no pasa por `SupportOpeningDelivery`. | Spec §15 D-7. |
+| L27 | Idempotencia (D-7), calcada de `SubmitOrderRequest.cs:227-232` y `KeyedOrderCommit`: columna `support.tickets.client_request_id uuid NULL`, índice único parcial `IX_tickets_tenant_client_request (tenant_id, client_request_id) WHERE client_request_id IS NOT NULL`, migración aparte `AddSupportTicketClientRequestId` (aditiva, sin relleno). `SupportTicket.CreateFromPublicForm` recibe `Guid? clientRequestId`. Orden del handler: resolver → si hay clave, `ISupportTicketRepository.FindByClientRequestAsync(tenantId, key)` → si existe, respuesta de reintento (L28) **antes** de Turnstile, validador y versiones. Sin ticket: el flujo de siempre. Carrera: dentro de la transacción, **después** de `numbers.NextAsync` (el `UPDATE … RETURNING` de `SupportTicketNumberGenerator` serializa las altas del tenant), se vuelve a buscar la clave; si la confirmó otro, se deshace la transacción (el número vuelve con el rollback) y se responde con el ganador. Respaldo: `SupportUnitOfWork` traduce `IX_tickets_tenant_client_request` **por nombre** a `SupportClientRequestTakenException` (Application) y el handler la atrapa igual. El cuerpo no se compara (como la tienda). `ClientRequestId` vacío o que no sea UUID v4 → `validation.failed` (D-10); sólo una clave v4 se busca. La clave no se audita ni va a `ticket_events`. | Spec §9.2; el doble chequeo bajo el candado del contador hace la carrera determinista sin depender del 23505. |
+| L28 | PIN del reintento (D-7, **confirmada por el owner el 2026-11-15**): con `ticket_access.last_sent_channel = 'Email'` y `last_failure_code IS NULL` → `Pin = null`, `PinEmailed = true`, nada se escribe. Lo mismo si el ticket tiene destino de correo y nada anotado todavía (el correo de apertura del primer intento sigue en vuelo): rotar invalidaría el PIN que va en ese correo (desvío C-2), **pero sólo durante 10 minutos desde `pin_issued_at`** (L33). Si no (anónimo, sin canal, `send_failed`, `send_pending`), `SupportTicketAccess.Reissue(hash nuevo, now)` en una transacción corta y `Pin` = el nuevo, `PinEmailed = false`; no se manda correo ni texto. El reintento no pasa por `SupportOpeningDelivery`. | Spec §15 D-7. |
 | L29 | Empresa del portal (D-6, opción a): `SupportFormVersion` gana `Guid? OrganizationCompanyId` (parámetro de `Create`; `Default` lo deja `null`). Columna `support.form_versions.organization_company_id uuid NULL`, índice `IX_form_versions_organization_company` y FK `FK_form_versions_companies_organization_company_id` → `companies.companies(id) ON DELETE RESTRICT`, escrita a mano en la migración `AddSupportFormOrganization` con `migrationBuilder.Sql` / `AddForeignKey` con `principalSchema: "companies"` (EF no la modela entre contextos; precedente `PosDbContext.cs:48-50`). El `Down` quita FK, índice y columna. Borrar la empresa responde `422 companies.company.in_use` sin tocar Companies: `CompaniesUnitOfWork.cs:48-54` traduce cualquier FK que frene el `DELETE` de una `Company`. | Spec §9.3. Companies migra antes que Support (`Program.cs:450`, `:510`). |
 | L30 | Puerto `ISupportOrganizationDirectory` (Application) con `SupportOrganizationRef(Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive)`: `Task<IReadOnlyList<SupportOrganizationRef>> ListActiveAsync(Guid tenantId, CancellationToken)` (ordenadas por nombre) y `Task<SupportOrganizationRef?> FindAsync(Guid tenantId, Guid companyId, CancellationToken)` (filtra por tenant; inactiva incluida). Adaptador `SupportOrganizationDirectory` en `src/Bootstrapper/` sobre `ICompanyRepository`, calcado de `PosCompanyLookup.cs` (`SearchAsync(..., CompanyStatusFilter.Active)`, `FindAsync`, `DocumentType.ToWire()`, `TaxId`). Registro en `QepServiceCollectionExtensions` junto a `IPosCompanyLookup`. | Support no referencia `Modules.Companies.*` (`SupportLayerTests`); mismo patrón que POS y Quotations. |
 | L31 | `PUT /settings/public-form`: `UpdateFormSettingsRequest`/`Command` suman `Guid? OrganizationCompanyId` (opcional: `null` = sin empresa). Validador: `Guid.Empty` → `errors.OrganizationCompanyId`. Handler: si el valor **cambia** frente a la versión vigente y no es `null`, `FindAsync` tiene que devolver una empresa del tenant **activa**; si no existe, es de otro tenant o está inactiva → `422 support.form.organization_unavailable` (código nuevo). Si no cambia, no se valida (una empresa desactivada después no bloquea editar). `changedFields` suma `organizationCompanyId`. | Spec §9.3. |
 | L32 | Bloqueadores nuevos en `SupportFormSettings.BlockersAsync`, después de los de documentos: `organization_required` (la versión candidata no tiene empresa; D-8) y `organization_inactive` (la elegida está inactiva). `ErrorCodeOf`: `support.form.organization_required` y `support.form.organization_inactive` (nuevos). Como hoy, sólo frenan pasar de sin publicar a publicado. `SupportFormSettingsDto` suma `Organization` (la elegida, `SupportFormOrganizationDto?`, con `IsActive`) y `OrganizationOptions` (las activas del tenant). Público: `GetPublicFormHandler` y `GetPublicConsultHandler` suman `SupportPublicOrganizationDto? Organization` desde la versión que ya usan (`FindAsync`; inactiva se muestra; inexistente o `null` → `null`). | Spec §9.3, D-8. Las opciones viajan en la configuración porque `GET /companies` exige `companies.company.read` (precedente `RegisterContextResponse.Companies` del POS). |
+| L33 | **El correo «en vuelo» de C-2 vence a los 10 minutos** (revisión final, S3): con destino de correo y `last_sent_channel` `NULL`, el reintento no rota sólo mientras `now - pin_issued_at ≤ 10 min` (`FilePublicTicketHandler.OpeningDeliveryGrace`); pasado eso el envío se toma como fallido y rota como L28. El reloj es el del tenant (`ReadContextAsync`), leído bajo el candado de `ticket_access`. Es independiente de S2 (ventana del reintento), que el owner resolvió sin ventana (D-10). | Sin el vencimiento, un proceso que muere entre confirmar y anotar el envío deja al solicitante sin PIN para siempre: todo reintento respondería `pin: null`. Los envíos tienen timeouts muy por debajo de 10 minutos. |
 
 ## Notas de merge
 
+- **`develop` mergeado el 2026-11-15** (fase 4a de Soporte y prioridad del ticket). Sus migraciones `20261116011502_AddTicketTypeForeignKey`, `20261116012625_AddTicketExtension` y `20261116022832_AddSupportTicketPriority` van antes; las tres de esta rama se regeneraron encima con los mismos nombres: `20261116025754_AddSupportLegalDocuments` (con el chequeo previo y el relleno a mano, y el `Down` que deja las tablas), `20261116025806_AddSupportTicketClientRequestId` y `20261116025810_AddSupportFormOrganization` (con la FK a mano `FK_form_versions_companies_organization_company_id`, `ON DELETE RESTRICT`, que el snapshot no registra). `SupportMemberDto` pasó a `(Id, DisplayName, IsMe)` armado con `SupportTicketDtoComposer.ToMemberDto(…, viewer)`: el autor de los documentos legales lo usa con `ISupportViewer` (la publicación usa al que publica, que es quien lee). `SupportTicketDetailDto` termina en `IssuedPin`: `LegalAcceptances` queda justo antes. `GetLegalTexts` y `PublishLegalTexts` siguen borrados.
 - **`HtmlSanitizer` 11.0.26** (fijado en el Bloque A, no la 9.x que decía L4): al mergear, revisar los avisos de nuget.org y de GitHub y correr `dotnet list package --vulnerable --include-transitive`; si hace falta, subir a la 11.x más nueva con al menos 14 días publicada.
 
 ## Review Focus
@@ -135,6 +137,10 @@ public sealed record SupportLegalDocumentDto(
     string? AuthorizationQuestion, string? PolicyUrl, string? DefaultAuthorizationQuestion,
     DateTimeOffset? CreatedAt, SupportMemberDto? CreatedBy);
 
+// El autor (createdBy, en el documento y en cada ítem del historial) es el SupportMemberDto de la fase 4a: { id, displayName, isMe }.
+// isMe se mide contra quien lee (suma aditiva al mergear develop).
+public sealed record SupportMemberDto(Guid Id, string DisplayName, bool IsMe);
+
 public sealed record SupportLegalDocumentHistoryDto(string Kind, IReadOnlyList<SupportLegalDocumentVersionItemDto> Versions); // nueva → vieja; [] sin publicadas
 public sealed record SupportLegalDocumentVersionItemDto(int Version, DateTimeOffset CreatedAt, SupportMemberDto CreatedBy);
 
@@ -147,7 +153,7 @@ public sealed record SupportLegalAcceptanceSnapshotDto(
     string Kind, int Version, DateTimeOffset AcceptedAt, string? VisitorIp, string ContentHtml,
     string? AuthorizationQuestion, string? PolicyUrl, string? CharacterizationText);
 
-// SupportTicketDetailDto suma al final:
+// SupportTicketDetailDto suma, justo antes de IssuedPin (el último campo, de la fase 4a):
 //     IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances   // orden PrivacyNotice, AnonymousNotice, Terms; [] si no hay
 
 // Formulario público (Ajustes › Formulario público). Los campos de la fase 3 no cambian; suman los dos últimos.
@@ -170,7 +176,9 @@ public sealed record UpdateFormSettingsRequest(
     Guid? OrganizationCompanyId);
 ```
 
-- `ContentHtml` siempre llega **saneado** (lista blanca del spec §6.2). La respuesta del `POST` es lo que quedó guardado: el editor se repinta con ella.
+- `ContentHtml` llega **saneado en toda lectura** (lista blanca del spec §6.2): el documento vigente, una versión vieja, la respuesta del `POST` y la foto de una aceptación pasan otra vez por el saneador al salir (revisión final, S5). Lo guardado ya es su punto fijo, así que los bytes no cambian y la prueba guardada no se toca; una fila escrita a mano llega limpia. La respuesta del `POST` es lo que quedó guardado: el editor se repinta con ella.
+- **Texto plano, nunca `innerHTML`:** `authorizationQuestion`, `defaultAuthorizationQuestion`, `characterizationText`, `organization.*`, `tenantName` y `successMessage`. Sólo `contentHtml` se pinta como HTML.
+- `createdBy.isMe` (nuevo, aditivo al mergear `develop`): `true` si el autor es quien lee.
 - `SupportLegalAcceptanceDto.AcceptedAt` en `AnonymousNotice` significa «continuó después de verlo». `VisitorIp` es `null` en las dos filas de un anónimo.
 - `SupportFormSettingsDto.PublishBlockers` ⊆ `privacy_notice_required`, `anonymous_notice_required`, `terms_required`, `organization_required`, `organization_inactive`, `no_published_types` (sale `legal_texts_required`). Como hoy, sólo impiden pasar de sin publicar a publicado: un formulario publicado se sigue editando aunque aparezca uno.
 - **El selector de empresa usa `organizationOptions`**, no `GET /api/v1/tenants/{tenantId}/companies?status=active` (`companies.api.ts` de la consola): esa ruta exige `companies.company.read`, que un rol con `support.settings.manage` puede no tener. Si `organization` está inactiva, el selector la muestra igual (no está en `organizationOptions`) con una marca de «desactivada», y guardar sin cambiarla no falla.
@@ -255,9 +263,11 @@ En JSON: `organization: { name, documentTypeCode, documentNumber } | null` en `G
 
 **Radicado idempotente** (`clientRequestId`, spec §9.2, L26–L28):
 
-- El portal genera un UUID al empezar a radicar y lo manda en **cada** reintento de ese mismo radicado (timeout, red caída, 5xx). Uno nuevo sólo para otro radicado («Radicar otra solicitud»).
-- Un reintento con la misma clave en el mismo tenant responde `201` con el **mismo** `number`, `receivedAt`, `dueOn`, `termBusinessDays`, `termIsLegal`, `successMessage` y `consultUrl`, aunque el cuerpo cambie, el token de Turnstile ya esté gastado o el formulario o los documentos hayan cambiado: la clave se mira antes que todo eso. No se crea otro ticket ni se gasta otro número, y el correo de apertura no se vuelve a mandar.
-- `pin` en un reintento: `null` con `pinEmailed: true` si el PIN ya salió por correo (el portal dice que se lo enviamos al correo y ofrece la consulta); un PIN **nuevo** con `pinEmailed: false` si no salió por ningún canal (anónimo o correo fallido): el anterior deja de servir y el portal lo muestra como en la primera respuesta.
+- El portal genera un UUID **v4** (`crypto.randomUUID()`) al empezar a radicar y lo manda en **cada** reintento de ese mismo radicado (timeout, red caída, 5xx). Uno nuevo sólo para otro radicado («Radicar otra solicitud»). Otra versión de UUID (un v7, p. ej.) o el vacío es `422 validation.failed` con `errors.ClientRequestId` (D-10).
+- **Nunca dos radicados en vuelo**: el portal no manda un reintento mientras el anterior no respondió o no venció, y pinta **sólo la última respuesta**. Un reintento de un anónimo rota el PIN, así que el PIN de una respuesta anterior ya no sirve.
+- Un reintento con la misma clave en el mismo tenant responde `201` con el **mismo** `number`, `receivedAt`, `dueOn`, `termBusinessDays`, `termIsLegal`, `successMessage` y `consultUrl`, aunque el cuerpo cambie o el formulario o los documentos hayan cambiado: la clave se mira antes que todo eso. No se crea otro ticket ni se gasta otro número, y el correo de apertura no se vuelve a mandar.
+- **Turnstile:** el reintento lo salta **sólo si el original ya confirmó** (la clave existe). Mientras el original sigue corriendo, un reintento con el token ya gastado responde `422 support.public.captcha_invalid`: el portal vuelve a correr Turnstile y reenvía con el **mismo** `clientRequestId`.
+- `pin` en un reintento: `null` con `pinEmailed: true` si el PIN ya salió por correo, o si el correo de apertura todavía no se anotó y el PIN se emitió hace 10 minutos o menos (en vuelo; el portal dice que se lo enviamos al correo y ofrece la consulta); un PIN **nuevo** con `pinEmailed: false` si no salió por ningún canal (anónimo, correo fallido, o el correo sigue sin anotarse pasados 10 minutos, L33): el anterior deja de servir y el portal lo muestra como en la primera respuesta. La rotación no tiene ventana de tiempo: sigue disponible en cualquier reintento (D-10).
 - Sin `clientRequestId`, cada `POST` es un radicado nuevo, como en la fase 3. El reintento sigue contando para el limitador `SupportPublicSubmit` (5 cada 10 min por IP).
 
 Qué manda cada camino del portal (pasos del tablero aprobado):
@@ -272,9 +282,9 @@ Qué manda cada camino del portal (pasos del tablero aprobado):
 | `acceptsTerms` | `true` («Acepto» del paso 3) | `true` |
 | `termsVersion` | `legal.terms.version` | `legal.terms.version` |
 
-- `contentHtml` llega saneado y se pinta como HTML (`dangerouslySetInnerHTML`). El portal no lo vuelve a sanear ni lo transforma.
+- `contentHtml` llega saneado y se pinta como HTML (`dangerouslySetInnerHTML`). El portal no lo vuelve a sanear ni lo transforma. Todo lo demás (`authorizationQuestion`, `characterizationNotice`, `organization.*`, `tenantName`, `successMessage`) es texto plano: nunca va a `innerHTML`.
 - `characterizationNotice` va al pie del paso 2 (sólo en el camino con datos).
-- `GET /form` responde `404 support.public.not_found` si al tenant le falta cualquiera de los tres documentos (igual que con el formulario sin publicar).
+- `GET /form` responde `404 support.public.not_found` si al tenant le falta cualquiera de los tres documentos, o si uno guardado ya no pasa el saneador (sólo una fila escrita a mano; revisión final N2), igual que con el formulario sin publicar.
 
 Errores nuevos o cambiados de `POST /tickets`:
 
@@ -283,7 +293,8 @@ Errores nuevos o cambiados de `POST /tickets`:
 | `422 validation.failed`, `errors.AcceptsDataPolicy` | con datos y `acceptsDataPolicy` falso | no debería pasar: el paso 1 no deja seguir |
 | `422 validation.failed`, `errors.AcceptsTerms` | `acceptsTerms` falso | no debería pasar: el paso 3 no deja seguir |
 | `422 validation.failed`, `errors.PrivacyNoticeVersion` / `errors.AnonymousNoticeVersion` / `errors.TermsVersion` | falta la que aplica o viene la que no aplica | bug del portal |
-| `422 validation.failed`, `errors.ClientRequestId` | `clientRequestId` es el UUID vacío | bug del portal |
+| `422 validation.failed`, `errors.ClientRequestId` | `clientRequestId` es el UUID vacío o no es v4 (D-10) | bug del portal |
+| `422 support.public.captcha_invalid` en un reintento | el original todavía no confirmó y el token ya se gastó | volver a correr Turnstile y reenviar con el **mismo** `clientRequestId` |
 | `422 support.public.legal_texts_outdated` | alguna versión que aplica ya no es la vigente | recargar `GET /form`, volver al paso del documento cambiado y pedir de nuevo la aceptación; reiniciar Turnstile |
 | `422 support.public.form_outdated`, `captcha_invalid`, `attachment_invalid`, `attachments_disabled`, `404 not_found`, `413`, `429` | sin cambio | como en la fase 3 |
 
@@ -623,6 +634,7 @@ Agregadas el 2026-11-15 en la revisión del spec del portal (Bloque C):
 - **D-6 «No omitir datos»:** fecha de radicación y término en días hábiles en el radicado y la consulta (L26, Tarea 8). **NIT, resuelto con la opción (a):** el tenant elige en Ajustes › Formulario público una de sus empresas y el portal muestra su nombre, tipo y número de documento (L29–L32, Tarea 10).
 - **D-8: la empresa es obligatoria para publicar** (`organization_required`). **Confirmada por el owner el 2026-11-15.**
 - **D-7 Radicado idempotente por `clientRequestId`** (L27, Tarea 9), calcado del checkout de la tienda. **La regla del PIN en un reintento (L28) la confirmó el owner el 2026-11-15**: `null` con `pinEmailed: true` si ya salió por correo; uno nuevo, sólo en la respuesta y sin correo, si no salió por ningún canal (el viejo deja de servir).
+- **D-10: el reintento rota el PIN sin ventana de tiempo, y `clientRequestId` es UUID v4** (owner, 2026-11-15, sobre S2 de la revisión final). La rotación de L28 sigue disponible en cualquier reintento, por viejo que sea el radicado. Sólo se suma que la clave sea un UUID v4 (lo que da `crypto.randomUUID()`, como `SupportPublicUploads.IsKey`); otra versión o el vacío es `422 validation.failed`, `errors.ClientRequestId`. S6 (término contra prórroga) sigue pendiente.
 - **D-9: la IP del visitante en las aceptaciones la ve quien ve el ticket** (owner, 2026-11-15). `legalAcceptances[].visitorIp` del detalle y la foto de `GET …/legal-acceptances/{kind}` siguen con `support.ticket.view`, como dice el spec §7. Sin cambio de código.
 
 ## Desvíos del Bloque C (implementación, 2026-11-15)
@@ -633,7 +645,8 @@ Ninguno cambia el «Contrato para las pantallas».
    correo de apertura que anota (`FakeSupportCaptcha`, `RecordingSupportOpeningEmail`), que sólo monta el host público.
 2. **C-2 L28 con el correo en vuelo.** Con destino de correo y `ticket_access` sin anotar (`last_sent_channel` `NULL`: el primer intento
    todavía está mandando, p. ej. dos `POST` simultáneos), el reintento responde `pin: null`, `pinEmailed: true` y no rota. Rotar dejaría
-   sin valor el PIN que va en ese correo. `send_failed` y `send_pending` rotan como dice L28.
+   sin valor el PIN que va en ese correo. `send_failed` y `send_pending` rotan como dice L28. **Revisión final S3:** el «en vuelo» vence a
+   los 10 minutos de `pin_issued_at` (L33); después rota.
 3. **C-3 `successMessage` del reintento** sale de la versión del formulario con que se radicó el ticket (`form_version_id`), no de la
    vigente: el contrato pide «el mismo `successMessage`» aunque el formulario haya cambiado.
 4. **C-4 Parámetros opcionales al final.** `SupportTicket.CreateFromPublicForm(…, Guid? clientRequestId = null)`,
@@ -650,7 +663,8 @@ Ninguno cambia el «Contrato para las pantallas».
    eligen una empresa, y los bloqueadores esperados suman `organization_required` donde no la hay.
 8. **C-8 Revisión del Bloque B (opcional): sin caché del HTML saneado por versión.** El re-saneo existe por una fila cambiada a mano, y
    una caché por id seguiría sirviendo lo de antes del cambio; el costo es a lo sumo tres pasadas del saneador por request. Queda
-   anotado en `SupportServedLegal`.
+   anotado en `SupportServedLegal`. **Revisión final S1:** sí hay caché, pero por SHA-256 del contenido guardado y no por id
+   (`CachingSupportHtmlSanitizer`, acotada por caracteres y por pod): una fila cambiada a mano tiene otra clave y se vuelve a sanear.
 9. **C-9 Pruebas no corridas** (owner, 2026-11-15: «no se corre ninguna prueba»): RED y GREEN se reducen a `dotnet build`; las de
    comportamiento quedan «RED sin evidencia: no se corre». `dotnet format --verify-no-changes` en el checkout de Windows sólo reporta
    `ENDOFLINE`/`WHITESPACE` por los CRLF del árbol de trabajo (también en archivos no tocados); se corre antes del merge.

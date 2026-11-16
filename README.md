@@ -5260,8 +5260,10 @@ del ingress) y cada uno tiene su propia cubeta.
 contentHtml }`, y `characterizationNotice`, un texto plano fijo e igual para todos los tenants que va al pie del paso de datos.
 `authorizationQuestion` llega resuelta: la del tenant o «¿Autorizas a {nombre del tenant} para el tratamiento de los datos personales
 suministrados en este formulario?». `policyUrl` `null` es que el paso no muestra el enlace a la política. Si al tenant le falta cualquiera
-de los tres, `GET /form` responde el mismo `404 support.public.not_found` que con el formulario sin publicar. La página pinta
-`contentHtml` como HTML y no lo vuelve a sanear.
+de los tres, o si uno guardado ya no pasa el saneador (sin texto visible, demasiado grande, demasiado anidado o inestable: sólo una fila
+escrita a mano), `GET /form` responde el mismo `404 support.public.not_found` que con el formulario sin publicar. La página pinta
+`contentHtml` como HTML y no lo vuelve a sanear. La salida del saneador se guarda en una caché acotada por pod, con clave SHA-256 del
+contenido guardado: una fila cambiada a mano tiene otra clave y se vuelve a sanear.
 
 **La empresa que responde** (NIT del portal, spec 2026-11-15 §9.3, D-6 y D-8). El tenant elige en Ajustes › Formulario público una de sus
 empresas de Companies (`organizationCompanyId` en `PUT /settings/public-form`), y el portal muestra `organization: { name,
@@ -5302,19 +5304,23 @@ solicitante.
 **Radicado idempotente** (`clientRequestId`, spec 2026-11-15 §9.2, D-7). El portal genera un UUID al empezar a radicar y lo manda en cada
 reintento de ese mismo radicado (timeout, red caída, 5xx). Un reintento con la misma clave en el mismo tenant responde `201` con el mismo
 `number`, `receivedAt`, `dueOn`, `termBusinessDays`, `termIsLegal`, `successMessage` (el de la versión del formulario con que se radicó) y
-`consultUrl`: no crea otro ticket, no gasta número y no vuelve a mandar el correo de apertura. **La clave se mira antes de Turnstile** (el
-token se gastó en el primer intento), del validador y de las versiones, **y el cuerpo no se compara** (como el checkout de la tienda).
+`consultUrl`: no crea otro ticket, no gasta número y no vuelve a mandar el correo de apertura. **La clave se mira antes de Turnstile**, del
+validador y de las versiones, **y el cuerpo no se compara** (como el checkout de la tienda). Eso salta Turnstile **sólo cuando el primer
+intento ya confirmó**: mientras el original sigue corriendo, la clave todavía no existe, y un reintento con el token ya gastado responde
+`422 support.public.captcha_invalid`. El portal entonces vuelve a correr Turnstile y reenvía con el **mismo** `clientRequestId`.
 Dos `POST` simultáneos con la misma clave dan un solo ticket: dentro de la transacción, después de tomar el número (el `UPDATE … RETURNING`
 del contador serializa las altas del tenant), la clave se vuelve a buscar; si otro la confirmó, la transacción se deshace (el número
 vuelve) y se responde el ganador. El índice único parcial `IX_tickets_tenant_client_request` es el respaldo. Sin clave, cada `POST` es
-un radicado nuevo; la clave no se audita ni va a la traza, y el reintento cuenta para el limitador. `clientRequestId` vacío
-(`00000000-…`) es `422 validation.failed` con `errors.ClientRequestId`.
+un radicado nuevo; la clave no se audita ni va a la traza, y el reintento cuenta para el limitador. **`clientRequestId` es un UUID v4**
+(decisión del owner D-10, 2026-11-15; lo que da `crypto.randomUUID()`, como las claves de subida): vacío (`00000000-…`) u otra versión (un
+v7, por ejemplo) es `422 validation.failed` con `errors.ClientRequestId`. **El portal nunca tiene dos radicados en vuelo** y pinta sólo la
+última respuesta: un reintento de un anónimo rota el PIN, así que el PIN de una respuesta anterior ya no sirve.
 
 | El PIN del primer intento | `pin` del reintento | `pinEmailed` |
 | --- | --- | --- |
 | Salió por correo (`last_sent_channel = Email`, sin fallo) | `null`: no se vuelve a mostrar ni a mandar | `true` |
-| El correo del primer intento todavía no se anotó (en vuelo) | `null`: un PIN nuevo invalidaría el que va en el correo | `true` |
-| No salió por ningún canal (anónimo, `send_failed`, `send_pending`) | Uno **nuevo**; el anterior deja de servir. Sólo en la respuesta, sin correo | `false` |
+| El correo del primer intento todavía no se anotó, y el PIN se emitió hace 10 minutos o menos (en vuelo) | `null`: un PIN nuevo invalidaría el que va en el correo | `true` |
+| No salió por ningún canal (anónimo, `send_failed`, `send_pending`), o el correo sigue sin anotarse más de 10 minutos después del PIN (el proceso murió entre confirmar y anotar) | Uno **nuevo**; el anterior deja de servir. Sólo en la respuesta, sin correo | `false` |
 
 **Turnstile se gasta antes de validar los adjuntos.** El token es de un solo uso y radicar lo verifica primero (anti-abuso: nada más
 corre sin él). Por eso **la página reinicia el widget después de cualquier `422` de `POST /tickets`** —un adjunto inválido, un campo, la
@@ -5417,7 +5423,10 @@ si sale `available`, mandar el par al radicar.
 
 `{kind}` ∈ `privacy-notice`, `anonymous-notice`, `terms` (otro es `404 support.legal_documents.kind_not_found`); en los cuerpos viaja como
 `PrivacyNotice`, `AnonymousNotice`, `Terms`. El detalle del ticket trae `legalAcceptances` (`kind`, `version`, `acceptedAt`, `visitorIp`, sin el
-contenido), en ese orden y `[]` en un ticket manual. Las rutas `…/settings/legal-texts` de la fase 3 ya no existen.
+contenido), en ese orden y `[]` en un ticket manual. Las rutas `…/settings/legal-texts` de la fase 3 ya no existen. **`contentHtml` llega
+saneado en toda lectura** de la consola (documento vigente, versión vieja, respuesta del `POST` y foto de una aceptación): lo guardado ya es
+punto fijo del saneador, así que los bytes no cambian y la prueba guardada no se toca. `authorizationQuestion`, `organization.*`,
+`tenantName` y `successMessage` son texto plano: nunca van a `innerHTML`. El autor (`createdBy`) trae `isMe` contra quien lee.
 
 **Configuración** `Support:PublicForm` (`appsettings.json`, defaults en código):
 

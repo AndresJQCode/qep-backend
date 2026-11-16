@@ -402,8 +402,10 @@ el checkout de la tienda (`SubmitOrderRequest.cs:227-232`, `IStoreOrderGateway.c
   aditiva. Se guarda para siempre, como `external_key` del pedido de la tienda: no hay retención aparte.
 - **Orden**: resolver el tenant y el formulario → si viene `ClientRequestId`, buscar el ticket con esa clave → si existe,
   responder con él **antes** de Turnstile, del validador y de las versiones. Así un reintento después de perder la
-  respuesta no choca con el token de Turnstile ya gastado ni con un formulario que cambió entre medio. Sin clave, todo
-  sigue como hoy.
+  respuesta no choca con el token de Turnstile ya gastado ni con un formulario que cambió entre medio, **siempre que el
+  original ya haya confirmado**: mientras sigue corriendo, la clave todavía no existe y un reintento con el token gastado
+  responde `422 support.public.captcha_invalid`; el portal vuelve a correr Turnstile y reenvía con la **misma** clave. Sin
+  clave, todo sigue como hoy.
 - **Cuerpo distinto**: no se compara, igual que la tienda («devuelve el pedido que ya salió … aunque éste nombre otra
   [moneda]»). La clave identifica el intento; lo que el reintento traiga distinto se ignora.
 - **Carrera**: dos requests con la misma clave a la vez. Dentro de la transacción, después de tomar el número (el
@@ -414,7 +416,7 @@ el checkout de la tienda (`SubmitOrderRequest.cs:227-232`, `IStoreOrderGateway.c
 - **Respuesta**: la misma forma (`201 SupportPublicFiledDto`), con los datos del ticket guardado. No se reenvía nada que
   ya salió: el correo de apertura no se manda otra vez. El PIN no se puede repetir (sólo se guarda su hash): ver D-7 en
   §15 para qué trae `Pin` en un reintento.
-- `ClientRequestId` vacío (`Guid.Empty`) es `422 validation.failed` con `errors.ClientRequestId`, como en la tienda.
+- `ClientRequestId` vacío (`Guid.Empty`) o que no sea UUID v4 es `422 validation.failed` con `errors.ClientRequestId` (D-10).
 
 El cuerpo del radicado no crece (sólo números de versión): el tope de 64 KB sigue sobrado. La respuesta de `GET /form`
 sí crece (hasta tres documentos de 60 000 caracteres); no tiene tope y sigue `no-store`.
@@ -558,7 +560,7 @@ se itera, la clase completa una vez por bloque, nunca dos corridas de integraci�
 ## 15. Decisiones del owner (resueltas 2026-11-15)
 
 El owner aprobó D-1 a D-5 tal como se recomendaron, y agregó D-6 y D-7. El cuerpo del spec ya las aplica. D-8, la regla
-del PIN de D-7 y D-9 los confirmó el owner el 2026-11-15 (abajo).
+del PIN de D-7, D-9 y D-10 los confirmó el owner el 2026-11-15 (abajo).
 
 - **D-1 Pregunta de autorización: editable, con una por defecto.** Campo de texto plano opcional en el aviso de
   privacidad (`authorizationQuestion`, 1–500). Sin él, el backend arma la pregunta por defecto con el nombre del tenant
@@ -594,7 +596,8 @@ del PIN de D-7 y D-9 los confirmó el owner el 2026-11-15 (abajo).
   el owner el 2026-11-15** tal como está. Nota de implementación (plan L28): con destino de correo y nada anotado todavía
   en `ticket_access` (el correo de apertura del primer intento sigue en vuelo, p. ej. dos `POST` simultáneos), el
   reintento se trata como «ya salió por correo» (`Pin: null`, `PinEmailed: true`) y no rota: un PIN nuevo dejaría sin
-  valor el que va en ese correo.
+  valor el que va en ese correo. Ese «en vuelo» vence a los 10 minutos de emitido el PIN (plan L33, revisión final S3):
+  pasado eso el envío se toma como fallido y el reintento rota.
 
 **Confirmadas por el owner el 2026-11-15:**
 
@@ -605,6 +608,11 @@ del PIN de D-7 y D-9 los confirmó el owner el 2026-11-15 (abajo).
 - **D-9 La IP del visitante en las aceptaciones la ve quien ve el ticket** [owner]. `legalAcceptances[].visitorIp` del
   detalle y `visitorIp` de `GET /tickets/{ticketId}/legal-acceptances/{kind}` siguen visibles con `support.ticket.view`
   (§7), sin un permiso aparte. Sin cambio de código.
+- **D-10 El reintento rota el PIN sin ventana de tiempo; `clientRequestId` es un UUID v4** [owner, sobre S2 de la
+  revisión final]. La rotación de D-7 sigue disponible en cualquier reintento, por viejo que sea el radicado. Lo único que
+  se suma: la clave tiene que ser un UUID v4 (aleatorio, lo que da `crypto.randomUUID()` en el portal), como las claves de
+  subida públicas (`SupportPublicUploads.IsKey`). Otra versión (un v7, que deja adivinar el momento del radicado) o el vacío
+  es `422 validation.failed` con `errors.ClientRequestId`, y sólo una clave v4 se busca como reintento.
 
 ## 16. Discrepancias encontradas (spec contra código)
 

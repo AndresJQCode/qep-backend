@@ -1072,7 +1072,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   2026-11-15 §9.2). No muevas la búsqueda después de Turnstile: el token ya se gastó en el primer intento y el reintento fallaría con
   `captcha_invalid`. Un reintento no reenvía el correo; si el PIN no salió por ningún canal, emite uno nuevo y el viejo deja de servir.
   Con el correo de apertura todavía en vuelo (destino `Email` y nada anotado en `ticket_access`) no rota: invalidaría el PIN que va en el
-  correo. La búsqueda va siempre filtrada por tenant (`FindByClientRequestAsync`), y la clave no se audita ni va a `ticket_events`.
+  correo. Ese «en vuelo» vence a los 10 minutos de `pin_issued_at` (`OpeningDeliveryGrace`, plan L33): después rota, porque el proceso
+  murió entre confirmar y anotar. La clave es UUID v4 (D-10): otra versión es `422`. La búsqueda va siempre filtrada por tenant
+  (`FindByClientRequestAsync`), y la clave no se audita ni va a `ticket_events`.
 - **`support.form_versions.organization_company_id` tiene FK real a `companies.companies`** (`ON DELETE RESTRICT`, a mano en la
   migración `AddSupportFormOrganization`, como `pos.cash_sessions`): una empresa que alguna versión del formulario público eligió no se
   borra, sólo se desactiva (`422 companies.company.in_use`). Soporte la lee por `ISupportOrganizationDirectory` (Bootstrapper), nunca
