@@ -3178,6 +3178,30 @@ clave es opcional.
 `BaseUrl` debe ser HTTPS absoluta **en todo ambiente**, incluido local: la cotización completa
 —precios, cliente, totales— viaja en el cuerpo del POST.
 
+### Contenido configurable del PDF
+
+Spec `docs/superpowers/specs/2026-11-16-pdf-content-design.md`. El PDF de cotizaciones y pedidos tiene tres secciones que cada
+tenant configura en `GET`/`PUT /api/v1/tenants/{tenantId}/quotations/settings/pdf-content` (`tenancy.settings.read` / `.update`):
+
+| Sección | Dónde sale |
+| --- | --- |
+| `paymentNotice` | Debajo del recuadro de condiciones de pago, en rojo; sólo si el documento tiene cuenta para el pago |
+| `terms` | Después de los totales |
+| `deliveryProcess` | En página aparte, al final |
+
+Cada una se prende, se marca para cotización y/o pedido, y lleva título (texto plano, ≤ 120) y texto enriquecido (HTML saneado
+con el saneador compartido de `BuildingBlocks`, ≤ 20 000). Los dos aceptan variables `{{nombre}}` (`QuotationPdfVariables.All`:
+`empresa`, `nit_empresa`, `cliente`, `numero`, `fecha`, `vigencia`, `asesor`, `total`); un token que no está en la lista es
+`422 quotation.pdf_content.unknown_variable` al guardar, y una variable sin dato sale vacía en el PDF. Un tenant sin filas no
+imprime ninguna sección.
+
+- **La plantilla no lee HTML.** `RichTextHtmlReader` convierte el HTML guardado en un árbol de bloques, las variables se resuelven
+  sobre sus textos, y `quotation.typ` lo pinta como cadenas: un texto con `#`, `$` o `[` sale literal.
+- **El caché del PDF de la cotización se vence por contenido**: `quotation_pdfs.content_fingerprint` guarda el hash de las secciones
+  que salieron; cambiarlas regenera el PDF en el siguiente export. Una fila sin fingerprint (anterior a la columna) se regenera.
+- **Origen Botánico** (`slug = 'origen-botanico'`) conserva por la migración `AddPdfSections` el aviso de pago y el proceso de
+  entrega que antes estaban fijos en la plantilla para todos los tenants; los demás tenants dejaron de imprimirlos.
+
 ### Integraciones (conexiones del tenant)
 
 Cada tenant conecta sus propias cuentas de plataformas externas en **Ajustes → Integraciones**

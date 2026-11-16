@@ -1155,6 +1155,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   producción no está probada en el repo. Completar o radicar con un `uploadKey` que no es v4 es `support.public.attachment_invalid`
   (`SupportPublicUploads.IsKey`). Si la clave pierde el v8, un miembro que abre subidas sin adjuntarlas deja al formulario sin adjuntos.
 
+- **`quotation.typ` nunca hace `eval` de datos del tenant** (spec 2026-11-16, contenido del PDF). Las secciones configurables llegan
+  como árbol de bloques (`RichTextHtmlReader`) y la plantilla inserta cada texto como cadena; armar markup de Typst con texto del
+  tenant, o pasarle el HTML, abre inyección en el PDF. Lo amarran `TheTemplateNeverEvaluatesData` y
+  `TheTemplateCompilesWithTypstSyntaxInSectionText`. Y un dato nuevo que el PDF imprima desde la configuración del tenant entra
+  en el fingerprint de `QuotationPdfSectionsBuilder.Fingerprint`, o el PDF cacheado de la cotización no se regenera al cambiarlo.
+- **El saneador de HTML vive en `BuildingBlocks.Infrastructure/RichText` y lo comparten Soporte y Quotations.** La lista de
+  etiquetas y esquemas existe una sola vez: ensancharla cambia lo que aceptan los documentos legales del portal **y** el PDF de
+  cotizaciones, y el lector de bloques tiene que saber pintar toda etiqueta nueva o la plantilla la pierde en silencio.
+
 ## Verificación
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
