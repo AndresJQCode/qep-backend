@@ -142,8 +142,10 @@ public sealed class SupportTicketDtoComposer(
             (await legalAcceptances.ListByTicketAsync(ticket.TenantId, ticket.Id, cancellationToken))
                 .Select(item => new SupportLegalAcceptanceDto(item.Kind.ToString(), item.Version, item.AcceptedAt, item.VisitorIp))
                 .ToList(),
-            // El PIN sólo lo pone el alta anónima, en su 201 (plan G3); toda otra lectura lo deja en null.
-            IssuedPin: null);
+            // El PIN y el enlace de consulta sólo los ponen el alta anónima, en su 201 (plan G3), y el PIN nuevo de la consola, en su
+            // 200 (spec 2026-11-16, P-6); toda otra lectura los deja en null.
+            IssuedPin: null,
+            ConsultUrl: null);
     }
 
     // Plan F21: sin cliente y con documento en la foto, los clientes con ese documento (si customers está prendido): al radicar no se

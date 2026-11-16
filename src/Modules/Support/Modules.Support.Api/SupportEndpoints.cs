@@ -325,6 +325,8 @@ public static class SupportEndpoints
         MapTicketPost(group, "take", TakeAsync);
         // Fase 4a (plan G9): la prórroga única del plazo.
         MapTicketPost(group, "extension", ExtendAsync).Accepts<ExtendTicketRequest>("application/json");
+        // Spec 2026-11-16: «Generar PIN nuevo» de un anónimo, sin cuerpo. El 200 trae issuedPin y consultUrl una sola vez.
+        MapTicketPost(group, "pin", ReissuePinAsync);
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
         MapTicketAction<LinkTicketCustomerRequest>(group, "customer", LinkCustomerAsync);
         MapTicketAction<ChangeTicketPriorityRequest>(group, "priority", ChangePriorityAsync);
@@ -573,6 +575,11 @@ public static class SupportEndpoints
         Guid tenantId, Guid ticketId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new TakeTicketCommand(tenantId, ticketId, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ReissuePinAsync(
+        Guid tenantId, Guid ticketId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ReissueTicketPinCommand(tenantId, ticketId, RequireVersion(httpContext, "ticket")), cancellationToken));
 
     private static async Task<IResult> ExtendAsync(
         Guid tenantId,

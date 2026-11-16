@@ -549,6 +549,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.ExtendTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.ExtendTicketHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ReissueTicketPinCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ReissueTicketPinHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Support.Application.ChangeTicketTypeCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.ChangeTicketTypeHandler>();
         services.AddScoped<
