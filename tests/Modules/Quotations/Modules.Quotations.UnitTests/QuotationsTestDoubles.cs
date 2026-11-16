@@ -741,6 +741,8 @@ internal sealed class StubPdfContentStore : IPdfContentStore
         Content = content;
         return Task.CompletedTask;
     }
+
+    public Task InvalidateQuotationPdfsAsync(Guid tenantId, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
 /// <summary>El logo que el export ve, mutable entre dos llamados de la misma prueba — así se

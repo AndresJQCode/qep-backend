@@ -180,6 +180,9 @@
 #let aviso = if data.sections == none { none } else { data.sections.paymentNotice }
 #let terminos = if data.sections == none { none } else { data.sections.terms }
 #let proceso = if data.sections == none { none } else { data.sections.deliveryProcess }
+// El tenant decide por tipo de documento si salen las líneas de la cuenta para el pago (spec 2026-11-16 pdf-payment-account).
+#let mostrar-cuenta = data.sections != none and data.sections.showPaymentAccount
+#let cuenta-visible = data.billingAccount != none and mostrar-cuenta
 
 // ---------------------------------------------------------------------------- página
 
@@ -273,7 +276,8 @@
 
 // El recuadro de condiciones de pago va arriba y no al pie, como en la referencia: es lo que el
 // comprador necesita antes de decidir, no una nota final.
-#if data.paymentMethod != none or data.billingAccount != none or data.cashOnDelivery [
+#let hay-recuadro = data.paymentMethod != none or data.cashOnDelivery or cuenta-visible
+#if hay-recuadro [
   #block(
     breakable: false,
     width: 100%,
@@ -288,7 +292,7 @@
       ] else if data.paymentMethod != none [
         #renglon("Forma de pago", data.paymentMethod) \
       ]
-      #if data.billingAccount != none [
+      #if cuenta-visible [
         #renglon("Cuenta para el pago", data.billingAccount.companyName) \
         #data.billingAccount.bankName \
         #text(weight: "bold")[
@@ -297,15 +301,17 @@
       ]
     ]
   ]
-  // El aviso de pago del tenant, pegado al recuadro, como en la referencia. Sólo llega con cuenta para el pago: sin cuenta, el
-  // backend lo deja en `none`.
-  #if aviso != none [
-    #v(6pt, weak: true)
-    #text(size: 7.5pt, fill: naranja)[
-      #if aviso.title != "" [#text(weight: "bold")[#aviso.title]]
-      #bloques(aviso.blocks)
-    ]
+]
+// El aviso de pago del tenant, pegado al recuadro, como en la referencia. Sale por sus propias banderas aunque no haya recuadro
+// (spec 2026-11-16 pdf-payment-account, decisión 4): ya no depende de la cuenta para el pago.
+#if aviso != none [
+  #v(6pt, weak: true)
+  #text(size: 7.5pt, fill: naranja)[
+    #if aviso.title != "" [#text(weight: "bold")[#aviso.title]]
+    #bloques(aviso.blocks)
   ]
+]
+#if hay-recuadro or aviso != none [
   #v(12pt)
 ]
 
