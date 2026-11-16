@@ -64,14 +64,17 @@ public sealed class SupportHtmlSanitizerTests
         Assert.DoesNotContain(tag, output, StringComparison.OrdinalIgnoreCase);
     }
 
+    // A <div> cannot live inside a <p>: the HTML parser closes the <p> when the <div> opens (what a browser builds too), so the
+    // block case is wrapped in an element that takes flow content. The sanitizer must keep parsing like a browser; it is an XSS boundary.
     [Theory]
-    [InlineData("span")]
-    [InlineData("div")]
-    [InlineData("b")]
-    [InlineData("i")]
-    [InlineData("font")]
-    public void UnwrapsUnknownElementsKeepingTheirText(string tag) =>
-        Assert.Equal("<p>uno dos tres</p>", Clean($"<p>uno <{tag}>dos</{tag}> tres</p>"));
+    [InlineData("span", "p")]
+    [InlineData("div", "blockquote")]
+    [InlineData("b", "p")]
+    [InlineData("i", "p")]
+    [InlineData("font", "p")]
+    public void UnwrapsUnknownElementsKeepingTheirText(string tag, string container) =>
+        Assert.Equal(
+            $"<{container}>uno dos tres</{container}>", Clean($"<{container}>uno <{tag}>dos</{tag}> tres</{container}>"));
 
     [Theory]
     [InlineData("style=\"color:red\"")]
