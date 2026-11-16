@@ -503,6 +503,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         pdf.Property(value => value.QuotationVersion).HasColumnName("quotation_version");
         pdf.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
         pdf.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(16);
+        // Sin largo máximo: es un SHA-256 en hex (64), y una fila vieja la deja en NULL, que es lo que la vence (spec 2026-11-16 §5.4).
+        pdf.Property(value => value.ContentFingerprint).HasColumnName("content_fingerprint");
         pdf.Property(value => value.GeneratedAt).HasColumnName("generated_at");
 
         // El tenant no es parte de la clave --la cotizacion ya es unica-- pero toda consulta de

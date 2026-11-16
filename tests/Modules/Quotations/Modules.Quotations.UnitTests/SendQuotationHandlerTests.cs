@@ -1,3 +1,4 @@
+using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Domain;
@@ -746,7 +747,9 @@ public sealed class SendQuotationHandlerTests
                 storage,
                 new FixedTenantClock(Now),
                 new StubQuotationLogoLookup(),
-                tenant),
+                tenant,
+                new StubPdfContentStore(),
+                new RichTextHtmlReader()),
             storage,
             customerLookup,
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>

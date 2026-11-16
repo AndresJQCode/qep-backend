@@ -93,7 +93,11 @@ public sealed record QuotationPdfDocument(
     /// moneda siguen saliendo de <c>Currencies</c> (spec 2026-10-23, D-R4): esto sólo decide los separadores.</summary>
     string ThousandsSeparator = ".",
     /// <summary>El separador decimal del formato numérico del tenant; ver <see cref="ThousandsSeparator"/>.</summary>
-    string DecimalSeparator = ",");
+    string DecimalSeparator = ",",
+    /// <summary>Las secciones configurables del tenant ya resueltas para este documento (spec 2026-11-16 §5.3), o null sin
+    /// secciones. No las arma el mapper sino el proveedor, que es quien lee el contenido del tenant
+    /// (<see cref="QuotationPdfSectionsBuilder.Build"/>).</summary>
+    QuotationPdfSections? Sections = null);
 
 /// <summary>
 /// Viaja como texto (<c>"Quotation"</c> / <c>"Order"</c>) en <c>data.kind</c>: la plantilla compara

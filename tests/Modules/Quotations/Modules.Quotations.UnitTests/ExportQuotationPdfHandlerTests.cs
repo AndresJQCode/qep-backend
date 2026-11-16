@@ -1,3 +1,4 @@
+using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Domain;
@@ -234,7 +235,9 @@ public sealed class ExportQuotationPdfHandlerTests
                 storage,
                 new FixedTenantClock(Now),
                 logoLookup,
-                tenantDirectory ?? new StubTenantDirectory()),
+                tenantDirectory ?? new StubTenantDirectory(),
+                new StubPdfContentStore(),
+                new RichTextHtmlReader()),
             storage,
             new StubExecutionContext(SubjectId, TenantId));
 

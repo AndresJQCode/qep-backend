@@ -1259,6 +1259,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("quotation_id");
 
+                    b.Property<string>("ContentFingerprint")
+                        .HasColumnType("text")
+                        .HasColumnName("content_fingerprint");
+
                     b.Property<DateTimeOffset>("GeneratedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("generated_at");
