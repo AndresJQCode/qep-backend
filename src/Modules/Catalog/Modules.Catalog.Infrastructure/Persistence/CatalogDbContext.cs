@@ -419,9 +419,13 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // de la violación de unicidad discrimina por nombre de índice, no sólo por SqlState.
         // Con dos índices únicos en el mismo esquema, confundirlos manda al llamador a corregir
         // el campo equivocado — la lección de SDD-CT-06.
-        taxRate.HasIndex(value => new { value.TenantId, value.Name })
+        //
+        // Owner, 2026-11-15: el nombre se puede repetir; lo que no se repite es nombre + porcentaje + base mínima.
+        // NULLS NOT DISTINCT porque minimum_base es nullable: sin él, dos tasas iguales sin base no chocarían.
+        taxRate.HasIndex(value => new { value.TenantId, value.Name, value.Percentage, value.MinimumBase })
             .IsUnique()
-            .HasDatabaseName("IX_tax_rates_tenant_name");
+            .AreNullsDistinct(false)
+            .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");
         // No único: un municipio puede tener varias tarifas (una por actividad CIIU) y la empresa elige una.
         taxRate.HasIndex(value => new { value.TenantId, value.Type, value.CityId })
             .HasDatabaseName("IX_tax_rates_tenant_type_city");
