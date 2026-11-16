@@ -91,7 +91,7 @@ public static class QuotationPdfSectionsBuilder
         section.PrintsOn(isOrder)
             ? new QuotationPdfSection(
                 QuotationPdfVariables.Fill(section.Title, values),
-                RichText.MapText(reader.Read(section.ContentHtml), text => QuotationPdfVariables.Fill(text, values)))
+                RichTextTree.MapText(reader.Read(section.ContentHtml), text => QuotationPdfVariables.Fill(text, values)))
             : null;
 
     // Como `fecha()` de la plantilla: «16 de noviembre de 2026», día sin cero y mes en minúscula.

@@ -113,7 +113,7 @@ public sealed class RichTextHtmlReaderTests
     {
         var blocks = Reader.Read("<p>a<br>b</p><blockquote>c</blockquote><ol><li><em>d</em></li></ol><hr>");
 
-        var mapped = RichText.MapText(blocks, text => text.ToUpperInvariant());
+        var mapped = RichTextTree.MapText(blocks, text => text.ToUpperInvariant());
 
         Assert.Collection(
             mapped,

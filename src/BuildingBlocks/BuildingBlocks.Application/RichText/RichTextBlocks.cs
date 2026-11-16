@@ -2,7 +2,7 @@ namespace BuildingBlocks.Application.RichText;
 
 /// <summary>
 /// Un tramo de texto con sus marcas (spec 2026-11-16 §5.3). <see cref="Break"/> es un <c>&lt;br&gt;</c>: su <see cref="Text"/> va
-/// vacío y <see cref="RichText.MapText"/> no lo toca. Viaja a la plantilla del PDF en camelCase (<c>JsonSerializerDefaults.Web</c>),
+/// vacío y <see cref="RichTextTree.MapText"/> no lo toca. Viaja a la plantilla del PDF en camelCase (<c>JsonSerializerDefaults.Web</c>),
 /// y la plantilla pinta <see cref="Text"/> como cadena, nunca como markup.
 /// </summary>
 public sealed record RichTextRun(
@@ -47,7 +47,7 @@ public interface IRichTextReader
     IReadOnlyList<RichTextBlock> Read(string sanitizedHtml);
 }
 
-public static class RichText
+public static class RichTextTree
 {
     /// <summary>
     /// Aplica <paramref name="map"/> al texto de cada tramo, en todo el árbol, y devuelve un árbol nuevo. Es como se resuelven las
