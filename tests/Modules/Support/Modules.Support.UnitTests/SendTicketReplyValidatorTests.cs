@@ -61,8 +61,8 @@ public sealed class SendTicketReplyValidatorTests
         Assert.Equal(["ConnectionId"], Errors(Valid() with { ConnectionId = Guid.CreateVersion7() }));
         Assert.Equal(["ConnectionId"], Errors(Valid("Email") with { ConnectionId = Guid.CreateVersion7() }));
         Assert.Equal(["ConnectionId"], Errors(Valid("WhatsAppTemplate") with { ConnectionId = Guid.Empty }));
-        Assert.Equal(["UploadId"], Errors(Valid("Email") with { UploadId = Guid.CreateVersion7() }));
-        Assert.Equal(["UploadId"], Errors(Valid("WhatsAppTemplate") with { UploadId = Guid.CreateVersion7() }));
+        Assert.Equal(["UploadId"], Errors(Valid("Email") with { UploadId = Guid.CreateVersion7(), FileName = "contrato.pdf" }));
+        Assert.Equal(["UploadId"], Errors(Valid("WhatsAppTemplate") with { UploadId = Guid.CreateVersion7(), FileName = "contrato.pdf" }));
         Assert.Equal(["UploadId"], Errors(Valid() with { UploadId = Guid.Empty, FileName = "contrato.pdf" }));
     }
 
