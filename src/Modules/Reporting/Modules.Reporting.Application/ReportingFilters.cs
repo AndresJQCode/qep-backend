@@ -12,6 +12,10 @@ namespace Modules.Reporting.Application;
 /// abierta: los orígenes comparan instantes y no deciden husos. <see cref="From"/> y <see cref="To"/> son los mismos días
 /// sin convertir (inclusivos): los usa el reporte de pedidos, que corta por la fecha del pedido, que ya es un día del
 /// tenant (spec 2026-11-16 §5).
+///
+/// Ojo: pedidos filtran por <see cref="From"/>/<see cref="To"/> (días) y el POS por <see cref="Start"/>/<see cref="EndExclusive"/>
+/// (instantes). Un período armado sin <see cref="Of"/> (sólo con los instantes) dejaría los pedidos sin filtrar: armarlo
+/// siempre con <see cref="Of"/>.
 /// </summary>
 public sealed record ReportPeriod(
     DateTimeOffset? Start,
