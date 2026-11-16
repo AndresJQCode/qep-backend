@@ -197,7 +197,8 @@ public sealed record SupportConsultAccessDto(DateTimeOffset? LastSentAt, string?
 /// (fase 3, F12: publicada en la página de consulta); <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c>, <c>Portal</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
 /// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló. <c>ClientId</c> es el que mandó la
 /// pantalla: con él retoma una respuesta que quedó <c>Pending</c> (revisión final, I3). <c>MessageId</c> también viene en una fallida si
-/// Mensajería registró el mensaje.</summary>
+/// Mensajería registró el mensaje. <c>HasAttachment</c> dice si se mandó (o se intentó) con archivo, salido del adjunto que guarda la
+/// fila: «Reintentar» de una fallida no la reenvía como texto solo (owner, 2026-11-15).</summary>
 public sealed record SupportReplyDto(
     Guid Id,
     Guid ClientId,
@@ -208,7 +209,8 @@ public sealed record SupportReplyDto(
     string? FailureCode,
     Guid? MessageId,
     SupportMemberDto? Author,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    bool HasAttachment);
 
 /// <summary>La pestaña de Soporte de la ficha de una conversación: los tickets de esa conversación y los del mismo cliente por otros
 /// canales (<c>IsThisConversation</c> los distingue). <c>CanCreate</c> y su motivo (<c>messaging_disabled</c>, <c>no_permission</c>)

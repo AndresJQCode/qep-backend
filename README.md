@@ -5165,7 +5165,9 @@ menos de 60 s se devuelve sin enviar (la está mandando otro request) y una más
 canal, la entrega, la conexión, el texto, el adjunto (`upload_id`, `file_name`; el del reintento se ignora) y, en una plantilla al
 celular, el `target_wa_id` que se tomó de la foto al crearla (sin volver a revisar el celular, la conexión ni la aprobación de la
 plantilla: Mensajería devuelve primero lo que ya salió con ese `clientId`). Si el canal la rechaza o ya no tiene ruta, queda `Failed`
-con el motivo. La fila trae su `clientId` en el detalle y en el resultado, para que la pantalla retome una que quedó `Pending`. Una
+con el motivo. La fila trae su `clientId` en el detalle y en el resultado, para que la pantalla retome una que quedó `Pending`, y
+`hasAttachment` (`true` si se mandó o se intentó con archivo, leído del `upload_id` guardado), para que «Reintentar» de una fallida no la
+reenvíe como texto solo, también después de recargar. Una
 `Failed` trae `messageId` si Mensajería registró el mensaje (no se fija en el expediente), y un mensaje se fija sólo si salió por la
 conversación del ticket. **El correo no es idempotente**: una `Pending` de correo de más de 60 s se
 vuelve a mandar al retomarla, y el solicitante puede recibirlo dos veces.
