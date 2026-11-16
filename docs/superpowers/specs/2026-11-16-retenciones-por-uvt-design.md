@@ -28,7 +28,7 @@ El backend decide todo: si aplica, el motivo, el umbral en dinero y si la UVT es
 3. Una sola regla para «entra al cálculo» y «por qué no entra»: el veredicto sale de la misma función que hoy filtra
    candidatas (§5.3), nunca de una copia.
 
-4. Refrescar la UVT de los documentos editables en cada recálculo [owner P1, §5.4].
+4. Refrescar la UVT de los documentos editables al guardar y previsualizar [owner P1, §5.4].
 
 ## 3. No objetivos
 
@@ -99,7 +99,8 @@ método que usen los dos.
 
 ### 5.4 Refresco de la UVT en documentos editables [owner P1]
 
-- Documento editable = cotización que pasa `EnsureEditable` y pedido `Pending` (el plan cita el guard exacto de cada uno).
+- Documento editable = cotización `Draft` o `Sent` (`Quotation.EnsureEditable`, `Quotation.cs:1240`) y pedido `IsEditable`
+  (`Order.cs:294`: `Open`, sin preparar, sin facturar).
 - Todo handler que recalcula un documento editable (escrituras y vistas previas) lee las UVT **una vez**
   (`ITaxUnitValueRepository.ListAsync`) y, antes del recálculo, llama a un método de dominio NUEVO `RefreshTaxUnits(values,
   documentDate)` que pone en cada fila con unidad el valor y el año que hoy daría `ValueFor`, y después recalcula. Las filas
