@@ -73,12 +73,7 @@ public sealed partial class RichTextHtmlReader : IRichTextReader
                 AddParagraph(blocks, RunsOf(element, style));
                 break;
             case "h2" or "h3" or "h4":
-                var runs = Normalize(RunsOf(element, style));
-                if (HasContent(runs))
-                {
-                    blocks.Add(new RichTextBlock(RichTextBlockKind.Heading, Level: element.LocalName[1] - '0', Runs: runs));
-                }
-
+                AddHeading(blocks, element, style);
                 break;
             case "ul" or "ol":
                 var items = ReadItems(element, style);
@@ -105,6 +100,34 @@ public sealed partial class RichTextHtmlReader : IRichTextReader
                 break;
         }
     }
+
+    // Un título sólo lleva texto. El parser no cierra un h2 al abrir una lista o un párrafo adentro, así que desde el primer
+    // bloque (o inline que envuelve bloques) lo que sigue sale detrás del título como bloques propios: pegado a sus runs, el
+    // texto de los ítems quedaría unido al título sin separador.
+    private static void AddHeading(List<RichTextBlock> blocks, IElement heading, RichTextRun style)
+    {
+        var children = heading.ChildNodes.ToList();
+        var firstBlock = children.FindIndex(IsBlockOrWrapsBlocks);
+        var runs = new List<RichTextRun>();
+        foreach (var child in firstBlock < 0 ? children : children.GetRange(0, firstBlock))
+        {
+            CollectRuns(child, style, runs);
+        }
+
+        runs = Normalize(runs);
+        if (HasContent(runs))
+        {
+            blocks.Add(new RichTextBlock(RichTextBlockKind.Heading, Level: heading.LocalName[1] - '0', Runs: runs));
+        }
+
+        if (firstBlock >= 0)
+        {
+            blocks.AddRange(ReadBlocks(children.GetRange(firstBlock, children.Count - firstBlock), style));
+        }
+    }
+
+    private static bool IsBlockOrWrapsBlocks(INode node) =>
+        node is IElement element && (BlockTags.Contains(element.LocalName) || ContainsBlock(element));
 
     // Cada li es un ítem. Lo que el parser deje dentro de la lista fuera de un li no se pierde: va como un ítem propio.
     private static List<IReadOnlyList<RichTextBlock>> ReadItems(IElement list, RichTextRun style)

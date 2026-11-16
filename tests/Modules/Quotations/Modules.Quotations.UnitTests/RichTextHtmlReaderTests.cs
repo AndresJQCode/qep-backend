@@ -167,6 +167,42 @@ public sealed class RichTextHtmlReaderTests
             });
     }
 
+    // El parser deja una lista dentro de un h2 (no cierra el título al abrir la lista). El título se queda con su texto y la
+    // lista, y lo que venga después, salen como bloques propios detrás de él.
+    [Fact]
+    public void AListInsideAHeadingFollowsIt()
+    {
+        var blocks = Reader.Read("<h2><em>Título</em><ul><li>a</li></ul>cola</h2>");
+
+        Assert.Collection(
+            blocks,
+            heading =>
+            {
+                Assert.Equal("heading", heading.Kind);
+                Assert.Equal(2, heading.Level);
+                Assert.Equal(new RichTextRun("Título", Italic: true), Assert.Single(heading.Runs!));
+            },
+            list =>
+            {
+                Assert.Equal("list", list.Kind);
+                var paragraph = Assert.Single(Assert.Single(list.Items!));
+                Assert.Equal(new RichTextRun("a"), Assert.Single(paragraph.Runs!));
+            },
+            paragraph =>
+            {
+                Assert.Equal("paragraph", paragraph.Kind);
+                Assert.Equal(new RichTextRun("cola"), Assert.Single(paragraph.Runs!));
+            });
+    }
+
+    [Fact]
+    public void AHeadingThatOnlyWrapsBlocksLeavesNoEmptyHeading()
+    {
+        var blocks = Reader.Read("<h3><ul><li>a</li></ul></h3>");
+
+        Assert.Equal("list", Assert.Single(blocks).Kind);
+    }
+
     [Fact]
     public void ALinkWrappingParagraphsKeepsTheHref()
     {
