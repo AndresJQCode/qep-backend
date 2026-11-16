@@ -48,6 +48,20 @@ public sealed class SupportLayerTests
              name.StartsWith("Npgsql", StringComparison.Ordinal)));
     }
 
+    // Spec 2026-11-15 §6.3 (plan L2): the legal HTML is sanitized behind ISupportHtmlSanitizer; only Infrastructure knows the library.
+    [Fact]
+    public void ApplicationDoesNotReferenceTheHtmlSanitizer()
+    {
+        foreach (var assembly in new[] { typeof(SupportDomainException).Assembly, typeof(SupportPermissions).Assembly })
+        {
+            Assert.DoesNotContain(ReferenceNamesOf(assembly), name =>
+                name is not null &&
+                (name.StartsWith("HtmlSanitizer", StringComparison.Ordinal) ||
+                 name.StartsWith("Ganss.Xss", StringComparison.Ordinal) ||
+                 name.StartsWith("AngleSharp", StringComparison.Ordinal)));
+        }
+    }
+
     /// <summary>
     /// `support` no se acopla a ningún otro módulo de negocio (spec 2026-11-14). La única dependencia legítima hacia
     /// afuera es `Modules.Tenancy.*` (<c>IExecutionContext</c>, <c>ITenantModules</c>). Clientes, miembros y el calendario
