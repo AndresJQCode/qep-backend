@@ -2852,7 +2852,7 @@ public static class QepServiceCollectionExtensions
             "medium",
             RequiredModules: [])
         {
-            Shape = new("messaging.conversation", "Conversaciones", "reply"),
+            Shape = new("messaging.conversation", "Conversaciones", "manage"),
         });
         // Spec 2026-10-11 §6.4: núcleo como las otras dos de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(

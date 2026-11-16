@@ -34,7 +34,6 @@ public static class PermissionVocabulary
         ["discount"] = "Dar descuentos",
         ["customer"] = "Elegir cliente",
         ["operate"] = "Abrir y cerrar",
-        ["reply"] = "Responder",
     };
 
     /// <summary>
