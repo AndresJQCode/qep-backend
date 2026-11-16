@@ -1,7 +1,10 @@
+using BuildingBlocks.Application.RichText;
 using BuildingBlocks.Infrastructure.RichText;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -69,6 +72,91 @@ public sealed class PdfContentMigrationTests
     [InlineData(DeliveryProcessHtml)]
     public void TheOrigenBotanicoSeedIsAFixedPointOfTheSanitizer(string html) =>
         Assert.Equal(html, new RichTextHtmlSanitizer().Sanitize(html, "x").Html);
+
+    // Lo sembrado, pasado por el lector real, tiene la forma de los textos fijos de antes en `quotation.typ`: el aviso es un
+    // párrafo con sus tres saltos, y el proceso de entrega son cuatro párrafos con rótulo en negrita, uno sin rótulo y tres listas.
+    [Fact]
+    public void TheOrigenBotanicoSeedPrintsTheFormerTexts()
+    {
+        var content = PdfContent.Empty with
+        {
+            PaymentNotice = new PdfSection(PdfSectionKey.PaymentNotice, true, true, true, PaymentNoticeTitle, PaymentNoticeHtml),
+            DeliveryProcess = new PdfSection(
+                PdfSectionKey.DeliveryProcess, true, true, true, DeliveryProcessTitle, DeliveryProcessHtml),
+        };
+
+        var sections = QuotationPdfSectionsBuilder.Build(content, QuotationWithBillingAccount(), new RichTextHtmlReader());
+
+        var paymentNotice = Assert.IsType<QuotationPdfSection>(sections.PaymentNotice);
+        Assert.Equal("Ten en cuenta:", paymentNotice.Title);
+        var notice = Assert.Single(paymentNotice.Blocks);
+        Assert.Equal(RichTextBlockKind.Paragraph, notice.Kind);
+        Assert.Equal(3, notice.Runs!.Count(run => run.Break));
+
+        var delivery = Assert.IsType<QuotationPdfSection>(sections.DeliveryProcess);
+        Assert.Equal("Proceso de Alistamiento y Recepción de Pedidos.", delivery.Title);
+        Assert.Collection(
+            delivery.Blocks,
+            block => AssertLabeledParagraph(block, "Alistamiento y Entrega:"),
+            block => AssertLabeledParagraph(block, "Recepción de la Mercancía:"),
+            block => AssertBulletList(block, 3),
+            AssertPlainParagraph,
+            block => AssertBulletList(block, 3),
+            block => AssertLabeledParagraph(block, "Verificación del Contenido:"),
+            block => AssertLabeledParagraph(block, "Reporte de Novedades:"),
+            block => AssertBulletList(block, 3));
+    }
+
+    private static void AssertLabeledParagraph(RichTextBlock block, string label)
+    {
+        Assert.Equal(RichTextBlockKind.Paragraph, block.Kind);
+        var runs = block.Runs!;
+        Assert.Equal(new RichTextRun(label, Bold: true), runs[0]);
+        Assert.True(runs[1].Break);
+    }
+
+    private static void AssertPlainParagraph(RichTextBlock block)
+    {
+        Assert.Equal(RichTextBlockKind.Paragraph, block.Kind);
+        Assert.DoesNotContain(block.Runs!, run => run.Bold);
+    }
+
+    private static void AssertBulletList(RichTextBlock block, int items)
+    {
+        Assert.Equal(RichTextBlockKind.List, block.Kind);
+        Assert.False(block.Ordered);
+        Assert.Equal(items, block.Items!.Count);
+    }
+
+    private static QuotationPdfDocument QuotationWithBillingAccount() => new(
+        QuotationNumber: "QUO-2026-0042",
+        IssuedOn: new DateOnly(2026, 11, 16),
+        ValidUntil: new DateOnly(2026, 11, 30),
+        CustomerName: "María Pérez",
+        CustomerCuc: "CUC-0042",
+        CustomerContact: string.Empty,
+        CustomerLocation: string.Empty,
+        Billing: new QuotationPdfParty(true, string.Empty, string.Empty, string.Empty),
+        Shipping: new QuotationPdfParty(true, string.Empty, string.Empty, string.Empty),
+        IsStorePickup: false,
+        AdvisorLabel: "Laura Gómez",
+        Currency: "COP",
+        Symbol: "$",
+        Decimals: 0,
+        BillingAccount: new QuotationPdfBillingAccount(
+            "Comercial Andina S.A.S.", "900123456-7", "NIT", string.Empty, string.Empty, "Bancolombia", "123", "COP"),
+        PaymentMethod: null,
+        Items: [],
+        Subtotal: 1_050_420m,
+        DiscountAmount: 0m,
+        TaxPercentage: 19m,
+        TaxAmount: 199_580m,
+        Total: 1_250_000m,
+        RetentionAmount: 0m,
+        Withholdings: [],
+        NetTotal: 1_250_000m,
+        CustomerVatSurplus: false,
+        Logo: null);
 
     private static async Task<TestDatabase> MigrateWithTenantsAsync()
     {
