@@ -783,6 +783,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TypeId");
 
+                    b.HasIndex("ResolvedAt", "Id")
+                        .HasDatabaseName("IX_tickets_resolved_auto_close")
+                        .HasFilter("status = 'Resolved'");
+
                     b.HasIndex("TenantId", "ClientRequestId")
                         .IsUnique()
                         .HasDatabaseName("IX_tickets_tenant_client_request")
@@ -1344,6 +1348,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CommentMessageId")
+                        .HasDatabaseName("IX_ticket_surveys_comment_message")
+                        .HasFilter("comment_message_id IS NOT NULL");
+
                     b.HasIndex("MessageId")
                         .HasDatabaseName("IX_ticket_surveys_message")
                         .HasFilter("message_id IS NOT NULL");
@@ -1352,10 +1360,22 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_ticket_surveys_pending")
                         .HasFilter("status = 'Pending'");
 
+                    b.HasIndex("RatingMessageId")
+                        .HasDatabaseName("IX_ticket_surveys_rating_message")
+                        .HasFilter("rating_message_id IS NOT NULL");
+
                     b.HasIndex("TokenHash")
                         .IsUnique()
                         .HasDatabaseName("UX_ticket_surveys_token")
                         .HasFilter("token_hash IS NOT NULL");
+
+                    b.HasIndex("AnsweredAt", "Id")
+                        .HasDatabaseName("IX_ticket_surveys_awaiting_comment")
+                        .HasFilter("answered_via = 'WhatsApp' AND rating IS NOT NULL AND comment IS NULL");
+
+                    b.HasIndex("SentAt", "Id")
+                        .HasDatabaseName("IX_ticket_surveys_awaiting_rating")
+                        .HasFilter("status = 'Sent' AND rating IS NULL");
 
                     b.HasIndex("TenantId", "TicketId")
                         .HasDatabaseName("IX_ticket_surveys_tenant_ticket");

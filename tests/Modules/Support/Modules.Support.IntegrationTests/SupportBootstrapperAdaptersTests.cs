@@ -470,6 +470,29 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         Assert.Equal((validSurvey, valid), (tap.SurveyId, tap.MessageId));
     }
 
+    // Revisión del bloque D: los recorridos del cierre automático y del feed de la encuesta tienen su índice parcial, con el mismo
+    // predicado que la consulta (si el filtro de la consulta deja de implicarlo, Postgres recorre la tabla sin error).
+    [Fact]
+    public async Task TheAutoCloseAndSurveyScansHaveTheirPartialIndexes()
+    {
+        var indexes = await TextAsync(
+            Factory,
+            """
+            SELECT string_agg(indexname || ' ' || indexdef, '|' ORDER BY indexname) FROM pg_indexes
+            WHERE schemaname = 'support' AND indexname IN ('IX_tickets_resolved_auto_close', 'IX_ticket_surveys_awaiting_rating',
+                'IX_ticket_surveys_awaiting_comment', 'IX_ticket_surveys_rating_message', 'IX_ticket_surveys_comment_message')
+            """);
+
+        var lines = indexes!.Split('|');
+        Assert.Equal(5, lines.Length);
+        Assert.Contains(lines, line => line.StartsWith("IX_tickets_resolved_auto_close ", StringComparison.Ordinal)
+            && line.Contains("(resolved_at, id) WHERE (status = 'Resolved'", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.StartsWith("IX_ticket_surveys_awaiting_rating ", StringComparison.Ordinal)
+            && line.Contains("(sent_at, id) WHERE", StringComparison.Ordinal) && line.Contains("rating IS NULL", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.StartsWith("IX_ticket_surveys_awaiting_comment ", StringComparison.Ordinal)
+            && line.Contains("(answered_at, id) WHERE", StringComparison.Ordinal) && line.Contains("comment IS NULL", StringComparison.Ordinal));
+    }
+
     // Un ticket de una conversación nueva, resuelto, con la encuesta mandada por WhatsApp en sentAt.
     private async Task<(Guid SurveyId, Guid Conversation, Guid SurveyMessage)> SentWhatsAppSurveyAsync(
         Guid tenant, string waId, DateTimeOffset sentAt)

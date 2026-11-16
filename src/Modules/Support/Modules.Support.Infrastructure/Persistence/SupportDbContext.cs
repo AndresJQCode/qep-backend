@@ -652,6 +652,11 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             .IsDescending(false, false, true)
             .HasDatabaseName("IX_tickets_tenant_status_received");
         ticket.HasIndex(value => new { value.TenantId, value.DueOn }).HasDatabaseName("IX_tickets_tenant_due");
+        // Fase 4b (revisión del bloque D): el recorrido del cierre automático, de todos los tenants, por (resolved_at, id) sobre los
+        // Resueltos (SupportAutoCloseFeed). El filtro es el mismo predicado de la consulta.
+        ticket.HasIndex(value => new { value.ResolvedAt, value.Id })
+            .HasFilter("status = 'Resolved'")
+            .HasDatabaseName("IX_tickets_resolved_auto_close");
         ticket.HasIndex(value => new { value.TenantId, value.CustomerId }).HasDatabaseName("IX_tickets_tenant_customer");
         // Para SupportUserReferenceProbe, que busca por membresía sola, sin tenant: un usuario se borra en todos sus tenants.
         ticket.HasIndex(value => value.AssigneeMemberId).HasDatabaseName("IX_tickets_assignee");
@@ -872,6 +877,21 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             .HasFilter("message_id IS NOT NULL")
             .HasDatabaseName("IX_ticket_surveys_message");
         survey.HasIndex(value => new { value.TenantId, value.TicketId }).HasDatabaseName("IX_ticket_surveys_tenant_ticket");
+        // Revisión del bloque D: los recorridos de SupportSurveyFeed (toques: mandadas sin calificar, por sent_at; comentarios:
+        // calificadas por WhatsApp sin comentario, por answered_at) y las búsquedas por id de mensaje del NOT EXISTS de
+        // SupportAutoCloseFeed, que mira todas las encuestas del tenant. Cada filtro es el mismo predicado de su consulta.
+        survey.HasIndex(value => new { value.SentAt, value.Id })
+            .HasFilter("status = 'Sent' AND rating IS NULL")
+            .HasDatabaseName("IX_ticket_surveys_awaiting_rating");
+        survey.HasIndex(value => new { value.AnsweredAt, value.Id })
+            .HasFilter("answered_via = 'WhatsApp' AND rating IS NOT NULL AND comment IS NULL")
+            .HasDatabaseName("IX_ticket_surveys_awaiting_comment");
+        survey.HasIndex(value => value.RatingMessageId)
+            .HasFilter("rating_message_id IS NOT NULL")
+            .HasDatabaseName("IX_ticket_surveys_rating_message");
+        survey.HasIndex(value => value.CommentMessageId)
+            .HasFilter("comment_message_id IS NOT NULL")
+            .HasDatabaseName("IX_ticket_surveys_comment_message");
     }
 
     // Los anexos son una lista corta de textos (H4) que se guarda y se lee entera: jsonb, sin tabla hija.
