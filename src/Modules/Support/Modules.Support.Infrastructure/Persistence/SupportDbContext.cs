@@ -389,7 +389,7 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             table.HasCheckConstraint(
                 "CK_tickets_extension",
                 "(extended_at IS NULL) = (extension_reason IS NULL) AND extension_business_days >= 0"
-                + " AND (extended_at IS NOT NULL OR extension_business_days = 0)");
+                + " AND (extended_at IS NULL) = (extension_business_days = 0)");
             table.HasCheckConstraint(
                 TicketAnonymousCheck,
                 $"NOT is_anonymous OR (customer_id IS NULL AND {string.Join(" AND ", RequesterColumns.Select(column => $"{column} IS NULL"))})");

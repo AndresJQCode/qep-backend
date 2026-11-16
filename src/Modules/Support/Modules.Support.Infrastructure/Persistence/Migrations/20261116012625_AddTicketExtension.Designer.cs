@@ -544,7 +544,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_tickets_conversation_channel", "conversation_channel IN ('WhatsApp','Instagram')");
 
-                            t.HasCheckConstraint("CK_tickets_extension", "(extended_at IS NULL) = (extension_reason IS NULL) AND extension_business_days >= 0 AND (extended_at IS NOT NULL OR extension_business_days = 0)");
+                            t.HasCheckConstraint("CK_tickets_extension", "(extended_at IS NULL) = (extension_reason IS NULL) AND extension_business_days >= 0 AND (extended_at IS NULL) = (extension_business_days = 0)");
 
                             t.HasCheckConstraint("CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
 

@@ -938,7 +938,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `extension_clock_stopped`, `extension_overdue`, `extension_too_long`) y `MaxExtensionBusinessDays` usa las mismas cinco primeras: el
   DTO no las repite. La auditoría `support.ticket.extended` lleva nombres de campo, **nunca el motivo**. `Extended` es el último valor
   de `SupportTicketEventKind` y un pod viejo no lo lee (EF hace `Enum.Parse`): el detalle de un ticket prorrogado da 500 ahí durante el
-  rollout.
+  rollout, y al reanudar o cambiar el tipo el código viejo reescribe `due_on` sin la prórroga. Nadie prorroga hasta que no quede un
+  pod viejo, y un rollback después de la primera prórroga no se hace (README, «Gestión y plazos de Soporte»). El doble del término se
+  mide contra el término vigente al prorrogar: un cambio de tipo a uno más corto conserva la prórroga (P-5), no la recortes.
 - **`IssuedPin` sólo viaja en el `201` del alta manual anónima** (fase 4a, plan G3). `CreateTicketHandler` lo pone con `with` sobre el
   detalle compuesto; el composer siempre lo deja en `null`, así que el `GET`, las acciones y la auditoría nunca lo llevan. Un camino nuevo
   que componga el detalle no lo copia: es la única vez que el asesor puede dictárselo al solicitante. Lo amarra

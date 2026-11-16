@@ -43,7 +43,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                 name: "CK_tickets_extension",
                 schema: "support",
                 table: "tickets",
-                sql: "(extended_at IS NULL) = (extension_reason IS NULL) AND extension_business_days >= 0 AND (extended_at IS NOT NULL OR extension_business_days = 0)");
+                sql: "(extended_at IS NULL) = (extension_reason IS NULL) AND extension_business_days >= 0 AND (extended_at IS NULL) = (extension_business_days = 0)");
 
             migrationBuilder.AddCheckConstraint(
                 name: "CK_ticket_events_kind",
