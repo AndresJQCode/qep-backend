@@ -109,14 +109,10 @@ public sealed partial class QuotationTemplateTests
     }
 
     // El caso completo ejercita todas las ramas que dibujan algo: descuento por linea, retencion,
-    // cuenta de cobro y partes con datos propios.
+    // cuenta de cobro y partes con datos propios. También lleva las tres secciones del spec 2026-11-16 §5.3, con cada forma de
+    // bloque y cada marca (AllSections).
     [Fact]
     public async Task TheTemplateCompilesWithACompleteDocument() =>
-        await AssertCompilesAsync(Complete());
-
-    // Spec 2026-11-16 §5.3: las tres secciones, con cada forma de bloque y cada marca.
-    [Fact]
-    public async Task TheTemplateCompilesWithAllSections() =>
         await AssertCompilesAsync(Complete());
 
     // Un tenant sin secciones: `data.sections` llega en `none` y nada lo desreferencia.
