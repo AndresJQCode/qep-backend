@@ -183,6 +183,10 @@ public static class SupportErrorCodes
 
     public const string LegalDocumentsVersionNotFound = "support.legal_documents.version_not_found";
 
+    /// <summary>Spec 2026-11-16 (D-F8): el HTML saneado o la pregunta de autorización traen un <c>{{…}}</c> que no es una de
+    /// <c>SupportLegalVariables.All</c> (422). En singular, <c>legal_document</c>, porque así quedó fijado en el contrato con la consola.</summary>
+    public const string LegalDocumentUnknownVariable = "support.legal_document.unknown_variable";
+
     /// <summary>Translated by index name (<c>IX_legal_document_versions_tenant_kind_version</c>): two publications at once (409).</summary>
     public const string LegalDocumentsVersionTaken = "support.legal_documents.version_taken";
 
