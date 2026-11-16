@@ -53,6 +53,29 @@ internal sealed class QuotationWithholdingLookup(
         return customer is not null && customer.IsWithholdingAgent(Canonical(country), type, cityId);
     }
 
+    public async Task<IReadOnlyDictionary<string, TaxUnitPhoto>> TaxUnitsAsync(
+        IReadOnlyCollection<string> countries, DateOnly documentDate, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(countries);
+        var units = new Dictionary<string, TaxUnitPhoto>(StringComparer.Ordinal);
+        if (countries.Count == 0)
+        {
+            return units;
+        }
+
+        // Una sola lectura para todos los países, como la foto (PhotosAsync).
+        var values = await taxUnitValues.ListAsync(null, cancellationToken);
+        foreach (var country in countries.Select(Canonical).Distinct(StringComparer.Ordinal))
+        {
+            if (TaxUnitValues.Resolve(values, country, documentDate.Year) is { } resolved)
+            {
+                units[country] = new TaxUnitPhoto(resolved.Value, resolved.Year);
+            }
+        }
+
+        return units;
+    }
+
     // El código canónico: la tasa guarda el país normalizado y el repositorio de UVT compara crudo.
     private static string Canonical(string country) =>
         TaxCountries.Find(country)?.Country ?? country.Trim().ToUpperInvariant();

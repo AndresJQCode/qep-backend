@@ -419,6 +419,71 @@ public sealed class QuotationWithholdingsApiTests
         Assert.Equal(((int?)2025, false), (entry.TaxUnitYear, entry.TaxUnitOutdated));
     }
 
+    // Spec retenciones por UVT §5.4 (owner P1): guardar una cotización editable, aunque sea sin cambios, le pone la UVT del
+    // año que se cargó después y recalcula. Base 200.000: con 4 × 50.000 aplica (umbral inclusivo); con 4 × 60.000 no.
+    [Fact]
+    public async Task SavingRefreshesTheTaxUnit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var (setup, created) = await OutdatedQuotationAsync(factory, thisYear - 1);
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var saved = await ReadAsync(await PutAsync(setup, created, parties: null));
+
+        AssertRefreshed(saved, thisYear);
+        AssertRefreshed(await GetAsync(setup, created.Id), thisYear);
+    }
+
+    // §5.4: la vista previa refresca igual, pero no escribe: la cotización guardada sigue con la UVT del año anterior.
+    [Fact]
+    public async Task PreviewRefreshesWithoutSaving()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var (setup, created) = await OutdatedQuotationAsync(factory, thisYear - 1);
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var preview = await ReadAsync(await setup.Client.PostAsJsonAsync(
+            $"{QuotationsUrl(setup.TenantId)}/{created.Id}/preview",
+            SaveBody(created, parties: null),
+            TestContext.Current.CancellationToken));
+
+        AssertRefreshed(preview, thisYear);
+        var fetched = await GetAsync(setup, created.Id);
+        var entry = Assert.Single(fetched.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)(thisYear - 1), (decimal?)Uvt, true, "Applied", 8_000m),
+            (entry.TaxUnitYear, entry.TaxUnitValue, entry.TaxUnitOutdated, entry.Reason, fetched.RetentionAmount));
+        Assert.Equal(created.Version, fetched.Version);
+    }
+
+    // Una cotización con sólo la UVT del año anterior cargada, la Retefuente servicios con base de 4 UVT y 200.000 de base:
+    // aplica justo en el umbral.
+    private static async Task<(Setup Setup, QuotationResponse Created)> OutdatedQuotationAsync(QepApiFactory factory, int year)
+    {
+        var setup = await SetUpAsync(factory, taxUnitYear: year);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 4m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var created = await CreateWithLinesAsync(setup, clientId, quantity: 2m);
+        var entry = Assert.Single(created.WithholdingBreakdown);
+        Assert.Equal(((int?)year, true, 8_000m), (entry.TaxUnitYear, entry.TaxUnitOutdated, created.RetentionAmount));
+        return (setup, created);
+    }
+
+    private static void AssertRefreshed(QuotationResponse quotation, int year)
+    {
+        var entry = Assert.Single(quotation.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)year, (decimal?)60_000m, false, "BelowMinimumBase", (decimal?)240_000m, 0m),
+            (entry.TaxUnitYear, entry.TaxUnitValue, entry.TaxUnitOutdated, entry.Reason, entry.MinimumBaseAmount, entry.Amount));
+        Assert.Empty(quotation.Withholdings);
+        Assert.Equal((0m, quotation.Total), (quotation.RetentionAmount, quotation.NetTotal));
+    }
+
     private sealed record Setup(
         HttpClient Client,
         Guid TenantId,

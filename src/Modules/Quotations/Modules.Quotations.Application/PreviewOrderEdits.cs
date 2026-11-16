@@ -127,6 +127,11 @@ public sealed class PreviewOrderEditsHandler(
             order.SetShipping(shipping, updatedBy, now);
         }
 
+        // Mismo lugar que el guardado (spec retenciones por UVT §5.4): la vista previa muestra la UVT que el guardado dejaría.
+        await TaxUnitRefresh.RefreshAsync(
+            order, withholdingLookup, TaxUnitRefresh.DocumentDate(tenantClock, query.TenantId, order.CreatedAt),
+            cancellationToken);
+
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, query.TenantId, order, now, cancellationToken);
         // Sin historial: el preview no guarda nada.
