@@ -62,10 +62,10 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         surveys.AddRange(await SurveyIdsAsync(scenario));
         var claims = await Task.WhenAll(ClaimAsync(4), ClaimAsync(4));
 
-        var claimed = claims.SelectMany(ids => ids).ToList();
+        var claimed = claims.SelectMany(batch => batch.SurveyIds).ToList();
         Assert.Equal(claimed.Count, claimed.Distinct().Count());
         Assert.Equal(surveys.Order(), claimed.Order());
-        Assert.Empty(await ClaimAsync(10));
+        Assert.Empty((await ClaimAsync(10)).SurveyIds);
         Assert.Equal(
             6L,
             await ScalarAsync(
@@ -83,11 +83,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
             Factory, "UPDATE support.tenant_settings SET survey_enabled = true WHERE tenant_id = @tenant", ("tenant", scenario.TenantId));
         var resolved = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
 
-        foreach (var id in await ClaimAsync(10))
-        {
-            await using var scope = Factory.Services.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<SupportSurveySender>().ProcessAsync(id, Ct);
-        }
+        await ProcessClaimedAsync();
 
         var email = Assert.Single(_email.Sent);
         Assert.Equal("ana@example.com", email.ToAddress);
@@ -111,11 +107,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         var scenario = await StartAsync(Factory);
         var resolved = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
 
-        foreach (var id in await ClaimAsync(10))
-        {
-            await using var scope = Factory.Services.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<SupportSurveySender>().ProcessAsync(id, Ct);
-        }
+        await ProcessClaimedAsync();
 
         Assert.Empty(_email.Sent);
         Assert.Equal(
@@ -125,10 +117,78 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketSurveySkipped, Id(resolved).ToString()));
     }
 
-    private async Task<IReadOnlyList<Guid>> ClaimAsync(int take)
+    // Revisión del bloque C: el reclamo del lote cubre un envío, no el lote entero. Si el lote tardó más que su reclamo y otro worker
+    // volvió a reclamar la encuesta, el primero ya no la manda: renovar el reclamo exige que siga siendo el suyo.
+    [Fact]
+    public async Task AStaleBatchClaimDoesNotProcessTheSurveyTwice()
+    {
+        var scenario = await StartAsync(Factory);
+        await EnableSurveyAsync(scenario);
+        var resolved = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
+        var first = await ClaimAsync(10);
+        await ExecuteAsync(
+            Factory,
+            "UPDATE support.ticket_surveys SET locked_until = now() - interval '1 second' WHERE ticket_id = @id",
+            ("id", Id(resolved)));
+        var second = await ClaimAsync(10);
+        var surveyId = Assert.Single(first.SurveyIds);
+        Assert.Equal(surveyId, Assert.Single(second.SurveyIds));
+
+        await ProcessAsync(surveyId, first.ClaimedUntil);
+        Assert.Empty(_email.Sent);
+        await ProcessAsync(surveyId, second.ClaimedUntil);
+        await ProcessAsync(surveyId, second.ClaimedUntil);
+
+        Assert.Single(_email.Sent);
+        Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketSurveySent, Id(resolved).ToString()));
+    }
+
+    // Revisión del bloque C: cada encuesta renueva su reclamo justo antes de mandarse, así el reclamo cubre su propio envío aunque las
+    // anteriores del lote hayan tardado.
+    [Fact]
+    public async Task EachSurveyRenewsItsClaimRightBeforeSending()
+    {
+        var scenario = await StartAsync(Factory);
+        await EnableSurveyAsync(scenario);
+        var resolved = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
+        var batch = await ClaimAsync(10);
+        string? lockedAtSend = null;
+        _email.OnSend = async _ => lockedAtSend = await TextAsync(
+            Factory,
+            "SELECT (locked_until > @claimed)::text FROM support.ticket_surveys WHERE ticket_id = @id",
+            ("claimed", batch.ClaimedUntil),
+            ("id", Id(resolved)));
+
+        await ProcessAsync(Assert.Single(batch.SurveyIds), batch.ClaimedUntil);
+
+        Assert.Equal("true", lockedAtSend);
+        Assert.Single(_email.Sent);
+        Assert.Equal(5, new Modules.Support.Infrastructure.SupportWorkerOptions().SurveyBatchSize);
+    }
+
+    private Task EnableSurveyAsync(SupportTicketScenario scenario) =>
+        ExecuteAsync(
+            Factory, "UPDATE support.tenant_settings SET survey_enabled = true WHERE tenant_id = @tenant", ("tenant", scenario.TenantId));
+
+    private async Task<SupportSurveyBatch> ClaimAsync(int take)
     {
         await using var scope = Factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<SupportSurveySender>().ClaimAsync(take, Ct);
+    }
+
+    private async Task ProcessAsync(Guid surveyId, DateTimeOffset claimedUntil)
+    {
+        await using var scope = Factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<SupportSurveySender>().ProcessAsync(surveyId, claimedUntil, Ct);
+    }
+
+    private async Task ProcessClaimedAsync()
+    {
+        var batch = await ClaimAsync(10);
+        foreach (var id in batch.SurveyIds)
+        {
+            await ProcessAsync(id, batch.ClaimedUntil);
+        }
     }
 
     private async Task<IReadOnlyList<Guid>> SurveyIdsAsync(SupportTicketScenario scenario)

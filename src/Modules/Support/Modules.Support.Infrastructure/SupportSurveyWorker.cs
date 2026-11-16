@@ -10,8 +10,8 @@ namespace Modules.Support.Infrastructure;
 /// <summary>
 /// Fase 4b, Tarea 11 (H16): manda las encuestas de satisfacción pendientes. Espera el timbre de su cola (<c>support_survey</c>) hasta la red
 /// de seguridad o, sin timbres, <see cref="SupportWorkerOptions.SurveyIntervalSeconds"/>. Por tick reclama un lote
-/// (<c>FOR UPDATE SKIP LOCKED</c> + <c>locked_until</c>: varias réplicas no toman la misma) y procesa cada encuesta en su propio scope: una
-/// que falla queda reclamada y vuelve a la cola cuando su reclamo vence. Un lote lleno se repite sin esperar.
+/// (<c>FOR UPDATE SKIP LOCKED</c> + <c>locked_until</c>: varias réplicas no toman la misma) y procesa cada encuesta en su propio scope,
+/// renovando su reclamo justo antes de mandarla: el reclamo cubre un envío, no el lote. Un lote lleno se repite sin esperar.
 /// </summary>
 internal sealed partial class SupportSurveyWorker(
     IQueueDoorbell doorbell,
@@ -57,18 +57,19 @@ internal sealed partial class SupportSurveyWorker(
     /// <summary>Un lote: el reclamo y cada encuesta en su scope. Devuelve cuántas reclamó.</summary>
     internal async Task<int> RunOnceAsync(int take, CancellationToken cancellationToken)
     {
-        IReadOnlyList<Guid> claimed;
+        SupportSurveyBatch batch;
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
-            claimed = await scope.ServiceProvider.GetRequiredService<SupportSurveySender>().ClaimAsync(take, cancellationToken);
+            batch = await scope.ServiceProvider.GetRequiredService<SupportSurveySender>().ClaimAsync(take, cancellationToken);
         }
 
-        foreach (var surveyId in claimed)
+        foreach (var surveyId in batch.SurveyIds)
         {
             try
             {
                 await using var scope = scopeFactory.CreateAsyncScope();
-                await scope.ServiceProvider.GetRequiredService<SupportSurveySender>().ProcessAsync(surveyId, cancellationToken);
+                await scope.ServiceProvider.GetRequiredService<SupportSurveySender>()
+                    .ProcessAsync(surveyId, batch.ClaimedUntil, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -80,6 +81,6 @@ internal sealed partial class SupportSurveyWorker(
             }
         }
 
-        return claimed.Count;
+        return batch.SurveyIds.Count;
     }
 }

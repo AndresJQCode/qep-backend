@@ -131,10 +131,26 @@ internal sealed class RecordingSupportSurveyEmail : ISupportSurveyEmail
 {
     public ConcurrentQueue<SupportSurveyEmail> Sent { get; } = new();
 
-    public Task<SupportChannelSendResult> SendAsync(SupportSurveyEmail email, CancellationToken cancellationToken)
+    /// <summary>Corre antes de anotar el envío: deja que la prueba mire la base en el momento exacto del envío.</summary>
+    public Func<SupportSurveyEmail, Task>? OnSend { get; set; }
+
+    /// <summary>Con valor, el envío lanza esta excepción en vez de anotar: una falla inesperada del canal.</summary>
+    public Exception? Throw { get; set; }
+
+    public async Task<SupportChannelSendResult> SendAsync(SupportSurveyEmail email, CancellationToken cancellationToken)
     {
+        if (OnSend is { } onSend)
+        {
+            await onSend(email);
+        }
+
+        if (Throw is { } exception)
+        {
+            throw exception;
+        }
+
         Sent.Enqueue(email);
-        return Task.FromResult<SupportChannelSendResult>(new SupportChannelSendResult.Sent(null, null));
+        return new SupportChannelSendResult.Sent(null, null);
     }
 }
 

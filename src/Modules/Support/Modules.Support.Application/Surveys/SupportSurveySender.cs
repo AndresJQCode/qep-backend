@@ -37,26 +37,37 @@ public sealed class SupportSurveySender(
     ISupportRealtime realtime,
     IClock clock)
 {
-    public const int DefaultBatchSize = 20;
+    /// <summary>Revisión del bloque C: lotes chicos. Cada encuesta renueva su reclamo antes de mandarse, pero un lote corto también
+    /// acorta lo que espera la última.</summary>
+    public const int DefaultBatchSize = 5;
 
-    /// <summary>Cuánto dura el reclamo de una encuesta: lo que tarda un envío, con margen.</summary>
+    /// <summary>Cuánto dura el reclamo de una encuesta: lo que tarda un envío, con margen. Cubre un envío, no el lote: cada encuesta lo
+    /// renueva justo antes de mandarse (<see cref="ProcessAsync"/>).</summary>
     public static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(2);
 
     private static readonly string[] SurveyFields = ["survey"];
 
     /// <summary>Reclama hasta <paramref name="take"/> encuestas que tocan. Cada id se procesa después en su propio scope
-    /// (<see cref="ProcessAsync"/>), así una que falla no arrastra a las demás.</summary>
-    public Task<IReadOnlyList<Guid>> ClaimAsync(int take, CancellationToken cancellationToken)
+    /// (<see cref="ProcessAsync"/>) con el <see cref="SupportSurveyBatch.ClaimedUntil"/> del lote, así una que falla no arrastra a las
+    /// demás.</summary>
+    public async Task<SupportSurveyBatch> ClaimAsync(int take, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-        return surveys.ClaimAsync(take, now, now + ClaimLease, cancellationToken);
+        var claimedUntil = ToMicroseconds(now + ClaimLease);
+        return new SupportSurveyBatch(await surveys.ClaimAsync(take, now, claimedUntil, cancellationToken), claimedUntil);
     }
 
-    /// <summary>Una encuesta reclamada: decide el canal, la manda y guarda cómo terminó. Una que ya no está <c>Pending</c> no se toca. Si
-    /// algo lanza, queda <c>Pending</c> con su reclamo y vuelve a la cola cuando el reclamo vence.</summary>
-    public async Task ProcessAsync(Guid surveyId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Una encuesta reclamada: renueva su reclamo, decide el canal, la manda y guarda cómo terminó. Revisión del bloque C: el reclamo del
+    /// lote cubre un envío, no el lote entero, así que antes de mandar se renueva sólo si sigue siendo el de este lote
+    /// (<paramref name="claimedUntil"/>); si venció y otro worker la volvió a reclamar, ésta no se toca y la manda el otro. Una que ya no
+    /// está <c>Pending</c> tampoco se toca.
+    /// </summary>
+    public async Task ProcessAsync(Guid surveyId, DateTimeOffset claimedUntil, CancellationToken cancellationToken)
     {
-        if (await surveys.FindAsync(surveyId, cancellationToken) is not { Status: SupportSurveyStatus.Pending } survey)
+        var renewedUntil = ToMicroseconds(clock.UtcNow + ClaimLease);
+        if (!await surveys.RenewClaimAsync(surveyId, claimedUntil, renewedUntil, cancellationToken)
+            || await surveys.FindAsync(surveyId, cancellationToken) is not { Status: SupportSurveyStatus.Pending } survey)
         {
             return;
         }
@@ -205,6 +216,13 @@ public sealed class SupportSurveySender(
         }
     }
 
+    // Postgres guarda microsegundos: el reclamo que se compara al renovar tiene que ser el mismo valor que quedó en la columna.
+    private static DateTimeOffset ToMicroseconds(DateTimeOffset value)
+    {
+        var utc = value.ToUniversalTime();
+        return new DateTimeOffset(utc.Ticks - (utc.Ticks % 10), TimeSpan.Zero);
+    }
+
     // El nombre de la foto y, si no tiene, el del cliente vinculado: llena «nombre_contacto» de la plantilla.
     private async Task<string> RecipientNameAsync(SupportTicket ticket, CancellationToken cancellationToken)
     {
@@ -220,3 +238,7 @@ public sealed class SupportSurveySender(
                 : string.Empty;
     }
 }
+
+/// <summary>Las encuestas que reclamó un lote y hasta cuándo es suyo el reclamo: <see cref="SupportSurveySender.ProcessAsync"/> sólo
+/// renueva un reclamo que todavía tenga este valor.</summary>
+public sealed record SupportSurveyBatch(IReadOnlyList<Guid> SurveyIds, DateTimeOffset ClaimedUntil);

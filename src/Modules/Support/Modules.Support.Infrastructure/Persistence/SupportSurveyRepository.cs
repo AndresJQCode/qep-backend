@@ -37,6 +37,19 @@ internal sealed class SupportSurveyRepository(SupportDbContext dbContext) : ISup
         return claimed.Select(survey => survey.Id).ToList();
     }
 
+    public async Task<bool> RenewClaimAsync(
+        Guid surveyId, DateTimeOffset claimedUntil, DateTimeOffset renewedUntil, CancellationToken cancellationToken)
+    {
+        DateTimeOffset? claimed = claimedUntil.ToUniversalTime();
+        DateTimeOffset? renewed = renewedUntil.ToUniversalTime();
+        var updated = await dbContext.TicketSurveys
+            .Where(survey => survey.Id == surveyId
+                && survey.Status == SupportSurveyStatus.Pending
+                && survey.LockedUntil == claimed)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(survey => survey.LockedUntil, renewed), cancellationToken);
+        return updated == 1;
+    }
+
     public Task<SupportTicketSurvey?> FindAsync(Guid surveyId, CancellationToken cancellationToken) =>
         dbContext.TicketSurveys.FirstOrDefaultAsync(survey => survey.Id == surveyId, cancellationToken);
 }

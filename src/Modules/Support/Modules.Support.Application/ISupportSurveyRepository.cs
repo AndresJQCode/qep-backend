@@ -13,6 +13,12 @@ public interface ISupportSurveyRepository
     /// </summary>
     Task<IReadOnlyList<Guid>> ClaimAsync(int take, DateTimeOffset now, DateTimeOffset lockedUntil, CancellationToken cancellationToken);
 
+    /// <summary>Revisión del bloque C: renueva el reclamo de una encuesta <c>Pending</c> hasta <paramref name="renewedUntil"/> sólo si
+    /// todavía es el que puso este lote (<c>locked_until</c> = <paramref name="claimedUntil"/>), en un <c>UPDATE</c> condicionado que se
+    /// confirma solo. Falso si el reclamo ya es de otro worker o la encuesta dejó de estar <c>Pending</c>.</summary>
+    Task<bool> RenewClaimAsync(
+        Guid surveyId, DateTimeOffset claimedUntil, DateTimeOffset renewedUntil, CancellationToken cancellationToken);
+
     /// <summary>Con tracking, para guardar cómo terminó. Sin tenant: el id sale del reclamo del worker.</summary>
     Task<SupportTicketSurvey?> FindAsync(Guid surveyId, CancellationToken cancellationToken);
 }
