@@ -194,6 +194,47 @@ public sealed class TenantModulesApiTests(SharedTenancyHost host) : IClassFixtur
         return modules;
     }
 
+    // Spec 2026-11-15 (roles asignables): el signup no concede pos, así que Cajero no concede nada.
+    [Fact]
+    public async Task TheCatalogMarksTheCashierUnassignableWithoutPos()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        using var client = StubClient(factory, ownerId, tenantId, "advisorship.read");
+
+        var roles = await CatalogRolesAsync(client, tenantId);
+
+        var cashier = roles.Single(role => role.Role == "cashier");
+        Assert.False(cashier.Assignable);
+        Assert.Empty(cashier.Permissions);
+        Assert.True(roles.Single(role => role.Role == "admin").Assignable);
+    }
+
+    [Fact]
+    public async Task TheCatalogMarksTheCashierAssignableWithPos()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, ownerId) = await RegisterAsync(factory);
+        await EnableAsync(factory, tenantId, TenantModuleKeys.Pos);
+        using var client = StubClient(factory, ownerId, tenantId, "advisorship.read");
+
+        var roles = await CatalogRolesAsync(client, tenantId);
+
+        Assert.True(roles.Single(role => role.Role == "cashier").Assignable);
+    }
+
+    private static async Task<List<CatalogRoleDto>> CatalogRolesAsync(HttpClient client, Guid tenantId)
+    {
+        var catalog = await client.GetFromJsonAsync<CatalogDto>(
+            $"/api/v1/tenants/{tenantId}/authorization/catalog", TestContext.Current.CancellationToken);
+        Assert.NotNull(catalog);
+        return catalog.Roles;
+    }
+
+    private sealed record CatalogDto(List<CatalogRoleDto> Roles);
+
+    private sealed record CatalogRoleDto(string Role, string[] Permissions, bool Assignable);
+
     private sealed record ModulesDto(Guid TenantId, List<ModuleDto> Modules);
 
     private sealed record ModuleDto(string Key, bool Enabled, bool Contracted, string[] MissingDependencies);
@@ -258,6 +299,29 @@ public sealed class TenantModulesApiTests(SharedTenancyHost host) : IClassFixtur
                     .SetProperty(module => module.Status, TenantModuleStatus.Inactive)
                     .SetProperty(module => module.StatusChangedAt, now),
                 TestContext.Current.CancellationToken);
+    }
+
+    // Contratado = fila activa. Crea la fila si el signup no la dejó (pos no viene con el signup).
+    internal static async Task EnableAsync(QepApiFactory factory, Guid tenantId, TenantModuleKey key)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = new TenantId(tenantId);
+        var now = DateTimeOffset.UtcNow;
+        var existing = await dbContext.TenantModules
+            .SingleOrDefaultAsync(
+                module => module.TenantId == id && module.ModuleKey == key,
+                TestContext.Current.CancellationToken);
+        if (existing is null)
+        {
+            dbContext.TenantModules.Add(TenantModule.Create(id, key, "manual", now, null));
+        }
+        else
+        {
+            existing.Activate(now);
+        }
+
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     internal static async Task<List<(string Key, string Source)>> RowsAsync(QepApiFactory factory, Guid tenantId)

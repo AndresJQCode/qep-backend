@@ -276,6 +276,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
+- **Un rol que no concede ningún permiso ofrecido en el tenant no se agrega ni se invita** (spec 2026-11-15): `422
+  tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false`. Cajero sin `pos` es el caso típico,
+  pero vale también para un rol custom de sólo permisos de un módulo apagado. Quien ya tiene el rol lo conserva: el `PUT`
+  sólo rechaza los roles **agregados**, porque la pantalla reenvía todos al guardar. La regla vive en `RoleAssignability`
+  y la comparten `/authorization/catalog` y `RoleReferenceValidator`; no la copies en un handler. Una prueba que invite o
+  asigne un rol de módulo prende el módulo antes (`PosApiHarness.InviteCashierAsync` ya lo hace).
 - **La cotización por Meta no usa `OutboundGuards` ni `ConversationOpener.OpenAsync`** (spec 2026-10-21). `QuotationTemplateOutbound`
   busca la conversación por teléfono (`OpenByPhoneAsync`) y no por `customer_id`, para no caer en el hilo de otro número (D16b);
   pasa `seen: 0` para no tocar los no leídos (D16a); y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la

@@ -59,27 +59,40 @@ public sealed class UpdateMemberRolesHandler(
                 "A membership requires at least one role.");
         }
 
-        foreach (var role in requestedRoles)
-        {
-            if (!await roleReferenceValidator.IsKnownRoleAsync(
-                command.TenantId, role, cancellationToken))
-            {
-                throw new TenantDomainException(
-                    "tenancy.membership.role_unknown",
-                    $"The role '{role}' is not part of the authorization catalog.");
-            }
-        }
-
         var tenant = await TenantLoader.LoadAsync(
             tenantRepository, command.TenantId, cancellationToken);
         var membership = await MembershipLoader.LoadAsync(
             membershipRepository, command.MembershipId, command.TenantId, cancellationToken);
 
+        // Antes que los roles: role_unavailable compara contra los roles guardados, y con una versión
+        // vieja el cliente no vio esos roles. Una pantalla desactualizada recibe 412, no 422.
         if (membership.Version != command.ExpectedVersion)
         {
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
                 "Membership roles changed after they were loaded.");
+        }
+
+        foreach (var role in requestedRoles)
+        {
+            var reference = await roleReferenceValidator.CheckAsync(
+                command.TenantId, role, cancellationToken);
+            if (reference == RoleReference.Unknown)
+            {
+                throw new TenantDomainException(
+                    "tenancy.membership.role_unknown",
+                    $"The role '{role}' is not part of the authorization catalog.");
+            }
+
+            // Spec 2026-11-15: sólo se rechaza lo que se agrega. Quien ya tiene un rol que dejó de
+            // conceder algo (Cajero con pos apagado) lo conserva, y la pantalla lo reenvía al guardar.
+            if (reference == RoleReference.Unassignable &&
+                !membership.Roles.Contains(role, StringComparer.Ordinal))
+            {
+                throw new TenantDomainException(
+                    "tenancy.membership.role_unavailable",
+                    $"The role '{role}' grants nothing in this tenant: its module is not enabled.");
+            }
         }
 
         if (membership.UserId == executionContext.SubjectId)
