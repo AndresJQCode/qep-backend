@@ -3,7 +3,9 @@ using FluentValidation;
 
 namespace Modules.Buyers.Application;
 
-public sealed record BuyerOrderLineDto(string Name, decimal Quantity, decimal UnitPrice, decimal LineTotal);
+/// <summary><c>ImageUrl</c>: la foto actual del catálogo, null si no hay (spec 2026-11-15).</summary>
+public sealed record BuyerOrderLineDto(
+    string Name, decimal Quantity, decimal UnitPrice, decimal LineTotal, string? ImageUrl);
 
 /// <summary>Contrato con <c>qep-storefront</c>. Los cuatro ejes del pedido viajan por nombre (spec 2026-11-10 §9):
 /// <c>Status</c> (<c>Open</c> | <c>Archived</c> | <c>Cancelled</c>), <c>PaymentStatus</c>, <c>FulfillmentStatus</c>

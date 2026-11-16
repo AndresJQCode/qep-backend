@@ -6,8 +6,10 @@ namespace Modules.Quotations.Application;
 /// <summary>Una línea del pedido como la ve el comprador. <c>LineTotal</c> es <c>Subtotal + TaxAmount</c>: lo que la
 /// línea suma al total. Con excedente de IVA el IVA no se cobra aparte, así que la línea va sin IVA
 /// (<c>UnitPriceWithoutTax</c> y <c>Subtotal</c>) para que las líneas, con el flete, sumen el total (spec §4.7). No
-/// se «simplifica» a una sola fórmula: sin excedente son otros números.</summary>
-public sealed record BuyerOrderLine(string Name, decimal Quantity, decimal UnitPrice, decimal LineTotal);
+/// se «simplifica» a una sola fórmula: sin excedente son otros números. <c>ImageUrl</c> es la foto <b>actual</b> del
+/// catálogo (la de la variante o, sin ella, la principal del producto), no una copia del momento de la compra (owner,
+/// 2026-11-15); null si la variante ya no está o no tiene foto.</summary>
+public sealed record BuyerOrderLine(string Name, decimal Quantity, decimal UnitPrice, decimal LineTotal, string? ImageUrl);
 
 /// <summary>Los cuatro ejes del pedido (spec 2026-11-10 §9), por nombre: <c>Status</c> es <c>Open</c>,
 /// <c>Archived</c> o <c>Cancelled</c>; <c>FulfillmentStatus</c>, <c>NotPrepared</c> o <c>Prepared</c>; e
@@ -113,7 +115,8 @@ public sealed class BuyerOrderGateway(
     IQuotationAuditPublisher auditPublisher,
     IQuotationLifecycleEventPublisher lifecycleEvents,
     IClock clock,
-    IQuotationGeographyLookup geography)
+    IQuotationGeographyLookup geography,
+    IQuotationProductLookup products)
     : IBuyerOrderGateway
 {
     public async Task<BuyerOrderPage> ListAsync(
@@ -126,7 +129,7 @@ public sealed class BuyerOrderGateway(
     public async Task<BuyerOrderDetail?> FindAsync(
         Guid tenantId, Guid buyerAccountId, Guid orderId, CancellationToken cancellationToken) =>
         await FindOwnedAsync(tenantId, buyerAccountId, new OrderId(orderId), cancellationToken) is { } order
-            ? ToDetail(order, await ResolvePlacesAsync(order, cancellationToken))
+            ? ToDetail(order, await ResolveRefsAsync(order, cancellationToken))
             : null;
 
     public async Task<BuyerOrderDetail?> CancelAsync(
@@ -141,10 +144,10 @@ public sealed class BuyerOrderGateway(
 
         try
         {
-            // Los nombres se resuelven antes de anular: si el lookup falla, el pedido queda intacto.
-            var places = await ResolvePlacesIfCancellableAsync(order, cancellationToken);
+            // Nombres y fotos se resuelven antes de anular: si un lookup falla, el pedido queda intacto.
+            var refs = await ResolveRefsIfCancellableAsync(order, cancellationToken);
             await CancelAndSaveAsync(tenantId, buyerAccountId, order, cancellationToken);
-            return ToDetail(order, places);
+            return ToDetail(order, refs);
         }
         catch (RequestConcurrencyException)
         {
@@ -162,9 +165,9 @@ public sealed class BuyerOrderGateway(
         try
         {
             // Del pedido que se anula, no del primero: el releído puede traer ediciones del asesor.
-            var places = await ResolvePlacesIfCancellableAsync(reread, cancellationToken);
+            var refs = await ResolveRefsIfCancellableAsync(reread, cancellationToken);
             await CancelAndSaveAsync(tenantId, buyerAccountId, reread, cancellationToken);
-            return ToDetail(reread, places);
+            return ToDetail(reread, refs);
         }
         catch (RequestConcurrencyException exception)
         {
@@ -276,8 +279,16 @@ public sealed class BuyerOrderGateway(
             order.CanBeCancelledByBuyer,
             order.IsStorePickup);
 
-    private sealed record Places(
-        IReadOnlyDictionary<Guid, string> Departments, IReadOnlyDictionary<Guid, string> Cities);
+    /// <summary>Lo que el detalle trae de otros módulos: nombres de lugares (Geography) y variantes con su foto
+    /// (Catalog).</summary>
+    private sealed record DetailRefs(
+        IReadOnlyDictionary<Guid, string> Departments,
+        IReadOnlyDictionary<Guid, string> Cities,
+        IReadOnlyDictionary<Guid, QuotationVariantRef> Variants)
+    {
+        public static readonly DetailRefs None = new(
+            new Dictionary<Guid, string>(), new Dictionary<Guid, string>(), new Dictionary<Guid, QuotationVariantRef>());
+    }
 
     // Sólo se muestra la parte que corresponde; la facturación que no se muestra no se consulta.
     private static (BilledPartySource BilledTo, OrderParty? Billing, OrderParty? Shipping) PartiesShown(Order order)
@@ -289,13 +300,13 @@ public sealed class BuyerOrderGateway(
             order.IsStorePickup ? null : order.Shipping);
     }
 
-    // Un pedido que ya no se puede anular responde 409 sin tocar Geography: CancelAndSaveAsync lo rechaza.
-    private async Task<Places> ResolvePlacesIfCancellableAsync(Order order, CancellationToken cancellationToken) =>
+    // Un pedido que ya no se puede anular responde 409 sin tocar Geography ni Catalog: CancelAndSaveAsync lo rechaza.
+    private async Task<DetailRefs> ResolveRefsIfCancellableAsync(Order order, CancellationToken cancellationToken) =>
         order.CanBeCancelledByBuyer
-            ? await ResolvePlacesAsync(order, cancellationToken)
-            : new Places(new Dictionary<Guid, string>(), new Dictionary<Guid, string>());
+            ? await ResolveRefsAsync(order, cancellationToken)
+            : DetailRefs.None;
 
-    private async Task<Places> ResolvePlacesAsync(Order order, CancellationToken cancellationToken)
+    private async Task<DetailRefs> ResolveRefsAsync(Order order, CancellationToken cancellationToken)
     {
         var (_, billingParty, shippingParty) = PartiesShown(order);
 
@@ -308,14 +319,21 @@ public sealed class BuyerOrderGateway(
             colombian.Select(party => party!.DepartmentId), geography.FindDepartmentNamesAsync, cancellationToken);
         var cities = await NamesAsync(
             colombian.Select(party => party!.CityId), geography.FindCityNamesAsync, cancellationToken);
-        return new Places(departments, cities);
+
+        // Una sola consulta por pedido, con las variantes distintas; la foto es la actual del catálogo. Igual que la
+        // geografía, una excepción sale tal cual y nunca se disfraza de foto nula.
+        var variantIds = order.Items.Select(item => item.VariantId).Distinct().ToArray();
+        var variants = variantIds.Length == 0
+            ? DetailRefs.None.Variants
+            : await products.FindManyAsync(order.TenantId, variantIds, cancellationToken);
+        return new DetailRefs(departments, cities, variants);
     }
 
-    private static BuyerOrderDetail ToDetail(Order order, Places places)
+    private static BuyerOrderDetail ToDetail(Order order, DetailRefs refs)
     {
         var (billedTo, billingParty, shippingParty) = PartiesShown(order);
-        var departments = places.Departments;
-        var cities = places.Cities;
+        var departments = refs.Departments;
+        var cities = refs.Cities;
 
         var appliesVatSurplus = order.AppliesVatSurplus;
         return new BuyerOrderDetail(
@@ -332,7 +350,7 @@ public sealed class BuyerOrderGateway(
             FirstLineName(order),
             order.Items
                 .OrderBy(item => item.Position)
-                .Select(item => ToLine(item, appliesVatSurplus))
+                .Select(item => ToLine(item, appliesVatSurplus, refs.Variants))
                 .ToArray(),
             order.CancelledAt,
             order.CanBeCancelledByBuyer,
@@ -387,11 +405,16 @@ public sealed class BuyerOrderGateway(
             ? party.CityName
             : party.CityId is { } id && cities.TryGetValue(id, out var name) ? name : null;
 
-    private static BuyerOrderLine ToLine(OrderItem item, bool appliesVatSurplus) =>
-        appliesVatSurplus
-            ? new BuyerOrderLine(item.ProductName ?? string.Empty, item.Quantity, item.UnitPriceWithoutTax, item.Subtotal)
+    private static BuyerOrderLine ToLine(
+        OrderItem item, bool appliesVatSurplus, IReadOnlyDictionary<Guid, QuotationVariantRef> variants)
+    {
+        var imageUrl = variants.GetValueOrDefault(item.VariantId)?.ImageUrl;
+        return appliesVatSurplus
+            ? new BuyerOrderLine(
+                item.ProductName ?? string.Empty, item.Quantity, item.UnitPriceWithoutTax, item.Subtotal, imageUrl)
             : new BuyerOrderLine(
-                item.ProductName ?? string.Empty, item.Quantity, item.UnitPrice, item.Subtotal + item.TaxAmount);
+                item.ProductName ?? string.Empty, item.Quantity, item.UnitPrice, item.Subtotal + item.TaxAmount, imageUrl);
+    }
 
     private static string FirstLineName(Order order) =>
         order.Items.OrderBy(item => item.Position).FirstOrDefault()?.ProductName ?? string.Empty;
