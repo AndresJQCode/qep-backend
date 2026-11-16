@@ -2,7 +2,9 @@
 
 > **Estado:** aprobado por el owner 2026-11-16 (decisiones F-1 a F-8 abajo).
 > **Frontend:** `qep-frontend/docs/superpowers/specs/2026-11-16-order-date-design.md` (consume el contrato de §4).
-> **Deploy:** backend primero. La migración corre sola al arrancar la API (`Program.cs`, bloque bajo `RunUnderStartupLockAsync`).
+> **Deploy:** backend primero. La migración corre sola al arrancar la API (`Program.cs`, bloque bajo `RunUnderStartupLockAsync`)
+> y es **aditiva** (expand): `order_date` sale `NOT NULL` con un default de base para los pods viejos. Queda pendiente una migración
+> de contract posterior; ver §6.
 
 ## 1. Problema
 
@@ -97,6 +99,19 @@ Columna `quotations.orders.order_date date not null`. Una sola migración EF (`A
 4. La columna sale con default `((now() AT TIME ZONE 'America/Bogota')::date)` sólo en la base (no en el modelo de EF) para el
    rollout (expand): los pods viejos insertan pedidos sin `order_date`. Una migración posterior lo quita cuando ya no quede
    ningún pod viejo (contract).
+
+**Rollout: la migración es aditiva (expand).** Mientras convivan pods viejos y nuevos:
+
+- Un pod viejo inserta pedidos sin `order_date` y la base pone el default: el día **de Bogotá** del momento del insert, no el
+  del huso del tenant ni el de `converted_at`. Para un tenant fuera de Colombia, o un pedido de Shopify con `OccurredAt` de otro
+  día, esa fecha puede quedar corrida.
+- Un pod viejo que lee un pedido con una entrada de historial `OrderDateChanged` falla al parsearla (no conoce el miembro del
+  enum), igual que pasó con `BuyerAccountChanged`. El detalle de ese pedido da error en el pod viejo hasta que termine el rollout.
+
+**Migración de contract (posterior, cuando no quede ningún pod viejo).** Quita el default de la columna y vuelve a rellenar
+`order_date` con el día local de `converted_at` en el huso del tenant (el mismo `UPDATE` del paso 2) **sólo** en las filas donde
+`order_date` difiere de ese día **y** el pedido no tiene ninguna entrada de historial `OrderDateChanged` (una fecha que el asesor
+cambió a propósito no se pisa).
 
 Después del deploy, filtros, exportación, reportes y PDF dan lo mismo que antes hasta que alguien cambie una fecha: `CreatedAt` y
 `ConvertedAt` se escriben con el mismo `occurredAt` en `Build`, así que su día local es el que queda en `order_date`.
