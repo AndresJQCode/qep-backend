@@ -602,6 +602,21 @@ public sealed class SupportTicket
             new { businessDays, reason = trimmed, fromDueOn, toDueOn = DueOn });
     }
 
+    /// <summary>Spec 2026-11-16 (P-1, P-3, P-4): anota que un asesor generó un PIN nuevo para este anónimo. El PIN vive en
+    /// <see cref="SupportTicketAccess"/>; el evento va sin detalles para que ni el PIN ni su hash lleguen nunca a la traza. Sube la
+    /// versión como toda escritura: un segundo clic con la versión vieja da 412 y no genera dos PIN sin que la pantalla se entere. Sin
+    /// guarda de estado: es acceso para leer, no edición del caso, así que vale también cerrado.</summary>
+    public void RecordPinReissued(Guid actorMemberId, DateTimeOffset now)
+    {
+        if (!IsAnonymous)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.PinNotAnonymous, "Only an anonymous ticket gets a new PIN from the console.");
+        }
+
+        AddEvent(SupportTicketEventKind.PinReissued, actorMemberId, now, new { });
+    }
+
     /// <summary>El tope de la prórroga si hoy se puede prorrogar (el término inicial), o null si alguna guarda de
     /// <see cref="Extend"/> la rechaza: la pantalla muestra u oculta «Prorrogar» sin repetir las reglas.</summary>
     public int? MaxExtensionBusinessDays(DateOnly today) =>

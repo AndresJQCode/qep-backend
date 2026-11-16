@@ -5610,6 +5610,26 @@ default 0`, `extension_reason varchar(1000)`, `extended_at timestamptz`, el CHEC
   término menor, la prórroga se conserva y el total puede pasar del doble del término nuevo. Es lo decidido: no lo «arregles»
   recortando la prórroga.
 
+#### PIN nuevo de un ticket anónimo
+
+Spec `docs/superpowers/specs/2026-11-16-support-anonymous-pin-reissue-design.md`. Un anónimo no tiene correo ni hilo, así que
+«Reenviar PIN» del portal nunca le manda nada; si perdió el PIN o quedó bloqueado, el asesor le genera uno nuevo desde la consola.
+
+| Método y ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `POST /tickets/{ticketId}/pin` (`If-Match`) | `support.ticket.manage` | — | `SupportTicketDetailDto` con `issuedPin` y `consultUrl`; 403, 404, 412, `422 support.ticket.pin_not_anonymous`, 428 |
+
+- Sólo anónimos: un ticket con solicitante o cliente usa el reenvío público. Vale en cualquier estado, cerrado incluido.
+- **Desbloquea** la consulta: pone en cero los fallos y quita el bloqueo (el reenvío público sigue sin desbloquear). El PIN viejo deja
+  de servir.
+- Sube la `version`, suma el evento `PinReissued` (sólo el actor) y audita `support.ticket.pin_reissued` con el campo `pinIssuedAt`.
+  El PIN nunca va a la traza, a la auditoría ni a un log.
+- `consultUrl` (`string?`, último campo del detalle) es el enlace de la página de consulta del radicado. Viaja **sólo** junto con
+  `issuedPin`: en este `200` y en el `201` del alta manual anónima. En toda otra lectura los dos son `null`.
+- **Migración:** `Support` `AddSupportPinReissuedEventKind`, que sólo agrega `PinReissued` a `CK_ticket_events_kind`. Durante el
+  rollout un pod viejo no lee `PinReissued` (EF hace `Enum.Parse`) y el detalle de ese ticket le da `500`, como con `Extended`: nadie
+  genera un PIN nuevo hasta que no quede un pod viejo.
+
 ### API externa
 
 Un sistema del tenant (un ERP, una tienda) envía plantillas de WhatsApp con una **clave de API** en lugar de una sesión. Las claves las crea

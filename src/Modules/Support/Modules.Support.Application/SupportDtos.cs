@@ -113,7 +113,9 @@ public sealed record SupportTicketListItemDto(
 /// <summary>El detalle del ticket. <c>AllowedTransitions</c> sale de la máquina de estados del dominio: el selector de estado no la
 /// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones. <c>IssuedPin</c> (fase 4a, plan G3) trae el PIN de consulta sólo
 /// en el <c>201</c> del alta manual anónima, para que el asesor se lo dicte a quien llamó o vino en persona: ese ticket no tiene a dónde
-/// recibirlo. En toda otra respuesta es <c>null</c>.</summary>
+/// recibirlo, y en el <c>200</c> de <c>POST …/tickets/{id}/pin</c> (spec 2026-11-16), el PIN nuevo de un anónimo. <c>ConsultUrl</c>
+/// (spec 2026-11-16, P-6) viaja sólo junto con <c>IssuedPin</c>: el enlace de la página de consulta de ese radicado, para el mismo
+/// diálogo de entrega. En toda otra respuesta los dos son <c>null</c>.</summary>
 public sealed record SupportTicketDetailDto(
     Guid Id,
     string Number,
@@ -145,7 +147,8 @@ public sealed record SupportTicketDetailDto(
     SupportConsultAccessDto? ConsultAccess,
     IReadOnlyList<SupportAttachmentDto> Attachments,
     IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances,
-    string? IssuedPin);
+    string? IssuedPin,
+    string? ConsultUrl = null);
 
 /// <summary>
 /// One legal acceptance of a public filing (spec 2026-11-15 §7, plan L19), in the order <c>PrivacyNotice</c>, <c>AnonymousNotice</c>,
