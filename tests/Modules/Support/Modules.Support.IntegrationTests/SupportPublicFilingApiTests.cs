@@ -291,9 +291,12 @@ public sealed class SupportPublicFilingApiTests(SupportPublicLoggedHost host) : 
             NamedBody(rig.TypeId, rig.CityId, Email()),
             AnonymousBody(rig.TypeId),
         };
+        // Each body from its own visitor IP: five POSTs from one IP are exactly the SupportPublicSubmit quota, and one more filing in
+        // this test would turn into a 429 that hides the 422.
         foreach (var body in rejected)
         {
-            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await PostJsonAsync(rig.Client, rig.TicketsUrl, body)).StatusCode);
+            using var client = VisitorClient(rig.Factory, NextIp());
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await PostJsonAsync(client, rig.TicketsUrl, body)).StatusCode);
         }
 
         Assert.Equal(0L, await CountAsync(rig, "SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant"));
