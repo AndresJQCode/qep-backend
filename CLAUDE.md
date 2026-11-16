@@ -1146,6 +1146,42 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `attachments_busy` del formulario (revisión del Bloque B). No uses `uuid_extract_version`: exige Postgres 17+ y la versión de
   producción no está probada en el repo. Completar o radicar con un `uploadKey` que no es v4 es `support.public.attachment_invalid`
   (`SupportPublicUploads.IsKey`). Si la clave pierde el v8, un miembro que abre subidas sin adjuntarlas deja al formulario sin adjuntos.
+- **La respuesta formal se genera una sola vez** (fase 4b, H7). El PDF se guarda antes de la fila `Pending` y una respuesta retomada
+  manda el **guardado** (`ticket_reply_documents` y su `DocumentClientId`), nunca vuelve a llamar al generador. `ticket_reply_documents`
+  es prueba legal: sólo se inserta (su único borrado es la cascada de una respuesta que nunca salió) y el `Down` de
+  `AddSupportReplyDocuments` no se corre. Nada bajo `support/` en R2 lleva regla de ciclo de vida. Un error después del commit no borra
+  el PDF: `SendTicketReply` relee la fila por `clientId` antes de descartarlo.
+- **`Support:Pdf:ApiKey` es una clave propia de `qcode-pdf`, nunca `Quotations:Pdf:ApiKey`**, y es obligatoria en `Production` (sin
+  ella el pod no arranca). `qcode-pdf` identifica al cliente por el hash de la clave.
+- **Firma la respuesta formal el responsable del ticket, no quien envía** (owner 2026-11-16, Q-7). Sin responsable, `422
+  support.reply.formal_signer_required`. `ticket_reply_documents.signer_member_id` está en `SupportUserReferenceProbe`: un usuario que
+  firmó una respuesta formal no se borra.
+- **Toda transición a Resuelto pide la encuesta en el dominio** (`SupportTicket.ChangeStatus`, H15): un camino nuevo a Resuelto la
+  recibe gratis; uno que se salte `ChangeStatus` (SQL crudo) deja esa resolución sin encuesta. Un cambio de la encuesta **nunca sube la
+  versión del ticket** (un 412 al asesor que lo tiene abierto), pero sí avisa por el hub.
+- **El reclamo de una encuesta cubre un envío, no el lote** (revisión del bloque C). `SupportSurveySender.ProcessAsync` renueva
+  `locked_until` justo antes de mandar y sólo si sigue siendo el valor que puso su lote (`RenewClaimAsync`, comparado a microsegundos);
+  si otro worker la volvió a reclamar, la deja. Una excepción inesperada pasa la encuesta a su reintento (`send_failed`, 1/5/15 minutos y
+  `Failed`); sin eso volvería a lanzar cada vez que vence el reclamo. No subas el lote (`SurveyBatchSize`, 5) para «ir más rápido».
+- **No hay encuesta por Instagram** (owner 2026-11-16, Q-2): un ticket de Instagram recibe el enlace por correo si tiene correo, si no
+  sólo la página de consulta. Un camino nuevo que mande la encuesta por el hilo de Instagram contradice la decisión.
+- **`SupportSurveyFeed` y `SupportAutoCloseFeed` leen `messaging.messages` por nombre** (`reply_to_message_id`, `kind`, `text`,
+  `direction`, `imported`, `occurred_at`), y el segundo también `support.ticket_messages.state`. Renombrar una columna compila y deja la
+  encuesta sin respuestas o el cierre automático cerrando antes de tiempo, sin error. Los amarra `SupportBootstrapperAdaptersTests`.
+  `CustomerDeletionReferences` suelta los cuatro ids de mensaje de `ticket_surveys` (`message_id`, `rating_message_id`,
+  `comment_message_id`, `prompt_message_id`): una columna nueva con un id de mensaje en `support.*` entra ahí.
+- **Los botones de la encuesta son fijos (`Buena`, `Regular`, `Mala`) y viven en dos copias** (`SupportSurveyRatings` y
+  `SupportSurveyTemplateDefinition.ButtonLabels`), amarradas por `SupportSurveyParityTests`. Un toque cuenta sólo para la encuesta que
+  cita (`reply_to_message_id` = su `message_id`) y sólo mientras el ticket sigue en esa resolución.
+- **El mensaje que pide el comentario sale una sola vez por encuesta** (owner 2026-11-16, Q-11), con un `ClientId` fijo
+  (`SupportSurveyPrompt.ClientIdFor`) por el envío de respuestas de Soporte: no es una respuesta del asesor, no toma ni reabre la
+  conversación, y un tick repetido recibe de Mensajería el mismo mensaje. Sin reintento ni recordatorio: un fallo queda en
+  `prompt_failure_code`. No lo «arregles» reintentando.
+- **El token del enlace de calificación viaja en el cuerpo, nunca en una ruta**, y sólo se guarda su SHA-256 (`UX_ticket_surveys_token`).
+  Lo amarra `TheSurveyTokenNeverReachesLogsAuditOrEvents` (host en `Trace`).
+- **El cierre automático cuenta sólo las respuestas del cliente cuyo vínculo es `Linked` o `Pinned` ahora** (owner 2026-11-16, Q-4).
+  Soltar una devuelve la fecha; el toque y el comentario de la encuesta nunca cuentan. `clock.autoCloseOn` se recalcula en cada lectura y
+  el worker (`Noisy`) relee el ticket y cierra con su versión: la réplica que pierde salta el ticket.
 
 ## Verificación
 

@@ -5613,6 +5613,127 @@ default 0`, `extension_reason varchar(1000)`, `extended_at timestamptz`, el CHEC
   término menor, la prórroga se conserva y el total puede pasar del doble del término nuevo. Es lo decidido: no lo «arregles»
   recortando la prórroga.
 
+#### Respuesta formal, encuesta, cierre automático y reportes de Soporte (fase 4b)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-4b-formal-reply-survey-reports-backend.md` (spec §7.5, §8.3, §8.4, §8.5, §9.4 y
+§10). Cuatro piezas: la respuesta formal en PDF, la encuesta de satisfacción de cada resolución, el cierre automático de los tickets
+resueltos y el reporte de Soporte.
+
+| Método y ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `POST /tickets/{ticketId}/replies` (cambia) | `support.ticket.manage` | + `formal: { decision, signerTitle, annexes[] }` | `201`; 422 `support.reply.formal_organization_required`, `formal_signer_required`, `document_render_failed` |
+| `GET /tickets/{ticketId}/reply-options` (cambia) | `support.ticket.view` | — | + `formal` (sugerida, motivo de bloqueo, motivo del hilo, conexiones con la plantilla) |
+| `GET /tickets/{ticketId}/replies/{replyId}/document` | `support.ticket.view` | — | URL firmada de 5 minutos; 404 `support.reply.document_not_found` |
+| `GET` / `PUT /settings` (cambia) | `support.settings.view` / `support.settings.manage` | + `formalNextStep`, `surveyEnabled`, `autoCloseBusinessDays` | + los mismos y el rango del cierre |
+| `POST` / `PUT /settings/ticket-types…` (cambia) | `support.settings.manage` | + `formalNextStep` | + `formalNextStep` |
+| `GET /reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | `support.ticket.view` | — | `SupportReportDto` |
+
+Todas bajo `/api/v1/tenants/{tenantId}/support`. Las públicas, bajo `/api/v1/public/support/{tenantSlug}` (CORS `support-public`, sin
+credenciales, `no-store`, exentas de CSRF por el prefijo, todas con el limitador de la consulta):
+
+| Método y ruta | Cuerpo | Respuesta |
+| --- | --- | --- |
+| `POST /tickets/lookup` (cambia) | como antes | + `survey: { canRate, rating, options }` (null sin resolución); cada respuesta formal trae `documentUrl` (10 minutos) y `documentFileName` |
+| `POST /tickets/rating` | `{ number, pin, turnstileToken, rating, comment }` | lo mismo que la consulta; 422 `support.public.lookup_failed`, `support.survey.closed`, `support.survey.already_answered` |
+| `POST /surveys/lookup` | `{ token }` | `SupportPublicSurveyDto`; 404 `support.survey.not_found` |
+| `POST /surveys/answer` | `{ token, rating, comment }` | `SupportPublicSurveyDto`; 404, 422 `closed` / `already_answered` / `validation.failed` |
+
+**Los ajustes del `PUT /settings` son opcionales, salvo el umbral.** El frontend publicado manda sólo `{ dueSoonBusinessDays }`, así que
+`formalNextStep`, `surveyEnabled` y `autoCloseBusinessDays` ausentes (o `null`) conservan lo guardado; el rango 1–30 del cierre se valida
+sólo si llega. Para borrar el «siguiente paso» se manda vacío (`""`).
+
+**Respuesta formal.** Una respuesta normal con `formal` en el cuerpo, en cualquier tipo y estado (el tipo sólo la *sugiere*, con
+`requiresFormalResponse`). `text` es el mensaje del canal; `formal.decision` (1 a 20 000 caracteres, con saltos de línea) es el análisis y
+la decisión del PDF; `formal.signerTitle` (1 a 120) es el cargo; `formal.annexes`, de 0 a 10 textos de hasta 200, se imprimen como lista.
+`formal` y `uploadId` no van juntos. **Firma el responsable del ticket**, no quien envía: sin responsable, `422
+support.reply.formal_signer_required`. El membrete es la empresa del formulario del ticket o, sin ella, la del formulario vigente; sin
+ninguna, `422 support.reply.formal_organization_required`. El «siguiente paso» (sección 7) es el del tipo o, si no tiene, el del tenant;
+sin los dos, el PDF omite la sección. El PDF se genera (Typst en `qcode-pdf`, `formal-reply.typ`) y se guarda **antes** de la fila de la
+respuesta, en el bucket privado (`support/tenants/{tenantId}/replies/{yyyy}/{MM}/{guid}.pdf`); `support.ticket_reply_documents` guarda
+la foto de lo que salió. Un reintento de una respuesta `Pending` manda el **PDF guardado**, nunca lo vuelve a generar. Por canal: en el
+hilo de WhatsApp, un documento con `text` de pie; en Instagram, el texto y después el archivo; fuera de la ventana de WhatsApp, la
+plantilla «Respuesta formal» con el PDF de encabezado; por correo, adjunto; por la página de consulta, publicado y descargable.
+
+**Plantillas.** Dos tipos nuevos de `MessageTemplateKind`, aprovisionados **por conexión** como «Aviso de respuesta»:
+
+| Plantilla | Tipo y nombre | Aprovisionar | Borrador |
+| --- | --- | --- | --- |
+| Respuesta formal | `SupportFormalReply`, `qep_soporte_formal` (`UTILITY`, encabezado de documento) | `POST …/template-management/support-formal-reply` | `GET …/support-formal-reply/draft` |
+| Encuesta | `SupportSurvey`, `qep_soporte_encuesta` (`UTILITY`, tres botones fijos `Buena`, `Regular`, `Mala`) | `POST …/template-management/support-survey` | `GET …/support-survey/draft` |
+
+Las rutas cuelgan de `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}` y piden `messaging.template.manage`. El tenant
+edita el texto (cuerpo opcional `{ body }`), no los botones: Soporte lee el toque por su texto. Una plantilla aprobada no se edita:
+cambiarla es una versión nueva (`_v2`…) y otra aprobación.
+
+**Encuesta.** Toda transición a Resuelto pide una encuesta de ese ciclo, en el dominio (`ChangeStatus`), aunque el tenant la tenga
+apagada (`surveyEnabled`, apagada por defecto): el worker la salta con `survey_disabled`. Una por `(ticket, número de resolución)`. El
+worker la manda por el canal del ticket: anónimo o por la página de consulta, publicada ahí; conversación de WhatsApp, la plantilla de
+la encuesta (sin plantilla aprobada, sin Mensajería, sin autor o con el contacto bloqueado: «sin encuesta» con el motivo); por correo,
+o un ticket de Instagram con correo, un correo con el enlace de calificación; **nunca por Instagram**. Si el ticket se reabrió antes del
+envío, «sin encuesta» con `ticket_reopened`. `send_failed` y `connection_unavailable` se reintentan a 1, 5 y 15 minutos y después quedan
+`Failed`; una excepción inesperada sigue el mismo camino. El toque de WhatsApp que cita la encuesta la califica; después sale **un**
+mensaje libre que pide el comentario («Gracias. Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.»), sin reintento ni
+recordatorio, y el siguiente texto del cliente dentro de las 24 horas del toque es el comentario. Por el correo, el enlace es
+`{Support:PublicForm:BaseUrl}/{slug}/calificar?token=…`: el token viaja en el cuerpo de la API, nunca en una ruta, y sólo se guarda su
+SHA-256. La página de consulta califica con radicado y PIN, con la misma verificación (y el mismo conteo de intentos) que consultar; un
+anónimo sólo califica por ahí. La encuesta se responde una vez, hasta que el ticket se reabre (también después del cierre automático).
+Un cambio de la encuesta no sube la versión del ticket, pero avisa por el hub.
+
+**Cierre automático.** Un ticket Resuelto se cierra el día después del N-ésimo día hábil (calendario de Soporte) contado desde la
+resolución o desde la última respuesta del cliente que sigue en el expediente (vínculo `Linked` o `Pinned`), lo que sea más tarde.
+`autoCloseBusinessDays` va de 1 a 30, 5 por defecto, y no se apaga. Soltar la respuesta devuelve la fecha; el toque y el comentario de la
+encuesta nunca cuentan. Cierra el sistema: traza sin actor, auditoría de sistema `support.ticket.status_changed` y `TicketClosed` en el
+hilo. El detalle trae `clock.autoCloseOn` mientras está Resuelto, recalculado en cada lectura.
+
+**Reporte.** La población son los tickets cuya **fecha local de radicación** cae en `[from, to]` (las dos obligatorias, hasta 366 días).
+Trae los seis estados, todos los tipos del tenant (activos o no, en su orden) y las tres calificaciones, también en cero. Los totales
+cierran: `onTime + late + withoutTerm = resolved` y `pending + sent + withoutSurvey + failed + disabled = requested`. El tiempo de
+resolución son los días hábiles después de la radicación hasta la última resolución, en bruto (sin descontar pausas).
+
+**Workers** (sección `Support:Workers`, defaults en código; `Support:Workers:Enabled` en `false` los apaga):
+
+| Worker | Clave | Default | Qué hace |
+| --- | --- | --- | --- |
+| `SupportSurveyWorker` | `SurveyIntervalSeconds` | 30 | Sin timbres, cada cuánto mira la cola `support_survey` |
+| | `SurveyBatchSize` | 5 | Encuestas por reclamo; cada una renueva su reclamo de 2 minutos antes de mandarse |
+| | `SurveyCommentWindowHours` | 24 | La ventana del comentario, desde el toque |
+| | `SurveyAnswerLookbackDays` | 14 | Hasta cuándo se buscan toques de una encuesta mandada |
+| `SupportAutoCloseWorker` | `AutoCloseIntervalMinutes` | 15 | Cada cuánto revisa los tickets Resueltos |
+
+**Migraciones:** `Support` `AddSupportFormalNextStep`, `Support` `AddSupportReplyDocuments`, `Messaging`
+`AddSupportFormalAndSurveyTemplateKinds` y `Support` `AddSupportSurveys`. Las cuatro son aditivas.
+
+##### Despliegue (fase 4b)
+
+| Migración | Pods viejos durante el rollout |
+| --- | --- |
+| `AddSupportFormalNextStep` | Ignoran las columnas. |
+| `AddSupportReplyDocuments` | Una respuesta que borra un pod viejo se lleva su documento por la cascada. |
+| `AddSupportFormalAndSurveyTemplateKinds` | Ver abajo: no aprovisionar las plantillas nuevas mientras quede un pod viejo. |
+| `AddSupportSurveys` | Una resolución que hace un pod viejo no pide encuesta (aceptado: no hay relleno al arrancar). |
+
+- **Los tipos nuevos de plantilla se guardan por nombre.** Un pod viejo (o el código de antes, tras un rollback) no conoce
+  `SupportFormalReply` ni `SupportSurvey` en `message_templates.kind`: EF los lee con `Enum.Parse` y falla. En una conexión que ya tenga
+  una de esas plantillas, la gestión de plantillas y el refresco del espejo responden `500` en ese pod. Aprovisiona las plantillas nuevas
+  sólo cuando no quede un pod viejo, y no hagas rollback después de aprovisionarlas: el `Down` de
+  `AddSupportFormalAndSurveyTemplateKinds` **borra esas filas**, y con ellas plantillas ya aprobadas por Meta. Lo mismo vale para
+  cualquier valor nuevo de los enums de Soporte que se guardan por nombre (`SupportTicketEventKind` y los de la encuesta).
+- **`SUPPORT_PDF_API_KEY` y `SUPPORT_PDF_BASE_URL` tienen que existir en `Backend-prod` antes de que esto llegue a `main`.** Sin la
+  clave, `SupportPdfOptionsValidator` (`ValidateOnStart`) no deja arrancar el pod en producción; un `#{…}#` sin resolver cuenta como
+  ausente. Es una clave propia de `qcode-pdf`, nunca la de cotizaciones.
+- **La plantilla del PDF nunca se generó contra el `qcode-pdf` real.** Antes del primer envío en producción, genera a mano y revisa:
+  una decisión larga con saltos de línea; con logo y sin logo; un ticket anónimo («Solicitante anónimo», sin documento ni correo); diez
+  anexos; y textos con `#`, `[`, `*` y `$` (tienen que salir como texto, nunca como marcado de Typst).
+- **El prefijo `support/` del bucket privado de R2 no lleva regla de ciclo de vida:** la respuesta formal es prueba legal y se guarda
+  diez años (spec §13.10). Nunca la pongas bajo `quotations/`, que sí tiene ciclo de vida.
+- **La cola nueva `support_survey`** (pendientes y edad de la más vieja con `attempts = 0`) la publica el muestreador de colas, pero el
+  dashboard y las reglas de alerta viven en `migracion-k8s`: hay que sumarla allá.
+- **Los campos nuevos del `PUT /settings` son opcionales** (ausentes conservan lo guardado): el frontend publicado sigue funcionando
+  sin cambios.
+- **Verificar contra Meta real:** que la plantilla con tres botones de respuesta rápida se acepte sin parámetros de botón y que el
+  toque llegue con `button.text` y `context.id` (V-1); la categoría con que Meta aprueba `qep_soporte_encuesta` (V-2, puede ser
+  `MARKETING`); y que Instagram acepte el PDF como archivo desde la URL firmada de 10 minutos (V-3).
+
 ### API externa
 
 Un sistema del tenant (un ERP, una tienda) envía plantillas de WhatsApp con una **clave de API** en lugar de una sesión. Las claves las crea
