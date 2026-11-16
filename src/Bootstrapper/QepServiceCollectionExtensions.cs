@@ -943,6 +943,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<SendOrderCommand, OrderDetailDto>,
             SendOrderHandler>();
+        // «Descargar PDF» del pedido: el mismo documento del envío, como enlace firmado.
+        services.AddScoped<
+            ICommandHandler<ExportOrderPdfCommand, OrderPdfExportDto>,
+            ExportOrderPdfHandler>();
         services.AddScoped<
             ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>,
             ConvertQuotationToOrderHandler>();

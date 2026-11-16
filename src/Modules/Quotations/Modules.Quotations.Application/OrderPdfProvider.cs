@@ -16,11 +16,11 @@ public interface IOrderPdfProvider
 }
 
 /// <summary>
-/// A diferencia de <see cref="QuotationPdfProvider"/>, **no cachea**: genera en cada envío. El caché de
-/// la cotización es una tabla (<c>quotations.quotation_pdfs</c>) invalidada por <c>Quotation.Version</c>;
-/// el del pedido pediría una migración y la misma invalidación por <c>Order.Version</c>, y enviar un
-/// pedido es raro —no hay "Descargar PDF" del pedido—, así que la llamada a <c>qcode-pdf</c> que se
-/// ahorraría no paga esa maquinaria. Si el pedido llega a exportarse, ahí sí conviene.
+/// A diferencia de <see cref="QuotationPdfProvider"/>, **no cachea**: genera en cada envío y en cada
+/// «Descargar PDF» (<see cref="ExportOrderPdfHandler"/>, spec 2026-11-16). El caché de la cotización es
+/// una tabla (<c>quotations.quotation_pdfs</c>) invalidada por <c>Quotation.Version</c>; el del pedido
+/// pediría una migración y la misma invalidación por <c>Order.Version</c>. Mientras una descarga por
+/// clic no se note en latencia ni en costo de <c>qcode-pdf</c>, esa maquinaria no se paga.
 /// </summary>
 public sealed class OrderPdfProvider(
     IQuotationPdfRenderer renderer,
