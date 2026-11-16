@@ -15,6 +15,11 @@ public interface IOrderResponseComposer
     /// <see cref="OrderResponses.ToResponse"/> directo porque el desglose de retenciones necesita el calendario del tenant
     /// (spec retenciones por UVT §5.2).</summary>
     Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken);
+
+    /// <summary>La vista previa de la conversión (spec alerta UVT §5.3). Su desglose pasa por el mismo contexto de UVT que
+    /// el del pedido, con la fecha con que se armó, para que diga lo mismo que dirá el pedido ya creado.</summary>
+    Task<QuotationConversionPreviewResponse> ComposeConversionPreviewAsync(
+        Guid tenantId, QuotationConversionPreviewDto preview, CancellationToken cancellationToken);
 }
 
 public sealed class OrderResponseComposer(
@@ -100,9 +105,22 @@ public sealed class OrderResponseComposer(
     public async Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(order);
-        var documentYear = await QuotationResponseComposer.DocumentYearAsync(
-            tenantClock, tenantId, order.CreatedAt, order.WithholdingBreakdown, cancellationToken);
-        return OrderResponses.ToResponse(order, documentYear);
+        var taxUnits = await QuotationResponseComposer.TaxUnitContextAsync(
+            tenantClock, withholdingLookup, tenantId, order.CreatedAt, order.WithholdingBreakdown, cancellationToken);
+        return OrderResponses.ToResponse(order, taxUnits);
+    }
+
+    public async Task<QuotationConversionPreviewResponse> ComposeConversionPreviewAsync(
+        Guid tenantId, QuotationConversionPreviewDto preview, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        var taxUnits = await QuotationResponseComposer.TaxUnitContextAsync(
+            tenantClock, withholdingLookup, tenantId, preview.CreatedAt, preview.WithholdingBreakdown, cancellationToken);
+        return new QuotationConversionPreviewResponse(
+            preview.RetentionAmount,
+            preview.NetTotal,
+            QuotationResponseComposer.ToBreakdownResponse(preview.WithholdingBreakdown, taxUnits),
+            preview.TaxUnitChange);
     }
 }
 
@@ -110,10 +128,10 @@ public sealed class OrderResponseComposer(
 /// compositor del detalle.</summary>
 public static class OrderResponses
 {
-    /// <param name="documentYear">El año local del pedido, para decir si la UVT del desglose está desactualizada; null si
-    /// ninguna fila trae año. Lo resuelve <see cref="IOrderResponseComposer.ComposeOrderAsync"/> con el calendario del
-    /// tenant.</param>
-    public static OrderResponse ToResponse(OrderDto order, int? documentYear)
+    /// <param name="context">El año local del pedido y el último año de UVT cargado por país, para decir si la UVT del
+    /// desglose está desactualizada y cuál tomaría (spec alerta UVT §5.4). Lo resuelve
+    /// <see cref="IOrderResponseComposer.ComposeOrderAsync"/> con el calendario del tenant y Catalog.</param>
+    internal static OrderResponse ToResponse(OrderDto order, TaxUnitContext context)
     {
         ArgumentNullException.ThrowIfNull(order);
         return new OrderResponse(
@@ -182,6 +200,6 @@ public static class OrderResponses
             order.ArchivedBy,
             order.Balance,
             order.BuyerNotes,
-            QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, documentYear));
+            QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, context));
     }
 }

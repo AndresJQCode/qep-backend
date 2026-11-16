@@ -207,6 +207,10 @@ public sealed record WithholdingVerdictDto(
 /// </summary>
 /// <param name="TaxUnitOutdated">Si la UVT congelada es de un año anterior al del documento (su <c>CreatedAt</c> en la
 /// zona del tenant). False con <c>TaxUnitYear</c> null.</param>
+/// <param name="TaxUnitLatestYear">El año de la UVT que hoy tomaría la fila si se refrescara: la que Catalog da para su país
+/// con la fecha del documento (spec alerta UVT §5.4). Null sin base en unidades o sin ningún valor cargado para el país. Va
+/// aparte de <c>TaxUnitOutdated</c> para que la pantalla distinga «falta cargar la UVT» de «ya está cargada y se aplicará
+/// al guardar» sin calcular nada.</param>
 public sealed record WithholdingBreakdownResponse(
     Guid TaxRateId,
     string Name,
@@ -225,6 +229,7 @@ public sealed record WithholdingBreakdownResponse(
     decimal? TaxUnitValue,
     int? TaxUnitYear,
     bool TaxUnitOutdated,
+    int? TaxUnitLatestYear,
     decimal Amount);
 
 /// <summary>

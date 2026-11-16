@@ -907,6 +907,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetOrderQuery, OrderDetailDto>,
             GetOrderHandler>();
         services.AddScoped<
+            IQueryHandler<PreviewQuotationConversionQuery, QuotationConversionPreviewDto>,
+            PreviewQuotationConversionHandler>();
+        services.AddScoped<
             IQueryHandler<ListOrdersQuery, OrderPage>,
             ListOrdersHandler>();
         services.AddScoped<
