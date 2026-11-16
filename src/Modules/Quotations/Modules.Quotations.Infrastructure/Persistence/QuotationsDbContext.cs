@@ -729,6 +729,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // D9 (spec 2026-11-10): la nota que escribió el comprador en el checkout; Notes es la del asesor.
         order.Property(value => value.BuyerNotes).HasColumnName("buyer_notes").HasColumnType("text");
         order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
+        // Spec 2026-11-16 §6: «Fecha del pedido», un día sin hora (date) del calendario del tenant.
+        order.Property(value => value.OrderDate).HasColumnName("order_date");
         order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
@@ -796,6 +798,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // tenant.
         order.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.OrderNumber })
             .HasDatabaseName("IX_orders_tenant_converted_at_number");
+        // Spec 2026-11-16 §5 y §6: el orden nuevo de la lista y del cursor de la exportación (fecha del pedido, después
+        // la conversión y el número como desempate). El índice de arriba se queda: lo usa la ventana de sincronización.
+        order.HasIndex(value => new { value.TenantId, value.OrderDate, value.ConvertedAt, value.OrderNumber })
+            .HasDatabaseName("IX_orders_tenant_order_date_converted_at_number");
         // El período del reporte de margen (spec costo de producto §6.3) filtra por paid_at detrás del tenant.
         order.HasIndex(value => new { value.TenantId, value.PaidAt }).HasDatabaseName("IX_orders_tenant_paid_at");
 

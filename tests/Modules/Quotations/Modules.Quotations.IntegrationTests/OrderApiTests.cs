@@ -97,11 +97,11 @@ public abstract class OrderApiTests
                 id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at,
                 converted_by, paid_marked_at, paid_marked_by, ritual_collection_sync_id, created_at, updated_at, version,
                 client_id, advisor_id, currency, billing_company_id, billing_bank_name, billing_account_number,
-                billing_account_currency)
+                billing_account_currency, order_date)
             VALUES (
                 @id, @tenantId, 'LEGADO-0001', @quotationId, 'Open', 'PaymentPending', NULL, now(),
                 @convertedBy, NULL, NULL, NULL, now(), now(), 1,
-                @clientId, @convertedBy, 'COP', @companyId, 'Bancolombia', '7542', 'COP')
+                @clientId, @convertedBy, 'COP', @companyId, 'Bancolombia', '7542', 'COP', current_date)
             """,
             connection);
         command.Parameters.AddWithValue("id", Guid.CreateVersion7());

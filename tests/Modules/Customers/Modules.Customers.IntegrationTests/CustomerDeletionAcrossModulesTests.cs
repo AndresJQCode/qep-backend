@@ -959,9 +959,9 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                     """
                     INSERT INTO quotations.orders (id, tenant_id, order_number, status, payment_status, converted_at, converted_by, created_at,
                         updated_at, version, client_id, advisor_id, currency, billing_company_id, billing_bank_name, billing_account_number,
-                        billing_account_currency, source)
+                        billing_account_currency, source, order_date)
                     VALUES (gen_random_uuid(), @tenant, 'PED-' || @suffix, 'Cancelled', 'PaymentPending', now(), @member, now(), now(), 1,
-                        @customer, @member, 'COP', @member, 'Banco', '123', 'COP', 'Manual');
+                        @customer, @member, 'COP', @member, 'Banco', '123', 'COP', 'Manual', current_date);
                     """,
                     ("tenant", tenant), ("customer", customer), ("member", member), ("suffix", suffix));
                 break;
