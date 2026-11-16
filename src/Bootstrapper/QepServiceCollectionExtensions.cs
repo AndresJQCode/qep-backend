@@ -2211,140 +2211,200 @@ public static class QepServiceCollectionExtensions
             "Permite consultar la configuración del tenant.",
             "Tenancy",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.settings", "Configuración", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsUpdate,
             "Actualizar configuración",
             "Permite modificar la configuración del tenant.",
             "Tenancy",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.settings", "Configuración", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipInvite,
             "Invitar miembros",
             "Permite invitar usuarios al tenant.",
             "Tenancy",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.members", "Miembros", "invite"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipRead,
             "Leer miembros",
             "Permite consultar membresías y catálogo de roles/permisos.",
             "Tenancy",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.members", "Miembros", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipManage,
             "Gestionar miembros",
             "Permite suspender, remover y cambiar los roles que tiene un miembro.",
             "Tenancy",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.members", "Miembros", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipRolesManage,
             "Definir roles",
             "Permite crear roles propios y elegir que permisos concede cada uno.",
             "Tenancy",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.roles", "Roles", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileUpload,
             "Subir archivos",
             "Permite crear sesiones de carga y completar uploads.",
             "Storage",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("storage.file", "Archivos", "upload"),
+        });
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileRead,
             "Leer archivos",
             "Permite solicitar URLs de descarga.",
             "Storage",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("storage.file", "Archivos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileDelete,
             "Eliminar archivos",
             "Permite marcar archivos como eliminados.",
             "Storage",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("storage.file", "Archivos", "delete"),
+        });
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FilePublish,
             "Publicar imágenes",
             "Permite publicar y despublicar imágenes y sus variantes.",
             "Storage",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("storage.file", "Archivos", "publish"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductRead,
             "Leer productos",
             "Permite consultar el catálogo de productos del tenant.",
             "Catalog",
             "low",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.product", "Productos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductManage,
             "Gestionar productos",
             "Permite crear, editar e inactivar productos.",
             "Catalog",
             "medium",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.product", "Productos", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.TaxRateRead,
             "Leer tasas de impuesto",
             "Permite consultar las tasas de impuesto del tenant.",
             "Catalog",
             "low",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.tax_rate", "Tasas de impuesto", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.TaxRateManage,
             "Gestionar tasas de impuesto",
             "Permite crear, editar e inactivar tasas de impuesto.",
             "Catalog",
             "high",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.tax_rate", "Tasas de impuesto", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductCostRead,
             "Ver costos de productos",
             "Permite ver el costo unitario de las variantes.",
             "Catalog",
             "medium",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.product_cost", "Costos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductCostManage,
             "Gestionar costos de productos",
             "Permite escribir y borrar el costo unitario de las variantes.",
             "Catalog",
             "medium",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.product_cost", "Costos", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyRead,
             "Leer empresas",
             "Permite consultar las empresas del tenant.",
             "Companies",
             "low",
-            RequiredModules: [ModuleKeys.Companies]));
+            RequiredModules: [ModuleKeys.Companies])
+        {
+            Shape = new("companies.company", "Empresas", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyManage,
             "Gestionar empresas",
             "Permite crear, editar, inactivar y reactivar empresas.",
             "Companies",
             "medium",
-            RequiredModules: [ModuleKeys.Companies]));
+            RequiredModules: [ModuleKeys.Companies])
+        {
+            Shape = new("companies.company", "Empresas", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerRead,
             "Leer clientes",
             "Permite consultar el listado y el detalle de los clientes del tenant.",
             "Customers",
             "low",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerManage,
             "Gestionar clientes",
             "Permite crear, editar, inactivar y reactivar clientes.",
             "Customers",
             "medium",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerImport,
             "Importar clientes",
@@ -2354,84 +2414,120 @@ public static class QepServiceCollectionExtensions
             // de una sola vez, y el gate CLI-00 todavia tiene abierta la politica de retencion de
             // PII. Separado de manage justamente para poder darlo a menos gente.
             "high",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "import"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerMerge,
             "Fusionar clientes",
             "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
             "Customers",
             "high",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "merge"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerDelete,
             "Borrar clientes",
             "Permite borrar clientes de forma definitiva. No se puede deshacer.",
             "Customers",
             "high",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "delete"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.DataConsentRevoke,
             "Revocar autorización de datos",
             "Permite registrar que un cliente revocó su autorización de tratamiento de datos personales.",
             "Customers",
             "high",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.data_consent", "Autorización de datos", "revoke"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.ClassificationRead,
             "Leer clasificaciones de clientes",
             "Permite consultar el catalogo de clasificaciones de clientes del tenant.",
             "Customers",
             "low",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.classification", "Clasificaciones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.ClassificationManage,
             "Gestionar clasificaciones de clientes",
             "Permite crear, editar, inactivar, reactivar y eliminar clasificaciones de clientes.",
             "Customers",
             "medium",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.classification", "Clasificaciones", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.TagManage,
             "Gestionar etiquetas de clientes",
             "Permite renombrar, cambiar de color y eliminar etiquetas de clientes. Crearlas y asignarlas es de quien gestiona clientes.",
             "Customers",
             "medium",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.tag", "Etiquetas", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.NoteModerate,
             "Moderar notas de clientes",
             "Permite eliminar las notas internas que escribió otra persona.",
             "Customers",
             "medium",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.note", "Notas", "moderate"),
+        });
         services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationRead,
             "Leer cotizaciones",
             "Permite consultar el listado y el detalle de las cotizaciones del tenant.",
             "Quotations",
             "low",
-            RequiredModules: [ModuleKeys.Quotations]));
+            RequiredModules: [ModuleKeys.Quotations])
+        {
+            Shape = new("quotations.quotation", "Cotizaciones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationManage,
             "Gestionar cotizaciones",
             "Permite crear y editar cotizaciones en borrador, incluidas sus lineas de producto.",
             "Quotations",
             "medium",
-            RequiredModules: [ModuleKeys.Quotations]));
+            RequiredModules: [ModuleKeys.Quotations])
+        {
+            Shape = new("quotations.quotation", "Cotizaciones", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderRead,
             "Leer pedidos",
             "Permite consultar el pedido convertido de una cotización.",
             "Quotations",
             "low",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderManage,
             "Gestionar pedidos",
             "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
             "Quotations",
             "medium",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "manage"),
+        });
         // Aparte de OrderManage: quien carga los comprobantes (el asesor) no es quien verifica la plata.
         // Spec 2026-11-10 §7: la constante y el valor siguen; cambia lo que significa y su nombre visible.
         services.AddSingleton(new PermissionDefinition(
@@ -2440,7 +2536,10 @@ public static class QepServiceCollectionExtensions
             "Permite marcar un pedido como pagado, deshacerlo y quitar comprobantes de un pedido pagado.",
             "Quotations",
             "medium",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "mark_paid"),
+        });
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
         // persona ya registró (spec 2026-11-10: abierto, sin preparar ni facturar).
         services.AddSingleton(new PermissionDefinition(
@@ -2449,7 +2548,10 @@ public static class QepServiceCollectionExtensions
             "Permite anular un pedido abierto que no esté preparado ni facturado, con un motivo obligatorio.",
             "Quotations",
             "high",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "void"),
+        });
         // Medium, igual que marcar pagado: sólo cambia la marca del pedido, no emite ni anula nada fuera
         // de QEP (spec 2026-10-05). Exigir el pago antes es el ajuste RequireFullPaymentToInvoice (spec 2026-11-10).
         services.AddSingleton(new PermissionDefinition(
@@ -2458,21 +2560,30 @@ public static class QepServiceCollectionExtensions
             "Permite marcar un pedido como facturado y revertir esa marca. Si antes debe estar pagado lo decide el ajuste del pedido de cada tenant.",
             "Quotations",
             "medium",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "invoice"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.OrdersRead,
             "Reporte de pedidos",
             "Permite consultar y exportar el reporte de pedidos convertidos del tenant.",
             "Reporting",
             "low",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Orders])
+        {
+            Shape = new("reporting.orders", "Pedidos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.QuotationRead,
             "Reporte de cotizaciones",
             "Permite consultar y exportar el reporte de cotizaciones del tenant.",
             "Reporting",
             "low",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Quotations]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Quotations])
+        {
+            Shape = new("reporting.quotation", "Cotizaciones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.PriceChangeRead,
             "Reporte de cambios de precio",
@@ -2481,14 +2592,20 @@ public static class QepServiceCollectionExtensions
             // Medio y no bajo: el historico completo de precios de un catalogo es el margen del
             // negocio visto de costado, y por eso queda solo en admin.
             "medium",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog])
+        {
+            Shape = new("reporting.price_change", "Cambios de precio", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.CustomerRead,
             "Reporte de clientes",
             "Permite consultar y exportar el padron de clientes (Clientes CUC) del tenant.",
             "Reporting",
             "low",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Customers])
+        {
+            Shape = new("reporting.customer", "Clientes", "read"),
+        });
         // Medio y no bajo, mismo criterio que PriceChangeRead: es la venta de cada asesor vista
         // por otro. No abre ningún reporte por sí solo; amplía el alcance de los de pedidos y
         // cotizaciones, que sin él muestran sólo lo de quien consulta. Spec 2026-10-07: exige sólo
@@ -2499,14 +2616,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver en los reportes de pedidos y cotizaciones los datos de todos los asesores, no sólo los propios.",
             "Reporting",
             "medium",
-            RequiredModules: [ModuleKeys.Reporting]));
+            RequiredModules: [ModuleKeys.Reporting])
+        {
+            Shape = new("reporting.all_advisors", "Datos de todos los asesores", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.MarginRead,
             "Reporte de margen",
             "Permite consultar ventas netas, costo y margen bruto por producto.",
             "Reporting",
             "medium",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog])
+        {
+            Shape = new("reporting.margin", "Margen", "read"),
+        });
         // "high" las dos: el log arrastra la traza y el mensaje crudo de cualquier modulo --lo
         // que un 500 lleve adentro-- y el purgado borra en lote y no se deshace.
         services.AddSingleton(new PermissionDefinition(
@@ -2515,63 +2638,90 @@ public static class QepServiceCollectionExtensions
             "Permite consultar los POST, PUT, PATCH y DELETE que fallaron, con su error completo.",
             "Platform",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("platform.request_log", "Log de la aplicación", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PlatformPermissions.RequestLogPurge,
             "Purgar el log de la aplicacion",
             "Permite borrar del log lo anterior a la ultima semana.",
             "Platform",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("platform.request_log", "Log de la aplicación", "purge"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleRead,
             "Ver ventas y cierres de caja",
             "Permite consultar las ventas del punto de venta y los cierres de caja propios.",
             "Pos",
             "low",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.sale", "Ventas", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleCreate,
             "Vender en caja",
             "Permite registrar ventas en el punto de venta con la caja propia abierta.",
             "Pos",
             "medium",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.sale", "Ventas", "create"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleCustomer,
             "Elegir o crear el cliente de una venta",
             "Permite buscar el cliente de una venta del punto de venta o darlo de alta rápida.",
             "Pos",
             "medium",
-            RequiredModules: [ModuleKeys.Pos, ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Pos, ModuleKeys.Customers])
+        {
+            Shape = new("pos.sale", "Ventas", "customer"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleDiscount,
             "Dar descuentos en caja",
             "Permite dar descuentos por línea y cobrar ventas en $0 en el punto de venta.",
             "Pos",
             "high",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.sale", "Ventas", "discount"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleVoid,
             "Anular ventas de caja",
             "Permite anular, con un motivo, una venta cuya caja sigue abierta.",
             "Pos",
             "high",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.sale", "Ventas", "void"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.RegisterOperate,
             "Abrir y cerrar su caja",
             "Permite abrir y cerrar la caja propia del punto de venta.",
             "Pos",
             "medium",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.register", "Cajas", "operate"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.RegisterRead,
             "Ver todas las cajas y ventas",
             "Permite consultar las cajas y las ventas de todos los cajeros del tenant.",
             "Pos",
             "medium",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.register", "Cajas", "read"),
+        });
         // Spec 2026-10-08 §2: categoría "Operator" (no "Platform", que es la del log de fallas) y
         // núcleo, para que el enmascarado por módulos no las toque.
         services.AddSingleton(new PermissionDefinition(
@@ -2580,21 +2730,30 @@ public static class QepServiceCollectionExtensions
             "Permite listar los tenants, ver sus módulos y su historial.",
             "Operator",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.tenants", "Tenants", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             OperatorPermissions.ModulesManage,
             "Gestionar módulos de los tenants",
             "Permite activar o desactivar los módulos de cualquier tenant.",
             "Operator",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.modules", "Módulos de los tenants", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             OperatorPermissions.TenantsManage,
             "Activar o inactivar tenants",
             "Permite inactivar un tenant, lo que corta el acceso de toda la empresa, o reactivarlo.",
             "Operator",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.tenants", "Tenants", "manage"),
+        });
         // Spec 2026-10-26 §6: misma categoría y núcleo. Gestionar es "high": un sinónimo corrige pedidos y clientes de todos los
         // tenants.
         services.AddSingleton(new PermissionDefinition(
@@ -2603,14 +2762,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver la bandeja de ciudades sin resolver, los sinónimos y lo que cambiaría al confirmarlos.",
             "Operator",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.cities", "Ciudades", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             GeographyOperatorPermissions.CitiesManage,
             "Gestionar sinónimos de ciudades",
             "Permite confirmar, descartar, corregir y borrar sinónimos de ciudades, que corrigen pedidos y clientes de todos los tenants.",
             "Operator",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.cities", "Ciudades", "manage"),
+        });
         // Spec 2026-11-10: la unidad tributaria. Cargar un valor mueve el umbral de las retenciones de todos los tenants: "high".
         services.AddSingleton(new PermissionDefinition(
             CatalogOperatorPermissions.TaxUnitsRead,
@@ -2618,14 +2783,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver el valor de la unidad tributaria (UVT) cargado por país y año.",
             "Operator",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.tax_units", "Unidad tributaria", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogOperatorPermissions.TaxUnitsManage,
             "Gestionar la unidad tributaria",
             "Permite cargar y corregir el valor de la unidad tributaria de un año, que fija desde qué base se retiene en todos los tenants.",
             "Operator",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.tax_units", "Unidad tributaria", "manage"),
+        });
         // Reporte de uso: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
         services.AddSingleton(new PermissionDefinition(
             OperatorPermissions.UsageRead,
@@ -2633,7 +2804,10 @@ public static class QepServiceCollectionExtensions
             "Permite ver cuántas conversaciones tiene cada tenant, los registros nuevos y quién está conectado.",
             "Operator",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.usage", "Uso de la plataforma", "read"),
+        });
 
         // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
         // las toque. Gestionar es "high": cambia las credenciales con las que la empresa le habla a sus
@@ -2644,14 +2818,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver las conexiones del tenant con plataformas externas, sin sus credenciales.",
             "Integrations",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("integrations.connection", "Conexiones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             IntegrationsPermissions.ConnectionManage,
             "Gestionar integraciones",
             "Permite conectar, probar, pausar, reanudar y eliminar conexiones con plataformas externas y cambiar sus credenciales.",
             "Integrations",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("integrations.connection", "Conexiones", "manage"),
+        });
         // Spec 2026-10-09 §6.3: categoría "Messaging" y núcleo (RequiredModules vacío), para que el
         // enmascarado por módulos no las toque y el 403 con módulo apagado salga con su código.
         services.AddSingleton(new PermissionDefinition(
@@ -2660,14 +2840,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver las conversaciones de WhatsApp del tenant, su hilo y sus archivos.",
             "Messaging",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.conversation", "Conversaciones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.ConversationManage,
             "Responder en la bandeja de WhatsApp",
             "Permite responder mensajes, marcarlos como leídos y resolver o reabrir conversaciones.",
             "Messaging",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.conversation", "Conversaciones", "reply"),
+        });
         // Spec 2026-10-11 §6.4: núcleo como las otras dos de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.CampaignManage,
@@ -2675,7 +2861,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, programar, lanzar y cancelar campañas de plantillas de WhatsApp a etiquetas o clientes; cada mensaje tiene costo.",
             "Messaging",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.campaign", "Campañas", "manage"),
+        });
         // Spec 2026-10-12 §3.5: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.QuickReplyManage,
@@ -2683,7 +2872,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar y borrar los textos guardados que los asesores insertan en la bandeja de WhatsApp.",
             "Messaging",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.quick_reply", "Respuestas rápidas", "manage"),
+        });
         // Spec 2026-10-15 §3.7: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.ResolutionReasonManage,
@@ -2691,7 +2883,10 @@ public static class QepServiceCollectionExtensions
             "Permite renombrar y archivar los motivos con los que se resuelven las conversaciones de la bandeja.",
             "Messaging",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.resolution_reason", "Motivos de resolución", "manage"),
+        });
         // Spec 2026-10-21 D-H8: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.BusinessHoursManage,
@@ -2699,7 +2894,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar, duplicar y asignar los horarios de atención de los números de la bandeja.",
             "Messaging",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.business_hours", "Horarios de atención", "manage"),
+        });
         // Spec 2026-10-14 §4.6: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.TemplateManage,
@@ -2707,7 +2905,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, sincronizar y borrar las plantillas de WhatsApp de una conexión y aprovisionar la plantilla de cotización; cada plantilla pasa por la revisión de Meta.",
             "Messaging",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.template", "Plantillas", "manage"),
+        });
         // Spec 2026-10-13 D23 y P1 del plan: categoría "Pipeline" y núcleo (RequiredModules vacío), para que el enmascarado por
         // módulos no las toque y el 403 con la capacidad apagada salga con su código.
         services.AddSingleton(new PermissionDefinition(
@@ -2716,21 +2917,30 @@ public static class QepServiceCollectionExtensions
             "Permite ver el tablero, los negocios del tenant, el triage de conversaciones y los ajustes del embudo.",
             "Pipeline",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("pipeline.deal", "Negocios", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PipelinePermissions.DealManage,
             "Gestionar negocios",
             "Permite crear, editar, mover, ganar, perder y reabrir negocios, enlazar cotizaciones y decidir el triage.",
             "Pipeline",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("pipeline.deal", "Negocios", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PipelinePermissions.SettingsManage,
             "Configurar el embudo",
             "Permite cambiar las etapas del embudo y los motivos de pérdida y de descarte.",
             "Pipeline",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("pipeline.settings", "Configuración del embudo", "manage"),
+        });
         // Spec 2026-10-21 D-C10: categoría "Automations" y núcleo (RequiredModules vacío), como Pipeline: con [automations] el 403
         // con la capacidad apagada saldría authorization.denied en vez de tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -2739,14 +2949,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver los chatbots, sus plantillas y las conexiones que atienden.",
             "Automations",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("automations.chatbot", "Chatbots", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             AutomationsPermissions.ChatbotManage,
             "Gestionar chatbots",
             "Permite crear, editar, publicar, pausar y borrar chatbots y sus plantillas.",
             "Automations",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("automations.chatbot", "Chatbots", "manage"),
+        });
         // Spec 2026-10-29 §1: categoría "Ai" y núcleo (RequiredModules vacío), como Automations: con [ai] el 403 con la capacidad
         // apagada saldría authorization.denied en vez de tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -2755,14 +2971,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver los agentes IA, los modelos disponibles, su consumo y el estado de las claves de los proveedores.",
             "Ai",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("ai.agent", "Agentes IA", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             AiPermissions.AgentManage,
             "Gestionar agentes IA",
             "Permite crear, editar, probar, publicar, pausar y borrar agentes IA.",
             "Ai",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("ai.agent", "Agentes IA", "manage"),
+        });
         // Spec 2026-10-23 D-14: proveedores exige el módulo suppliers.
         services.AddSingleton(new PermissionDefinition(
             SuppliersPermissions.Read,
@@ -2770,14 +2992,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver el directorio de proveedores y exportarlo.",
             "Suppliers",
             "low",
-            RequiredModules: [ModuleKeys.Suppliers]));
+            RequiredModules: [ModuleKeys.Suppliers])
+        {
+            Shape = new("suppliers.supplier", "Proveedores", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             SuppliersPermissions.Manage,
             "Gestionar proveedores",
             "Permite crear, editar, activar y desactivar proveedores.",
             "Suppliers",
             "medium",
-            RequiredModules: [ModuleKeys.Suppliers]));
+            RequiredModules: [ModuleKeys.Suppliers])
+        {
+            Shape = new("suppliers.supplier", "Proveedores", "manage"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -2785,7 +3013,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, ver y revocar las claves con las que tus sistemas se conectan a QEP.",
             "Developer",
             "high",
-            RequiredModules: [ModuleKeys.Developer]));
+            RequiredModules: [ModuleKeys.Developer])
+        {
+            Shape = new("developer.api_key", "Claves de API", "manage"),
+        });
         // Spec cobros-recurrentes (owner, 2026-10-29): nunca se muestran opciones ni permisos que el tenant no tiene. Con
         // [billing], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo ofrece; la API
         // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de ServiceContractsAuthorization queda de respaldo).
@@ -2795,14 +3026,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver los contratos de servicio, los cobros por cobrar y los encargados.",
             "Contratos de servicio",
             "low",
-            RequiredModules: [ModuleKeys.ServiceContracts]));
+            RequiredModules: [ModuleKeys.ServiceContracts])
+        {
+            Shape = new("billing.service", "Contratos de servicio", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ServiceContractsPermissions.Manage,
             "Gestionar contratos de servicio",
             "Permite crear y editar contratos, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
             "Contratos de servicio",
             "medium",
-            RequiredModules: [ModuleKeys.ServiceContracts]));
+            RequiredModules: [ModuleKeys.ServiceContracts])
+        {
+            Shape = new("billing.service", "Contratos de servicio", "manage"),
+        });
         // Spec de préstamos (2026-10-31): nunca se muestran permisos que el tenant no tiene. Con [loans], ModuleEntitlementMask quita el
         // permiso al apagar el módulo y el editor de roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -2811,14 +3048,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver los préstamos, las cuotas por cobrar y los abonos.",
             "Préstamos",
             "low",
-            RequiredModules: [ModuleKeys.Loans]));
+            RequiredModules: [ModuleKeys.Loans])
+        {
+            Shape = new("loans.loan", "Préstamos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             LoansPermissions.Manage,
             "Gestionar préstamos",
             "Permite crear y editar préstamos, marcar cuotas como pagadas y registrar abonos a capital.",
             "Préstamos",
             "medium",
-            RequiredModules: [ModuleKeys.Loans]));
+            RequiredModules: [ModuleKeys.Loans])
+        {
+            Shape = new("loans.loan", "Préstamos", "manage"),
+        });
         // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -2827,21 +3070,30 @@ public static class QepServiceCollectionExtensions
             "Permite ver todos los tickets de soporte del tenant, su detalle y su trazabilidad.",
             "Soporte",
             "low",
-            RequiredModules: [ModuleKeys.Support]));
+            RequiredModules: [ModuleKeys.Support])
+        {
+            Shape = new("support.ticket", "Tickets", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             SupportPermissions.Manage,
             "Gestionar tickets de soporte",
             "Permite crear tickets y cambiar su estado, su responsable, su tipo y su cliente.",
             "Soporte",
             "medium",
-            RequiredModules: [ModuleKeys.Support]));
+            RequiredModules: [ModuleKeys.Support])
+        {
+            Shape = new("support.ticket", "Tickets", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             SupportPermissions.SettingsManage,
             "Configurar soporte",
             "Permite crear, editar y ordenar los tipos de ticket y fijar cuántos días hábiles antes un ticket está por vencer.",
             "Soporte",
             "medium",
-            RequiredModules: [ModuleKeys.Support]));
+            RequiredModules: [ModuleKeys.Support])
+        {
+            Shape = new("support.settings", "Configuración de soporte", "manage"),
+        });
         // Spec de la tienda en línea (2026-11-03): con [store], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece. La bandeja no declara permiso nuevo: usa quotations.order.manage.
         services.AddSingleton(new PermissionDefinition(
@@ -2850,7 +3102,10 @@ public static class QepServiceCollectionExtensions
             "Permite publicar la tienda, cambiar su marca, contacto, monedas con sus cuentas y modo de precios.",
             "Tienda",
             "medium",
-            RequiredModules: [ModuleKeys.Store]));
+            RequiredModules: [ModuleKeys.Store])
+        {
+            Shape = new("store.settings", "Configuración de la tienda", "manage"),
+        });
     }
 
     private static void AddAuthentication(
