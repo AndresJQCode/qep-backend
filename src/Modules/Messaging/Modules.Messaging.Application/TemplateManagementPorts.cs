@@ -86,6 +86,13 @@ public interface ISupportFormalReplyTemplateReadiness
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
 
+/// <summary>Soporte fase 4b (H16): la señal de la plantilla de la encuesta, hermana de <see cref="ISupportReplyTemplateReadiness"/>. Devuelve la
+/// fila <c>SupportSurvey</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>.</summary>
+public interface ISupportSurveyTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
 /// <summary>Cobros recurrentes §5: la señal para el consumidor Billing, hermana de <see cref="IQuotationTemplateReadiness"/>. Devuelve la fila de ese
 /// <paramref name="kind"/> (<c>BillingReminder</c> o <c>BillingOverdue</c>) en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>. Devuelve
 /// nombre e idioma y no un <c>bool</c> porque el reintento versiona el nombre (<c>qep_cobro_recordatorio_v2</c>…).</summary>

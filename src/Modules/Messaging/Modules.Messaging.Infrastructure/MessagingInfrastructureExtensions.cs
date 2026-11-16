@@ -128,6 +128,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ISupportReplyTemplateReadiness, SupportReplyTemplateReadiness>();
         // Soporte fase 4b: la de «Respuesta formal», para las opciones de respuesta formal y su envío por plantilla con el PDF.
         services.AddScoped<ISupportFormalReplyTemplateReadiness, SupportFormalReplyTemplateReadiness>();
+        // Soporte fase 4b: la de la encuesta, para su envío por WhatsApp.
+        services.AddScoped<ISupportSurveyTemplateReadiness, SupportSurveyTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();
