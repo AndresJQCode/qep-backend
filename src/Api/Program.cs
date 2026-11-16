@@ -6,6 +6,7 @@ using Bootstrapper.Authentication;
 using Bootstrapper.Cors;
 using Bootstrapper.Csrf;
 using Bootstrapper.Health;
+using Bootstrapper.Realtime;
 using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using Bootstrapper.Startup;
@@ -382,6 +383,8 @@ app.MapMessagingEndpoints();
 // Spec 2026-10-30 §5.2: la API externa, autenticada con X-Api-Key. Después de Messaging, de cuyos handlers depende.
 app.MapExternalApi();
 app.MapMessagingHub();
+// Spec 2026-11-15 §5.1: the global hub; each module authorizes its own topics.
+app.MapAppHub();
 app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();

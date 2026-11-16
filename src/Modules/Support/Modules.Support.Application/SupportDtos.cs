@@ -287,6 +287,16 @@ public sealed record SupportConnectionOptionDto(Guid Id, string Name);
 /// nuevos: la pantalla repinta las dos cosas con una sola llamada.</summary>
 public sealed record SupportReplyResultDto(SupportReplyDto Reply, SupportTicketDetailDto Ticket);
 
+/// <summary>Spec 2026-11-15 §5.4: an internal note. <c>Files</c> in the order they were sent; <c>Author</c> stays named after the
+/// member is removed («Sin nombre» without a visible name).</summary>
+public sealed record SupportTicketNoteDto(
+    Guid Id, string Text, SupportMemberDto Author, DateTimeOffset CreatedAt, IReadOnlyList<SupportNoteFileDto> Files);
+
+public sealed record SupportNoteFileDto(Guid FileId, string Name, string MimeType, long SizeBytes);
+
+/// <summary>A page of notes, newest first; <c>Next</c> is null on the last one (same cursor shape as the ticket's file).</summary>
+public sealed record SupportTicketNotesDto(IReadOnlyList<SupportTicketNoteDto> Items, SupportMessageCursorDto? Next);
+
 internal static class SupportDtoMapping
 {
     public static SupportTicketTypeDto ToDto(SupportTicketType type) => new(

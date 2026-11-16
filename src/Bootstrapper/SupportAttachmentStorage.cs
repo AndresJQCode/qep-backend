@@ -14,7 +14,12 @@ namespace Bootstrapper;
 /// que no existe. Nada de esto pasa por <c>StorageAuthorization</c>: la consola sigue igual.
 /// <para><see cref="CountPendingAsync"/> (owner, 2026-11-15, E2) es SQL crudo sobre la conexión de <see cref="SupportDbContext"/> y lee
 /// por nombre <c>storage.file_resources</c> (<c>tenant_id</c>, <c>owner_type</c>, <c>created_at</c>, <c>deleted_at</c>, <c>id</c>) y
-/// <c>support.ticket_attachments</c> (<c>file_id</c>, por <c>IX_ticket_attachments_file</c>). Renombrar una columna compila y deja
+/// <c>support.ticket_attachments</c> (<c>file_id</c>, por <c>IX_ticket_attachments_file</c>) y <c>owner_id</c>. Las notas usan el mismo
+/// dueño <see cref="FileOwnerType.SupportTicket"/> con la clave <c>SupportNoteUploads.OwnerKey</c> (plan N18), que es un UUID v8; la
+/// del formulario es v4 (<c>SupportPublicUploads.KeyVersion</c>). El tope cuenta sólo las v4 —la versión es el nibble alto del byte 6
+/// del UUID, <c>get_byte(uuid_send(owner_id), 6) &gt;&gt; 4</c>, que corre en cualquier Postgres; <c>uuid_extract_version</c> exige 17+ y la
+/// versión de producción no está probada en el repo (revisión final S1)—: una subida de nota, reclamada o no, nunca cuenta, y un miembro que abre subidas sin adjuntarlas no deja al formulario en <c>attachments_busy</c>
+/// (revisión del Bloque B). Renombrar una columna compila y deja
 /// <c>POST …/attachments</c> en 500; lo amarra <c>SupportPublicAttachmentsApiTests</c>, que corre contra el esquema migrado.</para>
 /// </summary>
 internal sealed class SupportAttachmentStorage(IStorageSystemUploads uploads, SupportDbContext support) : ISupportAttachmentStorage
@@ -31,6 +36,7 @@ internal sealed class SupportAttachmentStorage(IStorageSystemUploads uploads, Su
               AND f.owner_type = {SupportTicketOwner}
               AND f.created_at >= now() - {window}
               AND f.deleted_at IS NULL
+              AND (get_byte(uuid_send(f.owner_id), 6) >> 4) = {SupportPublicUploads.KeyVersion}
               AND NOT EXISTS (SELECT 1 FROM support.ticket_attachments a WHERE a.file_id = f.id)
             """).SingleAsync(cancellationToken);
 

@@ -253,6 +253,7 @@ public sealed class CreateTicketHandler(
     ISupportTicketNumberGenerator numbers,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     SupportOpeningDelivery openingDelivery,
     ISupportPublicOptions publicOptions,
@@ -347,6 +348,7 @@ public sealed class CreateTicketHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
+        await realtime.TicketChangedAsync(validated.TenantId, ticket.Id.Value, CancellationToken.None);
         await openingDelivery.DeliverAsync(
             ticket, access, pin, SupportOpeningSender.ConsultUrl(publicOptions, slug, ticket.DisplayNumber), context.Now,
             cancellationToken);

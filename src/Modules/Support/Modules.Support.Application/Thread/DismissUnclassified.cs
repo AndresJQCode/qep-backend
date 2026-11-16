@@ -22,6 +22,7 @@ public sealed class DismissUnclassifiedHandler(
     ISupportMemberDirectory members,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer)
     : ICommandHandler<DismissUnclassifiedCommand, SupportUnclassifiedDto>
 {
@@ -40,8 +41,10 @@ public sealed class DismissUnclassifiedHandler(
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
         row.Dismiss(actor, now);
-        foreach (var ticket in (await tickets.ListOpenByConversationAsync(command.TenantId, conversation.Id, cancellationToken))
-            .Where(ticket => ticket.CoversInbound(row.OccurredAt)))
+        var candidates = (await tickets.ListOpenByConversationAsync(command.TenantId, conversation.Id, cancellationToken))
+            .Where(ticket => ticket.CoversInbound(row.OccurredAt))
+            .ToList();
+        foreach (var ticket in candidates)
         {
             ticket.RecordMessageEvent(SupportTicketEventKind.MessageDismissed, row.MessageId, actor, now);
         }
@@ -56,6 +59,10 @@ public sealed class DismissUnclassifiedHandler(
             ChangedFields,
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        foreach (var ticket in candidates)
+        {
+            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+        }
 
         return await UnclassifiedReader.ReadAsync(
             conversations, tickets, unclassified, members, command.TenantId, conversation.Id, cancellationToken);

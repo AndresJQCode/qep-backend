@@ -885,6 +885,7 @@
           "Modules.Store.Infrastructure": "[1.0.0, )",
           "Modules.Suppliers.Application": "[1.0.0, )",
           "Modules.Suppliers.Infrastructure": "[1.0.0, )",
+          "Modules.Support.Api": "[1.0.0, )",
           "Modules.Support.Application": "[1.0.0, )",
           "Modules.Support.Infrastructure": "[1.0.0, )",
           "Modules.Tenancy.Api": "[1.0.0, )",

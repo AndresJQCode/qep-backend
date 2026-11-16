@@ -49,6 +49,31 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
         Assert.DoesNotContain(filed.Pin, raw, StringComparison.Ordinal);
     }
 
+    // Spec 2026-11-15 §5.4 and Review Focus 5: an internal note never reaches the requester's consult page.
+    [Fact]
+    public async Task TheConsultNeverShowsANote()
+    {
+        var rig = await RigAsync();
+        var filed = await FileNamedAsync(rig);
+        var ticketId = await TicketIdAsync(rig, filed.Number);
+        await SeedReplyAsync(rig, ticketId, "Ya revisamos tu caso.", SupportReplyStatus.Sent);
+        await using (var scope = rig.Factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ISupportTicketNoteRepository>().Add(SupportTicketNote.Create(
+                Guid.CreateVersion7(), rig.TenantId, new SupportTicketId(ticketId), Guid.CreateVersion7(),
+                "Nota interna: el cliente es difícil.", [], ClockedSupportHost.Reception.AddHours(2)));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var response = await LookupAsync(rig, filed.Number, filed.Pin);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var raw = await BodyAsync(response);
+        Assert.Contains("Ya revisamos tu caso.", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("Nota interna", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("difícil", raw, StringComparison.Ordinal);
+    }
+
     // Review Focus 1: radicado inexistente, PIN errado y radicado bloqueado responden igual: status, código y cuerpo.
     [Fact]
     public async Task AnUnknownNumberAWrongPinAndALockedTicketAnswerTheSame()

@@ -146,4 +146,25 @@ public static class SupportErrorCodes
 
     /// <summary>La página de consulta sólo responde a un ticket anónimo (plan F12).</summary>
     public const string ReplyPortalUnavailable = "support.reply.portal_unavailable";
+
+    /// <summary>Spec 2026-11-15 §5.5: the app hub refused a topic (subscribe or presence). A hub error, not HTTP. Owner O3: until a
+    /// second module uses the hub, it also covers topics without an authorizer, malformed topics, the per-connection cap and an
+    /// unknown presence state.</summary>
+    public const string RealtimeTopicForbidden = "support.realtime.topic_forbidden";
+
+    // Spec 2026-11-15 §5.4, internal notes (plan N15 to N21).
+
+    /// <summary>The note's domain guard (<c>SupportTicketNote.Create</c>). Not reachable over HTTP: the validator answers the same text
+    /// as <c>validation.failed</c> with <c>errors.text</c> first (plan N16).</summary>
+    public const string NoteTextInvalid = "support.note.text_invalid";
+
+    /// <summary>More than five files, or the same file twice.</summary>
+    public const string NoteTooManyFiles = "support.note.too_many_files";
+
+    /// <summary>A file that does not exist, belongs to another ticket or member, is not available, or is already in another note
+    /// (<c>IX_ticket_note_files_file</c>, translated by name). The same answer for all of them.</summary>
+    public const string NoteFileInvalid = "support.note.file_invalid";
+
+    /// <summary>A closed ticket takes no new note nor a new note upload; replaying a note created before closing still answers it.</summary>
+    public const string NoteTicketClosed = "support.note.ticket_closed";
 }

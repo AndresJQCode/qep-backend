@@ -42,6 +42,7 @@ public sealed class AssignUnclassifiedHandler(
     ISupportMemberDirectory members,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     IValidator<AssignUnclassifiedCommand> validator)
     : ICommandHandler<AssignUnclassifiedCommand, SupportUnclassifiedDto>
@@ -97,6 +98,7 @@ public sealed class AssignUnclassifiedHandler(
             ChangedFields,
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
 
         return await UnclassifiedReader.ReadAsync(
             conversations, tickets, unclassified, members, command.TenantId, conversation.Id, cancellationToken);

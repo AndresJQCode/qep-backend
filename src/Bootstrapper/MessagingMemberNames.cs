@@ -11,10 +11,10 @@ namespace Bootstrapper;
 /// <c>Membership.DisplayName ?? correo</c>. Sólo membresías del tenant; la que ya no está no aparece en el
 /// diccionario, y Messaging la muestra como «Miembro eliminado» (D-M20): la pantalla nunca recibe <c>null</c>.
 /// Pipeline usa el mismo FindAsync por <c>IPipelineMemberNames</c> (spec 2026-10-13 §6: el dueño del negocio y el actor del
-/// historial), así la regla vive en un solo lugar.
+/// historial), así la regla vive en un solo lugar. The app hub names who is composing with it too (plan N12).
 /// </summary>
 internal sealed class MessagingMemberNames(IMembershipRepository memberships, IUserDirectory users)
-    : IMessagingMemberNames, IPipelineMemberNames
+    : IMessagingMemberNames, IPipelineMemberNames, Bootstrapper.Realtime.IRealtimeMemberNames
 {
     public async Task<IReadOnlyDictionary<Guid, string>> FindAsync(
         Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken)

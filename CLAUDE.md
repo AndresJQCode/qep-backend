@@ -906,7 +906,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
 - **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
   `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id`,
-  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by` y `legal_text_versions.created_by`; una columna nueva que no se sume ahí deja borrar al usuario que
+  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by`, `legal_text_versions.created_by` y
+  `ticket_notes.author_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
   referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
   `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
   nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
@@ -1087,6 +1088,28 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`allow_attachments` tiene default `true` en la base y en el modelo, con `HasSentinel(true)`** (owner 2026-11-15). Sin el sentinel, EF
   omite un `false` del `INSERT` (es el valor CLR por defecto) y la base lo guarda en `true`: el tenant apaga los adjuntos y siguen
   prendidos. Precedente: `stores.show_prices`. Lo amarra el guardado `true` → `false` de `SupportFormSettingsApiTests`.
+- **El hub global `/api/v1/hubs/app` vive en Bootstrapper y no es de ningún módulo** (`src/Bootstrapper/Realtime/`, spec 2026-11-15).
+  Un módulo se suma registrando su `IRealtimeTopicAuthorizer` (contrato en `BuildingBlocks.Application.Realtime`) para su prefijo de
+  tópico, como `SupportRealtimeAuthorizer`; el hub no conoce a nadie. Mensajería sigue en su `MessagingHub`. El tópico de un ticket se
+  acepta sólo en la forma exacta que escribe `SupportRealtimeTopics.Ticket` (Guid `D` en minúsculas): otra forma del mismo id sería otro
+  grupo y otra sala de presencia.
+- **Los avisos de Soporte por el hub se llaman a mano, después del commit** (plan N13): cada handler de escritura y
+  `SupportThreadFollower` llaman `ISupportRealtime.TicketChangedAsync` con `CancellationToken.None`, no el unit of work, porque varias
+  escrituras confirman con `ISupportTransaction`. Una escritura nueva que no lo llame deja la pantalla sin avisar, sin error. La fusión y
+  el borrado de clientes (SQL crudo en Bootstrapper) **no** avisan, a propósito (owner O5).
+- **La presencia «está respondiendo» es por conexión, no por miembro** (`{memberId}:{connectionId}`): cerrar una pestaña no borra la
+  otra. Una entrada que nadie renueva (pod caído) la quita `RealtimePresenceSweeper` a los ≤ 50 s. `presenceChanged` lleva el estado
+  completo, por eso `RealtimeEventsListener` entrega los avisos en orden con un solo consumidor: dos en desorden dejan un fantasma.
+- **Una nota interna no pasa por el agregado del ticket** (spec 2026-11-15 §5.4): no sube `version`, no escribe `ticket_events` y nada
+  de ella sale por `public/support`. Sus tablas son insert-only. Su `id` es el `clientId` de la pantalla (`PK_ticket_notes`).
+- **Un archivo de nota ya está reclamado**: `ticket_note_files` entra en `SupportAttachmentReferenceProbe` (o el barrido de staging lo
+  borra). Su dueño en Storage es `SupportNoteUploads.OwnerKey(ticket, miembro)`, determinista: cambiar la derivación deja huérfanas
+  las subidas abiertas que todavía no están en una nota. **La clave es un UUID v8** y la del formulario público
+  (`SupportPublicUploads.NewKey()`) un v4: `SupportAttachmentStorage.CountPendingAsync` cuenta sólo
+  `(get_byte(uuid_send(owner_id), 6) >> 4) = 4`, así que ninguna subida de nota, reclamada o abandonada, cuenta en el tope
+  `attachments_busy` del formulario (revisión del Bloque B). No uses `uuid_extract_version`: exige Postgres 17+ y la versión de
+  producción no está probada en el repo. Completar o radicar con un `uploadKey` que no es v4 es `support.public.attachment_invalid`
+  (`SupportPublicUploads.IsKey`). Si la clave pierde el v8, un miembro que abre subidas sin adjuntarlas deja al formulario sin adjuntos.
 
 ## Verificación
 

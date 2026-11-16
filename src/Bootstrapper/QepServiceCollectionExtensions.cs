@@ -1,6 +1,7 @@
 using Bootstrapper.Authentication;
 using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
+using Bootstrapper.Realtime;
 using Bootstrapper.Seeding;
 using Bootstrapper.Valkey;
 using BuildingBlocks.Application;
@@ -568,6 +569,21 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.SendTicketReplyCommand, Modules.Support.Application.SupportReplyResultDto>,
             Modules.Support.Application.SendTicketReplyHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AddTicketNoteCommand, Modules.Support.Application.SupportTicketNoteDto>,
+            Modules.Support.Application.AddTicketNoteHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketNotesQuery, Modules.Support.Application.SupportTicketNotesDto>,
+            Modules.Support.Application.ListTicketNotesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.OpenNoteAttachmentCommand, Modules.Support.Application.SupportNoteAttachmentSessionDto>,
+            Modules.Support.Application.OpenNoteAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CompleteNoteAttachmentCommand, Modules.Support.Application.SupportNoteAttachmentStatusDto>,
+            Modules.Support.Application.CompleteNoteAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.GetNoteFileDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
+            Modules.Support.Application.GetNoteFileDownloadHandler>();
         services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
@@ -1591,6 +1607,10 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.
+        services.AddScoped<Modules.Support.Application.ISupportMemberPermissions, SupportMemberPermissions>();
+        Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);
+        services.AddAppRealtime();
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
         // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
         // Notifications; Soporte sólo declara los puertos.

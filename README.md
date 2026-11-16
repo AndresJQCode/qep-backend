@@ -3793,6 +3793,9 @@ avisan `conversationChanged` como un acuse de WhatsApp.
 sale del runtime del `Dockerfile`, no de NuGet. Por eso la imagen se clava en `aspnet:10.0.13` y no en el flotante
 `10.0`, y los paquetes `Microsoft.*` de `Directory.Packages.props` van en la misma línea 10.0.13.
 
+**El hub global `/api/v1/hubs/app` es otro.** Mensajería sigue en su propio hub; el global (spec 2026-11-15) no es de ningún módulo,
+lo usa hoy Soporte y se describe en [Tiempo real y notas internas de Soporte](#tiempo-real-y-notas-internas-de-soporte).
+
 La preferencia de sonido viaja en `GET/PUT /api/v1/auth/preferences` como `messageSound` (default `true`). El
 `PUT` acepta cada campo por separado y conserva el que no viene; un cuerpo vacío es 422
 `identity.preference.empty`.
@@ -5381,6 +5384,59 @@ formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attac
 (`form_versions.allow_attachments`, `true` por defecto), `Support` `AddSupportAnonymousTicketCheck` (`CK_tickets_anonymous`) y `Storage`
 `AddFileResourceTenantOwnerCreatedIndex` (`IX_file_resources_tenant_owner_created`, para el tope de subidas). `SupportTicket` se guarda
 por nombre en `owner_type`, sin migración.
+
+#### Tiempo real y notas internas de Soporte
+
+Spec `docs/superpowers/specs/2026-11-15-support-realtime-and-notes-design.md`, plan
+`docs/superpowers/plans/2026-11-15-support-realtime-and-notes-backend.md`. La consola sabe al instante que un ticket cambió y quién más
+está respondiendo, por un hub de SignalR **global** que no es de ningún módulo; y el asesor deja notas internas con texto y archivos que
+nunca salen al solicitante.
+
+**El hub.** Vive en `src/Bootstrapper/Realtime/` (`AppHub`), mapeado en `/api/v1/hubs/app` (no en `/hubs/app`: el query `tenantId` sólo
+se acepta bajo `/api/v1/hubs/`, plan N1). Mismo transporte que el de Mensajería: sólo WebSocket con `skipNegotiation: true` y sesión por
+cookie. Al conectar, sin claim de tenant o sin membresía activa la conexión se aborta; el endpoint no exige módulo (lo exige cada tópico).
+
+| Qué | Valor |
+| --- | --- |
+| Métodos | `Subscribe(topic)` (no devuelve nada; repetirlo no duplica), `Unsubscribe(topic)` (nunca falla), `SetPresence(topic, state)` con `state` ∈ `composing`, `none` |
+| Tópicos de Soporte | `support` (la bandeja) y `support:ticket:{ticketId}` (un detalle, el id en minúsculas, formato `D`). Exigen el módulo `support` y `support.ticket.read` o `support.ticket.manage`; un ticket, además, del tenant. `SetPresence` sólo en un ticket al que **esa conexión** ya se suscribió y con `manage`. Lo demás —tópico mal formado, sin autorizador, más de 50 por conexión, estado desconocido— es `HubException` con `support.realtime.topic_forbidden` (owner O3) |
+| Eventos | `supportTicketChanged { ticketId }` a los suscritos al ticket y a la bandeja; `presenceChanged { topic, members: [{ memberId, name, state }] }` a cada conexión del ticket **sin su propio miembro** (lista vacía: nadie más escribe). Suscribirse a un ticket manda enseguida la foto de la presencia sólo a esa conexión |
+| Grupo | `{tenantId}:{topic}`: el tenant es siempre el de la conexión, nunca uno que mande el cliente |
+| Fanout | `pg_notify('qep_realtime', …)` después del commit (`PgRealtimePublisher`, conexión con pool); cada pod tiene un `RealtimeEventsListener` en `LISTEN qep_realtime` con conexión propia sin pool (la misma regla de `ConnectionStrings:QepDatabaseListener`) que entrega los avisos **en orden** a sus conexiones. Dos `LISTEN` por pod mientras Mensajería no se mude |
+| Presencia | Valkey, clave `qep:rt:presence:{tenantId}:{topic}` (área `Valkey:Areas:Presence`), una entrada por **conexión** (`{memberId}:{connectionId}`) que vale 45 s; la clave expira a los 60 s y la pantalla renueva cada 20 s. Sin Valkey, memoria del pod. `RealtimePresenceSweeper` relee cada 5 s lo que el pod entregó no vacío, así una entrada de un pod caído desaparece a los ≤ 50 s |
+
+Avisan crear (consola, conversación y formulario público), estado, responsable, tipo, cliente, fijar, soltar, seguir el hilo, responder,
+nota, clasificar y «De ninguno», y el worker del hilo. Un aviso que falla se registra y no deshace la escritura. La fusión y el borrado de
+clientes **no** avisan (owner O5): la pantalla los ve al releer.
+
+**Notas internas.** Dos tablas insert-only, `support.ticket_notes` y `support.ticket_note_files`. Una nota no pasa por el agregado del
+ticket: no sube `version` ni cambia el `ETag`, no escribe `ticket_events`, no sale en eventos de integración y **nunca** aparece en
+`public/support`. Rutas, bajo `/api/v1/tenants/{tenantId}/support`:
+
+| Ruta | Permiso | Qué hace |
+| --- | --- | --- |
+| `GET /tickets/{ticketId}/notes?before=&take=` | `support.ticket.view` | Página del más nuevo al más viejo (`SupportTicketNotesDto`); `take` 1–100, 50 por defecto; `before` es el cursor de `next` |
+| `POST /tickets/{ticketId}/notes` | `support.ticket.manage` | `{ clientId, text, fileIds }` sin `If-Match` → `201 SupportTicketNoteDto`. Texto de 1 a 4 096 recortado, sin caracteres de control salvo salto de línea y tabulador; hasta 5 archivos |
+| `POST /tickets/{ticketId}/notes/attachments` | `support.ticket.manage` | `{ name, mimeType, sizeBytes }` → `201 { fileId, uploadUrl, headers }`; mismos límites que el formulario público (10 MB, PDF/JPEG/PNG/WebP) |
+| `POST /tickets/{ticketId}/notes/attachments/{fileId}/complete` | `support.ticket.manage` | `{ status }` (`available` o `rejected`) |
+| `GET /tickets/{ticketId}/notes/{noteId}/files/{fileId}/download` | `support.ticket.view` | `{ url }` firmada 5 minutos; audita `support.ticket.attachment_downloaded` |
+
+El `clientId` es el id de la nota: el reintento del mismo autor en el mismo ticket recibe la nota guardada (aun con el ticket ya cerrado);
+el mismo `clientId` en otro ticket o de otro autor, o la carrera que pierde, es `409 concurrency.conflict`. Errores: `422 validation.failed`
+(`errors.ClientId`, `Text`, `Take`, `Before`, `Name`, `MimeType`, `SizeBytes`), `422 support.note.too_many_files` (más de 5 o repetidos),
+`422 support.note.file_invalid` (no existe, es de otro ticket u otro miembro, no está `Available` o ya está en otra nota),
+`422 support.note.ticket_closed` (crear o abrir una subida en un ticket cerrado), `428 support.public.attachment_not_uploaded` (completar
+antes del `PUT`) y `404 support.attachment.not_found` (la nota no es del ticket o el archivo no es de la nota). Crear una nota audita
+`support.ticket.note_added` y avisa por el hub.
+
+Los archivos usan la subida sin miembro de Storage con dueño `SupportTicket` y clave `SupportNoteUploads.OwnerKey(ticket, miembro)`
+(SHA-256 de `support-note|{ticketId}|{memberId}` marcado como UUID v8, plan N18): sólo quien abrió la subida la usa, y sólo en una nota
+de ese ticket; una subida del formulario público no sirve en una nota ni al revés. `ticket_note_files` guarda la foto del archivo
+(nombre, tipo y tamaño) y la retiene `SupportAttachmentReferenceProbe` frente al barrido de staging. El tope `attachments_busy` del
+formulario cuenta sólo claves v4 (las suyas), así que una subida de nota, adjunta o abandonada, nunca cuenta; y completar o radicar
+con un `uploadKey` que no es v4 responde `422 support.public.attachment_invalid` (`SupportPublicUploads`).
+
+**Migración:** `Support` `AddSupportTicketNotes` (`ticket_notes`, `ticket_note_files`), aditiva.
 
 ### API externa
 

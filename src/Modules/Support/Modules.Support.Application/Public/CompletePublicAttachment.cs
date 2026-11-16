@@ -9,8 +9,8 @@ public sealed record CompletePublicAttachmentCommand(string? TenantSlug, Guid Fi
 /// <summary>
 /// Completar una subida del formulario público (plan F33): Storage corre el mismo pipeline que en la consola (tamaño, magic bytes,
 /// antivirus, promoción) y la respuesta dice si el archivo se puede adjuntar. Un archivo rechazado no es un error: la página avisa
-/// antes de radicar. Uno de otro tenant, con otra clave o sin clave es 422 <c>support.public.attachment_invalid</c>, igual que uno
-/// que no existe (plan F32); completar antes de terminar el PUT es 428. Un formulario sin adjuntos responde 422
+/// antes de radicar. Uno de otro tenant, con otra clave, sin clave o con una clave que no es v4 (<see cref="SupportPublicUploads"/>,
+/// revisión final S2) es 422 <c>support.public.attachment_invalid</c>, igual que uno que no existe (plan F32); completar antes de terminar el PUT es 428. Un formulario sin adjuntos responde 422
 /// <c>support.public.attachments_disabled</c> antes que todo eso.
 /// </summary>
 public sealed class CompletePublicAttachmentHandler(SupportPublicResolver resolver, ISupportAttachmentStorage storage)
@@ -21,7 +21,7 @@ public sealed class CompletePublicAttachmentHandler(SupportPublicResolver resolv
     {
         var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
         EnsureAllowed(tenant.Form);
-        if (command.UploadKey is not { } uploadKey || uploadKey == Guid.Empty)
+        if (command.UploadKey is not { } uploadKey || !SupportPublicUploads.IsKey(uploadKey))
         {
             throw Invalid();
         }
