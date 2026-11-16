@@ -5224,7 +5224,9 @@ con una variable.
 
 #### Formulario público de Soporte (fase 3)
 
-Plan `docs/superpowers/plans/2026-11-15-support-phase-3-public-form-backend.md` (spec §9). La página `soporte.lulocrm.com/{tenantSlug}`
+Plan `docs/superpowers/plans/2026-11-15-support-phase-3-public-form-backend.md` (spec §9); los documentos legales, plan
+`docs/superpowers/plans/2026-11-15-support-portal-legal-documents-backend.md` (spec `2026-11-15-support-portal-legal-documents-design.md`).
+La página es el portal `qep-frontend-support` (`soporte.lulocrm.com/{tenantSlug}`) y
 llama directo desde el navegador, sin BFF, a un grupo **anónimo**: `/api/v1/public/support/{tenantSlug}`. Ningún handler del grupo lee el
 contexto de ejecución ni la cookie de sesión, no hay CSRF (exención por prefijo, `SupportPublicPaths`), toda respuesta —también 404, 413
 y 429— lleva `Cache-Control: no-store` y ningún cuerpo pasa de 64 KB (`413 support.public.body_too_large`; un JSON ilegible es `400
@@ -5240,7 +5242,7 @@ del ingress) y cada uno tiene su propia cubeta.
 
 | Método y ruta | Cuerpo | Éxito | Turnstile | Límite por IP |
 | --- | --- | --- | --- | --- |
-| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país y textos legales vigentes | No | 60 / min |
+| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país y `legal`: los tres documentos vigentes y el texto de caracterización (abajo) | No | 60 / min |
 | `GET /consult` | — | `{ tenantName, logoUrl, accentColor }` para dibujar la página de consulta; `accentColor` es el de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
 | `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
 | `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
@@ -5249,18 +5251,34 @@ del ingress) y cada uno tiene su propia cubeta.
 | `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, plazo y respuestas | Sí | 10 / min |
 | `POST /tickets/resend-pin` | `{ number, turnstileToken }` | `202` vacío, siempre | Sí | 5 / 10 min |
 
+**Documentos legales del portal** (spec 2026-11-15). `GET /form` trae en `legal` los tres documentos vigentes del tenant, cada uno
+**saneado otra vez al servirlo** (`ISupportHtmlSanitizer`, lista blanca `p br strong em u s h2 h3 h4 ul ol li blockquote hr` y `a` con
+`https`/`mailto`/`tel`): `privacyNotice` `{ version, contentHtml, authorizationQuestion, policyUrl }`, `anonymousNotice` y `terms` `{ version,
+contentHtml }`, y `characterizationNotice`, un texto plano fijo e igual para todos los tenants que va al pie del paso de datos.
+`authorizationQuestion` llega resuelta: la del tenant o «¿Autorizas a {nombre del tenant} para el tratamiento de los datos personales
+suministrados en este formulario?». `policyUrl` `null` es que el paso no muestra el enlace a la política. Si al tenant le falta cualquiera
+de los tres, `GET /form` responde el mismo `404 support.public.not_found` que con el formulario sin publicar. La página pinta
+`contentHtml` como HTML y no lo vuelve a sanear.
+
 **Radicar.** Con solicitante o anónimo. Los campos que se piden y cuáles son obligatorios los dice la versión vigente del formulario
 (`SupportFormFields`); el tipo de documento sale de `DocumentTypesByCountry`; el celular se guarda en E.164; en Colombia la ciudad es de
-Geography (`cityId`) y fuera, texto libre (`cityName`). `formVersion` y `legalTextVersion` son las que la página cargó: si cambiaron, `422
-support.public.form_outdated` o `support.public.legal_texts_outdated` y la página recarga. Todo lo que puede responder 422 va antes de la
-transacción, así un rechazo no gasta radicado. Con solicitante se guarda el consentimiento (foto del texto aceptado e IP) y, con
-`customers` prendido y un único cliente con ese documento, el ticket queda vinculado; con cero o varios, el detalle los ofrece como
-candidatos. **Un anónimo** no guarda cliente —tampoco se lo vincula la consola: `PUT …/tickets/{id}/customer` responde `422
-support.ticket.anonymous_has_no_customer` y el detalle no ofrece candidatos—, foto del solicitante, documento, IP ni consentimiento, y sólo se responde por la página de
-consulta (canal `Portal`). La base lo respalda con `CK_tickets_anonymous` (migración `AddSupportAnonymousTicketCheck`): un anónimo no
-puede tener `customer_id` ni ninguna columna `requester_*`, tampoco por SQL crudo. Una fila de consentimiento por ticket
-(`IX_consents_ticket`); un segundo consentimiento del mismo ticket es `409 support.public.consent_duplicate`, que hoy ningún camino
-alcanza.
+Geography (`cityId`) y fuera, texto libre (`cityName`). Cada camino manda las versiones de sus documentos, las que la página cargó: con
+solicitante `privacyNoticeVersion` y `termsVersion` (`anonymousNoticeVersion` en `null`, `acceptsDataPolicy: true`); anónimo
+`anonymousNoticeVersion` y `termsVersion` (`privacyNoticeVersion` en `null`; `acceptsDataPolicy` se ignora). Los dos mandan
+`acceptsTerms: true`. Si `formVersion` o alguna versión que aplica ya no es la vigente, `422 support.public.form_outdated` o
+`support.public.legal_texts_outdated` y la página recarga. `acceptsDataPolicy` o `acceptsTerms` en falso, una versión que falta o una que
+no aplica salen como **`422 validation.failed`** con el campo en `errors` (`AcceptsDataPolicy`, `AcceptsTerms`, `PrivacyNoticeVersion`,
+`AnonymousNoticeVersion`, `TermsVersion`), no con un código propio: `ApiExceptionHandler` no publica el `ErrorCode` del validador. Todo lo
+que puede responder 422 va antes de la transacción, así un rechazo no gasta radicado. En la misma transacción que el ticket se guarda
+una fila de `support.legal_acceptances` por documento aceptado, con el HTML **tal como lo sirvió** `GET /form`: con solicitante, el aviso de
+privacidad (IP, pregunta mostrada, URL y caracterización) y los términos con la IP; anónimo, el aviso anónimo y los términos, **los dos sin
+IP**. Con solicitante y `customers` prendido y un único cliente con ese documento, el ticket queda vinculado; con cero o varios, el
+detalle los ofrece como candidatos. **Un anónimo** no guarda cliente —tampoco se lo vincula la consola: `PUT …/tickets/{id}/customer`
+responde `422 support.ticket.anonymous_has_no_customer` y el detalle no ofrece candidatos—, foto del solicitante, documento ni IP, y sólo
+se responde por la página de consulta (canal `Portal`). La base lo respalda con `CK_tickets_anonymous` (migración
+`AddSupportAnonymousTicketCheck`): un anónimo no puede tener `customer_id` ni ninguna columna `requester_*`, tampoco por SQL crudo, y con
+`CK_legal_acceptances_ip`: el aviso anónimo nunca lleva IP y el de privacidad siempre. Una aceptación por ticket y tipo
+(`IX_legal_acceptances_ticket_kind`, `409 support.public.legal_acceptance_duplicate`, que hoy ningún camino alcanza).
 
 **Turnstile se gasta antes de validar los adjuntos.** El token es de un solo uso y radicar lo verifica primero (anti-abuso: nada más
 corre sin él). Por eso **la página reinicia el widget después de cualquier `422` de `POST /tickets`** —un adjunto inválido, un campo, la
@@ -5354,9 +5372,16 @@ si sale `available`, mandar el par al radicar.
 
 | Método y ruta | Política | Qué hace |
 | --- | --- | --- |
-| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión |
-| `GET` · `POST /settings/legal-texts` | `support.settings.view` · `support.settings.manage` | Textos legales; cada publicación es una versión nueva |
+| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) |
+| `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`) |
+| `GET /settings/legal-documents/{kind}/versions` · `…/versions/{version}` | `support.settings.view` | Historial de un tipo, de la más nueva a la más vieja, y una versión vieja |
+| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada; la respuesta es lo guardado |
+| `GET /tickets/{ticketId}/legal-acceptances/{kind}` | `support.ticket.view` | La foto de lo que el solicitante aceptó: HTML servido, pregunta, URL, caracterización e IP. Sin fila, `404 support.legal_acceptance.not_found` |
 | `GET /tickets/{ticketId}/attachments/{attachmentId}/download` | `support.ticket.view` | URL firmada del adjunto (arriba) |
+
+`{kind}` ∈ `privacy-notice`, `anonymous-notice`, `terms` (otro es `404 support.legal_documents.kind_not_found`); en los cuerpos viaja como
+`PrivacyNotice`, `AnonymousNotice`, `Terms`. El detalle del ticket trae `legalAcceptances` (`kind`, `version`, `acceptedAt`, `visitorIp`, sin el
+contenido), en ese orden y `[]` en un ticket manual. Las rutas `…/settings/legal-texts` de la fase 3 ya no existen.
 
 **Configuración** `Support:PublicForm` (`appsettings.json`, defaults en código):
 
@@ -5367,23 +5392,37 @@ si sale `available`, mandar el par al radicar.
 | `AllowedOrigins` | vacía | Orígenes exactos de la página para la política CORS `support-public` (sin credenciales, `GET` y `POST`, sólo `Content-Type`) |
 
 `AllowedOrigins` sigue las reglas de `Cors:AllowedOrigins`: https exacto, sin comodín, ruta ni barra final; `http://localhost[:puerto]`
-sólo en `Development` (`appsettings.Development.json` trae `http://localhost:3002`, el puerto de la página en local). En `Production` es
+sólo en `Development` (`appsettings.Development.json` trae `http://localhost:4322`, el puerto fijo del portal `qep-frontend-support` en
+local; `3002` es la consola, que no llama al grupo público). En `Production` es
 obligatoria y no puede traer un `#{…}#` sin resolver: el pod no arranca (`SupportPublicFormOptionsValidator`). Turnstile es el de la tienda
 (`Store:Turnstile:*`, ver [Tienda pública](#secretos)). **El bucket privado de R2 necesita CORS para el origen de la página**, porque el
 `PUT` del adjunto sale del navegador: `PUT` con los headers `Content-Type` e `If-None-Match` desde `https://soporte.lulocrm.com` (y
-`http://localhost:3002` para probar en local).
+`http://localhost:4322` para probar en local).
+
+**El alias estable de `develop` del portal en Vercel** todavía no existe (el proyecto de Vercel no se ha creado). Cuando exista, se agrega
+como `Support__PublicForm__AllowedOrigins__N` del backend de desarrollo y en el CORS del bucket de desarrollo; no va en `appsettings*.json`.
 
 **Slugs reservados.** Las rutas fijas del host (`consultar`, `calificar`, `api`…) no pueden ser slug de un tenant nuevo (`422
 tenancy.slug.reserved`). Antes de desplegar se corre la consulta de los avisos de [Soporte](#soporte) contra producción.
 
-**Prueba legal.** `support.legal_text_versions` y `support.consents` son insert-only: ningún método edita ni borra, `consents` no tiene FK
-(ni al ticket ni a la versión: guarda su propia foto del texto) y el `Down` de `AddSupportPublicForm` no las borra.
+**Prueba legal.** `support.legal_document_versions` y `support.legal_acceptances` son insert-only: ningún método edita ni borra,
+`legal_acceptances` no tiene FK (ni al ticket ni a la versión: guarda su propia foto del HTML servido) y el `Down` de
+`AddSupportLegalDocuments` no las borra. **Todo HTML de un documento pasa por `ISupportHtmlSanitizer`**: al publicar (se guarda la salida),
+al servir `GET /form` y al escribir la foto. El saneador corre hasta que la salida no cambia y rechaza (`422 validation.failed` en
+`ContentHtml`) un HTML de más de 10 000 elementos o más de 100 niveles de anidamiento. Las tablas de la fase 3,
+`support.legal_text_versions` y `support.consents`, se quedan con sus filas y **sin escritor ni lector**: siguen mapeadas en
+`SupportDbContext` sólo para que EF no las borre, y el `Down` de `AddSupportPublicForm` tampoco las borra.
 
 **Migraciones:** `Support` `AddSupportPublicForm` (`form_versions`, `legal_text_versions`, `consents`, `ticket_access` y las columnas del
 formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attachments`), `Support` `AddSupportFormAllowAttachments`
 (`form_versions.allow_attachments`, `true` por defecto), `Support` `AddSupportAnonymousTicketCheck` (`CK_tickets_anonymous`) y `Storage`
 `AddFileResourceTenantOwnerCreatedIndex` (`IX_file_resources_tenant_owner_created`, para el tope de subidas). `SupportTicket` se guarda
-por nombre en `owner_type`, sin migración.
+por nombre en `owner_type`, sin migración. `Support` `AddSupportLegalDocuments` (`legal_document_versions` y `legal_acceptances`) es
+aditiva y **rellena**: la versión vigente de los textos de la fase 3 de cada tenant pasa a `PrivacyNotice` versión 1 (autorización más
+política, como HTML canónico: escapa `&`, `<`, `>`, un párrafo por línea en blanco, `<br>` por salto) y, si tenía términos, a `Terms`
+versión 1, con el autor y la fecha de origen; ningún `AnonymousNotice`, y un texto sólo de espacios no se copia. Si un texto convertido
+pasa de 60 000 caracteres la migración **se detiene** con el id del tenant (`tenant … legal text exceeds 60000 characters after
+escaping`) en vez de recortar un texto legal: se acorta a mano y se vuelve a desplegar.
 
 #### Tiempo real y notas internas de Soporte
 

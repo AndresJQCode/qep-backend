@@ -906,8 +906,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
 - **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
   `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id`,
-  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by`, `legal_text_versions.created_by` y
-  `ticket_notes.author_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
+  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by`, `legal_text_versions.created_by`,
+  `legal_document_versions.created_by` y `ticket_notes.author_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
   referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
   `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
   nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
@@ -1031,11 +1031,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   lea la sesión. Lo que toca CSRF, cookie o CORS va en `SupportPublicRealAuthHost` (precedente `ShopifyApiHarness.WithRealAuthentication`;
   lo amarra `ThePublicGroupIgnoresTheSessionCookieWithRealAuth`). Ningún handler del grupo lee `IExecutionContext` ni la cookie: el
   tenant sale del slug (`SupportPublicResolver`), nunca de la sesión de quien navega.
-- **`support.consents` y `support.legal_text_versions` son prueba legal: sólo se insertan** (spec §9.5, plan F16 y F17). Ningún método de
-  dominio los edita ni los borra, `consents` no tiene FK (ni al ticket ni a la versión: guarda su foto del texto, que es lo que prueba) y
-  el `Down` de `AddSupportPublicForm` no las borra. **Ese `Down` no se corre en producción**: el rollback es revertir el código. Una
-  purga futura de tickets tiene que dejar los consentimientos fuera, y una migración nueva de Support que las toque tampoco puede
-  borrarlas en su `Down`.
+- **`support.legal_document_versions` y `support.legal_acceptances` son prueba legal: sólo se insertan** (spec 2026-11-15 §5). Ningún
+  método de dominio las edita ni las borra, `legal_acceptances` no tiene FK (ni al ticket ni a la versión: guarda su foto del HTML
+  servido, que es lo que prueba) y el `Down` de `AddSupportLegalDocuments` no las borra. **Ese `Down` no se corre en producción**: el
+  rollback es revertir el código. Una purga futura de tickets tiene que dejar las aceptaciones fuera, y una migración nueva de Support que
+  las toque tampoco puede borrarlas en su `Down`. Lo mismo vale para `support.consents` y `support.legal_text_versions` de la fase 3, que
+  conservan sus filas.
+- **Todo HTML de un documento legal pasa por `ISupportHtmlSanitizer`**: al publicar, al servir `GET /form` y en la foto. Un camino nuevo
+  que escriba `content_html` sin el puerto abre XSS en el portal público. `legal_text_versions` y `consents` siguen mapeadas sin
+  escritor: quitarlas del modelo hace que EF las borre en la siguiente migración.
 - **El PIN de consulta nunca sale a logs, auditoría, eventos ni trazas: sólo se guarda su hash** (`ticket_access.pin_hash`, PBKDF2).
   Viaja dos veces y nada más: en la respuesta del radicado y en el envío al destino registrado del ticket. Un log nuevo en el formulario
   público lleva el id del ticket y el tipo de la excepción, nunca el PIN, el radicado ni el destinatario; lo amarra
