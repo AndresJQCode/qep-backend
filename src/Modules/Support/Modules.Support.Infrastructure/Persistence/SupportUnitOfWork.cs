@@ -46,6 +46,13 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
         {
             throw new SupportDomainException(SupportErrorCodes.TicketTypeUnavailable, "The ticket type is no longer available.");
         }
+        // Spec 2026-11-15 §9.3 (plan L29, final review N5): the company chosen for the portal was deleted between the handler's check and
+        // the save. The same 422 as choosing one that does not exist.
+        catch (DbUpdateException exception) when (IsFormOrganizationForeignKey(exception))
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.FormOrganizationUnavailable, "The company is not available for the public form.");
+        }
         // Por nombre de índice y no por 23505 (precedente TenancyUnitOfWork): cada índice único es una regla distinta.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketTypeNameIndex))
         {
@@ -164,6 +171,10 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
         exception.InnerException is PostgresException postgres
         && postgres.SqlState == sqlState
         && string.Equals(postgres.ConstraintName, SupportDbContext.TicketTypeForeignKey, StringComparison.Ordinal);
+
+    private static bool IsFormOrganizationForeignKey(DbUpdateException exception) =>
+        exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.ForeignKeyViolation } postgres
+        && string.Equals(postgres.ConstraintName, SupportDbContext.FormOrganizationForeignKey, StringComparison.Ordinal);
 
     private static SupportDomainException CustomerNotFound(CustomerReferenceToHold reference) =>
         new(reference.NotFoundCode, $"Customer '{reference.CustomerId}' was not found.");
