@@ -203,6 +203,14 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
 
 **Pedidos, tienda e impuestos**
 
+- [ ] **Enlace de pedidos de la tienda con la cuenta del comprador** (backend `a4aa88c1`, frontend `c1fd7530`): antes de
+  probar, correr las pruebas de los dos repos (no se corrieron); las de más riesgo son `BuyerLoginOrderLinkApiTests`,
+  `OrderBuyerAccountApiTests`, `PublicOrderBuyerAccountApiTests`, `PublicBuyerOrdersApiTests`,
+  `SubmitOrderRequestHandlerTests` y, en el front, las de `order-buyer-account-section` y `use-order-buyer-account`.
+  Prueba manual con `PED-2026-0005` de la base local: iniciar sesión en la tienda con la cuenta del correo del pedido y
+  ver que aparece en «Mis pedidos»; comprar sin sesión con ese correo y ver que el pedido nuevo queda en la cuenta; en la
+  consola, «Cambiar cuenta», «Quitar cuenta» (volver a iniciar sesión: el pedido no se enlaza solo) y la entrada «Cuenta
+  de la tienda» del historial.
 - [ ] **Estados del pedido en cuatro ejes** (`0e85094d`, con frontend y storefront): marcar y desmarcar pagado,
   preparar (el pedido deja de editarse) y desmarcar, archivar y desarchivar, facturado; un comprobante deja el pago en
   «Pendiente de verificar»; filtros del listado; ajustes en `/orders-settings`; el comprador ve los ejes en la tienda.
