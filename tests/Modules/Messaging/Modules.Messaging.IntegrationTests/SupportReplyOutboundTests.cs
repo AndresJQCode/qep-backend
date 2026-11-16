@@ -768,4 +768,332 @@ public sealed class SupportReplyOutboundTests
             factory.MetaHandler.Requests,
             request => request.Uri!.AbsolutePath.EndsWith("/messages", StringComparison.Ordinal) && request.Method == HttpMethod.Post);
     }
+
+    // ---- Soporte fase 4b (Tarea 6): el documento de la respuesta formal, la plantilla formal y la encuesta ----
+
+    private static byte[] FormalPdf() => Encoding.ASCII.GetBytes("%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n");
+
+    private static SupportThreadDocumentSend Document(
+        RegisteredTenant tenant, Guid conversationId, Guid memberId, string text = "Te enviamos la respuesta formal.", Guid? clientId = null,
+        Guid? documentClientId = null) =>
+        new(tenant.TenantId, conversationId, clientId ?? Guid.CreateVersion7(), documentClientId ?? Guid.CreateVersion7(), memberId, text, FormalPdf(),
+            "Respuesta-SOP-000127.pdf");
+
+    private static async Task<SupportReplySendResult> WithOutboundAsync(
+        IServiceProvider services, Func<ISupportReplyOutbound, Task<SupportReplySendResult>> action)
+    {
+        using var scope = services.CreateScope();
+        return await action(scope.ServiceProvider.GetRequiredService<ISupportReplyOutbound>());
+    }
+
+    /// <summary>Una fila aprobada del tipo dado, con sus componentes: lo que dejaría el aprovisionamiento ya aprobado por Meta.</summary>
+    private static async Task SeedApprovedAsync(
+        IServiceProvider services, Guid tenantId, Guid connectionId, Guid memberId, string name, string componentsJson, MessageTemplateKind kind)
+    {
+        using var scope = services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+        dbContext.MessageTemplates.Add(MessageTemplate.Pending(
+            tenantId, connectionId, Guid.CreateVersion7().ToString("N"), name, "es", "UTILITY", TemplateComponentsBuilder.Named,
+            MessageTemplateStatuses.Approved, componentsJson, kind, memberId, DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(Ct);
+    }
+
+    private static Task SeedApprovedFormalAsync(IServiceProvider services, Guid tenantId, Guid connectionId, Guid memberId) =>
+        SeedApprovedAsync(
+            services, tenantId, connectionId, memberId, SupportFormalReplyTemplateDefinition.Name,
+            TemplateComponentsBuilder.Components(
+                SupportFormalReplyTemplateDefinition.Draft(SupportFormalReplyTemplateDefinition.Name, SupportFormalReplyTemplateDefinition.BaseBody),
+                "4::handle").ToJsonString(),
+            MessageTemplateKind.SupportFormalReply);
+
+    private static Task SeedApprovedSurveyAsync(IServiceProvider services, Guid tenantId, Guid connectionId, Guid memberId) =>
+        SeedApprovedAsync(
+            services, tenantId, connectionId, memberId, SupportSurveyTemplateDefinition.Name,
+            TemplateComponentsBuilder.Components(
+                SupportSurveyTemplateDefinition.Draft(SupportSurveyTemplateDefinition.Name, SupportSurveyTemplateDefinition.BaseBody)).ToJsonString(),
+            MessageTemplateKind.SupportSurvey);
+
+    private static Task<Guid> ConnectionOfAsync(MediaFixture f) =>
+        ScalarAsync<Guid>(f.ConnectionString, "SELECT connection_id FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId));
+
+    private static MetaRequest[] Sends(MediaFixture f) =>
+        f.Factory.MetaHandler.Requests
+            .Where(request => request.Uri!.AbsolutePath == "/v24.0/111/messages" && !IsReadReceipt(request))
+            .ToArray();
+
+    // H10: dentro de la ventana de WhatsApp, un solo mensaje de documento con el texto del canal como pie; el PDF sube a Meta y queda en el
+    // R2 de Mensajería con la clave del mensaje.
+    [Fact]
+    public async Task AFormalDocumentInsideTheWindowGoesAsOneDocumentWithCaption()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+
+        var sent = Assert.IsType<SupportReplySendResult.Sent>(await WithOutboundAsync(
+            f.Host.Services, outbound => outbound.SendThreadDocumentAsync(Document(f.Tenant, f.ConversationId, f.MemberId), Ct)));
+
+        Assert.Equal(f.ConversationId, sent.ConversationId);
+        Assert.Equal(sent.MessageId, sent.DocumentMessageId);
+        Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/media");
+        var send = Assert.Single(Sends(f));
+        using var body = JsonDocument.Parse(send.Body!);
+        Assert.Equal("document", body.RootElement.GetProperty("type").GetString());
+        var document = body.RootElement.GetProperty("document");
+        Assert.Equal(("media.support", "Respuesta-SOP-000127.pdf", "Te enviamos la respuesta formal."), (
+            document.GetProperty("id").GetString(), document.GetProperty("filename").GetString(), document.GetProperty("caption").GetString()));
+        Assert.Equal($"5|1|{f.MemberId}|Te enviamos la respuesta formal.|Respuesta-SOP-000127.pdf|application/pdf|media.support", await ScalarAsync<string>(
+            f.ConnectionString,
+            """
+            SELECT m.kind || '|' || m.status || '|' || m.sent_by_member_id || '|' || m.caption || '|' || mm.file_name || '|' || mm.mime_type
+                || '|' || mm.meta_media_id
+            FROM messaging.messages m JOIN messaging.message_media mm ON mm.message_id = m.id WHERE m.id = @id
+            """,
+            ("id", sent.MessageId)));
+        Assert.Equal(FormalPdf(), f.Bucket.Objects[$"messaging/{f.Tenant.TenantId}/{sent.MessageId}"].Bytes);
+    }
+
+    // WhatsApp corta el pie de un documento en 1024: un texto del canal más largo no sale, sin fila ni llamada.
+    [Fact]
+    public async Task AFormalDocumentWithALongCaptionIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+
+        var result = await WithOutboundAsync(f.Host.Services, outbound => outbound.SendThreadDocumentAsync(
+            Document(f.Tenant, f.ConversationId, f.MemberId, text: new string('a', SendMediaMessageValidator.MaxCaptionLength + 1)), Ct));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("text_invalid"), result);
+        await AssertNothingWentOutAsync(f);
+    }
+
+    // H10: un reintento con los mismos dos clientId devuelve lo que ya salió, aunque la ventana ya se haya cerrado; dos en vuelo, una
+    // sola llamada.
+    [Fact]
+    public async Task RetryingAFormalDocumentWithTheSameClientIdsSendsOnce()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var send = Document(f.Tenant, f.ConversationId, f.MemberId);
+
+        var first = Assert.IsType<SupportReplySendResult.Sent>(
+            await WithOutboundAsync(f.Host.Services, outbound => outbound.SendThreadDocumentAsync(send, Ct)));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET last_inbound_at = now() - interval '25 hours'");
+        var second = Assert.IsType<SupportReplySendResult.Sent>(
+            await WithOutboundAsync(f.Host.Services, outbound => outbound.SendThreadDocumentAsync(send, Ct)));
+
+        Assert.Equal(first.MessageId, second.MessageId);
+        Assert.Single(Sends(f));
+        Assert.Single(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath == "/v24.0/111/media");
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+    }
+
+    // H10: en Instagram el documento no lleva pie, así que sale el texto (ClientId) y después el archivo (DocumentClientId) por una URL
+    // firmada de R2. Un reintento con los mismos dos no repite ninguno.
+    [Fact]
+    public async Task AnInstagramFormalReplySendsTheTextThenTheFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var bucket = new FakeMessagingBucket();
+        using var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.AddSingleton<IMessagingMediaStore>(bucket);
+            services.AddSingleton<IMessagingUploadStaging>(bucket);
+        }));
+        var tenant = await RegisterTenantAsync(host);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        await SeedInstagramConnectionAsync(host, tenant.TenantId, "Instagram Ventas", InstagramPayloads.DefaultAccountId);
+        factory.MetaHandler.Respond($@"^/v24\.0/{InstagramPayloads.DefaultUserId}\?", HttpStatusCode.OK,
+            """{"name":"Laura Pérez","username":"laura.perez","id":"1234567890123456"}""");
+        using (var anonymous = host.CreateClient())
+        {
+            await PostInstagramWebhookAsync(anonymous, InstagramPayloads.Text("m1", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, "hola"));
+            await DrainDeliveriesAsync(host);
+        }
+
+        var sendPath = $"/v24.0/{InstagramPayloads.DefaultAccountId}/messages";
+        var answers = 0;
+        factory.MetaHandler.RespondWith($"^{sendPath}$", _ => FakeMetaGraphHandler.Json(HttpStatusCode.OK,
+            $$"""{"recipient_id":"{{InstagramPayloads.DefaultUserId}}","message_id":"mid.support.{{Interlocked.Increment(ref answers)}}"}"""));
+        var conversationId = await ScalarAsync<Guid>(connectionString, "SELECT id FROM messaging.conversations");
+        var memberId = await OwnerMembershipIdAsync(connectionString, tenant);
+        var send = Document(tenant, conversationId, memberId);
+
+        var sent = Assert.IsType<SupportReplySendResult.Sent>(
+            await WithOutboundAsync(host.Services, outbound => outbound.SendThreadDocumentAsync(send, Ct)));
+        var retried = Assert.IsType<SupportReplySendResult.Sent>(
+            await WithOutboundAsync(host.Services, outbound => outbound.SendThreadDocumentAsync(send, Ct)));
+
+        Assert.Equal(sent, retried);
+        Assert.NotNull(sent.DocumentMessageId);
+        Assert.NotEqual(sent.MessageId, sent.DocumentMessageId);
+        var calls = factory.MetaHandler.Requests.Where(request => request.Uri!.AbsolutePath == sendPath && request.Method == HttpMethod.Post).ToArray();
+        Assert.Equal(2, calls.Length);
+        Assert.Contains("Te enviamos la respuesta formal.", calls[0].Body, StringComparison.Ordinal);
+        Assert.Contains("\"file\"", calls[1].Body, StringComparison.Ordinal);
+        Assert.Contains($"https://r2.test/messaging/{tenant.TenantId}/{sent.DocumentMessageId}", calls[1].Body, StringComparison.Ordinal);
+        Assert.Equal($"{send.ClientId}|1|{send.DocumentClientId}|1", await ScalarAsync<string>(connectionString,
+            """
+            SELECT t.client_id || '|' || t.status || '|' || d.client_id || '|' || d.status
+            FROM messaging.messages t, messaging.messages d WHERE t.id = @text AND d.id = @document
+            """,
+            ("text", sent.MessageId), ("document", sent.DocumentMessageId!.Value)));
+        Assert.Equal(FormalPdf(), bucket.Objects[$"messaging/{tenant.TenantId}/{sent.DocumentMessageId}"].Bytes);
+    }
+
+    // H10: fuera de la ventana, la plantilla «Respuesta formal» con el PDF como encabezado de documento, subido a Meta y guardado en R2.
+    [Fact]
+    public async Task AFormalTemplateCarriesTheDocumentHeader()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var connectionId = await ConnectionOfAsync(f);
+        await SeedApprovedFormalAsync(f.Host.Services, f.Tenant.TenantId, connectionId, f.MemberId);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET last_inbound_at = now() - interval '25 hours'");
+
+        var sent = Assert.IsType<SupportReplySendResult.Sent>(await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(
+            new SupportFormalTemplateSend(
+                f.Tenant.TenantId, f.ConversationId, null, null, null, "Ana Pérez", Guid.CreateVersion7(), f.MemberId, "SOP-000127",
+                "Revisamos tu caso", FormalPdf(), "Respuesta-SOP-000127.pdf"),
+            Ct)));
+
+        Assert.Equal(f.ConversationId, sent.ConversationId);
+        var send = Assert.Single(Sends(f));
+        using var body = JsonDocument.Parse(send.Body!);
+        var template = body.RootElement.GetProperty("template");
+        Assert.Equal("qep_soporte_formal", template.GetProperty("name").GetString());
+        var header = template.GetProperty("components")[0];
+        Assert.Equal("header", header.GetProperty("type").GetString());
+        var document = header.GetProperty("parameters")[0].GetProperty("document");
+        Assert.Equal(("media.support", "Respuesta-SOP-000127.pdf"), (document.GetProperty("id").GetString(), document.GetProperty("filename").GetString()));
+        Assert.Equal(
+            $"11|1|{f.MemberId}|Hola Ana Pérez, te enviamos la respuesta formal a tu caso SOP-000127: Revisamos tu caso. Si tienes dudas, responde este mensaje.|application/pdf|Respuesta-SOP-000127.pdf",
+            await ScalarAsync<string>(f.ConnectionString,
+                """
+                SELECT m.kind || '|' || m.status || '|' || m.sent_by_member_id || '|' || m.text || '|' || mm.mime_type || '|' || mm.file_name
+                FROM messaging.messages m JOIN messaging.message_media mm ON mm.message_id = m.id WHERE m.id = @id
+                """,
+                ("id", sent.MessageId)));
+        Assert.Equal(FormalPdf(), f.Bucket.Objects[$"messaging/{f.Tenant.TenantId}/{sent.MessageId}"].Bytes);
+    }
+
+    [Fact]
+    public async Task AFormalTemplateWithoutApprovalIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeMediaAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        // La de «Aviso de respuesta» aprobada no sirve: la formal es otro tipo.
+        await SeedApprovedAsync(
+            f.Host.Services, f.Tenant.TenantId, await ConnectionOfAsync(f), f.MemberId, SupportReplyTemplateDefinition.Name,
+            TemplateComponentsBuilder.Components(
+                SupportReplyTemplateDefinition.Draft(SupportReplyTemplateDefinition.Name, SupportReplyTemplateDefinition.BaseBody)).ToJsonString(),
+            MessageTemplateKind.SupportReply);
+
+        var result = await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(
+            new SupportFormalTemplateSend(
+                f.Tenant.TenantId, f.ConversationId, null, null, null, "Ana Pérez", Guid.CreateVersion7(), f.MemberId, "SOP-000127",
+                "Revisamos tu caso", FormalPdf(), "Respuesta-SOP-000127.pdf"),
+            Ct));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("template_not_approved"), result);
+        await AssertNothingWentOutAsync(f);
+        Assert.Empty(f.Bucket.Objects);
+    }
+
+    private static SupportSurveyTemplateSend Survey(Fixture f, Guid? clientId = null) =>
+        new(f.Tenant.TenantId, f.ConversationId, clientId ?? Guid.CreateVersion7(), f.MemberId, "Ana Pérez", "SOP-000127");
+
+    private static Task<SupportReplySendResult> SendSurveyAsync(Fixture f, SupportSurveyTemplateSend send) =>
+        WithOutboundAsync(f, outbound => outbound.SendSurveyTemplateAsync(send, Ct));
+
+    // H16: la encuesta sale por la plantilla aprobada a la conversación del ticket, con el radicado y sin parámetros en los botones.
+    [Fact]
+    public async Task ASurveyTemplateGoesToTheConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedApprovedSurveyAsync(f.Factory.Services, f.Tenant.TenantId, f.ConnectionId, f.MemberId);
+        var clientId = Guid.CreateVersion7();
+
+        var sent = Assert.IsType<SupportReplySendResult.Sent>(await SendSurveyAsync(f, Survey(f, clientId)));
+        var retried = Assert.IsType<SupportReplySendResult.Sent>(await SendSurveyAsync(f, Survey(f, clientId)));
+
+        Assert.Equal(sent, retried);
+        Assert.Equal(f.ConversationId, sent.ConversationId);
+        var call = Assert.Single(Sends(f));
+        using var body = JsonDocument.Parse(call.Body!);
+        var template = body.RootElement.GetProperty("template");
+        Assert.Equal("qep_soporte_encuesta", template.GetProperty("name").GetString());
+        var component = Assert.Single(template.GetProperty("components").EnumerateArray());
+        Assert.Equal("body", component.GetProperty("type").GetString());
+        Assert.Equal(
+            [("nombre_contacto", "Ana Pérez"), ("radicado", "SOP-000127")],
+            component.GetProperty("parameters").EnumerateArray()
+                .Select(item => (item.GetProperty("parameter_name").GetString()!, item.GetProperty("text").GetString()!)));
+        Assert.Equal($"11|1|{f.MemberId}|{clientId}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT kind || '|' || status || '|' || sent_by_member_id || '|' || client_id FROM messaging.messages WHERE id = @id",
+            ("id", sent.MessageId)));
+    }
+
+    [Fact]
+    public async Task ASurveyWithoutApprovalIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedApprovedTemplateAsync(f);
+
+        var result = await SendSurveyAsync(f, Survey(f));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("template_not_approved"), result);
+        Assert.Equal(0L, await OutboundRowsAsync(f));
+        Assert.Empty(Sends(f));
+    }
+
+    [Fact]
+    public async Task ASurveyToABlockedContactIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedApprovedSurveyAsync(f.Factory.Services, f.Tenant.TenantId, f.ConnectionId, f.MemberId);
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.conversations SET blocked_at = now(), blocked_by_member_id = @member, blocked_wa_id = @phone, version = version + 1",
+            ("member", f.MemberId), ("phone", Phone));
+
+        var result = await SendSurveyAsync(f, Survey(f));
+
+        Assert.Equal(new SupportReplySendResult.Rejected("contact_blocked"), result);
+        Assert.Equal(0L, await OutboundRowsAsync(f));
+        Assert.Empty(Sends(f));
+    }
+
+    // Como toda respuesta de Soporte: no toma la conversación, no la reabre ni resta no leídos (seen: 0).
+    [Fact]
+    public async Task ASurveyDoesNotTakeNorReopenTheConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await SeedApprovedSurveyAsync(f.Factory.Services, f.Tenant.TenantId, f.ConnectionId, f.MemberId);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET status = 'Resolved', unread_count = 2");
+        var version = await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.conversations");
+
+        Assert.IsType<SupportReplySendResult.Sent>(await SendSurveyAsync(f, Survey(f)));
+
+        Assert.Equal($"Resolved||2|{version}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT status || '|' || coalesce(assigned_member_id::text, '') || '|' || unread_count || '|' || version FROM messaging.conversations"));
+    }
 }
