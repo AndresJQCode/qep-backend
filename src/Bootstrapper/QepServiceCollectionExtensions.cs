@@ -497,7 +497,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
             Modules.Support.Application.UpdateSupportSettingsHandler>();
-        // Fase 3: el formulario público y los textos legales, versionados (plan F14 a F16).
+        // Fase 3: el formulario público, versionado (plan F14); los documentos legales del portal, versionados por tipo (spec
+        // 2026-11-15 §7).
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.GetFormSettingsQuery, Modules.Support.Application.SupportFormSettingsDto>,
             Modules.Support.Application.GetFormSettingsHandler>();
@@ -505,17 +506,29 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.UpdateFormSettingsCommand, Modules.Support.Application.SupportFormSettingsDto>,
             Modules.Support.Application.UpdateFormSettingsHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Support.Application.GetLegalTextsQuery, Modules.Support.Application.SupportLegalTextsDto>,
-            Modules.Support.Application.GetLegalTextsHandler>();
+            IQueryHandler<Modules.Support.Application.GetLegalDocumentsQuery, Modules.Support.Application.SupportLegalDocumentsDto>,
+            Modules.Support.Application.GetLegalDocumentsHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Support.Application.PublishLegalTextsCommand, Modules.Support.Application.SupportLegalTextsDto>,
-            Modules.Support.Application.PublishLegalTextsHandler>();
+            IQueryHandler<
+                Modules.Support.Application.GetLegalDocumentHistoryQuery, Modules.Support.Application.SupportLegalDocumentHistoryDto>,
+            Modules.Support.Application.GetLegalDocumentHistoryHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetLegalDocumentVersionQuery, Modules.Support.Application.SupportLegalDocumentDto>,
+            Modules.Support.Application.GetLegalDocumentVersionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PublishLegalDocumentCommand, Modules.Support.Application.SupportLegalDocumentDto>,
+            Modules.Support.Application.PublishLegalDocumentHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.CreateTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.CreateTicketHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.GetTicketQuery, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.GetTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<
+                Modules.Support.Application.GetLegalAcceptanceSnapshotQuery,
+                Modules.Support.Application.SupportLegalAcceptanceSnapshotDto>,
+            Modules.Support.Application.GetLegalAcceptanceSnapshotHandler>();
         services.AddScoped<
             ICommandHandler<
                 Modules.Support.Application.GetTicketAttachmentDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
@@ -1619,6 +1632,8 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the public portal is a Companies company, like IPosCompanyLookup.
+        services.AddScoped<Modules.Support.Application.ISupportOrganizationDirectory, SupportOrganizationDirectory>();
         // Fase 4a (plan G8): el «quién soy» de IsMe; null fuera de una sesión.
         services.AddScoped<Modules.Support.Application.ISupportViewer, SupportViewer>();
         // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.

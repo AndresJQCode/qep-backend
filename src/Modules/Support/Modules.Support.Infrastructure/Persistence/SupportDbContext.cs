@@ -75,13 +75,31 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         "requester_address", "requester_city_id", "requester_city_name",
     ];
 
+    /// <summary>Unique idempotency key of the public filing per tenant (spec 2026-11-15 §9.2, plan L27). Translated by name in
+    /// <c>SupportUnitOfWork</c> to <c>SupportClientRequestTakenException</c>.</summary>
+    public const string TicketClientRequestIndex = "IX_tickets_tenant_client_request";
+
     public DbSet<SupportTicketAccess> TicketAccess => Set<SupportTicketAccess>();
+
+    /// <summary>Spec 2026-11-15 §9.3 (plan L29): the FK to <c>companies.companies</c> lives only in <c>AddSupportFormOrganization</c>,
+    /// written by hand (EF does not model relations across module contexts; precedent <c>pos.cash_sessions</c>).</summary>
+    public const string FormOrganizationForeignKey = "FK_form_versions_companies_organization_company_id";
 
     public DbSet<SupportFormVersion> FormVersions => Set<SupportFormVersion>();
 
     public DbSet<SupportLegalTextVersion> LegalTextVersions => Set<SupportLegalTextVersion>();
 
     public DbSet<SupportConsent> Consents => Set<SupportConsent>();
+
+    /// <summary>Unique version per tenant and legal document kind (spec 2026-11-15 §5.1): two publications of the same one collide here.</summary>
+    public const string LegalDocumentVersionIndex = "IX_legal_document_versions_tenant_kind_version";
+
+    /// <summary>One acceptance per ticket and kind (spec 2026-11-15 §5.2). Translated by name in <c>SupportUnitOfWork</c>.</summary>
+    public const string LegalAcceptanceTicketKindIndex = "IX_legal_acceptances_ticket_kind";
+
+    public DbSet<SupportLegalDocumentVersion> LegalDocumentVersions => Set<SupportLegalDocumentVersion>();
+
+    public DbSet<SupportLegalAcceptance> LegalAcceptances => Set<SupportLegalAcceptance>();
 
     /// <summary>Único del archivo de Storage (plan F35): dos radicaciones que reclaman el mismo archivo chocan acá.</summary>
     public const string TicketAttachmentFileIndex = "IX_ticket_attachments_file";
@@ -115,6 +133,8 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureFormVersion(modelBuilder);
         ConfigureLegalTextVersion(modelBuilder);
         ConfigureConsent(modelBuilder);
+        ConfigureLegalDocumentVersion(modelBuilder);
+        ConfigureLegalAcceptance(modelBuilder);
         ConfigureTicketAttachment(modelBuilder);
         ConfigureTicketNote(modelBuilder);
     }
@@ -252,9 +272,14 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         form.Property(value => value.SuccessMessage)
             .HasColumnName("success_message")
             .HasMaxLength(SupportFormVersion.SuccessMessageMaxLength);
+        // Spec 2026-11-15 §9.3 (plan L29): the company that answers. The column and its index are modeled here; the FK to
+        // companies.companies (ON DELETE RESTRICT) only in the migration (FormOrganizationForeignKey).
+        form.Property(value => value.OrganizationCompanyId).HasColumnName("organization_company_id");
         form.Property(value => value.CreatedAt).HasColumnName("created_at");
         form.Property(value => value.CreatedBy).HasColumnName("created_by");
         form.HasIndex(value => new { value.TenantId, value.Version }).IsUnique().HasDatabaseName(FormVersionIndex);
+        // Serves the RESTRICT check of a company DELETE (PostgreSQL does not index the referencing side by itself).
+        form.HasIndex(value => value.OrganizationCompanyId).HasDatabaseName("IX_form_versions_organization_company");
         // Para SupportUserReferenceProbe, que busca por membresía sola.
         form.HasIndex(value => value.CreatedBy).HasDatabaseName("IX_form_versions_created_by");
     }
@@ -280,7 +305,6 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         text.Property(value => value.TermsText).HasColumnName("terms_text").HasMaxLength(SupportLegalTextVersion.TextMaxLength);
         text.Property(value => value.CreatedAt).HasColumnName("created_at");
         text.Property(value => value.CreatedBy).HasColumnName("created_by");
-        text.Ignore(value => value.IsExample);
         text.HasIndex(value => new { value.TenantId, value.Version }).IsUnique().HasDatabaseName(LegalTextVersionIndex);
         // Para SupportUserReferenceProbe, que busca por membresía sola.
         text.HasIndex(value => value.CreatedBy).HasDatabaseName("IX_legal_text_versions_created_by");
@@ -310,6 +334,87 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         consent.Property(value => value.VisitorIp).HasColumnName("visitor_ip").HasMaxLength(SupportConsent.VisitorIpMaxLength);
         // Una fila por ticket.
         consent.HasIndex(value => value.TicketId).IsUnique().HasDatabaseName(ConsentTicketIndex);
+    }
+
+    // Spec 2026-11-15 §5.1: legal evidence, insert-only. No FK; the Down of AddSupportLegalDocuments keeps the table. The kind is
+    // stored by name; the question and the URL belong only to the privacy notice. created_by is listed in SupportUserReferenceProbe.
+    private static void ConfigureLegalDocumentVersion(ModelBuilder modelBuilder)
+    {
+        var document = modelBuilder.Entity<SupportLegalDocumentVersion>();
+        document.ToTable("legal_document_versions", Schema, table =>
+        {
+            table.HasCheckConstraint(
+                "CK_legal_document_versions_kind", "kind IN ('PrivacyNotice', 'AnonymousNotice', 'Terms')");
+            table.HasCheckConstraint("CK_legal_document_versions_version", "version >= 1");
+            table.HasCheckConstraint(
+                "CK_legal_document_versions_privacy_only",
+                "kind = 'PrivacyNotice' OR (authorization_question IS NULL AND policy_url IS NULL)");
+        });
+        document.HasKey(value => value.Id);
+        document.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        document.Property(value => value.TenantId).HasColumnName("tenant_id");
+        document.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(32);
+        document.Property(value => value.Version).HasColumnName("version");
+        document.Property(value => value.ContentHtml)
+            .HasColumnName("content_html")
+            .HasMaxLength(SupportLegalDocumentVersion.ContentMaxLength);
+        document.Property(value => value.AuthorizationQuestion)
+            .HasColumnName("authorization_question")
+            .HasMaxLength(SupportLegalDocumentVersion.AuthorizationQuestionMaxLength);
+        document.Property(value => value.PolicyUrl)
+            .HasColumnName("policy_url")
+            .HasMaxLength(SupportLegalDocumentVersion.PolicyUrlMaxLength);
+        document.Property(value => value.CreatedAt).HasColumnName("created_at");
+        document.Property(value => value.CreatedBy).HasColumnName("created_by");
+        document.Ignore(value => value.IsExample);
+        document.HasIndex(value => new { value.TenantId, value.Kind, value.Version })
+            .IsUnique()
+            .HasDatabaseName(LegalDocumentVersionIndex);
+        // For SupportUserReferenceProbe, which looks up by membership alone.
+        document.HasIndex(value => value.CreatedBy).HasDatabaseName("IX_legal_document_versions_created_by");
+    }
+
+    // Spec 2026-11-15 §5.2: legal evidence, insert-only, the mirror of consents. No FK on purpose, neither to the ticket nor to the
+    // version, so nothing drags it away; the row keeps its own snapshot. The IP check backs the domain against raw SQL: a privacy
+    // notice always has an IP and an anonymous notice never does (a Terms row of an anonymous filing is kept without one by the handler).
+    private static void ConfigureLegalAcceptance(ModelBuilder modelBuilder)
+    {
+        var acceptance = modelBuilder.Entity<SupportLegalAcceptance>();
+        acceptance.ToTable("legal_acceptances", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_legal_acceptances_kind", "kind IN ('PrivacyNotice', 'AnonymousNotice', 'Terms')");
+            table.HasCheckConstraint(
+                "CK_legal_acceptances_ip",
+                "(kind <> 'PrivacyNotice' OR visitor_ip IS NOT NULL) AND (kind <> 'AnonymousNotice' OR visitor_ip IS NULL)");
+        });
+        acceptance.HasKey(value => value.Id);
+        acceptance.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        acceptance.Property(value => value.TenantId).HasColumnName("tenant_id");
+        acceptance.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        acceptance.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(32);
+        acceptance.Property(value => value.DocumentVersionId).HasColumnName("document_version_id");
+        acceptance.Property(value => value.DocumentVersion).HasColumnName("document_version");
+        acceptance.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
+        acceptance.Property(value => value.ContentHtml)
+            .HasColumnName("content_html")
+            .HasMaxLength(SupportLegalDocumentVersion.ContentMaxLength);
+        acceptance.Property(value => value.AuthorizationQuestion)
+            .HasColumnName("authorization_question")
+            .HasMaxLength(SupportLegalDocumentVersion.AuthorizationQuestionMaxLength);
+        acceptance.Property(value => value.PolicyUrl)
+            .HasColumnName("policy_url")
+            .HasMaxLength(SupportLegalDocumentVersion.PolicyUrlMaxLength);
+        acceptance.Property(value => value.CharacterizationText)
+            .HasColumnName("characterization_text")
+            .HasMaxLength(SupportLegalAcceptance.CharacterizationTextMaxLength);
+        acceptance.Property(value => value.VisitorIp)
+            .HasColumnName("visitor_ip")
+            .HasMaxLength(SupportLegalAcceptance.VisitorIpMaxLength);
+        acceptance.HasIndex(value => new { value.TicketId, value.Kind })
+            .IsUnique()
+            .HasDatabaseName(LegalAcceptanceTicketKindIndex);
     }
 
     // La fila la inserta SupportProvisioner con SQL crudo; EF sólo la lee y actualiza el umbral. El contador y created_at son
@@ -464,6 +569,7 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         // nunca se borran).
         ticket.Property(value => value.IsAnonymous).HasColumnName("is_anonymous").HasDefaultValue(false);
         ticket.Property(value => value.FormVersionId).HasColumnName("form_version_id");
+        ticket.Property(value => value.ClientRequestId).HasColumnName("client_request_id");
         ticket.Property(value => value.ReceivedAt).HasColumnName("received_at");
         ticket.Property(value => value.ReceivedOn).HasColumnName("received_on");
         ticket.Property(value => value.DueOn).HasColumnName("due_on");
@@ -511,6 +617,12 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.HasIndex(value => new { value.TenantId, value.ConversationId })
             .HasFilter("conversation_id IS NOT NULL")
             .HasDatabaseName("IX_tickets_tenant_conversation");
+        // Spec 2026-11-15 §9.2 (plan L27): the idempotency key of the public filing, unique per tenant. Partial: every ticket without
+        // one (other intakes, a filing without key) is outside the index.
+        ticket.HasIndex(value => new { value.TenantId, value.ClientRequestId })
+            .IsUnique()
+            .HasFilter("client_request_id IS NOT NULL")
+            .HasDatabaseName(TicketClientRequestIndex);
     }
 
     private static void ConfigureTicketMessage(ModelBuilder modelBuilder)

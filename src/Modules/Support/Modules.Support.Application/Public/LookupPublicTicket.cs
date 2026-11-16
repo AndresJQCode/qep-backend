@@ -104,6 +104,7 @@ public sealed partial class LookupPublicTicketHandler(
             ticket.DueOn,
             dueState.ToString(),
             ticket.TermIsLegal,
+            ticket.TermBusinessDays,
             sent);
     }
 

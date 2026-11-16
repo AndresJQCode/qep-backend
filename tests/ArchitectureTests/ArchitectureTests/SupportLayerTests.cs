@@ -48,6 +48,20 @@ public sealed class SupportLayerTests
              name.StartsWith("Npgsql", StringComparison.Ordinal)));
     }
 
+    // Spec 2026-11-15 §6.3 (plan L2): the legal HTML is sanitized behind ISupportHtmlSanitizer; only Infrastructure knows the library.
+    [Fact]
+    public void ApplicationDoesNotReferenceTheHtmlSanitizer()
+    {
+        foreach (var assembly in new[] { typeof(SupportDomainException).Assembly, typeof(SupportPermissions).Assembly })
+        {
+            Assert.DoesNotContain(ReferenceNamesOf(assembly), name =>
+                name is not null &&
+                (name.StartsWith("HtmlSanitizer", StringComparison.Ordinal) ||
+                 name.StartsWith("Ganss.Xss", StringComparison.Ordinal) ||
+                 name.StartsWith("AngleSharp", StringComparison.Ordinal)));
+        }
+    }
+
     /// <summary>
     /// `support` no se acopla a ningún otro módulo de negocio (spec 2026-11-14). La única dependencia legítima hacia
     /// afuera es `Modules.Tenancy.*` (<c>IExecutionContext</c>, <c>ITenantModules</c>). Clientes, miembros y el calendario
@@ -64,6 +78,24 @@ public sealed class SupportLayerTests
             name.StartsWith("Modules.", StringComparison.Ordinal) &&
             !name.StartsWith("Modules.Support", StringComparison.Ordinal) &&
             !name.StartsWith("Modules.Tenancy", StringComparison.Ordinal));
+    }
+
+    // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the portal is read through ISupportOrganizationDirectory, whose
+    // adapter lives in Bootstrapper. No layer of Support references Companies, not even for the FK, which is SQL in the migration.
+    [Fact]
+    public void SupportDoesNotReferenceCompanies()
+    {
+        foreach (var assembly in new[]
+        {
+            typeof(SupportDomainException).Assembly,
+            typeof(SupportPermissions).Assembly,
+            typeof(SupportInfrastructureExtensions).Assembly,
+            typeof(SupportEndpoints).Assembly,
+        })
+        {
+            Assert.DoesNotContain(ReferenceNamesOf(assembly), name =>
+                name is not null && name.StartsWith("Modules.Companies", StringComparison.Ordinal));
+        }
     }
 
     private static string?[] ReferenceNamesOf(Assembly assembly) => assembly

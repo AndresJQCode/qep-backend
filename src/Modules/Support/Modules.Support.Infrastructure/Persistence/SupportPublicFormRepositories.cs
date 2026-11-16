@@ -70,25 +70,3 @@ internal sealed class SupportFormRepository(SupportDbContext dbContext) : ISuppo
             .AsNoTracking()
             .FirstOrDefaultAsync(form => form.TenantId == tenantId && form.Id == id, cancellationToken);
 }
-
-internal sealed class SupportLegalTextRepository(SupportDbContext dbContext) : ISupportLegalTextRepository
-{
-    public void Add(SupportLegalTextVersion text) => dbContext.LegalTextVersions.Add(text);
-
-    public Task<SupportLegalTextVersion?> CurrentAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        dbContext.LegalTextVersions
-            .AsNoTracking()
-            .Where(text => text.TenantId == tenantId)
-            .OrderByDescending(text => text.Version)
-            .FirstOrDefaultAsync(cancellationToken);
-
-    public Task<SupportLegalTextVersion?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
-        dbContext.LegalTextVersions
-            .AsNoTracking()
-            .FirstOrDefaultAsync(text => text.TenantId == tenantId && text.Id == id, cancellationToken);
-}
-
-internal sealed class SupportConsentRepository(SupportDbContext dbContext) : ISupportConsentRepository
-{
-    public void Add(SupportConsent consent) => dbContext.Consents.Add(consent);
-}

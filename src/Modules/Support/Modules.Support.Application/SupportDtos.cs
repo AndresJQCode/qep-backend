@@ -28,9 +28,12 @@ public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonB
 /// <summary>
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
 /// formulario por defecto, sin publicar) y va en el <c>If-Match</c> del <c>PUT</c>. <c>PublishBlockers</c> dice por qué no se puede
-/// publicar (<c>legal_texts_required</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
+/// publicar (<c>privacy_notice_required</c>, <c>anonymous_notice_required</c>, <c>terms_required</c>, <c>organization_required</c>,
+/// <c>organization_inactive</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
 /// <c>PublicUrl</c> es el enlace que el tenant comparte. <c>AllowAttachments</c> dice si la página ofrece adjuntos (spec §9.3; apagado
-/// por defecto).
+/// por defecto). <c>Organization</c> es la empresa elegida (null = ninguna; <c>IsActive</c> false si se desactivó después) y
+/// <c>OrganizationOptions</c> las activas del tenant, por nombre: el selector las usa en vez de <c>GET …/companies</c>, que exige
+/// <c>companies.company.read</c> (spec 2026-11-15 §9.3, plan L32).
 /// </summary>
 public sealed record SupportFormSettingsDto(
     int Version,
@@ -44,21 +47,40 @@ public sealed record SupportFormSettingsDto(
     string? IntroText,
     string? SuccessMessage,
     string PublicUrl,
-    IReadOnlyList<string> PublishBlockers);
+    IReadOnlyList<string> PublishBlockers,
+    SupportFormOrganizationDto? Organization,
+    IReadOnlyList<SupportFormOrganizationDto> OrganizationOptions);
+
+/// <summary>A tenant company in the public form settings. <c>DocumentTypeCode</c> ∈ <c>NIT</c>, <c>CC</c>, <c>CE</c>,
+/// <c>PASAPORTE</c>, <c>NIF</c>, <c>NIE</c>, <c>TAX_ID</c>; <c>DocumentNumber</c> is the company's tax id. <c>IsActive</c> false can only
+/// come in <c>Organization</c> (one chosen and deactivated later), never in <c>OrganizationOptions</c>.</summary>
+public sealed record SupportFormOrganizationDto(Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive);
+
+/// <summary>The current version of each legal document, or its example (spec 2026-11-15 §7).</summary>
+public sealed record SupportLegalDocumentsDto(
+    SupportLegalDocumentDto PrivacyNotice, SupportLegalDocumentDto AnonymousNotice, SupportLegalDocumentDto Terms);
 
 /// <summary>
-/// La versión vigente de los textos legales (fase 3, plan F16). Sin ninguna publicada, el texto base de QEP con <c>IsExample</c> en
-/// verdadero, <c>Version</c> 0 y sin autor: la pantalla lo marca como ejemplo y nada se guarda hasta publicar.
+/// One version of a legal document: the current one, an old one or the example (<c>Version</c> 0, <c>IsExample</c>, without
+/// <c>CreatedAt</c> nor <c>CreatedBy</c>). <c>ContentHtml</c> is always sanitized. <c>AuthorizationQuestion</c>, <c>PolicyUrl</c> and
+/// <c>DefaultAuthorizationQuestion</c> are null except on <c>PrivacyNotice</c>; <c>DefaultAuthorizationQuestion</c> is the question
+/// the portal shows when <c>AuthorizationQuestion</c> is null, so the editor offers it without building it in the browser.
 /// </summary>
-public sealed record SupportLegalTextsDto(
+public sealed record SupportLegalDocumentDto(
+    string Kind,
     int Version,
     bool IsExample,
-    string AuthorizationText,
-    string? PolicyText,
+    string ContentHtml,
+    string? AuthorizationQuestion,
     string? PolicyUrl,
-    string? TermsText,
+    string? DefaultAuthorizationQuestion,
     DateTimeOffset? CreatedAt,
     SupportMemberDto? CreatedBy);
+
+/// <summary>The published versions of a kind, newest first, without content; empty if none was published.</summary>
+public sealed record SupportLegalDocumentHistoryDto(string Kind, IReadOnlyList<SupportLegalDocumentVersionItemDto> Versions);
+
+public sealed record SupportLegalDocumentVersionItemDto(int Version, DateTimeOffset CreatedAt, SupportMemberDto CreatedBy);
 
 /// <summary>Una página de la bandeja. <c>Summary</c> es del tenant entero, no de la página ni del filtro: las pestañas cuentan siempre
 /// lo mismo, filtres lo que filtres.</summary>
@@ -122,7 +144,30 @@ public sealed record SupportTicketDetailDto(
     IReadOnlyList<SupportCustomerCandidateDto> CustomerCandidates,
     SupportConsultAccessDto? ConsultAccess,
     IReadOnlyList<SupportAttachmentDto> Attachments,
+    IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances,
     string? IssuedPin);
+
+/// <summary>
+/// One legal acceptance of a public filing (spec 2026-11-15 §7, plan L19), in the order <c>PrivacyNotice</c>, <c>AnonymousNotice</c>,
+/// <c>Terms</c>; an empty list if the ticket has none (a manual ticket), never <c>null</c>. No content: it opens with
+/// <c>GET …/tickets/{id}/legal-acceptances/{kind}</c>. On <c>AnonymousNotice</c>, <c>AcceptedAt</c> means «continued after reading it».
+/// <c>VisitorIp</c> is null on both rows of an anonymous ticket.
+/// </summary>
+public sealed record SupportLegalAcceptanceDto(string Kind, int Version, DateTimeOffset AcceptedAt, string? VisitorIp);
+
+/// <summary>
+/// What the requester was shown and accepted (spec 2026-11-15 §7, plan L20): the sanitized HTML as it was served, the question shown,
+/// the policy URL and the characterization notice (the last three only on <c>PrivacyNotice</c>). Never today's document.
+/// </summary>
+public sealed record SupportLegalAcceptanceSnapshotDto(
+    string Kind,
+    int Version,
+    DateTimeOffset AcceptedAt,
+    string? VisitorIp,
+    string ContentHtml,
+    string? AuthorizationQuestion,
+    string? PolicyUrl,
+    string? CharacterizationText);
 
 /// <summary>Un adjunto del formulario público (plan F37), en el orden en que se adjuntó. El archivo se baja con
 /// <c>GET …/tickets/{id}/attachments/{attachmentId}/download</c>: la pantalla no necesita <c>storage.file.read</c>. Una lista vacía

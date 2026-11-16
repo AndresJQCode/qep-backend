@@ -29,6 +29,7 @@ public sealed class SupportTicketDtoComposer(
     ISupportUnclassifiedRepository unclassified,
     ISupportTicketAccessRepository accesses,
     ISupportTicketAttachmentRepository attachments,
+    ISupportLegalAcceptanceRepository legalAcceptances,
     ITenantModules tenantModules,
     ISupportViewer viewer)
 {
@@ -136,6 +137,10 @@ public sealed class SupportTicketDtoComposer(
                 : null,
             (await attachments.ListAsync(ticket.TenantId, ticket.Id, cancellationToken))
                 .Select(item => new SupportAttachmentDto(item.Id, item.FileName, item.MimeType, item.SizeBytes))
+                .ToList(),
+            // Spec 2026-11-15 §7 (plan L19): a projection without the snapshot, already in the order of the enum.
+            (await legalAcceptances.ListByTicketAsync(ticket.TenantId, ticket.Id, cancellationToken))
+                .Select(item => new SupportLegalAcceptanceDto(item.Kind.ToString(), item.Version, item.AcceptedAt, item.VisitorIp))
                 .ToList(),
             // El PIN sólo lo pone el alta anónima, en su 201 (plan G3); toda otra lectura lo deja en null.
             IssuedPin: null);

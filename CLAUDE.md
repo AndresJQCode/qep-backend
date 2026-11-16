@@ -906,8 +906,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
 - **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
   `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id`,
-  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by`, `legal_text_versions.created_by` y
-  `ticket_notes.author_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
+  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by`, `legal_text_versions.created_by`,
+  `legal_document_versions.created_by` y `ticket_notes.author_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
   referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
   `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
   nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
@@ -1051,11 +1051,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   lea la sesión. Lo que toca CSRF, cookie o CORS va en `SupportPublicRealAuthHost` (precedente `ShopifyApiHarness.WithRealAuthentication`;
   lo amarra `ThePublicGroupIgnoresTheSessionCookieWithRealAuth`). Ningún handler del grupo lee `IExecutionContext` ni la cookie: el
   tenant sale del slug (`SupportPublicResolver`), nunca de la sesión de quien navega.
-- **`support.consents` y `support.legal_text_versions` son prueba legal: sólo se insertan** (spec §9.5, plan F16 y F17). Ningún método de
-  dominio los edita ni los borra, `consents` no tiene FK (ni al ticket ni a la versión: guarda su foto del texto, que es lo que prueba) y
-  el `Down` de `AddSupportPublicForm` no las borra. **Ese `Down` no se corre en producción**: el rollback es revertir el código. Una
-  purga futura de tickets tiene que dejar los consentimientos fuera, y una migración nueva de Support que las toque tampoco puede
-  borrarlas en su `Down`.
+- **`support.legal_document_versions` y `support.legal_acceptances` son prueba legal: sólo se insertan** (spec 2026-11-15 §5). Ningún
+  método de dominio las edita ni las borra, `legal_acceptances` no tiene FK (ni al ticket ni a la versión: guarda su foto del HTML
+  servido, que es lo que prueba) y el `Down` de `AddSupportLegalDocuments` no las borra. **Ese `Down` no se corre en producción**: el
+  rollback es revertir el código. Una purga futura de tickets tiene que dejar las aceptaciones fuera, y una migración nueva de Support que
+  las toque tampoco puede borrarlas en su `Down`. Lo mismo vale para `support.consents` y `support.legal_text_versions` de la fase 3, que
+  conservan sus filas.
+- **Todo HTML de un documento legal pasa por `ISupportHtmlSanitizer`**: al publicar, al servir `GET /form` y en la foto. Un camino nuevo
+  que escriba `content_html` sin el puerto abre XSS en el portal público. `legal_text_versions` y `consents` siguen mapeadas sin
+  escritor: quitarlas del modelo hace que EF las borre en la siguiente migración.
 - **El PIN de consulta nunca sale a logs, auditoría, eventos ni trazas: sólo se guarda su hash** (`ticket_access.pin_hash`, PBKDF2).
   Viaja dos veces y nada más: en la respuesta del radicado y en el envío al destino registrado del ticket. Un log nuevo en el formulario
   público lleva el id del ticket y el tipo de la excepción, nunca el PIN, el radicado ni el destinatario; lo amarra
@@ -1064,6 +1068,18 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   ese radicado 15 minutos, y mirar el bloqueo y anotar el intento van con la fila tomada (`LockByNumberAsync`, `SELECT … FOR UPDATE`):
   sin el candado, intentos a la vez leen el mismo contador, se pisan y el quinto fallo no bloquea (`ConcurrentWrongPinsStillLockTheTicket`). Un camino
   nuevo que lea o escriba la clave (otra forma de consulta, un reenvío por otro canal) toma la misma fila y nunca desbloquea.
+- **El reintento del radicado público se reconoce por `clientRequestId` antes de Turnstile y bajo el candado del contador** (spec
+  2026-11-15 §9.2). No muevas la búsqueda después de Turnstile: el token ya se gastó en el primer intento y el reintento fallaría con
+  `captcha_invalid`. Un reintento no reenvía el correo; si el PIN no salió por ningún canal, emite uno nuevo y el viejo deja de servir.
+  Con el correo de apertura todavía en vuelo (destino `Email` y nada anotado en `ticket_access`) no rota: invalidaría el PIN que va en el
+  correo. Ese «en vuelo» vence a los 10 minutos de `pin_issued_at` (`OpeningDeliveryGrace`, plan L33): después rota, porque el proceso
+  murió entre confirmar y anotar. La clave es UUID v4 (D-10): otra versión es `422`. La búsqueda va siempre filtrada por tenant
+  (`FindByClientRequestAsync`), y la clave no se audita ni va a `ticket_events`.
+- **`support.form_versions.organization_company_id` tiene FK real a `companies.companies`** (`ON DELETE RESTRICT`, a mano en la
+  migración `AddSupportFormOrganization`, como `pos.cash_sessions`): una empresa que alguna versión del formulario público eligió no se
+  borra, sólo se desactiva (`422 companies.company.in_use`). Soporte la lee por `ISupportOrganizationDirectory` (Bootstrapper), nunca
+  referenciando Companies (`SupportDoesNotReferenceCompanies`). Es obligatoria para publicar (D-8): una siembra de prueba que publica un
+  formulario por la consola tiene que elegir una empresa activa del tenant (`SupportPublicHarness.SeedCompanyAsync`).
 - **`uploadKey` es el único vínculo entre la subida anónima de un adjunto y quien la abrió** (plan F32). Es un `Guid.NewGuid()` (v4) que
   Soporte genera, devuelve una vez y Storage guarda como `OwnerId` del archivo `SupportTicket`; completar y radicar exigen el par
   `(fileId, uploadKey)`. No lo cambies por un v7 (`Guid.CreateVersion7`, el de los ids de Storage): se adivina por la hora y cualquiera
