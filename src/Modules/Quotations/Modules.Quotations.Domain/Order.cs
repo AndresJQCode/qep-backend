@@ -1708,16 +1708,17 @@ public sealed class Order
     public bool ChangeOrderDate(DateOnly date, DateOnly today, DateTimeOffset occurredAt)
     {
         EnsureEditable("The order date can only be edited on an editable order.");
+        // Antes que el tope: reenviar la fecha ya guardada nunca es un cambio, aunque haya quedado después de «hoy».
+        if (date == OrderDate)
+        {
+            return false;
+        }
+
         if (date > today)
         {
             throw new QuotationsDomainException(
                 "order.order_date.in_future",
                 "The order date cannot be later than today in the tenant calendar.");
-        }
-
-        if (date == OrderDate)
-        {
-            return false;
         }
 
         OrderDate = date;

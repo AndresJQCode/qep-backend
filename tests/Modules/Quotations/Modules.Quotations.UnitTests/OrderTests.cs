@@ -1347,6 +1347,22 @@ public sealed class OrderTests
         Assert.Equal(Now, order.UpdatedAt);
     }
 
+    // Un pedido cuya fecha guardada quedó después de «hoy» (otro huso, reloj de un pod) acepta que se le reenvíe la
+    // misma fecha: el save-all manda siempre la del pedido y no puede fallar con in_future por algo que no cambió.
+    [Fact]
+    public void ResendingAStoredFutureOrderDateIsNotAChangeAndDoesNotFail()
+    {
+        var stored = Today.AddDays(1);
+        var order = NewOrder(orderDate: stored);
+        var before = order.Version;
+
+        var changed = order.ChangeOrderDate(stored, Today, Now.AddDays(1));
+
+        Assert.False(changed);
+        Assert.Equal(stored, order.OrderDate);
+        Assert.Equal(before, order.Version);
+    }
+
     [Fact]
     public void TodayIsAnAcceptedOrderDate()
     {
