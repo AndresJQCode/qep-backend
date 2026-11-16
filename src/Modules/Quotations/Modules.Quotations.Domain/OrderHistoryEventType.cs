@@ -34,4 +34,8 @@ public enum OrderHistoryEventType
     /// asesor escribe esta entrada: los enlaces automáticos (checkout, inicio de sesión, alta diferida) no. Al final, como los
     /// demás.</summary>
     BuyerAccountChanged,
+
+    /// <summary>Spec 2026-11-16 §3 (F-6): un asesor cambió la «Fecha del pedido». La entrada la escribe el handler del guardado
+    /// del borrador, con la fecha anterior y la nueva en <c>Details</c>. Al final, como los demás.</summary>
+    OrderDateChanged,
 }

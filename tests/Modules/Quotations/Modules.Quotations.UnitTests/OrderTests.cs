@@ -1311,6 +1311,14 @@ public sealed class OrderTests
         Assert.All(orders, order => Assert.Equal(date, order.OrderDate));
     }
 
+    // Spec 2026-11-16 §3 (F-6): la columna del historial guarda el nombre, así que el miembro nuevo va al final y no reordena.
+    [Fact]
+    public void OrderDateChangedIsTheLastHistoryEventType()
+    {
+        Assert.Equal("OrderDateChanged", Enum.GetNames<OrderHistoryEventType>()[^1]);
+        Assert.Equal("BuyerAccountChanged", Enum.GetNames<OrderHistoryEventType>()[^2]);
+    }
+
     [Fact]
     public void ChangingTheOrderDateMovesItAndBumpsTheVersion()
     {

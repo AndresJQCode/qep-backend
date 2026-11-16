@@ -94,6 +94,9 @@ Columna `quotations.orders.order_date date not null`. Una sola migración EF (`A
    antes que Quotations en `Program.cs`, así que la tabla existe.
 3. `AlterColumn` a `NOT NULL`; índice nuevo `(tenant_id, order_date, converted_at, order_number)`. El índice viejo
    `(tenant_id, converted_at, order_number)` se queda (lo sigue usando la ventana de sincronización).
+4. La columna sale con default `((now() AT TIME ZONE 'America/Bogota')::date)` sólo en la base (no en el modelo de EF) para el
+   rollout (expand): los pods viejos insertan pedidos sin `order_date`. Una migración posterior lo quita cuando ya no quede
+   ningún pod viejo (contract).
 
 Después del deploy, filtros, exportación, reportes y PDF dan lo mismo que antes hasta que alguien cambie una fecha: `CreatedAt` y
 `ConvertedAt` se escriben con el mismo `occurredAt` en `Build`, así que su día local es el que queda en `order_date`.
