@@ -4,8 +4,9 @@ namespace Modules.Support.Application;
 /// (Meta lo devuelve como <c>button.text</c>, V-1); <c>OccurredAt</c>, la hora del toque según Meta.</summary>
 public sealed record SupportSurveyTap(Guid TenantId, Guid SurveyId, Guid MessageId, string? Text, DateTimeOffset OccurredAt);
 
-/// <summary>Fase 4b (H18): el primer texto del contacto después del toque, dentro de la ventana del comentario.</summary>
-public sealed record SupportSurveyComment(Guid TenantId, Guid SurveyId, Guid MessageId, string Text);
+/// <summary>Fase 4b (H18): el primer texto del contacto después del toque, dentro de la ventana del comentario. <c>OccurredAt</c> es
+/// cuándo lo escribió (la hora de Meta): la ventana se mide con ella y no con la hora en que el worker lo procesa (revisión del bloque D).</summary>
+public sealed record SupportSurveyComment(Guid TenantId, Guid SurveyId, Guid MessageId, string Text, DateTimeOffset OccurredAt);
 
 /// <summary>
 /// Fase 4b (H18, owner 2026-11-16, Q-11): lo que el worker de la encuesta lee de Mensajería para las respuestas por WhatsApp. SQL crudo
@@ -18,7 +19,8 @@ public interface ISupportSurveyFeed
     /// llegada: el primero cuyo texto es un botón gana.</summary>
     Task<IReadOnlyList<SupportSurveyTap>> ListTapsAsync(int take, CancellationToken cancellationToken);
 
-    /// <summary>Por encuesta calificada por WhatsApp, sin comentario y con su ventana abierta: el primer texto entrante (no importado) de
-    /// la conversación del toque, después del toque y antes de que cierre la ventana.</summary>
+    /// <summary>Por encuesta calificada por WhatsApp y sin comentario: el primer texto entrante (no importado) de la conversación del
+    /// toque, escrito después del toque y antes de que cierre la ventana. Una ventana ya cerrada se sigue mirando durante
+    /// <c>Support:Workers:SurveyAnswerLookbackDays</c>, por si el texto llegó a tiempo y el worker iba tarde.</summary>
     Task<IReadOnlyList<SupportSurveyComment>> ListCommentsAsync(int take, CancellationToken cancellationToken);
 }

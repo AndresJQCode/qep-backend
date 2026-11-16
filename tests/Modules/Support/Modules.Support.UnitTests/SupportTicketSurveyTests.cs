@@ -114,7 +114,7 @@ public sealed class SupportTicketSurveyTests
         var ticket = Resolved(out var survey);
         var tap = Received.AddHours(2);
         survey.MarkSent(SupportSurveyChannel.WhatsApp, Guid.CreateVersion7(), null, tap);
-        Assert.False(survey.AddComment("Antes de calificar.", Guid.CreateVersion7(), tap));
+        Assert.False(survey.AddComment("Antes de calificar.", Guid.CreateVersion7(), tap, tap));
 
         survey.Answer(ticket, SupportSurveyRating.Regular, null, SupportSurveyChannel.WhatsApp, Guid.CreateVersion7(), tap.AddHours(24), tap);
         var late = Resolved(out var other);
@@ -122,12 +122,31 @@ public sealed class SupportTicketSurveyTests
         other.Answer(late, SupportSurveyRating.Good, null, SupportSurveyChannel.WhatsApp, Guid.CreateVersion7(), tap.AddHours(24), tap);
 
         var message = Guid.CreateVersion7();
-        Assert.True(survey.AddComment(new string('a', 1500), message, tap.AddHours(1)));
+        Assert.True(survey.AddComment(new string('a', 1500), message, tap.AddHours(1), tap.AddHours(1)));
         Assert.Equal(SupportTicketSurvey.CommentMaxLength, survey.Comment!.Length);
         Assert.Equal(message, survey.CommentMessageId);
-        Assert.False(survey.AddComment("Otro más.", Guid.CreateVersion7(), tap.AddHours(2)));
-        Assert.False(other.AddComment("Tarde.", Guid.CreateVersion7(), tap.AddHours(24)));
+        Assert.False(survey.AddComment("Otro más.", Guid.CreateVersion7(), tap.AddHours(2), tap.AddHours(2)));
+        Assert.False(other.AddComment("Tarde.", Guid.CreateVersion7(), tap.AddHours(24), tap.AddHours(24)));
         Assert.Null(other.Comment);
+    }
+
+    // Revisión del bloque D: la ventana se mide con la hora en que el cliente escribió, no con la hora en que el worker lo procesa. Un
+    // texto escrito dentro de las 24 horas y procesado tarde sigue siendo el comentario; uno escrito después, nunca.
+    [Fact]
+    public void TheCommentWindowIsMeasuredByWhenTheCustomerWrote()
+    {
+        var tap = Received.AddHours(2);
+        var processedLate = Resolved(out var onTime);
+        onTime.MarkSent(SupportSurveyChannel.WhatsApp, Guid.CreateVersion7(), null, tap);
+        onTime.Answer(processedLate, SupportSurveyRating.Good, null, SupportSurveyChannel.WhatsApp, Guid.CreateVersion7(), tap.AddHours(24), tap);
+        var writtenLate = Resolved(out var late);
+        late.MarkSent(SupportSurveyChannel.WhatsApp, Guid.CreateVersion7(), null, tap);
+        late.Answer(writtenLate, SupportSurveyRating.Bad, null, SupportSurveyChannel.WhatsApp, Guid.CreateVersion7(), tap.AddHours(24), tap);
+
+        Assert.True(onTime.AddComment("Escrito a tiempo.", Guid.CreateVersion7(), tap.AddHours(23), tap.AddHours(30)));
+        Assert.False(late.AddComment("Escrito tarde.", Guid.CreateVersion7(), tap.AddHours(25), tap.AddHours(25)));
+        Assert.Equal(("Escrito a tiempo.", (string?)null), (onTime.Comment, late.Comment));
+        Assert.Equal(tap.AddHours(30), onTime.UpdatedAt);
     }
 
     [Fact]

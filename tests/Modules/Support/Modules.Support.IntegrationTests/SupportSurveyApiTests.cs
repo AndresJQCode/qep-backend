@@ -356,6 +356,29 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
                 Factory, "SELECT rating || '|' || coalesce(comment, '') FROM support.ticket_surveys WHERE id = @id", ("id", sent.SurveyId)));
     }
 
+    // Revisión del bloque D: la ventana se mide con la hora del mensaje. Un texto escrito dentro de las 24 horas del toque es el
+    // comentario aunque el worker lo procese cuando la ventana ya cerró.
+    [Fact]
+    public async Task ACommentWrittenInTheWindowCountsEvenIfProcessedLate()
+    {
+        var sent = await SentWhatsAppSurveyAsync();
+        var tap = await TapAsync(sent, "Buena", DateTimeOffset.UtcNow);
+        await AnswersTickAsync();
+        await ExecuteAsync(
+            Factory, "UPDATE messaging.messages SET occurred_at = now() - interval '3 hours' WHERE id = @id", ("id", tap));
+        await ExecuteAsync(
+            Factory, "UPDATE support.ticket_surveys SET comment_until = now() - interval '1 hour' WHERE id = @id", ("id", sent.SurveyId));
+        var comment = await SeedMessageAsync(
+            Factory, sent.TenantId, sent.Conversation, DateTimeOffset.UtcNow.AddHours(-2), text: "Escrito a tiempo.");
+
+        await AnswersTickAsync();
+
+        Assert.Equal(
+            $"Escrito a tiempo.|{comment}",
+            await TextAsync(
+                Factory, "SELECT comment || '|' || comment_message_id FROM support.ticket_surveys WHERE id = @id", ("id", sent.SurveyId)));
+    }
+
     // Review Focus 3: el toque cuenta sólo para la encuesta que cita. Reabierto y vuelto a resolver, la primera ya no se responde: un
     // toque sobre ella no califica nada, ni la primera ni la segunda.
     [Fact]

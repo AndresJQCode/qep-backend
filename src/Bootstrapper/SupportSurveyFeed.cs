@@ -18,9 +18,9 @@ namespace Bootstrapper;
 /// <c>IX_messages_thread</c> (<c>conversation_id, occurred_at</c>) desde que se pidió la encuesta, y sólo encuestas mandadas en las
 /// últimas <c>Support:Workers:SurveyAnswerLookbackDays</c> (14).
 ///
-/// **Comentarios.** Por encuesta calificada por WhatsApp, sin comentario y con la ventana abierta: el primer entrante en vivo de tipo
-/// <c>Text</c> de la conversación del toque, después del toque (por <c>occurred_at</c> y el id de desempate) y antes de
-/// <c>comment_until</c>.
+/// **Comentarios.** Por encuesta calificada por WhatsApp y sin comentario: el primer entrante en vivo de tipo <c>Text</c> de la
+/// conversación del toque, escrito después del toque (por <c>occurred_at</c> y el id de desempate) y antes de <c>comment_until</c>. Una
+/// ventana ya cerrada se sigue mirando durante el lookback: el texto que llegó a tiempo cuenta aunque el worker vaya tarde.
 ///
 /// **Lo que lee por nombre.** <c>support.ticket_surveys</c> (<c>id</c>, <c>tenant_id</c>, <c>ticket_id</c>, <c>resolution_number</c>,
 /// <c>status</c>, <c>channel</c>, <c>message_id</c>, <c>sent_at</c>, <c>created_at</c>, <c>rating</c>, <c>answered_via</c>,
@@ -79,12 +79,13 @@ internal sealed class SupportSurveyFeed(SupportDbContext support, IOptions<Suppo
     public async Task<IReadOnlyList<SupportSurveyComment>> ListCommentsAsync(int take, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(take);
+        var lookback = Lookback;
         var rows = await support.Database.SqlQuery<CommentRow>($"""
-            SELECT s.tenant_id AS "TenantId", s.id AS "SurveyId", m.id AS "MessageId", m.text AS "Text"
+            SELECT s.tenant_id AS "TenantId", s.id AS "SurveyId", m.id AS "MessageId", m.text AS "Text", m.occurred_at AS "OccurredAt"
             FROM support.ticket_surveys s
             JOIN messaging.messages tap ON tap.id = s.rating_message_id AND tap.tenant_id = s.tenant_id
             JOIN LATERAL (
-                SELECT m.id, m.text
+                SELECT m.id, m.text, m.occurred_at
                 FROM messaging.messages m
                 WHERE m.tenant_id = s.tenant_id
                   AND m.conversation_id = tap.conversation_id
@@ -100,11 +101,11 @@ internal sealed class SupportSurveyFeed(SupportDbContext support, IOptions<Suppo
             WHERE s.rating IS NOT NULL
               AND s.answered_via = 'WhatsApp'
               AND s.comment IS NULL
-              AND s.comment_until > now()
+              AND s.comment_until > now() - {lookback}
             ORDER BY s.answered_at, s.id
             LIMIT {take}
             """).ToListAsync(cancellationToken);
-        return rows.Select(row => new SupportSurveyComment(row.TenantId, row.SurveyId, row.MessageId, row.Text)).ToList();
+        return rows.Select(row => new SupportSurveyComment(row.TenantId, row.SurveyId, row.MessageId, row.Text, row.OccurredAt)).ToList();
     }
 
     private sealed class TapRow
@@ -129,5 +130,7 @@ internal sealed class SupportSurveyFeed(SupportDbContext support, IOptions<Suppo
         public Guid MessageId { get; init; }
 
         public string Text { get; init; } = string.Empty;
+
+        public DateTimeOffset OccurredAt { get; init; }
     }
 }

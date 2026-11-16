@@ -118,7 +118,7 @@ public sealed class SupportSurveyAnswers(
             var now = clock.UtcNow;
             if (await surveys.LockAsync(comment.SurveyId, cancellationToken) is not { } locked
                 || locked.TenantId != comment.TenantId
-                || !locked.AddComment(comment.Text, comment.MessageId, now))
+                || !locked.AddComment(comment.Text, comment.MessageId, comment.OccurredAt, now))
             {
                 return false;
             }

@@ -402,7 +402,9 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
             var feed = scope.ServiceProvider.GetRequiredService<ISupportSurveyFeed>();
 
             Assert.Empty(await feed.ListTapsAsync(50, Ct));
-            Assert.Equal(new SupportSurveyComment(tenant, surveyId, comment, "Muy amables."), Assert.Single(await feed.ListCommentsAsync(50, Ct)));
+            var found = Assert.Single(await feed.ListCommentsAsync(50, Ct));
+            Assert.Equal((tenant, surveyId, comment, "Muy amables."), (found.TenantId, found.SurveyId, found.MessageId, found.Text));
+            Assert.True((found.OccurredAt - tappedAt.AddMinutes(1)).Duration() < TimeSpan.FromMilliseconds(1));
         }
     }
 

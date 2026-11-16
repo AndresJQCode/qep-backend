@@ -210,11 +210,14 @@ public sealed class SupportTicketSurvey
         UpdatedAt = now;
     }
 
-    /// <summary>H18: el comentario que llegó después del toque, una sola vez y antes de <see cref="CommentUntil"/>. Falso si no
-    /// corresponde (sin calificar, ya con comentario o fuera de la ventana): el mensaje queda como un entrante cualquiera.</summary>
-    public bool AddComment(string comment, Guid messageId, DateTimeOffset now)
+    /// <summary>H18: el comentario que llegó después del toque, una sola vez y escrito antes de <see cref="CommentUntil"/>. La ventana se
+    /// mide con <paramref name="writtenAt"/>, la hora del mensaje, y no con <paramref name="now"/>: procesado tarde sigue contando, escrito
+    /// tarde nunca (revisión del bloque D). Falso si no corresponde (sin calificar, ya con comentario o fuera de la ventana): el mensaje
+    /// queda como un entrante cualquiera.</summary>
+    public bool AddComment(string comment, Guid messageId, DateTimeOffset writtenAt, DateTimeOffset now)
     {
-        if (Rating is null || Comment is not null || CommentUntil is not { } until || now >= until || CommentOf(comment) is not { } text)
+        if (Rating is null || Comment is not null || CommentUntil is not { } until || writtenAt >= until
+            || CommentOf(comment) is not { } text)
         {
             return false;
         }
