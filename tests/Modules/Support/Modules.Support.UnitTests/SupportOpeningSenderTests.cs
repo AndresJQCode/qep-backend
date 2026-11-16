@@ -299,6 +299,13 @@ public sealed class SupportOpeningSenderTests
         public Task<SupportChannelSendResult> SendFormalTemplateAsync(
             SupportChannelFormalTemplateSend send, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The opening never sends a document.");
+
+        public Task<bool> IsSurveyTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<SupportChannelSendResult> SendSurveyTemplateAsync(
+            SupportChannelSurveyTemplateSend send, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The opening never sends the survey.");
     }
 
     private sealed class FakeMembers : ISupportMemberDirectory

@@ -71,10 +71,15 @@ public static class SupportInfrastructureExtensions
         // Fase 2 (plan E2): el seguimiento del hilo sondea los entrantes de Mensajería. Apagable por configuración para que las pruebas
         // lo llamen a mano sin que el worker se lleve los entrantes por detrás.
         services.AddScoped<SupportThreadFollower>();
+        // Fase 4b (H16): la cola de la encuesta de satisfacción y quien la manda.
+        services.AddScoped<ISupportSurveyRepository, SupportSurveyRepository>();
+        services.AddScoped<SupportSystemAuthor>();
+        services.AddScoped<SupportSurveySender>();
         services.AddOptions<SupportWorkerOptions>().Bind(configuration.GetSection(SupportWorkerOptions.SectionName));
         if (configuration.GetValue($"{SupportWorkerOptions.SectionName}:Enabled", true))
         {
             services.AddHostedService<SupportThreadFollowWorker>();
+            services.AddHostedService<SupportSurveyWorker>();
         }
 
         return services;

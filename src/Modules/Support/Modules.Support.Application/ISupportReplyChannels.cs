@@ -65,6 +65,11 @@ public sealed record SupportChannelFormalTemplateSend(
     ReadOnlyMemory<byte> Document,
     string FileName);
 
+/// <summary>Fase 4b (H16): la encuesta por su plantilla, a la conversación de WhatsApp del ticket. <c>ClientId</c> es el id de la encuesta:
+/// un reintento no la manda dos veces.</summary>
+public sealed record SupportChannelSurveyTemplateSend(
+    Guid TenantId, Guid ConversationId, Guid ClientId, Guid AuthorMemberId, string RecipientName, string TicketNumber);
+
 /// <summary>Cómo terminó un envío por un canal de Soporte.</summary>
 public abstract record SupportChannelSendResult
 {
@@ -232,4 +237,9 @@ public interface ISupportReplyChannels
     Task<SupportChannelSendResult> SendThreadDocumentAsync(SupportChannelThreadDocumentSend send, CancellationToken cancellationToken);
 
     Task<SupportChannelSendResult> SendFormalTemplateAsync(SupportChannelFormalTemplateSend send, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4b (H16): si la conexión tiene la plantilla de la encuesta aprobada.</summary>
+    Task<bool> IsSurveyTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<SupportChannelSendResult> SendSurveyTemplateAsync(SupportChannelSurveyTemplateSend send, CancellationToken cancellationToken);
 }

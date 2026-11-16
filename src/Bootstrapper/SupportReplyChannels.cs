@@ -10,13 +10,15 @@ namespace Bootstrapper;
 /// Mensajería a los tipos de Soporte, que no ve Mensajería. Las conexiones salen del mismo origen que usa el envío de cotizaciones por
 /// WhatsApp (<see cref="IMessagingConnectionDirectory.ListActiveAsync"/>: activas, por nombre), filtradas a las de WhatsApp con la
 /// plantilla aprobada (ruling R2). Los motivos viajan por nombre: <see cref="SupportChannelReasons"/> copia <see cref="SupportReplyReasons"/>.
-/// Fase 4b (H10): la respuesta formal con su propia plantilla («Respuesta formal», otro tipo y otra aprobación) y el PDF.
+/// Fase 4b (H10): la respuesta formal con su propia plantilla («Respuesta formal», otro tipo y otra aprobación) y el PDF; (H16) la encuesta
+/// por la suya, a la conversación de WhatsApp del ticket.
 /// </summary>
 internal sealed class SupportReplyChannels(
     ISupportReplyOutbound outbound,
     IMessagingConnectionDirectory connections,
     ISupportReplyTemplateReadiness readiness,
-    ISupportFormalReplyTemplateReadiness formalReadiness) : ISupportReplyChannels
+    ISupportFormalReplyTemplateReadiness formalReadiness,
+    ISupportSurveyTemplateReadiness surveyReadiness) : ISupportReplyChannels
 {
     private const string ActiveStatus = "Active";
 
@@ -76,6 +78,19 @@ internal sealed class SupportReplyChannels(
         {
             return new SupportChannelSendResult.Rejected(SupportChannelReasons.CustomerNotFound);
         }
+    }
+
+    public async Task<bool> IsSurveyTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        await surveyReadiness.FindApprovedAsync(tenantId, connectionId, cancellationToken) is not null;
+
+    public async Task<SupportChannelSendResult> SendSurveyTemplateAsync(
+        SupportChannelSurveyTemplateSend send, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(send);
+        return Translate(await outbound.SendSurveyTemplateAsync(
+            new SupportSurveyTemplateSend(
+                send.TenantId, send.ConversationId, send.ClientId, send.AuthorMemberId, send.RecipientName, send.TicketNumber),
+            cancellationToken));
     }
 
     // Las conexiones de WhatsApp activas del tenant con la plantilla de ese tipo aprobada, por nombre (el orden de ListActiveAsync).

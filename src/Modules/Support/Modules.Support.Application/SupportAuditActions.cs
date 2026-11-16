@@ -55,6 +55,16 @@ public static class SupportAuditActions
     /// <summary>Fase 4b (H13): alguien de la consola pidió la URL del PDF de una respuesta formal. El recurso es el ticket.</summary>
     public const string TicketReplyDocumentDownloaded = "support.ticket.reply_document_downloaded";
 
+    /// <summary>Fase 4b (H16): el worker mandó la encuesta (o la publicó en la página de consulta). Acción del sistema; el recurso es el
+    /// ticket y el campo, <c>survey</c>.</summary>
+    public const string TicketSurveySent = "support.ticket.survey_sent";
+
+    /// <summary>Fase 4b (H16): «sin encuesta» (apagada, sin plantilla, sin autor, contacto bloqueado…). Acción del sistema.</summary>
+    public const string TicketSurveySkipped = "support.ticket.survey_skipped";
+
+    /// <summary>Fase 4b (H16): la encuesta falló en todos sus intentos. Acción del sistema.</summary>
+    public const string TicketSurveyFailed = "support.ticket.survey_failed";
+
     /// <summary>Spec 2026-11-15 §5.4 (plan N21): an advisor added an internal note. The resource is the ticket; the text is not
     /// recorded.</summary>
     public const string TicketNoteAdded = "support.ticket.note_added";

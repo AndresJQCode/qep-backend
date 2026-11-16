@@ -1664,6 +1664,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportDocumentStorage, SupportDocumentStorage>();
         // Tarea 8: arma el PDF de la respuesta formal (firma, membrete, «siguiente paso», generación y bucket) antes de crear la fila.
         services.AddScoped<Modules.Support.Application.SupportFormalReplies>();
+        // Tarea 11 (H16): el correo de la encuesta con el enlace de calificación (Notifications).
+        services.AddScoped<Modules.Support.Application.ISupportSurveyEmail, SupportSurveyEmailSender>();
         // Soporte fase 3: el host del formulario público (plan F28 y F29).
         // Los orígenes del grupo público se validan al arrancar, como Cors:AllowedOrigins (plan F4).
         services.AddOptions<SupportPublicFormOptions>()

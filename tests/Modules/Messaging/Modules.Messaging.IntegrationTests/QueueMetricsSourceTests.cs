@@ -99,6 +99,7 @@ public sealed class QueueMetricsSourceTests
     [InlineData(QueueNames.Campaign)]
     [InlineData(QueueNames.Outbox)]
     [InlineData(QueueNames.ShopifyWebhook)]
+    [InlineData(QueueNames.SupportSurvey)]
     public async Task AnEmptyQueueReadsZero(string queue)
     {
         await using var database = await StartDatabaseAsync();
@@ -235,6 +236,34 @@ public sealed class QueueMetricsSourceTests
         Assert.Equal(1, reading.Backlog);
         Assert.InRange(reading.OldestAgeSeconds!.Value, 40, 90);
     }
+
+    // Soporte fase 4b (Tarea 11): la encuesta pendiente es backlog; la edad mira sólo las que nadie intentó; las procesadas no cuentan.
+    [Fact]
+    public async Task TheSupportSurveyQueueIsMeasured()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        await SurveyAsync(f, "Pending", attempts: 0, secondsAgo: 75);
+        await SurveyAsync(f, "Pending", attempts: 2, secondsAgo: 600);
+        await SurveyAsync(f, "Sent", attempts: 0, secondsAgo: 900);
+
+        var reading = await ReadAsync(f, QueueNames.SupportSurvey);
+
+        Assert.Equal((2, 1), (reading.Backlog, reading.Retrying));
+        Assert.InRange(reading.OldestAgeSeconds!.Value, 70, 120);
+    }
+
+    // La fila de la encuesta exige su ticket (FK); con session_replication_role = replica la base no revisa las FK (el usuario del
+    // contenedor es superusuario), y la lectura no mira el ticket.
+    private static Task<int> SurveyAsync(Fixture f, string status, int attempts, int secondsAgo) =>
+        ExecuteAsync(f.ConnectionString, """
+            SET session_replication_role = replica;
+            INSERT INTO support.ticket_surveys (id, tenant_id, ticket_id, resolution_number, status, channel, attempts, next_attempt_at,
+                created_at, updated_at)
+            VALUES (gen_random_uuid(), @tenant, gen_random_uuid(), 1, @status, CASE WHEN @status = 'Sent' THEN 'Portal' END, @attempts,
+                now(), now() - make_interval(secs => @ago), now());
+            SET session_replication_role = DEFAULT;
+            """, ("tenant", f.TenantId), ("status", status), ("attempts", attempts), ("ago", (double)secondsAgo));
 
     [Fact]
     public async Task ShopifyWebhookAgeUsesReceivedAt()

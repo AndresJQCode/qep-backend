@@ -32,6 +32,9 @@ public sealed class SupportOpeningSender(
     ISupportTicketRepository tickets,
     ITenantDirectory tenants)
 {
+    // Fase 4b (H17): la regla del autor es la misma de la encuesta; vive en SupportSystemAuthor.
+    private readonly SupportSystemAuthor author = new(members, tickets);
+
     public const string EmailChannel = "Email";
 
     public const string ThreadChannel = "Thread";
@@ -139,7 +142,7 @@ public sealed class SupportOpeningSender(
             return new SupportOpeningOutcome(ThreadChannel, unavailable, false);
         }
 
-        if (await AuthorAsync(ticket, cancellationToken) is not { } author)
+        if (await this.author.AuthorAsync(ticket, cancellationToken) is not { } author)
         {
             return new SupportOpeningOutcome(ThreadChannel, SupportChannelReasons.NoAuthor, false);
         }
@@ -151,34 +154,6 @@ public sealed class SupportOpeningSender(
                 ticket.TenantId, conversationId, ClientIdFor(ticket.Id, issuedAt), author, text, UploadId: null),
             cancellationToken);
         return Outcome(ThreadChannel, result);
-    }
-
-    // Plan F11: la fila del mensaje exige un autor. Quien creó el ticket (el actor de su evento Created), si sigue activo; si no, el
-    // responsable; si tampoco, el primer gestor en el orden de GET /assignees (nombre invariante y el id de desempate).
-    private async Task<Guid?> AuthorAsync(SupportTicket ticket, CancellationToken cancellationToken)
-    {
-        var created = ticket.Events.FirstOrDefault(item => item.Kind == SupportTicketEventKind.Created)
-            ?? (await tickets.ListEventsAsync(ticket.TenantId, ticket.Id, cancellationToken))
-                .FirstOrDefault(item => item.Kind == SupportTicketEventKind.Created);
-        var candidates = new[] { created?.ActorMemberId, ticket.AssigneeMemberId }.OfType<Guid>().Distinct().ToList();
-        if (candidates.Count > 0)
-        {
-            var found = await members.FindAsync(ticket.TenantId, candidates, cancellationToken);
-            foreach (var candidate in candidates)
-            {
-                if (found.Any(member => member.MemberId == candidate && member.IsActive))
-                {
-                    return candidate;
-                }
-            }
-        }
-
-        var managers = await members.ListManagersAsync(ticket.TenantId, cancellationToken);
-        return managers
-            .OrderBy(member => member.DisplayName, StringComparer.InvariantCultureIgnoreCase)
-            .ThenBy(member => member.MemberId)
-            .Select(member => (Guid?)member.MemberId)
-            .FirstOrDefault();
     }
 
     private static SupportOpeningOutcome Outcome(string channel, SupportChannelSendResult result) => result switch

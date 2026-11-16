@@ -87,6 +87,24 @@ internal sealed class FakeSupportReplyChannels : ISupportReplyChannels
         return Task.FromResult(OnFormalTemplate(send));
     }
 
+    /// <summary>Fase 4b: las conexiones con la plantilla de la encuesta aprobada.</summary>
+    public ConcurrentDictionary<Guid, string> ApprovedSurveyConnections { get; } = new();
+
+    public ConcurrentQueue<SupportChannelSurveyTemplateSend> SurveySends { get; } = new();
+
+    public Func<SupportChannelSurveyTemplateSend, SupportChannelSendResult> OnSurvey { get; set; } =
+        send => new SupportChannelSendResult.Sent(Guid.CreateVersion7(), send.ConversationId);
+
+    public Task<bool> IsSurveyTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(ApprovedSurveyConnections.ContainsKey(connectionId));
+
+    public Task<SupportChannelSendResult> SendSurveyTemplateAsync(
+        SupportChannelSurveyTemplateSend send, CancellationToken cancellationToken)
+    {
+        SurveySends.Enqueue(send);
+        return Task.FromResult(OnSurvey(send));
+    }
+
     private static List<SupportConnectionOption> Options(ConcurrentDictionary<Guid, string> connections) =>
         connections.Select(pair => new SupportConnectionOption(pair.Key, pair.Value)).OrderBy(option => option.Name).ToList();
 }
@@ -105,6 +123,18 @@ internal sealed class RecordingSupportReplyEmail : ISupportReplyEmail
         return Task.FromResult<SupportChannelSendResult>(Fail
             ? new SupportChannelSendResult.Failed(null, SupportChannelReasons.SendFailed)
             : new SupportChannelSendResult.Sent(null, null));
+    }
+}
+
+/// <summary>Fase 4b: el correo de la encuesta, que anota lo que manda en vez de mandarlo.</summary>
+internal sealed class RecordingSupportSurveyEmail : ISupportSurveyEmail
+{
+    public ConcurrentQueue<SupportSurveyEmail> Sent { get; } = new();
+
+    public Task<SupportChannelSendResult> SendAsync(SupportSurveyEmail email, CancellationToken cancellationToken)
+    {
+        Sent.Enqueue(email);
+        return Task.FromResult<SupportChannelSendResult>(new SupportChannelSendResult.Sent(null, null));
     }
 }
 
