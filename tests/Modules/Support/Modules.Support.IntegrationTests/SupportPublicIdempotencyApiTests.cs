@@ -126,6 +126,54 @@ public sealed class SupportPublicIdempotencyApiTests(SupportPublicHost host) : I
         Assert.Equal(HttpStatusCode.OK, (await LookupAsync(rig, number, newPin)).StatusCode);
     }
 
+    // C-2: the opening email of the first attempt is still unrecorded (simulated by clearing what the delivery wrote). Within the grace
+    // it is in flight: the retry neither rotates nor shows the PIN, and the one being emailed keeps working.
+    [Fact]
+    public async Task ARetryWhileTheOpeningEmailIsInFlightKeepsThePin()
+    {
+        var rig = await RigAsync();
+        var email = Email();
+        var key = Guid.NewGuid();
+        var first = await JsonAsync(await FileAsync(rig, NamedBody(rig.TypeId, rig.CityId, email, clientRequestId: key)));
+        await ForgetDeliveryAsync(rig);
+        host.Clock.UtcNow = ClockedSupportHost.Reception.AddMinutes(5);
+
+        var retry = await FileAsync(rig, NamedBody(rig.TypeId, rig.CityId, email, clientRequestId: key));
+
+        Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        var body = await JsonAsync(retry);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("pin").ValueKind);
+        Assert.True(body.GetProperty("pinEmailed").GetBoolean());
+        var number = first.GetProperty("number").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, (await LookupAsync(rig, number, first.GetProperty("pin").GetString()!)).StatusCode);
+        Assert.Single(host.Emails.To(email));
+    }
+
+    // Final review S3: a delivery still unrecorded more than 10 minutes after the PIN is a failed one (the process died between commit
+    // and recording it). The retry rotates, as after a failed email, and sends nothing.
+    [Fact]
+    public async Task ARetryPastTheGraceOfAnUnrecordedEmailRotatesThePin()
+    {
+        var rig = await RigAsync();
+        var email = Email();
+        var key = Guid.NewGuid();
+        var first = await JsonAsync(await FileAsync(rig, NamedBody(rig.TypeId, rig.CityId, email, clientRequestId: key)));
+        await ForgetDeliveryAsync(rig);
+        host.Clock.UtcNow = ClockedSupportHost.Reception + FilePublicTicketHandler.OpeningDeliveryGrace + TimeSpan.FromMinutes(1);
+
+        var retry = await FileAsync(rig, NamedBody(rig.TypeId, rig.CityId, email, clientRequestId: key));
+
+        Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        var body = await JsonAsync(retry);
+        var number = first.GetProperty("number").GetString()!;
+        var newPin = body.GetProperty("pin").GetString()!;
+        Assert.Matches("^[0-9]{6}$", newPin);
+        Assert.False(body.GetProperty("pinEmailed").GetBoolean());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await LookupAsync(rig, number, first.GetProperty("pin").GetString()!)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await LookupAsync(rig, number, newPin)).StatusCode);
+        Assert.Single(host.Emails.To(email));
+    }
+
     // The key is looked up before Turnstile (the token was spent by the first attempt) and before the form and legal version checks.
     [Fact]
     public async Task ARetrySkipsTurnstileAndTheVersionChecks()
@@ -295,6 +343,13 @@ public sealed class SupportPublicIdempotencyApiTests(SupportPublicHost host) : I
             "Otro mensaje de éxito.", Guid.CreateVersion7(), DateTimeOffset.UtcNow));
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
     }
+
+    // What the opening delivery wrote after the commit, cleared: as if the process died before recording it.
+    private static Task ForgetDeliveryAsync(Rig rig) =>
+        ExecuteAsync(
+            rig.Factory,
+            "UPDATE support.ticket_access SET last_sent_channel = NULL, last_failure_code = NULL, last_sent_at = NULL WHERE tenant_id = @tenant",
+            ("tenant", rig.TenantId));
 
     private static string Email() => $"ana-{Guid.CreateVersion7():N}@example.com";
 

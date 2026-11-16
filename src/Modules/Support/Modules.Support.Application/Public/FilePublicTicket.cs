@@ -429,9 +429,10 @@ public sealed class FilePublicTicketHandler(
     /// (the one of the form version the ticket was filed with) and consult link; nothing new is created and the opening email is not
     /// sent again. The PIN: if it went out by email (<c>Email</c> without failure), null with <c>PinEmailed</c> true and nothing is
     /// written. If the ticket has an email destination and no delivery is recorded yet, the opening email of the first attempt is still
-    /// in flight: treated the same, because issuing a new PIN would invalidate the one being emailed. Otherwise (anonymous, a failed or
-    /// pending send) a new PIN replaces the old one, in a short transaction with the access row locked, and it travels only in this
-    /// response: no email.
+    /// in flight: treated the same, because issuing a new PIN would invalidate the one being emailed, but only for
+    /// <see cref="OpeningDeliveryGrace"/> after the PIN was issued; past that the delivery is taken as failed (the process died between
+    /// commit and recording it). Otherwise (anonymous, a failed send, or one unrecorded past the grace) a new PIN replaces the old one, in
+    /// a short transaction with the access row locked, and it travels only in this response: no email.
     /// </summary>
     private async Task<SupportPublicFiledDto> RetryAsync(
         SupportPublicTenant tenant, SupportTicket ticket, CancellationToken cancellationToken)
@@ -445,12 +446,15 @@ public sealed class FilePublicTicketHandler(
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
             var found = await accesses.LockByNumberAsync(tenant.TenantId, ticket.Number, cancellationToken);
-            if (found is { } match && MustRotate(ticket, match.Access))
+            if (found is { } match)
             {
-                var context = await composer.ReadContextAsync(tenant.TenantId, cancellationToken);
-                pin = SupportPin.Generate();
-                match.Access.Reissue(pinHasher.Hash(pin), context.Now);
-                await unitOfWork.SaveChangesAsync(cancellationToken);
+                var now = (await composer.ReadContextAsync(tenant.TenantId, cancellationToken)).Now;
+                if (MustRotate(ticket, match.Access, now))
+                {
+                    pin = SupportPin.Generate();
+                    match.Access.Reissue(pinHasher.Hash(pin), now);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
+                }
             }
 
             await transaction.CommitAsync(cancellationToken);
@@ -459,8 +463,14 @@ public sealed class FilePublicTicketHandler(
         return Filed(ticket, pin, successMessage, pinEmailed: pin is null, consultUrl);
     }
 
-    // Plan L28: a new PIN only when the current one went out by no channel.
-    private static bool MustRotate(SupportTicket ticket, SupportTicketAccess access)
+    /// <summary>Final review S3 (C-2): how long an opening delivery may stay unrecorded before a retry takes it as failed. The send has
+    /// timeouts far below this; a delivery still unrecorded after it means the process died between the commit and recording it, and
+    /// without the rotation the visitor would never get a PIN.</summary>
+    internal static readonly TimeSpan OpeningDeliveryGrace = TimeSpan.FromMinutes(10);
+
+    // Plan L28: a new PIN only when the current one went out by no channel. An unrecorded delivery is in flight (C-2) only within
+    // OpeningDeliveryGrace of the PIN; past it, it is a failed one.
+    internal static bool MustRotate(SupportTicket ticket, SupportTicketAccess access, DateTimeOffset now)
     {
         if (!SupportOpeningSender.HasDestination(ticket))
         {
@@ -469,7 +479,7 @@ public sealed class FilePublicTicketHandler(
 
         if (access.LastSentChannel is null)
         {
-            return false;
+            return now - access.PinIssuedAt > OpeningDeliveryGrace;
         }
 
         return access.LastSentChannel != SupportOpeningSender.EmailChannel || access.LastFailureCode is not null;
