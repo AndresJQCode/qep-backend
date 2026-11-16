@@ -145,4 +145,121 @@ public sealed class RichTextHtmlReaderTests
         var paragraph = Assert.Single(blocks);
         Assert.Equal(new RichTextRun("a"), Assert.Single(paragraph.Runs!));
     }
+
+    // El saneador deja pasar un inline que envuelve bloques: sus bloques se conservan y heredan las marcas.
+    [Fact]
+    public void ABlockInsideAnInlineKeepsItsBoundaries()
+    {
+        var blocks = Reader.Read("<strong><p>a</p><ul><li>b</li></ul></strong>");
+
+        Assert.Collection(
+            blocks,
+            paragraph =>
+            {
+                Assert.Equal("paragraph", paragraph.Kind);
+                Assert.Equal(new RichTextRun("a", Bold: true), Assert.Single(paragraph.Runs!));
+            },
+            list =>
+            {
+                Assert.Equal("list", list.Kind);
+                var paragraph = Assert.Single(Assert.Single(list.Items!));
+                Assert.Equal(new RichTextRun("b", Bold: true), Assert.Single(paragraph.Runs!));
+            });
+    }
+
+    [Fact]
+    public void ALinkWrappingParagraphsKeepsTheHref()
+    {
+        var blocks = Reader.Read("<a href=\"https://x.co\"><p>a</p><p>b</p></a>");
+
+        Assert.Collection(
+            blocks,
+            first =>
+            {
+                Assert.Equal("paragraph", first.Kind);
+                Assert.Equal(new RichTextRun("a", Href: "https://x.co"), Assert.Single(first.Runs!));
+            },
+            second =>
+            {
+                Assert.Equal("paragraph", second.Kind);
+                Assert.Equal(new RichTextRun("b", Href: "https://x.co"), Assert.Single(second.Runs!));
+            });
+    }
+
+    [Fact]
+    public void WhitespaceCollapsesAcrossRuns()
+    {
+        var blocks = Reader.Read("<p> a <b> b</b> </p>");
+
+        var paragraph = Assert.Single(blocks);
+        Assert.Collection(
+            paragraph.Runs!,
+            run => Assert.Equal(new RichTextRun("a "), run),
+            run => Assert.Equal(new RichTextRun("b", Bold: true), run));
+    }
+
+    [Fact]
+    public void WhitespaceAroundABreakIsTrimmed()
+    {
+        var blocks = Reader.Read("<p>a <br> b</p>");
+
+        var paragraph = Assert.Single(blocks);
+        Assert.Collection(
+            paragraph.Runs!,
+            run => Assert.Equal(new RichTextRun("a"), run),
+            run => Assert.Equal(new RichTextRun("", Break: true), run),
+            run => Assert.Equal(new RichTextRun("b"), run));
+    }
+
+    [Fact]
+    public void AnOrderedListIsOrdered()
+    {
+        var blocks = Reader.Read("<ol><li>a</li></ol>");
+
+        var list = Assert.Single(blocks);
+        Assert.Equal("list", list.Kind);
+        Assert.True(list.Ordered);
+        var paragraph = Assert.Single(Assert.Single(list.Items!));
+        Assert.Equal(new RichTextRun("a"), Assert.Single(paragraph.Runs!));
+    }
+
+    [Fact]
+    public void AQuoteHoldsItsParagraphs()
+    {
+        var blocks = Reader.Read("<blockquote><p>a</p></blockquote>");
+
+        var quote = Assert.Single(blocks);
+        Assert.Equal("quote", quote.Kind);
+        var paragraph = Assert.Single(quote.Children!);
+        Assert.Equal("paragraph", paragraph.Kind);
+        Assert.Equal(new RichTextRun("a"), Assert.Single(paragraph.Runs!));
+    }
+
+    [Fact]
+    public void ABreakInsideAHeadingIsKept()
+    {
+        var blocks = Reader.Read("<h2>a<br>b</h2>");
+
+        var heading = Assert.Single(blocks);
+        Assert.Equal("heading", heading.Kind);
+        Assert.Equal(2, heading.Level);
+        Assert.Collection(
+            heading.Runs!,
+            run => Assert.Equal(new RichTextRun("a"), run),
+            run => Assert.Equal(new RichTextRun("", Break: true), run),
+            run => Assert.Equal(new RichTextRun("b"), run));
+    }
+
+    [Fact]
+    public void MailtoAndTelLinksAreKept()
+    {
+        var blocks = Reader.Read("<p><a href=\"mailto:a@b.co\">correo</a> <a href=\"tel:+573001234567\">celular</a></p>");
+
+        var paragraph = Assert.Single(blocks);
+        Assert.Collection(
+            paragraph.Runs!,
+            run => Assert.Equal(new RichTextRun("correo", Href: "mailto:a@b.co"), run),
+            run => Assert.Equal(new RichTextRun(" "), run),
+            run => Assert.Equal(new RichTextRun("celular", Href: "tel:+573001234567"), run));
+    }
 }
