@@ -5673,7 +5673,8 @@ o un ticket de Instagram con correo, un correo con el enlace de calificación; *
 envío, «sin encuesta» con `ticket_reopened`. `send_failed` y `connection_unavailable` se reintentan a 1, 5 y 15 minutos y después quedan
 `Failed`; una excepción inesperada sigue el mismo camino. El toque de WhatsApp que cita la encuesta la califica; después sale **un**
 mensaje libre que pide el comentario («Gracias. Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.»), sin reintento ni
-recordatorio, y el siguiente texto del cliente dentro de las 24 horas del toque es el comentario. Por el correo, el enlace es
+recordatorio, y el siguiente texto del cliente **escrito** dentro de las 24 horas del toque es el comentario (la ventana se mide con la
+hora del mensaje, no con la del worker). Por el correo, el enlace es
 `{Support:PublicForm:BaseUrl}/{slug}/calificar?token=…`: el token viaja en el cuerpo de la API, nunca en una ruta, y sólo se guarda su
 SHA-256. La página de consulta califica con radicado y PIN, con la misma verificación (y el mismo conteo de intentos) que consultar; un
 anónimo sólo califica por ahí. La encuesta se responde una vez, hasta que el ticket se reabre (también después del cierre automático).
@@ -5681,13 +5682,16 @@ Un cambio de la encuesta no sube la versión del ticket, pero avisa por el hub.
 
 **Cierre automático.** Un ticket Resuelto se cierra el día después del N-ésimo día hábil (calendario de Soporte) contado desde la
 resolución o desde la última respuesta del cliente que sigue en el expediente (vínculo `Linked` o `Pinned`), lo que sea más tarde.
-`autoCloseBusinessDays` va de 1 a 30, 5 por defecto, y no se apaga. Soltar la respuesta devuelve la fecha; el toque y el comentario de la
-encuesta nunca cuentan. Cierra el sistema: traza sin actor, auditoría de sistema `support.ticket.status_changed` y `TicketClosed` en el
+`autoCloseBusinessDays` va de 1 a 30, 5 por defecto, y no se apaga. Soltar la respuesta devuelve la fecha; el toque y el comentario de
+ninguna encuesta del tenant cuentan (el seguimiento vincula cada entrante a todos los tickets abiertos de la conversación, así que el
+toque de la encuesta de un ticket también queda en el otro). Cierra el sistema: traza sin actor, auditoría de sistema `support.ticket.status_changed` y `TicketClosed` en el
 hilo. El detalle trae `clock.autoCloseOn` mientras está Resuelto, recalculado en cada lectura.
 
 **Reporte.** La población son los tickets cuya **fecha local de radicación** cae en `[from, to]` (las dos obligatorias, hasta 366 días).
 Trae los seis estados, todos los tipos del tenant (activos o no, en su orden) y las tres calificaciones, también en cero. Los totales
-cierran: `onTime + late + withoutTerm = resolved` y `pending + sent + withoutSurvey + failed + disabled = requested`. El tiempo de
+cierran: `onTime + late + withoutTerm = resolved` y `pending + sent + withoutSurvey + failed + disabled = requested`. Resuelto es un
+ticket Resuelto o cerrado **desde** Resuelto: uno reabierto y cerrado desde «Esperando al cliente» conserva el `resolved_at` del ciclo
+anterior y no cuenta. El tiempo de
 resolución son los días hábiles después de la radicación hasta la última resolución, en bruto (sin descontar pausas).
 
 **Workers** (sección `Support:Workers`, defaults en código; `Support:Workers:Enabled` en `false` los apaga):
@@ -5701,7 +5705,8 @@ resolución son los días hábiles después de la radicación hasta la última r
 | `SupportAutoCloseWorker` | `AutoCloseIntervalMinutes` | 15 | Cada cuánto revisa los tickets Resueltos |
 
 **Migraciones:** `Support` `AddSupportFormalNextStep`, `Support` `AddSupportReplyDocuments`, `Messaging`
-`AddSupportFormalAndSurveyTemplateKinds` y `Support` `AddSupportSurveys`. Las cuatro son aditivas.
+`AddSupportFormalAndSurveyTemplateKinds`, `Support` `AddSupportSurveys` y `Support` `AddSupportAutoCloseAndSurveyIndexes` (los índices
+parciales de los recorridos del cierre automático y de la encuesta). Las cinco son aditivas.
 
 ##### Despliegue (fase 4b)
 

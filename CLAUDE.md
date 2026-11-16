@@ -1180,7 +1180,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El token del enlace de calificación viaja en el cuerpo, nunca en una ruta**, y sólo se guarda su SHA-256 (`UX_ticket_surveys_token`).
   Lo amarra `TheSurveyTokenNeverReachesLogsAuditOrEvents` (host en `Trace`).
 - **El cierre automático cuenta sólo las respuestas del cliente cuyo vínculo es `Linked` o `Pinned` ahora** (owner 2026-11-16, Q-4).
-  Soltar una devuelve la fecha; el toque y el comentario de la encuesta nunca cuentan. `clock.autoCloseOn` se recalcula en cada lectura y
+  Soltar una devuelve la fecha; el toque y el comentario de **cualquier** encuesta del tenant nunca cuentan, no sólo los de la del ticket:
+  el seguimiento del hilo vincula cada entrante a todos los tickets abiertos de la conversación. `clock.autoCloseOn` se recalcula en cada lectura y
   el worker (`Noisy`) relee el ticket y cierra con su versión: la réplica que pierde salta el ticket.
 
 ## Verificación
