@@ -89,29 +89,31 @@ pipeline, `SupportReply` template), [phase 3](2026-11-15-support-phase-3-public-
 - New hosted services enter `MultiReplicaInventory` in the same commit; a new singleton built by a factory enters `InterfaceFactories`.
   No new startup initialization (nothing goes into `RunUnderStartupLockAsync`).
 - The survey table is a queue: it enters `QueueDoorbellInterceptor.Tables`, `DoorbellQueues` and the observability queue list.
-- Columns with Messaging message ids in `support.*` enter `CustomerDeletionReferences`; no new member-id column is introduced (so
-  `SupportUserReferenceProbe` does not change — the formal signer is a name snapshot, the survey author is resolved at send time).
+- Columns with Messaging message ids in `support.*` enter `CustomerDeletionReferences` (`ticket_surveys.message_id`, `rating_message_id`,
+  `comment_message_id`, `prompt_message_id`). The one new member-id column, `ticket_reply_documents.signer_member_id` (H3, owner
+  2026-11-16), enters `SupportUserReferenceProbe` and `SupportUserReferenceProbeTests` in the same commit; the survey author is resolved
+  at send time and not stored.
 - Support never reuses `Quotations:Pdf:ApiKey`: its own section `Support:Pdf`.
 
 ## Plan decisions
 
-Mine (planner) on what the spec leaves to the implementer, or what the code forces. Those marked **(owner, Q-n)** are also in «Open
-decisions for the owner»; the plan assumes them as written here until the owner answers.
+Mine (planner) on what the spec leaves to the implementer, or what the code forces. Those marked **(owner, 2026-11-16, Q-n)** were
+decided by the owner on 2026-11-16 (see «Owner decisions (2026-11-16)»); the text here is already the decided one.
 
 ### Formal reply
 
 | # | Decision | Why |
 | --- | --- | --- |
 | H1 | A formal reply is a normal reply with a `formal` object in the body of `POST /tickets/{id}/replies`: `{ decision, signerTitle, annexes[] }`. Allowed on **any** ticket type and state (replying is allowed in any state, R9 extended). `RequiresFormalResponse` already exists on the type and on the ticket snapshot (`SupportTicket.cs:48`, `SupportTicketTypeSnapshotDto`) and only *suggests* it (`replyOptions.formal.suggested`). | Spec §8.3: «el asesor puede elegirla en cualquier tipo». The type already carries the flag (phase 1); verified, nothing to add. |
-| H2 | `text` stays the **channel message** (existing rules: thread 4096, Instagram 1000, template one line ≤ 1024, caption ≤ 1024 when the PDF goes as a document); `formal.decision` is the PDF section 6, 1–20 000 characters, line breaks allowed. **(owner, Q-5)** | The channel message and the legal letter have different limits; the template variable `respuesta` cannot hold a letter. |
-| H3 | Signature: name = the author's display name (snapshot), title = `formal.signerTitle`, 1–120, **required**. No member id is stored with the document. **(owner, Q-7)** | No job title exists in Tenancy or Identity (verified). Spec §8.3.8. |
-| H4 | Annexes: `formal.annexes`, 0–10 strings of 1–200, printed as a list. No files travel with them. **(owner, Q-8)** | Spec §8.3.8 «lista de anexos»; a formal reply already carries one document. |
-| H5 | Letterhead: the company of the ticket's form version (`FormVersionId` → `organization_company_id`) or, without one, of the **current** form version; name, document type and number, address, email (and city). Logo = tenant logo (PNG/JPEG; WebP is skipped because `qcode-pdf` rejects it). No company → `422 support.reply.formal_organization_required`, and `reply-options` says `organization_required`. **(owner, Q-6)** | The tenant has no tax id, address or email (`Tenant.cs`); `Company` has them (`Company.cs:102-131`) and the portal already picks «the company that answers» (portal legal plan L30). |
+| H2 | `text` stays the **channel message** (existing rules: thread 4096, Instagram 1000, template one line ≤ 1024, caption ≤ 1024 when the PDF goes as a document); `formal.decision` is the PDF section 6, 1–20 000 characters, line breaks allowed. **(owner, 2026-11-16, Q-5)** | The channel message and the legal letter have different limits; the template variable `respuesta` cannot hold a letter. |
+| H3 | Signature: the ticket's **assignee** signs, not the sender. Name = the assignee's display name (snapshot), title = `formal.signerTitle`, free text 1–120, **required**, typed at send. A formal reply on a ticket without assignee → `422 support.reply.formal_signer_required` (new `SupportErrorCodes.ReplyFormalSignerRequired`; a `SupportDomainException`, so the central `ApiExceptionHandler` maps it to 422 with no change there), and `reply-options` says `signer_required` (new `SupportChannelReasons.SignerRequired`, in `All`). The document stores `signer_member_id`, the name snapshot and the title. **(owner, 2026-11-16, Q-7)** | No job title exists in Tenancy or Identity (verified). Spec §8.3.8 «firma del responsable». The member id is a membership reference: `SupportUserReferenceProbe`. |
+| H4 | Annexes: `formal.annexes`, 0–10 strings of 1–200, printed as a list. No files travel with them. **(owner, 2026-11-16, Q-8)** | Spec §8.3.8 «lista de anexos»; a formal reply already carries one document. |
+| H5 | Letterhead: the company of the ticket's form version (`FormVersionId` → `organization_company_id`) or, without one, of the **current** form version; name, document type and number, address, email (and city). Logo = tenant logo (PNG/JPEG; WebP is skipped because `qcode-pdf` rejects it). No company → `422 support.reply.formal_organization_required`, and `reply-options` says `organization_required`. **(owner, 2026-11-16, Q-6)** | The tenant has no tax id, address or email (`Tenant.cs`); `Company` has them (`Company.cs:102-131`) and the portal already picks «the company that answers» (portal legal plan L30). |
 | H6 | «Next step» (section 7): `ticket_types.formal_next_step` overrides `support.tenant_settings.formal_next_step`; both nullable, plain text ≤ 2000. Both empty → the section is omitted. Snapshot into the document row. | Spec §8.3.7 and §13.6: configurable per tenant and per type; the legal text is a deployment concern. |
 | H7 | The PDF is rendered and stored **before** the `Pending` reply row; the document row is inserted in the same `SaveChanges` as the reply. A resumed `Pending` reply re-sends the **stored** document, never re-renders. Render failure → `422 support.reply.document_render_failed`, nothing persisted (the R2 object, if uploaded, is deleted best effort). | Same idempotency rule as the reply (CM1): a retry sends exactly what the row saved. Precedent of the 422 for an upstream PDF failure: `quotation.pdf.render_failed`. |
 | H8 | Storage: private bucket, key `support/tenants/{tenantId:N}/replies/{yyyy}/{MM}/{guid:N}.pdf`, through a Support port (`ISupportDocumentStorage`) with adapter in Bootstrapper over `IObjectStorage` (calque of `QuotationPdfStorage`). Downloads by presigned URL: 5 minutes in the console, 10 minutes in the public consult. | Legal retention (§13.10): never under `quotations/` (lifecycle). |
 | H9 | Table `support.ticket_reply_documents` (PK `reply_id`, FK → `ticket_replies.id` `ON DELETE CASCADE`), insert-only. The cascade only fires when `SendTicketReplyHandler` removes a reply the channel rejected **before** sending (`SendTicketReply.cs:214`): that reply never existed for the requester. | Legal proof of what was sent, like `support.legal_acceptances`; one row per reply. |
-| H10 | Delivery of the PDF by route: **thread WhatsApp, window open** → one document message with `text` as caption; **thread Instagram, window open** → the text message, then a `file` attachment (two messages, the second with `DocumentClientId` from the document row); **WhatsApp outside the window or without conversation** → the new template `SupportFormalReply` with the PDF as document header (not approved → existing `support.reply.template_not_approved`); **email** → attachment; **portal** → published, downloadable in the consult. | Spec §8.3 and §8.5. A document header cannot be optional in a Meta template, so the formal one is a **separate kind** from `SupportReply`. **(owner, Q-1)** |
+| H10 | Delivery of the PDF by route: **thread WhatsApp, window open** → one document message with `text` as caption; **thread Instagram, window open** → the text message, then a `file` attachment (two messages, the second with `DocumentClientId` from the document row); **WhatsApp outside the window or without conversation** → the new template `SupportFormalReply` with the PDF as document header (not approved → existing `support.reply.template_not_approved`); **email** → attachment; **portal** → published, downloadable in the consult. | Spec §8.3 and §8.5. A document header cannot be optional in a Meta template, so the formal one is a **separate kind** from `SupportReply`. **(owner, 2026-11-16, Q-1)** |
 | H11 | `formal` and `uploadId` are mutually exclusive (`422 validation.failed` on `UploadId`): one document per reply. | Keeps the thread to one attachment per message. |
 | H12 | `Support:Pdf` options (`BaseUrl` default `https://qcode-pdf.qcode.co`, `ApiKey`, `TimeoutSeconds` 30), validator with `ValidateOnStart`: HTTPS always; `ApiKey` required in `Production`, an unresolved pipeline token `#{…}#` counts as absent (`SeedOptions.IsUnreplacedPipelineToken`, gotcha «Un token del pipeline sin resolver llega literal»). Renderer in `Modules.Support.Infrastructure/Pdf`, template `formal-reply.typ` embedded; data as camelCase JSON read with `json(sys.inputs.data)`, every string printed as text (never evaluated as markup). | Spec §8.3 / §13.5: own key and section; calque of `QCodePdfRenderer`. |
 | H13 | Console download `GET /tickets/{ticketId}/replies/{replyId}/document` (policy `support.ticket.view`, revalidated by `EnsureCanViewAsync`), audit `support.ticket.reply_document_downloaded`. Public: `SupportPublicReplyDto` gains `DocumentUrl`/`DocumentFileName`, filled only in the `lookup` response (PIN-gated; no new public route). | §9.4: «muestra la respuesta (incluido el PDF)»; a separate public download route would need the PIN again. |
@@ -120,23 +122,23 @@ decisions for the owner»; the plan assumes them as written here until the owner
 
 | # | Decision | Why |
 | --- | --- | --- |
-| H14 | Settings: `survey_enabled` (default **false**), `auto_close_business_days` (default 5, range 1–30; auto-close is never off). **(owner, Q-19, Q-20)** | Spec §8.4: toggle per tenant; «desactivada, el cierre automático funciona igual». |
-| H15 | `SupportTicket.ChangeStatus(Resolved, …)` adds a `SupportTicketSurvey` (`Pending`, `ResolutionNumber = ResolutionCount`) to a new navigation, persisted like `Events`. **Every** path to `Resolved` creates it without remembering to. The worker skips it with `survey_disabled` if the tenant has the survey off **when it processes it**. Unique `(ticket_id, resolution_number)` (`UX_ticket_surveys_ticket_resolution`). **(owner, Q-9)** | Spec §8.4: idempotent per `(ticket, número de resolución)`; two handlers reach `Resolved` today (`ChangeTicketStatus`, `SendTicketReply` with `resolve`). |
-| H16 | Channel per survey, decided by the worker: anonymous or `Portal` → `Portal` (status `Sent` with no message, like a `Portal` reply); a WhatsApp conversation → template `SupportSurvey`; an Instagram conversation with the window open → text with the rating link; `Email` → email with the rating link; anything else → `Portal`. WhatsApp without an approved template, Messaging off, contact blocked, Instagram window closed → `Skipped` with the reason («sin encuesta», not failed). `send_failed` / `connection_unavailable` retry 3 times (1, 5, 15 min) then `Failed`. **(owner, Q-2)** | Spec §8.4 «por qué canal»; Instagram has no outbound interactives (`BotOutbound.cs:79`, D-I1) and the inbound `quick_reply` payload is not parsed, see Q-2. |
+| H14 | Settings: `survey_enabled` (default **false**), `auto_close_business_days` (default 5, range 1–30; auto-close is never off). **(owner, 2026-11-16, Q-19, Q-20)** | Spec §8.4: toggle per tenant; «desactivada, el cierre automático funciona igual». |
+| H15 | `SupportTicket.ChangeStatus(Resolved, …)` adds a `SupportTicketSurvey` (`Pending`, `ResolutionNumber = ResolutionCount`) to a new navigation, persisted like `Events`. **Every** path to `Resolved` creates it without remembering to. The worker skips it with `survey_disabled` if the tenant has the survey off **when it processes it**. Unique `(ticket_id, resolution_number)` (`UX_ticket_surveys_ticket_resolution`). **(owner, 2026-11-16, Q-9)** | Spec §8.4: idempotent per `(ticket, número de resolución)`; two handlers reach `Resolved` today (`ChangeTicketStatus`, `SendTicketReply` with `resolve`). |
+| H16 | Channel per survey, decided by the worker: anonymous or `Portal` → `Portal` only (status `Sent` with no message, like a `Portal` reply); a **WhatsApp** conversation → template `SupportSurvey` (`qep_soporte_encuesta`, Buena/Regular/Mala); an **email** contact → email with the rating link; an **Instagram** ticket → **never through Instagram**: the email link if the ticket has an email, else `Portal` only; anything else → `Portal`. WhatsApp without an approved template, Messaging off, contact blocked → `Skipped` with the reason («sin encuesta», not failed). `send_failed` / `connection_unavailable` retry 3 times (1, 5, 15 min) then `Failed`. **(owner, 2026-11-16, Q-2)** | Spec §8.4 «por qué canal». Owner: no tenant uses Instagram yet and no Instagram tickets will be created for now, so no Instagram survey path is built (Instagram has no outbound interactives either, `BotOutbound.cs:79`, D-I1). |
 | H17 | Author of a survey sent by Messaging: the same rule as the PIN information (`SupportOpeningSender.AuthorAsync`, plan F11), extracted to `SupportSystemAuthor`; none → `Skipped no_author`. | Messaging rows need `SentByMemberId`; no member id stored on the survey. |
-| H18 | WhatsApp answer: the inbound with `kind = Interactive`, `direction = 1`, not imported, whose `reply_to_message_id` is the survey's `message_id` (Meta's `context.id`, resolved by `InboundIngestion`), its `text` matched to Buena/Regular/Mala (case, accents and edges ignored). Comment: the first inbound `Text` of that conversation after the rating, within `Support:Workers:SurveyCommentWindowHours` (24), cut to 1000. No prompt message is sent. **(owner, Q-11)** | Spec §8.4: buttons, «comentario libre opcional en el mensaje siguiente». A tap on an old survey only counts for the survey it quotes (same lesson as the data consent, `FlowEngine.IsStaleConsentTap`). |
-| H19 | Rating link: `{Support:PublicForm:BaseUrl}/{slug}/calificar?token={token}`; token = 32 random bytes base64url, only its SHA-256 is stored (`UX_ticket_surveys_token`). The API takes the token in the **body**, never in the path (no token in access logs): `POST /api/v1/public/support/{slug}/surveys/lookup` and `/surveys/answer`, with the `lookup` limiter, no Turnstile. **(owner, Q-12)** | Spec §8.4 «correo: enlace a una página pública»; `calificar` is already reserved (`TenantSlugReservations.cs`). |
+| H18 | WhatsApp answer: the inbound with `kind = Interactive`, `direction = 1`, not imported, whose `reply_to_message_id` is the survey's `message_id` (Meta's `context.id`, resolved by `InboundIngestion`), its `text` matched to Buena/Regular/Mala (case, accents and edges ignored). Right after recording the tap, the worker sends **one** free-form text inside the window the tap just opened (no template): «Gracias. Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.», through `ISupportReplyChannels.SendThreadAsync` (the support reply outbound: idempotent by `ClientId`, no `OutboundGuards`, does not take, assign or reopen the conversation nor count as an advisor reply, `seen: 0`) with a **deterministic** `ClientId` per survey (`SupportSurveyPrompt.ClientIdFor(surveyId)`, derived like `SupportOpeningSender.ClientIdFor`); its outcome is stored (`prompt_message_id` and `prompt_sent_at`, or `prompt_failure_code`), with no retry nor reminder. Comment: the first inbound `Text` of that conversation after the tap and within `Support:Workers:SurveyCommentWindowHours` (24) **of the tap**, cut to 1000; after 24 h nothing is awaited and later messages are ordinary inbound. **(owner, 2026-11-16, Q-11)** | Spec §8.4: buttons, «comentario libre opcional en el mensaje siguiente». A tap on an old survey only counts for the survey it quotes (same lesson as the data consent, `FlowEngine.IsStaleConsentTap`). |
+| H19 | Rating link: `{Support:PublicForm:BaseUrl}/{slug}/calificar?token={token}`; token = 32 random bytes base64url, only its SHA-256 is stored (`UX_ticket_surveys_token`). The API takes the token in the **body**, never in the path (no token in access logs): `POST /api/v1/public/support/{slug}/surveys/lookup` and `/surveys/answer`, with the `lookup` limiter, no Turnstile. **(owner, 2026-11-16, Q-12)** | Spec §8.4 «correo: enlace a una página pública»; `calificar` is already reserved (`TenantSlugReservations.cs`). |
 | H20 | Consult page: `lookup` returns `survey` (can rate, current rating), and `POST /api/v1/public/support/{slug}/tickets/rating` takes `{ number, pin, turnstileToken, rating, comment }` with **the same verification as `lookup`** (Turnstile, locked row, five failures lock 15 min). Anonymous tickets rate only here. | Spec §8.4: «formulario público… en la página de consulta», «anónimo: sólo por la página de consulta». |
-| H21 | A survey is answerable when it has no rating, its status is not `Pending` and not `Skipped survey_disabled`, the ticket is `Resolved` or `Closed`, and `ticket.ResolutionCount == survey.ResolutionNumber` (reopened = that resolution is no longer judged). First answer wins (`UPDATE … WHERE rating IS NULL`); a second → `422 support.survey.already_answered`; not answerable → `422 support.survey.closed`. **(owner, Q-10)** | Spec «una vez por ciclo de resolución». |
-| H22 | Auto-close: a `Resolved` ticket closes when the tenant's local date is **after** `Add(calendar, max(resolvedOn, lastCustomerReplyOn), N)`; `lastCustomerReplyOn` = the last **linked** inbound (`support.ticket_messages` joined to `messaging.messages` with `direction = 1`) after `resolved_at`, excluding survey answers. Closes as the system (`ChangeStatus(Closed, null, …)`, `PublishSystem`, `TicketClosed` in the thread). Detail shows `clock.autoCloseOn`. **(owner, Q-4)** | Spec §8.4 «N días hábiles sin respuesta del cliente», and P4 (an inbound does not reopen a `Resolved`): without the restart, a customer who writes «sigue fallando» is closed for good (`Closed` is terminal). |
+| H21 | A survey is answerable when it has no rating, its status is not `Pending` and not `Skipped survey_disabled`, the ticket is `Resolved` or `Closed`, and `ticket.ResolutionCount == survey.ResolutionNumber` (reopened = that resolution is no longer judged). First answer wins (`UPDATE … WHERE rating IS NULL`); a second → `422 support.survey.already_answered`; not answerable → `422 support.survey.closed`. **(owner, 2026-11-16, Q-10)** | Spec «una vez por ciclo de resolución». |
+| H22 | Auto-close: a `Resolved` ticket closes when the tenant's local date is **after** `Add(calendar, max(resolvedOn, lastCustomerReplyOn), N)`; `lastCustomerReplyOn` = the last customer inbound (`messaging.messages.direction = 1`, not imported) after `resolved_at` whose link in `support.ticket_messages` is **currently in state `Linked`**: an advisor «Soltar» (`Released`) removes it from the count and the close date falls back to the previous one (or to the resolution). The survey tap and the survey comment never count. N per tenant, 1–30, default 5. Closes as the system (`ChangeStatus(Closed, null, …)`, `PublishSystem`, `TicketClosed` in the thread). Detail shows `clock.autoCloseOn`, recomputed on every read. **(owner, 2026-11-16, Q-4)** | Spec §8.4 «N días hábiles sin respuesta del cliente», and P4 (an inbound does not reopen a `Resolved`): without the restart, a customer who writes «sigue fallando» is closed for good (`Closed` is terminal). |
 | H23 | Old pods during the rollout run the old `ChangeStatus`: a resolution they make gets no survey row. Accepted; the README says it. | No startup backfill (startup-lock rule) for a non-legal feature. |
 
 ### Reports
 
 | # | Decision | Why |
 | --- | --- | --- |
-| H24 | Reports live in **Support**: `GET /support/reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`, policy `support.ticket.view`, computed in Application from Support's own tables. **(owner, Q-3, Q-16)** | Every figure is in the `support` schema; Reporting would read it by raw SQL (rename warning) and gate it behind `reporting.*` permissions and module. |
-| H25 | Population = tickets whose **local reception date** is in `[from, to]` (≤ 366 days, both required). `byStatus` brings the six statuses, `byType` every ticket type of the tenant (active or not, by `Position`), `ratings` the three ratings — all complete even in zero. Totals close: `onTime + late + withoutTerm = resolved`; `pending + sent + withoutSurvey + failed + disabled = requested`. Resolution time = business days `d` with `receivedOn < d ≤ resolvedOn` (last resolution), gross of pauses; average with one decimal and median. **(owner, Q-17)** | BFF rules: fixed-size collections travel complete; a total that does not close is explained by a field. |
+| H24 | Reports live in **Support**: `GET /support/reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`, policy `support.ticket.view`, computed in Application from Support's own tables. **(owner, 2026-11-16, Q-3, Q-16)** | Every figure is in the `support` schema; Reporting would read it by raw SQL (rename warning) and gate it behind `reporting.*` permissions and module. |
+| H25 | Population = tickets whose **local reception date** is in `[from, to]` (≤ 366 days, both required). `byStatus` brings the six statuses, `byType` every ticket type of the tenant (active or not, by `Position`), `ratings` the three ratings — all complete even in zero. Totals close: `onTime + late + withoutTerm = resolved`; `pending + sent + withoutSurvey + failed + disabled = requested`. Resolution time = business days `d` with `receivedOn < d ≤ resolvedOn` (last resolution), gross of pauses; average with one decimal and median. **(owner, 2026-11-16, Q-17)** | BFF rules: fixed-size collections travel complete; a total that does not close is explained by a field. |
 
 ## Already covered, no task
 
@@ -159,12 +161,18 @@ decisions for the owner»; the plan assumes them as written here until the owner
    `EveryResolutionRequestsOneSurvey`, `ReopeningAndResolvingAgainRequestsASecondSurvey`.
 3. **A WhatsApp tap counts only for the survey it quotes:** a tap on survey 1 after survey 2 was sent rates nothing (survey 1 is no
    longer answerable). Task 12: `ATapOnAnOldSurveyRatesNothing`.
-4. **Auto-close respects the customer:** a linked customer reply after the resolution moves `autoCloseOn`; a survey tap does not. Task 14:
-   `ACustomerReplyAfterResolvingRestartsTheCount`, `ASurveyAnswerDoesNotHoldTheClose`.
+4. **Auto-close respects the customer, and only while the advisor keeps the message:** a customer reply in state `Linked` after the
+   resolution moves `autoCloseOn`; releasing it moves the date back; the survey tap and comment never count. Task 14:
+   `ACustomerReplyAfterResolvingRestartsTheCount`, `ReleasingTheReplyMovesTheCloseDateBack`, `ASurveyAnswerDoesNotHoldTheClose`.
 5. **No secret leaks:** the rating token never appears in a route, a log, the audit or an event; the PIN of `tickets/rating` neither.
    Task 13: `TheSurveyTokenNeverReachesLogsAuditOrEvents` (host in `Trace`, like `ThePinNeverReachesLogsAuditOrEvents`).
 6. **The raw-SQL feeds run against the migrated schema:** `SupportSurveyFeed` and `SupportAutoCloseFeed` in
    `SupportBootstrapperAdaptersTests`.
+7. **The comment prompt goes out once and is not an advisor reply:** a retried tick re-sends with the same deterministic `ClientId` and
+   Messaging returns the same message; the conversation is not taken nor reassigned. Task 12: `ThePromptIsSentOnceAfterTheTap`,
+   `ThePromptDoesNotTakeTheConversation`.
+8. **The assignee signs:** the PDF and the document row carry the assignee, not the sender; no assignee → 422. Task 8:
+   `TheAssigneeSignsNotTheSender`, `AFormalReplyWithoutAssigneeIs422SignerRequired`.
 
 ---
 
@@ -174,7 +182,7 @@ Under `/api/v1/tenants/{tenantId:guid}/support`:
 
 | Method and route | Permission | Body | Response |
 | --- | --- | --- | --- |
-| `POST /tickets/{ticketId}/replies` (changes) | `Manage` | `SupportReplyRequest` + `SupportFormalReplyRequest? Formal` (last) | `201 SupportReplyResultDto`; new 422 `formal_organization_required`, `document_render_failed` |
+| `POST /tickets/{ticketId}/replies` (changes) | `Manage` | `SupportReplyRequest` + `SupportFormalReplyRequest? Formal` (last) | `201 SupportReplyResultDto`; new 422 `formal_organization_required`, `formal_signer_required`, `document_render_failed` |
 | `GET /tickets/{ticketId}/reply-options` (changes) | `TicketView` | — | `SupportReplyOptionsDto` + `SupportFormalOptionsDto Formal` (last) |
 | `GET /tickets/{ticketId}/replies/{replyId:guid}/document` | `TicketView` | — | `SupportDocumentLinkDto`; 404 `support.reply.document_not_found` |
 | `GET /settings`, `PUT /settings` (change) | `SettingsView` / `SettingsManage` | `UpdateSupportSettingsRequest` + `FormalNextStep`, `SurveyEnabled`, `AutoCloseBusinessDays` | `SupportSettingsDto` (appended fields) |
@@ -198,17 +206,17 @@ Shapes (records append at the **end**; every enum by name):
 
 ```csharp
 public sealed record SupportFormalReplyRequest(string? Decision, string? SignerTitle, IReadOnlyList<string>? Annexes);
-public sealed record SupportReplyDocumentDto(string FileName, long SizeBytes, string SignerName, string SignerTitle);  // SupportReplyDto + Document (last)
+public sealed record SupportReplyDocumentDto(string FileName, long SizeBytes, SupportMemberDto Signer, string SignerTitle);  // SupportReplyDto + Document (last); Signer.DisplayName is the snapshot
 public sealed record SupportFormalOptionsDto(
     bool Suggested,                // ticket.RequiresFormalResponse: the composer pre-checks «Respuesta formal»
-    string? BlockedReason,         // organization_required, or null
+    string? BlockedReason,         // organization_required, signer_required (no assignee), or null
     string? ThreadReason,          // null if the thread can take a formal reply now; template_not_approved, window_closed, …
     IReadOnlyList<SupportConnectionOptionDto> TemplateConnections);   // connections with SupportFormalReply approved (no conversation)
 public sealed record SupportDocumentLinkDto(Uri Url, string FileName, DateTimeOffset ExpiresAt);
 public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonBusinessDays, int MaxDueSoonBusinessDays, long Version,
     string? FormalNextStep, bool SurveyEnabled, int AutoCloseBusinessDays, int MinAutoCloseBusinessDays, int MaxAutoCloseBusinessDays);
 public sealed record SupportSurveyDto(int ResolutionNumber, string Status, string? Channel, string? ReasonCode, DateTimeOffset? SentAt,
-    string? Rating, string? Comment, DateTimeOffset? AnsweredAt, string? AnsweredVia);          // SupportTicketDetailDto + Surveys (last)
+    string? Rating, string? Comment, DateTimeOffset? AnsweredAt, string? AnsweredVia, bool CommentPromptSent);   // SupportTicketDetailDto + Surveys (last); Channel/AnsweredVia ∈ WhatsApp, Email, Portal
 // SupportClockDto + DateOnly? AutoCloseOn (last): only while Resolved.
 public sealed record SupportPublicSurveyStateDto(bool CanRate, string? Rating, IReadOnlyList<string> Options);   // Options = Good, Regular, Bad
 public sealed record SupportPublicSurveyDto(string TenantName, string? LogoUrl, string? AccentColor, string Number, string TypeName,
@@ -320,7 +328,8 @@ Validators: ≤ 2000 after trim, no control characters except line break and tab
 
 **Files:**
 - Create: `Modules.Support.Domain/SupportReplyDocument.cs`; migration `AddSupportReplyDocuments`
-- Modify: `SupportErrorCodes.cs`, `Infrastructure/Persistence/SupportDbContext.cs` (`ReplyDocuments`, table, FK cascade, CHECKs),
+- Modify: `SupportErrorCodes.cs`, `src/Bootstrapper/SupportUserReferenceProbe.cs` (+ `ticket_reply_documents.signer_member_id`),
+  `Infrastructure/Persistence/SupportDbContext.cs` (`ReplyDocuments`, table, FK cascade, CHECKs),
   `ISupportReplyRepository.cs` + `SupportReplyRepository.cs` (`AddDocument`, `FindDocumentAsync`, `ListDocumentsAsync(tenantId, ticketId)`)
 - Test: `$SU\SupportReplyDocumentTests.cs` (new), `$SI\SupportPersistenceTests.cs`
 
@@ -331,13 +340,14 @@ public sealed class SupportReplyDocument          // insert-only: no mutators
     public const int DecisionMaxLength = 20_000; public const int SignerTitleMaxLength = 120;
     public const int MaxAnnexes = 10; public const int AnnexMaxLength = 200;
     public Guid ReplyId { get; } public Guid TenantId { get; } public SupportTicketId TicketId { get; }
-    public string Decision { get; } public string? NextStep { get; } public string SignerName { get; } public string SignerTitle { get; }
+    public string Decision { get; } public string? NextStep { get; }
+    public Guid SignerMemberId { get; } public string SignerName { get; } public string SignerTitle { get; }   // the assignee (H3)
     public IReadOnlyList<string> Annexes { get; }      // jsonb
     public string StorageKey { get; } public string FileName { get; } public long SizeBytes { get; } public string Sha256Hex { get; }
     public DateOnly RespondedOn { get; }               // tenant local date printed in the PDF
     public Guid DocumentClientId { get; }              // clientId of the second Instagram message (H10)
     public DateTimeOffset CreatedAt { get; }
-    public static SupportReplyDocument Create(SupportTicketReply reply, string decision, string? nextStep, string signerName,
+    public static SupportReplyDocument Create(SupportTicketReply reply, string decision, string? nextStep, Guid signerMemberId, string signerName,
         string signerTitle, IReadOnlyList<string> annexes, string storageKey, string fileName, byte[] content, DateOnly respondedOn,
         DateTimeOffset now);
     public static string FileNameFor(string displayNumber) => $"Respuesta-{displayNumber}.pdf";
@@ -345,9 +355,10 @@ public sealed class SupportReplyDocument          // insert-only: no mutators
 public const string ReplyFormalOrganizationRequired = "support.reply.formal_organization_required";
 public const string ReplyDocumentRenderFailed = "support.reply.document_render_failed";
 public const string ReplyDocumentNotFound = "support.reply.document_not_found";
+public const string ReplyFormalSignerRequired = "support.reply.formal_signer_required";   // owner 2026-11-16, Q-7
 ```
 Table `support.ticket_reply_documents`: `reply_id uuid PK FK → ticket_replies(id) ON DELETE CASCADE`, `tenant_id`, `ticket_id`,
-`decision varchar(20000)`, `next_step varchar(2000) null`, `signer_name varchar(200)`, `signer_title varchar(120)`, `annexes jsonb`,
+`decision varchar(20000)`, `next_step varchar(2000) null`, `signer_member_id uuid` (index `IX_ticket_reply_documents_signer`), `signer_name varchar(200)`, `signer_title varchar(120)`, `annexes jsonb`,
 `storage_key varchar(512)`, `file_name varchar(64)`, `size_bytes bigint CHECK > 0`, `sha256 char(64)`, `responded_on date`,
 `document_client_id uuid`, `created_at`. Index `IX_ticket_reply_documents_tenant_ticket`. `SupportDbContext` documents «insert-only;
 the only delete is the cascade of a never-sent reply (H9)». A reply with a document is only `Text`/`Template`/`Email`/`Portal` with
@@ -355,12 +366,13 @@ the only delete is the cascade of a never-sent reply (H9)». A reply with a docu
 
 - [ ] **Step 1: tests** — `SupportReplyDocumentTests.ItTrimsAndKeepsTheDecisionWithLineBreaks`, `ItRejectsMoreThanTenAnnexesOrALongOne`,
   `ItRejectsAReplyWithAnAttachment`, `ItHashesTheContent` (SHA-256 hex of the bytes), `TheFileNameCarriesTheTicketNumber`;
-  `SupportPersistenceTests.AReplyDocumentRoundTrips` and `RemovingANeverSentReplyRemovesItsDocument` (cascade).
+  `SupportPersistenceTests.AReplyDocumentRoundTrips` and `RemovingANeverSentReplyRemovesItsDocument` (cascade);
+  `SupportUserReferenceProbeTests.TheSignerOfAFormalReplyHoldsTheUser`.
 - [ ] **Step 2: RED** — `dotnet build $SU` fails (`CS0246 SupportReplyDocument`).
 - [ ] **Step 3: implement.** Migration additive (new table).
 - [ ] **Step 4: GREEN.** **Step 5: commit** — `feat(support): store the formal reply document of a reply`.
 - Filters: `dotnet test $SU --filter "FullyQualifiedName~SupportReplyDocumentTests"`;
-  `dotnet test $SI --filter "FullyQualifiedName~AReplyDocumentRoundTrips|FullyQualifiedName~RemovingANeverSentReplyRemovesItsDocument"`.
+  `dotnet test $SI --filter "FullyQualifiedName~AReplyDocumentRoundTrips|FullyQualifiedName~RemovingANeverSentReplyRemovesItsDocument|FullyQualifiedName~TheSignerOfAFormalReplyHoldsTheUser"`.
 
 ### Task 3: Renderer, letterhead and storage
 
@@ -551,11 +563,11 @@ Test: `$NU\InfobipEmailChannelTests.cs`, `$NU\SupportReplyEmailTemplateTests.cs`
 **Files:**
 - Modify: `Replies/SendTicketReply.cs` (request, command, validator, handler), `Replies/GetReplyOptions.cs`, `ISupportReplyChannels.cs`
   (`SendThreadDocumentAsync`, `SendFormalTemplateAsync`, `ListFormalTemplateConnectionsAsync`, `IsFormalTemplateApprovedAsync`;
-  `SupportChannelReasons.OrganizationRequired = "organization_required"` in `All`), `ISupportReplyEmail.cs` (`SupportReplyEmail` +
+  `SupportChannelReasons.OrganizationRequired = "organization_required"` and `SignerRequired = "signer_required"` in `All`), `ISupportReplyEmail.cs` (`SupportReplyEmail` +
   `SupportEmailDocument? Document`, last), `src/Bootstrapper/{SupportReplyChannels,SupportReplyEmailSender}.cs`, `SupportDtos.cs`
   (`SupportReplyDto.Document`, `SupportReplyOptionsDto.Formal`), `Tickets/SupportTicketDtoComposer.cs` (documents of the replies, one
   query), `SupportTicket.RecordReply` (details + `formal`), `SupportTicketEventDto` + `bool? Formal` (last, only `ReplySent`)
-- Create: `Replies/SupportFormalReplies.cs` (builds the document: letterhead, recipient, next step, signer name, render, store, row)
+- Create: `Replies/SupportFormalReplies.cs` (builds the document: letterhead, recipient, next step, signer = assignee, render, store, row)
 - Test: `$SU\SendTicketReplyValidatorTests.cs`, `$SI\SupportTicketRepliesApiTests.cs`, `$SI\SupportReplyDoubles.cs` (renderer double
   that records calls), `$BU\SupportFailureCodeParityTests.cs` (still green with the new Support-only code)
 
@@ -567,7 +579,8 @@ public sealed record SendTicketReplyCommand(…, string? FileName = null, Suppor
 public sealed record SupportEmailDocument(string FileName, ReadOnlyMemory<byte> Content);
 ```
 Handler order (only the new steps; the rest as today): after `RouteAsync`, if `Formal` is present on a **new** reply →
-`SupportFormalReplies.PrepareAsync` (letterhead or `422 formal_organization_required`; WhatsApp thread caption ≤ 1024 else
+`SupportFormalReplies.PrepareAsync` (assignee or `422 formal_signer_required`, its name by `ISupportMemberDirectory.NamesAsync`;
+letterhead or `422 formal_organization_required`; WhatsApp thread caption ≤ 1024 else
 `ValidationException` on `Text`; render; `SaveAsync` to R2) → `SupportTicketReply.Start` → `SupportReplyDocument.Create` → one
 `SaveChangesAsync` (on the duplicate-client-id race, delete the R2 object best effort). `SendAsync` picks the document variants when the
 reply has a document: `Text` → `SendThreadDocumentAsync`, `Template` → `SendFormalTemplateAsync`, `Email` → email with the attachment,
@@ -579,7 +592,10 @@ reply is removed with its document (cascade) and its R2 object (best effort). `T
   - `SendTicketReplyValidatorTests.AFormalReplyNeedsADecisionAndASignerTitle`, `TheDecisionIsAtMost20000`, `AtMostTenAnnexesOf200`,
     `FormalAndAnAttachmentAreExclusive` (key `UploadId`).
   - `SupportTicketRepliesApiTests.AFormalThreadReplySendsOneDocumentAndStoresIt` — 201, `reply.document.fileName == "Respuesta-SOP-…pdf"`,
-    the renderer received the decision, next step of the type over the tenant's, signer = author name; Messaging double got the bytes.
+    the renderer received the decision, next step of the type over the tenant's, signer = assignee name and the typed title; the
+    document row stores `signerMemberId`; Messaging double got the bytes.
+  - `TheAssigneeSignsNotTheSender` (sender ≠ assignee), `AFormalReplyWithoutAssigneeIs422SignerRequired` (nothing persisted, no render),
+    `ReplyOptionsSaySignerRequiredWithoutAssignee`.
   - `AFormalReplyOutsideTheWindowUsesTheFormalTemplate`, `AFormalReplyWithoutTheFormalTemplateIs422TemplateNotApproved`,
     `AFormalEmailReplyAttachesThePdf`, `AFormalPortalReplyIsPublishedWithItsDocument`,
     `AFormalReplyWithoutACompanyIs422OrganizationRequired`, `ARenderFailureIs422AndLeavesNothing` (no reply row, no document row),
@@ -589,7 +605,7 @@ reply is removed with its document (cascade) and its R2 object (best effort). `T
 - [ ] **Step 3–4.**
 - [ ] **Step 5: commit** — `feat(support): send the formal reply PDF through the ticket channel`.
 - Filters: `dotnet test $SU --filter "FullyQualifiedName~SendTicketReplyValidatorTests"`;
-  `dotnet test $SI --filter "FullyQualifiedName~Formal|FullyQualifiedName~ReplyOptionsSay"`; `dotnet test $BU --filter "FullyQualifiedName~SupportFailureCodeParityTests"`.
+  `dotnet test $SI --filter "FullyQualifiedName~Formal|FullyQualifiedName~ReplyOptionsSay|FullyQualifiedName~TheAssigneeSigns"`; `dotnet test $BU --filter "FullyQualifiedName~SupportFailureCodeParityTests"`.
 
 ### Task 9: Downloading the document (console and consult)
 
@@ -622,7 +638,7 @@ reply is removed with its document (cascade) and its R2 object (best effort). `T
 **Interfaces — Produces:**
 ```csharp
 public enum SupportSurveyStatus { Pending, Sent, Skipped, Failed }
-public enum SupportSurveyChannel { WhatsApp, Instagram, Email, Portal }
+public enum SupportSurveyChannel { WhatsApp, Email, Portal }   // no Instagram (owner 2026-11-16, Q-2)
 public enum SupportSurveyRating { Good, Regular, Bad }
 public sealed class SupportTicketSurvey
 {
@@ -633,7 +649,9 @@ public sealed class SupportTicketSurvey
     public DateTimeOffset? LockedUntil { get; } public DateTimeOffset? SentAt { get; }
     public SupportSurveyRating? Rating { get; } public string? Comment { get; } public DateTimeOffset? AnsweredAt { get; }
     public SupportSurveyChannel? AnsweredVia { get; } public Guid? RatingMessageId { get; } public Guid? CommentMessageId { get; }
-    public DateTimeOffset? CommentUntil { get; } public DateTimeOffset CreatedAt { get; } public DateTimeOffset UpdatedAt { get; }
+    public DateTimeOffset? CommentUntil { get; }                                      // tap + 24 h (H18)
+    public Guid? PromptMessageId { get; } public DateTimeOffset? PromptSentAt { get; } public string? PromptFailureCode { get; }
+    public DateTimeOffset CreatedAt { get; } public DateTimeOffset UpdatedAt { get; }
     internal static SupportTicketSurvey Request(Guid tenantId, SupportTicketId ticketId, int resolutionNumber, DateTimeOffset now);
     public void MarkSent(SupportSurveyChannel channel, Guid? messageId, byte[]? tokenHash, DateTimeOffset now, string? reasonCode = null);
     public void Skip(string reasonCode, SupportSurveyChannel? channel, DateTimeOffset now);
@@ -642,6 +660,7 @@ public sealed class SupportTicketSurvey
     public void Answer(SupportSurveyRating rating, string? comment, SupportSurveyChannel via, Guid? ratingMessageId,
         DateTimeOffset? commentUntil, DateTimeOffset now);                              // throws already_answered / closed
     public void AddComment(string comment, Guid messageId, DateTimeOffset now);         // only once, only before CommentUntil
+    public void RecordPrompt(Guid? messageId, string? failureCode, DateTimeOffset now); // once; no retry (H18)
 }
 public static class SupportSurveyRatings { public static SupportSurveyRating? FromButtonText(string? text); }   // Buena/Regular/Mala
 public const string SurveyNotFound = "support.survey.not_found"; public const string SurveyClosed = "support.survey.closed";
@@ -651,14 +670,16 @@ public const string SurveyAlreadyAnswered = "support.survey.already_answered";
 Table `support.ticket_surveys`: the columns above; FK `ticket_id → tickets(id) RESTRICT`; `UX_ticket_surveys_ticket_resolution
 (ticket_id, resolution_number)`; `UX_ticket_surveys_token (token_hash) WHERE token_hash IS NOT NULL`;
 `IX_ticket_surveys_pending (next_attempt_at) WHERE status = 'Pending'`; `IX_ticket_surveys_message (message_id) WHERE message_id IS NOT
-NULL`; `IX_ticket_surveys_tenant_ticket`. CHECK `CK_ticket_surveys_comment` (length ≤ 1000), CHECK that a `Sent` row has a channel.
+NULL`; `IX_ticket_surveys_tenant_ticket`. Prompt columns `prompt_message_id uuid null`, `prompt_sent_at timestamptz null`,
+`prompt_failure_code varchar(64) null` (a `SupportChannelReasons` code). CHECK `CK_ticket_surveys_comment` (length ≤ 1000), CHECK that a `Sent` row has a channel.
 Settings: `survey_enabled boolean NOT NULL DEFAULT false`, `auto_close_business_days int NOT NULL DEFAULT 5` with `CK_tenant_settings_auto_close`
 (1–30). The provisioner's `INSERT` relies on the defaults. The survey row is **not** legal proof: it can be updated.
 
 - [ ] **Step 1: tests**
   - `SupportTicketSurveyTests.ResolvingRequestsASurveyWithTheResolutionNumber`, `ReopeningAndResolvingAgainRequestsTheNext`,
     `OtherTransitionsRequestNothing`, `AnswerOnlyOnceAndOnlyWhileAnswerable` (reopened, `Pending`, `survey_disabled`),
-    `TheCommentIsCutTo1000AndOnlyBeforeItsWindow`, `ThirdFailureBecomesFailed`, `FromButtonTextIgnoresCaseAccentsAndEdges`.
+    `TheCommentIsCutTo1000AndOnlyBeforeItsWindow`, `ThePromptIsRecordedOnce`, `ThirdFailureBecomesFailed`,
+    `FromButtonTextIgnoresCaseAccentsAndEdges`.
   - `SupportTenantSettingsTests.AutoCloseIsBetween1And30AndTheSurveyIsOffByDefault`.
   - `SupportPersistenceTests.ASurveyRoundTrips` and `TheResolutionUniqueIndexRejectsADuplicate` (SQL insert ⇒ `23505` on that name).
   - `SupportTicketActionsApiTests.EveryResolutionRequestsOneSurvey` (status change and «Enviar y marcar Resuelto»),
@@ -688,16 +709,16 @@ Settings: `survey_enabled boolean NOT NULL DEFAULT false`, `auto_close_business_
 
 Sender per claimed row (H16, H17): tenant survey off → `Skip(survey_disabled)`; ticket anonymous or `ReplyChannel = Portal` →
 `MarkSent(Portal)`; WhatsApp conversation → Messaging module off `Skip(messaging_disabled)`, no approved `SupportSurvey` on the
-conversation's connection `Skip(template_not_approved)`, else `SendSurveyTemplateAsync` with `ClientId = survey.Id`; Instagram
-conversation → window open: text `«Hola {nombre}, tu caso {radicado} quedó resuelto. Califica la atención que recibiste aquí: {link}»`
-by `SendThreadAsync` with `ClientId = survey.Id`, closed: `Skip(window_closed)`; `ReplyChannel = Email` with an email → survey email;
-anything else → `MarkSent(Portal)`. `Rejected` reasons map to `Skip`; `send_failed`/`connection_unavailable` → `Retry`. Every outcome
+conversation's connection `Skip(template_not_approved)`, else `SendSurveyTemplateAsync` with `ClientId = survey.Id`; `ReplyChannel =
+Email` with an email → survey email; an Instagram conversation → **nothing through Instagram** (owner 2026-11-16, Q-2): the survey email if
+the requester snapshot has an email, else `MarkSent(Portal)`; anything else → `MarkSent(Portal)`. `Rejected` reasons map to `Skip`; `send_failed`/`connection_unavailable` → `Retry`. Every outcome
 commits with `PublishSystem("support.ticket.survey_sent" | "support.ticket.survey_skipped" | "support.ticket.survey_failed", ["survey"])`
 and then `TicketChangedAsync`.
 
 - [ ] **Step 1: tests** — `ASurveyOffTenantSkipsWithSurveyDisabled`, `AnAnonymousTicketIsPublishedOnThePortal`,
   `AWhatsAppTicketSendsTheTemplateWithTheSurveyAsClientId`, `WithoutTheTemplateTheTicketIsWithoutSurvey`,
-  `AnInstagramTicketInsideTheWindowGetsTheLink`, `AnEmailTicketGetsTheEmailWithATokenAndOnlyItsHashIsStored`,
+  `AnInstagramTicketWithAnEmailGetsTheEmailLink`, `AnInstagramTicketWithoutEmailIsPortalOnly` (no Messaging call in either),
+  `AnEmailTicketGetsTheEmailWithATokenAndOnlyItsHashIsStored`,
   `ASendFailureRetriesThreeTimesThenFails`, `NoAuthorSkips`, `TwoWorkersNeverClaimTheSameRow` (integration, `SKIP LOCKED`),
   `ProcessingAnnouncesTheTicket`; `QueueMetricsSourceTests.TheSupportSurveyQueueIsMeasured`.
 - [ ] **Step 2–4.** **Step 5: commit** — `feat(support): send the satisfaction survey by the ticket channel`.
@@ -712,11 +733,18 @@ classification and the doorbell; the token hash only; no ticket version bump fro
 
 ## Block D — Answers, auto-close, reports and documentation (Tasks 12–16, one implementer)
 
-### Task 12: Capturing the WhatsApp answer and comment
+### Task 12: Capturing the WhatsApp answer, the comment prompt and the comment
 
 **Files:** Create `ISupportSurveyFeed.cs`, `Application/Surveys/SupportSurveyAnswers.cs` (runs inside the survey worker tick, after the
-sends), `src/Bootstrapper/SupportSurveyFeed.cs`. Modify `src/Bootstrapper/CustomerDeletionReferences.cs` (null
-`ticket_surveys.message_id`, `rating_message_id`, `comment_message_id` of the tickets whose conversation is unlinked).
+sends), `Application/Surveys/SupportSurveyPrompt.cs` (the text and `ClientIdFor(surveyId)`), `src/Bootstrapper/SupportSurveyFeed.cs`.
+Modify `src/Bootstrapper/CustomerDeletionReferences.cs` (null `ticket_surveys.message_id`, `rating_message_id`, `comment_message_id`,
+`prompt_message_id` of the tickets whose conversation is unlinked).
+
+Per tap (H18, owner 2026-11-16, Q-11): `Answer(…, commentUntil: tap.OccurredAt + 24 h)` and commit; then, if the prompt was never
+recorded, `SendThreadAsync` with the author rule of H17, `ClientId = SupportSurveyPrompt.ClientIdFor(survey.Id)` and the text
+«Gracias. Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.»; `RecordPrompt` with the message id or the
+`SupportChannelReasons` code (`no_author` included), commit, `TicketChangedAsync`. A crash between the send and `RecordPrompt` re-sends on
+the next tick with the same `ClientId`: Messaging returns the message already sent. No retry after a recorded failure, no reminder.
 Test `$SI\SupportSurveyApiTests.cs`, `$SI\SupportBootstrapperAdaptersTests.cs`, `$CI\CustomerDeletionAcrossModulesTests.cs`,
 `$BU\SupportSurveyParityTests.cs` (new).
 
@@ -734,13 +762,15 @@ Reads by name: `messaging.messages` (`id`, `tenant_id`, `conversation_id`, `dire
 `occurred_at`, `created_at`, `imported`). A tap whose text is not a label, or whose survey is no longer answerable, is ignored (the
 survey stays unrated; it leaves the feed after the lookback).
 
-- [ ] **Step 1: tests** — `ATapOnTheSurveyRatesItWithItsMessage`, `TheNextTextIsTheCommentAndALaterOneIsNot`, `ACommentAfterTheWindowIsIgnored`,
+- [ ] **Step 1: tests** — `ATapOnTheSurveyRatesItWithItsMessage`, `ThePromptIsSentOnceAfterTheTap` (two ticks, one message; same
+  `ClientId` on a resend), `ThePromptDoesNotTakeTheConversation` (assignee, status and unread unchanged), `AFailedPromptIsNotRetried`,
+  `TheNextTextIsTheCommentAndALaterOneIsNot`, `ACommentAfterTheWindowIsIgnored`,
   `ATapOnAnOldSurveyRatesNothing`, `ATapWithAnUnknownTextRatesNothing`, `ATapRatesOnlyOnce`, `AnAnswerAnnouncesTheTicket`;
   `SupportBootstrapperAdaptersTests.TheSurveyFeedRunsAgainstTheMigratedSchema`; `CustomerDeletionAcrossModulesTests` (extend the existing
   deletion scenario: the survey message ids are null after the deletion); `SupportSurveyParityTests.TheButtonLabelsMatchTheMessagingTemplate`
   (`SupportSurveyRatings` vs `SupportSurveyTemplateDefinition.ButtonLabels`).
-- [ ] **Step 2–4.** **Step 5: commit** — `feat(support): capture the WhatsApp survey answer and comment`.
-- Filters: `dotnet test $SI --filter "FullyQualifiedName~Tap|FullyQualifiedName~Comment|FullyQualifiedName~TheSurveyFeedRuns"`;
+- [ ] **Step 2–4.** **Step 5: commit** — `feat(support): capture the WhatsApp survey answer, prompt for and store the comment`.
+- Filters: `dotnet test $SI --filter "FullyQualifiedName~Tap|FullyQualifiedName~Comment|FullyQualifiedName~Prompt|FullyQualifiedName~TheSurveyFeedRuns"`;
   `dotnet test $CI --filter "FullyQualifiedName~CustomerDeletionAcrossModulesTests"`; `dotnet test $BU --filter "FullyQualifiedName~SupportSurveyParityTests"`.
 
 ### Task 13: Rating from the consult page and from the link
@@ -757,7 +787,7 @@ Rules: rating ∈ `Good|Regular|Bad` (exact name, else `validation.failed` on `R
 line break; the token is 43 base64url characters (else 404, same body as unknown). `answer` hashes the token and loads the survey by
 `UX_ticket_surveys_token`, filtered by the slug's tenant. `tickets/rating` failures are exactly those of `lookup` (same code, same body,
 same counting); a correct PIN with a non-answerable survey → `422 support.survey.closed`. Answers set `AnsweredVia = Portal` (consult) or
-the survey's channel (link: `Email`/`Instagram`). After commit, `TicketChangedAsync`. Audit `support.ticket.survey_answered` (`PublishSystem`,
+`Email` (link). After commit, `TicketChangedAsync`. Audit `support.ticket.survey_answered` (`PublishSystem`,
 `["survey"]`).
 
 - [ ] **Step 1: tests** — `TheLinkShowsTheSurveyAndAnswersItOnce`, `AnUnknownOrMalformedTokenIs404WithTheSameBody`,
@@ -787,15 +817,18 @@ public interface ISupportAutoCloseFeed
 }
 public static DateOnly AutoCloseOn(ISupportBusinessCalendar calendar, DateOnly resolvedOn, DateOnly? lastReplyOn, int businessDays);
 ```
-The last customer reply: max `ticket_messages.occurred_at` of the ticket after `resolved_at` whose message is `direction = 1`, not
-imported, and is not a survey answer (not `Interactive` quoting one of the ticket's survey `message_id`s, not a survey
-`comment_message_id`). Closing (H22): reload tracked, still `Resolved` with the same `ResolvedAt`, transaction: `ChangeStatus(Closed,
+The last customer reply (H22, owner 2026-11-16, Q-4): max `ticket_messages.occurred_at` of the ticket after `resolved_at` whose link
+`state = 'Linked'` **now** (a `Released` link does not count; the date is recomputed every tick and every detail read, so releasing moves
+`autoCloseOn` back), whose message is `direction = 1`, not imported, and is not a survey answer (not `Interactive` quoting one of the
+ticket's survey `message_id`s, not a survey `comment_message_id`). Reads `support.ticket_messages.state` by name too. A `Pinned` customer
+message does not count either: the owner's rule is «currently `Linked`» (open point at the end of «Owner decisions»). Closing (H22): reload tracked, still `Resolved` with the same `ResolvedAt`, transaction: `ChangeStatus(Closed,
 null, …)`, `TicketClosed` in the thread if there is a conversation, `PublishSystem(status_changed, ["status"])`, commit; then
 `TicketChangedAsync` and `NotifyChangedAsync`. A `RequestConcurrencyException` skips the ticket (logged at `Debug`).
 
 - [ ] **Step 1: tests** — `SupportAutoCloserTests.ItClosesTheDayAfterTheNthBusinessDay`, `HolidaysAndWeekendsDoNotCount` (CO calendar
   double); `SupportAutoCloseApiTests.AResolvedTicketClosesAfterNBusinessDays` (trace `StatusChanged` without actor, audit as system,
-  `TicketClosed` in the thread), `ACustomerReplyAfterResolvingRestartsTheCount`, `ASurveyAnswerDoesNotHoldTheClose`,
+  `TicketClosed` in the thread), `ACustomerReplyAfterResolvingRestartsTheCount`, `ReleasingTheReplyMovesTheCloseDateBack`,
+  `ASurveyAnswerDoesNotHoldTheClose`, `TheSurveyCommentDoesNotHoldTheClose`, `AClosedTicketCanStillBeRated` (H21),
   `AReopenedTicketIsNotClosed`, `TheDetailShowsAutoCloseOn`, `ClosingAnnouncesTheTicket`;
   `SupportBootstrapperAdaptersTests.TheAutoCloseFeedRunsAgainstTheMigratedSchema`.
 - [ ] **Step 2–4.** **Step 5: commit** — `feat(support): auto-close resolved tickets after N business days`.
@@ -841,6 +874,11 @@ CLAUDE.md gotchas to add, one bullet each:
    survey it quotes.
 6. A survey change never bumps the ticket version, but it notifies the hub.
 7. The rating token travels in the body, never in a route; only its SHA-256 is stored.
+8. The formal reply is signed by the ticket's assignee; `ticket_reply_documents.signer_member_id` is in `SupportUserReferenceProbe`.
+9. Auto-close counts only customer replies whose link is `Linked` right now: releasing one moves the close date back; the survey tap and
+   comment never count.
+10. The comment prompt is sent once per survey with a deterministic `ClientId` through the support reply outbound: it is not an advisor
+   reply and never takes the conversation. No survey goes through Instagram.
 
 - [ ] **Step 1–4:** build clean (docs only). **Step 5: commit** — `docs(support): document the formal reply, the survey, auto-close and reports`.
 
@@ -859,70 +897,71 @@ ticket.
 
 ---
 
-## Open decisions for the owner
+## Owner decisions (2026-11-16)
 
-The plan assumes the recommended default of each. **Blocks** = a different answer changes tasks; **deploy** = only a value, a text or
-an action at deployment.
+The owner answered all twelve blocking questions on 2026-11-16. The plan above already reflects each one.
 
-**Blocking (would change tasks):**
+**Accepted as proposed:**
 
-- **Q-1 One more template kind for the formal reply** (H10). Meta templates cannot have an optional document header, so «Aviso de
-  respuesta con el PDF» cannot be the existing `SupportReply`. Default: a separate kind `SupportFormalReply` (`qep_soporte_formal`),
-  provisioned per connection like the others. Alternative: no formal reply outside the 24 h window (the PDF only inside the window, by
-  email or on the consult page) — drops part of Tasks 4, 6 and 8.
-- **Q-2 Instagram survey** (H16). Spec §8.4 asks for the same buttons, but Messaging sends no interactives on Instagram (D-I1,
-  `BotOutbound.cs:79`) and does not parse the inbound `quick_reply` payload. Default: inside the window, a text with the rating link (the
-  same page as email). Alternative: build Instagram quick replies (send `quick_replies` and parse the payload) — one more Messaging task in
-  Block B and a capture path in Task 12.
-- **Q-3 Where the reports live** (H24). Default: Support, `GET /support/reports/summary`, from its own tables. Alternative: the
-  Reporting module (`reporting.*` permission, raw SQL in Bootstrapper with a schema test) — Task 15 moves.
-- **Q-4 Auto-close and a customer reply** (H22). Default: a linked customer reply after the resolution restarts the N days (the advisor
-  decides whether to reopen, P4). Alternatives: ignore replies (closes even if the customer complained; `Closed` is terminal) or hold the
-  close indefinitely until the advisor acts.
-- **Q-5 Two texts in a formal reply** (H2). Default: `text` is the channel message and `formal.decision` the PDF body. Alternative: one
-  text for both (the PDF body then has the template/caption limits: one line, ≤ 1024).
-- **Q-6 Which company signs the letterhead** (H5). Default: the company of the ticket's form version, else the current form's; none →
-  422. Alternative: a dedicated «company of the formal reply» in Support settings (one more setting, migration column).
-- **Q-7 Signer** (H3). Default: the author who sends, with a free-text title per reply, required. Alternatives: the ticket's assignee; a
-  title stored per member or per tenant.
-- **Q-8 Annexes** (H4). Default: a text list only. Alternative: real files attached to the formal reply (Storage uploads, more delivery
-  paths).
-- **Q-9 Survey rows when the survey is off** (H15). Default: always created on resolution, skipped as `survey_disabled`. Alternative:
-  created only when on (the domain needs the setting at `ChangeStatus`: signature change in three callers).
-- **Q-10 When a survey can be answered** (H21). Default: until the ticket is reopened; the consult page offers it even when WhatsApp
-  had no approved template. Alternative: a fixed expiry (for example 30 days), or no consult rating when the channel skipped.
-- **Q-11 WhatsApp comment** (H18). Default: the next text within 24 h, without a prompt. Alternative: after the tap, send «¿Quieres
-  contarnos algo más?» (one more outbound text, copy to approve) and only take the reply to it.
-- **Q-12 Rating link and routes** (H19). Default: `{BaseUrl}/{slug}/calificar?token=…`, token in the body, no Turnstile on the token
-  routes. Alternative: Turnstile there too (the portal has to render it on the rating page).
+- **Q-1** Separate template kind `SupportFormalReply` (`qep_soporte_formal`) for the formal PDF outside the window (H10). (owner, 2026-11-16)
+- **Q-3** Reports inside Support, `GET /support/reports/summary` (H24). (owner, 2026-11-16)
+- **Q-5** Two texts: `text` is the channel message, `formal.decision` the PDF body (H2). (owner, 2026-11-16)
+- **Q-6** Letterhead company: the ticket's form version company, else the current form's, else `422
+  support.reply.formal_organization_required` (H5). (owner, 2026-11-16)
+- **Q-8** Annexes are a printed text list only (H4). (owner, 2026-11-16)
+- **Q-9** A survey row is always created on resolution; skipped `survey_disabled` when the tenant has it off (H15). (owner, 2026-11-16)
+- **Q-10** A survey is answerable until the ticket is reopened, also after the auto-close (H21). (owner, 2026-11-16)
+- **Q-12** No Turnstile on the rating routes; token in the body (H19). (owner, 2026-11-16)
 
-**Deploy only:**
+**Changed by the owner:**
+
+- **Q-2** No survey through Instagram at all. WhatsApp contact → `qep_soporte_encuesta` with three buttons; email contact → rating
+  link email; Instagram ticket → email link if it has an email, else the consult page only; anonymous → consult page only. No Instagram
+  survey task, and no block on creating tickets from Instagram conversations (no tenant uses Instagram yet). (owner, 2026-11-16) —
+  H16, Tasks 10 (`SupportSurveyChannel` without Instagram), 11 and 13.
+- **Q-4** Auto-close restarts the N business days only with customer inbound whose link is **currently** `Linked`; releasing the
+  message removes it and the date falls back; survey tap and comment never count; N per tenant 1–30, default 5. (owner, 2026-11-16) —
+  H22, Task 14, Review Focus 4.
+- **Q-7** The ticket's **assignee** signs; the title is a required free text typed at send; no assignee → `422
+  support.reply.formal_signer_required` (+ `signer_required` in `reply-options`); the document stores signer member id, name snapshot
+  and title, so `SupportUserReferenceProbe` gains a column. (owner, 2026-11-16) — H3, Tasks 2 and 8, Review Focus 8.
+- **Q-11** After the tap, one free-form prompt inside the window it opened: «Gracias. Si quieres, cuéntanos en un mensaje por qué
+  elegiste esa opción.»; idempotent by a deterministic `ClientId` per survey, through the support reply outbound (not an advisor reply,
+  never takes the conversation); the next customer text within 24 h of the tap is the comment; no retry nor reminder. (owner,
+  2026-11-16) — H18, Tasks 10 (prompt columns) and 12, Review Focus 7.
+
+**Deploy only, defaults kept** (owner, 2026-11-16, no objection):
 
 - **Q-13** `qcode-pdf` key for Support (spec §13.5): create it and set `SUPPORT_PDF_API_KEY` (and `SUPPORT_PDF_BASE_URL`) in
   `Backend-prod` **before** this reaches `main`: without it the pod does not start.
 - **Q-14** Legal «next step» text per ticket type (spec §13.6): loaded by each tenant in settings; empty → the PDF omits section 7.
 - **Q-15** Texts and Meta category of `qep_soporte_formal` and `qep_soporte_encuesta` (spec §13.8). Default `UTILITY`; Meta may classify a
   survey as `MARKETING` (V-2). An approved template is never edited: a change is a new version.
-- **Q-16** Who sees the report: default everyone with `support.ticket.read` or `manage` (owner rule: they already see every ticket).
+- **Q-16** Who sees the report: everyone with `support.ticket.read` or `manage`.
 - **Q-17** Report population and measure (H25): by reception date, gross business days to the last resolution.
-- **Q-18** No lifecycle rule on the `support/` prefix of the private bucket (10-year retention, §13.10); confirm nobody adds one.
+- **Q-18** No lifecycle rule on the `support/` prefix of the private bucket (10-year retention, §13.10).
 - **Q-19** Auto-close default 5 business days, range 1–30, always on.
-- **Q-20** Survey off by default for every tenant (nothing goes out until the tenant turns it on and approves the template).
+- **Q-20** Survey off by default for every tenant.
 - **Q-21** Resolutions made by an old pod during the rollout get no survey (H23).
+
+**Open point raised by the planner (does not block):** with the owner's wording, a customer message the advisor **pinned** (`Pinned`)
+does not hold the auto-close; only `Linked` does. If pinned messages should count too, it is one condition in `SupportAutoCloseFeed`
+(Task 14).
 
 ## Spec discrepancies (spec against code)
 
 1. §8.5 lists one «Aviso de respuesta» whose formal variant carries the PDF as document header; a Meta template cannot have an optional
    header. The code already has `SupportReply` without header (phase 2), and its summary said the PDF «llegará como una versión nueva»;
    4b adds `SupportFormalReply` (Q-1) and corrects both.
-2. §8.4 «Instagram: mensaje con los mismos botones»: Messaging has no outbound interactives on Instagram (D-I1) nor parses the inbound
-   quick-reply payload; the plan sends a link (Q-2).
+2. §8.4 «Instagram: mensaje con los mismos botones»: the owner dropped any survey through Instagram (2026-11-16, Q-2); an Instagram
+   ticket gets the email link or the consult page. Task 16 corrects §8.4.
 3. §8.3 «se adjunta al canal de origen» by email: `IEmailChannel`/`EmailMessage` have no attachments; Task 7 adds them.
 4. §8.3.1 «Membrete del tenant: razón social, NIT, dirección y correo»: the tenant has none of those (`Tenant.cs`); they live on
    `Company`. The plan uses the company of the form (Q-6).
-5. §8.3.8 «Firma del responsable (nombre y cargo)»: no job title exists for a member; free text per reply (Q-7).
-6. §8.4 «a los N días hábiles sin respuesta del cliente» with P4 (an inbound does not reopen a `Resolved`, phase 2): the plan restarts the
-   count on a linked customer reply (Q-4).
+5. §8.3.8 «Firma del responsable (nombre y cargo)»: the assignee signs; no job title exists for a member, so the title is free text per
+   reply (owner 2026-11-16, Q-7).
+6. §8.4 «a los N días hábiles sin respuesta del cliente» with P4 (an inbound does not reopen a `Resolved`, phase 2): the owner decided the
+   count restarts on a customer reply whose link is currently `Linked` (2026-11-16, Q-4).
 7. §10 «Reportes… Si Reporting las lee por SQL crudo»: the plan keeps them in Support, with no cross-module SQL (Q-3).
 
 ## To verify against real Meta (handoff)
