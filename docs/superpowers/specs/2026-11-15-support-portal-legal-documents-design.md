@@ -326,11 +326,11 @@ SupportPublicFileRequest(
 
 | Regla | Con datos | Anónimo | Si falla |
 | --- | --- | --- | --- |
-| `AcceptsDataPolicy` | `true` | se ignora, como hoy | `422 support.public.consent_required` (sin cambio) |
-| `PrivacyNoticeVersion` | obligatoria | tiene que ser `null` | `validation.failed`, campo `privacyNoticeVersion` |
-| `AnonymousNoticeVersion` | tiene que ser `null` | obligatoria | `validation.failed`, campo `anonymousNoticeVersion` |
-| `AcceptsTerms` | `true` | `true` | `422 support.public.terms_required` (nuevo, `WithErrorCode` como `consent_required`) |
-| `TermsVersion` | obligatoria | obligatoria | `validation.failed`, campo `termsVersion` |
+| `AcceptsDataPolicy` | `true` | se ignora, como hoy | `422 validation.failed`, `errors.AcceptsDataPolicy` (sin cambio) |
+| `PrivacyNoticeVersion` | obligatoria | tiene que ser `null` | `validation.failed`, `errors.PrivacyNoticeVersion` |
+| `AnonymousNoticeVersion` | tiene que ser `null` | obligatoria | `validation.failed`, `errors.AnonymousNoticeVersion` |
+| `AcceptsTerms` | `true` | `true` | `422 validation.failed`, `errors.AcceptsTerms` (como `AcceptsDataPolicy`) |
+| `TermsVersion` | obligatoria | obligatoria | `validation.failed`, `errors.TermsVersion` |
 | Versión distinta de la vigente (cualquiera de las que aplican) | | | `422 support.public.legal_texts_outdated` (sin cambio; la página recarga `GET /form`) |
 
 El handler lee las vigentes después de Turnstile y del validador, como hoy (`FilePublicTicket.cs:248`), y escribe las
@@ -357,9 +357,9 @@ Patrones existentes: validador con `validation.failed` y el mapa `errors` por ca
 | `support.legal_documents.version_taken` (nuevo) | 409 | `IX_legal_document_versions_tenant_kind_version`, dos publicaciones a la vez |
 | `concurrency.conflict` | 412 | `If-Match` distinto de la vigente, como `PublishLegalTexts` hoy |
 | `support.legal_acceptance.not_found` (nuevo) | 404 | snapshot de un tipo que el ticket no tiene |
-| `support.public.terms_required` (nuevo) | 422 | radicar sin aceptar los términos |
+| `support.public.terms_required` (nuevo, interno) | — | `ErrorCode` de la regla del validador, como `consent_required`; por HTTP sale `422 validation.failed` con `errors.AcceptsTerms` (`ApiExceptionHandler` no publica el `ErrorCode`) |
 | `support.public.legal_acceptance_duplicate` (nuevo) | 409 | `IX_legal_acceptances_ticket_kind`; inalcanzable hoy, como `consent_duplicate` |
-| `support.public.consent_required`, `support.public.legal_texts_outdated`, `support.form.legal_texts_required` | 422 | se conservan con el significado de §7 y §9 |
+| `support.public.legal_texts_outdated`, `support.form.legal_texts_required` | 422 | se conservan con el significado de §7 y §9. `support.public.consent_required` sigue siendo sólo el `ErrorCode` interno de su regla |
 
 `support.legal_texts.policy_required` y `support.legal_texts.version_taken` quedan sin ruta que los produzca; se
 retiran de `SupportErrorCodes` junto con las rutas viejas.
@@ -371,7 +371,7 @@ Migración `AddSupportLegalDocuments`, **aditiva** (regla expand/contract de `CL
 
 **Relleno** [diseñador], en la misma migración, por cada tenant con `legal_text_versions`, desde su versión vigente:
 
-- `PrivacyNotice` versión 1: `authorization_text` y, si hay, `policy_text`, cada uno escapado (`&`, `<`, `>`, `"`) y
+- `PrivacyNotice` versión 1: `authorization_text` y, si hay, `policy_text`, cada uno escapado (sólo `&`, `<`, `>`: es lo que escapa el serializador, y `&quot;` no sería canónico) y
   partido en `<p>` por líneas en blanco, con `<br>` en los saltos simples; `policy_url` se copia;
   `authorization_question` `NULL` (rige la por defecto); `created_at` y `created_by` de la versión de origen.
 - `Terms` versión 1: sólo si `terms_text` no es `NULL`, con la misma conversión.
@@ -431,7 +431,7 @@ se itera, la clase completa una vez por bloque, nunca dos corridas de integraci�
 - `SupportLegalAcceptanceTests`: no acepta el ejemplo ni una versión de otro tenant u otro tipo; `PrivacyNotice` exige
   IP; `AnonymousNotice` la rechaza; guarda la foto que se le pasa.
 - `PublishLegalDocumentValidatorTests` y `FilePublicTicketValidatorTests` (amplía la existente): cada fila de la tabla de
-  §9, con el campo del mapa `errors`; `TheTermsMustBeAccepted` con `support.public.terms_required`.
+  §9, con el campo del mapa `errors` (PascalCase, el `PropertyName`); `TheTermsMustBeAccepted` con `errors.AcceptsTerms`.
 - `SupportFormSettingsTests`: un bloqueador por documento faltante, todos con `support.form.legal_texts_required`.
 
 **Integración (`Modules.Support.IntegrationTests`)**
