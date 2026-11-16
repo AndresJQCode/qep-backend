@@ -73,6 +73,14 @@ public sealed class SupportReplyParityTests
         SupportChannelReasons.NoAuthor,
         SupportChannelReasons.PortalOnly,
         SupportChannelReasons.PortalUnavailable,
+        // Fase 3 (f3f0555c): el permiso de la pestaña de Soporte de una conversación y el reenvío del PIN reclamado.
+        SupportChannelReasons.NoPermission,
+        SupportChannelReasons.SendPending,
+        // Fase 4b (e6d55c8c, 6a866796, 718d1168): los bloqueos de la respuesta formal y los motivos de una encuesta sin enviar.
+        SupportChannelReasons.OrganizationRequired,
+        SupportChannelReasons.SignerRequired,
+        SupportChannelReasons.SurveyDisabled,
+        SupportChannelReasons.TicketReopened,
     ];
 
     [Fact]
