@@ -34,9 +34,9 @@ internal sealed record SupportServedLegal(
                 throw SupportPublicResolver.NotFound();
             }
 
-            // Not cached per version id on purpose (Block B review, optional): versions are insert-only by code, but the re-sanitizing
-            // exists for a row changed by hand, and a cache keyed by id would keep serving what it saw before that change. The cost is
-            // three sanitizer runs per request, at most.
+            // Not cached per version id on purpose (Block B review): the re-sanitizing exists for a row changed by hand, and a cache
+            // keyed by id would keep serving what it saw before that change. The sanitizer behind the port caches by the SHA-256 of the
+            // stored content instead (final review S1, CachingSupportHtmlSanitizer), so a hand-edited row is sanitized again.
             var served = sanitizer.Sanitize(version.ContentHtml);
             return served.HasVisibleText ? new SupportServedDocument(version, served.Html) : throw SupportPublicResolver.NotFound();
         }

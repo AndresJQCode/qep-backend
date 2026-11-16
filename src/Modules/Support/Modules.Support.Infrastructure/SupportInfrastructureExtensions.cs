@@ -40,8 +40,9 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<ISupportTicketAccessRepository, SupportTicketAccessRepository>();
         services.AddScoped<ISupportFormRepository, SupportFormRepository>();
         services.AddSingleton<ISupportPinHasher, Pbkdf2SupportPinHasher>();
-        // Spec 2026-11-15 §6.3 (plan L2): stateless, it builds its HtmlSanitizer on each call.
-        services.AddSingleton<ISupportHtmlSanitizer, HtmlSupportSanitizer>();
+        // Spec 2026-11-15 §6.3 (plan L2): HtmlSupportSanitizer is stateless, it builds its HtmlSanitizer on each call; the decorator caches
+        // its output by the SHA-256 of the input (final review S1), bounded and per pod (MultiReplicaInventory).
+        services.AddSingleton<ISupportHtmlSanitizer>(_ => new CachingSupportHtmlSanitizer(new HtmlSupportSanitizer()));
         services.AddScoped<ISupportLegalDocumentRepository, SupportLegalDocumentRepository>();
         services.AddScoped<ISupportLegalAcceptanceRepository, SupportLegalAcceptanceRepository>();
         // Plan F35 y F36: los adjuntos del formulario, y la sonda que le dice al barrido de Storage cuáles ya reclamó un ticket.
