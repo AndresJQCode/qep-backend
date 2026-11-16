@@ -131,20 +131,40 @@ public static class AuthorizationCatalogEndpoints
                 .ToArray(),
             roleCatalog.ListPermissions()
                 .Where(permission => OfferedAsCheckbox(permission.Permission))
-                .Select(permission => new PermissionCatalogItemResponse(
-                    permission.Permission,
-                    permission.DisplayName,
-                    permission.Description,
-                    permission.Category,
-                    permission.RiskLevel))
+                .Select(ToResponse)
+                .ToArray(),
+            // Spec 2026-11-16: las columnas de la matriz, en orden y con su nombre en pantalla.
+            PermissionVocabulary.ColumnActions
+                .Select(action => new CatalogActionResponse(action, PermissionVocabulary.LabelOfAction(action)))
                 .ToArray()));
+    }
+
+    private static PermissionCatalogItemResponse ToResponse(PermissionDefinition permission)
+    {
+        var placement = PermissionVocabulary.PlacementOf(permission);
+        return new PermissionCatalogItemResponse(
+            permission.Permission,
+            permission.DisplayName,
+            permission.Description,
+            permission.Category,
+            permission.RiskLevel,
+            PermissionVocabulary.LabelOfCategory(permission.Category),
+            placement.Entity,
+            placement.EntityLabel,
+            placement.Action,
+            placement.ActionLabel);
     }
 }
 
 public sealed record AuthorizationCatalogResponse(
     string CatalogVersion,
     IReadOnlyCollection<RoleCatalogItemResponse> Roles,
-    IReadOnlyCollection<PermissionCatalogItemResponse> Permissions);
+    IReadOnlyCollection<PermissionCatalogItemResponse> Permissions,
+    // Spec 2026-11-16: las columnas de la matriz de roles. Una acción de permiso fuera de esta lista
+    // va a «Otros» de su fila.
+    IReadOnlyCollection<CatalogActionResponse> Actions);
+
+public sealed record CatalogActionResponse(string Key, string Label);
 
 public sealed record RoleCatalogItemResponse(
     string Role,
@@ -163,7 +183,14 @@ public sealed record PermissionCatalogItemResponse(
     string DisplayName,
     string Description,
     string Category,
-    string RiskLevel);
+    string RiskLevel,
+    // Spec 2026-11-16: fila (Entity) y columna (Action) del permiso en la matriz de roles, con los
+    // nombres en pantalla. Sin metadata, Action es "other" y la fila es el propio permiso.
+    string CategoryLabel,
+    string Entity,
+    string EntityLabel,
+    string Action,
+    string ActionLabel);
 
 /// <summary>
 /// Lo que el llamador realmente puede hacer en este tenant, a diferencia de qué roles existen.

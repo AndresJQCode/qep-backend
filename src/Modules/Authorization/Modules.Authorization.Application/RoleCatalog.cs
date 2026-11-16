@@ -30,7 +30,16 @@ public sealed record PermissionDefinition(
     string Description,
     string Category,
     string RiskLevel,
-    IReadOnlyCollection<TenantModuleKey>? RequiredModules);
+    IReadOnlyCollection<TenantModuleKey>? RequiredModules)
+{
+    /// <summary>
+    /// Entidad y acción del permiso en la matriz de roles (spec 2026-11-16). Propiedad y no posicional
+    /// para no tocar cada construcción de las pruebas; que nadie la olvide lo verifica
+    /// <c>CompositionRootTests.EveryRegisteredPermissionDeclaresItsShape</c>. <c>null</c> sólo en el
+    /// fallback de metadata de <see cref="RoleCatalog"/>.
+    /// </summary>
+    public PermissionShape? Shape { get; init; }
+}
 
 /// <summary>Resuelve una referencia de rol de una membresía a los permisos que concede.</summary>
 public interface IRoleCatalog
@@ -90,7 +99,12 @@ public sealed class RoleCatalog : IRoleCatalog
                     RequiredModules: null))
             .OrderBy(permission => permission.Permission, StringComparer.Ordinal)
             .ToArray();
-        CatalogVersion = ComputeCatalogVersion(_roleDefinitions, _permissionDefinitions);
+        CatalogVersion = ComputeCatalogVersion(
+            _roleDefinitions,
+            _permissionDefinitions,
+            PermissionVocabulary.ColumnActions,
+            PermissionVocabulary.ActionLabels,
+            PermissionVocabulary.CategoryLabels);
     }
 
     public IReadOnlyCollection<string> PermissionsFor(string role) =>
@@ -102,9 +116,12 @@ public sealed class RoleCatalog : IRoleCatalog
 
     public bool ContainsRole(string role) => _roles.ContainsKey(role);
 
-    private static string ComputeCatalogVersion(
+    public static string ComputeCatalogVersion(
         IReadOnlyCollection<RoleDefinition> roles,
-        IReadOnlyCollection<PermissionDefinition> permissions)
+        IReadOnlyCollection<PermissionDefinition> permissions,
+        IReadOnlyList<string> columnActions,
+        IReadOnlyDictionary<string, string> actionLabels,
+        IReadOnlyDictionary<string, string> categoryLabels)
     {
         var builder = new StringBuilder();
         foreach (var role in roles)
@@ -126,8 +143,29 @@ public sealed class RoleCatalog : IRoleCatalog
                 .Append(permission.DisplayName).Append('|')
                 .Append(permission.Description).Append('|')
                 .Append(permission.Category).Append('|')
-                .Append(permission.RiskLevel)
+                .Append(permission.RiskLevel).Append('|')
+                // Spec 2026-11-16: mover un permiso de fila o de columna de la matriz cambia el catálogo.
+                .Append(permission.Shape?.Entity).Append('|')
+                .Append(permission.Shape?.EntityLabel).Append('|')
+                .Append(permission.Shape?.Action)
                 .AppendLine();
+        }
+
+        // Spec 2026-11-16: el vocabulario de la matriz (qué acciones son columna y cómo se llaman las
+        // acciones y categorías en uso) también define lo que ve el cliente, aunque ningún permiso cambie.
+        builder.AppendJoin(',', columnActions).AppendLine();
+        var usedActions = permissions
+            .Where(permission => permission.Shape is not null)
+            .Select(permission => permission.Shape!.Action);
+        foreach (var action in usedActions.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            builder.Append(action).Append('=').Append(actionLabels.GetValueOrDefault(action)).AppendLine();
+        }
+
+        foreach (var category in permissions.Select(permission => permission.Category)
+                     .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            builder.Append(category).Append('=').Append(categoryLabels.GetValueOrDefault(category)).AppendLine();
         }
 
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()));
