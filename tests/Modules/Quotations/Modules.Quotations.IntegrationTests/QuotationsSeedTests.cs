@@ -131,7 +131,7 @@ public sealed class QuotationsSeedTests
     [Fact]
     public void NoHeaderCollidesWithTheSeedLayout()
     {
-        foreach (var key in new[] { "withholding_retefuente", "withholding_reteica", "buyer_notes" })
+        foreach (var key in new[] { "withholding_retefuente", "withholding_reteica", "buyer_notes", "withholding_retefuente_rate", "withholding_reteica_rate" })
         {
             var column = Assert.Single(OrdersExportColumnCatalog.Columns, candidate => candidate.Key == key);
 

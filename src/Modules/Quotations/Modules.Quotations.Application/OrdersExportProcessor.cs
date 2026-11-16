@@ -383,15 +383,32 @@ public sealed class OrdersExportProcessor(
                 WithholdingCell(order, TaxCountries.RetefuenteType),
                 WithholdingCell(order, TaxCountries.ReteIcaType),
                 ExportCell.OfText(order.BuyerNotes ?? string.Empty),
+                WithholdingRateCell(order, TaxCountries.RetefuenteType, PercentScale),
+                WithholdingRateCell(order, TaxCountries.ReteIcaType, PerMilleScale),
             ];
         }
     }
+
+    private const decimal PercentScale = 1m;
+
+    /// <summary>El porcentaje guardado por 10: 1.104 % es 11.04 ‰.</summary>
+    private const decimal PerMilleScale = 10m;
 
     /// <summary>La suma de lo retenido de ese tipo en el pedido; 0 si ninguna aplicó, como «Retencion».</summary>
     private static ExportCell WithholdingCell(Order order, string type) =>
         ExportCell.OfNumber(order.AppliedWithholdings
             .Where(withholding => string.Equals(withholding.Type, type, StringComparison.Ordinal))
             .Sum(withholding => withholding.Amount));
+
+    /// <summary>
+    /// La tarifa efectiva de ese tipo en la escala que pide el import (spec 2026-11-16); 0 si ninguna aplicó. Con varias
+    /// aplicadas del mismo tipo sale la primera por <c>Position</c>: límite conocido, el owner confirmó que no se da hoy.
+    /// </summary>
+    private static ExportCell WithholdingRateCell(Order order, string type, decimal scale) =>
+        ExportCell.OfNumber(order.AppliedWithholdings
+            .FirstOrDefault(withholding => string.Equals(withholding.Type, type, StringComparison.Ordinal)) is { } applied
+            ? applied.Percentage * scale
+            : 0m);
 
     private static ExportCell PaymentMethodCell(
         IReadOnlyList<OrderExportPaymentProof> proofs, int index, string bankAndAccount) =>

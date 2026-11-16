@@ -36,7 +36,7 @@ public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) 
         Assert.NotNull(layout);
         Assert.Equal(tenantId, layout.TenantId);
         Assert.Equal(1, layout.Version);
-        Assert.Equal(84, layout.Columns.Count);
+        Assert.Equal(86, layout.Columns.Count);
         Assert.All(layout.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
         // (ajuste 2026-10-02), las "payment_method_N" (ajuste 2026-10-03) y "carrier" (ajuste
@@ -87,8 +87,9 @@ public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) 
         var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
         Assert.NotNull(saved);
         Assert.Equal(2, saved.Version);
-        // 84 del catálogo (81 de la reorganización de cliente y facturación, 2026-10-28, + Retefuente, ReteICA y Notas del cliente) + 1 fija.
-        Assert.Equal(85, saved.Columns.Count);
+        // 86 del catálogo (81 de la reorganización de cliente y facturación, 2026-10-28, + Retefuente, ReteICA, Notas del cliente
+        // y las dos tarifas de retención) + 1 fija.
+        Assert.Equal(87, saved.Columns.Count);
         Assert.Equal(new ColumnPayload("Fixed", null, null, null, null, "Tipo Doc", "FV", true), saved.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), saved.Columns[1]);
         Assert.Equal("Correo", saved.Columns[19].Header);
@@ -266,8 +267,9 @@ public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var read = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
         var layout = await read.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        // 84 del catálogo (81 de la reorganización de cliente y facturación, 2026-10-28, + Retefuente, ReteICA y Notas del cliente) + la repetida.
-        Assert.Equal(85, layout!.Columns.Count);
+        // 86 del catálogo (81 de la reorganización de cliente y facturación, 2026-10-28, + Retefuente, ReteICA, Notas del cliente
+        // y las dos tarifas de retención) + la repetida.
+        Assert.Equal(87, layout!.Columns.Count);
         Assert.Equal(
             [
                 new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true),
@@ -427,7 +429,7 @@ public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) 
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var layout = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(84, layout!.Columns.Count);
+        Assert.Equal(86, layout!.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal("order_number", layout.Columns[1].Key);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[2]);
@@ -440,19 +442,20 @@ public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) 
                 "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email",
                 "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
                 "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email",
-                "withholding_retefuente", "withholding_reteica", "buyer_notes"],
-            layout.Columns.TakeLast(46).Select(column => column.Key));
+                "withholding_retefuente", "withholding_reteica", "buyer_notes",
+                "withholding_retefuente_rate", "withholding_reteica_rate"],
+            layout.Columns.TakeLast(48).Select(column => column.Key));
         // Las siete primeras nacen ocultas; "order_total" (ajuste 2026-10-05), "retention_amount"
         // (ajuste 2026-10-06) y "freight_amount" (2026-10-17) nacen visibles.
-        Assert.All(layout.Columns.TakeLast(46).Take(7), column => Assert.False(column.Visible));
-        Assert.All(layout.Columns.TakeLast(46).Skip(7).Take(3), column => Assert.True(column.Visible));
+        Assert.All(layout.Columns.TakeLast(48).Take(7), column => Assert.False(column.Visible));
+        Assert.All(layout.Columns.TakeLast(48).Skip(7).Take(3), column => Assert.True(column.Visible));
         // El resto del flete y "variant" (2026-10-21) nacen ocultos.
-        Assert.All(layout.Columns.TakeLast(46).Skip(10).Take(5), column => Assert.False(column.Visible));
-        // Grupos de cliente, facturación y envío (2026-10-28), las retenciones por tipo y «Notas del cliente» (2026-11-14):
-        // sólo «Cliente» y «Documento de identidad» nacen visibles.
+        Assert.All(layout.Columns.TakeLast(48).Skip(10).Take(5), column => Assert.False(column.Visible));
+        // Grupos de cliente, facturación y envío (2026-10-28), las retenciones por tipo, «Notas del cliente» (2026-11-14)
+        // y las tarifas de retención (2026-11-16): sólo «Cliente» y «Documento de identidad» nacen visibles.
         Assert.Equal(
             ["customer_name", "customer_identification"],
-            layout.Columns.TakeLast(31).Where(column => column.Visible).Select(column => column.Key));
+            layout.Columns.TakeLast(33).Where(column => column.Visible).Select(column => column.Key));
     }
 
     // D10: restaurar es un PUT con el catálogo en su orden y nombres, sin fijas. La fila queda.
@@ -474,7 +477,7 @@ public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) 
         Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
         Assert.Equal("\"3\"", restored.Headers.ETag?.Tag);
         var layout = await restored.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(84, layout!.Columns.Count);
+        Assert.Equal(86, layout!.Columns.Count);
         Assert.DoesNotContain(layout.Columns, column => column.Kind == "Fixed");
         Assert.Equal(defaults, layout.Columns);
     }
