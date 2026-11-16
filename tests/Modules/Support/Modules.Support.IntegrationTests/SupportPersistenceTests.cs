@@ -199,6 +199,39 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal([1, 2], (await tickets.ListEventsAsync(tenant, ticket.Id, Ct)).Select(item => item.Ordinal));
     }
 
+    // Spec 2026-11-15 §5.4: la prioridad va por nombre y el CHECK de la traza admite PriorityChanged.
+    [Fact]
+    public async Task ATicketPriorityAndItsChangeEventRoundTrip()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var type = (await TypesAsync(factory, tenant))[0];
+        var actor = Guid.CreateVersion7();
+        var ticket = NewTicket(tenant, type, 1, Now, actor, SupportTicketPriority.High);
+        await SaveAsync(factory, ticket);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var loaded = await scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().FindAsync(tenant, ticket.Id, Ct);
+            Assert.Equal(SupportTicketPriority.High, loaded!.Priority);
+            loaded.ChangePriority(SupportTicketPriority.Urgent, actor, Now.AddHours(1));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
+        var found = await tickets.FindAsync(tenant, ticket.Id, Ct);
+        var events = await tickets.ListEventsAsync(tenant, ticket.Id, Ct);
+
+        Assert.Equal(SupportTicketPriority.Urgent, found!.Priority);
+        Assert.Equal(2L, found.Version);
+        Assert.Equal([SupportTicketEventKind.Created, SupportTicketEventKind.PriorityChanged], events.Select(item => item.Kind));
+        Assert.Equal(actor, events[1].ActorMemberId);
+        using var details = JsonDocument.Parse(events[1].Details);
+        Assert.Equal("High", details.RootElement.GetProperty("from").GetString());
+        Assert.Equal("Urgent", details.RootElement.GetProperty("to").GetString());
+    }
+
     [Fact]
     public async Task AStaleTicketVersionIsAConcurrencyConflict()
     {
@@ -612,9 +645,15 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
 
     private static DateTimeOffset At(int month, int day) => new(2026, month, day, 15, 0, 0, TimeSpan.Zero);
 
-    private static SupportTicket NewTicket(Guid tenant, SupportTicketType type, long number, DateTimeOffset receivedAt, Guid actor) =>
+    private static SupportTicket NewTicket(
+        Guid tenant,
+        SupportTicketType type,
+        long number,
+        DateTimeOffset receivedAt,
+        Guid actor,
+        SupportTicketPriority priority = SupportTicketPriority.Medium) =>
         SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, number, type, $"Asunto {number}", "Descripción", SupportTicketPriority.Medium,
+            SupportTicketId.New(), tenant, number, type, $"Asunto {number}", "Descripción", priority,
             ManualIntakeMedium.Phone, SupportReplyChannel.Email, null,
             new TicketRequester("Ana", "Gómez", null, null, null, "ana@example.com", null, null, "CO", null),
             null, actor, receivedAt, Clock);

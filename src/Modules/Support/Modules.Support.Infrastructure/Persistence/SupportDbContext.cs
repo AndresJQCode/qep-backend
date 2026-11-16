@@ -372,6 +372,7 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.ToTable("tickets", Schema, table =>
         {
             table.HasCheckConstraint("CK_tickets_status", InList("status", Enum.GetNames<SupportTicketStatus>()));
+            table.HasCheckConstraint("CK_tickets_priority", InList("priority", Enum.GetNames<SupportTicketPriority>()));
             table.HasCheckConstraint("CK_tickets_intake", InList("intake", Enum.GetNames<SupportTicketIntake>()));
             table.HasCheckConstraint("CK_tickets_reply_channel", InList("reply_channel", Enum.GetNames<SupportReplyChannel>()));
             // Nullable: un NULL pasa el IN (da desconocido, no falso), que es lo que quieren las entradas sin medio manual.
@@ -406,6 +407,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.Property(value => value.ManualMedium).HasColumnName("manual_medium").HasConversion<string>().HasMaxLength(24);
         ticket.Property(value => value.ReplyChannel).HasColumnName("reply_channel").HasConversion<string>().HasMaxLength(24);
         ticket.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(24);
+        // El default 'Medium' de la columna vive sólo en la migración, para las filas viejas: declararlo en el modelo haría que EF
+        // omitiera Low (el valor CLR por defecto del enum) en el INSERT y la base lo guardara como Medium.
+        ticket.Property(value => value.Priority).HasColumnName("priority").HasConversion<string>().HasMaxLength(24);
         // Responsable y cliente son referencias blandas: viven en otros esquemas.
         ticket.Property(value => value.AssigneeMemberId).HasColumnName("assignee_member_id");
         ticket.Property(value => value.CustomerId).HasColumnName("customer_id");
