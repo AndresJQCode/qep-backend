@@ -80,6 +80,17 @@ public sealed class SupportTicketAccess
         PinIssuedAt = now;
     }
 
+    /// <summary>Spec 2026-11-16 (P-2): el PIN nuevo que genera un asesor desde la consola para un anónimo. A diferencia de
+    /// <see cref="Reissue"/>, éste sí desbloquea: el asesor es la verificación humana y los intentos fallidos se hicieron contra un PIN
+    /// que ya no existe. No toca el último envío: esta vía no envía nada.</summary>
+    public void ReissueByAgent(string pinHash, DateTimeOffset now)
+    {
+        PinHash = ValidHash(pinHash);
+        PinIssuedAt = now;
+        FailedAttempts = 0;
+        LockedUntil = null;
+    }
+
     public bool CanResend(DateTimeOffset now) => LastSentAt is not { } last || now - last >= ResendCooldown;
 
     public void RecordDelivery(string channel, string? failureCode, DateTimeOffset now)

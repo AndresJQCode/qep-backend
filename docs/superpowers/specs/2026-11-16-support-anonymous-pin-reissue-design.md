@@ -53,3 +53,9 @@ If-Match: "<version del ticket>"
 - Reenvío público del PIN, su enfriamiento y su regla de no desbloquear.
 - `ConsultAccess` del detalle: `lastSentAt`, `channel` y `failureCode` no se tocan (esta ruta no envía nada).
 - El PIN nunca va a logs, auditoría, traza ni a otra lectura.
+
+## 5. Deploy
+
+- Hay una migración, `AddSupportPinReissuedEventKind` (en el commit del dominio): sólo borra y vuelve a crear el CHECK
+  `CK_ticket_events_kind` con `'PinReissued'`, sin columnas ni datos. El CHECK sale del enum, así que sin ella el primer
+  `PinReissued` rompe el insert. El backend con su migración sale antes que la consola.

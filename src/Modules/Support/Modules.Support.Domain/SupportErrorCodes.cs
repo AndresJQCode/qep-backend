@@ -142,6 +142,10 @@ public static class SupportErrorCodes
     /// <summary>Revisión final, I1: un ticket anónimo no guarda cliente (spec §9.4). Lo rechaza el agregado, para todo camino.</summary>
     public const string AnonymousHasNoCustomer = "support.ticket.anonymous_has_no_customer";
 
+    /// <summary>Spec 2026-11-16 (P-1): sólo un ticket anónimo recibe un PIN nuevo desde la consola; uno con solicitante o cliente usa el
+    /// reenvío público, que va a su correo o a su hilo. También lo responde un ticket sin fila de acceso.</summary>
+    public const string PinNotAnonymous = "support.ticket.pin_not_anonymous";
+
     /// <summary>Completar antes de que el navegador termine el PUT: el archivo todavía no está en el bucket (428).</summary>
     public const string PublicAttachmentNotUploaded = "support.public.attachment_not_uploaded";
 

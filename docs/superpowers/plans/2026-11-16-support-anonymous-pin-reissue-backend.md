@@ -6,8 +6,11 @@
 **Goal:** que el asesor genere desde la consola un PIN nuevo para un ticket anónimo, lo vea una vez junto con el enlace
 de la página de consulta, y que eso desbloquee la consulta y quede en la traza.
 
-**Architecture:** todo en el módulo Support. Sin migración de esquema: `PinReissued` se persiste por nombre (valor nuevo
-al final del enum) y el acceso ya tiene `pin_hash`, `pin_issued_at`, `failed_attempts` y `locked_until`.
+**Architecture:** todo en el módulo Support. Una sola migración, `AddSupportPinReissuedEventKind` (en el commit de la Task 1,
+aprobada por el owner 2026-11-16): `PinReissued` se persiste por nombre (valor nuevo al final del enum), pero el CHECK
+`CK_ticket_events_kind` sale de `Enum.GetNames`, así que la migración lo borra y lo vuelve a crear con el valor nuevo, sin
+columnas ni datos, con `Down` simétrico. El acceso ya tiene `pin_hash`, `pin_issued_at`, `failed_attempts` y `locked_until`.
+Deploy: backend con su migración antes que la consola.
 
 **Spec:** [`docs/superpowers/specs/2026-11-16-support-anonymous-pin-reissue-design.md`](../specs/2026-11-16-support-anonymous-pin-reissue-design.md).
 
