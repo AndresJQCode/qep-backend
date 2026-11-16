@@ -33,6 +33,18 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
             .FirstOrDefaultAsync(
                 ticket => ticket.TenantId == tenantId && ticket.ClientRequestId == clientRequestId, cancellationToken);
 
+    public Task<SupportTicketSurvey?> FindLatestSurveyAsync(Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) =>
+        dbContext.TicketSurveys
+            .AsNoTracking()
+            .Where(survey => survey.TenantId == tenantId && survey.TicketId == id)
+            .OrderByDescending(survey => survey.ResolutionNumber)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<SupportTicketSurvey?> FindSurveyByTokenHashAsync(Guid tenantId, byte[] tokenHash, CancellationToken cancellationToken) =>
+        dbContext.TicketSurveys
+            .AsNoTracking()
+            .FirstOrDefaultAsync(survey => survey.TenantId == tenantId && survey.TokenHash == tokenHash, cancellationToken);
+
     public async Task<IReadOnlyList<SupportTicketSurvey>> ListSurveysAsync(
         Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) =>
         await dbContext.TicketSurveys

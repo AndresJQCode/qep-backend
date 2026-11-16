@@ -13,6 +13,11 @@ internal static class SupportNotFound
     public static ResourceNotFoundException TicketType(Guid typeId) =>
         new(SupportErrorCodes.TicketTypeNotFound, $"Support ticket type '{typeId}' was not found.");
 
+    /// <summary>Fase 4b (H19): un token que no existe, mal formado o de otro tenant. El mensaje no lleva el token: el cuerpo es el mismo
+    /// para los tres.</summary>
+    public static ResourceNotFoundException Survey() =>
+        new(SupportErrorCodes.SurveyNotFound, "The survey was not found.");
+
     public static ResourceNotFoundException Conversation(Guid conversationId) =>
         new(SupportErrorCodes.ConversationNotFound, $"Conversation '{conversationId}' was not found.");
 }

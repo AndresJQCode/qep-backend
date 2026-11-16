@@ -1692,6 +1692,20 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.LookupPublicTicketCommand, Modules.Support.Application.SupportPublicTicketDto>,
             Modules.Support.Application.LookupPublicTicketHandler>();
+        // Fase 4b (H19, H20): la verificación de la consulta, extraída para calificar por la consulta, y la encuesta por el enlace.
+        services.AddScoped<Modules.Support.Application.SupportPublicAccess>();
+        services.AddScoped<Modules.Support.Application.SupportPublicTicketView>();
+        services.AddScoped<Modules.Support.Application.SupportPublicSurveys>();
+        services.AddScoped<Modules.Support.Application.SupportSurveyAnswering>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.RatePublicTicketCommand, Modules.Support.Application.SupportPublicTicketDto>,
+            Modules.Support.Application.RatePublicTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.LookupPublicSurveyQuery, Modules.Support.Application.SupportPublicSurveyDto>,
+            Modules.Support.Application.LookupPublicSurveyHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AnswerPublicSurveyCommand, Modules.Support.Application.SupportPublicSurveyDto>,
+            Modules.Support.Application.AnswerPublicSurveyHandler>();
         // Los adjuntos del formulario (plan F30 a F37): el archivo va por la subida sin miembro de Storage.
         services.AddScoped<Modules.Support.Application.ISupportAttachmentStorage, SupportAttachmentStorage>();
         services.AddScoped<

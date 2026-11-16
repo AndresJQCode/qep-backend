@@ -357,6 +357,12 @@ public sealed class SupportOpeningSenderTests
         public Task<IReadOnlyList<SupportTicketSurvey>> ListSurveysAsync(
             Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<SupportTicketSurvey?> FindLatestSurveyAsync(
+            Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<SupportTicketSurvey?> FindSurveyByTokenHashAsync(
+            Guid tenantId, byte[] tokenHash, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<SupportTicketPage> ListAsync(SupportTicketFilter filter, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
