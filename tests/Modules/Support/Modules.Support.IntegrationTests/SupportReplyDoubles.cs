@@ -221,3 +221,32 @@ internal sealed class FakeSupportLetterhead : ISupportLetterhead
     public Task<bool> ExistsAsync(Guid tenantId, Guid? formVersionId, CancellationToken cancellationToken) =>
         Task.FromResult(Data is not null);
 }
+
+/// <summary>Revisión del bloque C: arma <see cref="ThrowAfterCommitUnitOfWork"/> para el siguiente guardado.</summary>
+internal sealed class ThrowAfterCommitSwitch
+{
+    public bool Armed { get; set; }
+}
+
+/// <summary>Revisión del bloque C: el unit of work real, salvo que armado lanza después de que el guardado confirmó, una sola vez. Es
+/// lo que ve el handler cuando la conexión se cae al volver del commit: la fila quedó guardada y el request termina en error.</summary>
+internal sealed class ThrowAfterCommitUnitOfWork(ISupportUnitOfWork inner, ThrowAfterCommitSwitch commitSwitch) : ISupportUnitOfWork
+{
+    public async Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        await inner.SaveChangesAsync(cancellationToken);
+        if (commitSwitch.Armed)
+        {
+            commitSwitch.Armed = false;
+            throw new IOException("The connection dropped after the commit.");
+        }
+    }
+
+    public Task<ISupportTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        inner.BeginTransactionAsync(cancellationToken);
+
+    public Task HoldCustomerReferenceAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        inner.HoldCustomerReferenceAsync(tenantId, customerId, cancellationToken);
+
+    public void DiscardChanges() => inner.DiscardChanges();
+}

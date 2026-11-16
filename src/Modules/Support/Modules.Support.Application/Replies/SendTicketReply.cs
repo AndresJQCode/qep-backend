@@ -250,8 +250,13 @@ public sealed class SendTicketReplyHandler(
             }
             catch (Exception) when (prepared is not null)
             {
-                // H7: el PDF ya estaba en el bucket y la fila no se guardó.
-                await DiscardDocumentAsync(prepared);
+                // H7: el PDF ya estaba en el bucket y la fila no se guardó. Revisión del bloque C: salvo que el commit sí se haya confirmado
+                // y lo que falló fue la vuelta (la conexión se cayó al responder): entonces la fila existe y el PDF es su documento.
+                if (!await ReplySavedAsync(command.TenantId, ticket.Id, clientId))
+                {
+                    await DiscardDocumentAsync(prepared);
+                }
+
                 throw;
             }
         }
@@ -498,6 +503,21 @@ public sealed class SendTicketReplyHandler(
                 cancellationToken),
             _ => throw new InvalidOperationException($"Unknown reply delivery '{route.Delivery}'."),
         };
+
+    // Revisión del bloque C: si el guardado que lanzó en realidad confirmó. Mira la base, no lo que quedó en el contexto. Si ni siquiera se
+    // puede mirar, se responde que sí: un PDF huérfano en el bucket no rompe nada, borrar el documento de una respuesta que existe sí.
+    private async Task<bool> ReplySavedAsync(Guid tenantId, SupportTicketId ticketId, Guid clientId)
+    {
+        try
+        {
+            unitOfWork.DiscardChanges();
+            return await replies.FindByClientIdAsync(tenantId, ticketId, clientId, CancellationToken.None) is not null;
+        }
+        catch (Exception)
+        {
+            return true;
+        }
+    }
 
     // Best effort: el puerto no lanza y deja un log si no pudo; un PDF huérfano no rompe nada, y quien llama ya está respondiendo otra cosa.
     private async Task DiscardDocumentAsync(SupportPreparedFormalReply? prepared)

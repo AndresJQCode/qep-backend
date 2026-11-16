@@ -25,6 +25,7 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
     private readonly RecordingSupportFormalReplyRenderer _renderer = new();
     private readonly RecordingSupportDocumentStorage _storage = new();
     private readonly FakeSupportLetterhead _letterhead = new();
+    private readonly ThrowAfterCommitSwitch _commitSwitch = new();
     private PostgreSqlContainer? _database;
     private QepApiFactory? _factory;
 
@@ -46,6 +47,10 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
             services.AddSingleton<ISupportDocumentStorage>(_storage);
             services.RemoveAll<ISupportLetterhead>();
             services.AddSingleton<ISupportLetterhead>(_letterhead);
+            // Revisión del bloque C: un guardado que confirma y después lanza, sólo cuando la prueba lo arma.
+            services.RemoveAll<ISupportUnitOfWork>();
+            services.AddScoped<ISupportUnitOfWork>(provider => new ThrowAfterCommitUnitOfWork(
+                ActivatorUtilities.CreateInstance<Modules.Support.Infrastructure.Persistence.SupportUnitOfWork>(provider), _commitSwitch));
         });
 
     public async ValueTask DisposeAsync()
@@ -959,6 +964,26 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Empty(_email.Sent);
         Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
         Assert.Equal(0, await DocumentsCountAsync(Id(ticket)));
+    }
+
+    // Revisión del bloque C: el guardado de la respuesta nueva confirmó y aun así lanzó (la conexión se cayó al volver del commit). La
+    // fila existe y el PDF es su documento: no se borra del bucket, aunque el asesor vea un error.
+    [Fact]
+    public async Task ACommittedFormalReplyKeepsItsDocumentWhenTheSaveThrowsAfterCommitting()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+        _commitSwitch.Armed = true;
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.False(_commitSwitch.Armed);
+        Assert.Equal(1, await RepliesCountAsync(Id(ticket)));
+        Assert.Equal(1, await DocumentsCountAsync(Id(ticket)));
+        Assert.Empty(_storage.Deleted);
+        Assert.Single(_storage.Objects);
     }
 
     // Review Focus 1: una Pending vieja con documento sale con el PDF guardado y su DocumentClientId; el generador no se vuelve a llamar.
