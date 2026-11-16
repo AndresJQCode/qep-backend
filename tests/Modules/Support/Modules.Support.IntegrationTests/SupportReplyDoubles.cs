@@ -183,8 +183,16 @@ internal sealed class RecordingSupportDocumentStorage : ISupportDocumentStorage
 
     public ConcurrentQueue<string> Reads { get; } = new();
 
+    /// <summary>Con <c>true</c>, guardar lanza como lo haría R2 caído (revisión final): nada queda en el bucket.</summary>
+    public bool FailSave { get; set; }
+
     public Task<string> SaveAsync(Guid tenantId, byte[] content, CancellationToken cancellationToken)
     {
+        if (FailSave)
+        {
+            throw new HttpRequestException("R2 is unreachable.");
+        }
+
         var key = $"support/tenants/{tenantId:N}/replies/2026/11/{Guid.NewGuid():N}.pdf";
         Objects[key] = content.ToArray();
         return Task.FromResult(key);

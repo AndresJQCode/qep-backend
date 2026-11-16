@@ -104,7 +104,8 @@ public static class SupportErrorCodes
     /// no tiene membrete (422).</summary>
     public const string ReplyFormalOrganizationRequired = "support.reply.formal_organization_required";
 
-    /// <summary>H7: <c>qcode-pdf</c> no devolvió el PDF; no se guarda nada (422, como <c>quotation.pdf.render_failed</c>).</summary>
+    /// <summary>H7: <c>qcode-pdf</c> no devolvió el PDF, o el bucket privado no lo guardó (revisión final); no se guarda nada (422, como
+    /// <c>quotation.pdf.render_failed</c>).</summary>
     public const string ReplyDocumentRenderFailed = "support.reply.document_render_failed";
 
     /// <summary>H13: la respuesta no existe en el ticket o no tiene documento (404).</summary>

@@ -2,6 +2,7 @@ using System.Text;
 using BuildingBlocks.Domain;
 using FluentValidation;
 using FluentValidation.Results;
+using Microsoft.Extensions.Logging;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -63,10 +64,11 @@ internal sealed record SupportPreparedFormalReply(
 /// Fase 4b, Tarea 8: arma el PDF de una respuesta formal (spec §8.3). En orden: quien firma es el responsable del ticket (H3; sin él,
 /// <c>support.reply.formal_signer_required</c>), el membrete es la empresa del formulario (H5; sin ella,
 /// <c>support.reply.formal_organization_required</c>), el pie de WhatsApp cabe (H2), el «siguiente paso» es el del tipo o el del tenant (H6),
-/// el PDF se genera (H12; si falla, <c>support.reply.document_render_failed</c>) y se guarda en el bucket privado (H8). Nada de esto escribe
+/// el PDF se genera (H12; si falla, <c>support.reply.document_render_failed</c>) y se guarda en el bucket privado (H8; si falla, el mismo
+/// código: para el asesor es el mismo «no se pudo generar el documento», y no queda nada que limpiar). Nada de esto escribe
 /// en la base: la fila del documento la crea quien envía, en el mismo guardado que la respuesta.
 /// </summary>
-public sealed class SupportFormalReplies(
+public sealed partial class SupportFormalReplies(
     ISupportMemberDirectory members,
     ISupportLetterhead letterhead,
     ISupportTicketTypeRepository types,
@@ -74,7 +76,8 @@ public sealed class SupportFormalReplies(
     ISupportCustomerLookup customers,
     ITenantDirectory tenants,
     ISupportFormalReplyRenderer renderer,
-    ISupportDocumentStorage storage)
+    ISupportDocumentStorage storage,
+    ILogger<SupportFormalReplies> logger)
 {
     /// <summary>El destinatario de un ticket anónimo en el PDF: sin documento ni correo.</summary>
     public const string AnonymousRecipient = "Solicitante anónimo";
@@ -164,11 +167,29 @@ public sealed class SupportFormalReplies(
                 annexes,
                 dateFormat),
             cancellationToken);
-        var key = await storage.SaveAsync(ticket.TenantId, content, cancellationToken);
+        string key;
+        try
+        {
+            key = await storage.SaveAsync(ticket.TenantId, content, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Revisión final: R2 caído era un 500. Sólo el tipo de la excepción va al log: su mensaje puede traer la clave del objeto o la
+            // URL del bucket.
+            DocumentNotSaved(logger, ticket.TenantId, ticket.Id.Value, exception.GetType().Name);
+            throw new SupportDomainException(
+                SupportErrorCodes.ReplyDocumentRenderFailed, "The formal reply document could not be saved to the private bucket.");
+        }
+
         return new SupportPreparedFormalReply(
             decision, nextStep, signer, signerName, signerTitle, annexes, key, SupportReplyDocument.FileNameFor(ticket.DisplayNumber),
             content, context.Today);
     }
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "The formal reply document of ticket {TicketId} of tenant {TenantId} could not be saved ({ExceptionType}); the reply answers 422.")]
+    private static partial void DocumentNotSaved(ILogger logger, Guid tenantId, Guid ticketId, string exceptionType);
 
     private sealed record Recipient(string Name, string? Document, string? Email, string? Address);
 

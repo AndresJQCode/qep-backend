@@ -974,6 +974,27 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal(0, await DocumentsCountAsync(Id(ticket)));
     }
 
+    // Revisión final: si el bucket privado no guarda el PDF, la respuesta es el mismo 422 del render y no un 500; no queda respuesta,
+    // documento ni envío, y el asesor puede reintentar.
+    [Fact]
+    public async Task AStorageFailureIs422RenderFailedAndLeavesNothing()
+    {
+        var scenario = await StartAsync(Factory);
+        _storage.FailSave = true;
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.document_render_failed", await CodeOfAsync(response));
+        Assert.Single(_renderer.Rendered);
+        Assert.Empty(_storage.Objects);
+        Assert.Empty(_email.Sent);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+        Assert.Equal(0, await DocumentsCountAsync(Id(ticket)));
+    }
+
     // Revisión del bloque C: el guardado de la respuesta nueva confirmó y aun así lanzó (la conexión se cayó al volver del commit). La
     // fila existe y el PDF es su documento: no se borra del bucket, aunque el asesor vea un error.
     [Fact]
