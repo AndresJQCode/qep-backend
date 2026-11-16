@@ -265,6 +265,21 @@ public sealed class SupportPublicIdempotencyApiTests(SupportPublicHost host) : I
             rig.Factory, "SELECT count(*) FROM support.tickets WHERE client_request_id = @key", ("key", key)));
     }
 
+    // Owner decision D-10: the key is a random v4 UUID. A time-ordered v7 is 422 validation.failed on ClientRequestId, and nothing is
+    // created.
+    [Fact]
+    public async Task AClientRequestIdThatIsNotV4IsRejected()
+    {
+        var rig = await RigAsync();
+
+        var response = await FileAsync(rig, NamedBody(rig.TypeId, rig.CityId, Email(), clientRequestId: Guid.CreateVersion7()));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Equal(["ClientRequestId"], await ErrorKeysAsync(response));
+        Assert.Equal(0L, await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant"));
+    }
+
     [Fact]
     public async Task WithoutAKeyEveryFilingIsNew()
     {

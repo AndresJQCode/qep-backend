@@ -225,6 +225,16 @@ public sealed class FilePublicTicketValidatorTests
     public void AnEmptyClientRequestIdIsAnError() =>
         Assert.Equal(["ClientRequestId"], Errors(Command(Natural()) with { ClientRequestId = Guid.Empty }));
 
+    // Owner decision D-10: only a random v4 UUID is a key, like the public upload keys.
+    [Fact]
+    public void AClientRequestIdOfAnotherVersionIsAnError()
+    {
+        Assert.Equal(["ClientRequestId"], Errors(Command(Natural()) with { ClientRequestId = Guid.CreateVersion7() }));
+        Assert.Equal(
+            ["ClientRequestId"],
+            Errors(Command(Natural()) with { ClientRequestId = Guid.Parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8") }));
+    }
+
     [Fact]
     public void ANullClientRequestIdIsFine()
     {

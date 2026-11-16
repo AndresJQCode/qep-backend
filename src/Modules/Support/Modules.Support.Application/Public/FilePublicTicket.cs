@@ -66,6 +66,14 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
 {
     private const string Colombia = "CO";
 
+    /// <summary>Owner decision D-10 (2026-11-15): the idempotency key is a random RFC 9562 v4 UUID, what the portal's
+    /// <c>crypto.randomUUID()</c> gives, like the public upload keys (<see cref="SupportPublicUploads.KeyVersion"/>). A time-ordered one
+    /// (v7) could be guessed from the moment of the filing.</summary>
+    internal const int ClientRequestIdVersion = 4;
+
+    /// <summary>Whether <paramref name="key"/> can be a client request id: not empty and v4.</summary>
+    internal static bool IsClientRequestId(Guid key) => key != Guid.Empty && key.Version == ClientRequestIdVersion;
+
     public FilePublicTicketValidator(ISupportCountries countries, ISupportPhoneNormalizer phones)
     {
         ArgumentNullException.ThrowIfNull(countries);
@@ -75,10 +83,10 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
         RuleFor(command => command.Subject).MustFit(1, SupportTicket.SubjectMaxLength);
         RuleFor(command => command.Description).MustFit(1, SupportTicket.DescriptionMaxLength);
         RuleFor(command => command.FormVersion).NotNull();
-        // Plan L27: optional, but the empty UUID is a bug of the portal, never a key.
+        // Plan L27 and owner decision D-10: optional, but when present a v4 UUID; the empty one or another version is a bug of the portal.
         RuleFor(command => command.ClientRequestId)
-            .NotEqual(Guid.Empty)
-            .WithMessage("The client request id cannot be the empty UUID.");
+            .Must(key => key is not { } value || IsClientRequestId(value))
+            .WithMessage("The client request id must be a random (version 4) UUID.");
         // Spec 2026-11-15 §9 (plan L15 y L16): los dos caminos aceptan los términos. Por HTTP sale como validation.failed con
         // errors.AcceptsTerms: ApiExceptionHandler no publica el ErrorCode.
         RuleFor(command => command.TermsVersion).NotNull();
@@ -265,8 +273,8 @@ public sealed class FilePublicTicketHandler(
     {
         var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
         // Plan L27: a retry is recognized before Turnstile (its token was spent by the first attempt), the validator and the version
-        // checks, and the body is not compared. Always by tenant. The empty UUID is never looked up: the validator rejects it below.
-        var key = command.ClientRequestId is { } requested && requested != Guid.Empty ? requested : (Guid?)null;
+        // checks, and the body is not compared. Always by tenant. Only a v4 key is looked up (D-10): the validator rejects any other below.
+        var key = command.ClientRequestId is { } requested && FilePublicTicketValidator.IsClientRequestId(requested) ? requested : (Guid?)null;
         if (key is { } retryKey && await tickets.FindByClientRequestAsync(tenant.TenantId, retryKey, cancellationToken) is { } earlier)
         {
             return await RetryAsync(tenant, earlier, cancellationToken);
