@@ -185,7 +185,8 @@ public sealed class SupportTicketDtoComposer(
         reply.FailureCode,
         reply.MessageId,
         ToMemberDto(reply.AuthorMemberId, membersById, viewerMemberId),
-        reply.CreatedAt);
+        reply.CreatedAt,
+        reply.UploadId is not null);
 
     public async Task<IReadOnlyList<SupportTicketListItemDto>> ComposeListAsync(
         Guid tenantId, IReadOnlyList<SupportTicket> page, SupportReadContext context, CancellationToken cancellationToken)
