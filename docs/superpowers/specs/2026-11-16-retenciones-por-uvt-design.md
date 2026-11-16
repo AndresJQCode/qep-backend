@@ -3,7 +3,7 @@
 Fecha: 2026-11-16. Trabajo que cruza repos: este spec cubre `qep-backend` y **manda el contrato**; la mitad del frontend es
 `qep-frontend/docs/superpowers/specs/2026-11-16-retenciones-por-uvt-design.md`. Salen juntos, backend primero (§10).
 
-Estado: **diseño aprobado por el owner 2026-11-16 (maqueta), spec sin revisar, sin construir**. Rama `feature/retenciones-uvt`
+Estado: **maqueta y decisiones P1/P2 aprobadas por el owner 2026-11-16, sin construir**. Rama `feature/retenciones-uvt`
 desde `develop` (`cf367779`). Las rutas y líneas citadas son de ese commit.
 
 Maqueta aprobada: canvas «Retenciones por UVT» (artboards «Crear / editar», «Detalle», «Estados de una tasa»).
@@ -27,6 +27,8 @@ El backend decide todo: si aplica, el motivo, el umbral en dinero y si la UVT es
 2. Congelar el **año** de la UVT junto a su valor (§5.2), para poder mostrarlo y detectar la desactualizada.
 3. Una sola regla para «entra al cálculo» y «por qué no entra»: el veredicto sale de la misma función que hoy filtra
    candidatas (§5.3), nunca de una copia.
+
+4. Refrescar la UVT de los documentos editables en cada recálculo [owner P1, §5.4].
 
 ## 3. No objetivos
 
@@ -95,7 +97,22 @@ ser `Explain(...)` filtrado a las que superan los pasos 1-4, para que «entra» 
 umbral (`Applied`/`BelowMinimumBase`/`NoTaxUnitValue`) lo decide la misma comparación de `DocumentTotals.Withhold`, extraída a un
 método que usen los dos.
 
-### 5.4 Lo que no cambia
+### 5.4 Refresco de la UVT en documentos editables [owner P1]
+
+- Documento editable = cotización que pasa `EnsureEditable` y pedido `Pending` (el plan cita el guard exacto de cada uno).
+- Todo handler que recalcula un documento editable (escrituras y vistas previas) lee las UVT **una vez**
+  (`ITaxUnitValueRepository.ListAsync`) y, antes del recálculo, llama a un método de dominio NUEVO `RefreshTaxUnits(values,
+  documentDate)` que pone en cada fila con unidad el valor y el año que hoy daría `ValueFor`, y después recalcula. Las filas
+  sin base mínima o sin unidad no cambian.
+- Sólo la UVT: nombre, porcentaje y base mínima de la tasa siguen congelados como hoy.
+- Las lecturas (GET) no refrescan: un detalle no escribe. Una cotización editable con la UVT vieja muestra el aviso hasta que
+  alguien la guarde o la previsualice.
+- Si el refresco cambia retenciones o totales, no se escribe una entrada de historial propia [agente]: es parte del recálculo,
+  como cambiar una cantidad.
+- Pruebas (§9): un documento editable con UVT 2025 congelada se guarda después de cargar la de 2026 → `taxUnitYear: 2026`,
+  umbral y monto recalculados; un pedido aprobado no cambia.
+
+### 5.5 Lo que no cambia
 
 `withholdings`, `customerWithholdingTaxRates`, `billingWithholdingTaxRates`, `municipalWithholdings`, totales, PDF e historial.
 
@@ -139,9 +156,9 @@ Ninguno nuevo: el campo es de lectura.
 
 `ALTER TABLE quotations.quotation_withholdings ADD tax_unit_year smallint NULL;` y lo mismo en `order_withholdings`.
 
-### 8.2 Filas existentes [pendiente del owner, P2]
+### 8.2 Filas existentes [owner P2]
 
-Propuesta [agente]: rellenar `tax_unit_year` donde `tax_unit_value` no es null, buscando en `catalog.tax_unit_values` el año
+Se rellena `tax_unit_year` donde `tax_unit_value` no es null, buscando en `catalog.tax_unit_values` el año
 con ese país y ese valor (el mayor año ≤ el del documento). Lo que no case queda null: se muestra el valor sin año y sin aviso.
 
 ## 9. Pruebas (TDD: RED antes que GREEN)
@@ -166,10 +183,9 @@ Suite completa de los módulos tocados (Quotations, Catalog) sólo antes de merg
 
 Backend primero: el campo nuevo no rompe al frontend actual. Después el frontend.
 
-## 11. Decisiones pendientes del owner
+## 11. Decisiones del owner (2026-11-16)
 
-- **P1. ¿Se refresca la UVT de un documento editable cuando el operador carga la del año?** Hoy no: la foto es fija
-  (`WithholdingRate.cs:5-9`, decisión del spec 2026-11-10 §7.5). Sin refresco, el aviso sirve para los documentos nuevos pero la
-  cotización que lo mostró sigue con la UVT vieja hasta que cambien cliente o empresa. Opciones: (a) no se refresca;
-  (b) cada recálculo de una cotización editable o un pedido `Pending` vuelve a leer la UVT. Recomendación [agente]: (b).
-- **P2. Relleno del año en filas existentes** (§8.2). Recomendación [agente]: sí, por coincidencia de valor.
+- **P1 [owner]: la UVT de un documento editable se refresca en cada recálculo** (opción b). Cambia la decisión del spec
+  2026-11-10 §7.5 («cargar otra UVT no la mueve») **sólo para documentos editables**; los cerrados conservan su foto. Detalle
+  en §5.4.
+- **P2 [owner]: se rellena el año en las filas existentes** por coincidencia de valor (§8.2).
