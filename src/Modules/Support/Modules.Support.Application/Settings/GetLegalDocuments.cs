@@ -15,7 +15,8 @@ public sealed class GetLegalDocumentsHandler(
     ISupportLegalDocumentRepository legalDocuments,
     ISupportMemberDirectory members,
     ISupportViewer viewer,
-    ITenantDirectory tenantDirectory)
+    ITenantDirectory tenantDirectory,
+    ISupportHtmlSanitizer sanitizer)
     : IQueryHandler<GetLegalDocumentsQuery, SupportLegalDocumentsDto>
 {
     public async Task<SupportLegalDocumentsDto> HandleAsync(GetLegalDocumentsQuery query, CancellationToken cancellationToken)
@@ -31,9 +32,9 @@ public sealed class GetLegalDocumentsHandler(
         var me = await viewer.MemberIdAsync(query.TenantId, cancellationToken);
 
         return new SupportLegalDocumentsDto(
-            SupportLegalDocuments.ToDto(documents[0], names, defaultQuestion, me),
-            SupportLegalDocuments.ToDto(documents[1], names, defaultQuestion, me),
-            SupportLegalDocuments.ToDto(documents[2], names, defaultQuestion, me));
+            SupportLegalDocuments.ToDto(documents[0], names, defaultQuestion, me, sanitizer),
+            SupportLegalDocuments.ToDto(documents[1], names, defaultQuestion, me, sanitizer),
+            SupportLegalDocuments.ToDto(documents[2], names, defaultQuestion, me, sanitizer));
     }
 }
 
@@ -71,15 +72,22 @@ internal static class SupportLegalDocuments
     public static SupportMemberDto Author(Guid memberId, IReadOnlyDictionary<Guid, string> names, Guid? viewerMemberId) =>
         SupportTicketDtoComposer.ToMemberDto(memberId, names, viewerMemberId);
 
+    /// <summary>The content goes through <see cref="ISupportHtmlSanitizer"/> again on every read (final review S5): stored versions are
+    /// already its fixed point, so the bytes do not change, but a row edited by hand never reaches the editor unsanitized. The row is
+    /// not touched.</summary>
     public static SupportLegalDocumentDto ToDto(
-        SupportLegalDocumentVersion version, IReadOnlyDictionary<Guid, string> names, string? defaultQuestion, Guid? viewerMemberId)
+        SupportLegalDocumentVersion version,
+        IReadOnlyDictionary<Guid, string> names,
+        string? defaultQuestion,
+        Guid? viewerMemberId,
+        ISupportHtmlSanitizer sanitizer)
     {
         var isPrivacy = version.Kind == SupportLegalDocumentKind.PrivacyNotice;
         return new SupportLegalDocumentDto(
             version.Kind.ToString(),
             version.Version,
             version.IsExample,
-            version.ContentHtml,
+            sanitizer.Sanitize(version.ContentHtml).Html,
             version.AuthorizationQuestion,
             version.PolicyUrl,
             isPrivacy ? defaultQuestion : null,

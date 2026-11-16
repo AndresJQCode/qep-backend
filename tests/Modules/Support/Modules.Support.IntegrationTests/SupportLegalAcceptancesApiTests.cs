@@ -103,6 +103,30 @@ public sealed class SupportLegalAcceptancesApiTests(SupportPublicHost host) : IC
         Assert.Null(termsBody.CharacterizationText);
     }
 
+    // Final review S5: the snapshot is sanitized again on the way out. A snapshot edited by hand reaches the console clean, and the
+    // stored evidence is not touched.
+    [Fact]
+    public async Task TheSnapshotIsResanitizedOnRead()
+    {
+        var rig = await RigAsync();
+        var ticket = await FileAsync(rig, NamedBody(rig.TypeId, rig.CityId, Email()));
+        const string handWritten = "<p>a</p><script>alert(1)</script>";
+        await ExecuteAsync(
+            rig.Factory,
+            "UPDATE support.legal_acceptances SET content_html = @html WHERE ticket_id = @ticket AND kind = 'Terms'",
+            ("html", handWritten),
+            ("ticket", ticket));
+        using var reader = CreateReader(rig.Factory, rig.Tenant);
+
+        var body = await JsonAsync(await reader.GetAsync(SnapshotUrl(rig, ticket, "terms"), Ct));
+
+        Assert.Equal("<p>a</p>", body.GetProperty("contentHtml").GetString());
+        Assert.Equal(handWritten, await TextAsync(
+            rig.Factory,
+            "SELECT content_html FROM support.legal_acceptances WHERE ticket_id = @ticket AND kind = 'Terms'",
+            ("ticket", ticket)));
+    }
+
     [Fact]
     public async Task TheSnapshotOfAMissingKindIs404()
     {

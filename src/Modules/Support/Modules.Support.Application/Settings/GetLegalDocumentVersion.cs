@@ -15,7 +15,8 @@ public sealed class GetLegalDocumentVersionHandler(
     ISupportLegalDocumentRepository legalDocuments,
     ISupportMemberDirectory members,
     ISupportViewer viewer,
-    ITenantDirectory tenantDirectory)
+    ITenantDirectory tenantDirectory,
+    ISupportHtmlSanitizer sanitizer)
     : IQueryHandler<GetLegalDocumentVersionQuery, SupportLegalDocumentDto>
 {
     public async Task<SupportLegalDocumentDto> HandleAsync(GetLegalDocumentVersionQuery query, CancellationToken cancellationToken)
@@ -32,6 +33,6 @@ public sealed class GetLegalDocumentVersionHandler(
             ? await SupportLegalDocuments.DefaultQuestionAsync(query.TenantId, tenantDirectory, cancellationToken)
             : null;
         return SupportLegalDocuments.ToDto(
-            version, names, defaultQuestion, await viewer.MemberIdAsync(query.TenantId, cancellationToken));
+            version, names, defaultQuestion, await viewer.MemberIdAsync(query.TenantId, cancellationToken), sanitizer);
     }
 }

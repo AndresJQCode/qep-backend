@@ -130,6 +130,6 @@ public sealed class PublishLegalDocumentHandler(
             ? await SupportLegalDocuments.DefaultQuestionAsync(command.TenantId, tenantDirectory, cancellationToken)
             : null;
         // The author is whoever publishes, so IsMe is true by construction: no ISupportViewer round trip.
-        return SupportLegalDocuments.ToDto(version, names, defaultQuestion, actor);
+        return SupportLegalDocuments.ToDto(version, names, defaultQuestion, actor, sanitizer);
     }
 }

@@ -251,6 +251,44 @@ public sealed class SupportLegalDocumentsApiTests(SharedSupportHost sharedHost) 
         Assert.False(string.IsNullOrEmpty(body.GetProperty("defaultAuthorizationQuestion").GetString()));
     }
 
+    // Final review S5: the console sanitizes again what it reads, current and old versions alike. A row edited by hand around the
+    // publishing path reaches the editor clean, and the row itself is not touched.
+    [Fact]
+    public async Task TheConsoleResanitizesWhatItReads()
+    {
+        var (factory, client, tenant, _) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
+        await PublishAsync(client, tenant, "terms", new { contentHtml = "<p>Términos.</p>" }, version: 0);
+        const string handWritten = "<p>a</p><script>alert(1)</script><img src=x onerror=alert(1)>";
+        await ExecuteAsync(
+            factory,
+            "UPDATE support.legal_document_versions SET content_html = @html WHERE tenant_id = @tenant AND kind = 'Terms'",
+            ("html", handWritten),
+            ("tenant", Guid.Parse(tenant)));
+
+        var current = (await JsonAsync(await client.GetAsync(DocumentsUrl(tenant), Ct))).GetProperty("terms");
+        var old = await JsonAsync(await client.GetAsync($"{DocumentsUrl(tenant)}/terms/versions/1", Ct));
+
+        Assert.Equal("<p>a</p>", current.GetProperty("contentHtml").GetString());
+        Assert.Equal("<p>a</p>", old.GetProperty("contentHtml").GetString());
+        Assert.Equal(handWritten, await StoredHtmlAsync(tenant, "Terms", 1));
+    }
+
+    // Phase 4a (plan G8), after the merge: the author carries isMe against whoever reads.
+    [Fact]
+    public async Task TheAuthorSaysWhetherItIsTheReader()
+    {
+        var (_, client, tenant, member) = await NewTenantAsync(SupportPermissions.Read, SupportPermissions.SettingsManage);
+        var published = await JsonAsync(await PublishAsync(client, tenant, "terms", new { contentHtml = "<p>Términos.</p>" }, version: 0));
+
+        var read = (await JsonAsync(await client.GetAsync(DocumentsUrl(tenant), Ct))).GetProperty("terms");
+        var history = (await JsonAsync(await client.GetAsync($"{DocumentsUrl(tenant)}/terms/versions", Ct))).GetProperty("versions");
+
+        Assert.True(published.GetProperty("createdBy").GetProperty("isMe").GetBoolean());
+        Assert.Equal(member, read.GetProperty("createdBy").GetProperty("id").GetGuid());
+        Assert.True(read.GetProperty("createdBy").GetProperty("isMe").GetBoolean());
+        Assert.True(history[0].GetProperty("createdBy").GetProperty("isMe").GetBoolean());
+    }
+
     [Fact]
     public async Task AMissingVersionIs404()
     {
