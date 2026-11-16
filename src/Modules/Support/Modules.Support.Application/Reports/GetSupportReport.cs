@@ -80,8 +80,8 @@ public sealed class GetSupportReportHandler(
 /// <summary>
 /// Fase 4b (H25): las cuentas del reporte, sin base. Los totales cierran (BFF: un total que no cierra se explica con un campo):
 /// <list type="bullet">
-/// <item>Resuelto es un ticket Resuelto o Cerrado que pasó por una resolución (uno cerrado esperando al cliente sin resolver no lo es; uno
-/// reabierto tampoco). <c>OnTime + Late + WithoutTerm = Resolved</c>: a tiempo si la última resolución cae el día del vencimiento vigente
+/// <item>Resuelto es un ticket Resuelto, o Cerrado desde Resuelto (uno cerrado esperando al cliente sin resolver no lo es, aunque se
+/// hubiera resuelto en un ciclo anterior; uno reabierto tampoco). <c>OnTime + Late + WithoutTerm = Resolved</c>: a tiempo si la última resolución cae el día del vencimiento vigente
 /// o antes; sin término si no tiene vencimiento.</item>
 /// <item>El tiempo de resolución son los días hábiles <c>d</c> con <c>radicación &lt; d ≤ última resolución</c>, en bruto (sin descontar
 /// pausas); promedio con un decimal y mediana.</item>
@@ -205,9 +205,11 @@ public static class SupportReportCalculator
 
     private static TicketFacts Facts(SupportReportTicketRow ticket, SupportClockContext clock, DateOnly today, int dueSoonBusinessDays)
     {
-        var resolvedOn = ticket is { Status: SupportTicketStatus.Resolved or SupportTicketStatus.Closed, ResolvedAt: { } resolvedAt }
-            ? clock.LocalDate(resolvedAt)
-            : (DateOnly?)null;
+        // Revisión del bloque D: un Cerrado cuenta sólo si se cerró desde Resuelto; reabierto y cerrado sin resolver, su ResolvedAt es
+        // del ciclo anterior.
+        var resolved = ticket.Status is SupportTicketStatus.Resolved
+            || (ticket.Status is SupportTicketStatus.Closed && ticket.ClosedFromResolved);
+        var resolvedOn = resolved && ticket.ResolvedAt is { } resolvedAt ? clock.LocalDate(resolvedAt) : (DateOnly?)null;
         var (dueState, _) = SupportDueStates.Evaluate(ticket.Status, ticket.DueOn, today, clock.Calendar, dueSoonBusinessDays);
         return new TicketFacts(
             ticket,

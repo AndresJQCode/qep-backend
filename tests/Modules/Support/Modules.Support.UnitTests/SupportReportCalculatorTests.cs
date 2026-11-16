@@ -84,6 +84,29 @@ public sealed class SupportReportCalculatorTests
         Assert.All(report.ByType.Where(row => row.TypeId != petition), row => Assert.Equal((0, (decimal?)null), (row.Received, row.AverageResolutionBusinessDays)));
     }
 
+    // Revisión del bloque D: Resuelto → Abierto → Esperando al cliente → Cerrado es un camino válido (AllowedFrom), y el ticket
+    // conserva el resolved_at del ciclo anterior. Cerrado sin pasar por una resolución nueva no es un resuelto: sólo cuenta el cierre que
+    // viene de Resuelto.
+    [Fact]
+    public void AClosedTicketThatWasReopenedIsNotResolved()
+    {
+        Assert.Contains(SupportTicketStatus.Open, SupportTicketStatuses.AllowedFrom(SupportTicketStatus.Resolved));
+        Assert.Contains(SupportTicketStatus.Closed, SupportTicketStatuses.AllowedFrom(SupportTicketStatus.WaitingOnCustomer));
+        var petition = Types[0].Id.Value;
+        var closedFromResolved = Ticket(petition, SupportTicketStatus.Closed, Friday.AddDays(4), new DateOnly(2026, 11, 20));
+        var closedAfterReopening = Ticket(petition, SupportTicketStatus.Closed, Friday.AddDays(4), new DateOnly(2026, 11, 20)) with
+        {
+            ClosedFromResolved = false,
+        };
+
+        var report = Compute([closedFromResolved, closedAfterReopening], []);
+
+        Assert.Equal((2, 1), (report.Received, report.Resolved));
+        Assert.Equal((1, 1, 0, 0), (report.ResolutionTime.Resolved, report.ResolutionTime.OnTime, report.ResolutionTime.Late,
+            report.ResolutionTime.WithoutTerm));
+        Assert.Equal(2, report.ByStatus.Single(item => item.Status == "Closed").Count);
+    }
+
     [Fact]
     public void SurveyBucketsAddUpToRequested()
     {

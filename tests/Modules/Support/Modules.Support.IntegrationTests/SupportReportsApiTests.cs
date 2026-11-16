@@ -61,6 +61,26 @@ public sealed class SupportReportsApiTests(ClockedSupportHost host) : IClassFixt
         Assert.Equal(("2026-11-13", "2026-11-13"), (report.GetProperty("from").GetString(), report.GetProperty("to").GetString()));
     }
 
+    // Revisión del bloque D: un ticket resuelto, reabierto y cerrado desde «Esperando al cliente» no cuenta como resuelto, aunque
+    // conserve el resolved_at del ciclo anterior; uno cerrado desde Resuelto sí.
+    [Fact]
+    public async Task AClosedTicketCountsAsResolvedOnlyWhenClosedFromResolved()
+    {
+        var factory = await host.StartTestAsync();
+        var scenario = await StartAsync(factory);
+        var fromResolved = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
+        await scenario.MoveAsync(fromResolved, "Closed");
+        var reopened = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
+        reopened = await scenario.MoveAsync(reopened, "Open");
+        reopened = await scenario.MoveAsync(reopened, "WaitingOnCustomer");
+        await scenario.MoveAsync(reopened, "Closed");
+
+        var report = await ReportAsync(scenario.Client, scenario.Tenant, "2026-11-13", "2026-11-13");
+
+        Assert.Equal((2, 1), (report.GetProperty("received").GetInt32(), report.GetProperty("resolved").GetInt32()));
+        Assert.Equal(1, report.GetProperty("resolutionTime").GetProperty("resolved").GetInt32());
+    }
+
     // Q-16: lo ve todo el que tenga leer o gestionar.
     [Fact]
     public async Task AReaderCanSeeTheReport()

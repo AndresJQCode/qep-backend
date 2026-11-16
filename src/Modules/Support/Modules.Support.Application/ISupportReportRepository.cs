@@ -2,9 +2,17 @@ using Modules.Support.Domain;
 
 namespace Modules.Support.Application;
 
-/// <summary>Fase 4b (H25): lo que el reporte necesita de un ticket de la población.</summary>
+/// <summary>Fase 4b (H25): lo que el reporte necesita de un ticket de la población. <c>ClosedFromResolved</c> (revisión del bloque D):
+/// si el último cambio de estado del ticket fue de Resuelto a Cerrado. Un ticket reabierto conserva el <c>ResolvedAt</c> del ciclo
+/// anterior y puede cerrarse desde «Esperando al cliente» sin resolverse otra vez: ese cierre no es una resolución.</summary>
 public sealed record SupportReportTicketRow(
-    Guid TicketId, Guid TypeId, SupportTicketStatus Status, DateTimeOffset ReceivedAt, DateTimeOffset? ResolvedAt, DateOnly? DueOn);
+    Guid TicketId,
+    Guid TypeId,
+    SupportTicketStatus Status,
+    DateTimeOffset ReceivedAt,
+    DateTimeOffset? ResolvedAt,
+    DateOnly? DueOn,
+    bool ClosedFromResolved = true);
 
 /// <summary>Fase 4b (H25): una encuesta de un ticket de la población, de cualquier ciclo de resolución.</summary>
 public sealed record SupportReportSurveyRow(Guid TicketId, SupportSurveyStatus Status, string? ReasonCode, SupportSurveyRating? Rating);
