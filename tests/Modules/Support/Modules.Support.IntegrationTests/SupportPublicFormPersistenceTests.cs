@@ -307,6 +307,23 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         Assert.Null(await tickets.FindByClientRequestAsync(tenant, Guid.NewGuid(), Ct));
     }
 
+    // Spec 2026-11-15 §9.3 (plan L29): the company that answers is a real FK to companies.companies with ON DELETE RESTRICT, written
+    // by hand in AddSupportFormOrganization (the model snapshot does not record it).
+    [Fact]
+    public async Task TheOrganizationForeignKeyRestrictsDeletes()
+    {
+        var factory = await sharedHost.StartTestAsync();
+
+        Assert.Equal("r", await TextAsync(
+            factory,
+            """
+            SELECT confdeltype::text FROM pg_constraint
+            WHERE conname = @name AND contype = 'f' AND conrelid = 'support.form_versions'::regclass
+                AND confrelid = 'companies.companies'::regclass
+            """,
+            ("name", SupportDbContext.FormOrganizationForeignKey)));
+    }
+
     // The index is partial: tickets without a key (the console, the conversation, a filing without clientRequestId) never collide.
     [Fact]
     public async Task ManyTicketsWithoutAClientRequestIdAreFine()

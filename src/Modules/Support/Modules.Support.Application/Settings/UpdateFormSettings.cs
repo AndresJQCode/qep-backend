@@ -7,7 +7,8 @@ namespace Modules.Support.Application;
 
 /// <summary>Los seis interruptores son obligatorios (null es un 422 en el campo, no «sin cambio»): el formulario manda la
 /// configuración completa. Un texto vacío o con sólo espacios queda en null. <c>AllowAttachments</c> dice si la página ofrece
-/// adjuntos (spec §9.3).</summary>
+/// adjuntos (spec §9.3). <c>OrganizationCompanyId</c> es la empresa que responde en el portal; null = sin empresa (spec 2026-11-15
+/// §9.3).</summary>
 public sealed record UpdateFormSettingsRequest(
     bool? IsPublished,
     bool? ShowDocument,
@@ -17,7 +18,8 @@ public sealed record UpdateFormSettingsRequest(
     bool? AllowAttachments,
     string? AccentColor,
     string? IntroText,
-    string? SuccessMessage);
+    string? SuccessMessage,
+    Guid? OrganizationCompanyId = null);
 
 /// <param name="ExpectedVersion">La versión vigente que la pantalla cargó (0 sin filas); llega por <c>If-Match</c>.</param>
 public sealed record UpdateFormSettingsCommand(
@@ -31,6 +33,7 @@ public sealed record UpdateFormSettingsCommand(
     string? AccentColor,
     string? IntroText,
     string? SuccessMessage,
+    Guid? OrganizationCompanyId,
     long ExpectedVersion)
     : ICommand<SupportFormSettingsDto>
 {
@@ -46,6 +49,7 @@ public sealed record UpdateFormSettingsCommand(
             request.AccentColor,
             request.IntroText,
             request.SuccessMessage,
+            request.OrganizationCompanyId,
             expectedVersion);
 }
 
@@ -70,6 +74,10 @@ public sealed class UpdateFormSettingsValidator : AbstractValidator<UpdateFormSe
         RuleFor(command => command.SuccessMessage)
             .Must(text => AtMost(text, SupportFormVersion.SuccessMessageMaxLength))
             .WithMessage($"The success message must have at most {SupportFormVersion.SuccessMessageMaxLength} characters.");
+        // Plan L31: null is «no company»; the empty UUID is a bug of the console.
+        RuleFor(command => command.OrganizationCompanyId)
+            .NotEqual(Guid.Empty)
+            .WithMessage("The organization company cannot be the empty UUID.");
         RuleFor(command => command.ExpectedVersion).GreaterThanOrEqualTo(0);
     }
 
@@ -81,7 +89,9 @@ public sealed class UpdateFormSettingsValidator : AbstractValidator<UpdateFormSe
 /// con su auditoría en la misma transacción. Sin cambios frente a la vigente no crea versión ni audita. Publicar con un motivo pendiente
 /// (<see cref="SupportFormSettingsDto.PublishBlockers"/>) desde un formulario sin publicar responde 422 con su código: <c>support.form.legal_texts_required</c> (plan F15)
 /// o <c>support.form.no_published_types</c>. Si otro guardó la misma versión a la vez, el índice responde 409
-/// <c>support.form.version_taken</c>.
+/// <c>support.form.version_taken</c>. La empresa que responde (spec 2026-11-15 §9.3, plan L31 y L32): cambiarla a una que no existe, es
+/// de otro tenant o está inactiva es <c>422 support.form.organization_unavailable</c>; publicar sin empresa o con la elegida desactivada,
+/// <c>support.form.organization_required</c> o <c>support.form.organization_inactive</c> (D-8).
 /// </summary>
 public sealed class UpdateFormSettingsHandler(
     IExecutionContext executionContext,
@@ -92,6 +102,7 @@ public sealed class UpdateFormSettingsHandler(
     ISupportFormRepository forms,
     ISupportLegalDocumentRepository legalDocuments,
     ISupportTicketTypeRepository ticketTypes,
+    ISupportOrganizationDirectory organizations,
     ITenantDirectory tenantDirectory,
     ISupportPublicOptions publicOptions,
     ISupportUnitOfWork unitOfWork,
@@ -129,13 +140,27 @@ public sealed class UpdateFormSettingsHandler(
             command.IntroText,
             command.SuccessMessage,
             actor,
-            now);
-        var blockers = await SupportFormSettings.BlockersAsync(legalDocuments, ticketTypes, command.TenantId, cancellationToken);
+            now,
+            command.OrganizationCompanyId);
+        var organization = await SupportFormSettings.OrganizationOfAsync(organizations, candidate, cancellationToken);
+        // Plan L31: only a change of company is validated, against the tenant's own and active ones. Keeping one that was deactivated
+        // later does not block editing (it shows up as organization_inactive in PublishBlockers).
+        if (candidate.OrganizationCompanyId is not null
+            && candidate.OrganizationCompanyId != current.OrganizationCompanyId
+            && organization is not { IsActive: true })
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.FormOrganizationUnavailable,
+                "The company does not exist, is not of the tenant or is inactive.");
+        }
+
+        var blockers = await SupportFormSettings.BlockersAsync(legalDocuments, ticketTypes, candidate, organization, cancellationToken);
 
         var changedFields = ChangedFields(current, candidate);
         if (changedFields.Count == 0)
         {
-            return await SupportFormSettings.ToDtoAsync(current, blockers, tenantDirectory, publicOptions, cancellationToken);
+            return await SupportFormSettings.ToDtoAsync(
+                current, blockers, organization, organizations, tenantDirectory, publicOptions, cancellationToken);
         }
 
         // Sólo frena el paso de sin publicar a publicado: un formulario ya publicado cuyos tipos se despublicaron después se sigue
@@ -158,7 +183,8 @@ public sealed class UpdateFormSettingsHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await SupportFormSettings.ToDtoAsync(candidate, blockers, tenantDirectory, publicOptions, cancellationToken);
+        return await SupportFormSettings.ToDtoAsync(
+            candidate, blockers, organization, organizations, tenantDirectory, publicOptions, cancellationToken);
     }
 
     private static List<string> ChangedFields(SupportFormVersion current, SupportFormVersion candidate)
@@ -173,6 +199,7 @@ public sealed class UpdateFormSettingsHandler(
         Add(changed, "accentColor", !string.Equals(current.AccentColor, candidate.AccentColor, StringComparison.Ordinal));
         Add(changed, "introText", !string.Equals(current.IntroText, candidate.IntroText, StringComparison.Ordinal));
         Add(changed, "successMessage", !string.Equals(current.SuccessMessage, candidate.SuccessMessage, StringComparison.Ordinal));
+        Add(changed, "organizationCompanyId", current.OrganizationCompanyId != candidate.OrganizationCompanyId);
         return changed;
     }
 

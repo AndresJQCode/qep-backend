@@ -47,6 +47,18 @@ public sealed class FormSettingsValidatorTests
             FormErrors(Form(introText: new string('a', 1001), successMessage: new string('a', 501))));
     }
 
+    // Plan L31 (spec 2026-11-15 §9.3): null is «no company»; the empty UUID is a bug of the console.
+    [Fact]
+    public void AnEmptyOrganizationIdIsAnError() =>
+        Assert.Equal(["OrganizationCompanyId"], FormErrors(Form() with { OrganizationCompanyId = Guid.Empty }));
+
+    [Fact]
+    public void ANullOrganizationIdIsFine()
+    {
+        Assert.Empty(FormErrors(Form() with { OrganizationCompanyId = null }));
+        Assert.Empty(FormErrors(Form() with { OrganizationCompanyId = Guid.NewGuid() }));
+    }
+
     [Fact]
     public void EveryFlagIsRequiredAndTheVersionIsNotNegative()
     {

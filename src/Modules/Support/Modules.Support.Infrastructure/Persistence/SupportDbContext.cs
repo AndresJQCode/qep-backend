@@ -77,6 +77,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
 
     public DbSet<SupportTicketAccess> TicketAccess => Set<SupportTicketAccess>();
 
+    /// <summary>Spec 2026-11-15 §9.3 (plan L29): the FK to <c>companies.companies</c> lives only in <c>AddSupportFormOrganization</c>,
+    /// written by hand (EF does not model relations across module contexts; precedent <c>pos.cash_sessions</c>).</summary>
+    public const string FormOrganizationForeignKey = "FK_form_versions_companies_organization_company_id";
+
     public DbSet<SupportFormVersion> FormVersions => Set<SupportFormVersion>();
 
     public DbSet<SupportLegalTextVersion> LegalTextVersions => Set<SupportLegalTextVersion>();
@@ -264,9 +268,14 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         form.Property(value => value.SuccessMessage)
             .HasColumnName("success_message")
             .HasMaxLength(SupportFormVersion.SuccessMessageMaxLength);
+        // Spec 2026-11-15 §9.3 (plan L29): the company that answers. The column and its index are modeled here; the FK to
+        // companies.companies (ON DELETE RESTRICT) only in the migration (FormOrganizationForeignKey).
+        form.Property(value => value.OrganizationCompanyId).HasColumnName("organization_company_id");
         form.Property(value => value.CreatedAt).HasColumnName("created_at");
         form.Property(value => value.CreatedBy).HasColumnName("created_by");
         form.HasIndex(value => new { value.TenantId, value.Version }).IsUnique().HasDatabaseName(FormVersionIndex);
+        // Serves the RESTRICT check of a company DELETE (PostgreSQL does not index the referencing side by itself).
+        form.HasIndex(value => value.OrganizationCompanyId).HasDatabaseName("IX_form_versions_organization_company");
         // Para SupportUserReferenceProbe, que busca por membresía sola.
         form.HasIndex(value => value.CreatedBy).HasDatabaseName("IX_form_versions_created_by");
     }

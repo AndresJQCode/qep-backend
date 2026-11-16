@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Modules.Companies.Application;
+using Modules.Companies.Domain;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
@@ -82,8 +84,8 @@ internal static class SupportPublicHarness
     /// <summary>
     /// Un tenant con el formulario publicado: su fila y sus módulos, los tipos por defecto (todos publicados), la versión 1 de los
     /// tres documentos legales (spec 2026-11-15) y la versión 1 del formulario. Por SQL de dominio y no por la consola: el host puede tener la autenticación real.
-    /// Con adjuntos salvo <paramref name="allowAttachments"/> en false, como el formulario por defecto (owner, 2026-11-15, E2). Devuelve
-    /// el slug.
+    /// Con adjuntos salvo <paramref name="allowAttachments"/> en false, como el formulario por defecto (owner, 2026-11-15, E2). Con una
+    /// empresa activa del tenant elegida salvo <paramref name="withOrganization"/> en false (spec 2026-11-15 §15 D-8). Devuelve el slug.
     /// </summary>
     public static async Task<string> SeedPublishedTenantAsync(
         QepApiFactory factory,
@@ -94,9 +96,12 @@ internal static class SupportPublicHarness
         bool showAddress = true,
         bool showLandline = true,
         bool businessNameRequired = true,
-        bool allowAttachments = true)
+        bool allowAttachments = true,
+        bool withOrganization = true)
     {
         await SeedTenantAsync(factory, tenantId, modules);
+        // Spec 2026-11-15 §15 D-8: a form published from the console always has its company; the seed chooses one too.
+        Guid? organization = withOrganization ? await SeedCompanyAsync(factory, tenantId) : null;
         var tenant = Guid.Parse(tenantId);
         var now = DateTimeOffset.UtcNow;
         await using (var provision = factory.Services.CreateAsyncScope())
@@ -113,11 +118,54 @@ internal static class SupportPublicHarness
         {
             scope.ServiceProvider.GetRequiredService<ISupportFormRepository>().Add(SupportFormVersion.Create(
                 Guid.CreateVersion7(), tenant, 1, published, showDocument, showAddress, showLandline, businessNameRequired,
-                allowAttachments, "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.", Guid.CreateVersion7(), now));
+                allowAttachments, "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.", Guid.CreateVersion7(), now, organization));
             await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         }
 
         return await SlugOfAsync(factory, tenantId);
+    }
+
+    /// <summary>
+    /// A Colombian company of the tenant with NIT, created through the Companies domain and repository (not its API: the host may have
+    /// real authentication). <paramref name="active"/> false leaves it deactivated. Spec 2026-11-15 §9.3: the public form shows the
+    /// one it chose, and D-8 makes it required to publish.
+    /// </summary>
+    public static async Task<Guid> SeedCompanyAsync(
+        QepApiFactory factory, string tenantId, string name = "Verde S.A.S.", string taxId = "900123456", bool active = true)
+    {
+        var cityId = await AnyCityIdAsync(factory);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var now = DateTimeOffset.UtcNow;
+        var company = Company.Create(
+            CompanyId.New(),
+            Guid.Parse(tenantId),
+            name,
+            [new CompanyBankAccount { BankName = "Bancolombia", AccountNumber = $"CTA-{Guid.CreateVersion7():N}", Currency = "COP" }],
+            taxId,
+            Company.ColombiaCountryCode,
+            CompanyDocumentType.Nit,
+            cityId,
+            null,
+            CompanyContactInfo.Empty,
+            now);
+        if (!active)
+        {
+            company.Deactivate(now);
+        }
+
+        scope.ServiceProvider.GetRequiredService<ICompanyRepository>().Add(company);
+        await scope.ServiceProvider.GetRequiredService<ICompaniesUnitOfWork>().SaveChangesAsync(Ct);
+        return company.Id.Value;
+    }
+
+    /// <summary>Deactivates a company of the tenant, as Companies would.</summary>
+    public static async Task DeactivateCompanyAsync(QepApiFactory factory, string tenantId, Guid companyId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var company = await scope.ServiceProvider.GetRequiredService<ICompanyRepository>()
+            .FindAsync(Guid.Parse(tenantId), new CompanyId(companyId), Ct);
+        company!.Deactivate(DateTimeOffset.UtcNow);
+        await scope.ServiceProvider.GetRequiredService<ICompaniesUnitOfWork>().SaveChangesAsync(Ct);
     }
 
     /// <summary>Publica una versión nueva de un documento legal, como si el tenant la publicara desde la consola. El HTML pasa por el

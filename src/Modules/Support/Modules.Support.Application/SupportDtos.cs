@@ -25,10 +25,12 @@ public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonB
 /// <summary>
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
 /// formulario por defecto, sin publicar) y va en el <c>If-Match</c> del <c>PUT</c>. <c>PublishBlockers</c> dice por qué no se puede
-/// publicar (<c>privacy_notice_required</c>, <c>anonymous_notice_required</c>, <c>terms_required</c>, <c>no_published_types</c>), así
-/// la pantalla lo explica sin adivinar; vacía si se puede.
+/// publicar (<c>privacy_notice_required</c>, <c>anonymous_notice_required</c>, <c>terms_required</c>, <c>organization_required</c>,
+/// <c>organization_inactive</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
 /// <c>PublicUrl</c> es el enlace que el tenant comparte. <c>AllowAttachments</c> dice si la página ofrece adjuntos (spec §9.3; apagado
-/// por defecto).
+/// por defecto). <c>Organization</c> es la empresa elegida (null = ninguna; <c>IsActive</c> false si se desactivó después) y
+/// <c>OrganizationOptions</c> las activas del tenant, por nombre: el selector las usa en vez de <c>GET …/companies</c>, que exige
+/// <c>companies.company.read</c> (spec 2026-11-15 §9.3, plan L32).
 /// </summary>
 public sealed record SupportFormSettingsDto(
     int Version,
@@ -42,7 +44,14 @@ public sealed record SupportFormSettingsDto(
     string? IntroText,
     string? SuccessMessage,
     string PublicUrl,
-    IReadOnlyList<string> PublishBlockers);
+    IReadOnlyList<string> PublishBlockers,
+    SupportFormOrganizationDto? Organization,
+    IReadOnlyList<SupportFormOrganizationDto> OrganizationOptions);
+
+/// <summary>A tenant company in the public form settings. <c>DocumentTypeCode</c> ∈ <c>NIT</c>, <c>CC</c>, <c>CE</c>,
+/// <c>PASAPORTE</c>, <c>NIF</c>, <c>NIE</c>, <c>TAX_ID</c>; <c>DocumentNumber</c> is the company's tax id. <c>IsActive</c> false can only
+/// come in <c>Organization</c> (one chosen and deactivated later), never in <c>OrganizationOptions</c>.</summary>
+public sealed record SupportFormOrganizationDto(Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive);
 
 /// <summary>The current version of each legal document, or its example (spec 2026-11-15 §7).</summary>
 public sealed record SupportLegalDocumentsDto(

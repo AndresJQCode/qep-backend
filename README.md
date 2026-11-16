@@ -5242,8 +5242,8 @@ del ingress) y cada uno tiene su propia cubeta.
 
 | Método y ruta | Cuerpo | Éxito | Turnstile | Límite por IP |
 | --- | --- | --- | --- | --- |
-| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país y `legal`: los tres documentos vigentes y el texto de caracterización (abajo) | No | 60 / min |
-| `GET /consult` | — | `{ tenantName, logoUrl, accentColor }` para dibujar la página de consulta; `accentColor` es el de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
+| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país, `legal`: los tres documentos vigentes y el texto de caracterización (abajo), y `organization`, la empresa que responde | No | 60 / min |
+| `GET /consult` | — | `{ tenantName, logoUrl, accentColor, organization }` para dibujar la página de consulta; `accentColor` y `organization` son los de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
 | `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
 | `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
 | `POST /attachments/{fileId}/complete` | `{ uploadKey }` | `200` `{ status }`: `available` o `rejected` | No | 20 / 10 min |
@@ -5259,6 +5259,17 @@ contentHtml }`, y `characterizationNotice`, un texto plano fijo e igual para tod
 suministrados en este formulario?». `policyUrl` `null` es que el paso no muestra el enlace a la política. Si al tenant le falta cualquiera
 de los tres, `GET /form` responde el mismo `404 support.public.not_found` que con el formulario sin publicar. La página pinta
 `contentHtml` como HTML y no lo vuelve a sanear.
+
+**La empresa que responde** (NIT del portal, spec 2026-11-15 §9.3, D-6 y D-8). El tenant elige en Ajustes › Formulario público una de sus
+empresas de Companies (`organizationCompanyId` en `PUT /settings/public-form`), y el portal muestra `organization: { name,
+documentTypeCode, documentNumber }` (`Company.Name`, `Company.DocumentType.ToWire()` y `Company.TaxId`) en `GET /form` (versión publicada)
+y en `GET /consult` (versión vigente, publicada o no). **Es obligatoria para publicar** (`organization_required`). Cambiarla a una que no
+existe, es de otro tenant o está inactiva es `422 support.form.organization_unavailable`; una elegida que después se desactiva **se sigue
+mostrando** y no frena editar el formulario (sólo aparece `organization_inactive` en `publishBlockers`, que impide volver a publicar uno
+sin publicar). **Una empresa que alguna versión del formulario eligió no se puede borrar**: `support.form_versions.organization_company_id`
+tiene FK real a `companies.companies` con `ON DELETE RESTRICT`, y `DELETE …/companies/{id}` responde `422 companies.company.in_use` (sí se
+puede desactivar). Soporte la lee por el puerto `ISupportOrganizationDirectory`, cuyo adaptador vive en Bootstrapper; no referencia
+Companies. `organization: null` = formulario publicado antes de este cambio o tenant que nunca eligió: el portal no pinta la línea.
 
 **Radicar.** Con solicitante o anónimo. Los campos que se piden y cuáles son obligatorios los dice la versión vigente del formulario
 (`SupportFormFields`); el tipo de documento sale de `DocumentTypesByCountry`; el celular se guarda en E.164; en Colombia la ciudad es de
@@ -5394,7 +5405,7 @@ si sale `available`, mandar el par al radicar.
 
 | Método y ruta | Política | Qué hace |
 | --- | --- | --- |
-| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) |
+| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) y la empresa que responde (`organization_required`, `organization_inactive` → `422 support.form.organization_required` / `organization_inactive`). La respuesta trae `organization` (la elegida, con `isActive`) y `organizationOptions` (las activas del tenant, por nombre: el selector no necesita `companies.company.read`); el cuerpo del `PUT` suma `organizationCompanyId` (`null` = sin empresa) |
 | `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`) |
 | `GET /settings/legal-documents/{kind}/versions` · `…/versions/{version}` | `support.settings.view` | Historial de un tipo, de la más nueva a la más vieja, y una versión vieja |
 | `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada; la respuesta es lo guardado |
@@ -5446,7 +5457,10 @@ versión 1, con el autor y la fecha de origen; ningún `AnonymousNotice`, y un t
 pasa de 60 000 caracteres la migración **se detiene** con el id del tenant (`tenant … legal text exceeds 60000 characters after
 escaping`) en vez de recortar un texto legal: se acorta a mano y se vuelve a desplegar. `Support` `AddSupportTicketClientRequestId`
 (`tickets.client_request_id` y el índice único parcial `IX_tickets_tenant_client_request`) es aditiva y sin relleno; su `Down` quita
-índice y columna.
+índice y columna. `Support` `AddSupportFormOrganization` (`form_versions.organization_company_id`, `IX_form_versions_organization_company`
+y la FK `FK_form_versions_companies_organization_company_id` a `companies.companies` con `ON DELETE RESTRICT`, escrita a mano porque EF no
+modela relaciones entre contextos, como `pos.cash_sessions`) es aditiva; su `Down` quita FK, índice y columna. Companies migra antes que
+Support.
 
 #### Tiempo real y notas internas de Soporte
 

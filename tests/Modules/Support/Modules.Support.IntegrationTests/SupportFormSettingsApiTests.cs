@@ -4,6 +4,7 @@ using System.Text.Json;
 using Modules.Support.Application;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 using static Modules.Support.IntegrationTests.SupportMessagingSeed;
+using static Modules.Support.IntegrationTests.SupportPublicHarness;
 
 namespace Modules.Support.IntegrationTests;
 
@@ -17,7 +18,8 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static readonly object PublishedForm = new
+    // Spec 2026-11-15 §15 D-8: publishing needs the company that answers; the tests that publish choose one of the tenant.
+    private static object PublishedForm(Guid? organizationCompanyId = null) => new
     {
         isPublished = true,
         showDocument = true,
@@ -28,6 +30,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         accentColor = "#00B4FF",
         introText = "Cuéntanos tu caso.",
         successMessage = "Recibimos tu caso.",
+        organizationCompanyId,
     };
 
     [Fact]
@@ -50,7 +53,9 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         Assert.Equal(JsonValueKind.Null, body.GetProperty("accentColor").ValueKind);
         Assert.EndsWith("/" + await SlugAsync(tenant), body.GetProperty("publicUrl").GetString(), StringComparison.Ordinal);
         Assert.StartsWith("https://", body.GetProperty("publicUrl").GetString(), StringComparison.Ordinal);
-        Assert.Equal(["privacy_notice_required", "anonymous_notice_required", "terms_required"], Blockers(body));
+        Assert.Equal(["privacy_notice_required", "anonymous_notice_required", "terms_required", "organization_required"], Blockers(body));
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("organization").ValueKind);
+        Assert.Empty(body.GetProperty("organizationOptions").EnumerateArray());
         Assert.Equal("\"0\"", response.Headers.ETag?.Tag);
     }
 
@@ -62,12 +67,12 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         await PublishDocumentAsync(client, tenant, "privacy-notice");
         await PublishDocumentAsync(client, tenant, "terms");
 
-        var response = await PutFormAsync(client, tenant, PublishedForm, version: 0);
+        var response = await PutFormAsync(client, tenant, PublishedForm(), version: 0);
         var read = await JsonAsync(await client.GetAsync(FormUrl(tenant), Ct));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("support.form.legal_texts_required", await CodeOfAsync(response));
-        Assert.Equal(["anonymous_notice_required"], Blockers(read));
+        Assert.Equal(["anonymous_notice_required", "organization_required"], Blockers(read));
         Assert.Equal(0L, await CountFormVersionsAsync(tenant));
     }
 
@@ -80,8 +85,9 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         await ExecuteAsync(
             factory, "UPDATE support.ticket_types SET is_published = false WHERE tenant_id = @tenant", ("tenant", Guid.Parse(tenant)));
 
+        var company = await SeedCompanyAsync(factory, tenant);
         var read = await JsonAsync(await client.GetAsync(FormUrl(tenant), Ct));
-        var publish = await PutFormAsync(client, tenant, PublishedForm, version: 0);
+        var publish = await PutFormAsync(client, tenant, PublishedForm(company), version: 0);
         var saveUnpublished = await PutFormAsync(
             client, tenant,
             new
@@ -91,7 +97,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
             },
             version: 0);
 
-        Assert.Equal(["no_published_types"], Blockers(read));
+        Assert.Equal(["organization_required", "no_published_types"], Blockers(read));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, publish.StatusCode);
         Assert.Equal("support.form.no_published_types", await CodeOfAsync(publish));
         Assert.Equal(HttpStatusCode.OK, saveUnpublished.StatusCode);
@@ -105,7 +111,8 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
     {
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
         await PublishAllDocumentsAsync(client, tenant);
-        Assert.Equal(HttpStatusCode.OK, (await PutFormAsync(client, tenant, PublishedForm, version: 0)).StatusCode);
+        var company = await SeedCompanyAsync(factory, tenant);
+        Assert.Equal(HttpStatusCode.OK, (await PutFormAsync(client, tenant, PublishedForm(company), version: 0)).StatusCode);
         await ExecuteAsync(
             factory, "UPDATE support.ticket_types SET is_published = false WHERE tenant_id = @tenant", ("tenant", Guid.Parse(tenant)));
 
@@ -122,6 +129,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
                 accentColor = "#00B4FF",
                 introText = "Cuéntanos tu caso con detalle.",
                 successMessage = "Recibimos tu caso.",
+                organizationCompanyId = company,
             },
             version: 1);
 
@@ -138,8 +146,9 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
     {
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
         await PublishAllDocumentsAsync(client, tenant);
+        var company = await SeedCompanyAsync(factory, tenant);
 
-        var first = await PutFormAsync(client, tenant, PublishedForm, version: 0);
+        var first = await PutFormAsync(client, tenant, PublishedForm(company), version: 0);
         var second = await PutFormAsync(
             client, tenant,
             new
@@ -153,6 +162,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
                 accentColor = (string?)null,
                 introText = (string?)null,
                 successMessage = "Gracias por escribirnos.",
+                organizationCompanyId = company,
             },
             version: 1);
 
@@ -187,9 +197,10 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
     {
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
         await PublishAllDocumentsAsync(client, tenant);
-        await PutFormAsync(client, tenant, PublishedForm, version: 0);
+        var company = await SeedCompanyAsync(factory, tenant);
+        await PutFormAsync(client, tenant, PublishedForm(company), version: 0);
 
-        var again = await PutFormAsync(client, tenant, PublishedForm, version: 1);
+        var again = await PutFormAsync(client, tenant, PublishedForm(company), version: 1);
 
         Assert.Equal(HttpStatusCode.OK, again.StatusCode);
         Assert.Equal(1, (await JsonAsync(again)).GetProperty("version").GetInt32());
@@ -200,9 +211,9 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
     [Fact]
     public async Task AStaleIfMatchIs412()
     {
-        var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
         await PublishAllDocumentsAsync(client, tenant);
-        await PutFormAsync(client, tenant, PublishedForm, version: 0);
+        await PutFormAsync(client, tenant, PublishedForm(await SeedCompanyAsync(factory, tenant)), version: 0);
 
         var staleForm = await PutFormAsync(client, tenant, UnpublishedForm, version: 0);
 
@@ -216,7 +227,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
     {
         var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
 
-        var form = await PutFormAsync(client, tenant, PublishedForm, version: null);
+        var form = await PutFormAsync(client, tenant, PublishedForm(), version: null);
 
         Assert.Equal(HttpStatusCode.PreconditionRequired, form.StatusCode);
         Assert.Equal("precondition.if_match_required", await CodeOfAsync(form));
@@ -228,7 +239,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         var (_, client, tenant) = await NewTenantAsync(SupportPermissions.Read);
 
         var form = await client.GetAsync(FormUrl(tenant), Ct);
-        var saveForm = await PutFormAsync(client, tenant, PublishedForm, version: 0);
+        var saveForm = await PutFormAsync(client, tenant, PublishedForm(), version: 0);
 
         Assert.Equal(HttpStatusCode.OK, form.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, saveForm.StatusCode);
@@ -240,7 +251,7 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
 
         await PublishAllDocumentsAsync(client, tenant);
-        await PutFormAsync(client, tenant, PublishedForm, version: 0);
+        await PutFormAsync(client, tenant, PublishedForm(await SeedCompanyAsync(factory, tenant)), version: 0);
 
         Assert.Equal(1, await CountAuditEntriesAsync(factory, SupportAuditActions.FormUpdated, tenant));
     }

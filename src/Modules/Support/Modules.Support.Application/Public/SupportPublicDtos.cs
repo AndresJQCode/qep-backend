@@ -20,7 +20,16 @@ public sealed record SupportPublicFormDto(
     IReadOnlyDictionary<string, IReadOnlyList<string>> DocumentTypesByCountry,
     SupportPublicLegalDto Legal,
     int FormVersion,
-    SupportPublicAttachmentsDto Attachments);
+    SupportPublicAttachmentsDto Attachments,
+    SupportPublicOrganizationDto? Organization);
+
+/// <summary>
+/// The tenant company that answers (spec 2026-11-15 §9.3, D-6): <c>Company.Name</c>, <c>Company.DocumentType.ToWire()</c> (<c>NIT</c>,
+/// <c>CC</c>, <c>CE</c>, <c>PASAPORTE</c>, <c>NIF</c>, <c>NIE</c>, <c>TAX_ID</c>) and <c>Company.TaxId</c>. Null = the tenant chose
+/// none. A deactivated company is still shown. <c>GET /form</c> takes it from the published version, <c>GET /consult</c> from the
+/// current one even if unpublished.
+/// </summary>
+public sealed record SupportPublicOrganizationDto(string Name, string DocumentTypeCode, string DocumentNumber);
 
 /// <summary>
 /// Los adjuntos del formulario (spec §9.3; owner, 2026-11-15). Con <see cref="Allowed"/> en false la página no dibuja el control: el
@@ -37,7 +46,8 @@ public sealed record SupportPublicAttachmentsDto(bool Allowed, int MaxFiles, lon
 /// ruta la página no tendría de dónde sacar el nombre, el logo ni el color. <see cref="AccentColor"/> es el de la versión vigente del
 /// formulario, publicada o no; null si no hay ninguna, y la página usa su color por defecto.
 /// </summary>
-public sealed record SupportPublicConsultDto(string TenantName, string? LogoUrl, string? AccentColor);
+public sealed record SupportPublicConsultDto(
+    string TenantName, string? LogoUrl, string? AccentColor, SupportPublicOrganizationDto? Organization);
 
 /// <summary>Un tipo activo y publicado, en el orden de la consola.</summary>
 public sealed record SupportPublicTypeDto(Guid Id, string Name, int? TermBusinessDays);

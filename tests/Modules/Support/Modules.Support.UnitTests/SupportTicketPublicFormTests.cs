@@ -113,6 +113,29 @@ public sealed class SupportTicketPublicFormTests
             clientRequestId: Guid.Empty));
     }
 
+    // Plan L29 (spec 2026-11-15 §9.3): each form version keeps the tenant company it shows on the portal; the empty UUID is not a
+    // company.
+    [Fact]
+    public void TheVersionKeepsItsOrganization()
+    {
+        var company = Guid.CreateVersion7();
+
+        var form = SupportFormVersion.Create(
+            Guid.CreateVersion7(), TenantId, 1, true, true, true, true, true, true, null, null, null, Guid.CreateVersion7(), Received,
+            organizationCompanyId: company);
+        var without = SupportFormVersion.Create(
+            Guid.CreateVersion7(), TenantId, 2, true, true, true, true, true, true, null, null, null, Guid.CreateVersion7(), Received);
+
+        Assert.Equal(company, form.OrganizationCompanyId);
+        Assert.Null(without.OrganizationCompanyId);
+        Assert.Throws<ArgumentException>(() => SupportFormVersion.Create(
+            Guid.CreateVersion7(), TenantId, 3, true, true, true, true, true, true, null, null, null, Guid.CreateVersion7(), Received,
+            organizationCompanyId: Guid.Empty));
+    }
+
+    [Fact]
+    public void TheDefaultFormHasNoOrganization() => Assert.Null(SupportFormVersion.Default(TenantId).OrganizationCompanyId);
+
     [Fact]
     public void ANitWithoutBusinessNameShowsAsNitAndNumber()
     {

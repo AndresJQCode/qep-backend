@@ -255,6 +255,32 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         Assert.Empty(none);
     }
 
+    // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the portal comes from Companies through the Bootstrapper adapter:
+    // name, the wire code of its document type and its tax id, active or not, always within the tenant.
+    [Fact]
+    public async Task TheOrganizationDirectoryMapsTheCompany()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var other = await NewSeededTenantAsync();
+        var verde = await SupportPublicHarness.SeedCompanyAsync(Factory, tenant.ToString(), "Verde S.A.S.", "900123456");
+        var azul = await SupportPublicHarness.SeedCompanyAsync(Factory, tenant.ToString(), "Azul Ltda.", "800111222");
+        var off = await SupportPublicHarness.SeedCompanyAsync(Factory, tenant.ToString(), "Apagada S.A.", "700111222", active: false);
+        var foreign = await SupportPublicHarness.SeedCompanyAsync(Factory, other.ToString(), "Ajena S.A.", "600111222");
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<ISupportOrganizationDirectory>();
+        var found = await directory.FindAsync(tenant, verde, Ct);
+        var inactive = await directory.FindAsync(tenant, off, Ct);
+        var options = await directory.ListActiveAsync(tenant, Ct);
+
+        Assert.Equal(new SupportOrganizationRef(verde, "Verde S.A.S.", "NIT", "900123456", true), found);
+        Assert.Equal(new SupportOrganizationRef(off, "Apagada S.A.", "NIT", "700111222", false), inactive);
+        Assert.Null(await directory.FindAsync(tenant, foreign, Ct));
+        Assert.Null(await directory.FindAsync(tenant, Guid.CreateVersion7(), Ct));
+        Assert.Equal([azul, verde], options.Select(option => option.Id));
+        Assert.All(options, option => Assert.True(option.IsActive));
+    }
+
     private async Task<Guid> SeedConnectionAsync(Guid tenant, string status)
     {
         var id = Guid.CreateVersion7();

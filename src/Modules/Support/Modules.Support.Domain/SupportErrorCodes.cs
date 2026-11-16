@@ -131,6 +131,16 @@ public static class SupportErrorCodes
 
     public const string FormNoPublishedTypes = "support.form.no_published_types";
 
+    /// <summary>Spec 2026-11-15 §9.3 (plan L31): a <c>PUT</c> that changes the company to one that does not exist, is of another tenant
+    /// or is inactive.</summary>
+    public const string FormOrganizationUnavailable = "support.form.organization_unavailable";
+
+    /// <summary>Plan L32, D-8: publishing without a chosen company.</summary>
+    public const string FormOrganizationRequired = "support.form.organization_required";
+
+    /// <summary>Plan L32: publishing with the chosen company deactivated.</summary>
+    public const string FormOrganizationInactive = "support.form.organization_inactive";
+
     /// <summary>Traducido por nombre de índice (<c>IX_form_versions_tenant_version</c>): dos guardados de la misma versión.</summary>
     public const string FormVersionTaken = "support.form.version_taken";
 

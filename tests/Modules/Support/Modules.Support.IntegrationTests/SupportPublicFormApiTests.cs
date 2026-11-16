@@ -275,6 +275,97 @@ public sealed class SupportPublicFormApiTests(SupportPublicHost host) : IClassFi
         Assert.Equal(HttpStatusCode.NotFound, form.StatusCode);
     }
 
+    // Spec 2026-11-15 §9.3 (D-6, plan L32): GET /form shows the company the published version chose.
+    [Fact]
+    public async Task TheFormShowsTheChosenCompany()
+    {
+        var factory = await host.StartTestAsync();
+        var slug = await SeedPublishedTenantAsync(factory, NewTenantId());
+        using var client = VisitorClient(factory);
+
+        var organization = (await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct))).GetProperty("organization");
+
+        Assert.Equal("Verde S.A.S.", organization.GetProperty("name").GetString());
+        Assert.Equal("NIT", organization.GetProperty("documentTypeCode").GetString());
+        Assert.Equal("900123456", organization.GetProperty("documentNumber").GetString());
+        Assert.Equal(3, organization.EnumerateObject().Count());
+    }
+
+    // GET /consult takes it from the current version even unpublished, like accentColor (the consult page works from day one).
+    [Fact]
+    public async Task TheConsultShowsTheCompanyEvenUnpublished()
+    {
+        var factory = await host.StartTestAsync();
+        var slug = await SeedPublishedTenantAsync(factory, NewTenantId(), published: false);
+        using var client = VisitorClient(factory);
+
+        var consult = await client.GetAsync(PublicUrl(slug, "/consult"), Ct);
+        var form = await client.GetAsync(PublicUrl(slug, "/form"), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, consult.StatusCode);
+        var organization = (await JsonAsync(consult)).GetProperty("organization");
+        Assert.Equal("Verde S.A.S.", organization.GetProperty("name").GetString());
+        Assert.Equal("NIT", organization.GetProperty("documentTypeCode").GetString());
+        Assert.Equal("900123456", organization.GetProperty("documentNumber").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, form.StatusCode);
+    }
+
+    // A form published before this change has no company, and a tenant that never saved its form has none either: null, and the
+    // portal does not paint the line.
+    [Fact]
+    public async Task WithoutACompanyOrganizationIsNull()
+    {
+        var factory = await host.StartTestAsync();
+        var slug = await SeedPublishedTenantAsync(factory, NewTenantId(), withOrganization: false);
+        var bare = NewTenantId();
+        await SeedTenantAsync(factory, bare);
+        var bareSlug = await SlugOfAsync(factory, bare);
+        using var client = VisitorClient(factory);
+
+        var form = await JsonAsync(await client.GetAsync(PublicUrl(slug, "/form"), Ct));
+        var consult = await JsonAsync(await client.GetAsync(PublicUrl(slug, "/consult"), Ct));
+        var bareConsult = await client.GetAsync(PublicUrl(bareSlug, "/consult"), Ct);
+
+        Assert.Equal(JsonValueKind.Null, form.GetProperty("organization").ValueKind);
+        Assert.Equal(JsonValueKind.Null, consult.GetProperty("organization").ValueKind);
+        Assert.Equal(HttpStatusCode.OK, bareConsult.StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await JsonAsync(bareConsult)).GetProperty("organization").ValueKind);
+    }
+
+    // Each tenant sees its own company; a version pointing at a company of another tenant (only possible by hand) shows nothing,
+    // because the lookup is filtered by the version's tenant.
+    [Fact]
+    public async Task AnotherTenantsCompanyNeverShows()
+    {
+        var factory = await host.StartTestAsync();
+        var first = NewTenantId();
+        var second = NewTenantId();
+        var firstSlug = await SeedPublishedTenantAsync(factory, first);
+        var secondSlug = await SeedPublishedTenantAsync(factory, second, withOrganization: false);
+        var secondCompany = await SeedCompanyAsync(factory, second, "Azul Ltda.", "800111222");
+        await ExecuteAsync(
+            factory,
+            "UPDATE support.form_versions SET organization_company_id = @company WHERE tenant_id = @tenant",
+            ("company", secondCompany),
+            ("tenant", Guid.Parse(second)));
+        var firstCompany = Guid.Parse((await TextAsync(
+            factory, "SELECT organization_company_id::text FROM support.form_versions WHERE tenant_id = @tenant", ("tenant", Guid.Parse(first))))!);
+        using var client = VisitorClient(factory);
+
+        var firstForm = await JsonAsync(await client.GetAsync(PublicUrl(firstSlug, "/form"), Ct));
+        var secondForm = await JsonAsync(await client.GetAsync(PublicUrl(secondSlug, "/form"), Ct));
+        await ExecuteAsync(
+            factory,
+            "UPDATE support.form_versions SET organization_company_id = @company WHERE tenant_id = @tenant",
+            ("company", firstCompany),
+            ("tenant", Guid.Parse(second)));
+        var crossed = await JsonAsync(await client.GetAsync(PublicUrl(secondSlug, "/form"), Ct));
+
+        Assert.Equal("Verde S.A.S.", firstForm.GetProperty("organization").GetProperty("name").GetString());
+        Assert.Equal("Azul Ltda.", secondForm.GetProperty("organization").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, crossed.GetProperty("organization").ValueKind);
+    }
+
     private static List<string?> Keys(JsonElement fields) =>
         fields.EnumerateArray().Select(field => field.GetProperty("key").GetString()).ToList();
 

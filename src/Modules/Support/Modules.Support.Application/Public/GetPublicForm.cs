@@ -18,7 +18,8 @@ public sealed class GetPublicFormHandler(
     ISupportTicketTypeRepository ticketTypes,
     ISupportLegalDocumentRepository legalDocuments,
     ISupportHtmlSanitizer sanitizer,
-    ISupportTenantBranding branding)
+    ISupportTenantBranding branding,
+    ISupportOrganizationDirectory organizations)
     : IQueryHandler<GetPublicFormQuery, SupportPublicFormDto>
 {
     /// <summary>La clave de «cualquier otro país» en <see cref="SupportPublicFormDto.DocumentTypesByCountry"/>.</summary>
@@ -59,7 +60,8 @@ public sealed class GetPublicFormHandler(
                 form.AllowAttachments,
                 SupportPublicAttachmentRules.MaxFiles,
                 SupportPublicAttachmentRules.MaxSizeBytes,
-                SupportPublicAttachmentRules.MimeTypes));
+                SupportPublicAttachmentRules.MimeTypes),
+            await SupportPublicOrganization.OfAsync(organizations, form, cancellationToken));
     }
 
     private static List<SupportPublicFieldDto> Fields(SupportFormVariant variant, SupportFormVersion form) =>

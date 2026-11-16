@@ -191,6 +191,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_published");
 
+                    b.Property<Guid?>("OrganizationCompanyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_company_id");
+
                     b.Property<bool>("ShowAddress")
                         .HasColumnType("boolean")
                         .HasColumnName("show_address");
@@ -220,6 +224,9 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CreatedBy")
                         .HasDatabaseName("IX_form_versions_created_by");
+
+                    b.HasIndex("OrganizationCompanyId")
+                        .HasDatabaseName("IX_form_versions_organization_company");
 
                     b.HasIndex("TenantId", "Version")
                         .IsUnique()

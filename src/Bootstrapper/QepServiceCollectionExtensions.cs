@@ -1620,6 +1620,8 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the public portal is a Companies company, like IPosCompanyLookup.
+        services.AddScoped<Modules.Support.Application.ISupportOrganizationDirectory, SupportOrganizationDirectory>();
         // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.
         services.AddScoped<Modules.Support.Application.ISupportMemberPermissions, SupportMemberPermissions>();
         Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);

@@ -1053,6 +1053,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `captcha_invalid`. Un reintento no reenvía el correo; si el PIN no salió por ningún canal, emite uno nuevo y el viejo deja de servir.
   Con el correo de apertura todavía en vuelo (destino `Email` y nada anotado en `ticket_access`) no rota: invalidaría el PIN que va en el
   correo. La búsqueda va siempre filtrada por tenant (`FindByClientRequestAsync`), y la clave no se audita ni va a `ticket_events`.
+- **`support.form_versions.organization_company_id` tiene FK real a `companies.companies`** (`ON DELETE RESTRICT`, a mano en la
+  migración `AddSupportFormOrganization`, como `pos.cash_sessions`): una empresa que alguna versión del formulario público eligió no se
+  borra, sólo se desactiva (`422 companies.company.in_use`). Soporte la lee por `ISupportOrganizationDirectory` (Bootstrapper), nunca
+  referenciando Companies (`SupportDoesNotReferenceCompanies`). Es obligatoria para publicar (D-8): una siembra de prueba que publica un
+  formulario por la consola tiene que elegir una empresa activa del tenant (`SupportPublicHarness.SeedCompanyAsync`).
 - **`uploadKey` es el único vínculo entre la subida anónima de un adjunto y quien la abrió** (plan F32). Es un `Guid.NewGuid()` (v4) que
   Soporte genera, devuelve una vez y Storage guarda como `OwnerId` del archivo `SupportTicket`; completar y radicar exigen el par
   `(fileId, uploadKey)`. No lo cambies por un v7 (`Guid.CreateVersion7`, el de los ids de Storage): se adivina por la hora y cualquiera
