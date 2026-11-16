@@ -51,6 +51,49 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<PdfPaymentAccountRow> PdfPaymentAccounts => Set<PdfPaymentAccountRow>();
 
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        RefusePendingBillingAccounts();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        RefusePendingBillingAccounts();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    // A pending billing account (spec 2026-11-16 withholdings by company) is the company without its bank account, built
+    // only by the previews. IsPending has no column, so one that reached a save would be written as a real account with
+    // an empty bank and number and read back as complete. The guard is here and not in the domain because the previews run
+    // the same domain operations (Create, ApplyEdits) on in-memory or untracked aggregates: only saving tells a preview
+    // from a write. And here rather than in QuotationsUnitOfWork because a few writers save this context directly (the
+    // seeder, the expiration processor); the other SaveChanges overloads all end in these two. Today no write command
+    // carries a company without an account; this keeps a future one from persisting the placeholder silently. A bug, not
+    // a request error, so it surfaces as a 500 and never as a 422.
+    private void RefusePendingBillingAccounts()
+    {
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            if (entry.State is EntityState.Deleted or EntityState.Detached)
+            {
+                continue;
+            }
+
+            var account = entry.Entity switch
+            {
+                Quotation quotation => quotation.BillingAccount,
+                Order order => order.BillingAccount,
+                _ => null,
+            };
+            if (account is { IsPending: true })
+            {
+                throw new InvalidOperationException(
+                    $"A pending billing account cannot be persisted ({entry.Entity.GetType().Name}); only previews build one.");
+            }
+        }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -196,7 +239,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
             // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
             billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
-            // Spec 2026-11-16 withholdings by company: a pending account only lives inside a preview, so it has no column.
+            // Spec 2026-11-16 withholdings by company: a pending account is preview-only and has no column; a save that carries
+            // one is refused by RefusePendingBillingAccounts, so the flag is never silently dropped on the way to the database.
             billing.Ignore(value => value.IsPending);
         });
         quotation.Navigation(value => value.BillingAccount).IsRequired(false);
@@ -671,7 +715,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
             // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
             billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
-            // Spec 2026-11-16 withholdings by company: a pending account only lives inside a preview, so it has no column.
+            // Spec 2026-11-16 withholdings by company: a pending account is preview-only and has no column; a save that carries
+            // one is refused by RefusePendingBillingAccounts, so the flag is never silently dropped on the way to the database.
             billing.Ignore(value => value.IsPending);
         });
         order.Navigation(value => value.BillingAccount).IsRequired();
