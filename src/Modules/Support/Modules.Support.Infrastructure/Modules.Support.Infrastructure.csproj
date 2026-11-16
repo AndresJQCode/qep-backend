@@ -19,8 +19,6 @@
     <!-- Pbkdf2SupportPinHasher: el PasswordHasher de Identity, como AspNetCoreBuyerPasswordHasher (plan fase 3, F8). -->
     <PackageReference Include="Microsoft.Extensions.Identity.Core" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
-    <!-- HtmlSupportSanitizer: the legal documents' allowlist (spec 2026-11-15 §6.2, plan L2 to L4). -->
-    <PackageReference Include="HtmlSanitizer" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Modules.Support.UnitTests" />
