@@ -319,6 +319,31 @@ public sealed class OrderWithholdingsApiTests
         Assert.Equal(0m, fetched.Order.RetentionAmount);
     }
 
+    // Spec alerta UVT §5.2 (owner A): la conversión refresca la UVT al año del pedido. La cotización se envió con la del año
+    // anterior (2 × 50.000 = 100.000, aplica: 4.000); con la del año cargada antes de convertir (2 × 60.000) ya no aplica.
+    [Fact]
+    public async Task ConvertingRefreshesTheTaxUnitToTheOrderYear()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(factory, taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        Assert.Equal(4_000m, quotation.RetentionAmount);
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var order = await ConvertAsync(setup, quotation.Id);
+
+        var entry = Assert.Single(order.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)thisYear, (decimal?)60_000m, false, "BelowMinimumBase", (decimal?)120_000m),
+            (entry.TaxUnitYear, entry.TaxUnitValue, entry.TaxUnitOutdated, entry.Reason, entry.MinimumBaseAmount));
+        Assert.Equal((0m, order.Total), (order.RetentionAmount, order.NetTotal));
+    }
+
     // Review Focus 3: un pedido facturado ya no es editable; cargar la UVT del año no lo mueve, ni al leerlo ni al
     // intentar editarlo.
     [Fact]

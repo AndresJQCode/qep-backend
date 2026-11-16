@@ -1,3 +1,4 @@
+using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using static Modules.Quotations.UnitTests.TestWithholdings;
 
@@ -199,5 +200,21 @@ public sealed class TaxUnitRefreshTests
 
         Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
         Assert.Equal((int?)2026, Assert.Single(order.Withholdings).TaxUnitYear);
+    }
+
+    // Spec alerta UVT §5.2: sin ninguna fila con base en unidades la conversión no lee Catalog.
+    [Fact]
+    public async Task UnitsForWithoutUnitRowsDoesNotQueryTheLookup()
+    {
+        var quotation = NewQuotation(
+            new MunicipalContext(Bogota, [new MunicipalOffer("ReteICA", ReteIca, CustomerIsAgent: true)]));
+        var lookup = new StubQuotationWithholdingLookup().WithTaxUnit("CO", 47_000m, 2026);
+
+        var units = await TaxUnitRefresh.UnitsForAsync(
+            quotation.Withholdings.Where(row => row.Type == "ReteICA"), lookup, new DateOnly(2026, 11, 16),
+            TestContext.Current.CancellationToken);
+
+        Assert.Null(units);
+        Assert.Empty(lookup.TaxUnitRequests);
     }
 }

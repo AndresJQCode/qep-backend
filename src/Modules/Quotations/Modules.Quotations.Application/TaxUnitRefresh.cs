@@ -59,24 +59,40 @@ internal static class TaxUnitRefresh
         async cancellationToken => DocumentDates.LocalDate(
             await tenantClock.GetAsync(tenantId, cancellationToken), createdAt);
 
-    // Null = ninguna fila con base en unidades: no hay nada que refrescar ni que consultar.
+    /// <summary>
+    /// La UVT vigente por país para las filas con base mínima en unidades, a la fecha dada. Null = ninguna fila con base en
+    /// unidades: no hay nada que refrescar y no se consulta Catalog. La usa también la conversión, que arma el pedido con la
+    /// UVT de su año (spec alerta UVT §5.2) y ya tiene la fecha en la mano.
+    /// </summary>
+    internal static async Task<IReadOnlyDictionary<string, TaxUnitPhoto>?> UnitsForAsync(
+        IEnumerable<DocumentWithholding> rows,
+        IQuotationWithholdingLookup lookup,
+        DateOnly documentDate,
+        CancellationToken cancellationToken)
+    {
+        var countries = UnitCountries(rows);
+        return countries.Length == 0
+            ? null
+            : await lookup.TaxUnitsAsync(countries, documentDate, cancellationToken);
+    }
+
+    // Con la fecha perezosa: el calendario del tenant se lee sólo si hay alguna fila con unidad.
     private static async Task<IReadOnlyDictionary<string, TaxUnitPhoto>?> UnitsAsync(
         IReadOnlyCollection<DocumentWithholding> rows,
         IQuotationWithholdingLookup lookup,
         Func<CancellationToken, Task<DateOnly>> documentDate,
-        CancellationToken cancellationToken)
-    {
-        string[] countries =
+        CancellationToken cancellationToken) =>
+        UnitCountries(rows).Length == 0
+            ? null
+            : await UnitsForAsync(rows, lookup, await documentDate(cancellationToken), cancellationToken);
+
+    private static string[] UnitCountries(IEnumerable<DocumentWithholding> rows) =>
         [
             .. rows
                 .Where(row => row.MinimumBase is not null && row.MinimumBaseUnit is not null)
                 .Select(row => row.Country)
                 .Distinct(StringComparer.Ordinal),
         ];
-        return countries.Length == 0
-            ? null
-            : await lookup.TaxUnitsAsync(countries, await documentDate(cancellationToken), cancellationToken);
-    }
 
     // En un orden estable: la colección del agregado no promete ninguno.
     private static (WithholdingSource, short, decimal?, int?)[] Snapshot(IEnumerable<DocumentWithholding> rows) =>
