@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Options;
 using Modules.Notifications.Application;
 
@@ -43,6 +44,14 @@ internal sealed class InfobipEmailChannel(
             { new StringContent(message.TextBody), "text" },
             { new StringContent(message.HtmlBody), "html" },
         };
+
+        // Soporte fase 4b: una parte «attachment» por archivo, con su nombre y su tipo (API de Email de Infobip).
+        foreach (var attachment in message.Attachments ?? [])
+        {
+            var file = new ReadOnlyMemoryContent(attachment.Content);
+            file.Headers.ContentType = new MediaTypeHeaderValue(attachment.ContentType);
+            content.Add(file, "attachment", attachment.FileName);
+        }
 
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
