@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Modules.Support.Application;
 using Modules.Support.Domain;
 
 namespace Modules.Support.UnitTests;
@@ -70,6 +71,24 @@ public sealed class SupportTicketReplyTests
 
         Assert.Equal(((Guid?)connection, "573001234567"), (template.ConnectionId, template.TargetWaId));
         Assert.Equal(((Guid?)upload, "factura.pdf"), (attached.UploadId, attached.FileName));
+    }
+
+    // Owner 2026-11-15: «Reintentar» no puede reenviar como texto una respuesta que llevaba archivo, así que la respuesta dice si lo
+    // llevaba. Sale de la fila (el adjunto guardado), también para una fallida.
+    [Fact]
+    public void TheReplyDtoSaysWhetherTheReplyCarriedAnAttachment()
+    {
+        var attached = SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, SupportReplyDelivery.Text,
+            "Te adjunto la factura", null, Actor, Now, uploadId: Guid.CreateVersion7(), fileName: "factura.pdf");
+        attached.MarkFailed("send_failed", messageId: null, Now.AddMinutes(1));
+        var textOnly = SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, SupportReplyDelivery.Text,
+            "Hola", null, Actor, Now);
+        var members = new Dictionary<Guid, string>();
+
+        Assert.True(SupportTicketDtoComposer.ToReplyDto(attached, members).HasAttachment);
+        Assert.False(SupportTicketDtoComposer.ToReplyDto(textOnly, members).HasAttachment);
     }
 
     [Fact]

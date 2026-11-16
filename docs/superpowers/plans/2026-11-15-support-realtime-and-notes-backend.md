@@ -128,6 +128,18 @@ public sealed record SupportNoteAttachmentStatusDto(string Status);             
 
 Errores: `422 validation.failed` (`errors.ClientId`, `errors.Text`, `errors.Take`, `errors.Before`, `errors.Name`, `errors.MimeType`, `errors.SizeBytes`: las claves llegan en PascalCase, el `PropertyName` de FluentValidation tal como lo emite `ApiExceptionHandler`; el frontend ya las pasa a minúscula inicial); `422 support.note.too_many_files` (más de 5 o repetidos); `422 support.note.file_invalid` (archivo que no existe, de otro ticket u otro miembro, no `Available`, ya usado en otra nota); `422 support.note.ticket_closed`; `428 support.public.attachment_not_uploaded` (completar antes del `PUT`); `409 concurrency.conflict` (N15); `404 support.ticket.not_found`/`support.attachment.not_found`; `403` por tenant o permiso. Crear una nota **no** cambia `version` del ticket ni su `ETag`. El autor de la nota es la membresía de quien llama; un autor quitado sigue nombrado («Sin nombre» si no tiene nombre visible).
 
+### Respuestas: `SupportReplyDto.HasAttachment` (owner, 2026-11-15)
+
+Suma `bool HasAttachment` (JSON `hasAttachment`) en todo lugar donde viaja la respuesta: `replies` del detalle y `reply` (y
+`ticket.replies`) del resultado de `POST /tickets/{ticketId}/replies`. Es `true` si la respuesta se mandó o se intentó con archivo (el
+`UploadId` + `FileName` del cuerpo), y sale del `upload_id` que ya guarda la fila: sin migración, y las filas existentes lo leen bien.
+«Reintentar» de una fallida con `hasAttachment: true` no la reenvía como texto solo, también después de recargar.
+
+```csharp
+public sealed record SupportReplyDto(Guid Id, Guid ClientId, string Channel, string Delivery, string Text, string Status,
+    string? FailureCode, Guid? MessageId, SupportMemberDto? Author, DateTimeOffset CreatedAt, bool HasAttachment);
+```
+
 ## Estructura de archivos
 
 ```
