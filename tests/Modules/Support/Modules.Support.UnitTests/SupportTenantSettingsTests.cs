@@ -110,4 +110,18 @@ public sealed class SupportTenantSettingsTests
         Assert.Equal(new string('a', 2000), settings.FormalNextStep);
         Assert.Equal(2L, settings.Version);
     }
+
+    /// <summary>La regla del validador repetida en el dominio: un camino que se salte el validador no puede guardar un carácter de
+    /// control (un <c>\0</c> llegaría a Postgres como 22021).</summary>
+    [Fact]
+    public void ANextStepWithAControlCharacterThrows()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+
+        settings.ChangeFormalNextStep("Paso uno.\r\n\tPaso dos.", Now.AddHours(1));
+        Assert.Throws<ArgumentException>(() => settings.ChangeFormalNextStep("Con un \0 nulo", Now.AddHours(2)));
+        Assert.Throws<ArgumentException>(() => settings.ChangeFormalNextStep("Con un \u0007 de control", Now.AddHours(2)));
+        Assert.Throws<ArgumentException>(() => SupportFormalNextStep.Normalize("Con un \u001b escape"));
+        Assert.Equal("Paso uno.\r\n\tPaso dos.", settings.FormalNextStep);
+    }
 }

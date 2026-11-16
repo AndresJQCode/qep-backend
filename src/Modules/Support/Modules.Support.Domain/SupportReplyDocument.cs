@@ -105,6 +105,13 @@ public sealed class SupportReplyDocument
         ArgumentNullException.ThrowIfNull(annexes);
         ArgumentNullException.ThrowIfNull(content);
 
+        // Plan Tarea 2: sólo texto, plantilla, correo o página de consulta. Una entrega nueva decide si lleva documento, no lo hereda.
+        if (reply.Delivery is not (SupportReplyDelivery.Text or SupportReplyDelivery.Template or SupportReplyDelivery.Email
+            or SupportReplyDelivery.Portal))
+        {
+            throw new ArgumentException($"A '{reply.Delivery}' reply cannot carry a formal reply document.", nameof(reply));
+        }
+
         if (reply.UploadId is not null)
         {
             throw new ArgumentException("A reply with an attachment cannot carry a formal reply document.", nameof(reply));

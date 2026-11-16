@@ -27,11 +27,11 @@ internal sealed partial class SupportDocumentStorage(
     public async Task<string> SaveAsync(Guid tenantId, byte[] content, CancellationToken cancellationToken)
     {
         // Clave nueva y aleatoria en cada documento: no se deriva del ticket ni de la respuesta, así que no se adivina desde afuera y
-        // un documento nunca pisa a otro.
+        // un documento nunca pisa a otro. Es un v4 a propósito: un v7 lleva la hora y se adivina.
         var now = clock.UtcNow;
         var key = string.Create(
             CultureInfo.InvariantCulture,
-            $"{SupportPrefix}/tenants/{tenantId:N}/replies/{now:yyyy}/{now:MM}/{Guid.CreateVersion7():N}.pdf");
+            $"{SupportPrefix}/tenants/{tenantId:N}/replies/{now:yyyy}/{now:MM}/{Guid.NewGuid():N}.pdf");
 
         await objectStorage.UploadAsync(key, content, PdfContentType, cancellationToken);
         return key;

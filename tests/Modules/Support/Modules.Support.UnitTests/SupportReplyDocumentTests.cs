@@ -77,6 +77,32 @@ public sealed class SupportReplyDocumentTests
         Assert.Throws<ArgumentException>(() => Create(withAttachment));
     }
 
+    /// <summary>Sólo una respuesta que sale como texto, plantilla, correo o página de consulta lleva documento: una entrega nueva que se
+    /// sume al enum no lo hereda sin decidirlo.</summary>
+    [Fact]
+    public void ItRejectsAReplyWithAnotherDelivery()
+    {
+        foreach (var (channel, delivery) in new[]
+                 {
+                     (SupportReplyChannel.Thread, SupportReplyDelivery.Text),
+                     (SupportReplyChannel.WhatsAppTemplate, SupportReplyDelivery.Template),
+                     (SupportReplyChannel.Email, SupportReplyDelivery.Email),
+                     (SupportReplyChannel.Portal, SupportReplyDelivery.Portal),
+                 })
+        {
+            var reply = SupportTicketReply.Start(
+                TenantId, SupportTicketId.New(), Guid.CreateVersion7(), channel, delivery, "Respuesta formal.", null,
+                Guid.CreateVersion7(), Now);
+            Assert.Equal(reply.Id, Create(reply).ReplyId);
+        }
+
+        var unknown = SupportTicketReply.Start(
+            TenantId, SupportTicketId.New(), Guid.CreateVersion7(), SupportReplyChannel.Thread, (SupportReplyDelivery)99,
+            "Respuesta formal.", null, Guid.CreateVersion7(), Now);
+
+        Assert.Throws<ArgumentException>(() => Create(unknown));
+    }
+
     [Fact]
     public void ItHashesTheContent()
     {
