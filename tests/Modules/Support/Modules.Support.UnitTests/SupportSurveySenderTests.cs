@@ -87,6 +87,30 @@ public sealed class SupportSurveySenderTests
         Assert.Empty(_email.Sent);
     }
 
+    // Revisión del bloque C: el ticket se reabrió antes de que el worker llegara a la encuesta. Esa resolución ya no se juzga (H21): no
+    // se manda nada y queda «sin encuesta» con ticket_reopened. Igual si ya se volvió a resolver: la encuesta vieja es de otro ciclo.
+    [Fact]
+    public async Task AReopenedTicketIsSkippedWithTicketReopened()
+    {
+        var reopened = FromConversation("WhatsApp");
+        var first = Resolve(reopened);
+        reopened.ChangeStatus(SupportTicketStatus.Open, Creator, Received.AddHours(3), Clock);
+        var resolvedAgain = FromConversation("WhatsApp");
+        var old = Resolve(resolvedAgain);
+        resolvedAgain.ChangeStatus(SupportTicketStatus.Open, Creator, Received.AddHours(3), Clock);
+        resolvedAgain.ChangeStatus(SupportTicketStatus.Resolved, Creator, Received.AddHours(4), Clock);
+        WhatsAppThread();
+
+        await Sender().DecideAsync(first, reopened, Settings(surveyEnabled: true), TestContext.Current.CancellationToken);
+        await Sender().DecideAsync(old, resolvedAgain, Settings(surveyEnabled: true), TestContext.Current.CancellationToken);
+
+        Assert.Equal((SupportSurveyStatus.Skipped, SupportChannelReasons.TicketReopened), (first.Status, first.ReasonCode));
+        Assert.Equal((SupportSurveyStatus.Skipped, "ticket_reopened"), (old.Status, old.ReasonCode));
+        Assert.Contains(SupportChannelReasons.TicketReopened, SupportChannelReasons.All);
+        Assert.Empty(_channels.SurveySends);
+        Assert.Empty(_email.Sent);
+    }
+
     [Fact]
     public async Task AnAnonymousTicketIsPublishedOnThePortal()
     {

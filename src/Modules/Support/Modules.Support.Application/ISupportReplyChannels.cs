@@ -181,6 +181,10 @@ public static class SupportChannelReasons
     /// (<c>ticket_surveys.reason_code</c>); esa encuesta no se responde.</summary>
     public const string SurveyDisabled = SupportTicketSurvey.DisabledReasonCode;
 
+    /// <summary>Revisión del bloque C: el ticket se reabrió (o ya va en otra resolución) antes de que el worker procesara la encuesta. Esa
+    /// resolución ya no se juzga (H21), así que no se manda. Motivo de una encuesta sin enviar (<c>ticket_surveys.reason_code</c>).</summary>
+    public const string TicketReopened = "ticket_reopened";
+
     /// <summary>Todos los códigos de esta lista.</summary>
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -208,6 +212,7 @@ public static class SupportChannelReasons
         OrganizationRequired,
         SignerRequired,
         SurveyDisabled,
+        TicketReopened,
     };
 }
 

@@ -9,6 +9,7 @@ namespace Modules.Support.Application;
 /// Fase 4b, Tarea 11 (H16, H17, owner 2026-11-16, Q-2): manda la encuesta de satisfacción de cada resolución por el canal del ticket. Por
 /// encuesta reclamada:
 /// <list type="bullet">
+/// <item>El ticket se reabrió antes del envío: «sin encuesta» con <c>ticket_reopened</c> (esa resolución ya no se juzga).</item>
 /// <item>El tenant la tiene apagada: «sin encuesta» con <c>survey_disabled</c> (y esa encuesta no se responde).</item>
 /// <item>Anónimo, o se responde por la página de consulta: queda publicada ahí (<c>Sent</c> por <c>Portal</c>, sin mensaje).</item>
 /// <item>Conversación de WhatsApp: la plantilla de la encuesta con <c>ClientId</c> = la encuesta. Sin Mensajería, sin la plantilla aprobada
@@ -121,6 +122,14 @@ public sealed class SupportSurveySender(
     internal async Task DecideAsync(
         SupportTicketSurvey survey, SupportTicket ticket, SupportTenantSettings? tenantSettings, CancellationToken cancellationToken)
     {
+        // Revisión del bloque C (H21): reabierto antes del envío, esa resolución ya no se juzga; no se le pregunta nada al solicitante.
+        if (ticket.Status is not (SupportTicketStatus.Resolved or SupportTicketStatus.Closed)
+            || ticket.ResolutionCount != survey.ResolutionNumber)
+        {
+            survey.Skip(SupportChannelReasons.TicketReopened, null, clock.UtcNow);
+            return;
+        }
+
         if (tenantSettings is not { SurveyEnabled: true })
         {
             survey.Skip(SupportChannelReasons.SurveyDisabled, null, clock.UtcNow);
