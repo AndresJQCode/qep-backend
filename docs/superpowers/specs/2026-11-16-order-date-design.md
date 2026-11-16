@@ -33,8 +33,9 @@ Además es el registro técnico de cuándo nació el pedido, que no se debe perd
   todo lo demás, el día local de `occurredAt`.
 - `Order.ChangeOrderDate(DateOnly date, DateOnly today, DateTimeOffset occurredAt) : bool`, con el patrón de `UpdateNotes`:
   - Si no es `IsEditable` → `EnsureEditable` (la misma excepción que los demás cambios del borrador).
+  - Si `date == OrderDate` → `false` (sin historial, sin subir `Version`). Va antes del tope: reenviar la fecha guardada nunca
+    falla, aunque haya quedado después de «hoy».
   - Si `date > today` → `QuotationsDomainException("order.order_date.in_future")` (422).
-  - Si `date == OrderDate` → `false` (sin historial, sin subir `Version`).
   - Si cambia → escribe `OrderDate`, `UpdatedAt`, sube `Version` y devuelve `true`.
 - `OrderHistoryEventType.OrderDateChanged`, **al final** del enum (la columna guarda el nombre, el orden no se reescribe). La
   entrada la escribe el handler, como las demás: `Details` = `OrderChangeSummary.OrderDateChanged(anterior, nueva)` =
