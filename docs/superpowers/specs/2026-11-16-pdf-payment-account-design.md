@@ -41,6 +41,12 @@ billing account, `quotation.typ` always prints «Cuenta para el pago: {company}�
    guard (`QuotationPdfSections.cs:44`): the notice prints by its own flags only. In `quotation.typ` it moves
    out of the payment box `#if`, same position: under the box when there is one, alone otherwise.
    Visible effect: a tenant with the notice on now sees it on documents without an account too.
+5. **Deploy regenerates no PDF** (owner, 2026-11-16). `QuotationPdfSectionsBuilder.Fingerprint` is unchanged, so every
+   cached quotation PDF keeps its fingerprint. Accepted consequence: a cached PDF keeps what it printed (account,
+   notice) until it goes stale for another reason. A tenant changing the account later still sees it: when a `PUT`
+   changes `PaymentAccount.PrintsOn(false)` (orders have no cache), the same transaction sets
+   `content_fingerprint = NULL` on that tenant's `quotations.quotation_pdfs` rows; `QuotationPdf.IsStaleFor` reads
+   that as stale and each PDF regenerates lazily on its next request.
 
 ## Changes
 
@@ -48,8 +54,8 @@ billing account, `quotation.typ` always prints «Cuenta para el pago: {company}�
   and `Empty` (off). `PdfContent` gains `PaymentAccount`; `PdfContent.Empty` and `Create` carry it.
 - **Application** — DTO and validator: `paymentAccount` is required in the `PUT` body (`{ enabled, inQuotation,
   inOrder }`) and returned by `GET`/`PUT`. The PDF data gains a boolean `showPaymentAccount` computed with
-  `PrintsOn`. `QuotationPdfSectionsBuilder.Fingerprint` includes the flag that applies to the document kind, so
-  a cached quotation PDF regenerates when it changes.
+  `PrintsOn`. `Fingerprint` does not change (decision 5); the handler invalidates the tenant's cached quotation
+  PDFs when the quotation's account visibility changes.
 - **Infrastructure** — table + migration with seed; `PdfContentStore` reads the row (absent → `Empty`) and
   upserts it with `INSERT … ON CONFLICT (tenant_id)` inside the handler transaction, like the sections.
   `quotation.typ`: the three account lines print only with `data.showPaymentAccount`; the box condition becomes
@@ -59,8 +65,10 @@ billing account, `quotation.typ` always prints «Cuenta para el pago: {company}�
 ## Tests (TDD)
 
 - Domain: `PrintsOn` matrix; `Empty` is off.
-- Builder: notice prints without billing account; fingerprint changes when the account flag for that kind
-  changes and not when the other kind's flag changes.
+- Builder: notice prints without billing account; fingerprint of any content is identical before and after this
+  change (golden values).
+- Handler/integration: a `PUT` that changes the quotation's account visibility nulls the tenant's cached
+  fingerprints; one that only changes `InOrder`, or changes nothing, leaves them; another tenant's rows untouched.
 - Store/integration: no row → off; save then read round-trip; migration seeds Origen Botánico only.
 - Endpoint: `PUT` without `paymentAccount` → 422; `GET` returns it.
 - PDF data: `showPaymentAccount` true/false per kind.

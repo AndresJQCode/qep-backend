@@ -22,10 +22,10 @@
 
 ## Review Focus
 
-1. **Cached quotation PDFs printed with the account before deploy.** After deploy most tenants are off; the cached PDF must regenerate. The fingerprint must change for every tenant at deploy → always append the account line (Task 2 test `Fingerprint_changes_for_empty_content_after_adding_the_account`).
+1. **Deploy regenerates no PDF** (owner). `Fingerprint` must return the same hash as before for any content (Task 3 test `Fingerprint_is_unchanged_by_the_payment_account`); toggling the quotation account later invalidates the tenant's cache instead (Task 2 tests).
 2. **Payment box empty.** No payment method, no cash on delivery, account hidden → no empty bordered box (Task 3 template test).
 3. **Notice alone.** Notice on, document without billing account → notice prints without the box (Task 2 builder test + Task 3 template test).
-4. **Toggling the other document's flag** must not regenerate a quotation PDF (Task 2 fingerprint test).
+4. **Toggling only `InOrder`** must not invalidate quotation PDFs (orders have no cache) (Task 2 test).
 5. **Audit** of a PUT that only flips the account records `PaymentAccount.Enabled` etc. (Task 1 handler test).
 
 ---
@@ -74,8 +74,9 @@
 **Interfaces:**
 - Consumes: `PdfPaymentAccount` (Task 1).
 - Produces: `internal DbSet<PdfPaymentAccountRow> PdfPaymentAccounts`; table `quotations.pdf_payment_account` (`tenant_id uuid PK`, `enabled bool`, `in_quotation bool`, `in_order bool`, `updated_at timestamptz`), no FK to tenancy.
+- Produces: `IPdfContentStore.InvalidateQuotationPdfsAsync(Guid tenantId, CancellationToken ct)` — `UPDATE quotations.quotation_pdfs SET content_fingerprint = NULL WHERE tenant_id = {tenantId}`, same transaction guard as `SaveAsync`. `UpdatePdfContentHandler` calls it after `SaveAsync` only when `previous.PaymentAccount.PrintsOn(false) != content.PaymentAccount.PrintsOn(false)`.
 
-- [ ] **Step 1: Failing tests** in `PdfContentMigrationTests.cs`: `Migration_seeds_payment_account_on_for_origen_botanico_only` (origen-botanico row `true,true,true`; another tenant has no row → store reads `Empty`), following the existing seed test in that file. In `PdfContentApiTests` the Task 1 round-trip test covers the upsert.
+- [ ] **Step 1: Failing tests** in `PdfContentMigrationTests.cs`: `Migration_seeds_payment_account_on_for_origen_botanico_only` (origen-botanico row `true,true,true`; another tenant has no row → store reads `Empty`), following the existing seed test in that file. In `PdfContentApiTests` the Task 1 round-trip test covers the upsert. Also in `PdfContentApiTests` (seed a cached PDF by requesting the quotation PDF once, as existing PDF tests do): `Put_changing_quotation_account_visibility_invalidates_cached_pdfs` (row's `content_fingerprint` is null afterwards, another tenant's row unchanged); `Put_changing_only_in_order_keeps_cached_pdfs`; `Put_without_changes_keeps_cached_pdfs`.
 - [ ] **Step 2: RED** — build fails on `PdfPaymentAccountRow`.
 - [ ] **Step 3: Implement.** Store `GetAsync`: one more `AsNoTracking` read by tenant; absent → `PdfPaymentAccount.Empty`. `SaveAsync`: after the sections loop, `INSERT … ON CONFLICT (tenant_id) DO UPDATE SET enabled, in_quotation, in_order, updated_at` (same transaction guard). Migration `Up`: `CreateTable`, then the seed with the same `DO $$ … to_regclass('tenancy.tenants') … WHERE t.slug = 'origen-botanico' ON CONFLICT DO NOTHING` guard as `AddPdfSections`. `Down`: drop table.
 - [ ] **Step 4: GREEN** — `dotnet test tests/Modules/Quotations/Modules.Quotations.IntegrationTests --filter "FullyQualifiedName~PdfContentMigrationTests|FullyQualifiedName~PdfContentApiTests"`.
@@ -99,13 +100,12 @@
 - [ ] **Step 1: Failing builder tests:**
   - Replace the assertion at `QuotationPdfSectionsTests.cs:53` with `Payment_notice_prints_without_billing_account` (`Assert.NotNull(Build(content, Document() with { BillingAccount = null }, Reader).PaymentNotice)`).
   - `Show_payment_account_follows_the_flag_of_the_document` (quotation-only account → `true` for `Document()`, `false` for `Order()`).
-  - `Fingerprint_changes_when_the_account_flag_of_that_document_changes` and `Fingerprint_ignores_the_account_flag_of_the_other_document`.
-  - `Fingerprint_changes_for_empty_content_after_adding_the_account`: `Assert.NotEqual(<SHA-256 hex of "">, Fingerprint(PdfContent.Empty, Quotation))` — replaces the current empty-content expectation at l.190.
+  - `Fingerprint_is_unchanged_by_the_payment_account`: for the same sections, `Fingerprint` with `PaymentAccount` on and off is equal, and `Fingerprint(PdfContent.Empty, Quotation)` stays the SHA-256 hex of `""` (the existing expectation at l.190 must keep passing untouched).
 - [ ] **Step 2: Failing template tests** (`QuotationTemplateTests`, compile with `AssertCompilesAsync` like l.131, and assert on the extracted text the way the file already does): account hidden → no «Número:» and no «Cuenta para el pago»; account hidden + no payment method + no cash on delivery → no payment box; notice set + `BillingAccount = null` → notice title present.
 - [ ] **Step 3: RED** — `dotnet test tests/Modules/Quotations/Modules.Quotations.UnitTests --filter "FullyQualifiedName~QuotationPdfSectionsTests|FullyQualifiedName~QuotationTemplateTests"`.
 - [ ] **Step 4: Implement.**
   - Builder: drop the `BillingAccount is null` guard and its comment; pass `content.PaymentAccount.PrintsOn(isOrder)`.
-  - Fingerprint: after the sections, always append the line `PaymentAccount|{true|false}` (lowercase, `PrintsOn(isOrder)`), joined with `\n`; update the XML doc. Always-present on purpose: every cached PDF regenerates once at deploy.
+  - Fingerprint: **no change** (owner: deploy regenerates no PDF). Add one line to its XML doc saying the account is left out on purpose and invalidation happens on save (`InvalidateQuotationPdfsAsync`).
   - Template: `#let mostrar-cuenta = data.sections != none and data.sections.showPaymentAccount`; box condition `data.paymentMethod != none or data.cashOnDelivery or (data.billingAccount != none and mostrar-cuenta)`; account lines inside `#if data.billingAccount != none and mostrar-cuenta`; move the `#if aviso != none [...]` block out of the box `#if`, right after it, keeping `#v(12pt)` spacing for both cases. Update the comment at l.300-301 (no longer tied to the account).
 - [ ] **Step 5: GREEN** — same filter, then the whole `Modules.Quotations.UnitTests` project once.
 - [ ] **Step 6: Commit** — `feat(quotations): hide the payment account in the PDF by tenant setting`
