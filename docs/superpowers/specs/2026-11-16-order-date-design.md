@@ -29,13 +29,14 @@ Además es el registro técnico de cuándo nació el pedido, que no se debe perd
 - Todas las fábricas (`CreateFromQuotation`, manual, `CreateFromStore`, `CreateExternal`) reciben la fecha ya resuelta por Application
   (`orderDate`): el dominio no conoce el huso. Para Shopify es el día local del `OccurredAt` que ya recibe `CreateExternal`; para
   todo lo demás, el día local de `occurredAt`.
-- `Order.ChangeOrderDate(DateOnly date, DateOnly today, MemberId updatedBy, DateTimeOffset occurredAt)`:
-  - Si no es `IsEditable` → la misma excepción de no editable que usan los demás cambios del borrador.
-  - Si `date > today` → `order.order_date.in_future` (422).
-  - Si `date == OrderDate` → no hace nada (sin historial, sin subir `Version`).
-  - Si cambia → escribe `OrderDate`, `UpdatedAt` y la entrada `OrderDateChanged` con `Details` = `"{anterior:yyyy-MM-dd}→{nueva:yyyy-MM-dd}"`
-    (formato invariante; el frontend lo parsea, ver su spec §5).
-- `OrderHistoryEventType.OrderDateChanged`, **al final** del enum (la columna guarda el nombre, el orden no se reescribe).
+- `Order.ChangeOrderDate(DateOnly date, DateOnly today, DateTimeOffset occurredAt) : bool`, con el patrón de `UpdateNotes`:
+  - Si no es `IsEditable` → `EnsureEditable` (la misma excepción que los demás cambios del borrador).
+  - Si `date > today` → `QuotationsDomainException("order.order_date.in_future")` (422).
+  - Si `date == OrderDate` → `false` (sin historial, sin subir `Version`).
+  - Si cambia → escribe `OrderDate`, `UpdatedAt`, sube `Version` y devuelve `true`.
+- `OrderHistoryEventType.OrderDateChanged`, **al final** del enum (la columna guarda el nombre, el orden no se reescribe). La
+  entrada la escribe el handler, como las demás: `Details` = `OrderChangeSummary.OrderDateChanged(anterior, nueva)` =
+  `"Cambió la fecha del pedido de {anterior:yyyy-MM-dd} a {nueva:yyyy-MM-dd}."`.
 
 ## 4. Contrato HTTP
 
@@ -52,7 +53,7 @@ Además es el registro técnico de cuándo nació el pedido, que no se debe perd
 
 | Código | Status | Cuándo |
 | --- | --- | --- |
-| `order.order_date.in_future` | 422 | `orderDate` posterior a hoy del tenant. Va en el mapa `errors` bajo `orderDate`. |
+| `order.order_date.in_future` | 422 | `orderDate` posterior a hoy del tenant. Es un código de dominio: llega sin mapa `errors` y el frontend lo asocia al campo por código. |
 
 Un pedido no editable responde lo mismo que cualquier otro cambio del borrador hoy (sin código nuevo).
 
@@ -67,7 +68,7 @@ contrato) pero pasan a cortar por `OrderDate`, inclusive en las dos puntas, comp
 | `OrderRepository` — orden de lista y cursor | `ConvertedAt desc, OrderNumber` | `OrderDate desc, ConvertedAt desc, OrderNumber` |
 | `OrdersExportProcessor` — cursor (`OrderExportCursor`) | `(ConvertedAt, OrderNumber)` | `(OrderDate, ConvertedAt, OrderNumber)` |
 | `OrdersExportProcessor` — celda de fecha (línea ~264) | `calendar.ToLocal(order.CreatedAt)` | `order.OrderDate` (mismo formato `yyyy-MM-dd`) |
-| `Bootstrapper/OrdersReportSource.cs` — período y `occurred_at` de los pedidos | `o.converted_at` | `o.order_date` (el período se compara con `DateOnly`; la agrupación por año/mes deja de usar `AT TIME ZONE` para los pedidos). Las ventas de POS (`s.created_at`) no cambian. |
+| `Bootstrapper/OrdersReportSource.cs` — período, agrupación por mes y orden de filas | `o.converted_at` | Columna nueva `occurred_on date` en las dos ramas: `o.order_date` en pedidos y `(s.created_at AT TIME ZONE @time_zone)::date` en ventas POS. El período y la serie mensual van sobre `occurred_on`; las filas ordenan por `occurred_on DESC, occurred_at DESC`. Las ventas POS dan lo mismo que hoy. `OrdersReportItemDto` **no cambia** (el frontend no pinta su fecha). |
 | `QuotationPdfDocumentMapper.FromOrder` — fecha del documento | `calendar.ToLocal(header.CreatedAt)` | `order.OrderDate` |
 
 **No cambian (a propósito):**
