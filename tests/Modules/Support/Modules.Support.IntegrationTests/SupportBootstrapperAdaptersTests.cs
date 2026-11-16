@@ -406,6 +406,67 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         }
     }
 
+    // Fase 4b, Tarea 14 (Review Focus 6): el feed del cierre automático lee support.ticket_messages, support.ticket_surveys y
+    // messaging.messages por nombre. Contra el esquema migrado: cuenta sólo el entrante en vivo vinculado (Linked o Pinned) después de la
+    // resolución; no un vínculo soltado, un importado, un saliente ni el toque de la encuesta.
+    [Fact]
+    public async Task TheAutoCloseFeedRunsAgainstTheMigratedSchema()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var conversation = await SeedConversationAsync(Factory, tenant);
+        var ticket = await SupportTicketSeed.SaveConversationTicketAsync(Factory, tenant, conversation, Since);
+        var resolvedAt = Since.AddHours(1);
+        await SupportTicketSeed.UpdateTicketAsync(
+            Factory, tenant, ticket.Id, item => item.ChangeStatus(SupportTicketStatus.Resolved, null, resolvedAt, SupportTicketSeed.Clock));
+        var surveyMessage = await SeedMessageAsync(Factory, tenant, conversation, resolvedAt.AddMinutes(5), direction: Outbound, text: "Encuesta");
+        await ExecuteAsync(
+            Factory,
+            "UPDATE support.ticket_surveys SET status = 'Sent', channel = 'WhatsApp', message_id = @message, sent_at = @at WHERE ticket_id = @id",
+            ("message", surveyMessage), ("at", resolvedAt.AddMinutes(5)), ("id", ticket.Id.Value));
+        var reply = Since.AddDays(2);
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddMinutes(30), "Linked");
+        await LinkAsync(tenant, ticket.Id.Value, conversation, reply, "Pinned");
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddDays(3), "Released");
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddDays(4), "Linked", imported: true);
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddDays(4), "Linked", direction: Outbound);
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddDays(5), "Linked", kind: InteractiveKind, replyTo: surveyMessage);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var feed = scope.ServiceProvider.GetRequiredService<ISupportAutoCloseFeed>();
+        var candidate = Assert.Single(await feed.ListCandidatesAsync(50, null, Ct));
+        var last = await feed.LastCustomerReplyAsync(tenant, ticket.Id.Value, resolvedAt, Ct);
+
+        Assert.Equal((tenant, ticket.Id.Value), (candidate.TenantId, candidate.TicketId));
+        Assert.True((candidate.ResolvedAt - resolvedAt).Duration() < TimeSpan.FromMilliseconds(1));
+        Assert.True((candidate.LastCustomerReplyAt!.Value - reply).Duration() < TimeSpan.FromMilliseconds(1));
+        Assert.True((last!.Value - reply).Duration() < TimeSpan.FromMilliseconds(1));
+        Assert.Empty(await feed.ListCandidatesAsync(50, candidate, Ct));
+    }
+
+    // Un mensaje de la conversación vinculado al ticket en el estado pedido, como lo dejaría el seguimiento del hilo.
+    private async Task LinkAsync(
+        Guid tenant,
+        Guid ticketId,
+        Guid conversation,
+        DateTimeOffset occurredAt,
+        string state,
+        bool imported = false,
+        short direction = Inbound,
+        short kind = TextKind,
+        Guid? replyTo = null)
+    {
+        var message = await SeedMessageAsync(
+            Factory, tenant, conversation, occurredAt, direction: direction, imported: imported, kind: kind, replyTo: replyTo);
+        await ExecuteAsync(
+            Factory,
+            """
+            INSERT INTO support.ticket_messages (id, tenant_id, ticket_id, conversation_id, message_id, state, occurred_at, created_at, updated_at)
+            VALUES (gen_random_uuid(), @tenant, @ticket, @conversation, @message, @state, @occurred, now(), now())
+            """,
+            ("tenant", tenant), ("ticket", ticketId), ("conversation", conversation), ("message", message), ("state", state),
+            ("occurred", occurredAt));
+    }
+
     private async Task<Guid> NewSeededTenantAsync()
     {
         var tenant = NewTenantId();

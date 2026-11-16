@@ -275,7 +275,9 @@ public sealed record SupportTicketTypeSnapshotDto(Guid Id, string Name, int? Ter
 /// <c>Extension</c> es la prórroga ya hecha (null sin prórroga). <c>MaxExtensionBusinessDays</c> decide si la pantalla ofrece
 /// «Prorrogar» y su tope: es el término del ticket si hoy se puede prorrogar y null si no (ya prorrogado, sin término, esperando al
 /// cliente, vencido, resuelto o cerrado), así la pantalla no repite las reglas. El aviso al solicitante lo manda el asesor como
-/// respuesta (plan G13); <c>Extension</c> sirve para prellenarlo.</summary>
+/// respuesta (plan G13); <c>Extension</c> sirve para prellenarlo. Fase 4b (H22): <c>AutoCloseOn</c> es el día hábil después del cual el
+/// sistema cierra el ticket si el cliente no responde; sólo mientras está Resuelto, recalculado en cada lectura (una respuesta del cliente
+/// lo corre, soltarla lo devuelve), así la pantalla no conoce la regla.</summary>
 public sealed record SupportClockDto(
     DateOnly? DueOn,
     string DueState,
@@ -284,7 +286,8 @@ public sealed record SupportClockDto(
     bool TermIsLegal,
     int PausedBusinessDays,
     SupportExtensionDto? Extension,
-    int? MaxExtensionBusinessDays);
+    int? MaxExtensionBusinessDays,
+    DateOnly? AutoCloseOn = null);
 
 /// <summary>La prórroga del ticket. Sin autor: quién la hizo está en la traza, en el evento <c>Extended</c>.</summary>
 public sealed record SupportExtensionDto(int BusinessDays, string Reason, DateTimeOffset ExtendedAt);

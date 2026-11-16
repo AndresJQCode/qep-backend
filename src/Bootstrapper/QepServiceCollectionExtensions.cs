@@ -1656,6 +1656,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();
         services.AddScoped<Modules.Support.Application.ISupportThreadFeed, SupportThreadFeed>();
         services.AddScoped<Modules.Support.Application.ISupportSurveyFeed, SupportSurveyFeed>();
+        services.AddScoped<Modules.Support.Application.ISupportAutoCloseFeed, SupportAutoCloseFeed>();
         services.AddScoped<Modules.Support.Application.ISupportConversationEvents, SupportConversationEvents>();
         services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
         services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();

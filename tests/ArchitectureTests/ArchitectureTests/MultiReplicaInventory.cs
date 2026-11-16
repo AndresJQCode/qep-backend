@@ -64,6 +64,8 @@ public static class MultiReplicaInventory
     public static readonly IReadOnlyList<WorkerEntry> Workers =
     [
         // --- Claimed: FOR UPDATE SKIP LOCKED o lease. ---
+        new("Modules.Support.Infrastructure.SupportAutoCloseWorker", WorkerClassification.Noisy,
+            "Modules/Support/Modules.Support.Application/AutoClose/SupportAutoCloser.cs — relee el ticket y cierra con su Version (token de concurrencia): dos réplicas en el mismo tick, la segunda pierde con RequestConcurrencyException y salta el ticket; TicketClosed va en la misma transacción"),
         new("Modules.Support.Infrastructure.SupportSurveyWorker", WorkerClassification.Claimed,
             "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportSurveyRepository.cs:16-38 — FOR UPDATE SKIP LOCKED + locked_until de 2 minutos confirmado antes de enviar y renovado por encuesta (RenewClaimAsync); el envío es idempotente por ClientId (el id de la encuesta). Las respuestas por WhatsApp (SupportSurveyAnswers) toman la fila con FOR UPDATE (LockAsync, línea 53) y el mensaje que pide el comentario es idempotente por un ClientId fijo por encuesta"),
         new("Modules.Tenancy.Infrastructure.Messaging.OutboxPublisherWorker", WorkerClassification.Claimed,

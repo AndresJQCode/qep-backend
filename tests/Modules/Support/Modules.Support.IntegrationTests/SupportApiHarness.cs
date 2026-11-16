@@ -304,14 +304,15 @@ internal static class SupportApiHarness
         }
     }
 
-    /// <summary>Fase 4b (Tarea 11): saca el worker de la encuesta. Cada resolución pide una encuesta, y el worker la procesaría por detrás
-    /// (la salta con survey_disabled, o la manda) mientras la prueba la mira: las pruebas de la encuesta llaman a
-    /// <c>SupportSurveySender</c> a mano.</summary>
+    /// <summary>Fase 4b (Tareas 11 y 14): saca el worker de la encuesta y el del cierre automático. Cada resolución pide una encuesta, y
+    /// el worker la procesaría por detrás (la salta con survey_disabled, o la manda) mientras la prueba la mira; y el cierre automático
+    /// cerraría los tickets resueltos de una prueba que adelanta el reloj del tenant. Las pruebas de los dos los corren a mano.</summary>
     public static void RemoveSurveyWorker(IServiceCollection services)
     {
         var workers = services
             .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
-                && descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportSurveyWorker))
+                && (descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportSurveyWorker)
+                    || descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportAutoCloseWorker)))
             .ToList();
         foreach (var descriptor in workers)
         {

@@ -10,8 +10,14 @@ namespace Modules.Support.Application;
 /// <paramref name="Now"/> y su «hoy» local, y el umbral de «por vencer». Se lee una vez por petición: el reloj del tenant no se vuelve a
 /// pedir para fechar el cambio (revisión final, B5). <paramref name="ViewerMemberId"/> (fase 4a, plan G8) es la membresía de quien
 /// pide, para el <c>IsMe</c> de cada miembro; null fuera de una sesión.</summary>
+/// <param name="AutoCloseBusinessDays">Fase 4b (H22): los días hábiles del cierre automático del tenant.</param>
 public sealed record SupportReadContext(
-    SupportClockContext Clock, DateTimeOffset Now, DateOnly Today, int DueSoonBusinessDays, Guid? ViewerMemberId = null);
+    SupportClockContext Clock,
+    DateTimeOffset Now,
+    DateOnly Today,
+    int DueSoonBusinessDays,
+    Guid? ViewerMemberId = null,
+    int AutoCloseBusinessDays = SupportTenantSettings.DefaultAutoCloseBusinessDays);
 
 /// <summary>
 /// Arma las respuestas de ticket del contrato: el <see cref="SupportTicketDetailDto"/> de leer, crear y operar, y las filas de la
@@ -31,7 +37,8 @@ public sealed class SupportTicketDtoComposer(
     ISupportTicketAttachmentRepository attachments,
     ISupportLegalAcceptanceRepository legalAcceptances,
     ITenantModules tenantModules,
-    ISupportViewer viewer)
+    ISupportViewer viewer,
+    ISupportAutoCloseFeed autoCloseFeed)
 {
     /// <summary>Lo que el contrato muestra de un miembro o cliente que ya no se resuelve (un miembro removido, un cliente borrado).</summary>
     internal const string UnknownName = "Sin nombre";
@@ -46,7 +53,8 @@ public sealed class SupportTicketDtoComposer(
         var now = tenantCalendar.UtcNow;
         // Quién mira, una sola vez por petición (plan G8): null sin sesión, así el worker del hilo compone sin lanzar.
         var viewerMemberId = await viewer.MemberIdAsync(tenantId, cancellationToken);
-        return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays, viewerMemberId);
+        return new SupportReadContext(
+            clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays, viewerMemberId, tenantSettings.AutoCloseBusinessDays);
     }
 
     /// <summary>Las mismas lecturas que <see cref="ReadContextAsync"/>, sin exigir la fila de ajustes: <c>null</c> si el tenant nunca se
@@ -63,7 +71,8 @@ public sealed class SupportTicketDtoComposer(
         }
 
         var now = tenantCalendar.UtcNow;
-        return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays);
+        return new SupportReadContext(
+            clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays, AutoCloseBusinessDays: tenantSettings.AutoCloseBusinessDays);
     }
 
     public async Task<SupportTicketDetailDto> ComposeDetailAsync(SupportTicket ticket, CancellationToken cancellationToken) =>
@@ -117,7 +126,8 @@ public sealed class SupportTicketDtoComposer(
                 ticket is { ExtendedAt: { } extendedAt, ExtensionReason: { } reason }
                     ? new SupportExtensionDto(ticket.ExtensionBusinessDays, reason, extendedAt)
                     : null,
-                ticket.MaxExtensionBusinessDays(context.Today)),
+                ticket.MaxExtensionBusinessDays(context.Today),
+                await SupportAutoCloser.ForAsync(autoCloseFeed, ticket, context, cancellationToken)),
             ticket.Intake.ToString(),
             ticket.ManualMedium?.ToString(),
             ticket.ReplyChannel.ToString(),

@@ -76,11 +76,13 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<SupportSystemAuthor>();
         services.AddScoped<SupportSurveySender>();
         services.AddScoped<SupportSurveyAnswers>();
+        services.AddScoped<SupportAutoCloser>();
         services.AddOptions<SupportWorkerOptions>().Bind(configuration.GetSection(SupportWorkerOptions.SectionName));
         if (configuration.GetValue($"{SupportWorkerOptions.SectionName}:Enabled", true))
         {
             services.AddHostedService<SupportThreadFollowWorker>();
             services.AddHostedService<SupportSurveyWorker>();
+            services.AddHostedService<SupportAutoCloseWorker>();
         }
 
         return services;
