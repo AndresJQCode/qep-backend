@@ -51,13 +51,43 @@ public sealed record PdfContent(PdfSection PaymentNotice, PdfSection Terms, PdfS
             .ToList();
         if (unknown.Count > 0)
         {
+            // El mapa `errors` marca el primer campo con un token desconocido (`Terms.ContentHtml`, `PaymentNotice.Title`), con
+            // las mismas claves del validador, para que la consola sepa qué input pintar.
+            var (field, fieldUnknown) = FirstFieldWithUnknownVariables(content);
             throw new QuotationsDomainException(
                 UnknownVariableCode,
-                $"The PDF content uses variables that do not exist: {string.Join(", ", unknown.Select(name => $"{{{{{name}}}}}"))}.");
+                $"The PDF content uses variables that do not exist: {FormatTokens(unknown)}.",
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    [field] = [$"Unknown variables: {FormatTokens(fieldUnknown)}."],
+                });
         }
 
         return content;
     }
+
+    private static (string Field, IReadOnlyList<string> Unknown) FirstFieldWithUnknownVariables(PdfContent content)
+    {
+        foreach (var section in content.All)
+        {
+            var inTitle = QuotationPdfVariables.UnknownIn(section.Title);
+            if (inTitle.Count > 0)
+            {
+                return ($"{section.Key}.{nameof(PdfSection.Title)}", inTitle);
+            }
+
+            var inHtml = QuotationPdfVariables.UnknownIn(section.ContentHtml);
+            if (inHtml.Count > 0)
+            {
+                return ($"{section.Key}.{nameof(PdfSection.ContentHtml)}", inHtml);
+            }
+        }
+
+        throw new InvalidOperationException("No section has unknown variables.");
+    }
+
+    private static string FormatTokens(IEnumerable<string> names) =>
+        string.Join(", ", names.Select(name => $"{{{{{name}}}}}"));
 
     private static void EnsureKey(PdfSection section, PdfSectionKey expected)
     {

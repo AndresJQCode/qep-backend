@@ -113,6 +113,12 @@ public sealed class PdfContentApiTests(SharedQuotationsHost sharedHost) : IClass
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, put.StatusCode);
         Assert.Equal("quotation.pdf_content.unknown_variable", await CodeOfAsync(put));
+        // El error de dominio marca el campo con la clave del validador, para que la consola pinte el input.
+        using (var body = JsonDocument.Parse(await put.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)))
+        {
+            Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Terms.ContentHtml", out var _), body.RootElement.ToString());
+        }
+
         var after = await GetAsync(client, tenantId);
         Assert.Equal(
             (before.PaymentNotice, before.Terms, before.DeliveryProcess),

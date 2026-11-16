@@ -14,6 +14,10 @@ public sealed class PdfContentTests
             PdfSection.Empty(PdfSectionKey.PaymentNotice), terms, PdfSection.Empty(PdfSectionKey.DeliveryProcess)));
 
         Assert.Equal("quotation.pdf_content.unknown_variable", error.Code);
+        // La consola marca el input con la misma clave del validador.
+        var field = Assert.Single(error.FieldErrors);
+        Assert.Equal("Terms.Title", field.Key);
+        Assert.Contains("{{ciudad}}", Assert.Single(field.Value), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -25,6 +29,7 @@ public sealed class PdfContentTests
             PdfSection.Empty(PdfSectionKey.PaymentNotice), PdfSection.Empty(PdfSectionKey.Terms), delivery));
 
         Assert.Equal("quotation.pdf_content.unknown_variable", error.Code);
+        Assert.Equal("DeliveryProcess.ContentHtml", Assert.Single(error.FieldErrors).Key);
     }
 
     [Fact]
