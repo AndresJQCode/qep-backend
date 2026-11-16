@@ -115,9 +115,6 @@
 
 #v(12pt, weak: true)
 #text(weight: "bold")[Respuesta a tu #lower(data.typeName) #data.ticketNumber del #fecha(data.receivedOn)]
-#if data.termIsLegal [
-  \ #text(size: 8.5pt, fill: apagado)[Solicitud con término legal de respuesta.]
-]
 
 // ---------------------------------------------------------------------------- 5. resumen del caso
 
