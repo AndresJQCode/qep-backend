@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace Bootstrapper.Observability;
 
 /// <summary>
-/// Observabilidad fase 2: cada 15 s lee las seis colas (<see cref="QueueNames.All"/>) y se las pasa a <see cref="QueueGauges"/>.
+/// Observabilidad fase 2: cada 15 s lee las colas (<see cref="QueueNames.All"/>) y se las pasa a <see cref="QueueGauges"/>.
 /// Lee una por una, nunca en paralelo, y cada una en su propio scope: <see cref="QueueMetricsSource"/> usa la conexión del
 /// <c>MessagingDbContext</c> del scope, y una lectura que falla a medias (tope de 5 s, conexión caída) no puede dejar rota la conexión
 /// de la siguiente. Una cola que falla se loguea y se salta: su lectura vieja caduca sola a los 60 s y las demás siguen.

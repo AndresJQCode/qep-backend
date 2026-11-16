@@ -22,6 +22,10 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
 {
     private readonly FakeSupportReplyChannels _channels = new();
     private readonly RecordingSupportReplyEmail _email = new();
+    private readonly RecordingSupportFormalReplyRenderer _renderer = new();
+    private readonly RecordingSupportDocumentStorage _storage = new();
+    private readonly FakeSupportLetterhead _letterhead = new();
+    private readonly ThrowAfterCommitSwitch _commitSwitch = new();
     private PostgreSqlContainer? _database;
     private QepApiFactory? _factory;
 
@@ -36,6 +40,17 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
             services.AddSingleton<ISupportReplyChannels>(_channels);
             services.RemoveAll<ISupportReplyEmail>();
             services.AddSingleton<ISupportReplyEmail>(_email);
+            // Fase 4b: el PDF, el bucket y el membrete son dobles; los adaptadores reales los amarran sus pruebas.
+            services.RemoveAll<ISupportFormalReplyRenderer>();
+            services.AddSingleton<ISupportFormalReplyRenderer>(_renderer);
+            services.RemoveAll<ISupportDocumentStorage>();
+            services.AddSingleton<ISupportDocumentStorage>(_storage);
+            services.RemoveAll<ISupportLetterhead>();
+            services.AddSingleton<ISupportLetterhead>(_letterhead);
+            // Revisión del bloque C: un guardado que confirma y después lanza, sólo cuando la prueba lo arma.
+            services.RemoveAll<ISupportUnitOfWork>();
+            services.AddScoped<ISupportUnitOfWork>(provider => new ThrowAfterCommitUnitOfWork(
+                ActivatorUtilities.CreateInstance<Modules.Support.Infrastructure.Persistence.SupportUnitOfWork>(provider), _commitSwitch));
         });
 
     public async ValueTask DisposeAsync()
@@ -706,6 +721,493 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal("portal_only", Reason(options, "email"));
         Assert.Equal("Portal", options.GetProperty("defaultChannel").GetString());
     }
+
+    // ---- Fase 4b, Tarea 8: la respuesta formal (H1 a H11) ----
+
+    private static object FormalPart(string decision = "Revisamos el cobro y lo anulamos.", string signerTitle = "Coordinadora de servicio") =>
+        new { decision, signerTitle, annexes = new[] { "Factura de octubre", "Extracto bancario" } };
+
+    private const string FormalText = "Te enviamos la respuesta formal de tu caso.";
+
+    // Review Focus 8: el PDF y la fila del documento llevan al responsable, con el «siguiente paso» del tipo sobre el del tenant.
+    [Fact]
+    public async Task AFormalThreadReplySendsOneDocumentAndStoresIt()
+    {
+        var scenario = await StartAsync(Factory);
+        await ExecuteAsync(Factory, "UPDATE support.tenant_settings SET formal_next_step = 'Paso del tenant.' WHERE tenant_id = @tenant",
+            ("tenant", scenario.TenantId));
+        await ExecuteAsync(Factory, "UPDATE support.ticket_types SET formal_next_step = 'Paso del tipo.' WHERE id = @type",
+            ("type", await scenario.TypeIdAsync("Petición general")));
+        var (opened, conversation) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var ticket = await AssignAsync(scenario, opened, scenario.CallerMemberId);
+
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = FormalText, formal = FormalPart() });
+
+        var reply = result.GetProperty("reply");
+        var number = ticket.GetProperty("number").GetString();
+        Assert.Equal(("Sent", "Text"), (reply.GetProperty("status").GetString(), reply.GetProperty("delivery").GetString()));
+        var document = reply.GetProperty("document");
+        Assert.Equal($"Respuesta-{number}.pdf", document.GetProperty("fileName").GetString());
+        Assert.Equal(RecordingSupportFormalReplyRenderer.Content.LongLength, document.GetProperty("sizeBytes").GetInt64());
+        Assert.Equal(scenario.CallerMemberId, document.GetProperty("signer").GetProperty("id").GetGuid());
+        Assert.Equal("Zoe Llamante", document.GetProperty("signer").GetProperty("displayName").GetString());
+        Assert.Equal("Coordinadora de servicio", document.GetProperty("signerTitle").GetString());
+
+        var rendered = Assert.Single(_renderer.Rendered);
+        Assert.Equal(
+            (number, "Revisamos el cobro y lo anulamos.", "Paso del tipo.", "Zoe Llamante", "Coordinadora de servicio", "Lulo Servicios S.A.S."),
+            (rendered.TicketNumber, rendered.Decision, rendered.NextStep, rendered.SignerName, rendered.SignerTitle,
+                rendered.Letterhead.CompanyName));
+        Assert.Equal(["Factura de octubre", "Extracto bancario"], rendered.Annexes);
+
+        var send = Assert.Single(_channels.DocumentSends);
+        Assert.Empty(_channels.ThreadSends);
+        Assert.Equal((reply.GetProperty("id").GetGuid(), conversation, FormalText, $"Respuesta-{number}.pdf"),
+            (send.ClientId, send.ConversationId, send.Text, send.FileName));
+        Assert.Equal(RecordingSupportFormalReplyRenderer.Content, send.Document.ToArray());
+        var key = Assert.Single(_storage.Objects.Keys);
+        Assert.Equal(
+            $"{scenario.CallerMemberId}|{key}|{send.DocumentClientId}",
+            await TextAsync(
+                Factory,
+                "SELECT signer_member_id::text || '|' || storage_key || '|' || document_client_id::text FROM support.ticket_reply_documents WHERE reply_id = @id",
+                ("id", send.ClientId)));
+        var sentEvent = result.GetProperty("ticket").GetProperty("events").EnumerateArray().Last();
+        Assert.Equal("ReplySent", sentEvent.GetProperty("kind").GetString());
+        Assert.True(sentEvent.GetProperty("formal").GetBoolean());
+    }
+
+    // H2: en WhatsApp el texto del canal va como pie del documento, y Meta corta el pie en 1024.
+    [Fact]
+    public async Task AFormalThreadCaptionOver1024Is422OnTheText()
+    {
+        var scenario = await StartAsync(Factory);
+        var (opened, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var ticket = await AssignAsync(scenario, opened, scenario.CallerMemberId);
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = new string('a', 1025), formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("Text", await ErrorKeysAsync(response));
+        Assert.Empty(_renderer.Rendered);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+    }
+
+    [Fact]
+    public async Task TheAssigneeSignsNotTheSender()
+    {
+        var scenario = await StartAsync(Factory);
+        var beto = await SeedMemberAsync(Factory, $"beto-{Guid.CreateVersion7():N}@example.com", "Beto Asesor", "advisor", tenantId: scenario.Tenant);
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: beto));
+
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        var reply = result.GetProperty("reply");
+        Assert.Equal(scenario.CallerMemberId, reply.GetProperty("author").GetProperty("id").GetGuid());
+        Assert.Equal(beto, reply.GetProperty("document").GetProperty("signer").GetProperty("id").GetGuid());
+        Assert.Equal("Beto Asesor", Assert.Single(_renderer.Rendered).SignerName);
+        Assert.Equal(
+            beto.ToString(),
+            await TextAsync(Factory, "SELECT signer_member_id::text FROM support.ticket_reply_documents WHERE reply_id = @id",
+                ("id", reply.GetProperty("id").GetGuid())));
+    }
+
+    // H3 (owner 2026-11-16, Q-7): sin responsable no hay quién firme; nada se genera ni se guarda.
+    [Fact]
+    public async Task AFormalReplyWithoutAssigneeIs422SignerRequired()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync();
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.formal_signer_required", await CodeOfAsync(response));
+        Assert.Empty(_renderer.Rendered);
+        Assert.Empty(_storage.Objects);
+        Assert.Empty(_email.Sent);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+    }
+
+    [Fact]
+    public async Task ReplyOptionsSaySignerRequiredWithoutAssignee()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync();
+
+        var formal = (await OptionsAsync(scenario, Id(ticket))).GetProperty("formal");
+
+        Assert.Equal("signer_required", formal.GetProperty("blockedReason").GetString());
+    }
+
+    // H10: fuera de la ventana la respuesta formal sale por su propia plantilla, con el PDF como encabezado; sin conversación, al celular
+    // por la conexión que tenga la plantilla formal aprobada.
+    [Fact]
+    public async Task AFormalReplyOutsideTheWindowUsesTheFormalTemplate()
+    {
+        var scenario = await StartAsync(Factory);
+        var connection = Guid.CreateVersion7();
+        _channels.ApprovedFormalConnections[connection] = "Soporte";
+        var (closed, conversation) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(-2), connection: connection);
+        var ticket = await AssignAsync(scenario, closed, scenario.CallerMemberId);
+
+        var options = (await OptionsAsync(scenario, Id(ticket))).GetProperty("formal");
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(JsonValueKind.Null, options.GetProperty("threadReason").ValueKind);
+        Assert.Equal("Template", result.GetProperty("reply").GetProperty("delivery").GetString());
+        Assert.Empty(_channels.TemplateSends);
+        var send = Assert.Single(_channels.FormalTemplateSends);
+        Assert.Equal((conversation, (string?)null, FormalText), (send.ConversationId!.Value, send.WaId, send.Text));
+        Assert.Equal(RecordingSupportFormalReplyRenderer.Content, send.Document.ToArray());
+
+        // Sin conversación: el selector trae las conexiones con la plantilla formal, y sale al celular de la foto.
+        var manual = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+        var manualOptions = (await OptionsAsync(scenario, Id(manual))).GetProperty("formal");
+        Assert.Equal(connection, Assert.Single(manualOptions.GetProperty("templateConnections").EnumerateArray()).GetProperty("id").GetGuid());
+        await ReplyCreatedAsync(
+            scenario, manual,
+            new { clientId = Guid.CreateVersion7(), channel = "WhatsAppTemplate", text = FormalText, connectionId = connection, formal = FormalPart() });
+        Assert.Equal(2, _channels.FormalTemplateSends.Count);
+        var byPhone = _channels.FormalTemplateSends.Last();
+        Assert.Equal(((Guid?)null, (Guid?)connection, "573001234567"), (byPhone.ConversationId, byPhone.ConnectionId, byPhone.WaId));
+    }
+
+    // La plantilla «Aviso de respuesta» aprobada no sirve: la formal es otro tipo (Q-1).
+    [Fact]
+    public async Task AFormalReplyWithoutTheFormalTemplateIs422TemplateNotApproved()
+    {
+        var scenario = await StartAsync(Factory);
+        var connection = Guid.CreateVersion7();
+        _channels.ApprovedConnections[connection] = "Soporte";
+        var (closed, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(-2), connection: connection);
+        var ticket = await AssignAsync(scenario, closed, scenario.CallerMemberId);
+
+        var options = (await OptionsAsync(scenario, Id(ticket))).GetProperty("formal");
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal("template_not_approved", options.GetProperty("threadReason").GetString());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.template_not_approved", await CodeOfAsync(response));
+        Assert.Empty(_renderer.Rendered);
+        Assert.Empty(_channels.FormalTemplateSends);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+    }
+
+    [Fact]
+    public async Task AFormalEmailReplyAttachesThePdf()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+        var email = Assert.Single(_email.Sent);
+        Assert.Equal(FormalText, email.Text);
+        Assert.NotNull(email.Document);
+        Assert.Equal($"Respuesta-{ticket.GetProperty("number").GetString()}.pdf", email.Document.FileName);
+        Assert.Equal(RecordingSupportFormalReplyRenderer.Content, email.Document.Content.ToArray());
+    }
+
+    // Un anónimo se responde por la página de consulta: la respuesta formal queda publicada con su documento.
+    [Fact]
+    public async Task AFormalPortalReplyIsPublishedWithItsDocument()
+    {
+        var scenario = await StartAsync(Factory);
+        var anonymous = await SupportTicketSeed.SaveAnonymousTicketAsync(Factory, scenario.TenantId);
+        var ticket = await AssignAsync(scenario, await scenario.DetailAsync(anonymous.Id.Value), scenario.CallerMemberId);
+
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Portal", text = FormalText, formal = FormalPart() });
+
+        var reply = result.GetProperty("reply");
+        Assert.Equal(("Portal", "Sent"), (reply.GetProperty("delivery").GetString(), reply.GetProperty("status").GetString()));
+        Assert.Equal(JsonValueKind.Object, reply.GetProperty("document").ValueKind);
+        var rendered = Assert.Single(_renderer.Rendered);
+        Assert.True(rendered.Anonymous);
+        Assert.Equal(("Solicitante anónimo", (string?)null, (string?)null), (rendered.RecipientName, rendered.RecipientDocument, rendered.RecipientEmail));
+        Assert.Single(_storage.Objects);
+    }
+
+    // H5 (Q-6): sin empresa que responda no hay membrete.
+    [Fact]
+    public async Task AFormalReplyWithoutACompanyIs422OrganizationRequired()
+    {
+        var scenario = await StartAsync(Factory);
+        _letterhead.Data = null;
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.formal_organization_required", await CodeOfAsync(response));
+        Assert.Empty(_renderer.Rendered);
+        Assert.Empty(_storage.Objects);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+    }
+
+    // H7: si qcode-pdf no devuelve el PDF, no queda respuesta, documento ni objeto.
+    [Fact]
+    public async Task ARenderFailureIs422AndLeavesNothing()
+    {
+        var scenario = await StartAsync(Factory);
+        _renderer.Fail = true;
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.document_render_failed", await CodeOfAsync(response));
+        Assert.Empty(_storage.Objects);
+        Assert.Empty(_email.Sent);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+        Assert.Equal(0, await DocumentsCountAsync(Id(ticket)));
+    }
+
+    // Revisión final: si el bucket privado no guarda el PDF, la respuesta es el mismo 422 del render y no un 500; no queda respuesta,
+    // documento ni envío, y el asesor puede reintentar.
+    [Fact]
+    public async Task AStorageFailureIs422RenderFailedAndLeavesNothing()
+    {
+        var scenario = await StartAsync(Factory);
+        _storage.FailSave = true;
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.document_render_failed", await CodeOfAsync(response));
+        Assert.Single(_renderer.Rendered);
+        Assert.Empty(_storage.Objects);
+        Assert.Empty(_email.Sent);
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+        Assert.Equal(0, await DocumentsCountAsync(Id(ticket)));
+    }
+
+    // Revisión del bloque C: el guardado de la respuesta nueva confirmó y aun así lanzó (la conexión se cayó al volver del commit). La
+    // fila existe y el PDF es su documento: no se borra del bucket, aunque el asesor vea un error.
+    [Fact]
+    public async Task ACommittedFormalReplyKeepsItsDocumentWhenTheSaveThrowsAfterCommitting()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+        _commitSwitch.Armed = true;
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.False(_commitSwitch.Armed);
+        Assert.Equal(1, await RepliesCountAsync(Id(ticket)));
+        Assert.Equal(1, await DocumentsCountAsync(Id(ticket)));
+        Assert.Empty(_storage.Deleted);
+        Assert.Single(_storage.Objects);
+    }
+
+    // Review Focus 1: una Pending vieja con documento sale con el PDF guardado y su DocumentClientId; el generador no se vuelve a llamar.
+    [Fact]
+    public async Task AResumedFormalReplySendsTheStoredDocument()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, conversation) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var clientId = Guid.CreateVersion7();
+        var stored = "%PDF-1.7 guardado"u8.ToArray();
+        var (rowId, documentClientId, key) = await SeedPendingFormalReplyAsync(scenario, Id(ticket), clientId, stored);
+
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId, channel = "Thread", text = "Otro texto", formal = FormalPart(decision: "Otra decisión") });
+
+        Assert.Empty(_renderer.Rendered);
+        Assert.Equal(key, Assert.Single(_storage.Reads));
+        var send = Assert.Single(_channels.DocumentSends);
+        Assert.Equal((rowId, documentClientId, conversation, "Hola"), (send.ClientId, send.DocumentClientId, send.ConversationId, send.Text));
+        Assert.Equal(stored, send.Document.ToArray());
+        Assert.Equal("Sent", result.GetProperty("reply").GetProperty("status").GetString());
+        Assert.Equal(1, await DocumentsCountAsync(Id(ticket)));
+    }
+
+    // H9: una respuesta nueva que el canal rechaza antes de enviar no existió para el solicitante: se borran la fila, su documento (por la
+    // cascada) y el PDF del bucket (revisión del Bloque B: sin regla de ciclo de vida, quedaría huérfano para siempre).
+    [Fact]
+    public async Task ARejectedFormalReplyRemovesItsDocument()
+    {
+        var scenario = await StartAsync(Factory);
+        var (opened, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var ticket = await AssignAsync(scenario, opened, scenario.CallerMemberId);
+        _channels.OnDocument = _ => new SupportChannelSendResult.Rejected("window_closed");
+
+        var response = await ReplyAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Thread", text = FormalText, formal = FormalPart() });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.reply.window_closed", await CodeOfAsync(response));
+        Assert.Equal(0, await RepliesCountAsync(Id(ticket)));
+        Assert.Equal(0, await DocumentsCountAsync(Id(ticket)));
+        Assert.Single(_storage.Deleted);
+        Assert.Empty(_storage.Objects);
+    }
+
+    // Revisión del Bloque B: el PDF no subió a Meta o no se guardó en R2, y Mensajería no dejó nada (Rejected send_failed). La respuesta se
+    // borra con su PDF y el 422 es support.reply.send_failed: el asesor reintenta con el mismo clientId y la respuesta sale como nueva.
+    [Fact]
+    public async Task AFormalReplyWhoseDocumentDidNotGoOutIs422AndCanBeRetried()
+    {
+        var scenario = await StartAsync(Factory);
+        var (opened, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var ticket = await AssignAsync(scenario, opened, scenario.CallerMemberId);
+        var attempts = 0;
+        _channels.OnDocument = send => Interlocked.Increment(ref attempts) == 1
+            ? new SupportChannelSendResult.Rejected("send_failed")
+            : new SupportChannelSendResult.Sent(Guid.CreateVersion7(), send.ConversationId, Guid.CreateVersion7());
+        var body = new { clientId = Guid.CreateVersion7(), channel = "Thread", text = FormalText, formal = FormalPart() };
+
+        var failed = await ReplyAsync(scenario, ticket, body);
+        var retried = await ReplyCreatedAsync(scenario, ticket, body);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, failed.StatusCode);
+        Assert.Equal("support.reply.send_failed", await CodeOfAsync(failed));
+        Assert.Equal("Sent", retried.GetProperty("reply").GetProperty("status").GetString());
+        Assert.Equal(2, _renderer.Rendered.Count);
+        Assert.Single(_storage.Deleted);
+        Assert.Single(_storage.Objects);
+        Assert.Equal(1, await RepliesCountAsync(Id(ticket)));
+        Assert.Equal(1, await DocumentsCountAsync(Id(ticket)));
+    }
+
+    // H1: «Petición general» exige respuesta formal y la pantalla la marca de entrada; «Soporte técnico» no.
+    [Fact]
+    public async Task ReplyOptionsSuggestFormalForATypeThatRequiresIt()
+    {
+        var scenario = await StartAsync(Factory);
+        var (opened, _) = await TicketWithThreadAsync(scenario, DateTimeOffset.UtcNow.AddHours(5));
+        var ticket = await AssignAsync(scenario, opened, scenario.CallerMemberId);
+        var technical = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Soporte técnico"), assignee: scenario.CallerMemberId));
+
+        var formal = (await OptionsAsync(scenario, Id(ticket))).GetProperty("formal");
+        var notSuggested = (await OptionsAsync(scenario, Id(technical))).GetProperty("formal");
+
+        Assert.True(formal.GetProperty("suggested").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, formal.GetProperty("blockedReason").ValueKind);
+        Assert.Equal(JsonValueKind.Null, formal.GetProperty("threadReason").ValueKind);
+        Assert.False(notSuggested.GetProperty("suggested").GetBoolean());
+        Assert.Equal("no_conversation", notSuggested.GetProperty("threadReason").GetString());
+    }
+
+    [Fact]
+    public async Task ReplyOptionsSayOrganizationRequired()
+    {
+        var scenario = await StartAsync(Factory);
+        _letterhead.Data = null;
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+
+        var formal = (await OptionsAsync(scenario, Id(ticket))).GetProperty("formal");
+
+        Assert.Equal("organization_required", formal.GetProperty("blockedReason").GetString());
+    }
+
+    // ---- Fase 4b, Tarea 9: bajar el PDF desde la consola (H13) ----
+
+    [Fact]
+    public async Task TheConsoleDownloadsAFormalDocumentAndAudits()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, replyId) = await FormalEmailReplyAsync(scenario);
+
+        var response = await scenario.Client.GetAsync($"{scenario.Url}/tickets/{Id(ticket)}/replies/{replyId}/document", Ct);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var link = await JsonAsync(response);
+        var fileName = $"Respuesta-{ticket.GetProperty("number").GetString()}.pdf";
+        Assert.Equal(fileName, link.GetProperty("fileName").GetString());
+        var url = link.GetProperty("url").GetString()!;
+        Assert.StartsWith($"https://r2.test/{Assert.Single(_storage.Objects.Keys)}", url, StringComparison.Ordinal);
+        Assert.Contains("seconds=300", url, StringComparison.Ordinal);
+        Assert.InRange(
+            link.GetProperty("expiresAt").GetDateTimeOffset() - DateTimeOffset.UtcNow, TimeSpan.FromMinutes(4), TimeSpan.FromMinutes(6));
+        Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketReplyDocumentDownloaded, Id(ticket).ToString()));
+    }
+
+    // El documento se busca por ticket y respuesta: el de otro ticket del mismo tenant, o una respuesta sin documento, es 404.
+    [Fact]
+    public async Task ADocumentOfAnotherTicketIs404()
+    {
+        var scenario = await StartAsync(Factory);
+        var (_, replyId) = await FormalEmailReplyAsync(scenario);
+        var other = await scenario.CreateAsync();
+        var plain = await ReplyCreatedAsync(scenario, other, new { clientId = Guid.CreateVersion7(), channel = "Email", text = "Hola." });
+
+        var crossed = await scenario.Client.GetAsync($"{scenario.Url}/tickets/{Id(other)}/replies/{replyId}/document", Ct);
+        var withoutDocument = await scenario.Client.GetAsync(
+            $"{scenario.Url}/tickets/{Id(other)}/replies/{plain.GetProperty("reply").GetProperty("id").GetGuid()}/document", Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, crossed.StatusCode);
+        Assert.Equal("support.reply.document_not_found", await CodeOfAsync(crossed));
+        Assert.Equal(HttpStatusCode.NotFound, withoutDocument.StatusCode);
+        Assert.Equal("support.reply.document_not_found", await CodeOfAsync(withoutDocument));
+    }
+
+    // H13: con ver el ticket alcanza (support.ticket.view acepta read o manage).
+    [Fact]
+    public async Task AReaderCanDownload()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, replyId) = await FormalEmailReplyAsync(scenario);
+        using var reader = CreateClient(Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read);
+
+        var response = await reader.GetAsync($"{scenario.Url}/tickets/{Id(ticket)}/replies/{replyId}/document", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static async Task<(JsonElement Ticket, Guid ReplyId)> FormalEmailReplyAsync(SupportTicketScenario scenario)
+    {
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+        return (result.GetProperty("ticket"), result.GetProperty("reply").GetProperty("id").GetGuid());
+    }
+
+    private static async Task<JsonElement> AssignAsync(SupportTicketScenario scenario, JsonElement ticket, Guid memberId)
+    {
+        var response = await scenario.ActAsync(Id(ticket), "assignee", new AssignTicketRequest(memberId), Version(ticket));
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        return await JsonAsync(response);
+    }
+
+    // Una respuesta formal Pending como la deja un proceso que cayó entre confirmarla y marcarla: la fila, su documento y el PDF en el
+    // bucket. El responsable no importa acá: el retomado no vuelve a armar el documento.
+    private async Task<(Guid RowId, Guid DocumentClientId, string Key)> SeedPendingFormalReplyAsync(
+        SupportTicketScenario scenario, Guid ticketId, Guid clientId, byte[] content)
+    {
+        var key = await _storage.SaveAsync(scenario.TenantId, content, Ct);
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var createdAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+        var reply = Modules.Support.Domain.SupportTicketReply.Start(
+            scenario.TenantId, new Modules.Support.Domain.SupportTicketId(ticketId), clientId, Modules.Support.Domain.SupportReplyChannel.Thread,
+            Modules.Support.Domain.SupportReplyDelivery.Text, "Hola", null, scenario.CallerMemberId, createdAt, null, null, null);
+        var document = Modules.Support.Domain.SupportReplyDocument.Create(
+            reply, "Decisión guardada", null, scenario.CallerMemberId, "Zoe Llamante", "Gerente", [], key, "Respuesta-SOP-1.pdf", content,
+            DateOnly.FromDateTime(createdAt.UtcDateTime), createdAt);
+        var repository = scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>();
+        repository.Add(reply);
+        repository.AddDocument(document);
+        await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        return (reply.Id, document.DocumentClientId, key);
+    }
+
+    private Task<long> DocumentsCountAsync(Guid ticketId) =>
+        ScalarAsync(Factory, "SELECT count(*) FROM support.ticket_reply_documents WHERE ticket_id = @id", ("id", ticketId));
 
     // Un ticket desde una conversación sembrada, y el estado del hilo que el doble devuelve para ella.
     private async Task<(JsonElement Ticket, Guid Conversation)> TicketWithThreadAsync(

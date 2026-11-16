@@ -285,6 +285,27 @@ public sealed class SupportOpeningSenderTests
 
         public Task<SupportChannelSendResult> SendTemplateAsync(SupportChannelTemplateSend send, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The opening never uses the template (plan F24).");
+
+        public Task<IReadOnlyList<SupportConnectionOption>> ListFormalTemplateConnectionsAsync(
+            Guid tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<bool> IsFormalTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<SupportChannelSendResult> SendThreadDocumentAsync(
+            SupportChannelThreadDocumentSend send, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The opening never sends a document.");
+
+        public Task<SupportChannelSendResult> SendFormalTemplateAsync(
+            SupportChannelFormalTemplateSend send, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The opening never sends a document.");
+
+        public Task<bool> IsSurveyTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<SupportChannelSendResult> SendSurveyTemplateAsync(
+            SupportChannelSurveyTemplateSend send, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The opening never sends the survey.");
     }
 
     private sealed class FakeMembers : ISupportMemberDirectory
@@ -332,6 +353,15 @@ public sealed class SupportOpeningSenderTests
         public Task<IReadOnlyList<SupportTicketEvent>> ListEventsAsync(
             Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) =>
             throw new NotSupportedException("A ticket created in memory carries its Created event.");
+
+        public Task<IReadOnlyList<SupportTicketSurvey>> ListSurveysAsync(
+            Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<SupportTicketSurvey?> FindLatestSurveyAsync(
+            Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<SupportTicketSurvey?> FindSurveyByTokenHashAsync(
+            Guid tenantId, byte[] tokenHash, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<SupportTicketPage> ListAsync(SupportTicketFilter filter, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

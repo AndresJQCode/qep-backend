@@ -8,7 +8,8 @@ namespace Modules.Support.Application;
 /// <summary>Un tipo de ticket como lo dibujan el selector del alta y la tabla de ajustes. <c>Version</c> va en el <c>If-Match</c> del
 /// <c>PUT</c>; <c>Position</c> es el orden en que la pantalla los lista. <c>InUse</c> (fase 4a, plan G6) dice si algún ticket, en
 /// cualquier estado, usa el tipo: la tabla de ajustes ofrece «Eliminar» sólo si es falso, y si no, sólo «Desactivar», sin probar el
-/// <c>DELETE</c> para enterarse del 422.</summary>
+/// <c>DELETE</c> para enterarse del 422. <c>FormalNextStep</c> (fase 4b, H6) es el «siguiente paso» propio del tipo, que pisa el del
+/// tenant en el PDF de la respuesta formal; null es «usa el del tenant».</summary>
 public sealed record SupportTicketTypeDto(
     Guid Id,
     string Name,
@@ -19,11 +20,23 @@ public sealed record SupportTicketTypeDto(
     bool IsActive,
     int Position,
     long Version,
-    bool InUse);
+    bool InUse,
+    string? FormalNextStep);
 
 /// <summary>El umbral de «por vencer» del tenant [owner 2026-11-14]. Viaja con su rango (<c>Min</c> y <c>Max</c>) para que el
-/// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3.</summary>
-public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonBusinessDays, int MaxDueSoonBusinessDays, long Version);
+/// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3. <c>FormalNextStep</c> (fase 4b, H6) es
+/// el «siguiente paso» del tenant para el PDF de la respuesta formal, null sin texto. <c>SurveyEnabled</c> y <c>AutoCloseBusinessDays</c>
+/// (fase 4b, H14) viajan con el rango del cierre automático, por la misma razón que el umbral.</summary>
+public sealed record SupportSettingsDto(
+    int DueSoonBusinessDays,
+    int MinDueSoonBusinessDays,
+    int MaxDueSoonBusinessDays,
+    long Version,
+    string? FormalNextStep,
+    bool SurveyEnabled,
+    int AutoCloseBusinessDays,
+    int MinAutoCloseBusinessDays,
+    int MaxAutoCloseBusinessDays);
 
 /// <summary>
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
@@ -100,6 +113,64 @@ public sealed record SupportInboxSummaryDto(IReadOnlyList<SupportStatusCountDto>
 
 public sealed record SupportStatusCountDto(string Status, int Count);
 
+/// <summary>
+/// Fase 4b (H24, H25): el reporte de Soporte de los tickets radicados entre <see cref="From"/> y <see cref="To"/> (fechas locales del
+/// tenant). Las colecciones de tamaño fijo viajan completas, también en cero: <see cref="ByStatus"/> trae los seis estados,
+/// <see cref="ByType"/> todos los tipos del tenant (activos o no, en su orden) y cada lista de calificaciones las tres, así la pantalla no
+/// conoce los enums del backend para dibujar la que falta. <see cref="OverdueNow"/> son los de la población vencidos hoy, con la misma
+/// regla que la bandeja.
+/// </summary>
+public sealed record SupportReportDto(
+    DateOnly From,
+    DateOnly To,
+    int Received,
+    int Resolved,
+    int OverdueNow,
+    IReadOnlyList<SupportStatusCountDto> ByStatus,
+    IReadOnlyList<SupportReportTypeRowDto> ByType,
+    SupportResolutionTimeDto ResolutionTime,
+    SupportSatisfactionDto Satisfaction);
+
+/// <summary>Una fila por tipo. <see cref="IsActive"/> viaja para que la pantalla marque un tipo desactivado que todavía tiene tickets en el
+/// rango; <see cref="AverageResolutionBusinessDays"/> es null sin resueltos.</summary>
+public sealed record SupportReportTypeRowDto(
+    Guid TypeId,
+    string Name,
+    bool IsActive,
+    int Received,
+    int Resolved,
+    int OverdueNow,
+    decimal? AverageResolutionBusinessDays,
+    IReadOnlyList<SupportRatingCountDto> Ratings);
+
+/// <summary>El tiempo de resolución en días hábiles después de la radicación hasta la última resolución, en bruto (sin descontar pausas),
+/// con un decimal. <c>OnTime + Late + WithoutTerm = Resolved</c>: <see cref="WithoutTerm"/> existe para que la suma cierre con los tickets
+/// de un tipo sin término.</summary>
+public sealed record SupportResolutionTimeDto(
+    int Resolved,
+    decimal? AverageBusinessDays,
+    decimal? MedianBusinessDays,
+    int OnTime,
+    int Late,
+    int WithoutTerm);
+
+/// <summary>Las encuestas de los tickets de la población, de cualquier ciclo. <c>Pending + Sent + WithoutSurvey + Failed + Disabled =
+/// Requested</c>: <see cref="Disabled"/> existe para que la suma cierre cuando el tenant tenía la encuesta apagada, y
+/// <see cref="WithoutSurvey"/> son las demás «sin encuesta» (sin plantilla, contacto bloqueado, reabierto…). <see cref="Answered"/> y
+/// <see cref="Ratings"/> cuentan las respondidas.</summary>
+public sealed record SupportSatisfactionDto(
+    int Requested,
+    int Pending,
+    int Sent,
+    int WithoutSurvey,
+    int Failed,
+    int Disabled,
+    int Answered,
+    IReadOnlyList<SupportRatingCountDto> Ratings);
+
+/// <summary>Una calificación por nombre (<c>Good</c>, <c>Regular</c>, <c>Bad</c>) y cuántas.</summary>
+public sealed record SupportRatingCountDto(string Rating, int Count);
+
 /// <summary>Una fila de la bandeja. <c>RequesterDisplayName</c> lo resuelve el backend (cliente vinculado; si no, nombres y
 /// apellidos; si no, razón social; si no, «NIT número») para que la fila no repita la regla. <c>DueState</c> y
 /// <c>BusinessDaysLeft</c> ya vienen evaluados con el calendario y el umbral del tenant. <c>Priority</c> ∈ <c>Low</c>, <c>Medium</c>,
@@ -123,7 +194,8 @@ public sealed record SupportTicketListItemDto(
 /// en el <c>201</c> del alta manual anónima, para que el asesor se lo dicte a quien llamó o vino en persona: ese ticket no tiene a dónde
 /// recibirlo, y en el <c>200</c> de <c>POST …/tickets/{id}/pin</c> (spec 2026-11-16), el PIN nuevo de un anónimo. <c>ConsultUrl</c>
 /// (spec 2026-11-16, P-6) viaja sólo junto con <c>IssuedPin</c>: el enlace de la página de consulta de ese radicado, para el mismo
-/// diálogo de entrega. En toda otra respuesta los dos son <c>null</c>.</summary>
+/// diálogo de entrega. En toda otra respuesta los dos son <c>null</c>. <c>Surveys</c> (fase 4b, H15) son las encuestas de satisfacción,
+/// una por ciclo de resolución, en orden.</summary>
 public sealed record SupportTicketDetailDto(
     Guid Id,
     string Number,
@@ -156,6 +228,7 @@ public sealed record SupportTicketDetailDto(
     IReadOnlyList<SupportAttachmentDto> Attachments,
     IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances,
     string? IssuedPin,
+    IReadOnlyList<SupportSurveyDto> Surveys,
     string? ConsultUrl = null);
 
 /// <summary>
@@ -188,6 +261,10 @@ public sealed record SupportAttachmentDto(Guid Id, string FileName, string MimeT
 /// <summary>La URL firmada de un adjunto: vive 5 minutos y baja el archivo con su nombre.</summary>
 public sealed record SupportAttachmentDownloadDto(string Url);
 
+/// <summary>Fase 4b (H13): la URL firmada del PDF de una respuesta formal, con el nombre del archivo y cuándo vence, para que la pantalla
+/// la abra enseguida y la vuelva a pedir si se demoró.</summary>
+public sealed record SupportDocumentLinkDto(Uri Url, string FileName, DateTimeOffset ExpiresAt);
+
 // Fase 3 (formulario público): IsAnonymous apaga en la pantalla todo lo que pide un solicitante (sólo se responde por la página), y el
 // backend rechaza vincularle cliente (support.ticket.anonymous_has_no_customer);
 // CustomerCandidates son los clientes con el documento de la foto cuando el ticket no tiene cliente (cero o varios al radicar, plan
@@ -204,12 +281,32 @@ public sealed record SupportConsultAccessDto(DateTimeOffset? LastSentAt, string?
 // sin que la pantalla lea la traza; UnclassifiedCount es el aviso «hay mensajes sin clasificar» de esa conversación; Replies trae las
 // respuestas con su estado, porque una fallida se muestra igual que en el hilo.
 
+/// <summary>
+/// Fase 4b (H15 a H21): la encuesta de un ciclo de resolución, como la dibuja el detalle. <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>,
+/// <c>Skipped</c> («sin encuesta», con <c>ReasonCode</c>: <c>survey_disabled</c>, <c>template_not_approved</c>…), <c>Failed</c>;
+/// <c>Channel</c> y <c>AnsweredVia</c> ∈ <c>WhatsApp</c>, <c>Email</c>, <c>Portal</c>; <c>Rating</c> ∈ <c>Good</c>, <c>Regular</c>,
+/// <c>Bad</c>. <c>CommentPromptSent</c> dice si salió el mensaje que pide el comentario por WhatsApp: la pantalla no lee los mensajes.
+/// </summary>
+public sealed record SupportSurveyDto(
+    int ResolutionNumber,
+    string Status,
+    string? Channel,
+    string? ReasonCode,
+    DateTimeOffset? SentAt,
+    string? Rating,
+    string? Comment,
+    DateTimeOffset? AnsweredAt,
+    string? AnsweredVia,
+    bool CommentPromptSent);
+
 /// <summary>Una respuesta del ticket (plan E16). <c>Channel</c> ∈ <c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>, <c>Portal</c>
 /// (fase 3, F12: publicada en la página de consulta); <c>Delivery</c> ∈ <c>Text</c>, <c>Template</c>, <c>Email</c>, <c>Portal</c> (la pantalla dice «salió como plantilla» sin conocer la ventana);
 /// <c>Status</c> ∈ <c>Pending</c>, <c>Sent</c>, <c>Failed</c>, con <c>FailureCode</c> si falló. <c>ClientId</c> es el que mandó la
 /// pantalla: con él retoma una respuesta que quedó <c>Pending</c> (revisión final, I3). <c>MessageId</c> también viene en una fallida si
 /// Mensajería registró el mensaje. <c>HasAttachment</c> dice si se mandó (o se intentó) con archivo, salido del adjunto que guarda la
-/// fila: «Reintentar» de una fallida no la reenvía como texto solo (owner, 2026-11-15).</summary>
+/// fila: «Reintentar» de una fallida no la reenvía como texto solo (owner, 2026-11-15). El PDF de una respuesta formal (fase 4b) no
+/// cuenta como adjunto: viaja en <c>Document</c>, porque el sistema lo genera al enviar y «Reintentar» no lo manda como archivo del
+/// asesor; si <c>HasAttachment</c> lo incluyera, la pantalla ofrecería reenviar un archivo que nadie subió.</summary>
 public sealed record SupportReplyDto(
     Guid Id,
     Guid ClientId,
@@ -221,7 +318,13 @@ public sealed record SupportReplyDto(
     Guid? MessageId,
     SupportMemberDto? Author,
     DateTimeOffset CreatedAt,
-    bool HasAttachment);
+    bool HasAttachment,
+    SupportReplyDocumentDto? Document = null);
+
+/// <summary>Fase 4b (H3, H9): el PDF de una respuesta formal. <c>Signer</c> es el responsable que firmó, con el nombre como salió en el
+/// PDF (una foto: si después cambia su nombre visible, la carta firmada no cambia); la pantalla no lee la fila del documento. El archivo
+/// se baja por <c>GET …/replies/{replyId}/document</c>.</summary>
+public sealed record SupportReplyDocumentDto(string FileName, long SizeBytes, SupportMemberDto Signer, string SignerTitle);
 
 /// <summary>La pestaña de Soporte de la ficha de una conversación: los tickets de esa conversación y los del mismo cliente por otros
 /// canales (<c>IsThisConversation</c> los distingue). <c>CanCreate</c> y su motivo (<c>messaging_disabled</c>, <c>no_permission</c>)
@@ -245,7 +348,9 @@ public sealed record SupportTicketTypeSnapshotDto(Guid Id, string Name, int? Ter
 /// <c>Extension</c> es la prórroga ya hecha (null sin prórroga). <c>MaxExtensionBusinessDays</c> decide si la pantalla ofrece
 /// «Prorrogar» y su tope: es el término del ticket si hoy se puede prorrogar y null si no (ya prorrogado, sin término, esperando al
 /// cliente, vencido, resuelto o cerrado), así la pantalla no repite las reglas. El aviso al solicitante lo manda el asesor como
-/// respuesta (plan G13); <c>Extension</c> sirve para prellenarlo.</summary>
+/// respuesta (plan G13); <c>Extension</c> sirve para prellenarlo. Fase 4b (H22): <c>AutoCloseOn</c> es el día hábil después del cual el
+/// sistema cierra el ticket si el cliente no responde; sólo mientras está Resuelto, recalculado en cada lectura (una respuesta del cliente
+/// lo corre, soltarla lo devuelve), así la pantalla no conoce la regla.</summary>
 public sealed record SupportClockDto(
     DateOnly? DueOn,
     string DueState,
@@ -254,7 +359,8 @@ public sealed record SupportClockDto(
     bool TermIsLegal,
     int PausedBusinessDays,
     SupportExtensionDto? Extension,
-    int? MaxExtensionBusinessDays);
+    int? MaxExtensionBusinessDays,
+    DateOnly? AutoCloseOn = null);
 
 /// <summary>La prórroga del ticket. Sin autor: quién la hizo está en la traza, en el evento <c>Extended</c>.</summary>
 public sealed record SupportExtensionDto(int BusinessDays, string Reason, DateTimeOffset ExtendedAt);
@@ -280,12 +386,15 @@ public sealed record SupportTicketEventDto(
     DateOnly? ToDueOn,
     string? Reason,
     string? FromPriority,
-    string? ToPriority);
+    string? ToPriority,
+    bool? Formal = null);
 
 // Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
 // valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
 // Fase 4a (plan G11): ExtensionBusinessDays, FromDueOn, ToDueOn y Reason sólo vienen llenos en Extended.
 // Prioridad (spec 2026-11-15 §5.2): FromPriority y ToPriority son los nombres de PriorityChanged, nulos en los demás.
+// Fase 4b: Formal sólo en ReplySent, verdadero si la respuesta llevó el PDF formal (la traza dice «envió la respuesta formal» sin leer las
+// respuestas).
 
 /// <summary><c>IsMe</c> (fase 4a, plan G8): si el miembro es quien hace la petición. El SPA no conoce su <c>memberId</c>, y sin este
 /// campo no puede decir «tú» ni ocultar «Asignármelo» en un ticket que ya es suyo. Fuera de una sesión siempre es falso.</summary>
@@ -357,7 +466,22 @@ public sealed record SupportReplyOptionsDto(
     SupportChannelOptionDto WhatsAppTemplate,
     SupportChannelOptionDto Email,
     string DefaultChannel,
-    SupportChannelOptionDto Portal);
+    SupportChannelOptionDto Portal,
+    SupportFormalOptionsDto Formal);
+
+/// <summary>
+/// Fase 4b (H1, H3, H5, H10): lo que la pantalla necesita para ofrecer «Respuesta formal» sin conocer tipos de plantilla ni reglas de
+/// firma. <c>Suggested</c> es el «exige respuesta formal» del tipo del ticket: la pantalla marca la casilla de entrada. <c>BlockedReason</c>
+/// (<c>signer_required</c>: sin responsable que firme; <c>organization_required</c>: sin empresa para el membrete) apaga la respuesta formal
+/// en todo canal. <c>ThreadReason</c> existe porque fuera de la ventana el hilo sale por otra plantilla («Respuesta formal»): puede
+/// estar aprobada la de «Aviso de respuesta» y no ésta, y la pantalla no conoce los tipos (null: el hilo puede llevarla ahora).
+/// <c>TemplateConnections</c> es el selector de la plantilla formal sin conversación: las conexiones con ella aprobada.
+/// </summary>
+public sealed record SupportFormalOptionsDto(
+    bool Suggested,
+    string? BlockedReason,
+    string? ThreadReason,
+    IReadOnlyList<SupportConnectionOptionDto> TemplateConnections);
 
 /// <summary>El hilo de la conversación del ticket. <c>Delivery</c> ∈ <c>Text</c> (dentro de la ventana) o <c>Template</c> (fuera, en
 /// WhatsApp: sale «Aviso de respuesta»), para que la pantalla avise antes de enviar. <c>Reason</c> cuando no está disponible:
@@ -400,11 +524,17 @@ internal static class SupportDtoMapping
         type.IsActive,
         type.Position,
         type.Version,
-        inUse);
+        inUse,
+        type.FormalNextStep);
 
     public static SupportSettingsDto ToDto(SupportTenantSettings settings) => new(
         settings.DueSoonBusinessDays,
         SupportTenantSettings.MinDueSoonBusinessDays,
         SupportTenantSettings.MaxDueSoonBusinessDays,
-        settings.Version);
+        settings.Version,
+        settings.FormalNextStep,
+        settings.SurveyEnabled,
+        settings.AutoCloseBusinessDays,
+        SupportTenantSettings.MinAutoCloseBusinessDays,
+        SupportTenantSettings.MaxAutoCloseBusinessDays);
 }

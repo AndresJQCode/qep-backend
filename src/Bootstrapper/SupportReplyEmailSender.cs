@@ -7,7 +7,8 @@ namespace Bootstrapper;
 /// <summary>
 /// Soporte fase 2 (plan E15): el correo de respuesta de un ticket sobre <see cref="IEmailChannel"/> y
 /// <see cref="SupportReplyEmailTemplate"/> de Notifications, que Soporte no ve. Igual que <see cref="ServiceContractsEmailSender"/>, cualquier
-/// excepción del canal es <c>send_failed</c>: la respuesta queda <c>Failed</c> y visible, nunca un 500.
+/// excepción del canal es <c>send_failed</c>: la respuesta queda <c>Failed</c> y visible, nunca un 500. Fase 4b (H10): el PDF de una respuesta
+/// formal va adjunto, y el correo lo dice en un párrafo.
 /// </summary>
 internal sealed partial class SupportReplyEmailSender(IEmailChannel channel, ILogger<SupportReplyEmailSender> logger) : ISupportReplyEmail
 {
@@ -15,14 +16,19 @@ internal sealed partial class SupportReplyEmailSender(IEmailChannel channel, ILo
     [LoggerMessage(Level = LogLevel.Warning, Message = "Support reply email failed with {ExceptionType}; it is reported as send_failed.")]
     private static partial void LogSendFailed(ILogger logger, string exceptionType);
 
+    private const string PdfContentType = "application/pdf";
+
     public async Task<SupportChannelSendResult> SendAsync(SupportReplyEmail email, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(email);
         try
         {
+            var message = SupportReplyEmailTemplate.Render(new SupportReplyEmailInput(
+                email.ToAddress, email.TenantName, email.TicketNumber, email.TicketSubject, email.Text, email.Document is not null));
             await channel.SendAsync(
-                SupportReplyEmailTemplate.Render(new SupportReplyEmailInput(
-                    email.ToAddress, email.TenantName, email.TicketNumber, email.TicketSubject, email.Text)),
+                email.Document is { } document
+                    ? message with { Attachments = [new EmailAttachment(document.FileName, PdfContentType, document.Content)] }
+                    : message,
                 cancellationToken);
             return new SupportChannelSendResult.Sent(null, null);
         }

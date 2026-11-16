@@ -433,11 +433,112 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportReplyDocument", b =>
+                {
+                    b.Property<Guid>("ReplyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reply_id");
+
+                    b.Property<string>("Annexes")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("annexes");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)")
+                        .HasColumnName("decision");
+
+                    b.Property<Guid>("DocumentClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("document_client_id");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("NextStep")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("next_step");
+
+                    b.Property<DateOnly>("RespondedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("responded_on");
+
+                    b.Property<string>("Sha256Hex")
+                        .IsRequired()
+                        .HasColumnType("character(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<Guid>("SignerMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("signer_member_id");
+
+                    b.Property<string>("SignerName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("signer_name");
+
+                    b.Property<string>("SignerTitle")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("signer_title");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("storage_key");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.HasKey("ReplyId");
+
+                    b.HasIndex("SignerMemberId")
+                        .HasDatabaseName("IX_ticket_reply_documents_signer");
+
+                    b.HasIndex("TenantId", "TicketId")
+                        .HasDatabaseName("IX_ticket_reply_documents_tenant_ticket");
+
+                    b.ToTable("ticket_reply_documents", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_reply_documents_annexes", "jsonb_typeof(annexes) = 'array' AND jsonb_array_length(annexes) <= 10");
+
+                            t.HasCheckConstraint("CK_ticket_reply_documents_size", "size_bytes > 0");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTenantSettings", b =>
                 {
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<int>("AutoCloseBusinessDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(5)
+                        .HasColumnName("auto_close_business_days");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -447,11 +548,22 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("due_soon_business_days");
 
+                    b.Property<string>("FormalNextStep")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("formal_next_step");
+
                     b.Property<long>("NextTicketNumber")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
                         .HasDefaultValue(1L)
                         .HasColumnName("next_ticket_number");
+
+                    b.Property<bool>("SurveyEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("survey_enabled");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -468,6 +580,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_settings", "support", t =>
                         {
+                            t.HasCheckConstraint("CK_tenant_settings_auto_close", "auto_close_business_days BETWEEN 1 AND 30");
+
                             t.HasCheckConstraint("CK_tenant_settings_due_soon", "due_soon_business_days BETWEEN 0 AND 30");
                         });
                 });
@@ -668,6 +782,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_tickets_assignee");
 
                     b.HasIndex("TypeId");
+
+                    b.HasIndex("ResolvedAt", "Id")
+                        .HasDatabaseName("IX_tickets_resolved_auto_close")
+                        .HasFilter("status = 'Resolved'");
 
                     b.HasIndex("TenantId", "ClientRequestId")
                         .IsUnique()
@@ -1118,6 +1236,170 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketSurvey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("AnsweredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("answered_at");
+
+                    b.Property<string>("AnsweredVia")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("answered_via");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("Channel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("channel");
+
+                    b.Property<string>("Comment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("comment");
+
+                    b.Property<Guid?>("CommentMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("comment_message_id");
+
+                    b.Property<DateTimeOffset?>("CommentUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("comment_until");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<string>("PromptFailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("prompt_failure_code");
+
+                    b.Property<Guid?>("PromptMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("prompt_message_id");
+
+                    b.Property<DateTimeOffset?>("PromptSentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("prompt_sent_at");
+
+                    b.Property<string>("Rating")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("rating");
+
+                    b.Property<Guid?>("RatingMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("rating_message_id");
+
+                    b.Property<string>("ReasonCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("reason_code");
+
+                    b.Property<int>("ResolutionNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("resolution_number");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.Property<byte[]>("TokenHash")
+                        .HasColumnType("bytea")
+                        .HasColumnName("token_hash");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CommentMessageId")
+                        .HasDatabaseName("IX_ticket_surveys_comment_message")
+                        .HasFilter("comment_message_id IS NOT NULL");
+
+                    b.HasIndex("MessageId")
+                        .HasDatabaseName("IX_ticket_surveys_message")
+                        .HasFilter("message_id IS NOT NULL");
+
+                    b.HasIndex("NextAttemptAt")
+                        .HasDatabaseName("IX_ticket_surveys_pending")
+                        .HasFilter("status = 'Pending'");
+
+                    b.HasIndex("RatingMessageId")
+                        .HasDatabaseName("IX_ticket_surveys_rating_message")
+                        .HasFilter("rating_message_id IS NOT NULL");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ticket_surveys_token")
+                        .HasFilter("token_hash IS NOT NULL");
+
+                    b.HasIndex("AnsweredAt", "Id")
+                        .HasDatabaseName("IX_ticket_surveys_awaiting_comment")
+                        .HasFilter("answered_via = 'WhatsApp' AND rating IS NOT NULL AND comment IS NULL");
+
+                    b.HasIndex("SentAt", "Id")
+                        .HasDatabaseName("IX_ticket_surveys_awaiting_rating")
+                        .HasFilter("status = 'Sent' AND rating IS NULL");
+
+                    b.HasIndex("TenantId", "TicketId")
+                        .HasDatabaseName("IX_ticket_surveys_tenant_ticket");
+
+                    b.HasIndex("TicketId", "ResolutionNumber")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ticket_surveys_ticket_resolution");
+
+                    b.ToTable("ticket_surveys", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_surveys_answered_via", "answered_via IS NULL OR answered_via IN ('WhatsApp','Email','Portal')");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_channel", "channel IS NULL OR channel IN ('WhatsApp','Email','Portal')");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_comment", "comment IS NULL OR char_length(comment) <= 1000");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_rating", "rating IS NULL OR rating IN ('Good','Regular','Bad')");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_sent_channel", "status <> 'Sent' OR channel IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_ticket_surveys_status", "status IN ('Pending','Sent','Skipped','Failed')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketType", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1127,6 +1409,11 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<string>("FormalNextStep")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("formal_next_step");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
@@ -1234,6 +1521,15 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_unclassified_messages_resolution", "resolution IN ('Assigned','Dismissed','Reassigned')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportReplyDocument", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicketReply", null)
+                        .WithOne()
+                        .HasForeignKey("Modules.Support.Domain.SupportReplyDocument", "ReplyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Support.Domain.SupportTicket", b =>
@@ -1383,9 +1679,20 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportTicketSurvey", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicket", null)
+                        .WithMany("Surveys")
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTicket", b =>
                 {
                     b.Navigation("Events");
+
+                    b.Navigation("Surveys");
                 });
 
             modelBuilder.Entity("Modules.Support.Domain.SupportTicketNote", b =>

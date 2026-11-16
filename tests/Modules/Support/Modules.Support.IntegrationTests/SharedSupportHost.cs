@@ -23,7 +23,8 @@ public sealed class SharedSupportHost : IAsyncLifetime
     public async ValueTask InitializeAsync()
     {
         _database = await SupportApiHarness.StartDatabaseAsync();
-        _factory = new SupportApiHarness.QepApiFactory(_database.GetConnectionString());
+        // Fase 4b: la encuesta que pide cada resolución no la procesa nadie por detrás (SupportPersistenceTests la lee Pending).
+        _factory = new SupportApiHarness.QepApiFactory(_database.GetConnectionString(), SupportApiHarness.RemoveSurveyWorker);
     }
 
     public async ValueTask DisposeAsync()

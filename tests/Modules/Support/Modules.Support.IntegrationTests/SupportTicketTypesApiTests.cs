@@ -117,6 +117,86 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
         Assert.Equal(2L, (await TypeNamedAsync(client, tenant, "Queja formal")).GetProperty("version").GetInt64());
     }
 
+    // Fase 4b (H6): el «siguiente paso» del tipo pisa el del tenant. Nace en null en la siembra; el alta y la edición lo guardan
+    // recortado. En la edición, ausente o null lo conserva y "" lo borra, la misma regla que el PUT de ajustes: el frontend publicado
+    // no manda el campo y no debe borrarlo (revisión final). Un PUT sin cambios no sube la versión ni audita.
+    [Fact]
+    public async Task ATypeNextStepRoundTrips()
+    {
+        var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var queja = await TypeNamedAsync(client, tenant, "Queja");
+        var url = $"{SupportUrl(tenant)}/settings/ticket-types/{queja.GetProperty("id").GetGuid()}";
+
+        var created = await client.PostAsJsonAsync(
+            $"{SupportUrl(tenant)}/settings/ticket-types",
+            new
+            {
+                name = "Garantía",
+                termBusinessDays = 15,
+                termIsLegal = true,
+                requiresFormalResponse = true,
+                isPublished = true,
+                formalNextStep = "  Puedes acudir a la SIC.  ",
+            },
+            Ct);
+        var updated = await PutAsync(client, url, NextStepBody("Si no estás de acuerdo, escríbenos."), version: 1);
+        var keptWithoutField = await PutAsync(client, url, BodyWithoutNextStep(), version: 2);
+        var keptWithNull = await PutAsync(client, url, NextStepBody(null), version: 2);
+        var cleared = await PutAsync(client, url, NextStepBody(""), version: 2);
+
+        Assert.Equal(JsonValueKind.Null, queja.GetProperty("formalNextStep").ValueKind);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        Assert.Equal("Puedes acudir a la SIC.", (await JsonAsync(created)).GetProperty("formalNextStep").GetString());
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        Assert.Equal("Si no estás de acuerdo, escríbenos.", (await JsonAsync(updated)).GetProperty("formalNextStep").GetString());
+        Assert.Equal(HttpStatusCode.OK, keptWithoutField.StatusCode);
+        Assert.Equal("Si no estás de acuerdo, escríbenos.", (await JsonAsync(keptWithoutField)).GetProperty("formalNextStep").GetString());
+        Assert.Equal(2, (await JsonAsync(keptWithoutField)).GetProperty("version").GetInt64());
+        Assert.Equal(HttpStatusCode.OK, keptWithNull.StatusCode);
+        Assert.Equal("Si no estás de acuerdo, escríbenos.", (await JsonAsync(keptWithNull)).GetProperty("formalNextStep").GetString());
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await TypeNamedAsync(client, tenant, "Queja")).GetProperty("formalNextStep").ValueKind);
+        Assert.Equal(2, await CountAuditEntriesAsync(factory, SupportAuditActions.TicketTypeUpdated, queja.GetProperty("id").GetGuid().ToString()));
+    }
+
+    [Fact]
+    public async Task ANextStepOver2000Is422()
+    {
+        var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var queja = await TypeNamedAsync(client, tenant, "Queja");
+
+        var response = await PutAsync(
+            client,
+            $"{SupportUrl(tenant)}/settings/ticket-types/{queja.GetProperty("id").GetGuid()}",
+            NextStepBody(new string('a', 2001)),
+            version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Equal(["FormalNextStep"], await ErrorKeysAsync(response));
+    }
+
+    private static object BodyWithoutNextStep() => new
+    {
+        name = "Queja",
+        termBusinessDays = 15,
+        termIsLegal = true,
+        requiresFormalResponse = true,
+        isPublished = true,
+        isActive = true,
+    };
+
+    private static object NextStepBody(string? formalNextStep) => new
+    {
+        name = "Queja",
+        termBusinessDays = 15,
+        termIsLegal = true,
+        requiresFormalResponse = true,
+        isPublished = true,
+        isActive = true,
+        formalNextStep,
+    };
+
     [Fact]
     public async Task UpdatingATypeOfAnotherTenantIs404()
     {

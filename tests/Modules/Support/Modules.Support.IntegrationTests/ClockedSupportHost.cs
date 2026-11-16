@@ -43,6 +43,8 @@ public sealed class ClockedSupportHost : IAsyncLifetime
                 services.AddSingleton<ITenantClock>(Clock);
                 services.RemoveAll<IRealtimePublisher>();
                 services.AddSingleton<IRealtimePublisher>(Publisher);
+                // Fase 4b: la encuesta que pide cada resolución no la procesa nadie por detrás.
+                SupportApiHarness.RemoveSurveyWorker(services);
             });
     }
 

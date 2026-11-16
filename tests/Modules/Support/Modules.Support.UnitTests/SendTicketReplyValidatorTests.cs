@@ -79,4 +79,58 @@ public sealed class SendTicketReplyValidatorTests
         Assert.Equal(["Text"], Errors(upload with { Text = new string('a', SupportReplyAttachmentRules.CaptionMaxLength + 1) }));
         Assert.Empty(Errors(upload with { Text = new string('a', SupportReplyAttachmentRules.CaptionMaxLength) }));
     }
+
+    // ---- Fase 4b, Tarea 8: la respuesta formal (H1 a H4, H11) ----
+
+    private static SupportReplyRequest Formal(
+        string? decision = "Revisamos tu caso y te damos la razón.", string? signerTitle = "Coordinadora de servicio",
+        IReadOnlyList<string>? annexes = null) =>
+        Valid() with { Formal = new SupportFormalReplyRequest(decision, signerTitle, annexes ?? ["Factura de octubre"]) };
+
+    [Fact]
+    public void AValidFormalReplyPasses()
+    {
+        Assert.Empty(Errors(Formal()));
+        Assert.Empty(Errors(Formal(annexes: [])));
+        Assert.Empty(Errors(Formal() with { Formal = new SupportFormalReplyRequest("Decisión", "Gerente", null) }));
+        Assert.Empty(Errors(Formal(decision: "Primer punto.\nSegundo punto.\r\n\tTercero.")));
+        Assert.Empty(Errors(Formal() with { Channel = "Email" }));
+    }
+
+    [Fact]
+    public void AFormalReplyNeedsADecisionAndASignerTitle()
+    {
+        Assert.Equal(["Formal.Decision"], Errors(Formal(decision: null)));
+        Assert.Equal(["Formal.Decision"], Errors(Formal(decision: "   ")));
+        Assert.Equal(["Formal.Decision"], Errors(Formal(decision: "Decisión\u0007")));
+        Assert.Equal(["Formal.SignerTitle"], Errors(Formal(signerTitle: null)));
+        Assert.Equal(["Formal.SignerTitle"], Errors(Formal(signerTitle: " ")));
+        Assert.Equal(["Formal.SignerTitle"], Errors(Formal(signerTitle: "Gerente\nGeneral")));
+        Assert.Equal(["Formal.SignerTitle"], Errors(Formal(signerTitle: new string('a', 121))));
+        Assert.Empty(Errors(Formal(signerTitle: "  " + new string('a', 120) + "  ")));
+    }
+
+    [Fact]
+    public void TheDecisionIsAtMost20000()
+    {
+        Assert.Equal(["Formal.Decision"], Errors(Formal(decision: new string('a', 20_001))));
+        Assert.Empty(Errors(Formal(decision: new string('a', 20_000))));
+    }
+
+    // Revisión del Bloque A: un anexo vacío o largo es 422 en su campo, nunca un ArgumentException del dominio (500).
+    [Fact]
+    public void AtMostTenAnnexesOf200()
+    {
+        Assert.Equal(["Formal.Annexes"], Errors(Formal(annexes: Enumerable.Range(1, 11).Select(index => $"Anexo {index}").ToList())));
+        Assert.Empty(Errors(Formal(annexes: Enumerable.Range(1, 10).Select(index => $"Anexo {index}").ToList())));
+        Assert.Equal(["Formal.Annexes[1]"], Errors(Formal(annexes: ["Factura", "   "])));
+        Assert.Equal(["Formal.Annexes[0]"], Errors(Formal(annexes: [new string('a', 201)])));
+        Assert.Equal(["Formal.Annexes[0]"], Errors(Formal(annexes: ["Factura\nde octubre"])));
+        Assert.Empty(Errors(Formal(annexes: [" " + new string('a', 200) + " "])));
+    }
+
+    // H11: una respuesta lleva un solo documento.
+    [Fact]
+    public void FormalAndAnAttachmentAreExclusive() =>
+        Assert.Equal(["UploadId"], Errors(Formal() with { UploadId = Guid.CreateVersion7(), FileName = "contrato.pdf" }));
 }

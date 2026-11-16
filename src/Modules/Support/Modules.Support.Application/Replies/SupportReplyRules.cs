@@ -18,10 +18,11 @@ internal static class SupportReplyRules
     /// <summary>
     /// Plan E13: dentro de la ventana de 24 h, texto; fuera, en WhatsApp la plantilla «Aviso de respuesta» a la misma conversación si su
     /// conexión la tiene aprobada, y en Instagram nada (no tiene plantillas). Un contacto bloqueado no recibe nada, y por una conexión que
-    /// no está activa no sale nada (<c>connection_unavailable</c>). Quien llama ya comprobó el módulo de Mensajería.
+    /// no está activa no sale nada (<c>connection_unavailable</c>). Quien llama ya comprobó el módulo de Mensajería. Fase 4b (H10): con
+    /// <paramref name="formal"/>, fuera de la ventana la plantilla es «Respuesta formal», que se aprueba aparte (Q-1).
     /// </summary>
     public static async Task<SupportThreadAvailability> ThreadAsync(
-        ISupportReplyChannels channels, SupportTicket ticket, DateTimeOffset now, CancellationToken cancellationToken)
+        ISupportReplyChannels channels, SupportTicket ticket, DateTimeOffset now, CancellationToken cancellationToken, bool formal = false)
     {
         if (ticket.ConversationId is not { } conversationId)
         {
@@ -59,7 +60,10 @@ internal static class SupportReplyRules
                 null, SupportChannelReasons.WindowClosed, SupportErrorCodes.ReplyWindowClosed, thread.WindowClosesAt);
         }
 
-        return await channels.IsTemplateApprovedAsync(ticket.TenantId, thread.ConnectionId, cancellationToken)
+        var approved = formal
+            ? await channels.IsFormalTemplateApprovedAsync(ticket.TenantId, thread.ConnectionId, cancellationToken)
+            : await channels.IsTemplateApprovedAsync(ticket.TenantId, thread.ConnectionId, cancellationToken);
+        return approved
             ? new SupportThreadAvailability(
                 new SupportReplyRoute(SupportReplyDelivery.Template, conversationId, null, null), null, null, thread.WindowClosesAt)
             : new SupportThreadAvailability(
@@ -79,6 +83,8 @@ internal static class SupportReplyRules
         SupportChannelReasons.AttachmentUnavailable => SupportErrorCodes.ReplyAttachmentUnavailable,
         SupportChannelReasons.ConversationNotFound => SupportErrorCodes.ConversationNotFound,
         SupportChannelReasons.CustomerNotFound => SupportErrorCodes.CustomerNotFound,
+        // Revisión del Bloque B: el PDF de la respuesta formal no subió a Meta o no se guardó en R2, y no salió nada.
+        SupportChannelReasons.SendFailed => SupportErrorCodes.ReplySendFailed,
         // Un motivo nuevo de Mensajería que todavía no tiene código propio: genérico, nunca uno que mande a mirar otra cosa.
         _ => SupportErrorCodes.ReplyUnavailable,
     };

@@ -447,7 +447,10 @@ forma exacta los cierra el plan.
 - **Fuera de la ventana de 24 horas** de WhatsApp, la respuesta sale con la plantilla de aviso de
   respuesta (§8.5).
 - **Respuesta de fondo en PDF** (D3), generado con Typst en `qcode-pdf`. Contenido:
-  1. Membrete del tenant: logo, razón social, NIT, dirección y correo.
+  1. Membrete del tenant: logo, razón social, NIT, dirección y correo. *Corrección (fase 4b, Q-6):* el tenant no tiene razón social,
+     NIT, dirección ni correo (`Tenant.cs`); los tiene la empresa (`Company`). El membrete es el de la empresa que eligió la versión
+     del formulario del ticket o, sin ella, la del formulario vigente; sin ninguna, la respuesta formal responde
+     `422 support.reply.formal_organization_required`. El logo es el del tenant.
   2. Radicado, fecha de radicación y fecha de respuesta.
   3. Destinatario: nombre o razón social, documento, correo o dirección.
   4. Asunto y referencia («Respuesta a su reclamo SOP-000127 del …»).
@@ -455,14 +458,19 @@ forma exacta los cierra el plan.
   6. Análisis y decisión: el único texto libre, que escribe el asesor.
   7. Paso siguiente: qué puede hacer el solicitante si no está de acuerdo (por ejemplo, la SIC en
      consumo, tras la reclamación directa). Texto configurable por tenant.
-  8. Firma del responsable (nombre y cargo) y lista de anexos.
+  8. Firma del responsable (nombre y cargo) y lista de anexos. *Corrección (fase 4b, Q-7 y Q-8):* firma el **responsable del
+     ticket**, no quien envía; un miembro no tiene cargo, así que el cargo es un texto libre que se escribe al enviar. Sin responsable,
+     `422 support.reply.formal_signer_required`. Los anexos son sólo una lista de textos impresa: no viajan archivos.
 
-  El PDF se adjunta al canal de origen y queda descargable en la consulta por radicado.
-- **DECISIÓN PENDIENTE:** `qcode-pdf` identifica al cliente por el hash de la clave. Soporte
-  necesita su propia clave y sección de configuración (`Support:Pdf:*`) y no debe reutilizar
-  `Quotations:Pdf:ApiKey`, para no mezclar el tráfico en los logs. Su alta es del owner.
-- **DECISIÓN PENDIENTE:** el contenido del punto 7 depende de lo que el abogado indique por
-  tipo de ticket.
+  El PDF se adjunta al canal de origen y queda descargable en la consulta por radicado. *Corrección (fase 4b, Q-1 y Q-5):* por el
+  hilo de WhatsApp va como documento con el texto del canal de pie; fuera de la ventana, con la plantilla aparte «Respuesta formal»
+  (`qep_soporte_formal`), con el PDF de encabezado; por correo, adjunto. `IEmailChannel` no tenía adjuntos: la fase 4b los agregó. El
+  texto del canal (`text`) y el del PDF (`formal.decision`) son dos campos distintos.
+- **Resuelto (fase 4b, Q-13):** `qcode-pdf` identifica al cliente por el hash de la clave. Soporte
+  tiene su propia clave y sección de configuración (`Support:Pdf:*`) y no reutiliza
+  `Quotations:Pdf:ApiKey`. La alta de `SUPPORT_PDF_API_KEY` en `Backend-prod` es del owner.
+- **Resuelto (fase 4b, Q-14):** el texto del punto 7 lo carga cada tenant, en los ajustes y por tipo de ticket (el del tipo manda);
+  vacío, el PDF omite la sección.
 
 ### 8.4 Satisfacción (D5)
 
@@ -475,13 +483,18 @@ resolución**. Si el ticket se reabre y se vuelve a resolver, sale otra. La idem
 
 **Cierre automático** [coordinador]: un ticket `resuelto` pasa a `cerrado` solo a los **N días
 hábiles** sin respuesta del cliente (N configurable por tenant, por defecto 5), mediante un worker.
-Una respuesta del cliente vinculada antes de ese plazo sigue las reglas de §8.2.
+Una respuesta del cliente vinculada antes de ese plazo sigue las reglas de §8.2. *Corrección (fase 4b, owner 2026-11-16, Q-4):* como
+un entrante no reabre un ticket resuelto (P4), la cuenta de los N días vuelve a empezar con cada respuesta del cliente posterior a la
+resolución cuyo vínculo con el ticket está **ahora** vinculado o fijado; soltarla la saca y la fecha vuelve a la anterior. El toque y
+el comentario de la encuesta nunca cuentan. N va de 1 a 30 y el cierre automático no se apaga.
 
 **Por qué canal** [owner, D5; la forma concreta es del diseñador]:
 
 - WhatsApp: **plantilla aprobada por Meta**, la de encuesta de §8.5. Sin plantilla aprobada no se
   envía, y el ticket queda «sin encuesta», no fallido.
-- Instagram: mensaje con los mismos botones, dentro de la ventana de atención, si sigue abierta.
+- Instagram: ~~mensaje con los mismos botones, dentro de la ventana de atención, si sigue abierta.~~ *Corrección (fase 4b, owner
+  2026-11-16, Q-2):* nunca por Instagram. Un ticket de Instagram recibe el enlace por correo si tiene correo; si no, sólo la página de
+  consulta.
 - Correo: enlace a una página pública de calificación.
 - Formulario público: la calificación se ofrece en la página de consulta por radicado.
 - Anónimo: sólo por la página de consulta.
@@ -489,7 +502,10 @@ Una respuesta del cliente vinculada antes de ese plazo sigue las reglas de §8.2
 **Escala** [coordinador]: tres opciones, **Buena, Regular y Mala**, como botones de respuesta rápida,
 que funcionan en WhatsApp e Instagram. Después del botón, el cliente puede dejar un comentario libre
 en el mensaje siguiente; es opcional. En correo y en la página de consulta se ofrecen las mismas tres
-opciones.
+opciones. *Precisión (fase 4b, owner 2026-11-16, Q-11):* después del toque sale **un** mensaje libre que pide el comentario («Gracias.
+Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.»), una vez por encuesta, sin reintento ni recordatorio; el siguiente
+texto del cliente dentro de las 24 horas del toque es el comentario. La encuesta se responde hasta que el ticket se reabre, también
+después del cierre automático (Q-10).
 
 **DECISIÓN PENDIENTE (despliegue):** el texto de la plantilla y su categoría de Meta. Una plantilla
 aprobada no se edita: cambiarla es otra plantilla y otra aprobación.
@@ -503,7 +519,7 @@ sistema que ya existen:
 | Plantilla | Cuándo sale |
 | --- | --- |
 | Apertura de Soporte | Información del ticket (radicado, tipo, fecha límite, enlace de consulta y PIN) fuera de la ventana de 24 horas: ticket creado desde un hilo, ticket manual con canal WhatsApp sin hilo abierto (§8.3) y «Reenviar PIN» (§9.4). Lleva el PIN como variable. |
-| Aviso de respuesta | Respuesta del asesor fuera de la ventana de 24 horas. Si es respuesta formal, el PDF va como encabezado de documento. |
+| Aviso de respuesta | Respuesta del asesor fuera de la ventana de 24 horas. ~~Si es respuesta formal, el PDF va como encabezado de documento.~~ *Corrección (fase 4b, Q-1):* un encabezado de documento no puede ser opcional en una plantilla de Meta, así que la respuesta formal tiene su propia plantilla, «Respuesta formal» (`SupportFormalReply`, `qep_soporte_formal`), con el PDF de encabezado. |
 | Encuesta | Al pasar a `resuelto` (§8.4). |
 
 La información del ticket con el PIN sale por el canal del ticket: dentro de la ventana de 24 horas
@@ -773,7 +789,8 @@ Store (sólo una URL).
   leído por nombre.
 - **Reportes.** Soporte necesita sus propias cifras (por tipo, vencidos, tiempo de resolución,
   satisfacción). Si Reporting las lee por SQL crudo, hereda la advertencia de renombres: se amarra
-  con prueba.
+  con prueba. *Corrección (fase 4b, Q-3):* los reportes viven en Soporte (`GET /support/reports/summary`), calculados con sus propias
+  tablas: no hay SQL cruzado ni permisos de Reporting.
 - **Frontend** (`qep-frontend`). Pestaña en la ficha del contacto (`contact-sheet.tsx`), tira de
   ticket (equivalente a `deal-strip.tsx`), panel global del ticket, bandeja y detalle, ajustes del
   formulario y de los textos legales, y la página pública. La entrada «Soporte» del menú se gatea

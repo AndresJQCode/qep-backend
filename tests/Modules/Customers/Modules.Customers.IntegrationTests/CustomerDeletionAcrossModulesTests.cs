@@ -208,6 +208,19 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
             await services.GetRequiredService<Modules.Support.Application.ISupportUnitOfWork>().SaveChangesAsync(Ct);
         }
 
+        // Fase 4b, Tarea 12: la encuesta de ese ticket guarda ids de mensajes de la conversación que se va (la plantilla, el toque, el
+        // comentario y el mensaje que lo pidió). Se sueltan: los mensajes se borran con la conversación.
+        var surveyId = Guid.CreateVersion7();
+        await ExecuteAsync(
+            """
+            INSERT INTO support.ticket_surveys (id, tenant_id, ticket_id, resolution_number, status, channel, message_id, rating,
+                answered_at, answered_via, rating_message_id, comment, comment_message_id, prompt_message_id, prompt_sent_at, attempts,
+                next_attempt_at, created_at, updated_at)
+            VALUES (@id, @tenant, @ticket, 1, 'Sent', 'WhatsApp', gen_random_uuid(), 'Good', now(), 'WhatsApp', gen_random_uuid(),
+                'Muy amables.', gen_random_uuid(), gen_random_uuid(), now(), 0, now(), now(), now())
+            """,
+            ("id", surveyId), ("tenant", tenant), ("ticket", ticketId.Value));
+
         var deletion = await DeleteAsync(tenant, [customer]);
 
         Assert.Empty(deletion.Blockers);
@@ -228,6 +241,15 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
             "Sent|",
             await TextAsync(
                 "SELECT status || '|' || coalesce(message_id::text, '') FROM support.ticket_replies WHERE id = @id", ("id", replyId)));
+        Assert.Equal(
+            "Good|Muy amables.|t",
+            await TextAsync(
+                """
+                SELECT rating || '|' || comment || '|'
+                    || (message_id IS NULL AND rating_message_id IS NULL AND comment_message_id IS NULL AND prompt_message_id IS NULL)::text
+                FROM support.ticket_surveys WHERE id = @id
+                """,
+                ("id", surveyId)));
     }
 
     // P11: la audiencia nunca queda vacía (CK_campaigns_audience). Si el cliente era lo único, el id se queda.

@@ -172,7 +172,8 @@ internal static class InboundIngestion
         // el UPDATE de la conversación; la PK por message_id es la red por si aun así se repitiera. «Abrió» incluye la conversación recién
         // creada: nace Open, así que su estado «de antes» no la delata.
         var opened = conversation.Created || before.OldStatus == nameof(ConversationStatus.Resolved);
-        if (enqueueAutomation && ShouldEnqueue(message, before))
+        if (enqueueAutomation && ShouldEnqueue(message, before)
+            && !await IsSupportSurveyTapAsync(dbContext, tenantId, connectionId, message, cancellationToken))
         {
             // El corrimiento vive sólo en la cola, que es la única que ordena por created_at: correr también el mensaje o los eventos
             // movería timestamps que se ven en el hilo y en la auditoría.
@@ -233,6 +234,42 @@ internal static class InboundIngestion
         && (state.OldLastInboundAt is null || message.OccurredAt >= state.OldLastInboundAt)
         && message.Kind is MessageKind.Text or MessageKind.Interactive or MessageKind.Image or MessageKind.Document
             or MessageKind.Video or MessageKind.Audio or MessageKind.Unsupported;
+
+    /// <summary>
+    /// Owner, 2026-11-16: el toque de un botón de la encuesta de Soporte no despierta al bot. Es un <c>Interactive</c> que cita un saliente
+    /// mandado con una plantilla de tipo <c>SupportSurvey</c>: el mensaje no guarda el tipo, así que se une su <c>details.template</c>
+    /// (nombre e idioma, <see cref="Modules.Messaging.Application.TemplateDetailsJson"/>) con la fila de <c>message_templates</c> de la misma
+    /// conexión. El toque entra, cita y suma no leídos como cualquier entrante (Soporte lo lee del hilo); sólo no se encola. Va aparte de
+    /// <see cref="ShouldEnqueue"/> y después de él, para que la consulta corra sólo cuando el resto ya encolaría. Límites aceptados: el
+    /// comentario libre que sigue al toque sí despierta al bot, y si la fila de la plantilla se borró, el toque de una encuesta vieja se
+    /// encola como cualquier otro.
+    /// </summary>
+    private static async Task<bool> IsSupportSurveyTapAsync(
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, CancellationToken cancellationToken)
+    {
+        if (message.Kind is not MessageKind.Interactive || message.QuotedWamid is null)
+        {
+            return false;
+        }
+
+        var survey = nameof(MessageTemplateKind.SupportSurvey);
+        return await dbContext.Database.SqlQuery<bool>(
+            $"""
+            SELECT EXISTS (
+                SELECT 1
+                  FROM messaging.messages AS quoted
+                  JOIN messaging.message_templates AS template
+                    ON template.tenant_id = quoted.tenant_id
+                   AND template.connection_id = quoted.connection_id
+                   AND template.name = quoted.details -> 'template' ->> 'name'
+                   AND template.language = quoted.details -> 'template' ->> 'language'
+                 WHERE quoted.connection_id = {connectionId}
+                   AND quoted.tenant_id = {tenantId}
+                   AND quoted.wamid = {message.QuotedWamid}
+                   AND quoted.direction = 2
+                   AND template.kind = {survey}) AS "Value"
+            """).SingleAsync(cancellationToken);
+    }
 
     /// <summary>§8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El mensaje entra; el medio
     /// queda rendido de una vez, con el motivo, y el worker nunca lo reclama. Spec 2026-10-14 §6.2: un adjunto de Instagram no tiene

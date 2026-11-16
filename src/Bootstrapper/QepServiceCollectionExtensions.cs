@@ -533,6 +533,10 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<
                 Modules.Support.Application.GetTicketAttachmentDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
             Modules.Support.Application.GetTicketAttachmentDownloadHandler>();
+        // Fase 4b (H13): el PDF de una respuesta formal desde la consola.
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.GetReplyDocumentDownloadCommand, Modules.Support.Application.SupportDocumentLinkDto>,
+            Modules.Support.Application.GetReplyDocumentDownloadHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListSupportAssigneesQuery, Modules.Support.Application.SupportAssigneesDto>,
             Modules.Support.Application.ListSupportAssigneesHandler>();
@@ -563,6 +567,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
             Modules.Support.Application.ListTicketsHandler>();
+        // Fase 4b (H24): el reporte de Soporte.
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetSupportReportQuery, Modules.Support.Application.SupportReportDto>,
+            Modules.Support.Application.GetSupportReportHandler>();
         // Fase 2 (Mensajería).
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.CreateTicketFromConversationCommand, Modules.Support.Application.SupportTicketDetailDto>,
@@ -1196,6 +1204,12 @@ public static class QepServiceCollectionExtensions
         // Soporte fase 2: la plantilla «Aviso de respuesta», calcada de la de pedido sin encabezado.
         services.AddScoped<ICommandHandler<ProvisionSupportReplyTemplateCommand, ManagedTemplateDto>, ProvisionSupportReplyTemplateHandler>();
         services.AddScoped<IQueryHandler<GetSupportReplyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportReplyTemplateDraftHandler>();
+        // Soporte fase 4b: la plantilla «Respuesta formal», calcada de la de pedido con el PDF de encabezado.
+        services.AddScoped<ICommandHandler<ProvisionSupportFormalReplyTemplateCommand, ManagedTemplateDto>, ProvisionSupportFormalReplyTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetSupportFormalReplyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportFormalReplyTemplateDraftHandler>();
+        // Soporte fase 4b: la plantilla de la encuesta, con los tres botones fijos.
+        services.AddScoped<ICommandHandler<ProvisionSupportSurveyTemplateCommand, ManagedTemplateDto>, ProvisionSupportSurveyTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetSupportSurveyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportSurveyTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -1648,9 +1662,19 @@ public static class QepServiceCollectionExtensions
         // Notifications; Soporte sólo declara los puertos.
         services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();
         services.AddScoped<Modules.Support.Application.ISupportThreadFeed, SupportThreadFeed>();
+        services.AddScoped<Modules.Support.Application.ISupportSurveyFeed, SupportSurveyFeed>();
+        services.AddScoped<Modules.Support.Application.ISupportAutoCloseFeed, SupportAutoCloseFeed>();
         services.AddScoped<Modules.Support.Application.ISupportConversationEvents, SupportConversationEvents>();
         services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
         services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();
+        // Soporte fase 4b (H5 y H8): el membrete de la respuesta formal (Companies, Tenancy y Storage) y el PDF en el bucket privado,
+        // bajo support/ y sin regla de ciclo de vida.
+        services.AddScoped<Modules.Support.Application.ISupportLetterhead, SupportLetterhead>();
+        services.AddScoped<Modules.Support.Application.ISupportDocumentStorage, SupportDocumentStorage>();
+        // Tarea 8: arma el PDF de la respuesta formal (firma, membrete, «siguiente paso», generación y bucket) antes de crear la fila.
+        services.AddScoped<Modules.Support.Application.SupportFormalReplies>();
+        // Tarea 11 (H16): el correo de la encuesta con el enlace de calificación (Notifications).
+        services.AddScoped<Modules.Support.Application.ISupportSurveyEmail, SupportSurveyEmailSender>();
         // Soporte fase 3: el host del formulario público (plan F28 y F29).
         // Los orígenes del grupo público se validan al arrancar, como Cors:AllowedOrigins (plan F4).
         services.AddOptions<SupportPublicFormOptions>()
@@ -1676,6 +1700,20 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.LookupPublicTicketCommand, Modules.Support.Application.SupportPublicTicketDto>,
             Modules.Support.Application.LookupPublicTicketHandler>();
+        // Fase 4b (H19, H20): la verificación de la consulta, extraída para calificar por la consulta, y la encuesta por el enlace.
+        services.AddScoped<Modules.Support.Application.SupportPublicAccess>();
+        services.AddScoped<Modules.Support.Application.SupportPublicTicketView>();
+        services.AddScoped<Modules.Support.Application.SupportPublicSurveys>();
+        services.AddScoped<Modules.Support.Application.SupportSurveyAnswering>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.RatePublicTicketCommand, Modules.Support.Application.SupportPublicTicketDto>,
+            Modules.Support.Application.RatePublicTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.LookupPublicSurveyQuery, Modules.Support.Application.SupportPublicSurveyDto>,
+            Modules.Support.Application.LookupPublicSurveyHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AnswerPublicSurveyCommand, Modules.Support.Application.SupportPublicSurveyDto>,
+            Modules.Support.Application.AnswerPublicSurveyHandler>();
         // Los adjuntos del formulario (plan F30 a F37): el archivo va por la subida sin miembro de Storage.
         services.AddScoped<Modules.Support.Application.ISupportAttachmentStorage, SupportAttachmentStorage>();
         services.AddScoped<

@@ -151,6 +151,35 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
         Assert.Equal(WithoutTraceId(await JsonAsync(plainLookup)), WithoutTraceId(await JsonAsync(cookieLookup)));
     }
 
+    // Fase 4b, Tarea 13: las rutas de la encuesta son del grupo público. Con la autenticación real, una cookie de sesión de la consola no
+    // cambia nada (no la leen), y la defensa CSRF no las frena (exentas por prefijo): mismo status y mismo cuerpo con y sin cookie.
+    [Fact]
+    public async Task ThePublicSurveyRoutesIgnoreTheSessionCookieWithRealAuth()
+    {
+        var factory = await host.StartTestAsync();
+        var slug = await SeedPublishedTenantAsync(factory, NewTenantId());
+        using var client = VisitorClient(factory);
+        var bodies = new Dictionary<string, object>
+        {
+            ["/surveys/lookup"] = new { token = SupportSurveyTokens.NewToken() },
+            ["/surveys/answer"] = new { token = SupportSurveyTokens.NewToken(), rating = "Good" },
+            ["/tickets/rating"] = new { number = "SOP-000001", pin = "123456", turnstileToken = FakeSupportCaptcha.ValidToken, rating = "Good" },
+        };
+
+        foreach (var (path, body) in bodies)
+        {
+            var plain = await PostJsonAsync(client, PublicUrl(slug, path), body);
+            using var withCookie = new HttpRequestMessage(HttpMethod.Post, PublicUrl(slug, path)) { Content = JsonContent(body) };
+            withCookie.Headers.Add("Cookie", "qep_session=una-sesion-de-asesor");
+            var cookie = await client.SendAsync(withCookie, Ct);
+
+            Assert.NotEqual(HttpStatusCode.Forbidden, plain.StatusCode);
+            Assert.Equal(plain.StatusCode, cookie.StatusCode);
+            Assert.Equal(WithoutTraceId(await JsonAsync(plain)), WithoutTraceId(await JsonAsync(cookie)));
+            Assert.Equal("no-store", cookie.Headers.CacheControl?.ToString());
+        }
+    }
+
     // Review Focus 3: el origen de la página recibe Access-Control-Allow-Origin y nunca Allow-Credentials.
     [Fact]
     public async Task ThePublicPreflightAllowsTheSupportOriginWithoutCredentials()
@@ -237,6 +266,32 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
 
         Assert.Equal(HttpStatusCode.TooManyRequests, (await PostJsonAsync(first, url, LookupBody)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await PostJsonAsync(second, url, LookupBody)).StatusCode);
+    }
+
+    // Fase 4b (revisión del bloque D): calificar por la consulta y por el enlace usan el mismo limitador que consultar: la undécima por
+    // IP es 429, en cada una de las tres rutas.
+    [Theory]
+    [InlineData("/tickets/rating")]
+    [InlineData("/surveys/lookup")]
+    [InlineData("/surveys/answer")]
+    public async Task TheSurveyRoutesUseTheLookupLimiter(string path)
+    {
+        var factory = await host.StartTestAsync();
+        using var client = VisitorClient(factory);
+        var url = PublicUrl("no-existe-este-slug", path);
+        object body = path == "/tickets/rating"
+            ? new { number = "SOP-000001", pin = "123456", turnstileToken = FakeSupportCaptcha.ValidToken, rating = "Good" }
+            : new { token = SupportSurveyTokens.NewToken(), rating = "Good" };
+
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, (await PostJsonAsync(client, url, body)).StatusCode);
+        }
+
+        var limited = await PostJsonAsync(client, url, body);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.Equal("no-store", limited.Headers.CacheControl?.ToString());
     }
 
     private static async Task SuspendAsync(QepApiFactory factory, string slug)

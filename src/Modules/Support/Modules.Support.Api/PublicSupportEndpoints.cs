@@ -96,6 +96,39 @@ public static class PublicSupportEndpoints
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Fase 4b (H20): calificar desde la consulta, con la misma verificación y el mismo limitador que consultar.
+        group.MapPost("/tickets/rating", RateAsync)
+            .RequireRateLimiting(lookupPolicy)
+            .Accepts<SupportPublicRatingRequest>("application/json")
+            .Produces<SupportPublicTicketDto>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
+        // Fase 4b (H19, Q-12): el enlace del correo. Sin Turnstile; el token va en el cuerpo, nunca en la ruta, con el limitador de la
+        // consulta.
+        group.MapPost("/surveys/lookup", LookupSurveyAsync)
+            .RequireRateLimiting(lookupPolicy)
+            .Accepts<SupportPublicSurveyTokenRequest>("application/json")
+            .Produces<SupportPublicSurveyDto>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapPost("/surveys/answer", AnswerSurveyAsync)
+            .RequireRateLimiting(lookupPolicy)
+            .Accepts<SupportPublicSurveyAnswerRequest>("application/json")
+            .Produces<SupportPublicSurveyDto>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         group.MapPost("/tickets/resend-pin", ResendPinAsync)
             .RequireRateLimiting(submitPolicy)
             .Accepts<SupportPublicResendPinRequest>("application/json")
@@ -211,6 +244,48 @@ public static class PublicSupportEndpoints
         return Results.Ok(await dispatcher.SendAsync(
             new LookupPublicTicketCommand(tenantSlug, VisitorIp(httpContext), body.Number, body.Pin, body.TurnstileToken),
             cancellationToken));
+    }
+
+    // Fase 4b (H20): el PIN viaja en el cuerpo, como en la consulta.
+    private static async Task<IResult> RateAsync(
+        string tenantSlug, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<SupportPublicRatingRequest>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        return Results.Ok(await dispatcher.SendAsync(
+            new RatePublicTicketCommand(
+                tenantSlug, VisitorIp(httpContext), body.Number, body.Pin, body.TurnstileToken, body.Rating, body.Comment),
+            cancellationToken));
+    }
+
+    // Fase 4b (H19): el token en el cuerpo, nunca en la ruta (no queda en los logs de acceso).
+    private static async Task<IResult> LookupSurveyAsync(
+        string tenantSlug, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<SupportPublicSurveyTokenRequest>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        return Results.Ok(await dispatcher.QueryAsync(new LookupPublicSurveyQuery(tenantSlug, body.Token), cancellationToken));
+    }
+
+    private static async Task<IResult> AnswerSurveyAsync(
+        string tenantSlug, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<SupportPublicSurveyAnswerRequest>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        return Results.Ok(await dispatcher.SendAsync(
+            new AnswerPublicSurveyCommand(tenantSlug, body.Token, body.Rating, body.Comment), cancellationToken));
     }
 
     // Siempre 202 vacío (plan F10, Review Focus 4): la respuesta no dice si el radicado existe ni si salió algo.

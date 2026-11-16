@@ -10,6 +10,17 @@ public interface ISupportTicketRepository
     /// <summary>La traza del ticket por <c>Ordinal</c>.</summary>
     Task<IReadOnlyList<SupportTicketEvent>> ListEventsAsync(Guid tenantId, SupportTicketId id, CancellationToken cancellationToken);
 
+    /// <summary>Fase 4b (H15): las encuestas del ticket, por número de resolución. Sin tracking: el worker las escribe por su
+    /// repositorio.</summary>
+    Task<IReadOnlyList<SupportTicketSurvey>> ListSurveysAsync(Guid tenantId, SupportTicketId id, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4b (H20): la encuesta de la última resolución del ticket, sin tracking; null si nunca se resolvió.</summary>
+    Task<SupportTicketSurvey?> FindLatestSurveyAsync(Guid tenantId, SupportTicketId id, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4b (H19): la encuesta del token, por el hash (<c>UX_ticket_surveys_token</c>) y filtrada por el tenant del slug, sin
+    /// tracking.</summary>
+    Task<SupportTicketSurvey?> FindSurveyByTokenHashAsync(Guid tenantId, byte[] tokenHash, CancellationToken cancellationToken);
+
     Task<SupportTicketPage> ListAsync(SupportTicketFilter filter, CancellationToken cancellationToken);
 
     /// <summary>Los totales del tenant entero. <paramref name="dueSoonLimit"/> es el último vencimiento que cuenta como «por

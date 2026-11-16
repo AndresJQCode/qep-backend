@@ -37,4 +37,20 @@ public sealed class SupportReplyEmailTemplateTests
         Assert.Contains("SOP-000127", message.TextBody, StringComparison.Ordinal);
         Assert.Contains("Verde & Cia", message.TextBody, StringComparison.Ordinal);
     }
+
+    /// <summary>Soporte fase 4b (H10): la respuesta formal por correo avisa que el PDF va adjunto; una respuesta normal no lo dice.</summary>
+    [Fact]
+    public void AFormalReplyMentionsTheAttachedPdf()
+    {
+        var input = new SupportReplyEmailInput("ana@example.com", "Verde", "SOP-000127", "Factura", "Ya revisamos tu caso.");
+
+        var formal = SupportReplyEmailTemplate.Render(input with { HasDocument = true });
+        var plain = SupportReplyEmailTemplate.Render(input);
+
+        Assert.Contains("Adjuntamos la respuesta formal de tu caso en PDF.", formal.TextBody, StringComparison.Ordinal);
+        Assert.Contains("<p>Adjuntamos la respuesta formal de tu caso en PDF.</p>", formal.HtmlBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("Adjuntamos", plain.TextBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("Adjuntamos", plain.HtmlBody, StringComparison.Ordinal);
+        Assert.Null(formal.Attachments);
+    }
 }

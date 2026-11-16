@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Modules.Storage.Application;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using Testcontainers.PostgreSql;
@@ -16,6 +18,9 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset Since = new(2026, 11, 13, 15, 0, 0, TimeSpan.Zero);
 
+    // Fase 4b (H8): el bucket privado en memoria, para el almacén de documentos. Ninguna otra prueba de la clase toca Storage.
+    private readonly InMemorySupportObjectStorage _storage = new();
+
     private PostgreSqlContainer? _database;
     private QepApiFactory? _factory;
 
@@ -23,7 +28,11 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public async ValueTask InitializeAsync() => (_database, _factory) = await OpenOwnHostAsync();
+    public async ValueTask InitializeAsync() => (_database, _factory) = await OpenOwnHostAsync(services =>
+    {
+        services.RemoveAll<IObjectStorage>();
+        services.AddSingleton<IObjectStorage>(_storage);
+    });
 
     public async ValueTask DisposeAsync()
     {
@@ -273,12 +282,45 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
         var inactive = await directory.FindAsync(tenant, off, Ct);
         var options = await directory.ListActiveAsync(tenant, Ct);
 
-        Assert.Equal(new SupportOrganizationRef(verde, "Verde S.A.S.", "NIT", "900123456", true), found);
-        Assert.Equal(new SupportOrganizationRef(off, "Apagada S.A.", "NIT", "700111222", false), inactive);
+        // Fase 4b (H5): la dirección, el correo, el teléfono y la ciudad van al membrete. La siembra no trae contacto, y la ciudad de
+        // una empresa colombiana sale de Geography por su id.
+        Assert.NotNull(found);
+        Assert.Equal((verde, "Verde S.A.S.", "NIT", "900123456", true), (found.Id, found.Name, found.DocumentTypeCode, found.DocumentNumber, found.IsActive));
+        Assert.Equal((null, null, null), (found.Address, found.Email, found.Phone));
+        Assert.False(string.IsNullOrWhiteSpace(found.CityName));
+        Assert.NotNull(inactive);
+        Assert.Equal((off, "Apagada S.A.", "NIT", "700111222", false), (inactive.Id, inactive.Name, inactive.DocumentTypeCode, inactive.DocumentNumber, inactive.IsActive));
         Assert.Null(await directory.FindAsync(tenant, foreign, Ct));
         Assert.Null(await directory.FindAsync(tenant, Guid.CreateVersion7(), Ct));
         Assert.Equal([azul, verde], options.Select(option => option.Id));
         Assert.All(options, option => Assert.True(option.IsActive));
+    }
+
+    // Fase 4b (H8): el PDF de la respuesta formal va al bucket privado bajo support/ (sin regla de ciclo de vida: 10 años de
+    // retención), con una clave nueva por documento, y se lee de vuelta tal cual. La descarga firmada lleva la vida que pide quien llama.
+    [Fact]
+    public async Task TheDocumentStorageSavesUnderTheSupportPrefixAndReadsBack()
+    {
+        var tenant = Guid.CreateVersion7();
+        byte[] content = [0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37];
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var storage = scope.ServiceProvider.GetRequiredService<ISupportDocumentStorage>();
+        var key = await storage.SaveAsync(tenant, content, Ct);
+        var other = await storage.SaveAsync(tenant, content, Ct);
+        var read = await storage.ReadAsync(key, Ct);
+        var url = await storage.CreateDownloadUrlAsync(key, "Respuesta-SOP-000001.pdf", TimeSpan.FromMinutes(5), Ct);
+
+        Assert.Matches($@"^support/tenants/{tenant:N}/replies/\d{{4}}/\d{{2}}/[0-9a-f]{{32}}\.pdf$", key);
+        Assert.NotEqual(key, other);
+        Assert.Equal(content, read);
+        Assert.Contains(key, url.AbsoluteUri, StringComparison.Ordinal);
+        Assert.Equal(TimeSpan.FromMinutes(5), _storage.LastDownloadExpiry);
+
+        await storage.DeleteAsync(key, Ct);
+        // Best effort: borrar lo que ya no existe no lanza.
+        await storage.DeleteAsync(key, Ct);
+        Assert.Null(await _storage.StatAsync(key, Ct));
     }
 
     private async Task<Guid> SeedConnectionAsync(Guid tenant, string status)
@@ -292,6 +334,207 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
             """,
             ("id", id), ("tenant", tenant), ("name", $"Conexión {status} {id:N}"), ("status", status), ("member", Guid.CreateVersion7()));
         return id;
+    }
+
+    // Fase 4b, Tarea 12 (Review Focus 6): el feed de la encuesta lee messaging.messages por nombre (reply_to_message_id, kind, text,
+    // direction, imported, occurred_at). Contra el esquema migrado: el toque que cita la encuesta mandada, y después el primer texto del
+    // contacto como comentario. Un saliente, un importado o un texto de otra conversación no cuentan.
+    [Fact]
+    public async Task TheSurveyFeedRunsAgainstTheMigratedSchema()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var conversation = await SeedConversationAsync(Factory, tenant);
+        var otherConversation = await SeedConversationAsync(Factory, tenant, waId: "573009998877");
+        var ticket = await SupportTicketSeed.SaveConversationTicketAsync(Factory, tenant, conversation, Since);
+        await SupportTicketSeed.UpdateTicketAsync(
+            Factory, tenant, ticket.Id,
+            item => item.ChangeStatus(SupportTicketStatus.Resolved, null, DateTimeOffset.UtcNow.AddMinutes(-10), SupportTicketSeed.Clock));
+        var surveyMessage = await SeedMessageAsync(
+            Factory, tenant, conversation, DateTimeOffset.UtcNow.AddMinutes(-5), direction: Outbound, text: "¿Cómo te atendimos?");
+        await ExecuteAsync(
+            Factory,
+            """
+            UPDATE support.ticket_surveys
+            SET status = 'Sent', channel = 'WhatsApp', message_id = @message, sent_at = now() - interval '5 minutes'
+            WHERE ticket_id = @ticket
+            """,
+            ("message", surveyMessage),
+            ("ticket", ticket.Id.Value));
+        var surveyId = Guid.Parse(
+            (await TextAsync(Factory, "SELECT id::text FROM support.ticket_surveys WHERE ticket_id = @ticket", ("ticket", ticket.Id.Value)))!,
+            System.Globalization.CultureInfo.InvariantCulture);
+        var tappedAt = DateTimeOffset.UtcNow.AddMinutes(-4);
+        await SeedMessageAsync(
+            Factory, tenant, conversation, tappedAt.AddSeconds(-1), imported: true, text: "Mala", kind: InteractiveKind, replyTo: surveyMessage);
+        await SeedMessageAsync(
+            Factory, tenant, conversation, tappedAt.AddSeconds(-1), direction: Outbound, text: "Mala", kind: InteractiveKind,
+            replyTo: surveyMessage);
+        var tap = await SeedMessageAsync(
+            Factory, tenant, conversation, tappedAt, text: "Buena", kind: InteractiveKind, replyTo: surveyMessage);
+
+        await using (var scope = Factory.Services.CreateAsyncScope())
+        {
+            var taps = await scope.ServiceProvider.GetRequiredService<ISupportSurveyFeed>().ListTapsAsync(50, Ct);
+
+            var found = Assert.Single(taps);
+            Assert.Equal((tenant, surveyId, tap, "Buena"), (found.TenantId, found.SurveyId, found.MessageId, found.Text));
+            Assert.True((found.OccurredAt - tappedAt).Duration() < TimeSpan.FromMilliseconds(1));
+        }
+
+        await ExecuteAsync(
+            Factory,
+            """
+            UPDATE support.ticket_surveys
+            SET rating = 'Good', answered_via = 'WhatsApp', answered_at = now(), rating_message_id = @tap,
+                comment_until = now() + interval '1 day'
+            WHERE id = @id
+            """,
+            ("tap", tap),
+            ("id", surveyId));
+        await SeedMessageAsync(Factory, tenant, otherConversation, tappedAt.AddSeconds(30), text: "De otra conversación");
+        await SeedMessageAsync(Factory, tenant, conversation, tappedAt.AddSeconds(40), direction: Outbound, text: "Gracias.");
+        await SeedMessageAsync(Factory, tenant, conversation, tappedAt.AddSeconds(45), imported: true, text: "Importado");
+        var comment = await SeedMessageAsync(Factory, tenant, conversation, tappedAt.AddMinutes(1), text: "Muy amables.");
+        await SeedMessageAsync(Factory, tenant, conversation, tappedAt.AddMinutes(2), text: "Otra cosa.");
+
+        await using (var scope = Factory.Services.CreateAsyncScope())
+        {
+            var feed = scope.ServiceProvider.GetRequiredService<ISupportSurveyFeed>();
+
+            Assert.Empty(await feed.ListTapsAsync(50, Ct));
+            var found = Assert.Single(await feed.ListCommentsAsync(50, Ct));
+            Assert.Equal((tenant, surveyId, comment, "Muy amables."), (found.TenantId, found.SurveyId, found.MessageId, found.Text));
+            Assert.True((found.OccurredAt - tappedAt.AddMinutes(1)).Duration() < TimeSpan.FromMilliseconds(1));
+        }
+    }
+
+    // Fase 4b, Tarea 14 (Review Focus 6): el feed del cierre automático lee support.ticket_messages, support.ticket_surveys y
+    // messaging.messages por nombre. Contra el esquema migrado: cuenta sólo el entrante en vivo vinculado (Linked o Pinned) después de la
+    // resolución; no un vínculo soltado, un importado, un saliente ni el toque de la encuesta.
+    [Fact]
+    public async Task TheAutoCloseFeedRunsAgainstTheMigratedSchema()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var conversation = await SeedConversationAsync(Factory, tenant);
+        var ticket = await SupportTicketSeed.SaveConversationTicketAsync(Factory, tenant, conversation, Since);
+        var resolvedAt = Since.AddHours(1);
+        await SupportTicketSeed.UpdateTicketAsync(
+            Factory, tenant, ticket.Id, item => item.ChangeStatus(SupportTicketStatus.Resolved, null, resolvedAt, SupportTicketSeed.Clock));
+        var surveyMessage = await SeedMessageAsync(Factory, tenant, conversation, resolvedAt.AddMinutes(5), direction: Outbound, text: "Encuesta");
+        await ExecuteAsync(
+            Factory,
+            "UPDATE support.ticket_surveys SET status = 'Sent', channel = 'WhatsApp', message_id = @message, sent_at = @at WHERE ticket_id = @id",
+            ("message", surveyMessage), ("at", resolvedAt.AddMinutes(5)), ("id", ticket.Id.Value));
+        var reply = Since.AddDays(2);
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddMinutes(30), "Linked");
+        await LinkAsync(tenant, ticket.Id.Value, conversation, reply, "Pinned");
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddDays(3), "Released");
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddDays(4), "Linked", imported: true);
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddDays(4), "Linked", direction: Outbound);
+        await LinkAsync(tenant, ticket.Id.Value, conversation, Since.AddDays(5), "Linked", kind: InteractiveKind, replyTo: surveyMessage);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var feed = scope.ServiceProvider.GetRequiredService<ISupportAutoCloseFeed>();
+        var candidate = Assert.Single(await feed.ListCandidatesAsync(50, null, Ct));
+        var last = await feed.LastCustomerReplyAsync(tenant, ticket.Id.Value, resolvedAt, Ct);
+
+        Assert.Equal((tenant, ticket.Id.Value), (candidate.TenantId, candidate.TicketId));
+        Assert.True((candidate.ResolvedAt - resolvedAt).Duration() < TimeSpan.FromMilliseconds(1));
+        Assert.True((candidate.LastCustomerReplyAt!.Value - reply).Duration() < TimeSpan.FromMilliseconds(1));
+        Assert.True((last!.Value - reply).Duration() < TimeSpan.FromMilliseconds(1));
+        Assert.Empty(await feed.ListCandidatesAsync(50, candidate, Ct));
+    }
+
+    // Revisión del bloque D: un toque cuyo texto no es uno de los tres botones nunca califica, así que no vuelve a salir en cada tick ni
+    // le quita el lugar a los demás: con un lote de uno, sale el toque válido de la encuesta mandada después.
+    [Fact]
+    public async Task AnUnrecognisedTapDoesNotTakeTheBatch()
+    {
+        var tenant = await NewSeededTenantAsync();
+        var (_, unknownConversation, unknownMessage) = await SentWhatsAppSurveyAsync(tenant, "573001110000", DateTimeOffset.UtcNow.AddMinutes(-30));
+        var (validSurvey, validConversation, validMessage) = await SentWhatsAppSurveyAsync(tenant, "573002220000", DateTimeOffset.UtcNow.AddMinutes(-20));
+        foreach (var text in new[] { "Excelente", "Hola", "👍" })
+        {
+            await SeedMessageAsync(
+                Factory, tenant, unknownConversation, DateTimeOffset.UtcNow.AddMinutes(-10), text: text, kind: InteractiveKind,
+                replyTo: unknownMessage);
+        }
+
+        var valid = await SeedMessageAsync(
+            Factory, tenant, validConversation, DateTimeOffset.UtcNow.AddMinutes(-5), text: " regular ", kind: InteractiveKind,
+            replyTo: validMessage);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var tap = Assert.Single(await scope.ServiceProvider.GetRequiredService<ISupportSurveyFeed>().ListTapsAsync(1, Ct));
+
+        Assert.Equal((validSurvey, valid), (tap.SurveyId, tap.MessageId));
+    }
+
+    // Revisión del bloque D: los recorridos del cierre automático y del feed de la encuesta tienen su índice parcial, con el mismo
+    // predicado que la consulta (si el filtro de la consulta deja de implicarlo, Postgres recorre la tabla sin error).
+    [Fact]
+    public async Task TheAutoCloseAndSurveyScansHaveTheirPartialIndexes()
+    {
+        var indexes = await TextAsync(
+            Factory,
+            """
+            SELECT string_agg(indexname || ' ' || indexdef, '|' ORDER BY indexname) FROM pg_indexes
+            WHERE schemaname = 'support' AND indexname IN ('IX_tickets_resolved_auto_close', 'IX_ticket_surveys_awaiting_rating',
+                'IX_ticket_surveys_awaiting_comment', 'IX_ticket_surveys_rating_message', 'IX_ticket_surveys_comment_message')
+            """);
+
+        var lines = indexes!.Split('|');
+        Assert.Equal(5, lines.Length);
+        Assert.Contains(lines, line => line.StartsWith("IX_tickets_resolved_auto_close ", StringComparison.Ordinal)
+            && line.Contains("(resolved_at, id) WHERE (status = 'Resolved'", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.StartsWith("IX_ticket_surveys_awaiting_rating ", StringComparison.Ordinal)
+            && line.Contains("(sent_at, id) WHERE", StringComparison.Ordinal) && line.Contains("rating IS NULL", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.StartsWith("IX_ticket_surveys_awaiting_comment ", StringComparison.Ordinal)
+            && line.Contains("(answered_at, id) WHERE", StringComparison.Ordinal) && line.Contains("comment IS NULL", StringComparison.Ordinal));
+    }
+
+    // Un ticket de una conversación nueva, resuelto, con la encuesta mandada por WhatsApp en sentAt.
+    private async Task<(Guid SurveyId, Guid Conversation, Guid SurveyMessage)> SentWhatsAppSurveyAsync(
+        Guid tenant, string waId, DateTimeOffset sentAt)
+    {
+        var conversation = await SeedConversationAsync(Factory, tenant, waId: waId);
+        var ticket = await SupportTicketSeed.SaveConversationTicketAsync(Factory, tenant, conversation, Since);
+        await SupportTicketSeed.UpdateTicketAsync(
+            Factory, tenant, ticket.Id,
+            item => item.ChangeStatus(SupportTicketStatus.Resolved, null, sentAt.AddMinutes(-1), SupportTicketSeed.Clock));
+        var message = await SeedMessageAsync(Factory, tenant, conversation, sentAt, direction: Outbound, text: "Encuesta");
+        await ExecuteAsync(
+            Factory,
+            "UPDATE support.ticket_surveys SET status = 'Sent', channel = 'WhatsApp', message_id = @message, sent_at = @at WHERE ticket_id = @id",
+            ("message", message), ("at", sentAt), ("id", ticket.Id.Value));
+        var survey = Guid.Parse(
+            (await TextAsync(Factory, "SELECT id::text FROM support.ticket_surveys WHERE ticket_id = @id", ("id", ticket.Id.Value)))!,
+            System.Globalization.CultureInfo.InvariantCulture);
+        return (survey, conversation, message);
+    }
+
+    // Un mensaje de la conversación vinculado al ticket en el estado pedido, como lo dejaría el seguimiento del hilo.
+    private async Task LinkAsync(
+        Guid tenant,
+        Guid ticketId,
+        Guid conversation,
+        DateTimeOffset occurredAt,
+        string state,
+        bool imported = false,
+        short direction = Inbound,
+        short kind = TextKind,
+        Guid? replyTo = null)
+    {
+        var message = await SeedMessageAsync(
+            Factory, tenant, conversation, occurredAt, direction: direction, imported: imported, kind: kind, replyTo: replyTo);
+        await ExecuteAsync(
+            Factory,
+            """
+            INSERT INTO support.ticket_messages (id, tenant_id, ticket_id, conversation_id, message_id, state, occurred_at, created_at, updated_at)
+            VALUES (gen_random_uuid(), @tenant, @ticket, @conversation, @message, @state, @occurred, now(), now())
+            """,
+            ("tenant", tenant), ("ticket", ticketId), ("conversation", conversation), ("message", message), ("state", state),
+            ("occurred", occurredAt));
     }
 
     private async Task<Guid> NewSeededTenantAsync()

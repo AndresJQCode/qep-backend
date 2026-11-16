@@ -183,6 +183,8 @@ public sealed record SupportPublicResendPinRequest(string? Number, string? Turns
 /// <c>TermBusinessDays</c> es el término vigente del ticket: la foto del tipo (spec 2026-11-15 §9.1, plan L26) más los días de la
 /// prórroga, y <c>TermExtended</c> dice si hubo prórroga (owner decision S6, D-11), para que el término cuadre con <c>DueOn</c>, que ya
 /// la incluye. <c>TermBusinessDays</c> null = el tipo no tiene término.
+/// Fase 4b (H20): <c>Survey</c> es la encuesta de la última resolución, para que la página pinte «Califica tu atención» sin conocer los
+/// estados de la encuesta; null si el ticket nunca se resolvió.
 /// </summary>
 public sealed record SupportPublicTicketDto(
     string Number,
@@ -194,8 +196,48 @@ public sealed record SupportPublicTicketDto(
     bool TermIsLegal,
     int? TermBusinessDays,
     bool TermExtended,
-    IReadOnlyList<SupportPublicReplyDto> Replies);
+    IReadOnlyList<SupportPublicReplyDto> Replies,
+    SupportPublicSurveyStateDto? Survey = null);
+
+/// <summary>Fase 4b (H20, H21): la encuesta de la última resolución en la consulta. <see cref="CanRate"/> ya resuelve todas las reglas
+/// (procesada, no apagada, sin calificar, el ticket Resuelto o Cerrado y sin reabrir): la página no las repite. <see cref="Rating"/> es la
+/// calificación que quedó (<c>Good</c>, <c>Regular</c>, <c>Bad</c>) o null. <see cref="Options"/> viaja completa para que la página no
+/// conozca el enum.</summary>
+public sealed record SupportPublicSurveyStateDto(bool CanRate, string? Rating, IReadOnlyList<string> Options);
+
+/// <summary>Fase 4b (H19): lo que la página <c>/calificar</c> necesita para dibujarse sola desde el token del correo: el nombre, el logo
+/// y el color del tenant (como <see cref="SupportPublicConsultDto"/>, porque la página no pasa por la consulta), el radicado y el tipo del
+/// ticket, y el estado de la encuesta. Nada más del expediente.</summary>
+public sealed record SupportPublicSurveyDto(
+    string TenantName,
+    string? LogoUrl,
+    string? AccentColor,
+    string Number,
+    string TypeName,
+    bool CanRate,
+    string? Rating,
+    IReadOnlyList<string> Options);
+
+/// <summary>Fase 4b (H19): el token del enlace del correo, en el cuerpo y nunca en la ruta (no queda en los logs de acceso).</summary>
+public sealed record SupportPublicSurveyTokenRequest(string? Token);
+
+/// <summary>Fase 4b (H19): calificar por el enlace del correo. <c>Rating</c> es <c>Good</c>, <c>Regular</c> o <c>Bad</c>; el comentario
+/// es opcional.</summary>
+public sealed record SupportPublicSurveyAnswerRequest(string? Token, string? Rating, string? Comment);
+
+/// <summary>Fase 4b (H20): calificar por la página de consulta, con la misma verificación que la consulta (radicado, PIN y
+/// Turnstile).</summary>
+public sealed record SupportPublicRatingRequest(
+    string? Number, string? Pin, string? TurnstileToken, string? Rating, string? Comment);
+
+/// <summary>Las tres calificaciones, en el orden de la página, por nombre.</summary>
+public static class SupportPublicSurveyOptions
+{
+    public static IReadOnlyList<string> All { get; } = Enum.GetNames<Modules.Support.Domain.SupportSurveyRating>();
+}
 
 /// <summary>Una respuesta que salió: su texto, cuándo y por qué canal (<c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>,
-/// <c>Portal</c>).</summary>
-public sealed record SupportPublicReplyDto(string Text, DateTimeOffset SentAt, string Channel);
+/// <c>Portal</c>). Fase 4b (H13): una respuesta formal trae la URL firmada de su PDF (10 minutos) y el nombre del archivo; sin documento,
+/// los dos en null. Sólo los trae la consulta con el PIN: no hay otra ruta pública para bajarlo.</summary>
+public sealed record SupportPublicReplyDto(
+    string Text, DateTimeOffset SentAt, string Channel, string? DocumentUrl = null, string? DocumentFileName = null);

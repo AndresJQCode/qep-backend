@@ -70,6 +70,14 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "The ticket trace changed while the update was being committed.",
                 exception);
         }
+        // Fase 4b (H15): dos resoluciones del mismo ciclo. La versión del ticket ya las frena; esto es la red.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketSurveyResolutionIndex))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The survey of this resolution was already requested.",
+                exception);
+        }
         // Los tres únicos de la fase 2 (plan E3 y E16): dos réplicas del seguimiento sobre el mismo entrante, o un reintento con el
         // mismo clientId. Quien guarda los atrapa por código: el que perdió no tiene nada que hacer.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketMessageIndex))

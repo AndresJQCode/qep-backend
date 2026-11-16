@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Modules.Support.Application;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
+using static Modules.Support.IntegrationTests.SupportMessagingSeed;
 using static Modules.Support.IntegrationTests.SupportTicketScenario;
 
 namespace Modules.Support.IntegrationTests;
@@ -130,6 +131,66 @@ public sealed class SupportTicketActionsApiTests(ClockedSupportHost host) : ICla
                 item.GetProperty("kind").GetString()!,
                 item.GetProperty("fromStatus").GetString(),
                 item.GetProperty("toStatus").GetString()!)));
+    }
+
+    // ---- Fase 4b, Tarea 10 (H15, Review Focus 2): cada resolución pide una encuesta, por cualquier camino ----
+
+    [Fact]
+    public async Task EveryResolutionRequestsOneSurvey()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var byStatus = await scenario.CreateAsync();
+        var byReply = await scenario.CreateAsync();
+
+        await scenario.MoveAsync(byStatus, "Resolved");
+        var replied = await scenario.PostActionAsync(
+            $"tickets/{Id(byReply)}/replies", new { clientId = Guid.CreateVersion7(), channel = "Email", text = "Ya quedó.", resolve = true },
+            Version(byReply));
+
+        Assert.Equal(HttpStatusCode.Created, replied.StatusCode);
+        Assert.Equal("Resolved", (await JsonAsync(replied)).GetProperty("ticket").GetProperty("status").GetString());
+        Assert.Equal([1], await SurveyNumbersAsync(scenario, Id(byStatus)));
+        Assert.Equal([1], await SurveyNumbersAsync(scenario, Id(byReply)));
+    }
+
+    [Fact]
+    public async Task ReopeningAndResolvingAgainRequestsASecondSurvey()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        ticket = await scenario.MoveAsync(ticket, "Resolved");
+        ticket = await scenario.MoveAsync(ticket, "Open");
+        await scenario.MoveAsync(ticket, "Resolved");
+
+        Assert.Equal([1, 2], await SurveyNumbersAsync(scenario, Id(ticket)));
+    }
+
+    // El detalle trae las encuestas del ticket por ciclo, recién pedidas: Pending, sin canal ni respuesta.
+    [Fact]
+    public async Task TheDetailListsTheSurveys()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var created = await scenario.CreateAsync();
+        Assert.Empty(created.GetProperty("surveys").EnumerateArray());
+
+        var resolved = await scenario.MoveAsync(created, "Resolved");
+
+        var survey = Assert.Single(resolved.GetProperty("surveys").EnumerateArray());
+        Assert.Equal((1, "Pending"), (survey.GetProperty("resolutionNumber").GetInt32(), survey.GetProperty("status").GetString()));
+        Assert.Equal(JsonValueKind.Null, survey.GetProperty("channel").ValueKind);
+        Assert.Equal(JsonValueKind.Null, survey.GetProperty("rating").ValueKind);
+        Assert.False(survey.GetProperty("commentPromptSent").GetBoolean());
+        Assert.Single((await scenario.DetailAsync(Id(created))).GetProperty("surveys").EnumerateArray());
+    }
+
+    private static async Task<List<int>> SurveyNumbersAsync(SupportTicketScenario scenario, Guid ticketId)
+    {
+        var numbers = await TextAsync(
+            scenario.Factory,
+            "SELECT string_agg(resolution_number::text, ',' ORDER BY resolution_number) FROM support.ticket_surveys WHERE ticket_id = @id",
+            ("id", ticketId));
+        return numbers is null ? [] : numbers.Split(',').Select(number => int.Parse(number, System.Globalization.CultureInfo.InvariantCulture)).ToList();
     }
 
     [Fact]

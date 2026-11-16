@@ -137,6 +137,62 @@ public sealed class GetSupportReplyTemplateDraftHandler(
     }
 }
 
+/// <summary>Soporte fase 4b, <c>GET …/template-management/support-formal-reply/draft</c>: el borrador de la plantilla «Respuesta formal» de la
+/// conexión.</summary>
+public sealed record GetSupportFormalReplyTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
+
+public sealed class GetSupportFormalReplyTemplateDraftHandler(
+    IMessageTemplateRepository repository,
+    IMessagingConnectionDirectory connections,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetSupportFormalReplyTemplateDraftQuery, SystemTemplateDraftDto>
+{
+    public async Task<SystemTemplateDraftDto> HandleAsync(GetSupportFormalReplyTemplateDraftQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        _ = await connections.ResolveTemplateSourceAsync(query.TenantId, query.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var current = await repository.FindSupportFormalReplyAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var external = current is null
+            ? await repository.FindByNameAsync(
+                query.TenantId, query.ConnectionId, SupportFormalReplyTemplateDefinition.Name, SupportFormalReplyTemplateDefinition.Language,
+                cancellationToken)
+            : null;
+        return SystemTemplateDrafts.For(
+            current, external, SupportFormalReplyTemplateDefinition.BaseBody, SystemTemplateVariables.SupportFormalReply,
+            SupportFormalReplyTemplateDefinition.IsAdoptable);
+    }
+}
+
+/// <summary>Soporte fase 4b, <c>GET …/template-management/support-survey/draft</c>: el borrador de la plantilla de la encuesta de la conexión.
+/// Los botones son fijos y no viajan en el borrador.</summary>
+public sealed record GetSupportSurveyTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
+
+public sealed class GetSupportSurveyTemplateDraftHandler(
+    IMessageTemplateRepository repository,
+    IMessagingConnectionDirectory connections,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetSupportSurveyTemplateDraftQuery, SystemTemplateDraftDto>
+{
+    public async Task<SystemTemplateDraftDto> HandleAsync(GetSupportSurveyTemplateDraftQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        _ = await connections.ResolveTemplateSourceAsync(query.TenantId, query.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var current = await repository.FindSupportSurveyAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var external = current is null
+            ? await repository.FindByNameAsync(
+                query.TenantId, query.ConnectionId, SupportSurveyTemplateDefinition.Name, SupportSurveyTemplateDefinition.Language, cancellationToken)
+            : null;
+        return SystemTemplateDrafts.For(
+            current, external, SupportSurveyTemplateDefinition.BaseBody, SystemTemplateVariables.SupportSurvey, SupportSurveyTemplateDefinition.IsAdoptable);
+    }
+}
+
 /// <summary><c>GET …/template-management/billing/draft</c>: los borradores de las dos plantillas de cobro de la conexión.</summary>
 public sealed record GetBillingTemplatesDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<BillingTemplatesDraftDto>;
 

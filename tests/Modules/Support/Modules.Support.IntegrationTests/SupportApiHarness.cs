@@ -288,13 +288,31 @@ internal static class SupportApiHarness
         return (database, factory);
     }
 
-    /// <summary>Saca el hosted service del seguimiento por su tipo (precedente <c>PipelineApiHarness</c>), además de la bandera
-    /// <c>Support:Workers:Enabled</c>: si la bandera dejara de leerse, la prueba sigue sin un worker que le gane la carrera.</summary>
+    /// <summary>Saca los hosted services de Soporte por su tipo (precedente <c>PipelineApiHarness</c>), además de la bandera
+    /// <c>Support:Workers:Enabled</c>: si la bandera dejara de leerse, la prueba sigue sin un worker que le gane la carrera. Fase 4b: también
+    /// el de la encuesta (<see cref="RemoveSurveyWorker"/>).</summary>
     public static void RemoveThreadFollowWorker(IServiceCollection services)
     {
+        RemoveSurveyWorker(services);
         var workers = services
             .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
                 && descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportThreadFollowWorker))
+            .ToList();
+        foreach (var descriptor in workers)
+        {
+            services.Remove(descriptor);
+        }
+    }
+
+    /// <summary>Fase 4b (Tareas 11 y 14): saca el worker de la encuesta y el del cierre automático. Cada resolución pide una encuesta, y
+    /// el worker la procesaría por detrás (la salta con survey_disabled, o la manda) mientras la prueba la mira; y el cierre automático
+    /// cerraría los tickets resueltos de una prueba que adelanta el reloj del tenant. Las pruebas de los dos los corren a mano.</summary>
+    public static void RemoveSurveyWorker(IServiceCollection services)
+    {
+        var workers = services
+            .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                && (descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportSurveyWorker)
+                    || descriptor.ImplementationType == typeof(Modules.Support.Infrastructure.SupportAutoCloseWorker)))
             .ToList();
         foreach (var descriptor in workers)
         {

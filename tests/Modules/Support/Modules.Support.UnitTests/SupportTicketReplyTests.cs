@@ -88,8 +88,8 @@ public sealed class SupportTicketReplyTests
             "Hola", null, Actor, Now);
         var members = new Dictionary<Guid, string>();
 
-        Assert.True(SupportTicketDtoComposer.ToReplyDto(attached, members, viewerMemberId: null).HasAttachment);
-        Assert.False(SupportTicketDtoComposer.ToReplyDto(textOnly, members, viewerMemberId: null).HasAttachment);
+        Assert.True(SupportTicketDtoComposer.ToReplyDto(attached, members, viewerMemberId: null, document: null).HasAttachment);
+        Assert.False(SupportTicketDtoComposer.ToReplyDto(textOnly, members, viewerMemberId: null, document: null).HasAttachment);
     }
 
     [Fact]

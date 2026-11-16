@@ -173,6 +173,20 @@ public static class MessagingErrorCodes
     /// <summary>Soporte fase 2: existe una <c>qep_soporte_respuesta</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
     public const string TemplateSupportReplyConflict = "messaging.template.support_reply_conflict";
 
+    /// <summary>Soporte fase 4b: la conexión ya tiene su plantilla «Respuesta formal» viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_formal_reply</c>.</summary>
+    public const string TemplateSupportFormalReplyExists = "messaging.template.support_formal_reply_exists";
+
+    /// <summary>Soporte fase 4b: existe una <c>qep_soporte_formal</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateSupportFormalReplyConflict = "messaging.template.support_formal_reply_conflict";
+
+    /// <summary>Soporte fase 4b: la conexión ya tiene su plantilla de encuesta viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_survey</c>.</summary>
+    public const string TemplateSupportSurveyExists = "messaging.template.support_survey_exists";
+
+    /// <summary>Soporte fase 4b: existe una <c>qep_soporte_encuesta</c> creada fuera de QEP con otro cuerpo o unos botones distintos.</summary>
+    public const string TemplateSupportSurveyConflict = "messaging.template.support_survey_conflict";
+
     /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
     public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";
 

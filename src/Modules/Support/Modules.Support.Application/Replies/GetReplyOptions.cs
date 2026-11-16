@@ -10,14 +10,16 @@ public sealed record GetReplyOptionsQuery(Guid TenantId, Guid TicketId) : IQuery
 /// <summary>
 /// <c>reply-options</c> (plan E17b): qué canal puede usar el asesor y qué va a pasar, con las mismas reglas del envío
 /// (<see cref="SupportReplyRules"/>). La plantilla a un ticket con conversación se comporta como el hilo (plan E14), así que repite su
-/// disponibilidad; sin conversación, necesita el celular de la foto y una conexión con la plantilla aprobada.
+/// disponibilidad; sin conversación, necesita el celular de la foto y una conexión con la plantilla aprobada. Fase 4b (Tarea 8):
+/// <c>Formal</c> dice si se puede mandar la respuesta formal y por dónde, con las mismas reglas del envío.
 /// </summary>
 public sealed class GetReplyOptionsHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ISupportTicketRepository tickets,
     ISupportReplyChannels channels,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ISupportLetterhead letterhead)
     : IQueryHandler<GetReplyOptionsQuery, SupportReplyOptionsDto>
 {
     public async Task<SupportReplyOptionsDto> HandleAsync(GetReplyOptionsQuery query, CancellationToken cancellationToken)
@@ -34,7 +36,12 @@ public sealed class GetReplyOptionsHandler(
                 portalOnly,
                 portalOnly,
                 nameof(SupportReplyChannel.Portal),
-                new SupportChannelOptionDto(true, null, []));
+                new SupportChannelOptionDto(true, null, []),
+                new SupportFormalOptionsDto(
+                    ticket.RequiresFormalResponse,
+                    await FormalBlockedReasonAsync(ticket, cancellationToken),
+                    SupportChannelReasons.PortalOnly,
+                    []));
         }
 
         var now = (await tenantClock.GetAsync(query.TenantId, cancellationToken)).UtcNow;
@@ -75,7 +82,42 @@ public sealed class GetReplyOptionsHandler(
             template,
             email,
             DefaultChannel(ticket.ReplyChannel, thread, template, email),
-            new SupportChannelOptionDto(false, SupportChannelReasons.PortalUnavailable, []));
+            new SupportChannelOptionDto(false, SupportChannelReasons.PortalUnavailable, []),
+            await FormalAsync(ticket, messagingOn, now, cancellationToken));
+    }
+
+    // Fase 4b (H3, H5, H10): las mismas reglas que SendTicketReply. Fuera de la ventana el hilo sale por «Respuesta formal», que se aprueba
+    // aparte de «Aviso de respuesta»; sin conversación, el selector trae las conexiones con esa plantilla.
+    private async Task<SupportFormalOptionsDto> FormalAsync(
+        SupportTicket ticket, bool messagingOn, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var blocked = await FormalBlockedReasonAsync(ticket, cancellationToken);
+        if (!messagingOn)
+        {
+            return new SupportFormalOptionsDto(ticket.RequiresFormalResponse, blocked, SupportChannelReasons.MessagingDisabled, []);
+        }
+
+        var availability = await SupportReplyRules.ThreadAsync(channels, ticket, now, cancellationToken, formal: true);
+        var connections = ticket.ConversationId is null && !string.IsNullOrWhiteSpace(ticket.Requester?.MobilePhone)
+            ? (await channels.ListFormalTemplateConnectionsAsync(ticket.TenantId, cancellationToken))
+                .Select(connection => new SupportConnectionOptionDto(connection.Id, connection.Name))
+                .ToList()
+            : [];
+        return new SupportFormalOptionsDto(
+            ticket.RequiresFormalResponse, blocked, availability.Route is null ? availability.Reason : null, connections);
+    }
+
+    // Quien firma va primero, como en el envío: sin responsable no hay carta, haya o no empresa.
+    private async Task<string?> FormalBlockedReasonAsync(SupportTicket ticket, CancellationToken cancellationToken)
+    {
+        if (ticket.AssigneeMemberId is null)
+        {
+            return SupportChannelReasons.SignerRequired;
+        }
+
+        return await letterhead.ExistsAsync(ticket.TenantId, ticket.FormVersionId, cancellationToken)
+            ? null
+            : SupportChannelReasons.OrganizationRequired;
     }
 
     private async Task<SupportChannelOptionDto> TemplateWithoutConversationAsync(SupportTicket ticket, CancellationToken cancellationToken)

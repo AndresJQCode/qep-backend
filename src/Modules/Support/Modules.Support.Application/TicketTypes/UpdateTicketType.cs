@@ -5,6 +5,9 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Support.Application;
 
+/// <param name="FormalNextStep">Null (o ausente) conserva el guardado; vacío lo borra. Es la regla del <c>PUT</c> de ajustes
+/// (<see cref="UpdateSupportSettingsCommand"/>), aunque el resto del cuerpo reemplace el tipo entero: el frontend publicado no manda el
+/// campo, y con «null borra» cada edición de un tipo le quitaría el siguiente paso sin que nadie lo pidiera.</param>
 /// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por <c>If-Match</c>.</param>
 public sealed record UpdateTicketTypeCommand(
     Guid TenantId,
@@ -15,6 +18,7 @@ public sealed record UpdateTicketTypeCommand(
     bool? RequiresFormalResponse,
     bool? IsPublished,
     bool? IsActive,
+    string? FormalNextStep,
     long ExpectedVersion)
     : ICommand<SupportTicketTypeDto>
 {
@@ -27,6 +31,7 @@ public sealed record UpdateTicketTypeCommand(
         request.RequiresFormalResponse,
         request.IsPublished,
         request.IsActive,
+        request.FormalNextStep,
         expectedVersion);
 }
 
@@ -40,6 +45,7 @@ public sealed class UpdateTicketTypeValidator : AbstractValidator<UpdateTicketTy
         RuleFor(command => command.RequiresFormalResponse).NotNull();
         RuleFor(command => command.IsPublished).NotNull();
         RuleFor(command => command.IsActive).NotNull();
+        RuleFor(command => command.FormalNextStep).MustBeAFormalNextStep();
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -84,6 +90,7 @@ public sealed class UpdateTicketTypeHandler(
             command.RequiresFormalResponse!.Value,
             command.IsPublished!.Value,
             command.IsActive!.Value,
+            command.FormalNextStep ?? type.FormalNextStep,
             now);
         if (type.Version != before.Version)
         {
@@ -111,6 +118,7 @@ public sealed class UpdateTicketTypeHandler(
         Add(fields, "requiresFormalResponse", before.RequiresFormalResponse != after.RequiresFormalResponse);
         Add(fields, "isPublished", before.IsPublished != after.IsPublished);
         Add(fields, "isActive", before.IsActive != after.IsActive);
+        Add(fields, "formalNextStep", before.FormalNextStep != after.FormalNextStep);
         return fields;
     }
 

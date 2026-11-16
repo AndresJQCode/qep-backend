@@ -11,8 +11,8 @@ namespace Modules.Messaging.Application;
 
 /// <summary>
 /// Soporte fase 2: la **única** fuente del nombre, idioma, categoría, texto base y ejemplos de la plantilla «Aviso de respuesta», calcada de
-/// <see cref="OrderTemplateDefinition"/> pero sin encabezado (el PDF formal del caso es de la fase 4: llegará como una versión nueva, porque
-/// Meta no deja editar una aprobada). Sale cuando un asesor responde un ticket por WhatsApp fuera de la ventana de 24 h. El admin puede
+/// <see cref="OrderTemplateDefinition"/> pero sin encabezado. El PDF de la respuesta formal (fase 4b) no es una versión de esta: es otro tipo,
+/// <see cref="SupportFormalReplyTemplateDefinition"/>, porque Meta no admite un encabezado opcional. Sale cuando un asesor responde un ticket por WhatsApp fuera de la ventana de 24 h. El admin puede
 /// editar el texto al crearla, con las variables de <see cref="SystemTemplateVariables.SupportReply"/>. El nombre va por versiones
 /// (<c>qep_soporte_respuesta</c>, <c>qep_soporte_respuesta_v2</c>…) por la misma razón que la cotización: Meta bloquea un tiempo el nombre
 /// de una plantilla borrada. El envío lee el nombre vigente de la fila <c>SupportReply</c>, no de esta constante.

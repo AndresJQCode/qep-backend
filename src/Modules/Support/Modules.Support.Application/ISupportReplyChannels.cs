@@ -1,3 +1,5 @@
+using Modules.Support.Domain;
+
 namespace Modules.Support.Application;
 
 /// <summary>El estado de la conversación de un ticket para decidir cómo responderle (plan E13): el canal por nombre, si el contacto
@@ -34,13 +36,51 @@ public sealed record SupportChannelTemplateSend(
     string TicketNumber,
     string Text);
 
+/// <summary>Fase 4b (H10): la respuesta formal por el hilo, con el PDF. En WhatsApp sale un solo documento con <c>Text</c> como pie
+/// (<c>ClientId</c>); en Instagram sale el texto (<c>ClientId</c>) y después el archivo (<c>DocumentClientId</c>, guardado en el documento
+/// para que un reintento lo repita).</summary>
+public sealed record SupportChannelThreadDocumentSend(
+    Guid TenantId,
+    Guid ConversationId,
+    Guid ClientId,
+    Guid DocumentClientId,
+    Guid AuthorMemberId,
+    string Text,
+    ReadOnlyMemory<byte> Document,
+    string FileName);
+
+/// <summary>Fase 4b (H10): la respuesta formal por la plantilla «Respuesta formal», con el PDF como encabezado. Los destinos son los de
+/// <see cref="SupportChannelTemplateSend"/>.</summary>
+public sealed record SupportChannelFormalTemplateSend(
+    Guid TenantId,
+    Guid? ConversationId,
+    Guid? ConnectionId,
+    string? WaId,
+    Guid? CustomerId,
+    string RecipientName,
+    Guid ClientId,
+    Guid AuthorMemberId,
+    string TicketNumber,
+    string Text,
+    ReadOnlyMemory<byte> Document,
+    string FileName);
+
+/// <summary>Fase 4b (H16): la encuesta por su plantilla, a la conversación de WhatsApp del ticket. <c>ClientId</c> es el id de la encuesta:
+/// un reintento no la manda dos veces.</summary>
+public sealed record SupportChannelSurveyTemplateSend(
+    Guid TenantId, Guid ConversationId, Guid ClientId, Guid AuthorMemberId, string RecipientName, string TicketNumber);
+
 /// <summary>Cómo terminó un envío por un canal de Soporte.</summary>
 public abstract record SupportChannelSendResult
 {
-    /// <summary>Salió. Por Mensajería trae el mensaje y la conversación (la que se abrió, si no había); por correo, los dos nulos.</summary>
-    public sealed record Sent(Guid? MessageId, Guid? ConversationId) : SupportChannelSendResult;
+    /// <summary>Salió. Por Mensajería trae el mensaje y la conversación (la que se abrió, si no había); por correo, los dos nulos. Fase 4b:
+    /// <paramref name="DocumentMessageId"/> es el mensaje que lleva el PDF de una respuesta formal por el hilo (el mismo en WhatsApp, el
+    /// segundo en Instagram); se fija en el expediente igual que el primero.</summary>
+    public sealed record Sent(Guid? MessageId, Guid? ConversationId, Guid? DocumentMessageId = null) : SupportChannelSendResult;
 
-    /// <summary>No se intentó: <paramref name="Reason"/> es uno de <see cref="SupportChannelReasons"/>. No deja fila en el hilo.</summary>
+    /// <summary>No se intentó: <paramref name="Reason"/> es uno de <see cref="SupportChannelReasons"/>. No deja fila en el hilo. En la
+    /// respuesta formal también <c>send_failed</c>: el PDF no subió a Meta o no se guardó en R2 y no salió nada (fase 4b), así que la
+    /// respuesta nueva se borra con su PDF y se puede reintentar.</summary>
     public sealed record Rejected(string Reason) : SupportChannelSendResult;
 
     /// <summary>Se intentó y falló (Meta o el correo lo rechazaron). Por Mensajería la fila del hilo queda <c>Failed</c>.</summary>
@@ -129,6 +169,22 @@ public static class SupportChannelReasons
     /// envío exitoso que no ocurrió. Falla de la información con el PIN.</summary>
     public const string SendPending = "send_pending";
 
+    /// <summary>Fase 4b (H5, Q-6): ni el formulario del ticket ni el vigente eligieron la empresa que responde, así que la respuesta formal
+    /// no tiene membrete. Motivo de <c>reply-options</c> (<c>formal.blockedReason</c>).</summary>
+    public const string OrganizationRequired = "organization_required";
+
+    /// <summary>Fase 4b (H3, Q-7): el ticket no tiene responsable, que es quien firma la respuesta formal. Motivo de <c>reply-options</c>
+    /// (<c>formal.blockedReason</c>).</summary>
+    public const string SignerRequired = "signer_required";
+
+    /// <summary>Fase 4b (H14, H15, Q-9): el tenant tenía la encuesta apagada cuando el worker la procesó. Motivo de una encuesta sin enviar
+    /// (<c>ticket_surveys.reason_code</c>); esa encuesta no se responde.</summary>
+    public const string SurveyDisabled = SupportTicketSurvey.DisabledReasonCode;
+
+    /// <summary>Revisión del bloque C: el ticket se reabrió (o ya va en otra resolución) antes de que el worker procesara la encuesta. Esa
+    /// resolución ya no se juzga (H21), así que no se manda. Motivo de una encuesta sin enviar (<c>ticket_surveys.reason_code</c>).</summary>
+    public const string TicketReopened = "ticket_reopened";
+
     /// <summary>Todos los códigos de esta lista.</summary>
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -153,6 +209,10 @@ public static class SupportChannelReasons
         PortalUnavailable,
         NoPermission,
         SendPending,
+        OrganizationRequired,
+        SignerRequired,
+        SurveyDisabled,
+        TicketReopened,
     };
 }
 
@@ -172,4 +232,19 @@ public interface ISupportReplyChannels
     Task<SupportChannelSendResult> SendThreadAsync(SupportChannelThreadSend send, CancellationToken cancellationToken);
 
     Task<SupportChannelSendResult> SendTemplateAsync(SupportChannelTemplateSend send, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4b: las conexiones de WhatsApp activas del tenant con la plantilla «Respuesta formal» aprobada, por nombre.</summary>
+    Task<IReadOnlyList<SupportConnectionOption>> ListFormalTemplateConnectionsAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4b: si la conexión tiene la plantilla «Respuesta formal» aprobada (otro tipo que «Aviso de respuesta», Q-1).</summary>
+    Task<bool> IsFormalTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<SupportChannelSendResult> SendThreadDocumentAsync(SupportChannelThreadDocumentSend send, CancellationToken cancellationToken);
+
+    Task<SupportChannelSendResult> SendFormalTemplateAsync(SupportChannelFormalTemplateSend send, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4b (H16): si la conexión tiene la plantilla de la encuesta aprobada.</summary>
+    Task<bool> IsSurveyTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<SupportChannelSendResult> SendSurveyTemplateAsync(SupportChannelSurveyTemplateSend send, CancellationToken cancellationToken);
 }

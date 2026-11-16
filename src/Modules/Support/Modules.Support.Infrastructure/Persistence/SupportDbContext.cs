@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
@@ -26,6 +28,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
     /// (borrar uno usado) da <c>23001</c>; del lado del ticket (radicar o cambiar a un tipo recién borrado), <c>23503</c>.</summary>
     public const string TicketTypeForeignKey = "FK_tickets_ticket_types_ticket_type_id";
 
+    /// <summary>Fase 4b (H15): una encuesta por <c>(ticket, número de resolución)</c>. Inalcanzable después de la versión del ticket;
+    /// se traduce igual, como red.</summary>
+    public const string TicketSurveyResolutionIndex = "UX_ticket_surveys_ticket_resolution";
+
     public DbSet<SupportTicket> Tickets => Set<SupportTicket>();
 
     public DbSet<SupportTicketEvent> TicketEvents => Set<SupportTicketEvent>();
@@ -51,6 +57,14 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
     public DbSet<SupportUnclassifiedMessage> UnclassifiedMessages => Set<SupportUnclassifiedMessage>();
 
     public DbSet<SupportTicketReply> TicketReplies => Set<SupportTicketReply>();
+
+    /// <summary>Fase 4b (H9): el PDF de la respuesta formal. Insert-only: es prueba legal de lo que se envió. Su único borrado es la
+    /// cascada de una respuesta que nunca salió (<c>SendTicketReplyHandler</c> quita la que el canal rechazó antes de enviar).</summary>
+    public DbSet<SupportReplyDocument> ReplyDocuments => Set<SupportReplyDocument>();
+
+    /// <summary>Fase 4b (H15 a H21): la encuesta de cada ciclo de resolución. Es una cola con timbre
+    /// (<c>QueueDoorbellInterceptor</c>), no prueba legal: se actualiza.</summary>
+    public DbSet<SupportTicketSurvey> TicketSurveys => Set<SupportTicketSurvey>();
 
     /// <summary>Único de la versión del formulario por tenant (plan F14): dos guardados de la misma versión chocan acá.</summary>
     public const string FormVersionIndex = "IX_form_versions_tenant_version";
@@ -129,6 +143,8 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureTicketMessage(modelBuilder);
         ConfigureUnclassifiedMessage(modelBuilder);
         ConfigureTicketReply(modelBuilder);
+        ConfigureReplyDocument(modelBuilder);
+        ConfigureTicketSurvey(modelBuilder);
         ConfigureTicketAccess(modelBuilder);
         ConfigureFormVersion(modelBuilder);
         ConfigureLegalTextVersion(modelBuilder);
@@ -423,9 +439,14 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
     {
         var settings = modelBuilder.Entity<SupportTenantSettings>();
         settings.ToTable("tenant_settings", Schema, table =>
+        {
             table.HasCheckConstraint(
                 "CK_tenant_settings_due_soon",
-                $"due_soon_business_days BETWEEN {SupportTenantSettings.MinDueSoonBusinessDays} AND {SupportTenantSettings.MaxDueSoonBusinessDays}"));
+                $"due_soon_business_days BETWEEN {SupportTenantSettings.MinDueSoonBusinessDays} AND {SupportTenantSettings.MaxDueSoonBusinessDays}");
+            table.HasCheckConstraint(
+                "CK_tenant_settings_auto_close",
+                $"auto_close_business_days BETWEEN {SupportTenantSettings.MinAutoCloseBusinessDays} AND {SupportTenantSettings.MaxAutoCloseBusinessDays}");
+        });
         settings.HasKey(value => value.TenantId);
         settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
         settings.Property<long>("NextTicketNumber").HasColumnName("next_ticket_number").HasDefaultValue(1L);
@@ -433,6 +454,16 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         // válido (apaga «por vencer»). El DEFAULT 3 de la columna sí existe (migración InitialSupport): lo usa el INSERT del
         // aprovisionador.
         settings.Property(value => value.DueSoonBusinessDays).HasColumnName("due_soon_business_days");
+        // Fase 4b (H6). Nullable y sin default: el INSERT del aprovisionador no la nombra y nace en NULL.
+        settings.Property(value => value.FormalNextStep)
+            .HasColumnName("formal_next_step")
+            .HasMaxLength(SupportTenantSettings.FormalNextStepMaxLength);
+        // Fase 4b (H14). Con default en la columna, para las filas que ya existen y para el INSERT del aprovisionador, que no las nombra.
+        // EF nunca inserta esta fila, así que el sentinel no importa: CreateDefault ya pone los mismos valores.
+        settings.Property(value => value.SurveyEnabled).HasColumnName("survey_enabled").HasDefaultValue(false);
+        settings.Property(value => value.AutoCloseBusinessDays)
+            .HasColumnName("auto_close_business_days")
+            .HasDefaultValue(SupportTenantSettings.DefaultAutoCloseBusinessDays);
         settings.Property<DateTimeOffset>("CreatedAt").HasColumnName("created_at");
         settings.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         settings.Property(value => value.Version)
@@ -462,6 +493,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         type.Property(value => value.TermBusinessDays).HasColumnName("term_business_days");
         type.Property(value => value.TermIsLegal).HasColumnName("term_is_legal");
         type.Property(value => value.RequiresFormalResponse).HasColumnName("requires_formal_response");
+        // Fase 4b (H6). Nullable: la siembra del aprovisionador no la nombra y nace en NULL.
+        type.Property(value => value.FormalNextStep)
+            .HasColumnName("formal_next_step")
+            .HasMaxLength(SupportTicketType.FormalNextStepMaxLength);
         type.Property(value => value.IsPublished).HasColumnName("is_published");
         type.Property(value => value.IsActive).HasColumnName("is_active");
         type.Property(value => value.Position).HasColumnName("position");
@@ -605,11 +640,23 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             .HasForeignKey(value => value.TicketId)
             .OnDelete(DeleteBehavior.Cascade);
         ticket.Navigation(value => value.Events).UsePropertyAccessMode(PropertyAccessMode.Field);
+        // Fase 4b (H15): la encuesta que pide ChangeStatus entra en el mismo SaveChanges que el ticket. RESTRICT: un ticket con encuestas
+        // no se borra (hoy ningún camino borra tickets).
+        ticket.HasMany(value => value.Surveys)
+            .WithOne()
+            .HasForeignKey(value => value.TicketId)
+            .OnDelete(DeleteBehavior.Restrict);
+        ticket.Navigation(value => value.Surveys).UsePropertyAccessMode(PropertyAccessMode.Field);
         ticket.HasIndex(value => new { value.TenantId, value.Number }).IsUnique().HasDatabaseName("IX_tickets_tenant_number");
         ticket.HasIndex(value => new { value.TenantId, value.Status, value.ReceivedAt })
             .IsDescending(false, false, true)
             .HasDatabaseName("IX_tickets_tenant_status_received");
         ticket.HasIndex(value => new { value.TenantId, value.DueOn }).HasDatabaseName("IX_tickets_tenant_due");
+        // Fase 4b (revisión del bloque D): el recorrido del cierre automático, de todos los tenants, por (resolved_at, id) sobre los
+        // Resueltos (SupportAutoCloseFeed). El filtro es el mismo predicado de la consulta.
+        ticket.HasIndex(value => new { value.ResolvedAt, value.Id })
+            .HasFilter("status = 'Resolved'")
+            .HasDatabaseName("IX_tickets_resolved_auto_close");
         ticket.HasIndex(value => new { value.TenantId, value.CustomerId }).HasDatabaseName("IX_tickets_tenant_customer");
         // Para SupportUserReferenceProbe, que busca por membresía sola, sin tenant: un usuario se borra en todos sus tenants.
         ticket.HasIndex(value => value.AssigneeMemberId).HasDatabaseName("IX_tickets_assignee");
@@ -727,6 +774,135 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         // Para SupportUserReferenceProbe, que busca por membresía sola.
         reply.HasIndex(value => value.AuthorMemberId).HasDatabaseName("IX_ticket_replies_author");
     }
+
+    // Fase 4b (H9). Insert-only: el modelo no tiene mutadores y nada la actualiza; la cascada desde ticket_replies es su único
+    // borrado. El `Down` de AddSupportReplyDocuments borraría prueba legal: nunca se corre en producción.
+    private static void ConfigureReplyDocument(ModelBuilder modelBuilder)
+    {
+        var document = modelBuilder.Entity<SupportReplyDocument>();
+        document.ToTable("ticket_reply_documents", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_ticket_reply_documents_size", "size_bytes > 0");
+            table.HasCheckConstraint(
+                "CK_ticket_reply_documents_annexes",
+                $"jsonb_typeof(annexes) = 'array' AND jsonb_array_length(annexes) <= {SupportReplyDocument.MaxAnnexes}");
+        });
+        document.HasKey(value => value.ReplyId);
+        document.Property(value => value.ReplyId).HasColumnName("reply_id").ValueGeneratedNever();
+        document.Property(value => value.TenantId).HasColumnName("tenant_id");
+        document.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        document.Property(value => value.Decision).HasColumnName("decision").HasMaxLength(SupportReplyDocument.DecisionMaxLength);
+        document.Property(value => value.NextStep).HasColumnName("next_step").HasMaxLength(SupportFormalNextStep.MaxLength);
+        // Membresía del responsable que firma (H3): referencia blanda, la cuenta SupportUserReferenceProbe.
+        document.Property(value => value.SignerMemberId).HasColumnName("signer_member_id");
+        document.Property(value => value.SignerName).HasColumnName("signer_name").HasMaxLength(SupportReplyDocument.SignerNameMaxLength);
+        document.Property(value => value.SignerTitle).HasColumnName("signer_title").HasMaxLength(SupportReplyDocument.SignerTitleMaxLength);
+        document.Property(value => value.Annexes)
+            .HasColumnName("annexes")
+            .HasColumnType("jsonb")
+            .HasConversion(AnnexesConverter, AnnexesComparer);
+        document.Property(value => value.StorageKey).HasColumnName("storage_key").HasMaxLength(SupportReplyDocument.StorageKeyMaxLength);
+        document.Property(value => value.FileName).HasColumnName("file_name").HasMaxLength(SupportReplyDocument.FileNameMaxLength);
+        document.Property(value => value.SizeBytes).HasColumnName("size_bytes");
+        document.Property(value => value.Sha256Hex).HasColumnName("sha256").HasColumnType("character(64)");
+        document.Property(value => value.RespondedOn).HasColumnName("responded_on");
+        document.Property(value => value.DocumentClientId).HasColumnName("document_client_id");
+        document.Property(value => value.CreatedAt).HasColumnName("created_at");
+        document.HasOne<SupportTicketReply>()
+            .WithOne()
+            .HasForeignKey<SupportReplyDocument>(value => value.ReplyId)
+            .OnDelete(DeleteBehavior.Cascade);
+        document.HasIndex(value => new { value.TenantId, value.TicketId }).HasDatabaseName("IX_ticket_reply_documents_tenant_ticket");
+        // Para SupportUserReferenceProbe, que busca por membresía sola.
+        document.HasIndex(value => value.SignerMemberId).HasDatabaseName("IX_ticket_reply_documents_signer");
+    }
+
+    // Fase 4b (H15 a H21): una fila por ciclo de resolución. El worker la reclama por IX_ticket_surveys_pending (FOR UPDATE SKIP
+    // LOCKED + locked_until); el token del enlace sólo guarda su hash; los ids de mensaje son referencias blandas a messaging.messages.
+    private static void ConfigureTicketSurvey(ModelBuilder modelBuilder)
+    {
+        var survey = modelBuilder.Entity<SupportTicketSurvey>();
+        survey.ToTable("ticket_surveys", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_ticket_surveys_status", InList("status", Enum.GetNames<SupportSurveyStatus>()));
+            table.HasCheckConstraint(
+                "CK_ticket_surveys_channel", $"channel IS NULL OR {InList("channel", Enum.GetNames<SupportSurveyChannel>())}");
+            table.HasCheckConstraint(
+                "CK_ticket_surveys_answered_via", $"answered_via IS NULL OR {InList("answered_via", Enum.GetNames<SupportSurveyChannel>())}");
+            table.HasCheckConstraint("CK_ticket_surveys_rating", $"rating IS NULL OR {InList("rating", Enum.GetNames<SupportSurveyRating>())}");
+            table.HasCheckConstraint("CK_ticket_surveys_comment", $"comment IS NULL OR char_length(comment) <= {SupportTicketSurvey.CommentMaxLength}");
+            table.HasCheckConstraint("CK_ticket_surveys_sent_channel", "status <> 'Sent' OR channel IS NOT NULL");
+        });
+        survey.HasKey(value => value.Id);
+        survey.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        survey.Property(value => value.TenantId).HasColumnName("tenant_id");
+        survey.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        survey.Property(value => value.ResolutionNumber).HasColumnName("resolution_number");
+        survey.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        survey.Property(value => value.Channel).HasColumnName("channel").HasConversion<string>().HasMaxLength(16);
+        survey.Property(value => value.ReasonCode).HasColumnName("reason_code").HasMaxLength(SupportTicketSurvey.ReasonCodeMaxLength);
+        survey.Property(value => value.MessageId).HasColumnName("message_id");
+        survey.Property(value => value.TokenHash).HasColumnName("token_hash");
+        survey.Property(value => value.Attempts).HasColumnName("attempts");
+        survey.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
+        survey.Property(value => value.LockedUntil).HasColumnName("locked_until");
+        survey.Property(value => value.SentAt).HasColumnName("sent_at");
+        survey.Property(value => value.Rating).HasColumnName("rating").HasConversion<string>().HasMaxLength(16);
+        survey.Property(value => value.Comment).HasColumnName("comment").HasMaxLength(SupportTicketSurvey.CommentMaxLength);
+        survey.Property(value => value.AnsweredAt).HasColumnName("answered_at");
+        survey.Property(value => value.AnsweredVia).HasColumnName("answered_via").HasConversion<string>().HasMaxLength(16);
+        survey.Property(value => value.RatingMessageId).HasColumnName("rating_message_id");
+        survey.Property(value => value.CommentMessageId).HasColumnName("comment_message_id");
+        survey.Property(value => value.CommentUntil).HasColumnName("comment_until");
+        survey.Property(value => value.PromptMessageId).HasColumnName("prompt_message_id");
+        survey.Property(value => value.PromptSentAt).HasColumnName("prompt_sent_at");
+        survey.Property(value => value.PromptFailureCode)
+            .HasColumnName("prompt_failure_code")
+            .HasMaxLength(SupportTicketSurvey.ReasonCodeMaxLength);
+        survey.Property(value => value.CreatedAt).HasColumnName("created_at");
+        survey.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        survey.HasIndex(value => new { value.TicketId, value.ResolutionNumber }).IsUnique().HasDatabaseName(TicketSurveyResolutionIndex);
+        survey.HasIndex(value => value.TokenHash)
+            .IsUnique()
+            .HasFilter("token_hash IS NOT NULL")
+            .HasDatabaseName("UX_ticket_surveys_token");
+        survey.HasIndex(value => value.NextAttemptAt)
+            .HasFilter("status = 'Pending'")
+            .HasDatabaseName("IX_ticket_surveys_pending");
+        survey.HasIndex(value => value.MessageId)
+            .HasFilter("message_id IS NOT NULL")
+            .HasDatabaseName("IX_ticket_surveys_message");
+        survey.HasIndex(value => new { value.TenantId, value.TicketId }).HasDatabaseName("IX_ticket_surveys_tenant_ticket");
+        // Revisión del bloque D: los recorridos de SupportSurveyFeed (toques: mandadas sin calificar, por sent_at; comentarios:
+        // calificadas por WhatsApp sin comentario, por answered_at) y las búsquedas por id de mensaje del NOT EXISTS de
+        // SupportAutoCloseFeed, que mira todas las encuestas del tenant. Cada filtro es el mismo predicado de su consulta.
+        survey.HasIndex(value => new { value.SentAt, value.Id })
+            .HasFilter("status = 'Sent' AND rating IS NULL")
+            .HasDatabaseName("IX_ticket_surveys_awaiting_rating");
+        survey.HasIndex(value => new { value.AnsweredAt, value.Id })
+            .HasFilter("answered_via = 'WhatsApp' AND rating IS NOT NULL AND comment IS NULL")
+            .HasDatabaseName("IX_ticket_surveys_awaiting_comment");
+        survey.HasIndex(value => value.RatingMessageId)
+            .HasFilter("rating_message_id IS NOT NULL")
+            .HasDatabaseName("IX_ticket_surveys_rating_message");
+        survey.HasIndex(value => value.CommentMessageId)
+            .HasFilter("comment_message_id IS NOT NULL")
+            .HasDatabaseName("IX_ticket_surveys_comment_message");
+    }
+
+    // Los anexos son una lista corta de textos (H4) que se guarda y se lee entera: jsonb, sin tabla hija.
+    private static readonly ValueConverter<IReadOnlyList<string>, string> AnnexesConverter = new(
+        annexes => JsonSerializer.Serialize(annexes, (JsonSerializerOptions?)null),
+        json => JsonSerializer.Deserialize<string[]>(json, (JsonSerializerOptions?)null) ?? Array.Empty<string>());
+
+    private static readonly ValueComparer<IReadOnlyList<string>> AnnexesComparer = new(
+        (left, right) => left!.SequenceEqual(right!),
+        annexes => annexes.Aggregate(0, (hash, annex) => HashCode.Combine(hash, annex.GetHashCode(StringComparison.Ordinal))),
+        annexes => annexes.ToArray());
 
     private static void ConfigureTicketEvent(ModelBuilder modelBuilder)
     {

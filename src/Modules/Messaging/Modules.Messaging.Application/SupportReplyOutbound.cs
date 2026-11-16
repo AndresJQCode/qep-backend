@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using BuildingBlocks.Application;
 using Modules.Messaging.Domain;
 
@@ -19,18 +20,40 @@ public sealed record SupportTemplateReplySend(
     Guid TenantId, Guid? ConversationId, Guid? ConnectionId, string? WaId, Guid? CustomerId,
     string RecipientName, Guid ClientId, Guid AuthorMemberId, string TicketNumber, string Text);
 
+/// <summary>Soporte fase 4b (H10): la respuesta formal por el hilo, dentro de la ventana de 24 h, con el PDF. En WhatsApp sale un solo
+/// documento con <c>Text</c> como pie (<c>ClientId</c>); en Instagram, que no lleva pie en un adjunto, sale el texto (<c>ClientId</c>) y
+/// después el archivo (<c>DocumentClientId</c>, guardado en el documento de Soporte para que un reintento lo repita). <c>FileName</c> es el
+/// nombre con que lo ve el contacto.</summary>
+public sealed record SupportThreadDocumentSend(Guid TenantId, Guid ConversationId, Guid ClientId, Guid DocumentClientId,
+    Guid AuthorMemberId, string Text, ReadOnlyMemory<byte> Document, string FileName);
+
+/// <summary>Soporte fase 4b (H10): la respuesta formal por la plantilla «Respuesta formal», con el PDF como encabezado de documento. Los
+/// destinos son los de <see cref="SupportTemplateReplySend"/>: la conversación existente o, sin ella, el número por la conexión elegida.</summary>
+public sealed record SupportFormalTemplateSend(Guid TenantId, Guid? ConversationId, Guid? ConnectionId, string? WaId, Guid? CustomerId,
+    string RecipientName, Guid ClientId, Guid AuthorMemberId, string TicketNumber, string Text, ReadOnlyMemory<byte> Document, string FileName);
+
+/// <summary>Soporte fase 4b (H16): la encuesta de satisfacción por su plantilla, a la conversación de WhatsApp del ticket. Los botones viajan
+/// sin parámetros: Meta devuelve el toque con su texto (V-1).</summary>
+public sealed record SupportSurveyTemplateSend(Guid TenantId, Guid ConversationId, Guid ClientId, Guid AuthorMemberId,
+    string RecipientName, string TicketNumber);
+
 public abstract record SupportReplySendResult
 {
-    public sealed record Sent(Guid MessageId, Guid ConversationId) : SupportReplySendResult;
+    /// <summary><paramref name="DocumentMessageId"/> (fase 4b) es el mensaje que lleva el PDF de una respuesta formal por el hilo: el mismo
+    /// <paramref name="MessageId"/> en WhatsApp (un documento con pie) y el segundo mensaje en Instagram (el texto y después el archivo).
+    /// <c>null</c> en todo otro envío.</summary>
+    public sealed record Sent(Guid MessageId, Guid ConversationId, Guid? DocumentMessageId = null) : SupportReplySendResult;
 
     /// <summary>Antes de enviar, sin fila en el hilo ni llamada a Meta (salvo <c>connection_unavailable</c> por credencial rechazada al
     /// enviar, que tampoco deja fila). <paramref name="Reason"/> es uno de <see cref="SupportReplyReasons"/>: <c>window_closed</c>,
     /// <c>contact_blocked</c>, <c>template_not_approved</c>, <c>template_text_invalid</c>, <c>recipient_invalid</c>, <c>text_invalid</c>, <c>connection_unavailable</c>,
-    /// <c>conversation_not_found</c>, <c>attachment_unavailable</c>, <c>channel_unsupported</c>.</summary>
+    /// <c>conversation_not_found</c>, <c>attachment_unavailable</c>, <c>channel_unsupported</c>. En la respuesta formal (fase 4b) también
+    /// <c>send_failed</c>: el PDF no subió a Meta o no se pudo guardar en R2, y no salió nada.</summary>
     public sealed record Rejected(string Reason) : SupportReplySendResult;
 
     /// <summary>Meta lo rechazó o no lo confirmó: la fila queda <c>Failed</c> en el hilo. <paramref name="Code"/> es <c>window_closed</c>
-    /// (Meta cerró la ventana entre la lectura y el envío) o <c>send_failed</c>.</summary>
+    /// (Meta cerró la ventana entre la lectura y el envío) o <c>send_failed</c>. En la respuesta formal por Instagram, un archivo que no
+    /// sale después de que el texto ya salió es siempre <c>send_failed</c> (con el id del archivo si quedó fila): el texto queda enviado.</summary>
     public sealed record Failed(Guid? MessageId, string Code) : SupportReplySendResult;
 }
 
@@ -81,6 +104,15 @@ public interface ISupportReplyOutbound
     Task<SupportReplySendResult> SendThreadAsync(SupportThreadReplySend send, CancellationToken ct);
 
     Task<SupportReplySendResult> SendTemplateAsync(SupportTemplateReplySend send, CancellationToken ct);
+
+    /// <summary>Fase 4b: la respuesta formal por el hilo, con las mismas guardas que <see cref="SendThreadAsync"/>.</summary>
+    Task<SupportReplySendResult> SendThreadDocumentAsync(SupportThreadDocumentSend send, CancellationToken ct);
+
+    /// <summary>Fase 4b: la respuesta formal por la plantilla «Respuesta formal», con los pasos de <see cref="SendTemplateAsync"/>.</summary>
+    Task<SupportReplySendResult> SendFormalTemplateAsync(SupportFormalTemplateSend send, CancellationToken ct);
+
+    /// <summary>Fase 4b: la encuesta por su plantilla, sólo a una conversación de WhatsApp que ya existe.</summary>
+    Task<SupportReplySendResult> SendSurveyTemplateAsync(SupportSurveyTemplateSend send, CancellationToken ct);
 }
 
 /// <summary>
@@ -90,6 +122,11 @@ public interface ISupportReplyOutbound
 /// su permiso, así que no exige la conversación <c>Open</c> ni que sea del asesor, no la toma, no cambia su estado ni su asignación y no resta
 /// no leídos (<c>seen: 0</c>). El reclamo y la liquidación sí son los de siempre (<see cref="IOutboundMessages"/>,
 /// <see cref="OutboundSettlement"/>), y la liquidación es la que apaga <c>history_managed</c>.
+/// <para>
+/// Fase 4b: la respuesta formal y la encuesta siguen las mismas reglas. El PDF sube a Meta antes del reclamo y queda en el R2 de Mensajería
+/// con la clave del mensaje, como el documento de <see cref="DocumentTemplateOutbound"/>; las tres plantillas comparten el camino de
+/// <see cref="SendTemplateCoreAsync"/>.
+/// </para>
 /// </summary>
 public sealed class SupportReplyOutbound(
     IConversationQueries conversations,
@@ -103,11 +140,18 @@ public sealed class SupportReplyOutbound(
     IClock clock,
     IConversationOpener opener,
     ISupportReplyTemplateReadiness templateReadiness,
+    ISupportFormalReplyTemplateReadiness formalTemplateReadiness,
+    ISupportSurveyTemplateReadiness surveyTemplateReadiness,
     TemplateSenderValues senderValues,
     IMessagingMediaStore store,
     IMessagingUploadStaging staging,
     IMessagingImageCompressor compressor) : ISupportReplyOutbound
 {
+    private const string PdfMimeType = "application/pdf";
+
+    // El multipart lleva un nombre genérico ASCII; el que ve el contacto viaja en el mensaje (como en DocumentTemplateOutbound).
+    private const string GenericDocumentName = "document.pdf";
+
     public async Task<SupportThreadState?> FindThreadAsync(Guid tenantId, Guid conversationId, CancellationToken ct)
     {
         var conversation = await conversations.FindAsync(tenantId, conversationId, ct);
@@ -210,6 +254,100 @@ public sealed class SupportReplyOutbound(
             return Rejected(SupportReplyReasons.TemplateTextInvalid);
         }
 
+        return await SendTemplateCoreAsync(
+            new TemplateTarget(send.TenantId, send.ConversationId, send.ConnectionId, send.WaId, send.CustomerId, send.RecipientName, send.ClientId,
+                send.AuthorMemberId),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [SystemTemplateVariables.ContactName] = send.RecipientName,
+                [SupportReplyTemplateDefinition.CaseNumberKey] = send.TicketNumber,
+                [SupportReplyTemplateDefinition.ReplyKey] = send.Text.Trim(),
+            },
+            templateReadiness.FindApprovedAsync, document: null, ct);
+    }
+
+    public async Task<SupportReplySendResult> SendFormalTemplateAsync(SupportFormalTemplateSend send, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(send);
+        var document = DocumentOf(send.Document, send.FileName);
+
+        // 1. Las mismas reglas de Meta que «Aviso de respuesta»: el texto del canal es la variable respuesta.
+        if (!TemplateParameterRules.IsValid(send.RecipientName) || !TemplateParameterRules.IsValid(send.TicketNumber))
+        {
+            return Rejected(SupportReplyReasons.RecipientInvalid);
+        }
+
+        if (!TemplateParameterRules.IsValid(send.Text))
+        {
+            return Rejected(SupportReplyReasons.TemplateTextInvalid);
+        }
+
+        return await SendTemplateCoreAsync(
+            new TemplateTarget(send.TenantId, send.ConversationId, send.ConnectionId, send.WaId, send.CustomerId, send.RecipientName, send.ClientId,
+                send.AuthorMemberId),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [SystemTemplateVariables.ContactName] = send.RecipientName,
+                [SupportReplyTemplateDefinition.CaseNumberKey] = send.TicketNumber,
+                [SupportReplyTemplateDefinition.ReplyKey] = send.Text.Trim(),
+            },
+            formalTemplateReadiness.FindApprovedAsync, document, ct);
+    }
+
+    public async Task<SupportReplySendResult> SendSurveyTemplateAsync(SupportSurveyTemplateSend send, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(send);
+        if (!TemplateParameterRules.IsValid(send.RecipientName) || !TemplateParameterRules.IsValid(send.TicketNumber))
+        {
+            return Rejected(SupportReplyReasons.RecipientInvalid);
+        }
+
+        // Los botones son fijos y viajan sin parámetros: sólo el nombre y el radicado (más las fijas que use la fila).
+        return await SendTemplateCoreAsync(
+            new TemplateTarget(send.TenantId, send.ConversationId, null, null, null, send.RecipientName, send.ClientId, send.AuthorMemberId),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [SystemTemplateVariables.ContactName] = send.RecipientName,
+                [SupportReplyTemplateDefinition.CaseNumberKey] = send.TicketNumber,
+            },
+            surveyTemplateReadiness.FindApprovedAsync, document: null, ct);
+    }
+
+    /// <summary>Lo que viaja a una plantilla de Soporte: la conversación existente o, sin ella, la conexión y el número para abrir una.</summary>
+    private sealed record TemplateTarget(
+        Guid TenantId, Guid? ConversationId, Guid? ConnectionId, string? WaId, Guid? CustomerId, string RecipientName, Guid ClientId,
+        Guid AuthorMemberId);
+
+    /// <summary>El PDF de la respuesta formal, ya en bytes, con el nombre que ve el contacto.</summary>
+    private sealed record FormalDocument(byte[] Content, string FileName)
+    {
+        public string Sha256Hex { get; } = Convert.ToHexStringLower(SHA256.HashData(Content));
+    }
+
+    private static FormalDocument DocumentOf(ReadOnlyMemory<byte> content, string? fileName)
+    {
+        // Lo arma Soporte con su propio documento: sin bytes o sin nombre es un error de programación, no del asesor.
+        if (content.IsEmpty || string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName.Trim()).Length == 0)
+        {
+            throw new ArgumentException("A formal reply document needs its content and its file name.", nameof(content));
+        }
+
+        return new FormalDocument(content.ToArray(), Path.GetFileName(fileName.Trim()));
+    }
+
+    /// <summary>
+    /// Los pasos 2 a 6 de una plantilla de Soporte, los mismos para «Aviso de respuesta», «Respuesta formal» y la encuesta: la conversación o el
+    /// número (con lo ya enviado antes de mirar la plantilla o la conexión), la fila aprobada de su tipo, los valores, el remitente, la
+    /// conversación del número, el reclamo y el envío. Con <paramref name="document"/>, el PDF sube a Meta antes de abrir la conversación (si
+    /// falla no queda fila ni conversación), se guarda en R2 con la clave del reclamo y viaja como encabezado de documento.
+    /// </summary>
+    private async Task<SupportReplySendResult> SendTemplateCoreAsync(
+        TemplateTarget send,
+        Dictionary<string, string> values,
+        Func<Guid, Guid, CancellationToken, Task<ApprovedTemplate?>> findApproved,
+        FormalDocument? document,
+        CancellationToken ct)
+    {
         // 2. La conversación existente, o la conexión y el número para abrir una.
         ConversationRow? conversation = null;
         Guid connectionId;
@@ -262,18 +400,12 @@ public sealed class SupportReplyOutbound(
             connectionId = chosen;
         }
 
-        // 3. La fila SupportReply aprobada de esa conexión (nunca la constante: puede ser una _v2 con el texto del tenant).
-        if (await templateReadiness.FindApprovedAsync(send.TenantId, connectionId, ct) is not { } template)
+        // 3. La fila aprobada de su tipo en esa conexión (nunca la constante: puede ser una _v2 con el texto del tenant).
+        if (await findApproved(send.TenantId, connectionId, ct) is not { } template)
         {
             return Rejected(SupportReplyReasons.TemplateNotApproved);
         }
 
-        var values = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            [SystemTemplateVariables.ContactName] = send.RecipientName,
-            [SupportReplyTemplateDefinition.CaseNumberKey] = send.TicketNumber,
-            [SupportReplyTemplateDefinition.ReplyKey] = send.Text.Trim(),
-        };
         await senderValues.AddAsync(send.TenantId, send.AuthorMemberId, SystemTemplateSend.VariablesOf(template), values, ct);
         if (SystemTemplateSend.Build(template, values) is not { } built)
         {
@@ -290,6 +422,31 @@ public sealed class SupportReplyOutbound(
         if ((await connections.ResolveSenderWithReasonAsync(send.TenantId, connectionId, ct)).Sender is not { } sender)
         {
             return Rejected(SupportReplyReasons.ConnectionUnavailable);
+        }
+
+        // 4b. Fase 4b: el PDF sube a Meta antes de abrir la conversación y antes del reclamo, como DocumentTemplateOutbound.
+        string? mediaId = null;
+        if (document is not null)
+        {
+            MessagingGraphResult<string> upload;
+            using (var content = new MemoryStream(document.Content, writable: false))
+            {
+                upload = await meta.UploadMediaAsync(sender, content, document.Content.Length, PdfMimeType, GenericDocumentName, ct);
+            }
+
+            if (upload is not { Succeeded: true, Value: { Length: > 0 } uploaded })
+            {
+                // Un 4xx con 190/133010 dice que la credencial o el número ya no sirven: la conexión pasa a NeedsAttention.
+                if (upload.Failure is { HttpStatus: >= 400 and < 500, Code: MetaErrorCodes.TokenExpired or MetaErrorCodes.NumberUnregistered } rejected)
+                {
+                    await ReportRejectedAsync(send.TenantId, connectionId, MetaErrorCodes.RejectedReason(rejected.Code!.Value));
+                    return Rejected(SupportReplyReasons.ConnectionUnavailable);
+                }
+
+                return Rejected(SupportReplyReasons.SendFailed);
+            }
+
+            mediaId = uploaded;
         }
 
         // 5. Sin conversación: la del número en esa conexión, sin asignar a nadie (como el cobro). La que ya existe puede estar bloqueada.
@@ -313,17 +470,275 @@ public sealed class SupportReplyOutbound(
         // 6. El reclamo y el envío.
         var draft = new OutboundDraft(
             Guid.CreateVersion7(), conversation.Id, send.TenantId, connectionId, send.ClientId, built.Text, send.AuthorMemberId, now,
-            Kind: MessageKind.Template, DetailsJson: built.DetailsJson);
+            Kind: MessageKind.Template, DetailsJson: built.DetailsJson,
+            Media: document is null ? null : new OutboundMedia(PdfMimeType, document.Content.Length, document.Sha256Hex, document.FileName));
         await using var claim = await outbound.ClaimAsync(draft, ct);
         if (await OutboundGuards.TakeInFlightAsync(claim) is { } inFlight)
         {
             return new SupportReplySendResult.Sent(inFlight.Id, conversation.Id);
         }
 
-        var result = await meta.SendTemplateAsync(
-            sender, SendTarget.ForTemplate(conversation.UserId, conversation.WaId), built.Send,
-            SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"), CancellationToken.None);
-        return await SettleAsync(send.TenantId, conversation, claim, result);
+        var target = SendTarget.ForTemplate(conversation.UserId, conversation.WaId);
+        var callback = SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D");
+        if (document is null)
+        {
+            var result = await meta.SendTemplateAsync(sender, target, built.Send, callback, CancellationToken.None);
+            return await SettleAsync(send.TenantId, conversation, claim, result);
+        }
+
+        // La copia propia de Mensajería, con la clave del reclamo: el reintento de un Failed reutiliza el messageId y sobrescribe el objeto.
+        var key = MessagingMediaKeys.For(send.TenantId, claim.MessageId);
+        if (!await TryStoreAsync(key, document.Content, ct))
+        {
+            // No se envió nada y la fila no queda.
+            await claim.RollbackAsync(CancellationToken.None);
+            return Rejected(SupportReplyReasons.SendFailed);
+        }
+
+        // Desde acá todo va con CancellationToken.None: si Meta ya aceptó, cortar borraría la fila y el reintento mandaría dos veces.
+        try
+        {
+            var result = await meta.SendTemplateAsync(
+                sender, target, built.Send with { Header = TemplateHeader.DocumentById(mediaId!, document.FileName) }, callback,
+                CancellationToken.None);
+            return await SettleAsync(send.TenantId, conversation, claim, result, mediaId, claim.Inserted ? () => DiscardAsync(key) : null);
+        }
+        catch (Exception exception) when (claim.Inserted && exception is not MessagingDomainException)
+        {
+            await DiscardAsync(key);
+            throw;
+        }
+    }
+
+    public async Task<SupportReplySendResult> SendThreadDocumentAsync(SupportThreadDocumentSend send, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(send);
+        var document = DocumentOf(send.Document, send.FileName);
+        if (send.ClientId == send.DocumentClientId)
+        {
+            throw new ArgumentException("The text and the document of a formal reply need two distinct client ids.", nameof(send));
+        }
+
+        var conversation = await conversations.FindAsync(send.TenantId, send.ConversationId, ct);
+        if (conversation is null)
+        {
+            return Rejected(SupportReplyReasons.ConversationNotFound);
+        }
+
+        return conversation.Channel == ConversationChannel.Instagram
+            ? await SendInstagramDocumentAsync(send, conversation, document, ct)
+            : await SendWhatsAppDocumentAsync(send, conversation, document, ct);
+    }
+
+    /// <summary>WhatsApp: un solo documento con el texto como pie, por el camino del adjunto de <see cref="SendThreadMediaAsync"/> con los
+    /// bytes ya en memoria (la subida a Meta antes del reclamo; una subida fallida entra a la tabla del envío y deja la fila Failed).</summary>
+    private async Task<SupportReplySendResult> SendWhatsAppDocumentAsync(
+        SupportThreadDocumentSend send, ConversationRow conversation, FormalDocument document, CancellationToken ct)
+    {
+        if (await AlreadySentAsync(conversation.Id, send.ClientId, ct) is { } sent)
+        {
+            return sent with { DocumentMessageId = sent.MessageId };
+        }
+
+        if (conversation.BlockedAt is not null)
+        {
+            return Rejected(SupportReplyReasons.ContactBlocked);
+        }
+
+        if (!SendMessageValidator.IsAcceptableText(send.Text) || send.Text.Trim().Length > SendMediaMessageValidator.MaxCaptionLength)
+        {
+            return Rejected(SupportReplyReasons.TextInvalid);
+        }
+
+        var now = clock.UtcNow;
+        if (!IsWindowOpen(conversation, now))
+        {
+            return Rejected(SupportReplyReasons.WindowClosed);
+        }
+
+        if ((await connections.ResolveSenderWithReasonAsync(send.TenantId, conversation.ConnectionId, ct)).Sender is not { } sender)
+        {
+            return Rejected(SupportReplyReasons.ConnectionUnavailable);
+        }
+
+        MessagingGraphResult<string> upload;
+        using (var content = new MemoryStream(document.Content, writable: false))
+        {
+            upload = await meta.UploadMediaAsync(sender, content, document.Content.Length, PdfMimeType, GenericDocumentName, ct);
+        }
+
+        var caption = send.Text.Trim();
+        var draft = new OutboundDraft(
+            Guid.CreateVersion7(), conversation.Id, send.TenantId, conversation.ConnectionId, send.ClientId, Text: null, send.AuthorMemberId, now,
+            Kind: MessageKind.Document, Media: new OutboundMedia(PdfMimeType, document.Content.Length, document.Sha256Hex, document.FileName),
+            Caption: caption);
+        await using var claim = await outbound.ClaimAsync(draft, ct);
+        if (await OutboundGuards.TakeInFlightAsync(claim) is { } inFlight)
+        {
+            return new SupportReplySendResult.Sent(inFlight.Id, conversation.Id, inFlight.Id);
+        }
+
+        var key = MessagingMediaKeys.For(send.TenantId, claim.MessageId);
+        if (!await TryStoreAsync(key, document.Content, ct))
+        {
+            await claim.RollbackAsync(CancellationToken.None);
+            return Rejected(SupportReplyReasons.SendFailed);
+        }
+
+        // Desde acá todo va con CancellationToken.None: si Meta ya aceptó, cortar borraría la fila y el reintento mandaría dos veces.
+        SupportReplySendResult settled;
+        try
+        {
+            var mediaId = upload is { Succeeded: true, Value: { Length: > 0 } uploaded } ? uploaded : null;
+            var result = mediaId is null
+                ? SendAudioMessageHandler.FromUploadFailure(upload.Failure)
+                : await meta.SendDocumentAsync(
+                    sender, SendTarget.For(conversation.UserId, conversation.WaId), mediaId, document.FileName, caption,
+                    SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"), null, CancellationToken.None);
+            settled = await SettleAsync(
+                send.TenantId, conversation, claim, result, mediaId, claim.Inserted ? () => DiscardAsync(key) : null);
+        }
+        catch (Exception exception) when (claim.Inserted && exception is not MessagingDomainException)
+        {
+            await DiscardAsync(key);
+            throw;
+        }
+
+        return settled is SupportReplySendResult.Sent done ? done with { DocumentMessageId = done.MessageId } : settled;
+    }
+
+    /// <summary>
+    /// Instagram: el texto (<c>ClientId</c>) y después el archivo (<c>DocumentClientId</c>) por una URL firmada de R2, como el adjunto del
+    /// asesor (spec 2026-10-14 decisión 12). Cada mensaje es idempotente por su clientId: un reintento salta lo que ya salió. Las guardas
+    /// (bloqueo, texto, ventana) se miran sólo mientras no haya salido nada; un archivo que no sale después del texto es
+    /// <c>Failed(send_failed)</c> y el texto queda enviado.
+    /// </summary>
+    private async Task<SupportReplySendResult> SendInstagramDocumentAsync(
+        SupportThreadDocumentSend send, ConversationRow conversation, FormalDocument document, CancellationToken ct)
+    {
+        var text = await AlreadySentAsync(conversation.Id, send.ClientId, ct);
+        if (text is not null && await AlreadySentAsync(conversation.Id, send.DocumentClientId, ct) is { } file)
+        {
+            return new SupportReplySendResult.Sent(text.MessageId, conversation.Id, file.MessageId);
+        }
+
+        if (text is null)
+        {
+            if (conversation.BlockedAt is not null)
+            {
+                return Rejected(SupportReplyReasons.ContactBlocked);
+            }
+
+            if (!SendMessageValidator.IsAcceptableText(send.Text) || send.Text.Trim().Length > SendMessageValidator.InstagramTextMaxLength)
+            {
+                return Rejected(SupportReplyReasons.TextInvalid);
+            }
+
+            if (!IsWindowOpen(conversation, clock.UtcNow))
+            {
+                return Rejected(SupportReplyReasons.WindowClosed);
+            }
+
+            // Mismo camino que una respuesta de texto: sin conexión, ventana cerrada o Meta rechazando, nada más sale.
+            var first = await SendThreadAsync(
+                new SupportThreadReplySend(send.TenantId, conversation.Id, send.ClientId, send.AuthorMemberId, send.Text, UploadId: null), ct);
+            if (first is not SupportReplySendResult.Sent textSent)
+            {
+                return first;
+            }
+
+            text = textSent;
+        }
+
+        // El texto ya salió: desde acá nada es un rechazo sin envío.
+        if (conversation.BlockedAt is not null
+            || await connections.ResolveInstagramSenderAsync(send.TenantId, conversation.ConnectionId, ct) is not { } igSender)
+        {
+            return new SupportReplySendResult.Failed(null, SupportReplyReasons.SendFailed);
+        }
+
+        var draft = new OutboundDraft(
+            Guid.CreateVersion7(), conversation.Id, send.TenantId, conversation.ConnectionId, send.DocumentClientId, Text: null, send.AuthorMemberId,
+            clock.UtcNow, Kind: MessageKind.Document,
+            Media: new OutboundMedia(PdfMimeType, document.Content.Length, document.Sha256Hex, document.FileName));
+        await using var claim = await outbound.ClaimAsync(draft, ct);
+        if (await OutboundGuards.TakeInFlightAsync(claim) is { } inFlight)
+        {
+            return new SupportReplySendResult.Sent(text.MessageId, conversation.Id, inFlight.Id);
+        }
+
+        var key = MessagingMediaKeys.For(send.TenantId, claim.MessageId);
+        if (!await TryStoreAsync(key, document.Content, ct))
+        {
+            await claim.RollbackAsync(CancellationToken.None);
+            return new SupportReplySendResult.Failed(null, SupportReplyReasons.SendFailed);
+        }
+
+        SupportReplySendResult settled;
+        try
+        {
+            var result = await SendInstagramFileAsync(igSender, conversation.UserId!, key);
+            settled = await SettleAsync(send.TenantId, conversation, claim, result, afterRollback: claim.Inserted ? () => DiscardAsync(key) : null);
+        }
+        catch (Exception exception) when (claim.Inserted && exception is not MessagingDomainException)
+        {
+            await DiscardAsync(key);
+            throw;
+        }
+
+        return settled switch
+        {
+            SupportReplySendResult.Sent done => new SupportReplySendResult.Sent(text.MessageId, conversation.Id, done.MessageId),
+            SupportReplySendResult.Failed failed => new SupportReplySendResult.Failed(failed.MessageId, SupportReplyReasons.SendFailed),
+            _ => new SupportReplySendResult.Failed(null, SupportReplyReasons.SendFailed),
+        };
+    }
+
+    /// <summary>La URL firmada y el envío, como el adjunto del asesor: si R2 no firma, no se envió nada y la fila queda Failed.</summary>
+    private async Task<SendResult> SendInstagramFileAsync(InstagramSender sender, string recipientId, string key)
+    {
+        Uri url;
+        try
+        {
+            url = await store.CreateDownloadUrlAsync(key, SendMediaMessageHandler.InstagramDownloadLifetime, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return new SendResult(SendOutcome.NotSent, null, null, null);
+        }
+
+        return await instagram.SendAttachmentAsync(
+            sender, recipientId, OutboundMediaPolicy.InstagramAttachmentType(OutboundMediaFormat.Pdf), url, CancellationToken.None);
+    }
+
+    private static bool IsWindowOpen(ConversationRow conversation, DateTimeOffset now) =>
+        conversation.LastInboundAt is { } lastInbound && lastInbound.Add(Conversation.WindowLength) > now;
+
+    private async Task<bool> TryStoreAsync(string key, byte[] content, CancellationToken ct)
+    {
+        try
+        {
+            using var stream = new MemoryStream(content, writable: false);
+            await store.UploadAsync(key, stream, content.Length, PdfMimeType, ct);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException && !ct.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    // Best effort: la respuesta ya es connection_unavailable, y el próximo envío vuelve a recibir 190/133010 y reintenta el reporte.
+    private async Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode)
+    {
+        try
+        {
+            await connections.ReportRejectedAsync(tenantId, connectionId, failureCode, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Ver comentario.
+        }
     }
 
     /// <summary>
@@ -359,7 +774,8 @@ public sealed class SupportReplyOutbound(
         if (staged is null)
         {
             // Dos requests con el mismo clientId: el primero ya envió y consumió el staging. Gana la idempotencia.
-            return await AlreadySentAsync(conversation.Id, send.ClientId, ct) ?? Rejected(SupportReplyReasons.AttachmentUnavailable);
+            return (SupportReplySendResult?)await AlreadySentAsync(conversation.Id, send.ClientId, ct)
+                ?? Rejected(SupportReplyReasons.AttachmentUnavailable);
         }
 
         if (staged.SizeBytes <= 0 || staged.SizeBytes > OutboundMediaPolicy.MaxBytesOf(declared, channel)!.Value)
@@ -465,7 +881,7 @@ public sealed class SupportReplyOutbound(
         }
     }
 
-    private async Task<SupportReplySendResult?> AlreadySentAsync(Guid conversationId, Guid clientId, CancellationToken ct) =>
+    private async Task<SupportReplySendResult.Sent?> AlreadySentAsync(Guid conversationId, Guid clientId, CancellationToken ct) =>
         await outbound.FindByClientIdAsync(conversationId, clientId, ct) is { Status: not MessageStatus.Failed } sent
             ? new SupportReplySendResult.Sent(sent.Id, conversationId)
             : null;

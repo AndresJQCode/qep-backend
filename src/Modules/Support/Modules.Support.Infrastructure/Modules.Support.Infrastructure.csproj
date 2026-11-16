@@ -23,6 +23,10 @@
     <PackageReference Include="HtmlSanitizer" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Fase 4b (H12): la plantilla de la respuesta formal viaja dentro del ensamblado, como quotation.typ en Quotations. -->
+    <EmbeddedResource Include="Pdf\formal-reply.typ" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Modules.Support.UnitTests" />
     <InternalsVisibleTo Include="Modules.Support.IntegrationTests" />
   </ItemGroup>

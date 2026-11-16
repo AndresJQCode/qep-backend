@@ -20,6 +20,13 @@ public enum MessageTemplateKind
 
     /// <summary>Soporte fase 2: la plantilla «Aviso de respuesta» que QEP aprovisiona por conexión (se guarda por nombre: va al final).</summary>
     SupportReply,
+
+    /// <summary>Soporte fase 4b (H10): la plantilla «Respuesta formal», con el PDF como encabezado de documento. Es un tipo aparte de
+    /// <see cref="SupportReply"/> porque Meta no admite un encabezado opcional.</summary>
+    SupportFormalReply,
+
+    /// <summary>Soporte fase 4b (H16): la encuesta de satisfacción, con tres botones de respuesta rápida fijos.</summary>
+    SupportSurvey,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -102,6 +109,16 @@ public static partial class MessageTemplateName
 
     public const string SupportReplyPrefix = "qep_soporte_respuesta_";
 
+    /// <summary>Soporte fase 4b: <c>qep_soporte_formal</c> y sus versiones (<c>qep_soporte_formal_v2</c>…).</summary>
+    public const string SupportFormalReplyName = "qep_soporte_formal";
+
+    public const string SupportFormalReplyPrefix = "qep_soporte_formal_";
+
+    /// <summary>Soporte fase 4b: <c>qep_soporte_encuesta</c> y sus versiones (<c>qep_soporte_encuesta_v2</c>…).</summary>
+    public const string SupportSurveyName = "qep_soporte_encuesta";
+
+    public const string SupportSurveyPrefix = "qep_soporte_encuesta_";
+
     public static bool IsReserved(string? name) =>
         name is not null
         && (string.Equals(name, QuotationName, StringComparison.Ordinal)
@@ -110,7 +127,11 @@ public static partial class MessageTemplateName
             || string.Equals(name, OrderName, StringComparison.Ordinal)
             || name.StartsWith(OrderPrefix, StringComparison.Ordinal)
             || string.Equals(name, SupportReplyName, StringComparison.Ordinal)
-            || name.StartsWith(SupportReplyPrefix, StringComparison.Ordinal));
+            || name.StartsWith(SupportReplyPrefix, StringComparison.Ordinal)
+            || string.Equals(name, SupportFormalReplyName, StringComparison.Ordinal)
+            || name.StartsWith(SupportFormalReplyPrefix, StringComparison.Ordinal)
+            || string.Equals(name, SupportSurveyName, StringComparison.Ordinal)
+            || name.StartsWith(SupportSurveyPrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -180,7 +201,7 @@ public sealed class MessageTemplate
     {
         if (kind == MessageTemplateKind.External)
         {
-            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation, Order, Billing or SupportReply.");
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation, Order, Billing or a Support kind.");
         }
 
         if (!MessageTemplateName.IsValid(name))
@@ -267,6 +288,30 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.SupportReply;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Soporte fase 4b: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_soporte_formal</c> creada en la consola de Meta.</summary>
+    public void AdoptAsSupportFormalReply(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateSupportFormalReplyConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.SupportFormalReply;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Soporte fase 4b: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_soporte_encuesta</c> creada en la consola de Meta.</summary>
+    public void AdoptAsSupportSurvey(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateSupportSurveyConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.SupportSurvey;
         UpdatedAt = now;
     }
 

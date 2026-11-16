@@ -351,6 +351,9 @@ public class SupportPublicHost : IAsyncLifetime
     /// <summary>El correo de apertura: anota en vez de mandar. Cada prueba mira sólo los correos a su dirección.</summary>
     internal RecordingSupportOpeningEmail Emails { get; } = new();
 
+    /// <summary>Fase 4b: el bucket de los PDF de la respuesta formal, en memoria. La consulta firma la descarga desde acá.</summary>
+    internal RecordingSupportDocumentStorage Documents { get; } = new();
+
     /// <summary>Con la autenticación real (sin el stub): la defensa CSRF corre y la cookie de sesión se valida de verdad.</summary>
     protected virtual bool RealAuthentication => false;
 
@@ -386,6 +389,8 @@ public class SupportPublicHost : IAsyncLifetime
                 services.AddSingleton<ITenantClock>(Clock);
                 services.RemoveAll<ISupportOpeningEmail>();
                 services.AddSingleton<ISupportOpeningEmail>(Emails);
+                services.RemoveAll<ISupportDocumentStorage>();
+                services.AddSingleton<ISupportDocumentStorage>(Documents);
                 ConfigureServices(services);
             },
             settings);
