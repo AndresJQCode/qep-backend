@@ -237,6 +237,13 @@ public sealed class Order
     public IEnumerable<DocumentWithholding> AppliedWithholdings =>
         _withholdings.Where(withholding => withholding.Applied).OrderBy(withholding => withholding.Position);
 
+    /// <summary>Por qué cada tasa del pedido aplica o no, en su orden (spec retenciones por UVT §5.1); las de otro país
+    /// no salen.</summary>
+    public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
+        DocumentWithholding.Explain(
+            [.. _withholdings.OrderBy(withholding => withholding.Position)], BillsToFinalConsumer, BillingAccount, Currency,
+            OperationCityId, Subtotal);
+
     public decimal Subtotal { get; private set; }
 
     public decimal TaxPercentage { get; private set; }

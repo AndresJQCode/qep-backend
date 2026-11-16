@@ -189,6 +189,30 @@ public sealed class DocumentWithholding
     }
 
     /// <summary>
+    /// El veredicto de cada fila de la fuente vigente (spec retenciones por UVT §5.1), en su orden, con el monto que
+    /// guardó el último recálculo. Se emparejan por <see cref="TaxRateId"/>, que no se repite dentro de una fuente (ver
+    /// <see cref="SettleAll"/>), porque <c>Explain</c> omite las de otro país y las posiciones dejan de coincidir.
+    /// </summary>
+    internal static IReadOnlyList<WithholdingVerdict> Explain(
+        IReadOnlyList<DocumentWithholding> activeRows,
+        bool billsToFinalConsumer,
+        QuotationBillingAccount? billingAccount,
+        string currency,
+        Guid? operationCityId,
+        decimal productsSubtotal)
+    {
+        var amounts = activeRows.ToDictionary(row => row.TaxRateId, row => row.Amount);
+        return
+        [
+            .. WithholdingCandidates
+                .Explain(
+                    activeRows.Select(row => row.Rate), billsToFinalConsumer, billingAccount, currency, operationCityId,
+                    productsSubtotal)
+                .Select(verdict => verdict with { Amount = amounts[verdict.Rate.TaxRateId] }),
+        ];
+    }
+
+    /// <summary>
     /// Liquida todas las filas de un documento con lo que devolvió <c>DocumentTotals.Compute</c>. Las de la
     /// fuente vigente se emparejan por <see cref="TaxRateId"/> y no por posición: el cálculo sólo devuelve
     /// las que aplicaron, así que las posiciones no coinciden en cuanto una no aplica. Una tasa aparece a lo

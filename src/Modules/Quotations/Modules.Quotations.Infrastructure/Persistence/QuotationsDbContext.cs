@@ -207,6 +207,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.Ignore(value => value.BillingWithholdings);
         quotation.Ignore(value => value.ActiveWithholdings);
         quotation.Ignore(value => value.AppliedWithholdings);
+        quotation.Ignore(value => value.WithholdingVerdicts);
         quotation.OwnsMany(value => value.Withholdings, withholding =>
         {
             withholding.ToTable("quotation_withholdings", "quotations", table =>
@@ -671,6 +672,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // La foto de las tasas de retención del pedido (spec impuestos por tipo §7.5): misma forma que la de la
         // cotización, con una sola fuente ('Document').
         order.Ignore(value => value.AppliedWithholdings);
+        order.Ignore(value => value.WithholdingVerdicts);
         order.OwnsMany(value => value.Withholdings, withholding =>
         {
             withholding.ToTable("order_withholdings", "quotations", table =>

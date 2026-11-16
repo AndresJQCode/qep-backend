@@ -389,6 +389,12 @@ public sealed class Quotation
     public IEnumerable<DocumentWithholding> AppliedWithholdings =>
         ActiveWithholdings.Where(withholding => withholding.Applied);
 
+    /// <summary>Por qué cada tasa de la fuente vigente aplica o no, en su orden (spec retenciones por UVT §5.1); las de
+    /// otro país no salen.</summary>
+    public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
+        DocumentWithholding.Explain(
+            [.. ActiveWithholdings], BillsToFinalConsumer, BillingAccount, Currency, OperationCityId, Subtotal);
+
     private WithholdingSource ActiveWithholdingSource =>
         Billing is not null ? WithholdingSource.Billing : WithholdingSource.Customer;
 
