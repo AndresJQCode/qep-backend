@@ -347,10 +347,50 @@ El portal muestra la fecha de radicación y el término en días hábiles («no 
   `SupportTicket.TermBusinessDays`, `SupportTicket.cs:41`; `null` = el tipo no tiene término).
 - `SupportPublicTicketDto` (consulta) ya trae `ReceivedAt`, `DueOn` y `TermIsLegal`; suma `int? TermBusinessDays`, de la
   misma foto.
-- **El NIT del tenant no se agrega: no existe en el modelo** (§15, D-6). `Tenant` (`Modules.Tenancy.Domain/Tenant.cs`)
-  no tiene razón social ni número de documento, sólo `DisplayName` y `Country`. El NIT vive en `Modules.Companies`
-  (`Company.TaxId`, `Company.DocumentType`, `Company.Name`), pero un tenant tiene **varias** empresas y ninguna está marcada
-  como la propia. Queda pendiente del owner.
+- **El NIT del tenant sale de una de sus empresas** (§9.3, D-6 resuelta: opción a). `Tenant` no tiene razón social ni
+  documento; el tenant elige en Ajustes › Formulario público cuál de sus empresas (`Modules.Companies`) es la que responde.
+
+### 9.3 La empresa del portal [owner, 2026-11-15, D-6 y D-8]
+
+**Dónde se guarda.** Columna `organization_company_id uuid NULL` en `support.form_versions` (cada versión del formulario
+guarda la suya, como el resto de la configuración). Migración `AddSupportFormOrganization`, aditiva, sin relleno: las
+versiones existentes quedan en `NULL`.
+
+**Borrar y desactivar la empresa.** Hoy Companies no pregunta a nadie antes de borrar: deja que una clave foránea lo
+frene y traduce cualquier violación al borrar una `Company` a `422 companies.company.in_use`
+(`CompaniesUnitOfWork.cs:48-54`; precedente `pos.cash_sessions.company_id`, FK real entre esquemas agregada a mano en la
+migración, `PosDbContext.cs:48-50`). Soporte hace lo mismo [diseñador]: FK `FK_form_versions_companies_organization_company_id`
+a `companies.companies(id)` `ON DELETE RESTRICT`, escrita a mano en la migración (EF no modela relaciones entre contextos).
+Companies migra antes que Support al arrancar (`Program.cs:450` y `:510`), así que la FK encuentra la tabla. Consecuencia:
+una empresa que alguna versión del formulario eligió ya no se puede borrar, sólo desactivar; borrar es para la empresa
+cargada por error que nadie usó (`DeleteCompany.cs:35-36`), así que es coherente. Desactivar no lo frena nadie:
+
+- El portal **sigue mostrando** una empresa desactivada: sus datos siguen siendo ciertos y el owner pidió no omitirlos.
+- La consola la marca con el bloqueador `organization_inactive` en `PublishBlockers`; como todo bloqueador, sólo impide
+  pasar de sin publicar a publicado (`UpdateFormSettings.cs:141-147`). Un formulario ya publicado se sigue editando.
+- Elegir una empresa **nueva** exige que sea del tenant y esté activa; dejar la que ya estaba elegida, aunque se haya
+  desactivado, no falla (si no, desactivar una empresa bloquearía cualquier cambio del formulario).
+
+**Obligatoria para publicar** (D-8): sin empresa elegida, el bloqueador `organization_required` impide publicar. Un
+formulario publicado antes de este cambio (sólo en desarrollo) sigue sirviéndose con `organization: null`.
+
+**Cómo la lee Soporte.** Soporte no referencia `Modules.Companies.*` (`SupportLayerTests`). Puerto nuevo
+`ISupportOrganizationDirectory` en `Modules.Support.Application` con adaptador `SupportOrganizationDirectory` en
+Bootstrapper sobre `ICompanyRepository`, calcado de `PosCompanyLookup` (`ListActiveAsync` y `FindAsync`, con
+`CompanyDocumentType.ToWire()`).
+
+**Contrato.**
+
+- Público: `GET /form` y `GET /consult` suman `organization: { name, documentTypeCode, documentNumber } | null`
+  (`Company.Name`, `Company.DocumentType.ToWire()` — `NIT`, `CC`, `CE`, `PASAPORTE`, `NIF`, `NIE`, `TAX_ID` —,
+  `Company.TaxId`). `GET /form` usa la versión publicada; `GET /consult`, la vigente aunque no esté publicada (como
+  `accentColor` hoy). `null` = sin empresa elegida. La respuesta de `POST /tickets/lookup` no la repite: la página de
+  consulta ya la tiene de `GET /consult`, que carga primero.
+- Consola: `SupportFormSettingsDto` suma la empresa elegida y la lista de empresas activas para el selector;
+  `PUT /settings/public-form` suma `organizationCompanyId`. Las opciones viajan en la configuración del formulario y no se
+  piden a `GET /api/v1/tenants/{tenantId}/companies?status=active`: esa ruta exige `companies.company.read`, que un rol con
+  `support.settings.manage` puede no tener (precedente: `RegisterContextResponse.Companies` del POS, «el cajero no tiene
+  companies.company.read»).
 
 ### 9.2 Radicado idempotente [owner, 2026-11-15, D-7]
 
@@ -515,8 +555,8 @@ se itera, la clase completa una vez por bloque, nunca dos corridas de integraci�
 
 ## 15. Decisiones del owner (resueltas 2026-11-15)
 
-El owner aprobó D-1 a D-5 tal como se recomendaron, y agregó D-6 y D-7. El cuerpo del spec ya las aplica, salvo el NIT
-de D-6, que sigue pendiente.
+El owner aprobó D-1 a D-5 tal como se recomendaron, y agregó D-6 y D-7. El cuerpo del spec ya las aplica. D-8 es nueva
+(de este spec) y el plan la asume como se recomienda.
 
 - **D-1 Pregunta de autorización: editable, con una por defecto.** Campo de texto plano opcional en el aviso de
   privacidad (`authorizationQuestion`, 1–500). Sin él, el backend arma la pregunta por defecto con el nombre del tenant
@@ -537,14 +577,10 @@ de D-6, que sigue pendiente.
 **Agregadas el 2026-11-15 en la revisión del spec del portal:**
 
 - **D-6 «No omitir datos»: el portal muestra el NIT del tenant, la fecha de radicación y el término en días hábiles**
-  [owner]. Fecha y término quedan en el contrato (§9.1). **El NIT queda PENDIENTE**: el tenant no tiene NIT en el modelo
-  (`Tenant` sólo tiene `DisplayName` y `Country`); los NIT están en `Modules.Companies` (`Company.TaxId`,
-  `DocumentType`, `Name`), un tenant puede tener varias empresas y ninguna está marcada como la propia. No se inventa el
-  campo. Opciones para el owner: (a) que la configuración del formulario público elija una empresa del tenant
-  (`organizationCompanyId`) y `GET /form` y `GET /consult` muestren su nombre, tipo y número de documento, leídos por un
-  puerto de Soporte con adaptador en Bootstrapper; (b) agregar razón social y NIT al tenant en Tenancy, con su pantalla en
-  la consola. **Recomendación:** (a): el dato ya existe, la empresa es la entidad legal que responde la PQRSF y el NIT no
-  se duplica en dos módulos. Sin respuesta, el contrato del portal no trae NIT.
+  [owner]. Fecha y término: §9.1. **NIT: resuelto el 2026-11-15 con la opción (a)** [owner]: el tenant no tiene NIT
+  propio (`Tenant` sólo tiene `DisplayName` y `Country`), así que elige en Ajustes › Formulario público una de sus
+  empresas de `Modules.Companies`, y el portal muestra su nombre, tipo y número de documento (§9.3). Se descartó (b),
+  agregar razón social y NIT al tenant en Tenancy, porque duplicaba un dato que ya existe.
 - **D-7 Radicado idempotente por `clientRequestId`** [owner], calcado del checkout de la tienda (§9.2). **Qué trae `Pin`
   en un reintento** lo fija este spec dentro de lo que dijo el owner («sin reenviar el PIN si ya se entregó»), y conviene
   que lo confirme: sólo se guarda el hash del PIN, así que no se puede devolver el mismo. Regla: si el correo de apertura
@@ -553,6 +589,12 @@ de D-6, que sigue pendiente.
   (anónimo, o el correo falló), se **emite un PIN nuevo** que reemplaza al anterior y viaja sólo en la respuesta, sin
   correo: sin eso, un anónimo que perdió la primera respuesta perdería su caso. La clave sólo la conoce el navegador que
   radicó (UUID aleatorio que nunca se muestra), así que rotar el PIN con ella no abre nada a un tercero.
+
+**Nueva, de este spec (2026-11-15), asumida por el plan hasta que el owner responda:**
+
+- **D-8 ¿La empresa del portal es obligatoria para publicar?** **Recomendación: sí** (bloqueador `organization_required`,
+  §9.3). El owner pidió no omitir el NIT; un formulario publicado sin empresa lo omitiría. Si el owner prefiere que sea
+  opcional, el bloqueador se quita y `organization` llega `null` hasta que la elijan; nada más cambia.
 
 ## 16. Discrepancias encontradas (spec contra código)
 

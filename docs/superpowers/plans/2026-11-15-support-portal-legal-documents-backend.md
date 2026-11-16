@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10, ASP.NET Core minimal APIs, EF Core 10 + Npgsql, FluentValidation, `HtmlSanitizer` (mganss, sobre AngleSharp), xUnit v3, Testcontainers (PostgreSQL).
 
-**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-7 (§15; el NIT de D-6 sigue pendiente). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
+**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-8 (§15; D-8 asumida como se recomienda). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
 
 ---
 
@@ -33,7 +33,7 @@
   dotnet ef migrations add AddSupportLegalDocuments --project src/Modules/Support/Modules.Support.Infrastructure --context SupportDbContext -o Persistence/Migrations
   ```
   Revisa el `Up` generado: **no** puede traer `DropTable` ni `DropColumn` (L10). El `Down` se edita a mano (L11).
-  El Bloque C agrega otra, después: `dotnet ef migrations add AddSupportTicketClientRequestId` (mismos parámetros).
+  El Bloque C agrega dos más, en este orden y con los mismos parámetros: `AddSupportTicketClientRequestId` (Tarea 9) y `AddSupportFormOrganization` (Tarea 10, con la FK a `companies.companies` escrita a mano).
 - `docs/estado.md` **no se toca** en esta rama.
 
 ## Global Constraints
@@ -51,7 +51,7 @@
 
 ## Decisiones del plan
 
-Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-5 del spec están resueltas; de D-6 queda pendiente el NIT (fuera del plan) y de D-7 la confirmación de L28.
+Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-7 del spec están resueltas (de D-7 queda por confirmar L28); D-8 (empresa obligatoria para publicar) es nueva y el plan la asume como se recomienda.
 
 | # | Decisión | Por qué |
 | --- | --- | --- |
@@ -80,9 +80,13 @@ Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-5 del spec e
 | L23 | Origen de desarrollo del portal: `http://localhost:4322`. `appsettings.Development.json` cambia `Support:PublicForm:AllowedOrigins` de `["http://localhost:3002"]` a `["http://localhost:4322"]`. El repo del portal fija ese puerto con `--port 4322` y `strictPort` (el storefront usa 4321). | Spec §12: 3002 es la consola y ya no llama al grupo público. Un valor de configuración, sin código. |
 | L24 | `appsettings.example.json` documenta `Support:PublicForm:{BaseUrl,Hostname,AllowedOrigins}` y `Support:Workers:{BatchSize,FeedLookbackHours,FollowIntervalSeconds}`. | Pone en verde `ConfigurationExampleTests.EveryBoundConfigurationKeyIsDocumentedInTheExample`, en rojo desde la fase 3 (`docs/estado.md`, «Defectos conocidos»), y deja documentada la clave que esta rama cambia. |
 | L25 | El alias estable de `develop` del portal en Vercel (D-5) **no** entra en código ni en `appsettings*.json`: el proyecto de Vercel todavía no existe. El README dice dónde ponerlo (`Support__PublicForm__AllowedOrigins__N` del backend de desarrollo y CORS del bucket de desarrollo) cuando exista. | No se inventa un origen. |
-| L26 | Datos que no se omiten (D-6): `SupportPublicFiledDto` suma `ReceivedAt` (`SupportTicket.ReceivedAt`), `TermBusinessDays` y `TermIsLegal` (la foto del tipo en el ticket: `SupportTicket.TermBusinessDays`, `SupportTicket.cs:41`, y su `TermIsLegal`); `SupportPublicTicketDto` suma `TermBusinessDays` de la misma foto (`LookupPublicTicket.cs:~103`). Nunca del tipo vivo: editar el tipo después no cambia lo que ve el solicitante. **El NIT no entra** (D-6 pendiente: no existe en `Tenant`). | Spec §9.1. |
+| L26 | Datos que no se omiten (D-6): `SupportPublicFiledDto` suma `ReceivedAt` (`SupportTicket.ReceivedAt`), `TermBusinessDays` y `TermIsLegal` (la foto del tipo en el ticket: `SupportTicket.TermBusinessDays`, `SupportTicket.cs:41`, y su `TermIsLegal`); `SupportPublicTicketDto` suma `TermBusinessDays` de la misma foto (`LookupPublicTicket.cs:~103`). Nunca del tipo vivo: editar el tipo después no cambia lo que ve el solicitante. El NIT va por L29–L32. | Spec §9.1. |
 | L27 | Idempotencia (D-7), calcada de `SubmitOrderRequest.cs:227-232` y `KeyedOrderCommit`: columna `support.tickets.client_request_id uuid NULL`, índice único parcial `IX_tickets_tenant_client_request (tenant_id, client_request_id) WHERE client_request_id IS NOT NULL`, migración aparte `AddSupportTicketClientRequestId` (aditiva, sin relleno). `SupportTicket.CreateFromPublicForm` recibe `Guid? clientRequestId`. Orden del handler: resolver → si hay clave, `ISupportTicketRepository.FindByClientRequestAsync(tenantId, key)` → si existe, respuesta de reintento (L28) **antes** de Turnstile, validador y versiones. Sin ticket: el flujo de siempre. Carrera: dentro de la transacción, **después** de `numbers.NextAsync` (el `UPDATE … RETURNING` de `SupportTicketNumberGenerator` serializa las altas del tenant), se vuelve a buscar la clave; si la confirmó otro, se deshace la transacción (el número vuelve con el rollback) y se responde con el ganador. Respaldo: `SupportUnitOfWork` traduce `IX_tickets_tenant_client_request` **por nombre** a `SupportClientRequestTakenException` (Application) y el handler la atrapa igual. El cuerpo no se compara (como la tienda). `ClientRequestId == Guid.Empty` → `validation.failed`. La clave no se audita ni va a `ticket_events`. | Spec §9.2; el doble chequeo bajo el candado del contador hace la carrera determinista sin depender del 23505. |
 | L28 | PIN del reintento (D-7): con `ticket_access.last_sent_channel = 'Email'` y `last_failure_code IS NULL` → `Pin = null`, `PinEmailed = true`, nada se escribe. Si no (anónimo, sin canal, `send_failed`, `send_pending`), `SupportTicketAccess.Reissue(hash nuevo, now)` en una transacción corta y `Pin` = el nuevo, `PinEmailed = false`; no se manda correo ni texto. El reintento no pasa por `SupportOpeningDelivery`. | Spec §15 D-7. |
+| L29 | Empresa del portal (D-6, opción a): `SupportFormVersion` gana `Guid? OrganizationCompanyId` (parámetro de `Create`; `Default` lo deja `null`). Columna `support.form_versions.organization_company_id uuid NULL`, índice `IX_form_versions_organization_company` y FK `FK_form_versions_companies_organization_company_id` → `companies.companies(id) ON DELETE RESTRICT`, escrita a mano en la migración `AddSupportFormOrganization` con `migrationBuilder.Sql` / `AddForeignKey` con `principalSchema: "companies"` (EF no la modela entre contextos; precedente `PosDbContext.cs:48-50`). El `Down` quita FK, índice y columna. Borrar la empresa responde `422 companies.company.in_use` sin tocar Companies: `CompaniesUnitOfWork.cs:48-54` traduce cualquier FK que frene el `DELETE` de una `Company`. | Spec §9.3. Companies migra antes que Support (`Program.cs:450`, `:510`). |
+| L30 | Puerto `ISupportOrganizationDirectory` (Application) con `SupportOrganizationRef(Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive)`: `Task<IReadOnlyList<SupportOrganizationRef>> ListActiveAsync(Guid tenantId, CancellationToken)` (ordenadas por nombre) y `Task<SupportOrganizationRef?> FindAsync(Guid tenantId, Guid companyId, CancellationToken)` (filtra por tenant; inactiva incluida). Adaptador `SupportOrganizationDirectory` en `src/Bootstrapper/` sobre `ICompanyRepository`, calcado de `PosCompanyLookup.cs` (`SearchAsync(..., CompanyStatusFilter.Active)`, `FindAsync`, `DocumentType.ToWire()`, `TaxId`). Registro en `QepServiceCollectionExtensions` junto a `IPosCompanyLookup`. | Support no referencia `Modules.Companies.*` (`SupportLayerTests`); mismo patrón que POS y Quotations. |
+| L31 | `PUT /settings/public-form`: `UpdateFormSettingsRequest`/`Command` suman `Guid? OrganizationCompanyId` (opcional: `null` = sin empresa). Validador: `Guid.Empty` → `errors.OrganizationCompanyId`. Handler: si el valor **cambia** frente a la versión vigente y no es `null`, `FindAsync` tiene que devolver una empresa del tenant **activa**; si no existe, es de otro tenant o está inactiva → `422 support.form.organization_unavailable` (código nuevo). Si no cambia, no se valida (una empresa desactivada después no bloquea editar). `changedFields` suma `organizationCompanyId`. | Spec §9.3. |
+| L32 | Bloqueadores nuevos en `SupportFormSettings.BlockersAsync`, después de los de documentos: `organization_required` (la versión candidata no tiene empresa; D-8) y `organization_inactive` (la elegida está inactiva). `ErrorCodeOf`: `support.form.organization_required` y `support.form.organization_inactive` (nuevos). Como hoy, sólo frenan pasar de sin publicar a publicado. `SupportFormSettingsDto` suma `Organization` (la elegida, `SupportFormOrganizationDto?`, con `IsActive`) y `OrganizationOptions` (las activas del tenant). Público: `GetPublicFormHandler` y `GetPublicConsultHandler` suman `SupportPublicOrganizationDto? Organization` desde la versión que ya usan (`FindAsync`; inactiva se muestra; inexistente o `null` → `null`). | Spec §9.3, D-8. Las opciones viajan en la configuración porque `GET /companies` exige `companies.company.read` (precedente `RegisterContextResponse.Companies` del POS). |
 
 ## Review Focus
 
@@ -93,6 +97,7 @@ Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-5 del spec e
 5. **La migración no borra nada:** el `Up` no tiene `DropTable`/`DropColumn`; `legal_text_versions` y `consents` siguen con sus filas; el `Down` deja las tablas nuevas. Tarea 2: `TheMigrationDownKeepsTheLegalDocumentTables`, `TheLegacyTablesAreStillThere`.
 6. **Un reintento nunca crea un segundo ticket ni gasta un número:** dos `POST` en paralelo con la misma clave → una fila, los dos `201` con el mismo número, y el siguiente radicado sin clave toma el número siguiente sin hueco. Tarea 9: `TwoConcurrentFilingsWithTheSameKeyCreateOneTicket`, `ARetryWithTheSameClientRequestIdReturnsTheSameTicket`.
 7. **El reintento no reenvía ni filtra el PIN:** con el correo ya enviado, `pin` es `null` y no sale otro correo; sin canal, el PIN viejo deja de servir para consultar y el nuevo sí. La clave de otro tenant no encuentra nada. Tarea 9: `ARetryAfterTheEmailWentOutReturnsNoPin`, `ARetryOfAnAnonymousTicketRotatesThePin`, `TheSameKeyInAnotherTenantIsAnotherTicket`.
+8. **La empresa del portal es del tenant y no desaparece:** una empresa de otro tenant no se puede elegir ni se cuela en `GET /form`; una empresa elegida no se puede borrar (`422 companies.company.in_use`); una desactivada se sigue mostrando y no bloquea editar. Tarea 10: `ACompanyOfAnotherTenantIs422`, `AChosenCompanyCannotBeDeleted`, `AnInactiveChosenCompanyIsStillShownAndEditable`.
 
 ---
 
@@ -108,7 +113,8 @@ Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-5 del spec e
 | `POST /settings/legal-documents/{kind}` (`If-Match: <version vigente>`, `0` si no hay) | `support.settings.manage` | `201 SupportLegalDocumentDto`, con `ETag` |
 | `GET /tickets/{ticketId:guid}/legal-acceptances/{kind}` | `support.ticket.view` | `200 SupportLegalAcceptanceSnapshotDto` |
 | `GET /tickets/{ticketId:guid}` (existente) | `support.ticket.view` | `SupportTicketDetailDto` + `legalAcceptances` |
-| `GET` · `PUT /settings/public-form` (existentes) | sin cambio | `SupportFormSettingsDto` con los bloqueadores nuevos |
+| `GET /settings/public-form` (existente) | `support.settings.view` | `SupportFormSettingsDto` con los bloqueadores nuevos, `organization` y `organizationOptions` |
+| `PUT /settings/public-form` (existente, `If-Match`) | `support.settings.manage` | `SupportFormSettingsDto`; el cuerpo suma `organizationCompanyId` |
 
 `{kind}` ∈ `privacy-notice`, `anonymous-notice`, `terms`. En los cuerpos viaja como `PrivacyNotice`, `AnonymousNotice`, `Terms`.
 **Se eliminan** `GET` y `POST /settings/legal-texts` y `SupportLegalTextsDto`.
@@ -139,11 +145,32 @@ public sealed record SupportLegalAcceptanceSnapshotDto(
 
 // SupportTicketDetailDto suma al final:
 //     IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances   // orden PrivacyNotice, AnonymousNotice, Terms; [] si no hay
+
+// Formulario público (Ajustes › Formulario público). Los campos de la fase 3 no cambian; suman los dos últimos.
+public sealed record SupportFormSettingsDto(
+    int Version, bool IsPublished, bool ShowDocument, bool ShowAddress, bool ShowLandline, bool BusinessNameRequired,
+    bool AllowAttachments, string? AccentColor, string? IntroText, string? SuccessMessage, string PublicUrl,
+    IReadOnlyList<string> PublishBlockers,
+    SupportFormOrganizationDto? Organization,                     // la empresa elegida; null = ninguna
+    IReadOnlyList<SupportFormOrganizationDto> OrganizationOptions); // las activas del tenant, por nombre; [] si no hay
+
+// DocumentTypeCode ∈ NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID (CompanyDocumentType.ToWire()); DocumentNumber = Company.TaxId.
+// IsActive false sólo puede venir en Organization (una elegida que después se desactivó), nunca en OrganizationOptions.
+public sealed record SupportFormOrganizationDto(
+    Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive);
+
+// PUT /settings/public-form: los campos de la fase 3 no cambian; suma OrganizationCompanyId (null = sin empresa).
+public sealed record UpdateFormSettingsRequest(
+    bool? IsPublished, bool? ShowDocument, bool? ShowAddress, bool? ShowLandline, bool? BusinessNameRequired,
+    bool? AllowAttachments, string? AccentColor, string? IntroText, string? SuccessMessage,
+    Guid? OrganizationCompanyId);
 ```
 
 - `ContentHtml` siempre llega **saneado** (lista blanca del spec §6.2). La respuesta del `POST` es lo que quedó guardado: el editor se repinta con ella.
 - `SupportLegalAcceptanceDto.AcceptedAt` en `AnonymousNotice` significa «continuó después de verlo». `VisitorIp` es `null` en las dos filas de un anónimo.
-- `SupportFormSettingsDto.PublishBlockers` ⊆ `privacy_notice_required`, `anonymous_notice_required`, `terms_required`, `no_published_types` (sale `legal_texts_required`).
+- `SupportFormSettingsDto.PublishBlockers` ⊆ `privacy_notice_required`, `anonymous_notice_required`, `terms_required`, `organization_required`, `organization_inactive`, `no_published_types` (sale `legal_texts_required`). Como hoy, sólo impiden pasar de sin publicar a publicado: un formulario publicado se sigue editando aunque aparezca uno.
+- **El selector de empresa usa `organizationOptions`**, no `GET /api/v1/tenants/{tenantId}/companies?status=active` (`companies.api.ts` de la consola): esa ruta exige `companies.company.read`, que un rol con `support.settings.manage` puede no tener. Si `organization` está inactiva, el selector la muestra igual (no está en `organizationOptions`) con una marca de «desactivada», y guardar sin cambiarla no falla.
+- Una empresa elegida en el formulario **ya no se puede borrar** en Empresas (`DELETE …/companies/{id}` responde `422 companies.company.in_use`, código existente); sí desactivar.
 
 Errores de la consola:
 
@@ -160,19 +187,30 @@ Errores de la consola:
 | `404 support.ticket.not_found` | foto de un ticket que no es del tenant |
 | `404 support.legal_acceptance.not_found` | el ticket no tiene aceptación de ese tipo |
 | `422 support.form.legal_texts_required` | `PUT /settings/public-form` publicando con un documento sin versión (sin cambio de código) |
+| `422 validation.failed`, `errors.OrganizationCompanyId` | `organizationCompanyId` es el UUID vacío |
+| `422 support.form.organization_unavailable` | `PUT` que **cambia** la empresa a una que no existe, es de otro tenant o está inactiva |
+| `422 support.form.organization_required` | `PUT` publicando sin empresa elegida |
+| `422 support.form.organization_inactive` | `PUT` publicando con la empresa elegida desactivada |
 | `403` | sin permiso o tenant ajeno, como el resto del módulo |
 
 ### Portal (`qep-frontend-support`), bajo `/api/v1/public/support/{tenantSlug}`
 
-Anónimo, sin credenciales (CORS `support-public`: `GET` y `POST`, sólo `Content-Type`), `Cache-Control: no-store`, cuerpo ≤ 64 KB, limitadores por IP sin cambio. **Toda llamada sale del navegador**, nunca del render del servidor. Rutas sin cambio salvo lo de la tabla: `GET /consult`, geografía, adjuntos y `POST /tickets/resend-pin` siguen como en la fase 3.
+Anónimo, sin credenciales (CORS `support-public`: `GET` y `POST`, sólo `Content-Type`), `Cache-Control: no-store`, cuerpo ≤ 64 KB, limitadores por IP sin cambio. **Toda llamada sale del navegador**, nunca del render del servidor. Rutas sin cambio salvo lo de la tabla: geografía, adjuntos y `POST /tickets/resend-pin` siguen como en la fase 3.
 
 | Método y ruta | Cambio |
 | --- | --- |
-| `GET /form` | `legal` cambia de forma |
+| `GET /form` | `legal` cambia de forma; suma `organization` |
+| `GET /consult` | suma `organization` |
 | `POST /tickets` | cuerpo: sale `legalTextVersion`; entran `privacyNoticeVersion`, `anonymousNoticeVersion`, `acceptsTerms`, `termsVersion` y `clientRequestId` (opcional, idempotencia). Respuesta: suma `receivedAt`, `termBusinessDays`, `termIsLegal`; `pin` pasa a anulable |
 | `POST /tickets/lookup` | respuesta: suma `termBusinessDays` |
 
 ```csharp
+// SupportPublicFormDto suma al final `SupportPublicOrganizationDto? Organization`; SupportPublicConsultDto queda
+// (string TenantName, string? LogoUrl, string? AccentColor, SupportPublicOrganizationDto? Organization).
+// La empresa que responde: Company.Name, Company.DocumentType.ToWire() (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID) y
+// Company.TaxId. null = el tenant no eligió empresa. Una empresa desactivada se sigue mostrando.
+public sealed record SupportPublicOrganizationDto(string Name, string DocumentTypeCode, string DocumentNumber);
+
 // SupportPublicFormDto.Legal (los demás campos de SupportPublicFormDto no cambian):
 public sealed record SupportPublicLegalDto(
     SupportPublicPrivacyNoticeDto PrivacyNotice,
@@ -207,9 +245,9 @@ public sealed record SupportPublicTicketDto(
     bool TermIsLegal, int? TermBusinessDays, IReadOnlyList<SupportPublicReplyDto> Replies);
 ```
 
-En JSON: `legal.privacyNotice.{version, contentHtml, authorizationQuestion, policyUrl}`, `legal.anonymousNotice.{version, contentHtml}`, `legal.terms.{version, contentHtml}`, `legal.characterizationNotice`; cuerpo del radicado `{ …, anonymous, requester, acceptsDataPolicy, privacyNoticeVersion, anonymousNoticeVersion, acceptsTerms, termsVersion, formVersion, turnstileToken, attachments, clientRequestId }`; respuesta del radicado `{ number, pin, receivedAt, dueOn, termBusinessDays, termIsLegal, successMessage, pinEmailed, consultUrl }`; respuesta de la consulta `{ number, typeName, status, receivedAt, dueOn, dueState, termIsLegal, termBusinessDays, replies }`.
+En JSON: `organization: { name, documentTypeCode, documentNumber } | null` en `GET /form` y en `GET /consult`; `legal.privacyNotice.{version, contentHtml, authorizationQuestion, policyUrl}`, `legal.anonymousNotice.{version, contentHtml}`, `legal.terms.{version, contentHtml}`, `legal.characterizationNotice`; cuerpo del radicado `{ …, anonymous, requester, acceptsDataPolicy, privacyNoticeVersion, anonymousNoticeVersion, acceptsTerms, termsVersion, formVersion, turnstileToken, attachments, clientRequestId }`; respuesta del radicado `{ number, pin, receivedAt, dueOn, termBusinessDays, termIsLegal, successMessage, pinEmailed, consultUrl }`; respuesta de la consulta `{ number, typeName, status, receivedAt, dueOn, dueState, termIsLegal, termBusinessDays, replies }`.
 
-**El NIT del tenant no está en este contrato** (spec §15, D-6): el tenant no tiene NIT en el modelo y la fuente queda pendiente del owner. Cuando se decida, entra como un campo nuevo de `GET /form` y `GET /consult`.
+**La empresa que responde** (spec §9.3, D-6): `organization` es la empresa del tenant elegida en Ajustes › Formulario público. `GET /form` la toma de la versión publicada y `GET /consult` de la vigente aunque no esté publicada (como `accentColor`). La respuesta de `POST /tickets/lookup` no la repite: la página de consulta ya la tiene de `GET /consult`. Con el formulario recién publicado siempre viene (es obligatoria para publicar, D-8); `null` sólo en un formulario publicado antes de este cambio o en la consulta de un tenant que nunca la eligió, y el portal entonces no pinta la línea.
 
 **Radicado idempotente** (`clientRequestId`, spec §9.2, L26–L28):
 
@@ -265,7 +303,11 @@ src/Modules/Support/
                   SupportPublicFormRepositories (quita los dos repositorios viejos), SupportDbContext, SupportUnitOfWork,
                   Migrations/<ts>_AddSupportLegalDocuments, <ts>_AddSupportTicketClientRequestId; SupportTicketRepository (L27);
                   SupportInfrastructureExtensions; csproj (+HtmlSanitizer); packages.lock.json
-  Domain/         SupportTicket (+ClientRequestId, L27)
+  Domain/         SupportTicket (+ClientRequestId, L27), SupportFormVersion (+OrganizationCompanyId, L29)
+  Application/    ISupportOrganizationDirectory (+SupportOrganizationRef, L30), Settings/ UpdateFormSettings + GetFormSettings (L31–L32),
+                  Public/ GetPublicConsult (L32)
+  Infrastructure/ Migrations/<ts>_AddSupportFormOrganization (FK a mano, L29)
+src/Bootstrapper/ SupportOrganizationDirectory (nuevo, L30)
   Api/            SupportEndpoints (rutas nuevas, quita legal-texts)
 src/Bootstrapper/ SupportUserReferenceProbe (L22), QepServiceCollectionExtensions (handlers y validadores a mano)
 src/Api/          appsettings.Development.json (L23), appsettings.example.json (L24)
@@ -469,7 +511,7 @@ README.md (§ Formulario público de Soporte), CLAUDE.md (gotchas)
 
 **Revisión del Bloque B** (un revisor): L13–L20, L23–L25; Review Focus 3 y 4; que el anónimo no deje IP en ninguna tabla; que el contrato de las respuestas sea exactamente el de «Contrato para las pantallas».
 
-## Bloque C — Datos que no se omiten y radicado idempotente (Tareas 8–9, un implementador)
+## Bloque C — Datos que no se omiten, radicado idempotente y empresa del portal (Tareas 8–10, un implementador)
 
 Decisiones del owner del 2026-11-15 en la revisión del spec del portal (spec §9.1, §9.2, §15 D-6 y D-7). Va después del Bloque B: toca `FilePublicTicket.cs`, `SupportPublicDtos.cs` y `SupportPublicHarness.cs`, que el Bloque B ya cambió.
 
@@ -512,14 +554,46 @@ Decisiones del owner del 2026-11-15 en la revisión del spec del portal (spec §
     - `TheKeyIsNeverInTheTraceNorTheAudit` — `ticket_events` y la auditoría del alta no contienen la clave.
 - [ ] **Paso 2: RED** — `dotnet build $SU` falla: `FilePublicTicketCommand` sin `ClientRequestId`.
 - [ ] **Paso 3: implementar** — dominio, mapeo y `dotnet ef migrations add AddSupportTicketClientRequestId` (revisar que el `Up` sólo agregue la columna y el índice; `Down` los quita, la columna no es prueba legal); handler según L27 y L28. Documentación:
-  - README § «Formulario público de Soporte»: el radicado acepta `clientRequestId`; la tabla de qué trae `pin` en un reintento; que el reintento se mira antes de Turnstile y no compara el cuerpo; la migración `AddSupportTicketClientRequestId`; `receivedAt`, `termBusinessDays` y `termIsLegal` en las respuestas; que el NIT del tenant está pendiente (D-6).
+  - README § «Formulario público de Soporte»: el radicado acepta `clientRequestId`; la tabla de qué trae `pin` en un reintento; que el reintento se mira antes de Turnstile y no compara el cuerpo; la migración `AddSupportTicketClientRequestId`; `receivedAt`, `termBusinessDays` y `termIsLegal` en las respuestas.
   - `CLAUDE.md`, gotcha nuevo: «**El reintento del radicado público se reconoce por `clientRequestId` antes de Turnstile y bajo el candado del contador** (spec 2026-11-15 §9.2). No muevas la búsqueda después de Turnstile: el token ya se gastó en el primer intento y el reintento fallaría con `captcha_invalid`. Un reintento no reenvía el correo; si el PIN no salió por ningún canal, emite uno nuevo y el viejo deja de servir.»
 - [ ] **Paso 4: GREEN** — cada prueba filtrada por nombre; `dotnet test $SU --filter "FullyQualifiedName~FilePublicTicketValidatorTests|FullyQualifiedName~SupportTicketPublicFormTests"`.
 - [ ] **Paso 5: commit** — `feat(support): make public filing idempotent by client request id`.
 
-**Cierre del Bloque C:** una corrida por clase: `SupportPublicIdempotencyApiTests`, `SupportPublicFilingApiTests`, `SupportPublicLookupApiTests`, `SupportPublicFormPersistenceTests` en `$SI`, una a la vez; `FilePublicTicketValidatorTests` y `SupportTicketPublicFormTests` en `$SU`.
+### Task 10: La empresa que responde (NIT del portal)
 
-**Revisión del Bloque C** (un revisor): L26–L28; Review Focus 6 y 7; que la búsqueda por clave vaya antes de Turnstile y siempre filtrada por tenant; que la migración sea aditiva; que el contrato de `POST /tickets` y `POST /tickets/lookup` sea exactamente el de «Contrato para las pantallas».
+**Files:**
+- Create: `Modules.Support.Application/ISupportOrganizationDirectory.cs` (con `SupportOrganizationRef`); `src/Bootstrapper/SupportOrganizationDirectory.cs`; migración `AddSupportFormOrganization`
+- Modify: `Modules.Support.Domain/SupportFormVersion.cs` (`OrganizationCompanyId`), `SupportErrorCodes.cs` (`FormOrganizationUnavailable`, `FormOrganizationRequired`, `FormOrganizationInactive`), `SupportDbContext.cs` (columna e índice; la FK sólo en la migración), `Settings/UpdateFormSettings.cs` (L31), `Settings/GetFormSettings.cs` (`SupportFormSettings.BlockersAsync`, `ErrorCodeOf`, `ToDtoAsync`: L32), `SupportDtos.cs` (`SupportFormSettingsDto`, `SupportFormOrganizationDto`), `Public/SupportPublicDtos.cs` (`SupportPublicOrganizationDto`, `SupportPublicFormDto`, `SupportPublicConsultDto`), `Public/GetPublicForm.cs`, `Public/GetPublicConsult.cs`, `QepServiceCollectionExtensions.cs`, `README.md`, `CLAUDE.md`
+- Test: `$SU\FormSettingsValidatorTests.cs`, `$SU\SupportTicketPublicFormTests.cs` (o donde viva la prueba de `SupportFormVersion`), `$SI\SupportFormOrganizationApiTests.cs` (nueva), `$SI\SupportPublicFormApiTests.cs`, `$SI\SupportFormSettingsApiTests.cs`, `$SI\SupportPublicFormPersistenceTests.cs`, `$SI\SupportBootstrapperAdaptersTests.cs`, `$AT\SupportLayerTests.cs`, `$SI\SupportPublicHarness.cs` (`SeedPublishedFormAsync` siembra una empresa activa por SQL en `companies.companies` y la elige, para que los formularios sembrados sigan cumpliendo D-8)
+
+- [ ] **Paso 1: pruebas**
+  - `FormSettingsValidatorTests.AnEmptyOrganizationIdIsAnError` (`["OrganizationCompanyId"]`) y `ANullOrganizationIdIsFine`.
+  - `SupportFormVersion`: `TheVersionKeepsItsOrganization` y `TheDefaultFormHasNoOrganization`.
+  - `SupportFormOrganizationApiTests` (`SharedSupportHost`; cada prueba siembra su tenant y sus empresas por la API de Companies o por SQL):
+    - `TheSettingsListTheActiveCompaniesAsOptions` — dos activas y una inactiva → `organizationOptions` trae las dos activas, por nombre, con `documentTypeCode` y `documentNumber`.
+    - `AManagerWithoutCompaniesPermissionGetsTheOptions` — rol personalizado con sólo `support.settings.manage`: `GET /settings/public-form` trae las opciones; `GET …/companies` le da `403`.
+    - `ACompanyCanBeChosenAndIsReturned` — `PUT` con `organizationCompanyId` → `organization` con sus datos e `isActive: true`; nueva versión del formulario; auditoría con `organizationCompanyId` en `changedFields`.
+    - `ACompanyOfAnotherTenantIs422` — `support.form.organization_unavailable`; también un id que no existe.
+    - `AnInactiveCompanyCannotBeChosen` — `support.form.organization_unavailable`.
+    - `PublishingWithoutACompanyIs422` — `support.form.organization_required`, y `organization_required` en `PublishBlockers`.
+    - `PublishingWithAnInactiveCompanyIs422` — elegir activa, desactivarla, `PUT` publicando → `support.form.organization_inactive`.
+    - `AnInactiveChosenCompanyIsStillShownAndEditable` — formulario publicado con empresa; desactivarla; `PUT` cambiando sólo `introText` → `200`; `organization.isActive: false`; `organization_inactive` en `PublishBlockers`; `GET /form` sigue mostrando la empresa.
+    - `AChosenCompanyCannotBeDeleted` — `DELETE /api/v1/tenants/{tenantId}/companies/{id}` → `422 companies.company.in_use`; también si sólo una versión vieja del formulario la eligió.
+    - `AnUnchosenCompanyCanStillBeDeleted` — la FK no frena a las demás.
+  - `SupportPublicFormApiTests`: `TheFormShowsTheChosenCompany` (`organization` = `{ name, documentTypeCode: "NIT", documentNumber }`); `TheConsultShowsTheCompanyEvenUnpublished` (`GET /consult` con la versión vigente sin publicar); `WithoutACompanyOrganizationIsNull` (formulario sembrado sin empresa, publicado por SQL, y consulta de un tenant sin formulario); `AnotherTenantsCompanyNeverShows` (dos tenants, cada uno ve la suya).
+  - `SupportPublicFormPersistenceTests.TheOrganizationForeignKeyRestrictsDeletes` (existe `FK_form_versions_companies_organization_company_id` con `confdeltype = 'r'` en `pg_constraint`).
+  - `SupportBootstrapperAdaptersTests.TheOrganizationDirectoryMapsTheCompany` (nombre, `ToWire()`, `TaxId`, `IsActive`; otro tenant → `null`; `ListActiveAsync` sin inactivas, por nombre).
+  - `SupportLayerTests.SupportDoesNotReferenceCompanies` (Domain, Application, Infrastructure y Api de Support sin `Modules.Companies.*`).
+- [ ] **Paso 2: RED** — `dotnet build $SU` falla: `UpdateFormSettingsCommand` sin `OrganizationCompanyId`.
+- [ ] **Paso 3: implementar** — L29–L32. Migración: `dotnet ef migrations add AddSupportFormOrganization`, revisar que el `Up` sólo agregue columna e índice, y agregar a mano la FK con esquema principal `companies` y `onDelete: ReferentialAction.Restrict` (el model snapshot no la registra, como en POS). Documentación:
+  - README § «Formulario público de Soporte»: la empresa del portal (de dónde sale, obligatoria para publicar, se muestra aunque se desactive, no se puede borrar), la migración `AddSupportFormOrganization` con su FK, `organization` en `GET /form` y `GET /consult`, y los campos nuevos de `GET`/`PUT /settings/public-form`.
+  - `CLAUDE.md`: en el gotcha de Companies que corresponda (o uno nuevo), «**`support.form_versions.organization_company_id` tiene FK real a `companies.companies`** (`ON DELETE RESTRICT`, a mano en la migración, como `pos.cash_sessions`): una empresa que alguna versión del formulario público eligió no se borra, sólo se desactiva. Soporte la lee por `ISupportOrganizationDirectory` (Bootstrapper), nunca referenciando Companies.»
+- [ ] **Paso 4: GREEN** — cada prueba filtrada por nombre; `dotnet test $AT --filter "FullyQualifiedName~SupportLayerTests"`.
+- [ ] **Paso 5: commit** — `feat(support): show the tenant company that answers on the public portal`.
+
+**Cierre del Bloque C:** una corrida por clase: `SupportPublicIdempotencyApiTests`, `SupportFormOrganizationApiTests`, `SupportPublicFilingApiTests`, `SupportPublicLookupApiTests`, `SupportPublicFormApiTests`, `SupportFormSettingsApiTests`, `SupportPublicFormPersistenceTests`, `SupportBootstrapperAdaptersTests` en `$SI`, una a la vez; `FilePublicTicketValidatorTests`, `FormSettingsValidatorTests` y `SupportTicketPublicFormTests` en `$SU`; `SupportLayerTests` en `$AT`. Las de integración de Companies que borran empresas (`dotnet test` de su proyecto filtrado por `Delete`) una vez, porque la FK nueva puede frenar un borrado que antes pasaba.
+
+**Revisión del Bloque C** (un revisor): L26–L32; Review Focus 6, 7 y 8; que la búsqueda por clave vaya antes de Turnstile y siempre filtrada por tenant; que las migraciones sean aditivas y la FK quede `RESTRICT`; que Support no referencie Companies; que el contrato de `POST /tickets`, `POST /tickets/lookup`, `GET /form`, `GET /consult` y `GET`/`PUT /settings/public-form` sea exactamente el de «Contrato para las pantallas».
 
 **Antes de mergear a `develop`:** suites completas de `$SU`, `$SI`, `$BU`, `$AT`, una a la vez, con `-- xUnit.MaxParallelThreads=4` en las de integración; `dotnet format --verify-no-changes`; `dotnet build` limpio; `dotnet restore --locked-mode` limpio.
 
@@ -542,7 +616,8 @@ D-1 a D-5 del spec §15, aprobadas tal como se recomendaron: pregunta de autoriz
 
 Agregadas el 2026-11-15 en la revisión del spec del portal (Bloque C):
 
-- **D-6 «No omitir datos»:** fecha de radicación y término en días hábiles en el radicado y la consulta (L26, Tarea 8). **El NIT del tenant queda pendiente:** `Tenant` no tiene razón social ni NIT; los NIT están en `Modules.Companies` (`Company.TaxId`, `DocumentType`, `Name`), un tenant tiene varias empresas y ninguna es la propia. Recomendación del spec: que la configuración del formulario público elija una empresa del tenant. Hasta que el owner decida, el plan no agrega el campo.
+- **D-6 «No omitir datos»:** fecha de radicación y término en días hábiles en el radicado y la consulta (L26, Tarea 8). **NIT, resuelto con la opción (a):** el tenant elige en Ajustes › Formulario público una de sus empresas y el portal muestra su nombre, tipo y número de documento (L29–L32, Tarea 10).
+- **D-8 (nueva, del spec): la empresa es obligatoria para publicar** (`organization_required`). Asumida como se recomienda; si el owner la quiere opcional, se quita ese bloqueador y nada más cambia.
 - **D-7 Radicado idempotente por `clientRequestId`** (L27, Tarea 9), calcado del checkout de la tienda. Pendiente de confirmar la regla del PIN en un reintento (L28): `null` si ya salió por correo, uno nuevo si no salió por ningún canal.
 
 ## Spec discrepancies (spec contra código)
