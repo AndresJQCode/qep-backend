@@ -316,6 +316,7 @@ public static class SupportEndpoints
         MapTicketAction<AssignTicketRequest>(group, "assignee", AssignAsync);
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
         MapTicketAction<LinkTicketCustomerRequest>(group, "customer", LinkCustomerAsync);
+        MapTicketAction<ChangeTicketPriorityRequest>(group, "priority", ChangePriorityAsync);
 
         group.MapGet("/assignees", ListAssigneesAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -538,6 +539,16 @@ public static class SupportEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             LinkTicketCustomerCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ChangePriorityAsync(
+        Guid tenantId,
+        Guid ticketId,
+        ChangeTicketPriorityRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            ChangeTicketPriorityCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
 
     private static async Task<IResult> ListAssigneesAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

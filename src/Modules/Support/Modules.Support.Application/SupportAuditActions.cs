@@ -12,6 +12,8 @@ public static class SupportAuditActions
 
     public const string TicketCustomerChanged = "support.ticket.customer_changed";
 
+    public const string TicketPriorityChanged = "support.ticket.priority_changed";
+
     public const string TicketTypeCreated = "support.ticket_type.created";
 
     public const string TicketTypeUpdated = "support.ticket_type.updated";
