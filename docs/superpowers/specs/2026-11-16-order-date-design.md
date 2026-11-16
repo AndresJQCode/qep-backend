@@ -75,7 +75,7 @@ contrato) pero pasan a cortar por `OrderDate`, inclusive en las dos puntas, comp
 - `OrderRepository` línea ~98 (`Source == source && ConvertedAt >= since`): ventana técnica de sincronización, no la fecha del negocio.
 - Reporte de margen: corta por `PaidAt` (spec costo de producto §4.4).
 - Retenciones: el año de la UVT y la fecha de `MunicipalWithholdingExplanation` siguen leyendo `CreatedAt`. Cambiar la fecha del
-  pedido **no** recalcula impuestos. Ver §8, pendiente P-1.
+  pedido **no** recalcula impuestos. Ver §8, P-1.
 
 ## 6. Persistencia y migración
 
@@ -108,8 +108,8 @@ Después del deploy, filtros, exportación, reportes y PDF dan lo mismo que ante
 - **Migración:** un pedido con `converted_at = 2026-11-14T02:00:00Z` en un tenant `America/Bogota` queda con `order_date = 2026-11-13`.
 - `ArchitectureTests` sin cambios esperados.
 
-## 8. Pendientes del owner
+## 8. Decisiones cerradas
 
-| # | Pregunta | Default de este spec |
+| # | Pregunta | Decisión del owner (2026-11-16) |
 | --- | --- | --- |
-| P-1 | ¿Cambiar la fecha a otro año debe recalcular retenciones con la UVT de ese año? | No: los impuestos siguen con `CreatedAt`. |
+| P-1 | ¿Cambiar la fecha a otro año debe recalcular retenciones con la UVT de ese año? | **No.** El pedido no es una factura: QEP no la emite (spec 2026-10-05, `InvoicedAt` sólo deja constancia). La factura se hace después en el programa contable, con su propia fecha y su UVT. Las retenciones del pedido siguen con `CreatedAt` y `OrderDate` no las toca. |
