@@ -79,18 +79,22 @@ public sealed class OrderPdfDocumentMapperTests
         Assert.Null(document.ValidUntil);
     }
 
-    // Spec 2026-09-17, punto 7, igual que la cotización: creado el 31 de diciembre a las 23:00 en
-    // Bogotá —1 de enero en UTC— el documento dice 31 de diciembre.
+    // Spec 2026-11-16 §5: el documento imprime la fecha del pedido, que el asesor puede corregir, y no el día en que se
+    // creó. Ya es un día del tenant: no pasa por el calendario.
     [Fact]
-    public void TheIssueDateIsTheDayTheOrderWasCreatedInTheTenantsZone()
+    public void TheOrderPdfPrintsTheOrderDate()
     {
         var detail = Detail();
         var document = Map(detail with
         {
-            Order = detail.Order with { CreatedAt = new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero) },
+            Order = detail.Order with
+            {
+                CreatedAt = new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero),
+                OrderDate = new DateOnly(2026, 12, 28),
+            },
         });
 
-        Assert.Equal(new DateOnly(2026, 12, 31), document.IssuedOn);
+        Assert.Equal(new DateOnly(2026, 12, 28), document.IssuedOn);
     }
 
     [Fact]
@@ -239,7 +243,8 @@ public sealed class OrderPdfDocumentMapperTests
             [], new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero), Guid.CreateVersion7(), null, null, null,
             null, null, null, null, null,
             new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero),
-            1, [], shipping, 12605.04m, 2394.96m, [], [], [], null, null, null, null, 381180m, null, []);
+            1, [], shipping, 12605.04m, 2394.96m, [], [], [], null, null, null, null, 381180m, null, [],
+            new DateOnly(2026, 10, 20));
         var client = new QuotationClientResponse(
             order.ClientId, "CUC-0042", "Comercializadora del Norte S.A.S.", "3001234567", "compras@ejemplo.co",
             "Calle 100 #15-20", Guid.CreateVersion7(), "Bogotá", Guid.CreateVersion7(), "Cundinamarca", null, false, false,

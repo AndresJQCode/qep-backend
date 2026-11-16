@@ -282,10 +282,11 @@ public sealed class OrderListApiTests(SharedQuotationsHost sharedHost) : IClassF
         Assert.Equal(0, nextDay.Total);
     }
 
-    // Pedido del owner, 2026-10-15: convertido a la 01:00 del 15 en Madrid (23:00 UTC del 14, todavía
-    // el 14 en Bogotá). Quien filtra el 15 desde Madrid lo ve; sin zona, el día sigue siendo el del tenant.
+    // Convertido a la 01:00 del 15 en Madrid (23:00 UTC del 14, todavía el 14 en Bogotá). Desde el spec 2026-11-16 §4 el
+    // filtro corta por la fecha del pedido, que es un día del tenant: la zona de quien filtra ya no lo mueve (antes, desde
+    // Madrid, entraba en el 15). La zona se sigue validando.
     [Fact]
-    public async Task ListFiltersTheConversionRangeByTheDayOfWhoeverFilters()
+    public async Task ListFiltersByTheOrderDateWhateverTheZoneOfWhoeverFilters()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(
@@ -297,22 +298,67 @@ public sealed class OrderListApiTests(SharedQuotationsHost sharedHost) : IClassF
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         await ConvertToOrderAsync(client, tenantId, quotation.Id);
 
-        var inMadrid = await client.GetFromJsonAsync<OrdersPageResponse>(
+        var fifteenInMadrid = await client.GetFromJsonAsync<OrdersPageResponse>(
             $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15&timeZone=Europe%2FMadrid",
             TestContext.Current.CancellationToken);
-        var inTheTenantsDay = await client.GetFromJsonAsync<OrdersPageResponse>(
-            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15",
+        var fourteenInMadrid = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-14&convertedTo=2026-10-14&timeZone=Europe%2FMadrid",
             TestContext.Current.CancellationToken);
         var notAZone = await client.GetAsync(
             $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-15&convertedTo=2026-10-15&timeZone=Marte",
             TestContext.Current.CancellationToken);
 
-        Assert.NotNull(inMadrid);
-        Assert.Equal(quotation.Id, Assert.Single(inMadrid.Items).QuotationId);
-        Assert.NotNull(inTheTenantsDay);
-        Assert.Empty(inTheTenantsDay.Items);
+        Assert.NotNull(fifteenInMadrid);
+        Assert.Empty(fifteenInMadrid.Items);
+        Assert.NotNull(fourteenInMadrid);
+        Assert.Equal(quotation.Id, Assert.Single(fourteenInMadrid.Items).QuotationId);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, notAZone.StatusCode);
         Assert.Contains("order.time_zone_invalid", await notAZone.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-16 §4: convertedFrom/convertedTo conservan el nombre pero cortan por la fecha del pedido, inclusive en
+    // las dos puntas. Un pedido creado hoy y movido al 31 de octubre entra en octubre; el otro, de hoy, no.
+    [Fact]
+    public async Task TheDateFilterUsesTheOrderDate()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var moved = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        await MoveOrderDateAsync(client, tenantId, moved.Id, new DateOnly(2026, 10, 31));
+
+        var october = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?convertedFrom=2026-10-01&convertedTo=2026-10-31", TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(october!.Items);
+        Assert.Equal((moved.Id, new DateOnly(2026, 10, 31)), (row.Id, row.OrderDate));
+        Assert.Equal(1, october.Total);
+    }
+
+    // Spec 2026-11-16 §5: la lista ordena por la fecha del pedido y, dentro del mismo día, por el instante de creación. El
+    // segundo pedido se creó después, pero movido al 31 de octubre queda detrás del primero.
+    [Fact]
+    public async Task TheListIsSortedByOrderDate()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var first = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        var second = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        await MoveOrderDateAsync(client, tenantId, second.Id, new DateOnly(2026, 10, 31));
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(OrdersUrl(tenantId), TestContext.Current.CancellationToken);
+
+        Assert.Equal([first.Id, second.Id], page!.Items.Select(row => row.Id).ToArray());
     }
 
     // Spec 2026-11-10 §5, como Shopify: sin filtro de estado el listado no trae archivados; filtrarlos los muestra.

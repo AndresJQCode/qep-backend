@@ -31,7 +31,7 @@ public sealed class OrderShippingTests
         bool isStorePickup = false) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
-            Account, shipping, [Line], null, Advisor, proofs ?? [], Now);
+            Account, shipping, [Line], null, Advisor, proofs ?? [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     [Fact]
     public void FromQuotationCopiesTheShippingAndTheTotals()
@@ -45,7 +45,8 @@ public sealed class OrderShippingTests
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(shipping, order.ShippingDetails);
         Assert.Equal(
@@ -88,7 +89,8 @@ public sealed class OrderShippingTests
 
         var error = Assert.Throws<QuotationsDomainException>(() => Order.FromQuotation(
             OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor,
-            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)], Now));
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime)));
 
         Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
     }
@@ -171,7 +173,8 @@ public sealed class OrderShippingTests
         var line = Line;
         return Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
-            Account, [line], paymentStatus, null, Advisor, [], Now, OrderSource.Shopify, "#1001", shipping, externalKey,
+            Account, [line], paymentStatus, null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Shopify, "#1001", shipping, externalKey,
             externalShippingTitle, OrderCostFixtures.WithoutCosts([line]));
     }
 

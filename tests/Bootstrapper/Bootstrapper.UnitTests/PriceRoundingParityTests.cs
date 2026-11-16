@@ -51,7 +51,7 @@ public sealed class PriceRoundingParityTests
             },
             ShippingDetails.None,
             [new OrderLineInput(variant, variant, quantity, price, discount, 0)],
-            null, Advisor, [], Now);
+            null, Advisor, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         order.UsePriceRounding(rule, Now);
         var orderItem = Assert.Single(order.Items);
 

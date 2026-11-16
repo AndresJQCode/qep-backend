@@ -30,7 +30,7 @@ public sealed class OrderItemEditsTests
             new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             lines.Select(line => new OrderLineInput(line.ProductId, line.ProductId, line.Quantity, line.UnitPrice, 0m, 0, line.Product)).ToArray(),
-            null, UpdatedBy, [], Now);
+            null, UpdatedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static Task<IReadOnlyList<OrderItemEdit>> ApplyAsync(
         Order order, StubPricingCatalog catalog, params OrderItemAddition[] desired) =>
@@ -340,7 +340,7 @@ public sealed class OrderItemEditsTests
             new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0)],
-            null, UpdatedBy, [], Now);
+            null, UpdatedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         var catalog = new StubPricingCatalog(Variant(CamisetaM, "M", 30_000m), Variant(CamisetaL, "L", 32_000m));
 
         var edits = await ApplyAsync(
@@ -377,7 +377,7 @@ public sealed class OrderItemEditsTests
                 new OrderLineInput(CamisetaM, Camiseta, 1m, 30_000m, 0m, 0),
                 new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0),
             ],
-            null, UpdatedBy, [], Now));
+            null, UpdatedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime)));
 
         Assert.Equal("order.item.duplicate_product", error.Code);
     }

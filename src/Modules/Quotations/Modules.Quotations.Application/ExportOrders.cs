@@ -91,11 +91,11 @@ public sealed class ExportOrdersHandler(
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, command.TenantId, command.ClientCuc, cancellationToken);
 
-        // 3: al menos un pedido.
-        // El rango se corta en el día de quien pide, o en el del tenant (spec 2026-09-17, punto 3).
-        var calendar = OrderListing.CalendarFor(
-            await tenantClock.GetAsync(command.TenantId, cancellationToken), command.TimeZone);
-        var converted = TenantDayRange.Of(calendar, command.ConvertedFrom, command.ConvertedTo);
+        // 3: al menos un pedido. El rango corta por la fecha del pedido, que ya es un día del tenant (spec 2026-11-16 §4):
+        // TimeZone se sigue aceptando y guardando en el trabajo, pero no mueve el filtro. El calendario sólo da el instante
+        // de la solicitud.
+        OrderListing.EnsureValidTimeZone(command.TimeZone);
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
 
         var anyRow = await repository.AnyForExportAsync(
             command.TenantId,
@@ -106,8 +106,8 @@ public sealed class ExportOrdersHandler(
             paymentStatus,
             fulfillmentStatus,
             invoiced,
-            converted.From,
-            converted.Before,
+            command.ConvertedFrom,
+            command.ConvertedTo,
             command.OrderNumber,
             source,
             cancellationToken);

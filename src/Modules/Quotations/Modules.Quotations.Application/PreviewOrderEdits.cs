@@ -21,7 +21,8 @@ public sealed record PreviewOrderEditsQuery(
     QuotationBillingAccountRequest? BillingAccount = null,
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
-    IReadOnlyList<string>? ClearedWithholdingTypes = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    DateOnly? OrderDate = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -96,6 +97,12 @@ public sealed class PreviewOrderEditsHandler(
             updatedBy,
             now);
         order.UpdateNotes(query.Notes, now);
+        // Las mismas reglas que el guardado (spec 2026-11-16 §4): una fecha futura es 422 también acá.
+        if (query.OrderDate is { } orderDate)
+        {
+            order.ChangeOrderDate(orderDate, (await tenantClock.GetAsync(query.TenantId, cancellationToken)).Today, now);
+        }
+
         if (order.IsRetail != query.IsRetail)
         {
             order.SetIsRetail(query.IsRetail, updatedBy, now);
@@ -137,11 +144,12 @@ public sealed class PreviewOrderEditsHandler(
         // Sin historial: el preview no guarda nada.
         order.RecalculatePaymentStatus(previousNetTotal, now);
 
-        var quotationNumber = order.QuotationId is { } quotationId
-            ? (await quotationRepository.FindUntrackedAsync(query.TenantId, quotationId, cancellationToken))?.QuotationNumber
+        var quotation = order.QuotationId is { } quotationId
+            ? await quotationRepository.FindUntrackedAsync(query.TenantId, quotationId, cancellationToken)
             : null;
         // La versión que viaja es la guardada: el preview no es una edición y el If-Match del
         // guardado tiene que seguir valiendo.
-        return new OrderDetailDto(order.ToDto() with { Version = storedVersion }, quotationNumber, []);
+        return new OrderDetailDto(
+            order.ToDto() with { Version = storedVersion }, quotation?.QuotationNumber, [], quotation?.CreatedAt);
     }
 }

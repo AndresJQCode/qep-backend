@@ -63,12 +63,12 @@ public sealed class OrderWithholdingsTests
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", header ?? Header(Retefuente), parties ?? QuotationParties.Empty,
             account ?? ColombianAccount, ShippingDetails.None, [Line()], null,
-            AdvisorId, [], Now);
+            AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static Order PreviewWithoutAccount(params WithholdingRate[] withholdings) =>
         Order.Preview(
             OrderId.New(), TenantId, "PED-2026-0001", Header(withholdings), QuotationParties.Empty, null,
-            ShippingDetails.None, [Line()], null, AdvisorId, [], Now);
+            ShippingDetails.None, [Line()], null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static (string Name, decimal Base, decimal Amount)[] Applied(Order order) =>
         [.. order.AppliedWithholdings.Select(withholding => (withholding.Name, withholding.BaseAmount, withholding.Amount))];
@@ -88,7 +88,8 @@ public sealed class OrderWithholdingsTests
         });
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         // Con parte propia la fuente vigente son los selectores; la foto del cliente no viaja.
         var withholding = Assert.Single(order.Withholdings);
@@ -114,7 +115,8 @@ public sealed class OrderWithholdingsTests
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19, AdvisorId, Now);
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(bogota, order.OperationCityId);
         Assert.Equal([Retefuente, reteIcaBogota], order.Withholdings.OrderBy(row => row.Position).Select(row => row.Rate));

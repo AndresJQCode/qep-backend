@@ -72,7 +72,8 @@ public sealed class BuyerOrderGatewayTests
         var at = createdAt ?? Now.AddDays(-1);
         var order = Order.CreateFromStore(
             id ?? OrderId.New(), tenantId ?? TenantId, number, Header(), parties ?? Parties(), Account,
-            [Line("Aceite"), Line("Banano")], notes, Advisor, at, $"store-checkout:{number}",
+            [Line("Aceite"), Line("Banano")], notes, Advisor, at,
+            orderDate: DateOnly.FromDateTime(at.UtcDateTime), $"store-checkout:{number}",
             buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
@@ -165,7 +166,8 @@ public sealed class BuyerOrderGatewayTests
             OrderId.New(), TenantId, "PED-2026-0009", Header(),
             new QuotationParties(
                 billing, ShippingOf(billing), IsStorePickup: true, BillingVatSurplus: false),
-            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         pickup.LinkBuyerAccount(Buyer);
         var shipped = StoreOrder(Buyer, "PED-2026-0010", Now.AddDays(-1));
         var orders = new StubOrderListRepository(pickup, shipped);
@@ -764,7 +766,8 @@ public sealed class BuyerOrderGatewayTests
             OrderId.New(), TenantId, "PED-2026-0009", Header(),
             new QuotationParties(
                 billing, ShippingOf(billing), IsStorePickup: true, BillingVatSurplus: false),
-            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         order.LinkBuyerAccount(Buyer);
 
         var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);

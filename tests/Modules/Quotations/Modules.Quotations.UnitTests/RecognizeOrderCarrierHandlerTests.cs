@@ -162,7 +162,7 @@ public sealed class RecognizeOrderCarrierHandlerTests
             OrderId.New(), TenantId, "PED-2026-0002",
             new OrderHeader(Guid.CreateVersion7(), Advisor, "COP", null, false, null, false, []),
             new QuotationParties(null, null, IsStorePickup: false), OrderBuilders.BillingAccount,
-            [line], paymentStatus, null, Advisor, [], Now,
+            [line], paymentStatus, null, Advisor, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime),
             OrderSource.Shopify, "#1001", shipping, "shop-1:1001", title,
             OrderCostFixtures.WithoutCosts([line]));
     }

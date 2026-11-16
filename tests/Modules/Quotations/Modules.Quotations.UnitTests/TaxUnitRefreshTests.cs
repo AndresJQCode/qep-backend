@@ -57,7 +57,8 @@ public sealed class TaxUnitRefreshTests
         IReadOnlyDictionary<string, TaxUnitPhoto>? taxUnits,
         IReadOnlyCollection<OrderPaymentProofInput>? proofs = null) =>
         Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, proofs ?? [], Now, taxUnits);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, proofs ?? [], Now,
+            DateOnly.FromDateTime(Now.UtcDateTime), taxUnits);
 
     private static Order NewOrder() =>
         Order.CreateManual(
@@ -65,7 +66,7 @@ public sealed class TaxUnitRefreshTests
             new OrderHeader(ClientId, AdvisorId, "COP", null, IsRetail: false, null, CustomerVatSurplus: false, [RetefuenteServicios]),
             QuotationParties.Empty, ColombianAccount, ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 226_100m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
-            null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     [Fact]
     public void RefreshUpdatesValueAndYearAndRecalculates()

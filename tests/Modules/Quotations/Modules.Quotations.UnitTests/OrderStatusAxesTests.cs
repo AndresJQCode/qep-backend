@@ -30,7 +30,8 @@ public sealed class OrderStatusAxesTests
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), QuotationParties.Empty, Account,
             ShippingDetails.None, [Line()], null, ConvertedBy,
-            proofs ?? [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)], Now);
+            proofs ?? [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static string CodeOf(Action action) => Assert.Throws<QuotationsDomainException>(action).Code;
 

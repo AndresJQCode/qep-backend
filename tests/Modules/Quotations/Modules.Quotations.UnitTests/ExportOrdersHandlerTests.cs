@@ -19,10 +19,6 @@ public sealed class ExportOrdersHandlerTests
     private static readonly DateOnly From = new(2026, 9, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
 
-    // El mismo rango cortado en el día de Bogotá (spec 2026-09-17, punto 3).
-    private static readonly DateTimeOffset FromUtc = new(2026, 9, 1, 5, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
-
     [Fact]
     public async Task ExportForAnotherTenantIsForbiddenAndReadsNothing()
     {
@@ -200,16 +196,16 @@ public sealed class ExportOrdersHandlerTests
             JsonSerializer.Deserialize<OrdersExportFilters>(job.Filters));
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.PaymentPending, FromUtc, BeforeUtc, "PED-2026",
+                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.PaymentPending, From, To, "PED-2026",
                 FulfillmentStatus: OrderFulfillmentStatus.Prepared, Invoiced: false),
             repository.LastExportSearch);
         Assert.Equal(1, unitOfWork.Saves);
     }
 
-    // El export cubre el mismo rango que se ve en pantalla: el de la zona de quien lo pide, guardada
-    // con los filtros para que el procesador corte igual.
+    // Spec 2026-11-16 §4: el rango corta por la fecha del pedido, así que los días llegan tal cual aunque venga la zona de
+    // quien pide. La zona se sigue guardando con los filtros: es parte del contrato del trabajo.
     [Fact]
-    public async Task ExportCutsAndStoresTheTimeZoneOfWhoeverAsks()
+    public async Task ExportFiltersByTheOrderDateAndStillStoresTheTimeZone()
     {
         var queue = new InMemoryExportJobQueue();
         var repository = new StubOrderListRepository(NewRow());
@@ -217,8 +213,7 @@ public sealed class ExportOrdersHandlerTests
 
         await handler.HandleAsync(NewCommand() with { TimeZone = "Europe/Madrid" }, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch!.ConvertedFrom);
-        Assert.Equal(new DateTimeOffset(2026, 9, 12, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch.ConvertedBefore);
+        Assert.Equal(((DateOnly?)From, (DateOnly?)To), (repository.LastExportSearch!.OrderDateFrom, repository.LastExportSearch.OrderDateTo));
         Assert.Equal("Europe/Madrid", JsonSerializer.Deserialize<OrdersExportFilters>(Assert.Single(queue.Jobs).Filters)!.TimeZone);
     }
 

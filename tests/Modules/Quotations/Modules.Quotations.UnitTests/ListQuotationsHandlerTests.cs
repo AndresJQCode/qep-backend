@@ -255,7 +255,8 @@ public sealed class ListQuotationsHandlerTests
             notes: null,
             AdvisorId,
             [],
-            Now);
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static ListQuotationsHandler NewHandler(
         StubQuotationCustomerLookup customers, params Quotation[] quotations) =>

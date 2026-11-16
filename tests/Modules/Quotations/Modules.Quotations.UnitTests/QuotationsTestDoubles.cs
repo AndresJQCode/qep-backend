@@ -960,8 +960,8 @@ internal sealed record RecordedOrderExportSearch(
     MemberId? AdvisorId,
     OrderStatus? Status,
     OrderPaymentStatus? PaymentStatus,
-    DateTimeOffset? ConvertedFrom,
-    DateTimeOffset? ConvertedBefore,
+    DateOnly? OrderDateFrom,
+    DateOnly? OrderDateTo,
     string? OrderNumber,
     OrderSource? Source = null,
     OrderFulfillmentStatus? FulfillmentStatus = null,
@@ -975,7 +975,7 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     public IReadOnlyCollection<Guid>? LastClientIds { get; private set; }
 
     /// <summary>El rango, ya en instantes, con que se pidió la última página del listado.</summary>
-    public (DateTimeOffset? From, DateTimeOffset? Before) LastSearchRange { get; private set; }
+    public (DateOnly? From, DateOnly? To) LastSearchRange { get; private set; }
 
     public OrderSource? LastSource { get; private set; }
 
@@ -1040,8 +1040,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         int page,
@@ -1049,7 +1049,7 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         CancellationToken cancellationToken)
     {
         LastClientIds = clientIds;
-        LastSearchRange = (convertedFrom, convertedBefore);
+        LastSearchRange = (orderDateFrom, orderDateTo);
         LastSource = source;
         LastFulfillmentStatus = fulfillmentStatus;
         LastInvoiced = invoiced;
@@ -1121,15 +1121,15 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         CancellationToken cancellationToken)
     {
         AnyCalls++;
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source,
+            clientId, clientIds, advisorId, status, paymentStatus, orderDateFrom, orderDateTo, orderNumber, source,
             fulfillmentStatus, invoiced);
         return Task.FromResult(Matching(clientIds).Any());
     }
@@ -1143,8 +1143,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         OrderExportCursor? after,
@@ -1154,7 +1154,7 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         ExportCalls++;
         ExportCursors.Add(after);
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source,
+            clientId, clientIds, advisorId, status, paymentStatus, orderDateFrom, orderDateTo, orderNumber, source,
             fulfillmentStatus, invoiced);
         // Reproduce la forma del keyset en memoria, con comparación ordinal: alcanza para estas
         // pruebas unitarias, aunque el SQL real compara con la collation de la columna. El
@@ -1162,10 +1162,13 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         // OrdersCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip.
         IReadOnlyList<Order> page = Matching(clientIds)
             .Where(row => after is null
-                || row.ConvertedAt < after.ConvertedAt
-                || (row.ConvertedAt == after.ConvertedAt
+                || row.OrderDate < after.OrderDate
+                || (row.OrderDate == after.OrderDate && row.ConvertedAt < after.ConvertedAt)
+                || (row.OrderDate == after.OrderDate
+                    && row.ConvertedAt == after.ConvertedAt
                     && string.CompareOrdinal(row.OrderNumber, after.OrderNumber) < 0))
-            .OrderByDescending(row => row.ConvertedAt)
+            .OrderByDescending(row => row.OrderDate)
+            .ThenByDescending(row => row.ConvertedAt)
             .ThenByDescending(row => row.OrderNumber, StringComparer.Ordinal)
             .Take(limit)
             .ToArray();
@@ -1464,7 +1467,8 @@ internal static class OrderBuilders
             notes: null,
             advisorId,
             proofs ?? [],
-            now);
+            now,
+            orderDate: DateOnly.FromDateTime(now.UtcDateTime));
 }
 
 /// <summary>Spec 2026-10-13 §4.5: anota qué eventos del ciclo pidió el handler, sin outbox.</summary>

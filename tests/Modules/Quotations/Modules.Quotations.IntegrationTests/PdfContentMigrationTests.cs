@@ -32,10 +32,11 @@ public sealed class PdfContentMigrationTests
         "<p><strong>Alistamiento y Entrega:</strong><br>El proveedor preparará los pedidos bajo filmación y los entregará a la empresa transportadora dentro de los 8 días hábiles siguientes a la confirmación del pedido, siempre que estos hayan sido solicitados y pagados por el mayorista.</p><p><strong>Recepción de la Mercancía:</strong><br>Al recibir los productos de la transportadora, el mayorista deberá revisar el estado del paquete. No recibir en caso de detectar:</p><ul><li>Cinta contramarcada deteriorada</li><li>Cajas dañadas y/o abiertas</li><li>Cintas, zunchos o cajas diferentes a las del proveedor</li></ul><p>Si decide recibir el paquete a pesar de alguna de estas irregularidades, lo hará bajo su responsabilidad. En este caso, deberá:</p><ul><li>Dejar constancia de la novedad en la guía de recepción de la transportadora.</li><li>Informar de inmediato al proveedor.</li><li>Enviar fotografías como evidencia.</li></ul><p><strong>Verificación del Contenido:</strong><br>Una vez recibido el pedido, el mayorista deberá grabar un video al abrir las cajas o paquetes, evidenciando el estado y la cantidad de los productos.</p><p><strong>Reporte de Novedades:</strong><br>Si detecta daños, faltantes o deterioro en los productos, deberá informar al proveedor en un plazo máximo de 1 día hábil después de recibirlos. El reporte debe incluir:</p><ul><li>Video de la apertura del paquete.</li><li>Fotografías de las cajas.</li><li>Imágenes de los 3 stickers identificativos del proveedor.</li></ul>";
 
     // La base sólo tiene Quotations: la migración lee de tenancy.tenants sólo el id y el slug, así que alcanza con una réplica
-    // mínima hecha a mano (como las de CatalogVariantUsageCheckerTests).
+    // mínima hecha a mano (como las de CatalogVariantUsageCheckerTests). time_zone porque la prueba sigue hasta la última
+    // migración y AddOrderDate (spec 2026-11-16 §6) lo lee de la misma tabla.
     private const string TenantsSql = $"""
         CREATE SCHEMA IF NOT EXISTS tenancy;
-        CREATE TABLE tenancy.tenants (id uuid PRIMARY KEY, slug text NOT NULL);
+        CREATE TABLE tenancy.tenants (id uuid PRIMARY KEY, slug text NOT NULL, time_zone text NULL);
         INSERT INTO tenancy.tenants (id, slug) VALUES
             ('{OrigenBotanicoId}', 'origen-botanico'),
             ('{OtherTenantId}', 'otro-tenant');

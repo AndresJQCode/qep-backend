@@ -57,7 +57,8 @@ public sealed class OrderMunicipalWithholdingsTests
     private static Order NewOrder(OrderHeader? header = null, QuotationBillingAccount? account = null) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", header ?? Header(Retefuente, ReteIcaBogota), QuotationParties.Empty,
-            account ?? AccountBogota, ShippingDetails.None, [Line()], null, AdvisorId, [], Now);
+            account ?? AccountBogota, ShippingDetails.None, [Line()], null, AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     [Fact]
     public void ConvertingInheritsCityRowsAndEditedPercentage()
@@ -69,7 +70,8 @@ public sealed class OrderMunicipalWithholdingsTests
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19, AdvisorId, Now);
         quotation.SetWithholdingPercentage("ReteICA", 0.8m, AdvisorId, Now);
 
-        var order = Order.FromQuotation(OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now);
+        var order = Order.FromQuotation(OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(Bogota, order.OperationCityId);
         var row = order.Withholdings.Single(w => w.Type == "ReteICA");
@@ -86,7 +88,7 @@ public sealed class OrderMunicipalWithholdingsTests
         var store = Order.CreateFromStore(
             OrderId.New(), TenantId, "PED-2026-0002", Header(Retefuente, ReteIcaBogota),
             new QuotationParties(OwnBillingParty, OwnBillingParty with { }, BillingVatSurplus: false), AccountBogota,
-            [Line()], null, AdvisorId, Now, externalKey: "checkout-1");
+            [Line()], null, AdvisorId, Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime), externalKey: "checkout-1");
 
         foreach (var order in new[] { manual, store })
         {

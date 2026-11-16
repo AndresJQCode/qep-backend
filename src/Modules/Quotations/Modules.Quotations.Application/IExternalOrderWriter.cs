@@ -261,6 +261,10 @@ public sealed class ExternalOrderService(
             })
             .ToArray();
         var advisor = new MemberId(draft.AdvisorMembershipId);
+        // El día del pedido en la plataforma, en la zona del tenant: decide las tasas y es la «Fecha del pedido» (spec
+        // 2026-11-16 §3).
+        var orderDate = DocumentDates.LocalDate(
+            await tenantClock.GetAsync(draft.TenantId, cancellationToken), draft.OccurredAt);
         // Las tasas del cliente del país de la empresa (spec impuestos por tipo §7.5, D22), a la fecha del pedido en la zona
         // del tenant. Un cliente sin tasas da una lista vacía: el webhook de Shopify no empieza a fallar por esto.
         var withholdings = await OrderCustomerWithholdings.ResolveAsync(
@@ -268,7 +272,7 @@ public sealed class ExternalOrderService(
             draft.TenantId,
             draft.ClientId,
             billingAccount,
-            DocumentDates.LocalDate(await tenantClock.GetAsync(draft.TenantId, cancellationToken), draft.OccurredAt),
+            orderDate,
             cancellationToken);
         var header = new OrderHeader(
             draft.ClientId, advisor, billingAccount.Currency, draft.PaymentMethod, IsRetail: false,
@@ -287,7 +291,7 @@ public sealed class ExternalOrderService(
                     : OrderLineCosts.None;
                 var order = Order.CreateExternal(
                     OrderId.New(), draft.TenantId, orderNumber, header, draft.Parties.ToDomain(), billingAccount, lines,
-                    draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, draft.Source, draft.ExternalReference,
+                    draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, orderDate, draft.Source, draft.ExternalReference,
                     draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle, costs, draft.BuyerNotes);
                 // Decisión del owner (spec 2026-10-27 §4): un pedido de una integración se precia siempre con el valor por
                 // defecto de su moneda, no con la regla del tenant. Se fija acá, explícito, y OrderPricingRecalculation

@@ -52,7 +52,9 @@ public sealed class OrderDraftBuilder(
         var account = resolved
             ?? throw new QuotationsDomainException(
                 "order.billing.account_required", "An order needs a billing account.");
-        var (header, parties, lines) = await PriceAsync(input, customer, account, account.Currency, now, cancellationToken);
+        var orderDate = await LocalDateAsync(input.TenantId, now, cancellationToken);
+        var (header, parties, lines) = await PriceAsync(
+            input, customer, account, account.Currency, orderDate, cancellationToken);
         // Sólo al guardar: el cálculo previo corre mientras la persona escribe (spec 2026-10-26).
         var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(input.TenantId), cancellationToken);
         BillingPartyFiscalRules.EnsureConsistent(parties.Billing, regional?.Country);
@@ -60,7 +62,7 @@ public sealed class OrderDraftBuilder(
         var order = Order.CreateManual(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,
             shipping, lines,
-            input.Notes, input.AdvisorId, input.Proofs, now);
+            input.Notes, input.AdvisorId, input.Proofs, now, orderDate);
         await BillingPersonTypeRequirement.EnsureForOrderAsync(
             tenantDirectory, input.TenantId, order, cancellationToken);
         await OrderPricingRecalculation.ApplyAsync(
@@ -81,17 +83,23 @@ public sealed class OrderDraftBuilder(
         // de que se elija la empresa que factura. Con cuenta, manda la suya, como siempre.
         var currency = account?.Currency
             ?? Currencies.Normalize(await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
-        var (header, parties, lines) = await PriceAsync(input, customer, account, currency, now, cancellationToken);
+        var orderDate = await LocalDateAsync(input.TenantId, now, cancellationToken);
+        var (header, parties, lines) = await PriceAsync(input, customer, account, currency, orderDate, cancellationToken);
         var shipping = await ResolveShippingAsync(input, parties, currency, cancellationToken);
         var order = Order.Preview(
             OrderId.New(), input.TenantId, PreviewOrderNumber, header, parties, account,
             shipping, lines,
-            input.Notes, input.AdvisorId, input.Proofs, now);
+            input.Notes, input.AdvisorId, input.Proofs, now, orderDate);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
         order.RecalculateDraftPaymentStatus();
         return order;
     }
+
+    // Spec 2026-11-16 §3: el día local de la creación es a la vez la «Fecha del pedido» y el día con que se resuelven las
+    // retenciones del cliente, así que se lee el calendario una sola vez.
+    private async Task<DateOnly> LocalDateAsync(Guid tenantId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        DocumentDates.LocalDate(await tenantClock.GetAsync(tenantId, cancellationToken), now);
 
     // El pedido todavía no existe: la recogida y la moneda salen del borrador, las mismas con las que el
     // agregado va a validar el envío. Sin cuerpo (o con recogida) el resolver devuelve null: sin envío.
@@ -124,7 +132,7 @@ public sealed class OrderDraftBuilder(
         QuotationCustomerRef customer,
         QuotationBillingAccount? account,
         string currency,
-        DateTimeOffset now,
+        DateOnly orderDate,
         CancellationToken cancellationToken)
     {
         var lines = await PriceLinesAsync(input.TenantId, input.Items, currency, input.IsRetail, cancellationToken);
@@ -133,7 +141,7 @@ public sealed class OrderDraftBuilder(
             input.TenantId,
             input.ClientId,
             account,
-            DocumentDates.LocalDate(await tenantClock.GetAsync(input.TenantId, cancellationToken), now),
+            orderDate,
             cancellationToken);
         var header = new OrderHeader(
             input.ClientId,
