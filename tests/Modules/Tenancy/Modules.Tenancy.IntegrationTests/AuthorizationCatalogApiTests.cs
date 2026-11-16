@@ -43,6 +43,23 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
     private sealed record CatalogPermissionPayload(
         string Permission, string DisplayName, string Description, string Category, string RiskLevel);
 
+    // Spec 2026-11-16: lo que la matriz de roles lee del catálogo. Records aparte de CatalogPayload y
+    // CatalogPermissionPayload porque las pruebas viejas comparan esos por igualdad con listas escritas a
+    // mano: sumarles los campos de la matriz las ataría a la entidad y la acción de cada permiso.
+    private sealed record CatalogMatrixPayload(
+        IReadOnlyCollection<CatalogActionPayload> Actions,
+        IReadOnlyCollection<CatalogMatrixPermissionPayload> Permissions);
+
+    private sealed record CatalogActionPayload(string Key, string Label);
+
+    private sealed record CatalogMatrixPermissionPayload(
+        string Permission,
+        string CategoryLabel,
+        string Entity,
+        string EntityLabel,
+        string Action,
+        string ActionLabel);
+
     /// <summary>
     /// Lo que la pantalla de roles muestra de los permisos de pedidos (spec 2026-09-14): códigos
     /// nuevos, textos en masculino y con tilde, y los mismos permisos efectivos en los tres roles
@@ -161,6 +178,31 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
                 .Order(StringComparer.Ordinal).ToArray());
         Assert.Empty(PermissionsOf(catalog, "advisor", "pos."));
         Assert.Empty(PermissionsOf(catalog, "billing", "pos."));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-16: el catálogo dice en qué fila (entidad) y columna (acción) de la matriz de roles va
+    /// cada permiso, con los nombres en pantalla, para que el front no los traduzca con un diccionario
+    /// propio. Las columnas son las de <c>actions</c>; una acción fuera de ellas va a «Otros».
+    /// </summary>
+    [Fact]
+    public async Task TheCatalogDescribesEntityAndActionOfEachPermission()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
+
+        var catalog = await client.GetFromJsonAsync<CatalogMatrixPayload>(
+            $"/api/v1/tenants/{TenantId}/authorization/catalog", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(catalog);
+        Assert.Equal(["read", "manage", "delete", "import"], catalog!.Actions.Select(a => a.Key));
+        Assert.Equal(["Ver", "Gestionar", "Borrar", "Importar"], catalog.Actions.Select(a => a.Label));
+        var merge = catalog.Permissions.Single(p => p.Permission == "customers.customer.merge");
+        Assert.Equal(("customers.customer", "merge", "Fusionar", "Clientes"), (merge.Entity, merge.Action, merge.ActionLabel, merge.CategoryLabel));
+        Assert.Equal("manage", catalog.Permissions.Single(p => p.Permission == "tenancy.settings.update").Action);
+        Assert.DoesNotContain(catalog.Permissions.Single(p => p.Permission == "pos.sale.void").Action, catalog.Actions.Select(a => a.Key));
+        Assert.All(catalog.Permissions, p => Assert.False(string.IsNullOrWhiteSpace(p.EntityLabel)));
     }
 
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
