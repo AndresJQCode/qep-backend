@@ -104,6 +104,26 @@ public sealed class OrderResponseComposerTests
         Assert.Equal(["CO"], Assert.Single(withholdings.TaxUnitRequests));
     }
 
+    // Spec alerta UVT §8: un documento de 2026 cuando la última UVT cargada para el país es la de 2025. El último año es
+    // el que Catalog da (2025), no el del documento; y taxUnitOutdated sigue mirando el año de cada fila contra el del
+    // documento, así que la fila de 2025 queda desactualizada aunque no haya nada más nuevo que tomar.
+    [Fact]
+    public async Task LatestYearIsAnEarlierYearWhenTheDocumentYearIsNotLoaded()
+    {
+        var withholdings = new StubQuotationWithholdingLookup().WithTaxUnit("CO", 49_799m, 2025);
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with
+        {
+            WithholdingBreakdown = [Verdict(taxUnitYear: 2025), Verdict(taxUnitYear: 2024)],
+        };
+
+        var response = await Composer(withholdings: withholdings)
+            .ComposeOrderAsync(TenantId, order, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new[] { ((int?)2025, true, (int?)2025), ((int?)2024, true, (int?)2025) },
+            response.WithholdingBreakdown.Select(entry => (entry.TaxUnitYear, entry.TaxUnitOutdated, entry.TaxUnitLatestYear)));
+    }
+
     // Sin ningún valor cargado para el país no hay año que ofrecer.
     [Fact]
     public async Task LatestYearIsNullWithoutAnyLoadedValue()

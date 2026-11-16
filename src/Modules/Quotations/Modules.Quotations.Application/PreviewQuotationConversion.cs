@@ -129,10 +129,33 @@ internal static class QuotationConversionPreview
         IReadOnlyList<WithholdingVerdictDto> after,
         decimal afterNet)
     {
+        // Zip corta en silencio al largo menor: si los desgloses no casan fila por fila, la comparación saldría incompleta o
+        // mezclaría una tasa con otra sin que nada lo note. No pasa con dos pedidos de la misma cotización (spec alerta UVT
+        // §5.3), así que es un error de programación y no un código de dominio.
+        if (before.Count != after.Count)
+        {
+            throw new InvalidOperationException(
+                $"The conversion preview breakdowns differ in length ({before.Count} before, {after.Count} after).");
+        }
+
         var pairs = before.Zip(after).ToArray();
+        foreach (var (first, second) in pairs)
+        {
+            if (first.TaxRateId != second.TaxRateId)
+            {
+                throw new InvalidOperationException(
+                    $"The conversion preview paired tax rate {first.TaxRateId} with {second.TaxRateId}.");
+            }
+        }
+
         TaxUnitShiftDto[] taxUnits =
         [
             .. pairs
+                // Una fila que pasa de tener UVT a no tenerla (su país ya no está en TaxUnitsAsync) no se reporta, y por
+                // eso ToYear y ToValue del contrato no son nulos (spec alerta UVT §5.3). Supuesto: no hay ruta para borrar
+                // valores de UVT, así que un refresco nunca deja sin valor a una fila que lo tenía; sólo podría pasarle a
+                // una fila legada de un país sin ningún valor cargado, y esa tampoco tenía valor antes. Si algún día se
+                // pueden borrar valores, este filtro esconde un cambio del neto y hay que revisarlo.
                 .Where(pair => pair.Second.MinimumBaseUnit is not null
                     && pair.Second.TaxUnitValue is not null
                     && pair.Second.TaxUnitYear is not null

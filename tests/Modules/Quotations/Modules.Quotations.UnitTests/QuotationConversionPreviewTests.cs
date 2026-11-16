@@ -65,6 +65,27 @@ public sealed class QuotationConversionPreviewTests
         Assert.Equal([new TaxUnitShiftDto("CO", null, 50_000m, 2026, 60_000m)], change.TaxUnits);
     }
 
+    // Las filas se emparejan por posición: dos desgloses de largo distinto no salen de la misma cotización, y emparejarlos
+    // con Zip descartaría filas en silencio. Es un error de programación, no un error de dominio (spec alerta UVT §5.3).
+    [Fact]
+    public void CompareThrowsWhenTheBreakdownsHaveDifferentLengths()
+    {
+        var before = new[] { Row(2025, 50_000m, applies: true, amount: 4_000m) };
+        var after = new[] { Row(2026, 60_000m, applies: false, amount: 0m), Row(2026, 60_000m, applies: false, amount: 0m) };
+
+        Assert.Throws<InvalidOperationException>(() => QuotationConversionPreview.Compare(before, 115_000m, after, 119_000m));
+    }
+
+    // Mismo largo pero otra tasa en la misma posición: compararlas mezclaría el monto de una retención con el de otra.
+    [Fact]
+    public void CompareThrowsWhenARowPairsDifferentTaxRates()
+    {
+        var before = new[] { Row(2025, 50_000m, applies: true, amount: 4_000m) };
+        var after = new[] { Row(2026, 60_000m, applies: false, amount: 0m) with { TaxRateId = Guid.CreateVersion7() } };
+
+        Assert.Throws<InvalidOperationException>(() => QuotationConversionPreview.Compare(before, 115_000m, after, 119_000m));
+    }
+
     private static WithholdingVerdictDto Row(int? year, decimal value, bool applies, decimal amount) => new(
         RateId, "Retefuente servicios 4 %", "Retefuente", "CO", 4m, 4m, false, null, applies,
         applies ? "Applied" : "BelowMinimumBase", 100_000m, 2m, "UVT", 2m * value, value, year, amount);
