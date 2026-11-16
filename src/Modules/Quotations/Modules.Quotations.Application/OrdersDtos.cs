@@ -131,7 +131,8 @@ public sealed record OrderPaymentProofUpdateRequest(
 /// convertir. <c>BillingAccount</c> es obligatoria al crear y opcional en el cálculo previo, que sin ella
 /// precia en la moneda por defecto del tenant.
 /// </summary>
-public sealed record CreateOrderRequest(
+// Not sealed: PreviewOrderRequest extends it with the preview-only billingCompanyId.
+public record CreateOrderRequest(
     Guid ClientId,
     string? PaymentMethod,
     string? Notes,
@@ -144,6 +145,28 @@ public sealed record CreateOrderRequest(
     /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>. Con
     /// <c>CashOnDelivery</c> no puede llevar comprobantes (spec 2026-10-17 §6).</summary>
     ShippingRequest? Shipping = null);
+
+/// <summary>
+/// The body of <c>POST /orders/preview</c>: the manual order body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
+/// withholdings by company). Its own type so <c>POST /orders</c> never learns the field: an order keeps requiring the
+/// full account.
+/// </summary>
+public sealed record PreviewOrderRequest(
+    Guid ClientId,
+    string? PaymentMethod,
+    string? Notes,
+    bool IsRetail,
+    int? GlobalScaleFloor,
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount,
+    IReadOnlyList<OrderEditItemRequest> Items,
+    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
+    ShippingRequest? Shipping = null,
+    /// <summary>The billing company chosen before its bank account: the preview paints its withholdings and answers
+    /// <c>billingAccount: null</c>. Ignored when <c>billingAccount</c> is present.</summary>
+    Guid? BillingCompanyId = null)
+    : CreateOrderRequest(
+        ClientId, PaymentMethod, Notes, IsRetail, GlobalScaleFloor, Parties, BillingAccount, Items, PaymentProofs, Shipping);
 
 /// <summary>Sin estado de pago: lo calcula el backend con los comprobantes (spec 2026-11-10 §3.2).</summary>
 public sealed record ConvertQuotationToOrderRequest(
@@ -196,7 +219,8 @@ public sealed record OrderEditProofsRequest(
 
 /// <summary>El guardado atómico de «Editar» pedido (spec 2026-09-17). <c>IsRetail</c> y
 /// <c>GlobalScaleFloor</c> son del pedido desde el spec 2026-10-15.</summary>
-public sealed record SaveOrderEditsRequest(
+// Not sealed: PreviewOrderEditsRequest extends it with the preview-only billingCompanyId.
+public record SaveOrderEditsRequest(
     IReadOnlyList<OrderEditItemRequest>? Items,
     OrderEditProofsRequest? Proofs,
     string? Notes,
@@ -235,6 +259,30 @@ public sealed record SaveOrderEditsRequest(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement OperationCityId { get; init; }
 }
+
+/// <summary>
+/// The body of <c>POST /orders/{orderId}/preview</c>: the edit body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
+/// withholdings by company). Its own type so <c>PUT /orders/{orderId}</c> never learns the field.
+/// </summary>
+public sealed record PreviewOrderEditsRequest(
+    IReadOnlyList<OrderEditItemRequest>? Items,
+    OrderEditProofsRequest? Proofs,
+    string? Notes,
+    int? GlobalScaleFloor = null,
+    bool IsRetail = false,
+    ShippingRequest? Shipping = null,
+    OrderBillingEditRequest? Billing = null,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    QuotationBillingAccountRequest? BillingAccount = null,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    /// <summary>The billing company chosen before its bank account. Without <c>billingAccount</c>, absent still means
+    /// «keep the saved account»; with this field it means «this company, account pending»: the preview resolves the
+    /// order's withholdings against it and answers <c>billingAccount: null</c>.</summary>
+    Guid? BillingCompanyId = null)
+    : SaveOrderEditsRequest(
+        Items, Proofs, Notes, GlobalScaleFloor, IsRetail, Shipping, Billing, WithholdingTaxRateIds, BillingAccount,
+        WithholdingPercentages, ClearedWithholdingTypes);
 
 /// <summary>El bloque de facturación de «Editar pedido»: la parte propia (o ninguna), el consumidor final,
 /// la razón social del cliente y el perfil fiscal de la parte, como en <see cref="QuotationPartiesRequest"/>.</summary>

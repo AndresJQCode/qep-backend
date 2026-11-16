@@ -22,7 +22,8 @@ public sealed record PreviewOrderEditsQuery(
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
-    DateOnly? OrderDate = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    DateOnly? OrderDate = null,
+    Guid? BillingCompanyId = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {

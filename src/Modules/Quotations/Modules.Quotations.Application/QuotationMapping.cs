@@ -122,7 +122,7 @@ internal static class QuotationMapping
             ? null
             : new QuotationBillingAccountDto(
                 account.CompanyId, account.BankName, account.AccountNumber, account.Currency, account.Country,
-                account.CityId);
+                account.CityId, account.IsPending);
 
     private static QuotationPartyDto ToDto(QuotationParty party) => new(
         party.Id.Value,

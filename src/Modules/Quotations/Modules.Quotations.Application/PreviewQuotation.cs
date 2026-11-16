@@ -24,7 +24,8 @@ public sealed record PreviewQuotationQuery(
     ShippingRequest? Shipping = null,
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
-    IReadOnlyList<string>? ClearedWithholdingTypes = null) : IQuery<QuotationDto>, IQuotationEdits;
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    Guid? BillingCompanyId = null) : IQuery<QuotationDto>, IQuotationEdits;
 
 /// <summary>Las mismas reglas que el guardado salvo el documento de la facturación, que el cálculo
 /// previo no exige: corre mientras la persona escribe (ver <c>Quotation.EnsureBillingIdentified</c>).</summary>

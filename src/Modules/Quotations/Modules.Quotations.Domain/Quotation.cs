@@ -85,8 +85,9 @@ public sealed class Quotation
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
         // The billing account rules when there is one; otherwise the tenant default, read and
-        // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it).
-        Currency = BillingAccount?.Currency ?? defaultCurrency;
+        // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it). A pending account
+        // (company without account, previews only) is no account here: it never sets the currency.
+        Currency = HasBillingAccount ? BillingAccount!.Currency : defaultCurrency;
         CustomerVatSurplus = customerVatSurplus;
         // Spec ReteICA por empresa §7.6, «En la creación»: el municipio sale del mismo cuerpo (P13); en un país sin tipos
         // municipales no hay (A7).
@@ -807,7 +808,11 @@ public sealed class Quotation
     /// haya preguntado.
     /// </summary>
     public string CurrencyFor(QuotationBillingAccount? billingAccount) =>
-        billingAccount?.Currency ?? Currency;
+        billingAccount is { IsPending: false } ? billingAccount.Currency : Currency;
+
+    // A pending account (spec 2026-11-16 withholdings by company) only feeds the withholdings of a preview: every rule
+    // that asks «is there an account?» answers what it answers with none.
+    private bool HasBillingAccount => BillingAccount is { IsPending: false };
 
     // Cambiar de cuenta puede cambiar la moneda, y con ella el precio de cada línea: los importes
     // guardados son el precio del producto en la moneda vieja, no una cifra convertible. Por eso
@@ -1061,7 +1066,7 @@ public sealed class Quotation
         // Sin empresa facturadora no hay país, y sin país no se sabe qué retenciones aplican (spec impuestos
         // por tipo §7.7): la cotización que le llega al cliente tiene que decir lo que va a cobrar. Guardar un
         // borrador sin ella sigue permitido.
-        if (BillingAccount is null)
+        if (!HasBillingAccount)
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
@@ -1142,7 +1147,7 @@ public sealed class Quotation
 
         // Sin cuenta de cobro el pedido no sabe a donde se paga, que es justo lo que un pedido
         // tiene que decir.
-        if (BillingAccount is null)
+        if (!HasBillingAccount)
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
@@ -1194,7 +1199,7 @@ public sealed class Quotation
         Status is QuotationStatus.Draft or QuotationStatus.Sent
         && _items.Count > 0
         && ValidUntil is not null
-        && BillingAccount is not null
+        && HasBillingAccount
         && (Billing is not { } billing || billing.IsComplete)
         && (Shipping is not { } shipping || shipping.IsComplete)
         && !BillingLacksIdentification

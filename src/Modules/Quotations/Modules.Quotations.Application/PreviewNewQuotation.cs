@@ -23,7 +23,8 @@ public sealed record PreviewNewQuotationQuery(
     ShippingRequest? Shipping = null,
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
-    IReadOnlyList<string>? ClearedWithholdingTypes = null) : IQuery<QuotationDto>, IQuotationEdits;
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    Guid? BillingCompanyId = null) : IQuery<QuotationDto>, IQuotationEdits;
 
 /// <summary>Las reglas de la creación salvo el documento de la facturación, que el cálculo previo no exige: corre
 /// mientras la persona escribe, igual que <see cref="PreviewQuotationValidator"/>.</summary>

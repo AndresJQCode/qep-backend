@@ -29,6 +29,13 @@ public interface IQuotationEdits : IQuotationHeaderEdits
 
     QuotationBillingAccountRequest? BillingAccount { get; }
 
+    /// <summary>
+    /// The billing company chosen before its bank account (spec 2026-11-16 withholdings by company): only the previews
+    /// carry it, so withholdings are painted from the company while the account is pending. Ignored when
+    /// <see cref="BillingAccount"/> is present. Null by default: the write commands never accept it.
+    /// </summary>
+    Guid? BillingCompanyId => null;
+
     IReadOnlyList<QuotationItemAddition> Items { get; }
 
     /// <summary>

@@ -35,7 +35,7 @@ public static class OrderEndpoints
 
         collection.MapPost("/preview", PreviewOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Accepts<CreateOrderRequest>("application/json")
+            .Accepts<PreviewOrderRequest>("application/json")
             .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -64,7 +64,7 @@ public static class OrderEndpoints
 
         collection.MapPost("/{orderId:guid}/preview", PreviewOrderEditsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Accepts<SaveOrderEditsRequest>("application/json")
+            .Accepts<PreviewOrderEditsRequest>("application/json")
             .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -422,7 +422,7 @@ public static class OrderEndpoints
 
     private static async Task<IResult> PreviewOrderAsync(
         Guid tenantId,
-        CreateOrderRequest request,
+        PreviewOrderRequest request,
         IRequestDispatcher dispatcher,
         IOrderResponseComposer composer,
         CancellationToken cancellationToken)
@@ -431,7 +431,7 @@ public static class OrderEndpoints
             new PreviewOrderQuery(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentProofs, request.Shipping),
+                request.PaymentProofs, request.Shipping, request.BillingCompanyId),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
@@ -528,7 +528,7 @@ public static class OrderEndpoints
     private static async Task<IResult> PreviewOrderEditsAsync(
         Guid tenantId,
         Guid orderId,
-        SaveOrderEditsRequest request,
+        PreviewOrderEditsRequest request,
         IRequestDispatcher dispatcher,
         IOrderResponseComposer composer,
         CancellationToken cancellationToken)
@@ -539,7 +539,7 @@ public static class OrderEndpoints
                 tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail,
                 request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
-                request.ClearedWithholdingTypes, request.OrderDate),
+                request.ClearedWithholdingTypes, request.OrderDate, request.BillingCompanyId),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

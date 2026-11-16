@@ -65,6 +65,13 @@ public interface IOrderEdits
     /// <summary>La empresa y la cuenta de cobro (D22). <b>Null es «no la toques»</b>.</summary>
     QuotationBillingAccountRequest? BillingAccount { get; }
 
+    /// <summary>
+    /// The billing company chosen before its bank account (spec 2026-11-16 withholdings by company). Only the preview
+    /// carries it: absent <see cref="BillingAccount"/> then means «this company, account pending» instead of «keep the
+    /// saved account». Ignored when <see cref="BillingAccount"/> is present. Null by default: the save never accepts it.
+    /// </summary>
+    Guid? BillingCompanyId => null;
+
     /// <summary>El municipio de la operación (spec ReteICA por empresa §9.4, plan P1): ausente, <c>null</c> (el de la
     /// empresa) o un id.</summary>
     OperationCityChoice OperationCity { get; }
@@ -177,8 +184,11 @@ internal static class OrderWithholdingEdits
         CancellationToken cancellationToken)
     {
         // Con cuerpo, el resolver siempre devuelve la cuenta validada contra la empresa (o lanza).
+        // A company without account (preview only) resolves to a pending account in the order's own currency: an order
+        // never changes currency (plan P10), and the pending account must not trip that rule.
         var account = await QuotationBillingAccountResolver.ResolveAsync(
-            context.CompanyLookup, context.TenantId, edits.BillingAccount, cancellationToken);
+            context.CompanyLookup, context.TenantId, edits.BillingAccount, edits.BillingCompanyId, order.Currency,
+            cancellationToken);
         var target = account ?? order.BillingAccount;
         // La UVT es la del año del pedido (spec §7.3): la misma fecha con la que nació. Se lee una vez y sólo si hace falta.
         DateOnly? documentDate = null;

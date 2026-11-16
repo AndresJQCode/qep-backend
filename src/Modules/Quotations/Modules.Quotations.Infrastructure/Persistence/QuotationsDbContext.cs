@@ -196,6 +196,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
             // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
             billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
+            // Spec 2026-11-16 withholdings by company: a pending account only lives inside a preview, so it has no column.
+            billing.Ignore(value => value.IsPending);
         });
         quotation.Navigation(value => value.BillingAccount).IsRequired(false);
         // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
@@ -669,6 +671,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
             // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
             billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
+            // Spec 2026-11-16 withholdings by company: a pending account only lives inside a preview, so it has no column.
+            billing.Ignore(value => value.IsPending);
         });
         order.Navigation(value => value.BillingAccount).IsRequired();
         // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin

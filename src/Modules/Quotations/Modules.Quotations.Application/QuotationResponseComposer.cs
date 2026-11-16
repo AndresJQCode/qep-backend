@@ -374,9 +374,11 @@ public sealed class QuotationResponseComposer(
     // La empresa que no resuelve deja el bloque con la cuenta guardada y sin razón social, por
     // el mismo motivo que el cliente: la cotización es histórica y tiene que poder leerse aunque
     // la empresa se haya borrado. Lo que se muestra es lo que se congeló, no lo que hay hoy.
+    // A pending account (company without account, previews only — spec 2026-11-16) is never answered: showing an account
+    // that was never chosen is the anti-goal; its company already reaches the screen through the withholding fields.
     internal static QuotationBillingResponse? ToBillingResponse(
         QuotationBillingAccountDto? account, QuotationCompanyRef? company) =>
-        account is null
+        account is null or { IsPending: true }
             ? null
             : new QuotationBillingResponse(
                 account.CompanyId,
