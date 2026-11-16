@@ -5754,6 +5754,7 @@ parciales de los recorridos del cierre automático y de la encuesta). Las cinco 
 | `AddSupportReplyDocuments` | Una respuesta que borra un pod viejo se lleva su documento por la cascada. |
 | `AddSupportFormalAndSurveyTemplateKinds` | Ver abajo: no aprovisionar las plantillas nuevas mientras quede un pod viejo. |
 | `AddSupportSurveys` | Una resolución que hace un pod viejo no pide encuesta (aceptado: no hay relleno al arrancar). |
+| `AddSupportAutoCloseAndSurveyIndexes` | Ignoran los índices: son parciales sobre `support.tickets` (`IX_tickets_resolved_auto_close`) y `support.ticket_surveys` (`IX_ticket_surveys_awaiting_comment`, `…_awaiting_rating`, `…_comment_message`, `…_rating_message`), con `CREATE INDEX` simple (no `CONCURRENTLY`): bloquean las escrituras de esas tablas mientras se construyen, que en tablas de este tamaño es un instante. Aditiva. |
 
 - **Los tipos nuevos de plantilla se guardan por nombre.** Un pod viejo (o el código de antes, tras un rollback) no conoce
   `SupportFormalReply` ni `SupportSurvey` en `message_templates.kind`: EF los lee con `Enum.Parse` y falla. En una conexión que ya tenga
@@ -5764,6 +5765,9 @@ parciales de los recorridos del cierre automático y de la encuesta). Las cinco 
 - **`SUPPORT_PDF_API_KEY` y `SUPPORT_PDF_BASE_URL` tienen que existir en `Backend-prod` antes de que esto llegue a `main`.** Sin la
   clave, `SupportPdfOptionsValidator` (`ValidateOnStart`) no deja arrancar el pod en producción; un `#{…}#` sin resolver cuenta como
   ausente. Es una clave propia de `qcode-pdf`, nunca la de cotizaciones.
+- **Frontend: la página `/calificar?token=…` tiene que responder con `Referrer-Policy: no-referrer`.** El token va en la query de la
+  URL de la página (sólo la API lo recibe en el cuerpo); sin esa cabecera, cualquier recurso de terceros que la página cargue (una
+  fuente, una analítica, el logo del tenant) recibe la URL completa con el token en el `Referer`, y con él se califica la encuesta.
 - **La plantilla del PDF nunca se generó contra el `qcode-pdf` real.** Antes del primer envío en producción, genera a mano y revisa:
   una decisión larga con saltos de línea; con logo y sin logo; un ticket anónimo («Solicitante anónimo», sin documento ni correo); diez
   anexos; y textos con `#`, `[`, `*` y `$` (tienen que salir como texto, nunca como marcado de Typst).
