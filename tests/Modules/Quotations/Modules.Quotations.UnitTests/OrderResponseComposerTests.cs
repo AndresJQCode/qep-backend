@@ -31,7 +31,8 @@ public sealed class OrderResponseComposerTests
             new OrderHeader(ClientId, AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, OrderBuilders.BillingAccount,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
-            OrderPaymentStatus.PaymentPending, "Shopify #1001", AdvisorId, [], Now, OrderSource.Shopify, "#1001",
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Shopify, "#1001",
             ShippingDetails.None, null, null, OrderLineCosts.None, buyerNotes: "Sin cebolla");
 
         var dto = order.ToDto();

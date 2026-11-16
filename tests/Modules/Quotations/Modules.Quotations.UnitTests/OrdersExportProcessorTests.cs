@@ -559,7 +559,8 @@ public sealed class OrdersExportProcessorTests
             QuotationParties.Empty, DefaultBillingAccount,
             [.. DefaultItems.Select(item => new OrderLineInput(
                 item.ProductId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))],
-            OrderPaymentStatus.PaymentPending, "Shopify #1001", AdvisorId, [], Now, OrderSource.Shopify, "#1001",
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Shopify, "#1001",
             ShippingDetails.None, null, null, OrderLineCosts.None, buyerNotes: "Sin cebolla");
         var layouts = StoredLayout(
             OrdersExportColumnSetting.Catalog("notes", "Observaciones", visible: true),
@@ -2816,7 +2817,8 @@ public sealed class OrdersExportProcessorTests
             orderNotes,
             AdvisorId,
             proofInputs,
-            occurredAt);
+            occurredAt,
+            orderDate: DateOnly.FromDateTime(occurredAt.UtcDateTime));
     }
 
     private static OrdersExportProcessor NewProcessor(

@@ -37,12 +37,15 @@ public sealed class OrderLineCostTests
     private static Order NewOrder(IReadOnlyCollection<OrderPaymentProofInput>? proofs = null) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), QuotationParties.Empty, Account,
-            ShippingDetails.None, [Line(V1), Line(V2)], null, Advisor, proofs ?? [], T1);
+            ShippingDetails.None, [Line(V1), Line(V2)], null, Advisor, proofs ?? [], T1,
+            orderDate: DateOnly.FromDateTime(T1.UtcDateTime));
 
     private static Order External(OrderPaymentStatus paymentStatus) =>
         Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line(V1), Line(V2)],
-            paymentStatus, null, Advisor, [], T1, OrderSource.Shopify, "#1001", ShippingDetails.None, "shop:1001", null,
+            paymentStatus, null, Advisor, [], T1,
+            orderDate: DateOnly.FromDateTime(T1.UtcDateTime),
+            OrderSource.Shopify, "#1001", ShippingDetails.None, "shop:1001", null,
             Costs(6000m));
 
     private static OrderItem Item(Order order, Guid variantId) => order.Items.Single(item => item.VariantId == variantId);

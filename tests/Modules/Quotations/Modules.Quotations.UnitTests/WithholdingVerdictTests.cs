@@ -165,7 +165,7 @@ public sealed class WithholdingVerdictTests
             new OrderHeader(ClientId, AdvisorId, "COP", null, IsRetail: false, null, CustomerVatSurplus: false, [RetefuenteServicios, RetefuenteCo]),
             QuotationParties.Empty, ColombianAccount, ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
-            null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(
             [(WithholdingReason.BelowMinimumBase, 0m), (WithholdingReason.Applied, 2_500m)],

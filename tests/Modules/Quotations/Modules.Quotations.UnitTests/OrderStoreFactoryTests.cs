@@ -47,6 +47,7 @@ public sealed class OrderStoreFactoryTests
     private static Order NewStoreOrder(QuotationParties parties) =>
         Order.CreateFromStore(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), parties, Account, [Line()], null, Advisor, Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime),
             "store-checkout:abc");
 
     [Fact]
@@ -55,6 +56,7 @@ public sealed class OrderStoreFactoryTests
         var buyer = Guid.CreateVersion7();
         var order = Order.CreateFromStore(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()], null, Advisor, Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime),
             "store-checkout:abc", buyerAccountId: buyer);
         Assert.Equal(buyer, order.BuyerAccountId);
     }
@@ -109,7 +111,8 @@ public sealed class OrderStoreFactoryTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Order.CreateExternal(
                 OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()],
-                OrderPaymentStatus.PaymentPending, null, Advisor, [], Now, OrderSource.Store, "T-0001",
+                OrderPaymentStatus.PaymentPending, null, Advisor, [], Now,
+                orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Store, "T-0001",
                 ShippingDetails.None, null, null, OrderLineCosts.None));
 
         Assert.Equal(ExternalOrderErrors.SourceInvalid, error.Code);
@@ -118,7 +121,8 @@ public sealed class OrderStoreFactoryTests
     [Fact]
     public void QuoteForStoreHasNoClientAndIsNeverAManualOrder()
     {
-        var quote = Order.QuoteForStore(TenantId, "COP", isRetail: true, [Line()], Now);
+        var quote = Order.QuoteForStore(TenantId, "COP", isRetail: true, [Line()], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal((Guid.Empty, OrderSource.Store), (quote.ClientId, quote.Source));
         Assert.Null(quote.BillingAccount);

@@ -73,6 +73,6 @@ public sealed class OrderPriceRoundingTests
             },
             ShippingDetails.None,
             [new OrderLineInput(variantId, variantId, 10m, 13.19m, 15m, 19)],
-            null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
     }
 }

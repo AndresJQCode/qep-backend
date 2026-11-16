@@ -148,7 +148,8 @@ public sealed class OrderWithholdingsPersistenceTests
             null,
             Advisor,
             [],
-            Now);
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static async Task SaveNewAsync(string connectionString, Order order)
     {

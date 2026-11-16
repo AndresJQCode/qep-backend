@@ -1462,7 +1462,8 @@ internal static class OrderBuilders
             notes: null,
             advisorId,
             proofs ?? [],
-            now);
+            now,
+            orderDate: DateOnly.FromDateTime(now.UtcDateTime));
 }
 
 /// <summary>Spec 2026-10-13 §4.5: anota qué eventos del ciclo pidió el handler, sin outbox.</summary>

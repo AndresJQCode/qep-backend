@@ -43,7 +43,7 @@ public sealed class OrderBillingEditTests
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", header ?? Header, parties ?? QuotationParties.Empty,
             Account, new ShippingDetails(null, null, null, 0m, 0, false), [Line],
-            null, Advisor, [], Now);
+            null, Advisor, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static Order OrderWithRow(QuotationPartyDetails? row = null) =>
         NewOrder(QuotationParties.Empty with

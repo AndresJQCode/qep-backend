@@ -47,7 +47,8 @@ public sealed class RemoveOrderPaymentProofHandlerTests
                 new OrderPaymentProofInput(Guid.CreateVersion7(), remainingProofs),
                 new OrderPaymentProofInput(Guid.CreateVersion7(), 5_000m),
             ],
-            Now);
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         var mistaken = order.PaymentProofs.Single(proof => proof.Amount == 5_000m);
 
         var handler = NewHandler(new StubOrderListRepository(order));

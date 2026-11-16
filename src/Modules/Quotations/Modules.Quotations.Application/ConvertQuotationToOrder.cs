@@ -150,7 +150,9 @@ public sealed class ConvertQuotationToOrderHandler(
                 command.Notes,
                 convertedBy,
                 proofs,
-                now);
+                now,
+                // Spec 2026-11-16 §3: el día local de la conversión en el calendario del tenant; el dominio no conoce el huso.
+                DocumentDates.LocalDate(calendar, now));
 
             orderRepository.Add(order);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(

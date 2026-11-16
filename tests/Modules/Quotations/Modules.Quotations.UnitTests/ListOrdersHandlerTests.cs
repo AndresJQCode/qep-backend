@@ -366,5 +366,6 @@ public sealed class ListOrdersHandlerTests
             notes: null,
             AdvisorId,
             [],
-            Now);
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 }
