@@ -1,6 +1,6 @@
 # Soporte — documentos legales del portal público · diseño
 
-> Estado: borrador para revisión del owner (2026-11-15). Complementa la fase 3 «Formulario público»
+> Estado: aprobado por el owner (2026-11-15), con D-1 a D-5 resueltas (§15). Complementa la fase 3 «Formulario público»
 > (`2026-11-14-support-tickets-pqrs-design.md` §9 y plan `2026-11-15-support-phase-3-public-form-backend.md`), ya en
 > `develop`, y **reemplaza su §9.5**. Corrige su §9.1 en el mismo commit: el portal vive en un repo nuevo,
 > `qep-frontend-support`. Diseño aprobado del portal: https://claude.ai/artifact/CrSPJi5uVd9Co9v9XkSHuK (tablero
@@ -11,7 +11,7 @@ Convención de marcas:
 
 - **[owner]**: decisión tomada por el owner (2026-11-15). No se reabre.
 - **[diseñador]**: propuesta de este documento.
-- **DECISIÓN ABIERTA D-n**: ver §15; el plan la asume como la recomendación hasta que el owner responda.
+- **D-n**: decisión del owner del 2026-11-15, resuelta en §15.
 
 ## 1. Intención
 
@@ -138,7 +138,8 @@ Entidad `SupportLegalDocumentVersion`, tabla `support.legal_document_versions`, 
 
 **Ejemplo.** Sin versión publicada de un tipo, la consola recibe el ejemplo de QEP de ese tipo (versión 0,
 `isExample: true`), que no se guarda ni se puede aceptar, como `SupportLegalTextVersion.Example` hoy. El del aviso de
-privacidad parte del ejemplo actual (autorización y política) convertido a párrafos. Los otros dos son nuevos (D-4).
+privacidad parte del ejemplo actual (autorización y política) convertido a párrafos. Los otros dos son nuevos, cortos y
+marcados como ejemplo, y el abogado los revisa antes de salir a producción (D-4).
 
 ### 5.2 Aceptación por ticket
 
@@ -220,7 +221,8 @@ compartido, la foto de la aceptación es legible tal cual en SQL, y no ata el co
 ### 6.3 Dónde se sanea
 
 - **Al publicar** (consola): puerto `ISupportHtmlSanitizer` en `Modules.Support.Application`, implementado en
-  `Modules.Support.Infrastructure` sobre la librería de D-3. Application no referencia la librería (`SupportLayerTests`).
+  `Modules.Support.Infrastructure` sobre `HtmlSanitizer` (mganss, sobre AngleSharp), con versión fija y lock file
+  regenerado (D-3). Application no referencia la librería (`SupportLayerTests`).
 - **Al servir al portal** (`GET /form`): se vuelve a sanear lo leído. Con datos canónicos es un no-op, y protege contra
   una fila escrita por un camino que no pasó por el puerto (el relleno de §11, una corrección a mano en SQL o una lista
   blanca vieja). Tres documentos por request bajo el limitador `SupportPublicRead` (60/min/IP): costo despreciable.
@@ -396,7 +398,10 @@ que el tenant publique lo que falta; la consola lo muestra en `PublishBlockers`.
   sin tokens `#{…}#` en Production). Producción: `https://soporte.lulocrm.com` (`k8s/prod-configMap.yaml:55`), que
   sirve ahora `qep-frontend-support`. Desarrollo: `appsettings.Development.json` tiene `http://localhost:3002`, el
   puerto de la consola, puesto cuando el portal iba a ser el mismo SPA; se reemplaza por el puerto fijo del dev server de
-  `qep-frontend-support` cuando ese repo lo fije. Previews de Vercel: D-5.
+  `qep-frontend-support` cuando ese repo lo fije. Previews de Vercel (D-5): producción sólo admite
+  `https://soporte.lulocrm.com`; el backend de desarrollo admite además el alias estable de la rama `develop` del
+  proyecto de Vercel del portal (un origen exacto, por configuración), que también entra en el CORS del bucket de
+  desarrollo. Los previews por PR prueban contra un backend local.
 - **El portal llama desde el navegador.** Si alguna página de Astro llamara al grupo en el render del servidor, la
   cubeta de los limitadores sería la IP de Vercel para todos los visitantes. No se hace (corrección de §9.1 del spec de
   fase 3); un render del servidor necesitaría el patrón de secreto del storefront, que queda fuera.
@@ -456,36 +461,36 @@ se itera, la clase completa una vez por bloque, nunca dos corridas de integraci�
    cómo exponerlos.
 3. **Consola (`qep-frontend`)**: editor de los tres documentos, bloqueadores del formulario y aceptaciones en el detalle.
 4. **Portal (`qep-frontend-support`)**: los cuatro pasos contra el contrato de §9.
-5. Configuración: origen de desarrollo del portal en `appsettings.Development.json` (§12) y, si se aprueba D-5, los de
-   previews en el entorno de desarrollo y en el CORS del bucket `qep-private`.
+5. Configuración: origen de desarrollo del portal en `appsettings.Development.json` (§12) y el alias estable de
+   `develop` del portal en el backend de desarrollo y en el CORS de su bucket (D-5).
+6. Antes de producción: el abogado revisa los textos de ejemplo (D-4) y la suficiencia del aviso sin enlace (D-2).
 
 `docs/estado.md` se actualiza al mergear a `develop`, no en esta rama.
 
-## 15. Decisiones abiertas del owner
+## 15. Decisiones del owner (resueltas 2026-11-15)
 
-- **D-1 Pregunta de autorización.** ¿La escribe el tenant o es fija? El tablero la muestra con «sus sociedades
-  subsidiarias, matrices y/o económicamente vinculadas», que no es verdad para todo tenant. **Recomendación:** campo de
-  texto plano opcional en el aviso de privacidad (1–500), y sin él una pregunta por defecto con el nombre del tenant
-  (§6.4); la que se mostró va en la foto.
-- **D-2 Enlace a la política de tratamiento.** Hoy la política (texto o URL) es obligatoria. Con tres documentos, la
-  política escrita entra en el cuerpo del aviso de privacidad. ¿El enlace del pie es obligatorio? **Recomendación:**
-  `policyUrl` opcional en el aviso de privacidad; el portal muestra el enlace sólo si existe. El Decreto 1377 de 2013
-  pide que el aviso diga cómo conocer la política, y eso lo puede cumplir el cuerpo del aviso; que lo confirme el abogado.
-- **D-3 Librería de saneamiento.** El repo no tiene ninguna. **Recomendación:** `HtmlSanitizer` (mganss, sobre
-  AngleSharp), versión fija con el lock file regenerado, sólo en `Modules.Support.Infrastructure`. Escribir un saneador
-  propio es justo el error que este spec quiere evitar.
-- **D-4 Textos de ejemplo.** ¿QEP ofrece ejemplos para el aviso anónimo y los términos del SAC, además del de
-  privacidad? **Recomendación:** sí, cortos y marcados como ejemplo, revisados por el abogado antes de salir; nunca llegan
-  al portal porque no se pueden aceptar y el formulario no se publica sin versiones propias.
-- **D-5 Orígenes de previews de Vercel del portal.** El validador no admite comodines, y las URL de preview cambian por
-  despliegue. **Recomendación:** producción sólo `https://soporte.lulocrm.com`; en el backend de desarrollo, el alias
-  estable de la rama `develop` del proyecto de Vercel (un origen exacto), también en el CORS del bucket de desarrollo.
-  Los previews por PR prueban contra un backend local.
+El owner aprobó las cinco tal como se recomendaron. El cuerpo del spec ya las aplica.
+
+- **D-1 Pregunta de autorización: editable, con una por defecto.** Campo de texto plano opcional en el aviso de
+  privacidad (`authorizationQuestion`, 1–500). Sin él, el backend arma la pregunta por defecto con el nombre del tenant
+  (§6.4). La pregunta que se mostró, escrita o por defecto, va en la foto de la aceptación.
+- **D-2 Enlace a la política de tratamiento: opcional.** `policyUrl` (https) es opcional en el aviso de privacidad y el
+  portal muestra el enlace del pie sólo si existe. La política escrita va en el cuerpo del aviso. El abogado confirma
+  antes de producción que el cuerpo del aviso cumple lo que pide el Decreto 1377 de 2013 sobre cómo conocer la política.
+- **D-3 Librería de saneamiento: `HtmlSanitizer`** (mganss, sobre AngleSharp), versión fija con el lock file regenerado,
+  referenciada sólo desde `Modules.Support.Infrastructure`. No se escribe un saneador propio.
+- **D-4 Textos de ejemplo: los tres tipos tienen ejemplo.** Cortos, marcados como ejemplo y revisados por el abogado
+  antes de salir a producción. Nunca llegan al portal: no se pueden aceptar y el formulario no se publica sin versiones
+  propias.
+- **D-5 Orígenes de previews: alias estable en desarrollo.** Producción sólo `https://soporte.lulocrm.com`. El backend
+  de desarrollo admite además el alias estable de la rama `develop` del proyecto de Vercel del portal (un origen exacto,
+  por configuración), que también entra en el CORS del bucket de desarrollo. Los previews por PR prueban contra un
+  backend local.
 
 ## 16. Discrepancias encontradas (spec contra código)
 
 1. Spec de fase 3 §9.1: «es el mismo SPA». Corregido en el mismo commit [owner].
 2. Spec de fase 3 §9.5: «su política (texto o URL)» obligatoria y términos opcionales. Este spec la reemplaza: términos
-   obligatorios y política según D-2.
+   obligatorios y enlace a la política opcional (D-2).
 3. `appsettings.Development.json` permite `http://localhost:3002` (la consola) en el grupo público: era consecuencia de
    §9.1 y deja de tener sentido (§12).
