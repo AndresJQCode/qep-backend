@@ -621,6 +621,47 @@ public sealed class AutomationInboxTests
         Assert.Equal(0L, await InboxCountAsync(f));
     }
 
+    // Owner, 2026-11-16: el toque de un botón de la encuesta de Soporte no despierta al bot. Entra y cita a la plantilla como siempre
+    // (Soporte lo lee del hilo); sólo no se encola. El toque de cualquier otra plantilla sí se encola. La plantilla se reconoce por el
+    // tipo de su fila (SupportSurvey), unida por el nombre y el idioma que guarda el details del mensaje saliente.
+    [Fact]
+    public async Task ATapOnTheSurveyTemplateIsNotEnqueuedButATapOnAnotherTemplateIs()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO messaging.message_templates (id, tenant_id, connection_id, meta_template_id, name, language, category, parameter_format, status, components, kind, created_at, updated_at)
+            SELECT gen_random_uuid(), c.tenant_id, c.connection_id, v.meta, v.name, 'es', 'UTILITY', 'NAMED', 'APPROVED', '[]'::jsonb, v.kind, now(), now()
+              FROM messaging.conversations AS c,
+                   (VALUES ('91', 'qep_soporte_encuesta', 'SupportSurvey'), ('92', 'qep_cotizacion', 'Quotation')) AS v(meta, name, kind);
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, details, wamid, created_at)
+            SELECT gen_random_uuid(), c.id, c.tenant_id, c.connection_id, now() - interval '595 seconds', 2, 11, 2, 'x',
+                   jsonb_build_object('template', jsonb_build_object('name', v.name, 'language', 'es', 'category', 'UTILITY', 'parameters', '{}'::jsonb)),
+                   v.wamid, now()
+              FROM messaging.conversations AS c,
+                   (VALUES ('out.survey', 'qep_soporte_encuesta'), ('out.quote', 'qep_cotizacion')) AS v(wamid, name);
+            """);
+        var start = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600;
+
+        await PostAsync(f, MetaPayloads.InboundTemplateButtonTap("111", "573001234567", "w2", start + 10, "out.survey", "Buena"));
+        await PostAsync(f, MetaPayloads.InboundTemplateButtonTap("111", "573001234567", "w3", start + 20, "out.quote", "Ver"));
+
+        Assert.Equal("w2:out.survey,w3:out.quote", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(message.wamid || ':' || quoted.wamid, ',' ORDER BY message.wamid)
+              FROM messaging.messages AS message JOIN messaging.messages AS quoted ON quoted.id = message.reply_to_message_id
+             WHERE message.direction = 1
+            """));
+        Assert.Equal("w1,w3", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(message.wamid, ',' ORDER BY message.wamid)
+              FROM messaging.automation_inbox AS inbox JOIN messaging.messages AS message ON message.id = inbox.message_id
+            """));
+    }
+
     [Fact]
     public async Task AnInstagramDirectMessageIsNotEnqueued()
     {

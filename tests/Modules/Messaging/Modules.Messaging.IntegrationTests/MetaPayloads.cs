@@ -206,6 +206,26 @@ internal static class MetaPayloads
                 interactive = new { type = "button_reply", button_reply = new { id = replyId, title } },
             });
 
+    /// <summary>El toque de un botón de respuesta rápida de una plantilla, con la forma literal de Meta: <c>type: "button"</c>, el
+    /// <c>text</c> y el <c>payload</c> del botón, y el <c>context.id</c> del mensaje de la plantilla que cita.</summary>
+    public static string InboundTemplateButtonTap(
+        string phoneNumberId, string waId, string wamid, long timestamp, string quotedWamid, string text) =>
+        Messages(
+            phoneNumberId,
+            "15550000000",
+            UserIdFor(waId),
+            waId,
+            "Laura",
+            new
+            {
+                context = new { from = "15550000000", id = quotedWamid },
+                from = waId,
+                id = wamid,
+                timestamp = Seconds(timestamp),
+                type = "button",
+                button = new { text, payload = text },
+            });
+
     /// <summary>El <c>value</c> de un <c>messages</c> con un mensaje <c>location</c>, para pasarlo a
     /// <see cref="Change"/>.</summary>
     public static string LocationValue(

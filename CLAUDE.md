@@ -695,6 +695,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   el mismo mensaje otra vez sin que el cliente escribiera. Por eso se compara su `occurred_at` contra el `last_inbound_at`
   **de antes** (el CTE `old`; el `SET` ya lo pisó con `GREATEST`). No lo muevas al motor: ahí sólo cubriría uno de los tres
   caminos. Una prueba que postee webhooks con timestamps decrecientes ya no ejerce el bot desde el segundo.
+- **El toque de un botón de la encuesta de Soporte no se encola para el bot, y el comentario que sigue sí** (owner, 2026-11-16).
+  `InboundIngestion.IsSupportSurveyTapAsync` corre después de `ShouldEnqueue` (cuya regla de orden no cambia): un `Interactive` que cita
+  un saliente cuyo `details.template` (nombre e idioma) casa con la fila `SupportSurvey` de `message_templates` de la misma conexión se
+  ingresa y se cita como siempre, pero no entra a `automation_inbox`. El mensaje no guarda el tipo de plantilla: si cambias la forma del
+  `details` de un envío de plantilla (`TemplateDetailsJson`), el filtro deja de casar sin error y el bot vuelve a contestar los toques. El
+  comentario libre no se filtra, a propósito. Lo amarra `AutomationInboxTests.ATapOnTheSurveyTemplateIsNotEnqueuedButATapOnAnotherTemplateIs`.
 - **El `clientId` de un mensaje del bot no depende del `attempts` de la fila.** Es `DeterministicClientId.For(runId,
   baseStepNumber, effectIndex)` y el id de una corrida nueva sale del id del mensaje del inbox (`RunIdFor`), así un reintento de la
   fila —o un `Start` que se deshizo— reusa corrida y `clientId`s y Mensajería, idempotente por `clientId`, no duplica (P2-R5). El

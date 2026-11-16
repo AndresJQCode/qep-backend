@@ -5718,6 +5718,12 @@ SHA-256. La página de consulta califica con radicado y PIN, con la misma verifi
 anónimo sólo califica por ahí. La encuesta se responde una vez, hasta que el ticket se reabre (también después del cierre automático).
 Un cambio de la encuesta no sube la versión del ticket, pero avisa por el hub.
 
+**La encuesta y el asistente.** El toque de un botón de la encuesta entra al hilo como cualquier entrante, pero **no se encola para el
+asistente** (owner, 2026-11-16): Mensajería lo reconoce porque cita un saliente cuya plantilla (nombre e idioma del `details`) es la fila
+`SupportSurvey` de esa conexión (`InboundIngestion.IsSupportSurveyTapAsync`). **Efecto conocido y aceptado:** el comentario libre que el
+cliente escribe después sí despierta al asistente, si la conversación lo tiene activo y sin asesor, porque no cita nada que lo distinga
+de un texto cualquiera. Tampoco se filtra el toque de una encuesta cuya fila de plantilla se borró.
+
 **Cierre automático.** Un ticket Resuelto se cierra el día después del N-ésimo día hábil (calendario de Soporte) contado desde la
 resolución o desde la última respuesta del cliente que sigue en el expediente (vínculo `Linked` o `Pinned`), lo que sea más tarde.
 `autoCloseBusinessDays` va de 1 a 30, 5 por defecto, y no se apaga. Soltar la respuesta devuelve la fecha; el toque y el comentario de
