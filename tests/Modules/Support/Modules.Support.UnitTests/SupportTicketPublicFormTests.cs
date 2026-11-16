@@ -95,6 +95,24 @@ public sealed class SupportTicketPublicFormTests
             SupportTicketId.New(), TenantId, 3, Petition, "Asunto", "Descripción", Person, null, Guid.Empty, Received, Clock));
     }
 
+    // Plan L27 (spec 2026-11-15 §9.2): the idempotency key of the public filing stays with the ticket; without one it is null, and the
+    // empty UUID is never a key.
+    [Fact]
+    public void TheTicketKeepsItsClientRequestId()
+    {
+        var key = Guid.NewGuid();
+
+        var ticket = SupportTicket.CreateFromPublicForm(
+            SupportTicketId.New(), TenantId, 3, Petition, "Asunto", "Descripción", Person, null, FormVersion, Received, Clock,
+            clientRequestId: key);
+
+        Assert.Equal(key, ticket.ClientRequestId);
+        Assert.Null(FromForm(Person).ClientRequestId);
+        Assert.Throws<ArgumentException>(() => SupportTicket.CreateFromPublicForm(
+            SupportTicketId.New(), TenantId, 3, Petition, "Asunto", "Descripción", Person, null, FormVersion, Received, Clock,
+            clientRequestId: Guid.Empty));
+    }
+
     [Fact]
     public void ANitWithoutBusinessNameShowsAsNitAndNumber()
     {

@@ -83,6 +83,8 @@ public sealed record SupportPublicGeoItemDto(Guid Id, string Name);
 /// <see cref="TermsVersion"/>; la del otro camino va null. <see cref="AcceptsTerms"/> en los dos; <see cref="AcceptsDataPolicy"/> se
 /// ignora en el anónimo. Las versiones y <see cref="FormVersion"/> son las que la página cargó: si cambiaron, 422 y la página recarga.
 /// <see cref="Attachments"/> son los archivos ya completados con <c>available</c>, hasta cinco (plan F35); también para un anónimo.
+/// <see cref="ClientRequestId"/> es opcional (spec 2026-11-15 §9.2, plan L27): un UUID por intento de radicar, el mismo en cada
+/// reintento; con él, un reintento responde el ticket ya radicado en vez de crear otro.
 /// </summary>
 public sealed record SupportPublicFileRequest(
     Guid? TicketTypeId,
@@ -97,7 +99,8 @@ public sealed record SupportPublicFileRequest(
     int? TermsVersion,
     int? FormVersion,
     string? TurnstileToken,
-    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null);
+    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null,
+    Guid? ClientRequestId = null);
 
 /// <summary>Un adjunto del radicado: el par que devolvió <c>POST …/attachments</c>. Sin el <c>uploadKey</c> que lo abrió, el
 /// <c>fileId</c> no sirve (plan F32).</summary>

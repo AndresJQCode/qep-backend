@@ -25,7 +25,8 @@ public sealed record FilePublicTicketCommand(
     int? TermsVersion,
     int? FormVersion,
     string? TurnstileToken,
-    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null)
+    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null,
+    Guid? ClientRequestId = null)
     : ICommand<SupportPublicFiledDto>
 {
     /// <summary>La versión vigente del formulario del tenant, con la que se juzgan los campos. No viaja por el cable: la pone el handler
@@ -50,7 +51,8 @@ public sealed record FilePublicTicketCommand(
             request.TermsVersion,
             request.FormVersion,
             request.TurnstileToken,
-            request.Attachments);
+            request.Attachments,
+            request.ClientRequestId);
     }
 }
 
@@ -73,6 +75,10 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
         RuleFor(command => command.Subject).MustFit(1, SupportTicket.SubjectMaxLength);
         RuleFor(command => command.Description).MustFit(1, SupportTicket.DescriptionMaxLength);
         RuleFor(command => command.FormVersion).NotNull();
+        // Plan L27: optional, but the empty UUID is a bug of the portal, never a key.
+        RuleFor(command => command.ClientRequestId)
+            .NotEqual(Guid.Empty)
+            .WithMessage("The client request id cannot be the empty UUID.");
         // Spec 2026-11-15 §9 (plan L15 y L16): los dos caminos aceptan los términos. Por HTTP sale como validation.failed con
         // errors.AcceptsTerms: ApiExceptionHandler no publica el ErrorCode.
         RuleFor(command => command.TermsVersion).NotNull();
@@ -219,10 +225,15 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
 /// los términos con la IP; anónimo, el aviso anónimo y los términos sin IP. Todo lo que puede responder 422 va antes
 /// de la transacción, así un rechazo no gasta un radicado. El correo va después de confirmar: el radicado no depende de él (F23). Nada de
 /// esto lee el contexto de ejecución ni la sesión, y el PIN no va a logs, auditoría ni traza: sólo su hash se guarda.
+/// <para>Idempotente por <c>clientRequestId</c> (spec 2026-11-15 §9.2, plan L27 y L28): con clave, el ticket de ese tenant con esa clave
+/// se busca <b>antes de Turnstile</b> y, si existe, se responde como reintento (<see cref="RetryAsync"/>) sin mirar el cuerpo. Dentro de
+/// la transacción, después de tomar el número, se vuelve a buscar bajo el candado del contador: si otro radicado con la misma clave ganó,
+/// la transacción se deshace (el número vuelve) y se responde con el ganador; el índice único es el respaldo.</para>
 /// </summary>
 public sealed class FilePublicTicketHandler(
     SupportPublicResolver resolver,
     ISupportCaptcha captcha,
+    ISupportFormRepository forms,
     ISupportLegalDocumentRepository legalDocuments,
     ISupportHtmlSanitizer sanitizer,
     ISupportTicketTypeRepository types,
@@ -253,6 +264,14 @@ public sealed class FilePublicTicketHandler(
     public async Task<SupportPublicFiledDto> HandleAsync(FilePublicTicketCommand command, CancellationToken cancellationToken)
     {
         var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
+        // Plan L27: a retry is recognized before Turnstile (its token was spent by the first attempt), the validator and the version
+        // checks, and the body is not compared. Always by tenant. The empty UUID is never looked up: the validator rejects it below.
+        var key = command.ClientRequestId is { } requested && requested != Guid.Empty ? requested : (Guid?)null;
+        if (key is { } retryKey && await tickets.FindByClientRequestAsync(tenant.TenantId, retryKey, cancellationToken) is { } earlier)
+        {
+            return await RetryAsync(tenant, earlier, cancellationToken);
+        }
+
         if (!await captcha.VerifyAsync(command.TurnstileToken?.Trim() ?? string.Empty, command.VisitorIp, cancellationToken))
         {
             throw new SupportDomainException(SupportErrorCodes.PublicCaptchaInvalid, "The anti-bot challenge was not passed.");
@@ -292,11 +311,13 @@ public sealed class FilePublicTicketHandler(
         var customerId = await LinkedCustomerAsync(tenant.TenantId, requester, cancellationToken);
 
         var pin = SupportPin.Generate();
-        SupportTicket ticket;
-        SupportTicketAccess access;
-        DateTimeOffset now;
-        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
+        SupportTicket ticket = null!;
+        SupportTicketAccess access = null!;
+        DateTimeOffset now = default;
+        SupportTicket? winner = null;
+        try
         {
+            await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
             // El candado del cliente antes que la fila del radicado, como el alta manual (revisión final de la fase 1, m1).
             if (customerId is { } heldCustomerId)
             {
@@ -304,48 +325,33 @@ public sealed class FilePublicTicketHandler(
             }
 
             var number = await numbers.NextAsync(tenant.TenantId, cancellationToken);
-            var context = await composer.ReadContextAsync(tenant.TenantId, cancellationToken);
-            now = context.Now;
-            ticket = SupportTicket.CreateFromPublicForm(
-                SupportTicketId.New(),
-                tenant.TenantId,
-                number,
-                type,
-                validated.Subject!,
-                validated.Description!,
-                requester,
-                customerId,
-                tenant.Form.Id,
-                now,
-                context.Clock);
-            tickets.Add(ticket);
-            access = SupportTicketAccess.Issue(ticket.Id, tenant.TenantId, pinHasher.Hash(pin), now);
-            accesses.Add(access);
-            // Spec 2026-11-15 §5.2 (plan L13 y L14): la prueba legal va en la misma transacción que el ticket, con el texto que la
-            // persona vio. Un anónimo no deja IP en ninguna fila.
-            foreach (var acceptance in Acceptances(legal, tenant.TenantId, ticket.Id, validated.Anonymous, command.VisitorIp, now))
+            // Plan L27: the UPDATE … RETURNING of the counter serializes the filings of the tenant, so under its lock a concurrent filing
+            // with the same key is already committed and visible. The winner answers; disposing the transaction without commit rolls
+            // back the number, so no number is spent.
+            if (key is { } racedKey
+                && await tickets.FindByClientRequestAsync(tenant.TenantId, racedKey, cancellationToken) is { } raced)
             {
-                legalAcceptances.Add(acceptance);
+                winner = raced;
             }
-
-            // Plan F35: en la misma transacción. Si otra radicación ya reclamó un archivo, IX_ticket_attachments_file lo rechaza al
-            // guardar (SupportUnitOfWork lo traduce por nombre a support.public.attachment_invalid) y la transacción entera se
-            // deshace, radicado incluido.
-            foreach (var file in files)
+            else
             {
-                attachments.Add(SupportTicketAttachment.Attach(
-                    Guid.CreateVersion7(), tenant.TenantId, ticket.Id, file.FileId, file.Name, file.MimeType, file.SizeBytes, now));
+                (ticket, access, now) = await CreateAsync(
+                    validated, tenant, legal, type, requester, customerId, files, number, key, pin, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
             }
+        }
+        // The backstop of the same race (plan L27): the unique index, translated by name in SupportUnitOfWork.
+        catch (SupportClientRequestTakenException)
+        {
+            unitOfWork.DiscardChanges();
+            winner = await tickets.FindByClientRequestAsync(tenant.TenantId, key!.Value, cancellationToken)
+                ?? throw new InvalidOperationException("The ticket that took the client request id was not found.");
+        }
 
-            auditPublisher.PublishSystem(
-                tenant.TenantId,
-                SupportAuditActions.TicketCreated,
-                SupportAuditActions.Resources.Ticket,
-                ticket.Id.ToString(),
-                files.Count > 0 ? [.. CreatedFields, "attachments"] : CreatedFields,
-                now);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+        if (winner is not null)
+        {
+            unitOfWork.DiscardChanges();
+            return await RetryAsync(tenant, winner, cancellationToken);
         }
 
         await realtime.TicketChangedAsync(tenant.TenantId, ticket.Id.Value, CancellationToken.None);
@@ -356,6 +362,117 @@ public sealed class FilePublicTicketHandler(
         var emailed = outcome is { Channel: SupportOpeningSender.EmailChannel, Sent: true };
 
         return Filed(ticket, pin, tenant.Form.SuccessMessage, emailed, consultUrl);
+    }
+
+    // Inside the transaction, after the number: the ticket (with its idempotency key), its access, the legal acceptances, the
+    // attachments and the system audit, saved and not committed. The key is not audited (plan L27).
+    private async Task<(SupportTicket Ticket, SupportTicketAccess Access, DateTimeOffset Now)> CreateAsync(
+        FilePublicTicketCommand validated,
+        SupportPublicTenant tenant,
+        SupportServedLegal legal,
+        SupportTicketType type,
+        TicketRequester? requester,
+        Guid? customerId,
+        IReadOnlyList<SupportAttachmentFile> files,
+        long number,
+        Guid? key,
+        string pin,
+        CancellationToken cancellationToken)
+    {
+        var context = await composer.ReadContextAsync(tenant.TenantId, cancellationToken);
+        var now = context.Now;
+        var ticket = SupportTicket.CreateFromPublicForm(
+            SupportTicketId.New(),
+            tenant.TenantId,
+            number,
+            type,
+            validated.Subject!,
+            validated.Description!,
+            requester,
+            customerId,
+            tenant.Form.Id,
+            now,
+            context.Clock,
+            key);
+        tickets.Add(ticket);
+        var access = SupportTicketAccess.Issue(ticket.Id, tenant.TenantId, pinHasher.Hash(pin), now);
+        accesses.Add(access);
+        // Spec 2026-11-15 §5.2 (plan L13 y L14): la prueba legal va en la misma transacción que el ticket, con el texto que la
+        // persona vio. Un anónimo no deja IP en ninguna fila.
+        foreach (var acceptance in Acceptances(legal, tenant.TenantId, ticket.Id, validated.Anonymous, validated.VisitorIp, now))
+        {
+            legalAcceptances.Add(acceptance);
+        }
+
+        // Plan F35: en la misma transacción. Si otra radicación ya reclamó un archivo, IX_ticket_attachments_file lo rechaza al
+        // guardar (SupportUnitOfWork lo traduce por nombre a support.public.attachment_invalid) y la transacción entera se
+        // deshace, radicado incluido.
+        foreach (var file in files)
+        {
+            attachments.Add(SupportTicketAttachment.Attach(
+                Guid.CreateVersion7(), tenant.TenantId, ticket.Id, file.FileId, file.Name, file.MimeType, file.SizeBytes, now));
+        }
+
+        auditPublisher.PublishSystem(
+            tenant.TenantId,
+            SupportAuditActions.TicketCreated,
+            SupportAuditActions.Resources.Ticket,
+            ticket.Id.ToString(),
+            files.Count > 0 ? [.. CreatedFields, "attachments"] : CreatedFields,
+            now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return (ticket, access, now);
+    }
+
+    /// <summary>
+    /// The answer to a retry (spec 2026-11-15 §9.2 and §15 D-7, plan L28): the same number, filing date, due date, term, success message
+    /// (the one of the form version the ticket was filed with) and consult link; nothing new is created and the opening email is not
+    /// sent again. The PIN: if it went out by email (<c>Email</c> without failure), null with <c>PinEmailed</c> true and nothing is
+    /// written. If the ticket has an email destination and no delivery is recorded yet, the opening email of the first attempt is still
+    /// in flight: treated the same, because issuing a new PIN would invalidate the one being emailed. Otherwise (anonymous, a failed or
+    /// pending send) a new PIN replaces the old one, in a short transaction with the access row locked, and it travels only in this
+    /// response: no email.
+    /// </summary>
+    private async Task<SupportPublicFiledDto> RetryAsync(
+        SupportPublicTenant tenant, SupportTicket ticket, CancellationToken cancellationToken)
+    {
+        var consultUrl = SupportOpeningSender.ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber);
+        var successMessage = ticket.FormVersionId is { } formId
+            ? (await forms.FindAsync(tenant.TenantId, formId, cancellationToken))?.SuccessMessage ?? tenant.Form.SuccessMessage
+            : tenant.Form.SuccessMessage;
+
+        string? pin = null;
+        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
+        {
+            var found = await accesses.LockByNumberAsync(tenant.TenantId, ticket.Number, cancellationToken);
+            if (found is { } match && MustRotate(ticket, match.Access))
+            {
+                var context = await composer.ReadContextAsync(tenant.TenantId, cancellationToken);
+                pin = SupportPin.Generate();
+                match.Access.Reissue(pinHasher.Hash(pin), context.Now);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        return Filed(ticket, pin, successMessage, pinEmailed: pin is null, consultUrl);
+    }
+
+    // Plan L28: a new PIN only when the current one went out by no channel.
+    private static bool MustRotate(SupportTicket ticket, SupportTicketAccess access)
+    {
+        if (!SupportOpeningSender.HasDestination(ticket))
+        {
+            return true;
+        }
+
+        if (access.LastSentChannel is null)
+        {
+            return false;
+        }
+
+        return access.LastSentChannel != SupportOpeningSender.EmailChannel || access.LastFailureCode is not null;
     }
 
     // Plan L26: la fecha de radicación y el término salen de la foto del ticket, nunca del tipo vivo.

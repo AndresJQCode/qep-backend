@@ -5247,8 +5247,8 @@ del ingress) y cada uno tiene su propia cubeta.
 | `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
 | `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
 | `POST /attachments/{fileId}/complete` | `{ uploadKey }` | `200` `{ status }`: `available` o `rejected` | No | 20 / 10 min |
-| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` opcional | `201` `{ number, pin, dueOn, successMessage, pinEmailed, consultUrl }` | Sí | 5 / 10 min |
-| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, plazo y respuestas | Sí | 10 / min |
+| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` y `clientRequestId` opcionales | `201` `{ number, pin, receivedAt, dueOn, termBusinessDays, termIsLegal, successMessage, pinEmailed, consultUrl }` | Sí (no en un reintento, abajo) | 5 / 10 min |
+| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, radicación, plazo (`termIsLegal`, `termBusinessDays`) y respuestas | Sí | 10 / min |
 | `POST /tickets/resend-pin` | `{ number, turnstileToken }` | `202` vacío, siempre | Sí | 5 / 10 min |
 
 **Documentos legales del portal** (spec 2026-11-15). `GET /form` trae en `legal` los tres documentos vigentes del tenant, cada uno
@@ -5279,6 +5279,28 @@ se responde por la página de consulta (canal `Portal`). La base lo respalda con
 `AddSupportAnonymousTicketCheck`): un anónimo no puede tener `customer_id` ni ninguna columna `requester_*`, tampoco por SQL crudo, y con
 `CK_legal_acceptances_ip`: el aviso anónimo nunca lleva IP y el de privacidad siempre. Una aceptación por ticket y tipo
 (`IX_legal_acceptances_ticket_kind`, `409 support.public.legal_acceptance_duplicate`, que hoy ningún camino alcanza).
+
+**Fecha de radicación y término** (spec 2026-11-15 §9.1, D-6). La respuesta del radicado trae `receivedAt` (la radicación),
+`termBusinessDays` (`null` = el tipo no tiene término) y `termIsLegal` («plazo legal» u «objetivo»); la de `POST /tickets/lookup` suma
+`termBusinessDays`. Los dos salen de la **foto del tipo en el ticket**, nunca del tipo vivo: editar el tipo después no cambia lo que ve el
+solicitante.
+
+**Radicado idempotente** (`clientRequestId`, spec 2026-11-15 §9.2, D-7). El portal genera un UUID al empezar a radicar y lo manda en cada
+reintento de ese mismo radicado (timeout, red caída, 5xx). Un reintento con la misma clave en el mismo tenant responde `201` con el mismo
+`number`, `receivedAt`, `dueOn`, `termBusinessDays`, `termIsLegal`, `successMessage` (el de la versión del formulario con que se radicó) y
+`consultUrl`: no crea otro ticket, no gasta número y no vuelve a mandar el correo de apertura. **La clave se mira antes de Turnstile** (el
+token se gastó en el primer intento), del validador y de las versiones, **y el cuerpo no se compara** (como el checkout de la tienda).
+Dos `POST` simultáneos con la misma clave dan un solo ticket: dentro de la transacción, después de tomar el número (el `UPDATE … RETURNING`
+del contador serializa las altas del tenant), la clave se vuelve a buscar; si otro la confirmó, la transacción se deshace (el número
+vuelve) y se responde el ganador. El índice único parcial `IX_tickets_tenant_client_request` es el respaldo. Sin clave, cada `POST` es
+un radicado nuevo; la clave no se audita ni va a la traza, y el reintento cuenta para el limitador. `clientRequestId` vacío
+(`00000000-…`) es `422 validation.failed` con `errors.ClientRequestId`.
+
+| El PIN del primer intento | `pin` del reintento | `pinEmailed` |
+| --- | --- | --- |
+| Salió por correo (`last_sent_channel = Email`, sin fallo) | `null`: no se vuelve a mostrar ni a mandar | `true` |
+| El correo del primer intento todavía no se anotó (en vuelo) | `null`: un PIN nuevo invalidaría el que va en el correo | `true` |
+| No salió por ningún canal (anónimo, `send_failed`, `send_pending`) | Uno **nuevo**; el anterior deja de servir. Sólo en la respuesta, sin correo | `false` |
 
 **Turnstile se gasta antes de validar los adjuntos.** El token es de un solo uso y radicar lo verifica primero (anti-abuso: nada más
 corre sin él). Por eso **la página reinicia el widget después de cualquier `422` de `POST /tickets`** —un adjunto inválido, un campo, la
@@ -5422,7 +5444,9 @@ aditiva y **rellena**: la versión vigente de los textos de la fase 3 de cada te
 política, como HTML canónico: escapa `&`, `<`, `>`, un párrafo por línea en blanco, `<br>` por salto) y, si tenía términos, a `Terms`
 versión 1, con el autor y la fecha de origen; ningún `AnonymousNotice`, y un texto sólo de espacios no se copia. Si un texto convertido
 pasa de 60 000 caracteres la migración **se detiene** con el id del tenant (`tenant … legal text exceeds 60000 characters after
-escaping`) en vez de recortar un texto legal: se acorta a mano y se vuelve a desplegar.
+escaping`) en vez de recortar un texto legal: se acorta a mano y se vuelve a desplegar. `Support` `AddSupportTicketClientRequestId`
+(`tickets.client_request_id` y el índice único parcial `IX_tickets_tenant_client_request`) es aditiva y sin relleno; su `Down` quita
+índice y columna.
 
 #### Tiempo real y notas internas de Soporte
 

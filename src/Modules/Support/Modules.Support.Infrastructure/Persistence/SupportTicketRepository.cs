@@ -15,6 +15,12 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
     public Task<SupportTicket?> FindAsync(Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) =>
         dbContext.Tickets.FirstOrDefaultAsync(ticket => ticket.TenantId == tenantId && ticket.Id == id, cancellationToken);
 
+    public Task<SupportTicket?> FindByClientRequestAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken) =>
+        dbContext.Tickets
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                ticket => ticket.TenantId == tenantId && ticket.ClientRequestId == clientRequestId, cancellationToken);
+
     public async Task<IReadOnlyList<SupportTicketEvent>> ListEventsAsync(
         Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) =>
         await dbContext.TicketEvents

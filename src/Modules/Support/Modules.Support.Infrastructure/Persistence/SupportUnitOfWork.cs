@@ -103,6 +103,12 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "The ticket already has its acceptance of this legal document.",
                 exception);
         }
+        // Spec 2026-11-15 §9.2 (plan L27): another filing with the same clientRequestId committed first. FilePublicTicketHandler catches
+        // it and answers with the winner.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketClientRequestIndex))
+        {
+            throw new SupportClientRequestTakenException(exception);
+        }
         // Plan F35: otra radicación ya reclamó el archivo. El 422 de siempre de un adjunto inválido, no un 409: la página no distingue
         // un archivo ajeno de uno que no existe, y la transacción del radicado se deshace entera.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketAttachmentFileIndex))

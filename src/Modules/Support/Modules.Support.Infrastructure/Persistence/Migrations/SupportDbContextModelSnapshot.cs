@@ -475,6 +475,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("assignee_member_id");
 
+                    b.Property<Guid?>("ClientRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_request_id");
+
                     b.Property<DateTimeOffset?>("ClosedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("closed_at");
@@ -634,6 +638,11 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("AssigneeMemberId")
                         .HasDatabaseName("IX_tickets_assignee");
+
+                    b.HasIndex("TenantId", "ClientRequestId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_tickets_tenant_client_request")
+                        .HasFilter("client_request_id IS NOT NULL");
 
                     b.HasIndex("TenantId", "ConversationId")
                         .HasDatabaseName("IX_tickets_tenant_conversation")

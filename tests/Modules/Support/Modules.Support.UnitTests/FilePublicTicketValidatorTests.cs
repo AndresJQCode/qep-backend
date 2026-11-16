@@ -220,6 +220,18 @@ public sealed class FilePublicTicketValidatorTests
         Assert.Empty(Errors(Command(null, anonymous: true, acceptsDataPolicy: true)));
     }
 
+    // Plan L27: the idempotency key is optional, but the empty UUID is a bug of the portal, not a key.
+    [Fact]
+    public void AnEmptyClientRequestIdIsAnError() =>
+        Assert.Equal(["ClientRequestId"], Errors(Command(Natural()) with { ClientRequestId = Guid.Empty }));
+
+    [Fact]
+    public void ANullClientRequestIdIsFine()
+    {
+        Assert.Empty(Errors(Command(Natural()) with { ClientRequestId = null }));
+        Assert.Empty(Errors(Command(Natural()) with { ClientRequestId = Guid.NewGuid() }));
+    }
+
     private sealed class FakeCountries : ISupportCountries
     {
         public bool IsKnown(string countryCode) => countryCode is "CO" or "ES" or "US";

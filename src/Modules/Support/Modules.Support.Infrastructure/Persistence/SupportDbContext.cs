@@ -71,6 +71,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         "requester_address", "requester_city_id", "requester_city_name",
     ];
 
+    /// <summary>Unique idempotency key of the public filing per tenant (spec 2026-11-15 §9.2, plan L27). Translated by name in
+    /// <c>SupportUnitOfWork</c> to <c>SupportClientRequestTakenException</c>.</summary>
+    public const string TicketClientRequestIndex = "IX_tickets_tenant_client_request";
+
     public DbSet<SupportTicketAccess> TicketAccess => Set<SupportTicketAccess>();
 
     public DbSet<SupportFormVersion> FormVersions => Set<SupportFormVersion>();
@@ -537,6 +541,7 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         // nunca se borran).
         ticket.Property(value => value.IsAnonymous).HasColumnName("is_anonymous").HasDefaultValue(false);
         ticket.Property(value => value.FormVersionId).HasColumnName("form_version_id");
+        ticket.Property(value => value.ClientRequestId).HasColumnName("client_request_id");
         ticket.Property(value => value.ReceivedAt).HasColumnName("received_at");
         ticket.Property(value => value.ReceivedOn).HasColumnName("received_on");
         ticket.Property(value => value.DueOn).HasColumnName("due_on");
@@ -578,6 +583,12 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.HasIndex(value => new { value.TenantId, value.ConversationId })
             .HasFilter("conversation_id IS NOT NULL")
             .HasDatabaseName("IX_tickets_tenant_conversation");
+        // Spec 2026-11-15 §9.2 (plan L27): the idempotency key of the public filing, unique per tenant. Partial: every ticket without
+        // one (other intakes, a filing without key) is outside the index.
+        ticket.HasIndex(value => new { value.TenantId, value.ClientRequestId })
+            .IsUnique()
+            .HasFilter("client_request_id IS NOT NULL")
+            .HasDatabaseName(TicketClientRequestIndex);
     }
 
     private static void ConfigureTicketMessage(ModelBuilder modelBuilder)

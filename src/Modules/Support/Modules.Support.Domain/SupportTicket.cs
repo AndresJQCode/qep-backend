@@ -107,6 +107,11 @@ public sealed class SupportTicket
     /// <summary>Fase 3 (plan F14): la versión del formulario con que se radicó. Sólo la tienen los tickets del formulario público.</summary>
     public Guid? FormVersionId { get; private set; }
 
+    /// <summary>Spec 2026-11-15 §9.2 (plan L27): the idempotency key the portal sends with every retry of the same filing. Unique per
+    /// tenant (<c>IX_tickets_tenant_client_request</c>); null for every other intake and for a filing without one. Never audited nor
+    /// written to the trace.</summary>
+    public Guid? ClientRequestId { get; private set; }
+
     public int LastEventOrdinal { get; private set; }
 
     /// <summary>Los eventos de esta instancia: al crear, el <see cref="SupportTicketEventKind.Created"/>; cargado de la base, sólo
@@ -181,11 +186,17 @@ public sealed class SupportTicket
         Guid? customerId,
         Guid formVersionId,
         DateTimeOffset now,
-        SupportClockContext clock)
+        SupportClockContext clock,
+        Guid? clientRequestId = null)
     {
         if (formVersionId == Guid.Empty)
         {
             throw new ArgumentException("A ticket from the public form needs its form version.", nameof(formVersionId));
+        }
+
+        if (clientRequestId == Guid.Empty)
+        {
+            throw new ArgumentException("The client request id cannot be the empty UUID.", nameof(clientRequestId));
         }
 
         var anonymous = requester is null;
@@ -205,6 +216,7 @@ public sealed class SupportTicket
             assigneeMemberId: null, actorMemberId: null, now, clock);
         ticket.IsAnonymous = anonymous;
         ticket.FormVersionId = formVersionId;
+        ticket.ClientRequestId = clientRequestId;
         return ticket;
     }
 

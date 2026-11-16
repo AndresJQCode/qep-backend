@@ -276,6 +276,53 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         Assert.Null(await accesses.LockByNumberAsync(tenant, 8, Ct));
     }
 
+    // Plan L27: IX_tickets_tenant_client_request backs the idempotent filing. In raw SQL the second row with the same key in the tenant
+    // is a unique violation of that index; through the unit of work it is translated by name to SupportClientRequestTakenException.
+    // The same key in another tenant is another ticket.
+    [Fact]
+    public async Task TwoTicketsWithTheSameClientRequestIdInATenantAreRejected()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var form = await SaveFormAsync(factory, tenant, 1);
+        var key = Guid.NewGuid();
+        var first = await FromFormAsync(factory, tenant, 1, requester: null, form.Id, key);
+        var second = await FromFormAsync(factory, tenant, 2, requester: null, form.Id);
+
+        var raw = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            factory, "UPDATE support.tickets SET client_request_id = @key WHERE id = @id", ("key", key), ("id", second.Id.Value)));
+        var translated = await Assert.ThrowsAsync<SupportClientRequestTakenException>(
+            () => FromFormAsync(factory, tenant, 3, requester: null, form.Id, key));
+
+        Assert.Equal(PostgresErrorCodes.UniqueViolation, raw.SqlState);
+        Assert.Equal(SupportDbContext.TicketClientRequestIndex, raw.ConstraintName);
+        Assert.NotNull(translated);
+        var (otherFactory, otherTenant) = await NewTenantAsync();
+        var otherForm = await SaveFormAsync(otherFactory, otherTenant, 1);
+        await FromFormAsync(otherFactory, otherTenant, 1, requester: null, otherForm.Id, key);
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
+        Assert.Equal(first.Id, (await tickets.FindByClientRequestAsync(tenant, key, Ct))!.Id);
+        Assert.NotEqual(first.Id, (await tickets.FindByClientRequestAsync(otherTenant, key, Ct))!.Id);
+        Assert.Null(await tickets.FindByClientRequestAsync(tenant, Guid.NewGuid(), Ct));
+    }
+
+    // The index is partial: tickets without a key (the console, the conversation, a filing without clientRequestId) never collide.
+    [Fact]
+    public async Task ManyTicketsWithoutAClientRequestIdAreFine()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var form = await SaveFormAsync(factory, tenant, 1);
+
+        for (var number = 1; number <= 3; number++)
+        {
+            await FromFormAsync(factory, tenant, number, requester: null, form.Id);
+        }
+
+        Assert.Equal(3L, await ScalarAsync(
+            factory, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant AND client_request_id IS NULL", ("tenant", tenant)));
+    }
+
     private async Task<(QepApiFactory Factory, Guid Tenant)> NewTenantAsync()
     {
         var factory = await sharedHost.StartTestAsync();
@@ -297,14 +344,14 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
     }
 
     private static async Task<SupportTicket> FromFormAsync(
-        QepApiFactory factory, Guid tenant, long number, TicketRequester? requester, Guid formVersionId)
+        QepApiFactory factory, Guid tenant, long number, TicketRequester? requester, Guid formVersionId, Guid? clientRequestId = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(tenant, Ct);
         var type = (await scope.ServiceProvider.GetRequiredService<ISupportTicketTypeRepository>().ListAsync(tenant, Ct))[0];
         var ticket = SupportTicket.CreateFromPublicForm(
             SupportTicketId.New(), tenant, number, type, $"Asunto {number}", "Lo escribió en el formulario.", requester, null,
-            formVersionId, Now, Clock);
+            formVersionId, Now, Clock, clientRequestId);
         scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().Add(ticket);
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         return ticket;

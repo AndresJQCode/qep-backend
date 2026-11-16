@@ -345,6 +345,9 @@ public sealed class SupportOpeningSenderTests
             Guid tenantId, Guid conversationId, Guid? customerId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<SupportTicket?> FindByClientRequestAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void Add(SupportTicket ticket) => throw new NotSupportedException();
     }
 

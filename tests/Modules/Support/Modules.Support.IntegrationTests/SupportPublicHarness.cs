@@ -174,11 +174,13 @@ internal static class SupportPublicHarness
         int privacyNoticeVersion = 1,
         int termsVersion = 1,
         bool acceptsTerms = true,
-        int formVersion = 1) =>
+        int formVersion = 1,
+        Guid? clientRequestId = null,
+        string subject = "No me llegó el pedido") =>
         new
         {
             ticketTypeId = typeId,
-            subject = "No me llegó el pedido",
+            subject,
             description = "Pagué el lunes y todavía no llega.",
             anonymous = false,
             requester = new
@@ -203,6 +205,7 @@ internal static class SupportPublicHarness
             termsVersion,
             formVersion,
             turnstileToken = token,
+            clientRequestId,
         };
 
     /// <summary>Un radicado anónimo: sin solicitante ni aviso de privacidad; con el aviso anónimo y los términos.</summary>
@@ -211,7 +214,8 @@ internal static class SupportPublicHarness
         string token = FakeSupportCaptcha.ValidToken,
         int anonymousNoticeVersion = 1,
         int termsVersion = 1,
-        bool acceptsTerms = true) =>
+        bool acceptsTerms = true,
+        Guid? clientRequestId = null) =>
         new
         {
             ticketTypeId = typeId,
@@ -226,6 +230,7 @@ internal static class SupportPublicHarness
             termsVersion,
             formVersion = 1,
             turnstileToken = token,
+            clientRequestId,
         };
 
     /// <summary>Un cliente con documento, insertado por SQL como <see cref="SupportApiHarness.SeedCustomerAsync"/>. El tipo va con el

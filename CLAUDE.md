@@ -1048,6 +1048,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   ese radicado 15 minutos, y mirar el bloqueo y anotar el intento van con la fila tomada (`LockByNumberAsync`, `SELECT … FOR UPDATE`):
   sin el candado, intentos a la vez leen el mismo contador, se pisan y el quinto fallo no bloquea (`ConcurrentWrongPinsStillLockTheTicket`). Un camino
   nuevo que lea o escriba la clave (otra forma de consulta, un reenvío por otro canal) toma la misma fila y nunca desbloquea.
+- **El reintento del radicado público se reconoce por `clientRequestId` antes de Turnstile y bajo el candado del contador** (spec
+  2026-11-15 §9.2). No muevas la búsqueda después de Turnstile: el token ya se gastó en el primer intento y el reintento fallaría con
+  `captcha_invalid`. Un reintento no reenvía el correo; si el PIN no salió por ningún canal, emite uno nuevo y el viejo deja de servir.
+  Con el correo de apertura todavía en vuelo (destino `Email` y nada anotado en `ticket_access`) no rota: invalidaría el PIN que va en el
+  correo. La búsqueda va siempre filtrada por tenant (`FindByClientRequestAsync`), y la clave no se audita ni va a `ticket_events`.
 - **`uploadKey` es el único vínculo entre la subida anónima de un adjunto y quien la abrió** (plan F32). Es un `Guid.NewGuid()` (v4) que
   Soporte genera, devuelve una vez y Storage guarda como `OwnerId` del archivo `SupportTicket`; completar y radicar exigen el par
   `(fileId, uploadKey)`. No lo cambies por un v7 (`Guid.CreateVersion7`, el de los ids de Storage): se adivina por la hora y cualquiera
