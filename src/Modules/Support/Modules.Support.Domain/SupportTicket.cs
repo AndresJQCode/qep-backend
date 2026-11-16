@@ -536,8 +536,9 @@ public sealed class SupportTicket
     public void EnsureMessagesCanChange() => EnsureNotClosed();
 
     /// <summary>Anota una respuesta en la traza con su canal, cómo terminó (<c>status</c>, y <c>failureCode</c> si falló) y, si salió
-    /// por Mensajería, su mensaje (plan E16). Se llama después de marcarla.</summary>
-    public void RecordReply(SupportTicketReply reply, DateTimeOffset now)
+    /// por Mensajería, su mensaje (plan E16). Se llama después de marcarla. Fase 4b: <paramref name="formal"/> dice si llevó el PDF de la
+    /// respuesta formal.</summary>
+    public void RecordReply(SupportTicketReply reply, DateTimeOffset now, bool formal = false)
     {
         ArgumentNullException.ThrowIfNull(reply);
         if (reply.TicketId != Id || reply.TenantId != TenantId)
@@ -557,6 +558,7 @@ public sealed class SupportTicket
                 messageId = reply.MessageId,
                 status = reply.Status.ToString(),
                 failureCode = reply.FailureCode,
+                formal,
             });
     }
 

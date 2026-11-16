@@ -76,6 +76,10 @@ public sealed class SupportTicketDtoComposer(
         var events = await tickets.ListEventsAsync(ticket.TenantId, ticket.Id, cancellationToken);
         var details = events.Select(item => (Event: item, Details: EventDetails.Parse(item))).ToList();
         var ticketReplies = await replies.ListAsync(ticket.TenantId, ticket.Id, cancellationToken);
+        // Fase 4b: los documentos de las respuestas formales, en una sola consulta.
+        var documents = ticketReplies.Count == 0
+            ? new Dictionary<Guid, SupportReplyDocument>()
+            : (await replies.ListDocumentsAsync(ticket.TenantId, ticket.Id, cancellationToken)).ToDictionary(document => document.ReplyId);
         var unclassifiedCount = ticket.ConversationId is { } conversationId
             ? await unclassified.CountPendingAsync(ticket.TenantId, conversationId, cancellationToken)
             : 0;
@@ -129,7 +133,9 @@ public sealed class SupportTicketDtoComposer(
             ticket.FollowThread,
             ticket.FollowOffAt,
             unclassifiedCount,
-            ticketReplies.Select(reply => ToReplyDto(reply, membersById, context.ViewerMemberId)).ToList(),
+            ticketReplies
+                .Select(reply => ToReplyDto(reply, membersById, context.ViewerMemberId, documents.GetValueOrDefault(reply.Id)))
+                .ToList(),
             ticket.IsAnonymous,
             await CustomerCandidatesAsync(ticket, cancellationToken),
             await accesses.FindAsync(ticket.TenantId, ticket.Id, cancellationToken) is { } access
@@ -173,9 +179,10 @@ public sealed class SupportTicketDtoComposer(
             .ToList();
     }
 
-    /// <summary>Una respuesta como la dibujan el detalle y el resultado de responder.</summary>
+    /// <summary>Una respuesta como la dibujan el detalle y el resultado de responder. Fase 4b: el firmante del documento sale con el nombre
+    /// que imprimió el PDF, no con el que tenga hoy.</summary>
     internal static SupportReplyDto ToReplyDto(
-        SupportTicketReply reply, IReadOnlyDictionary<Guid, string> membersById, Guid? viewerMemberId) => new(
+        SupportTicketReply reply, IReadOnlyDictionary<Guid, string> membersById, Guid? viewerMemberId, SupportReplyDocument? document) => new(
         reply.Id,
         reply.ClientId,
         reply.Channel.ToString(),
@@ -185,7 +192,14 @@ public sealed class SupportTicketDtoComposer(
         reply.FailureCode,
         reply.MessageId,
         ToMemberDto(reply.AuthorMemberId, membersById, viewerMemberId),
-        reply.CreatedAt);
+        reply.CreatedAt,
+        document is null
+            ? null
+            : new SupportReplyDocumentDto(
+                document.FileName,
+                document.SizeBytes,
+                new SupportMemberDto(document.SignerMemberId, document.SignerName, document.SignerMemberId == viewerMemberId),
+                document.SignerTitle));
 
     public async Task<IReadOnlyList<SupportTicketListItemDto>> ComposeListAsync(
         Guid tenantId, IReadOnlyList<SupportTicket> page, SupportReadContext context, CancellationToken cancellationToken)
@@ -297,7 +311,8 @@ public sealed class SupportTicketDtoComposer(
             details.ToDueOn,
             details.Reason,
             details.FromPriority,
-            details.ToPriority);
+            details.ToPriority,
+            details.Formal);
 
     /// <summary>
     /// Los campos de <see cref="SupportTicketEvent.Details"/> según su <see cref="SupportTicketEvent.Kind"/>, con la forma que escribe
@@ -324,7 +339,8 @@ public sealed class SupportTicketDtoComposer(
         DateOnly? ToDueOn = null,
         string? Reason = null,
         string? FromPriority = null,
-        string? ToPriority = null)
+        string? ToPriority = null,
+        bool? Formal = null)
     {
         private static readonly EventDetails Empty = new(null, null, null, null, null, null);
 
@@ -355,6 +371,8 @@ public sealed class SupportTicketDtoComposer(
                 {
                     MessageId = Id(root, "messageId"),
                     ReplyChannel = Text(root, "channel"),
+                    // Fase 4b: una respuesta anterior no lo escribía; la traza la trata como no formal.
+                    Formal = Child(root, "formal").ValueKind == JsonValueKind.True,
                 },
                 SupportTicketEventKind.Extended => Empty with
                 {

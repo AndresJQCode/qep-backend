@@ -212,7 +212,13 @@ public sealed record SupportReplyDto(
     string? FailureCode,
     Guid? MessageId,
     SupportMemberDto? Author,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    SupportReplyDocumentDto? Document = null);
+
+/// <summary>Fase 4b (H3, H9): el PDF de una respuesta formal. <c>Signer</c> es el responsable que firmó, con el nombre como salió en el
+/// PDF (una foto: si después cambia su nombre visible, la carta firmada no cambia); la pantalla no lee la fila del documento. El archivo
+/// se baja por <c>GET …/replies/{replyId}/document</c>.</summary>
+public sealed record SupportReplyDocumentDto(string FileName, long SizeBytes, SupportMemberDto Signer, string SignerTitle);
 
 /// <summary>La pestaña de Soporte de la ficha de una conversación: los tickets de esa conversación y los del mismo cliente por otros
 /// canales (<c>IsThisConversation</c> los distingue). <c>CanCreate</c> y su motivo (<c>messaging_disabled</c>, <c>no_permission</c>)
@@ -271,12 +277,15 @@ public sealed record SupportTicketEventDto(
     DateOnly? ToDueOn,
     string? Reason,
     string? FromPriority,
-    string? ToPriority);
+    string? ToPriority,
+    bool? Formal = null);
 
 // Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
 // valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
 // Fase 4a (plan G11): ExtensionBusinessDays, FromDueOn, ToDueOn y Reason sólo vienen llenos en Extended.
 // Prioridad (spec 2026-11-15 §5.2): FromPriority y ToPriority son los nombres de PriorityChanged, nulos en los demás.
+// Fase 4b: Formal sólo en ReplySent, verdadero si la respuesta llevó el PDF formal (la traza dice «envió la respuesta formal» sin leer las
+// respuestas).
 
 /// <summary><c>IsMe</c> (fase 4a, plan G8): si el miembro es quien hace la petición. El SPA no conoce su <c>memberId</c>, y sin este
 /// campo no puede decir «tú» ni ocultar «Asignármelo» en un ticket que ya es suyo. Fuera de una sesión siempre es falso.</summary>
@@ -348,7 +357,22 @@ public sealed record SupportReplyOptionsDto(
     SupportChannelOptionDto WhatsAppTemplate,
     SupportChannelOptionDto Email,
     string DefaultChannel,
-    SupportChannelOptionDto Portal);
+    SupportChannelOptionDto Portal,
+    SupportFormalOptionsDto Formal);
+
+/// <summary>
+/// Fase 4b (H1, H3, H5, H10): lo que la pantalla necesita para ofrecer «Respuesta formal» sin conocer tipos de plantilla ni reglas de
+/// firma. <c>Suggested</c> es el «exige respuesta formal» del tipo del ticket: la pantalla marca la casilla de entrada. <c>BlockedReason</c>
+/// (<c>signer_required</c>: sin responsable que firme; <c>organization_required</c>: sin empresa para el membrete) apaga la respuesta formal
+/// en todo canal. <c>ThreadReason</c> existe porque fuera de la ventana el hilo sale por otra plantilla («Respuesta formal»): puede
+/// estar aprobada la de «Aviso de respuesta» y no ésta, y la pantalla no conoce los tipos (null: el hilo puede llevarla ahora).
+/// <c>TemplateConnections</c> es el selector de la plantilla formal sin conversación: las conexiones con ella aprobada.
+/// </summary>
+public sealed record SupportFormalOptionsDto(
+    bool Suggested,
+    string? BlockedReason,
+    string? ThreadReason,
+    IReadOnlyList<SupportConnectionOptionDto> TemplateConnections);
 
 /// <summary>El hilo de la conversación del ticket. <c>Delivery</c> ∈ <c>Text</c> (dentro de la ventana) o <c>Template</c> (fuera, en
 /// WhatsApp: sale «Aviso de respuesta»), para que la pantalla avise antes de enviar. <c>Reason</c> cuando no está disponible:

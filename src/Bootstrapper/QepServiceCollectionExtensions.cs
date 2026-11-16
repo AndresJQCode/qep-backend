@@ -1658,6 +1658,8 @@ public static class QepServiceCollectionExtensions
         // bajo support/ y sin regla de ciclo de vida.
         services.AddScoped<Modules.Support.Application.ISupportLetterhead, SupportLetterhead>();
         services.AddScoped<Modules.Support.Application.ISupportDocumentStorage, SupportDocumentStorage>();
+        // Tarea 8: arma el PDF de la respuesta formal (firma, membrete, «siguiente paso», generación y bucket) antes de crear la fila.
+        services.AddScoped<Modules.Support.Application.SupportFormalReplies>();
         // Soporte fase 3: el host del formulario público (plan F28 y F29).
         // Los orígenes del grupo público se validan al arrancar, como Cors:AllowedOrigins (plan F4).
         services.AddOptions<SupportPublicFormOptions>()

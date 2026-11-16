@@ -10,9 +10,17 @@ namespace Modules.Support.Application;
 /// <summary>El cuerpo de <c>POST /tickets/{id}/replies</c>. <c>ClientId</c> lo genera la pantalla: el reintento de la misma respuesta
 /// lo repite y recibe la misma fila sin volver a enviar. <c>ConnectionId</c> sólo con <c>WhatsAppTemplate</c> (la conexión del selector
 /// de <c>reply-options</c>) y <c>UploadId</c> sólo por el hilo, con <c>FileName</c>: el nombre del archivo que la pantalla mandó a la
-/// sesión de subida de Mensajería (de su extensión sale la clave del staging). <c>Resolve</c> es «Enviar y marcar Resuelto».</summary>
+/// sesión de subida de Mensajería (de su extensión sale la clave del staging). <c>Resolve</c> es «Enviar y marcar Resuelto». Fase 4b
+/// (H1, H2): con <c>Formal</c> la respuesta lleva el PDF de la respuesta formal; <c>Text</c> sigue siendo el mensaje del canal.</summary>
 public sealed record SupportReplyRequest(
-    Guid? ClientId, string? Channel, string? Text, Guid? ConnectionId, Guid? UploadId, bool Resolve, string? FileName = null);
+    Guid? ClientId,
+    string? Channel,
+    string? Text,
+    Guid? ConnectionId,
+    Guid? UploadId,
+    bool Resolve,
+    string? FileName = null,
+    SupportFormalReplyRequest? Formal = null);
 
 /// <param name="ExpectedVersion">La versión del ticket que la pantalla cargó; llega por <c>If-Match</c>.</param>
 public sealed record SendTicketReplyCommand(
@@ -25,12 +33,13 @@ public sealed record SendTicketReplyCommand(
     Guid? UploadId,
     bool Resolve,
     long ExpectedVersion,
-    string? FileName = null)
+    string? FileName = null,
+    SupportFormalReplyRequest? Formal = null)
     : ICommand<SupportReplyResultDto>
 {
     public static SendTicketReplyCommand From(Guid tenantId, Guid ticketId, SupportReplyRequest request, long expectedVersion) => new(
         tenantId, ticketId, request.ClientId, request.Channel, request.Text, request.ConnectionId, request.UploadId, request.Resolve,
-        expectedVersion, request.FileName);
+        expectedVersion, request.FileName, request.Formal);
 }
 
 /// <summary>
@@ -74,6 +83,15 @@ public sealed class SendTicketReplyValidator : AbstractValidator<SendTicketReply
             .When(command => command.UploadId is not null)
             .WithMessage($"Con un adjunto, la respuesta puede tener hasta {SupportReplyAttachmentRules.CaptionMaxLength} caracteres.");
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
+
+        // Fase 4b (H1 a H4, H11): la parte formal con sus reglas, y un solo documento por respuesta.
+        RuleFor(command => command.Formal!)
+            .SetValidator(new SupportFormalReplyRequestValidator())
+            .When(command => command.Formal is not null);
+        RuleFor(command => command.UploadId)
+            .Null()
+            .When(command => command.Formal is not null)
+            .WithMessage("Una respuesta formal ya lleva su PDF: no puede llevar otro adjunto.");
     }
 }
 
@@ -84,6 +102,13 @@ public sealed class SendTicketReplyValidator : AbstractValidator<SendTicketReply
 /// <c>Pending</c> confirmada → envío fuera de transacción → transacción: <c>MarkSent</c>/<c>MarkFailed</c>, el mensaje fijado en el
 /// expediente, <c>ReplySent</c>, la conversación nueva de una plantilla (<c>ConversationLinked</c> + <c>TicketOpened</c>), Resuelto si se
 /// pidió y salió, auditoría → confirmar → 201.
+///
+/// Fase 4b (Tarea 8): con <c>Formal</c>, después de la ruta y antes de la fila, <see cref="SupportFormalReplies"/> genera el PDF y lo guarda
+/// en el bucket (H7); la fila del documento entra en el mismo guardado que la respuesta. Una <c>Pending</c> retomada manda el PDF guardado
+/// (lo lee del bucket), nunca uno nuevo. Una respuesta nueva que se borra (rechazada antes de enviar, o perdida la carrera del
+/// <c>clientId</c>) se lleva su documento por la cascada, y su PDF se borra del bucket, que bajo <c>support/</c> no tiene regla de ciclo
+/// de vida (revisión del Bloque B). <c>send_failed</c> como rechazo (el PDF no subió a Meta o no se guardó en R2) es eso mismo: no salió
+/// nada, la respuesta se borra y se puede reintentar.
 ///
 /// El <c>id</c> de la fila es el <c>clientId</c> que viaja a Mensajería, que es idempotente por él: un reintento con una fila todavía
 /// <c>Pending</c> (se cayó entre el envío y la marca) vuelve a llamar y Mensajería devuelve el mensaje que ya salió. El correo no tiene esa
@@ -109,7 +134,9 @@ public sealed class SendTicketReplyHandler(
     ISupportAuditPublisher auditPublisher,
     ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
-    IValidator<SendTicketReplyCommand> validator)
+    IValidator<SendTicketReplyCommand> validator,
+    SupportFormalReplies formalReplies,
+    ISupportDocumentStorage documentStorage)
     : ICommandHandler<SendTicketReplyCommand, SupportReplyResultDto>
 {
     private static readonly string[] ReplyFields = ["replies"];
@@ -160,6 +187,10 @@ public sealed class SendTicketReplyHandler(
 
         // Revisión del bloque C (CM1 y CM2): una Pending vieja sale por lo que guardó su fila (canal, entrega, conexión y texto), nunca por
         // lo que traiga el reintento. Si ya no tiene por dónde salir, queda Failed con el motivo: no se borra ni se queda Pending.
+        // Fase 4b: también su documento formal, si lo tiene (Review Focus 1).
+        var storedDocument = existing is null
+            ? null
+            : await replies.FindDocumentAsync(command.TenantId, ticket.Id, existing.Id, cancellationToken);
         SupportReplyRoute route;
         if (existing is not null)
         {
@@ -169,7 +200,7 @@ public sealed class SendTicketReplyHandler(
             }
             catch (SupportDomainException unavailable)
             {
-                return await FailResumedAsync(ticket, existing, unavailable.Code, actor, cancellationToken);
+                return await FailResumedAsync(ticket, existing, unavailable.Code, actor, storedDocument is not null, cancellationToken);
             }
         }
         else
@@ -177,46 +208,83 @@ public sealed class SendTicketReplyHandler(
             route = await RouteAsync(ticket, channel, command, command.Text!.Trim(), context.Now, cancellationToken);
         }
 
+        // H7: el PDF se genera y se guarda antes de la fila; si falla, no queda nada (el generador responde 422).
+        var prepared = existing is null && command.Formal is { } formal
+            ? await formalReplies.PrepareAsync(ticket, route.Delivery, command.Text!.Trim(), formal, context, cancellationToken)
+            : null;
+
         var reply = existing;
+        SupportFormalPayload? document;
         if (reply is null)
         {
             var text = command.Text!.Trim();
-            // Revisión final (I1 y M2): la fila guarda el destino de la plantilla al celular y el adjunto, para que un retomado mande
-            // exactamente esto.
-            reply = SupportTicketReply.Start(
-                command.TenantId, ticket.Id, clientId, channel, route.Delivery, text, route.ConnectionId, actor, context.Now,
-                route.WaId, command.UploadId, command.FileName?.Trim());
-            replies.Add(reply);
             try
             {
+                // Revisión final (I1 y M2): la fila guarda el destino de la plantilla al celular y el adjunto, para que un retomado mande
+                // exactamente esto.
+                reply = SupportTicketReply.Start(
+                    command.TenantId, ticket.Id, clientId, channel, route.Delivery, text, route.ConnectionId, actor, context.Now,
+                    route.WaId, command.UploadId, command.FileName?.Trim());
+                replies.Add(reply);
+                document = null;
+                if (prepared is not null)
+                {
+                    var row = SupportReplyDocument.Create(
+                        reply, prepared.Decision, prepared.NextStep, prepared.SignerMemberId, prepared.SignerName, prepared.SignerTitle,
+                        prepared.Annexes, prepared.StorageKey, prepared.FileName, prepared.Content, prepared.RespondedOn, context.Now);
+                    replies.AddDocument(row);
+                    document = new SupportFormalPayload(prepared.Content, prepared.FileName, row.DocumentClientId);
+                }
+
                 await unitOfWork.SaveChangesAsync(cancellationToken);
             }
-            // Dos envíos del mismo clientId a la vez: el segundo devuelve la fila del primero, sin enviar.
+            // Dos envíos del mismo clientId a la vez: el segundo devuelve la fila del primero, sin enviar. Su PDF no quedó en ninguna fila.
             catch (ResourceConflictException conflict) when (conflict.Code == SupportErrorCodes.ReplyDuplicateClientId)
             {
                 unitOfWork.DiscardChanges();
+                await DiscardDocumentAsync(prepared);
                 var winner = await replies.FindByClientIdAsync(command.TenantId, ticket.Id, clientId, cancellationToken)
                     ?? throw new InvalidOperationException("The reply that won the client id race was not found.");
                 var current = await tickets.FindAsync(command.TenantId, ticket.Id, cancellationToken) ?? ticket;
                 return await ResultAsync(current, winner.Id, cancellationToken);
             }
+            catch (Exception) when (prepared is not null)
+            {
+                // H7: el PDF ya estaba en el bucket y la fila no se guardó.
+                await DiscardDocumentAsync(prepared);
+                throw;
+            }
+        }
+        else
+        {
+            // Review Focus 1: el retomado manda el PDF guardado y su DocumentClientId; el generador no se vuelve a llamar.
+            document = storedDocument is null
+                ? null
+                : new SupportFormalPayload(
+                    await documentStorage.ReadAsync(storedDocument.StorageKey, cancellationToken),
+                    storedDocument.FileName,
+                    storedDocument.DocumentClientId);
         }
 
         // El adjunto sale de la fila: un retomado manda el que guardó (o ninguno), nunca el que traiga el reintento.
-        var outcome = await SendAsync(ticket, route, reply, actor, cancellationToken);
+        var outcome = await SendAsync(ticket, route, reply, actor, document, cancellationToken);
         if (outcome is SupportChannelSendResult.Rejected rejected)
         {
             if (existing is not null)
             {
-                return await FailResumedAsync(ticket, reply, rejected.Reason, actor, cancellationToken);
+                return await FailResumedAsync(ticket, reply, rejected.Reason, actor, document is not null, cancellationToken);
             }
 
+            // Plan E17 y H9: la respuesta nunca existió para el solicitante. La fila se va con su documento (cascada) y el PDF sale del
+            // bucket (revisión del Bloque B).
             replies.Remove(reply);
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            await DiscardDocumentAsync(prepared);
             throw new SupportDomainException(SupportReplyRules.CodeFor(rejected.Reason), $"The reply was rejected: {rejected.Reason}.");
         }
 
-        var (saved, linkedConversation) = await ApplyOutcomeAsync(ticket, reply, outcome, actor, command.Resolve, cancellationToken);
+        var (saved, linkedConversation) = await ApplyOutcomeAsync(
+            ticket, reply, outcome, actor, command.Resolve, document is not null, cancellationToken);
         if (linkedConversation is { } conversationId)
         {
             await conversationEvents.NotifyChangedAsync(command.TenantId, conversationId, cancellationToken);
@@ -254,9 +322,10 @@ public sealed class SendTicketReplyHandler(
         else
         {
             await TenantModuleGuard.EnsureEnabledAsync(tenantModules, ticket.TenantId, TenantModuleKeys.Messaging, cancellationToken);
+            var formal = command.Formal is not null;
             route = channel is SupportReplyChannel.WhatsAppTemplate && ticket.ConversationId is null
-                ? await TemplateToPhoneAsync(ticket, command.ConnectionId, cancellationToken)
-                : await ThreadRouteAsync(ticket, now, cancellationToken);
+                ? await TemplateToPhoneAsync(ticket, command.ConnectionId, formal, cancellationToken)
+                : await ThreadRouteAsync(ticket, now, formal, cancellationToken);
         }
 
         if (route.Delivery is SupportReplyDelivery.Template)
@@ -337,22 +406,25 @@ public sealed class SendTicketReplyHandler(
     /// <summary>CM2: el retomado que no salió deja su fila <c>Failed</c> con el motivo, con su traza y su auditoría, y responde 201 como
     /// cualquier envío fallido. Así el request original que siga en curso encuentra la fila (ya terminada) y no escribe nada más.</summary>
     private async Task<SupportReplyResultDto> FailResumedAsync(
-        SupportTicket ticket, SupportTicketReply reply, string code, Guid actor, CancellationToken cancellationToken)
+        SupportTicket ticket, SupportTicketReply reply, string code, Guid actor, bool formal, CancellationToken cancellationToken)
     {
         var (saved, _) = await ApplyOutcomeAsync(
-            ticket, reply, new SupportChannelSendResult.Failed(null, code), actor, resolve: false, cancellationToken);
+            ticket, reply, new SupportChannelSendResult.Failed(null, code), actor, resolve: false, formal, cancellationToken);
         return await ResultAsync(saved, reply.Id, cancellationToken);
     }
 
-    private async Task<SupportReplyRoute> ThreadRouteAsync(SupportTicket ticket, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<SupportReplyRoute> ThreadRouteAsync(
+        SupportTicket ticket, DateTimeOffset now, bool formal, CancellationToken cancellationToken)
     {
-        var availability = await SupportReplyRules.ThreadAsync(channels, ticket, now, cancellationToken);
+        var availability = await SupportReplyRules.ThreadAsync(channels, ticket, now, cancellationToken, formal);
         return availability.Route
             ?? throw new SupportDomainException(availability.ErrorCode!, $"The thread cannot take a reply: {availability.Reason}.");
     }
 
-    // Plan E14: sin conversación, la plantilla va al celular de la foto (sin «+») por la conexión que eligió el asesor.
-    private async Task<SupportReplyRoute> TemplateToPhoneAsync(SupportTicket ticket, Guid? connectionId, CancellationToken cancellationToken)
+    // Plan E14: sin conversación, la plantilla va al celular de la foto (sin «+») por la conexión que eligió el asesor. Fase 4b: la
+    // respuesta formal necesita su propia plantilla aprobada en esa conexión.
+    private async Task<SupportReplyRoute> TemplateToPhoneAsync(
+        SupportTicket ticket, Guid? connectionId, bool formal, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(ticket.Requester?.MobilePhone))
         {
@@ -365,7 +437,10 @@ public sealed class SendTicketReplyHandler(
                 SupportErrorCodes.ReplyConnectionRequired, "Choose the WhatsApp connection the template goes out through.");
         }
 
-        if (!await channels.IsTemplateApprovedAsync(ticket.TenantId, connection, cancellationToken))
+        var approved = formal
+            ? await channels.IsFormalTemplateApprovedAsync(ticket.TenantId, connection, cancellationToken)
+            : await channels.IsTemplateApprovedAsync(ticket.TenantId, connection, cancellationToken);
+        if (!approved)
         {
             throw new SupportDomainException(
                 SupportErrorCodes.ReplyTemplateNotApproved, "The connection does not have the support reply template approved.");
@@ -375,12 +450,34 @@ public sealed class SendTicketReplyHandler(
             SupportReplyDelivery.Template, null, connection, ticket.Requester.MobilePhone.Trim().TrimStart('+'));
     }
 
+    /// <summary>El PDF de una respuesta formal tal como sale por el canal: los bytes, el nombre y el <c>clientId</c> del segundo mensaje
+    /// de Instagram.</summary>
+    private sealed record SupportFormalPayload(byte[] Content, string FileName, Guid DocumentClientId);
+
+    // Fase 4b (H10): con documento, el hilo manda el PDF (un documento con pie en WhatsApp; texto y archivo en Instagram), la plantilla es
+    // «Respuesta formal» con el PDF como encabezado, el correo lo adjunta y la página de consulta lo publica.
     private async Task<SupportChannelSendResult> SendAsync(
-        SupportTicket ticket, SupportReplyRoute route, SupportTicketReply reply, Guid actor, CancellationToken cancellationToken) =>
+        SupportTicket ticket,
+        SupportReplyRoute route,
+        SupportTicketReply reply,
+        Guid actor,
+        SupportFormalPayload? document,
+        CancellationToken cancellationToken) =>
         route.Delivery switch
         {
             // Plan F12: la respuesta se publica, no se envía. Queda Sent y la ve quien consulte con el radicado y el PIN.
             SupportReplyDelivery.Portal => new SupportChannelSendResult.Sent(null, null),
+            SupportReplyDelivery.Text when document is not null => await channels.SendThreadDocumentAsync(
+                new SupportChannelThreadDocumentSend(
+                    ticket.TenantId, route.ConversationId!.Value, reply.Id, document.DocumentClientId, actor, reply.Text, document.Content,
+                    document.FileName),
+                cancellationToken),
+            SupportReplyDelivery.Template when document is not null => await channels.SendFormalTemplateAsync(
+                new SupportChannelFormalTemplateSend(
+                    ticket.TenantId, route.ConversationId, route.ConnectionId, route.WaId, ticket.CustomerId,
+                    await RecipientNameAsync(ticket, cancellationToken), reply.Id, actor, ticket.DisplayNumber, reply.Text, document.Content,
+                    document.FileName),
+                cancellationToken),
             SupportReplyDelivery.Text => await channels.SendThreadAsync(
                 new SupportChannelThreadSend(
                     ticket.TenantId, route.ConversationId!.Value, reply.Id, actor, reply.Text, reply.UploadId, reply.FileName),
@@ -396,24 +493,34 @@ public sealed class SendTicketReplyHandler(
                     await tenantDirectory.GetDisplayNameAsync(new TenantId(ticket.TenantId), cancellationToken) ?? string.Empty,
                     ticket.DisplayNumber,
                     ticket.Subject,
-                    reply.Text),
+                    reply.Text,
+                    document is null ? null : new SupportEmailDocument(document.FileName, document.Content)),
                 cancellationToken),
             _ => throw new InvalidOperationException($"Unknown reply delivery '{route.Delivery}'."),
         };
+
+    // Best effort: el puerto no lanza y deja un log si no pudo; un PDF huérfano no rompe nada, y quien llama ya está respondiendo otra cosa.
+    private async Task DiscardDocumentAsync(SupportPreparedFormalReply? prepared)
+    {
+        if (prepared is not null)
+        {
+            await documentStorage.DeleteAsync(prepared.StorageKey, CancellationToken.None);
+        }
+    }
 
     /// <summary>
     /// Guarda lo que pasó en una transacción. El mensaje ya salió, así que una versión que cambió mientras tanto no lo deshace: se recarga
     /// el ticket y la fila y se aplica otra vez, una sola vez más.
     /// </summary>
     private async Task<(SupportTicket Ticket, Guid? LinkedConversation)> ApplyOutcomeAsync(
-        SupportTicket ticket, SupportTicketReply reply, SupportChannelSendResult outcome, Guid actor, bool resolve,
+        SupportTicket ticket, SupportTicketReply reply, SupportChannelSendResult outcome, Guid actor, bool resolve, bool formal,
         CancellationToken cancellationToken)
     {
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                var applied = await ApplyOnceAsync(ticket, reply, outcome, actor, resolve, cancellationToken);
+                var applied = await ApplyOnceAsync(ticket, reply, outcome, actor, resolve, formal, cancellationToken);
                 // Plan N13: after the commit of the outcome, on the new reply and on a resumed one alike.
                 await realtime.TicketChangedAsync(applied.Ticket.TenantId, applied.Ticket.Id.Value, CancellationToken.None);
                 return applied;
@@ -430,7 +537,7 @@ public sealed class SendTicketReplyHandler(
     }
 
     private async Task<(SupportTicket Ticket, Guid? LinkedConversation)> ApplyOnceAsync(
-        SupportTicket ticket, SupportTicketReply reply, SupportChannelSendResult outcome, Guid actor, bool resolve,
+        SupportTicket ticket, SupportTicketReply reply, SupportChannelSendResult outcome, Guid actor, bool resolve, bool formal,
         CancellationToken cancellationToken)
     {
         // Otro request con el mismo clientId (o la recarga después de un choque de versión) ya la dejó terminada: él escribió la traza,
@@ -475,9 +582,15 @@ public sealed class SendTicketReplyHandler(
             && sentConversation == ticketConversation)
         {
             await PinAsync(ticket, ticketConversation, messageId, now, cancellationToken);
+
+            // Fase 4b (H10): en Instagram el PDF va en un segundo mensaje, que también es del expediente.
+            if (outcome is SupportChannelSendResult.Sent { DocumentMessageId: { } documentMessage } && documentMessage != messageId)
+            {
+                await PinAsync(ticket, ticketConversation, documentMessage, now, cancellationToken);
+            }
         }
 
-        ticket.RecordReply(reply, now);
+        ticket.RecordReply(reply, now, formal);
         auditPublisher.Publish(
             ticket.TenantId,
             executionContext.SubjectId,

@@ -285,6 +285,20 @@ public sealed class SupportOpeningSenderTests
 
         public Task<SupportChannelSendResult> SendTemplateAsync(SupportChannelTemplateSend send, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The opening never uses the template (plan F24).");
+
+        public Task<IReadOnlyList<SupportConnectionOption>> ListFormalTemplateConnectionsAsync(
+            Guid tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<bool> IsFormalTemplateApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<SupportChannelSendResult> SendThreadDocumentAsync(
+            SupportChannelThreadDocumentSend send, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The opening never sends a document.");
+
+        public Task<SupportChannelSendResult> SendFormalTemplateAsync(
+            SupportChannelFormalTemplateSend send, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The opening never sends a document.");
     }
 
     private sealed class FakeMembers : ISupportMemberDirectory

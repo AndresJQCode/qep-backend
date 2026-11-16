@@ -29,4 +29,8 @@ public interface ISupportLetterhead
     /// de la versión vigente del tenant. Null sin empresa: la respuesta formal se rechaza con
     /// <c>support.reply.formal_organization_required</c>. Un logo que no se puede leer no falla: el membrete sale sin imagen.</summary>
     Task<SupportLetterheadData?> FindAsync(Guid tenantId, Guid? formVersionId, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4b, Tarea 8: si <see cref="FindAsync"/> daría un membrete, sin leer el logo. Lo usa <c>reply-options</c>, que se pide
+    /// cada vez que se abre un ticket: bajar el logo de R2 para decir «organization_required» no vale lo que cuesta.</summary>
+    Task<bool> ExistsAsync(Guid tenantId, Guid? formVersionId, CancellationToken cancellationToken);
 }

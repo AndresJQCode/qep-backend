@@ -113,6 +113,11 @@ public static class SupportErrorCodes
     /// <summary>H3 (owner 2026-11-16, Q-7): firma el responsable del ticket, y el ticket no tiene (422).</summary>
     public const string ReplyFormalSignerRequired = "support.reply.formal_signer_required";
 
+    /// <summary>Revisión del Bloque B: el canal no llegó a enviar la respuesta (el PDF de la respuesta formal no subió a Meta o no se guardó
+    /// en R2) y no quedó nada: la respuesta nueva se borra con su PDF (422) y el asesor puede reintentar, también con el mismo
+    /// <c>clientId</c>.</summary>
+    public const string ReplySendFailed = "support.reply.send_failed";
+
     // Fase 3, formulario público (spec §9, plan F1 a F37). Los de support.public.* los ve la página pública; el resto, la consola.
 
     /// <summary>Slug desconocido, tenant inactivo, módulo apagado o formulario sin publicar: el mismo 404 (plan F3).</summary>

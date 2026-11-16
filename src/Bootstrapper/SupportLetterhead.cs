@@ -59,6 +59,10 @@ internal sealed partial class SupportLetterhead(
             await LogoAsync(tenantId, cancellationToken));
     }
 
+    public async Task<bool> ExistsAsync(Guid tenantId, Guid? formVersionId, CancellationToken cancellationToken) =>
+        await CompanyOfAsync(tenantId, formVersionId, cancellationToken) is { } companyId
+        && await organizations.FindAsync(tenantId, companyId, cancellationToken) is not null;
+
     private async Task<Guid?> CompanyOfAsync(Guid tenantId, Guid? formVersionId, CancellationToken cancellationToken)
     {
         if (formVersionId is { } id
