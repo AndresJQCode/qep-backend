@@ -171,6 +171,16 @@ public sealed class UpdateFormSettingsHandler(
                 SupportFormSettings.ErrorCodeOf(blockers[0]), $"The public form cannot be published yet: {blockers[0]}.");
         }
 
+        // D-8 mientras esté publicado, no sólo al publicar: quitarle la empresa a un formulario publicado dejaría al portal sin con qué
+        // resolver {{empresa}} y sus hermanas (spec 2026-11-16), y todo el portal respondería 404. Una empresa desactivada después sí
+        // se deja editar (arriba): sigue resolviendo. Un formulario publicado antes de D-8, sin empresa, tiene que elegirla al guardar
+        // publicado; despublicarlo no lo exige.
+        if (candidate.IsPublished && candidate.OrganizationCompanyId is null)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.FormOrganizationRequired, "A published form needs the company that answers.");
+        }
+
         forms.Add(candidate);
         auditPublisher.Publish(
             command.TenantId,

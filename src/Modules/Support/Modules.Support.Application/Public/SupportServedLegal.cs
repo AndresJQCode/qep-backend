@@ -1,4 +1,6 @@
+using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Support.Domain;
 
 namespace Modules.Support.Application;
@@ -33,6 +35,7 @@ internal sealed record SupportServedLegal(
         Guid tenantId,
         string tenantName,
         SupportPublicOrganizationDto? organization,
+        ILogger logger,
         CancellationToken cancellationToken)
     {
         var current = await documents.CurrentAllAsync(tenantId, cancellationToken);
@@ -67,21 +70,27 @@ internal sealed record SupportServedLegal(
             // Después de sanear: los valores van codificados, así que lo resuelto no necesita otra pasada. El tope es el de la foto
             // (SupportLegalAcceptance.Record): mejor no servir que dejar radicar algo que no se puede guardar como prueba.
             var filled = SupportLegalVariables.FillHtml(served.Html, values);
-            return filled is not null && filled.Length <= SupportLegalDocumentVersion.ContentMaxLength
+            if (filled is null)
+            {
+                throw Unservable(logger, tenantId, kind, SupportServedLegalLog.UnresolvedCompanyVariable);
+            }
+
+            return filled.Length <= SupportLegalDocumentVersion.ContentMaxLength
                 ? new SupportServedDocument(version, filled)
-                : throw SupportPublicResolver.NotFound();
+                : throw Unservable(logger, tenantId, kind, SupportServedLegalLog.ContentTooLong);
         }
 
         var privacy = Serve(SupportLegalDocumentKind.PrivacyNotice);
         return new SupportServedLegal(
             privacy,
-            Question(privacy.Version.AuthorizationQuestion, tenantName, values),
+            Question(privacy.Version.AuthorizationQuestion, tenantName, values, logger, tenantId),
             Serve(SupportLegalDocumentKind.AnonymousNotice),
             Serve(SupportLegalDocumentKind.Terms));
     }
 
     // La del tenant, resuelta como texto plano (V-2: el portal la pinta como texto de React, que ya escapa); la de QEP no tiene variables.
-    private static string Question(string? stored, string tenantName, SupportLegalVariableValues values)
+    private static string Question(
+        string? stored, string tenantName, SupportLegalVariableValues values, ILogger logger, Guid tenantId)
     {
         if (stored is null)
         {
@@ -89,9 +98,22 @@ internal sealed record SupportServedLegal(
         }
 
         var filled = SupportLegalVariables.FillText(stored, values);
-        return filled is not null && filled.Trim().Length <= SupportLegalDocumentVersion.AuthorizationQuestionMaxLength
+        if (filled is null)
+        {
+            throw Unservable(logger, tenantId, SupportLegalDocumentKind.PrivacyNotice, SupportServedLegalLog.UnresolvedCompanyVariable);
+        }
+
+        return filled.Trim().Length <= SupportLegalDocumentVersion.AuthorizationQuestionMaxLength
             ? filled
-            : throw SupportPublicResolver.NotFound();
+            : throw Unservable(logger, tenantId, SupportLegalDocumentKind.PrivacyNotice, SupportServedLegalLog.QuestionTooLong);
+    }
+
+    // El 404 del visitante es el mismo de siempre, pero el tenant que configuró algo que no se puede servir tiene que quedar visible
+    // para soporte: si no, el portal cae sin rastro. Sólo tenant, tipo y motivo; nunca el contenido.
+    private static ResourceNotFoundException Unservable(ILogger logger, Guid tenantId, SupportLegalDocumentKind kind, string reason)
+    {
+        SupportServedLegalLog.Unservable(logger, tenantId, kind, reason);
+        return SupportPublicResolver.NotFound();
     }
 
     public SupportPublicLegalDto ToDto() =>
@@ -101,4 +123,22 @@ internal sealed record SupportServedLegal(
             new SupportPublicLegalDocumentDto(AnonymousNotice.Version.Version, AnonymousNotice.Html),
             new SupportPublicLegalDocumentDto(Terms.Version.Version, Terms.Html),
             SupportLegalNotices.Characterization);
+}
+
+/// <summary>Los avisos de <see cref="SupportServedLegal"/> cuando un documento no se puede servir por sus variables.</summary>
+internal static partial class SupportServedLegalLog
+{
+    /// <summary>Un token de la empresa sin empresa que responde en la versión publicada del formulario.</summary>
+    public const string UnresolvedCompanyVariable = "unresolved_company_variable";
+
+    /// <summary>El HTML resuelto pasa del tope de la foto de la aceptación.</summary>
+    public const string ContentTooLong = "content_too_long";
+
+    /// <summary>La pregunta resuelta pasa del tope de la foto de la aceptación.</summary>
+    public const string QuestionTooLong = "question_too_long";
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The {Kind} legal document of tenant {TenantId} cannot be served ({Reason}); the public form answers 404.")]
+    public static partial void Unservable(ILogger logger, Guid tenantId, SupportLegalDocumentKind kind, string reason);
 }

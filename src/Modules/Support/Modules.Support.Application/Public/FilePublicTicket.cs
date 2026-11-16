@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using FluentValidation.Results;
+using Microsoft.Extensions.Logging;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -264,6 +265,7 @@ public sealed class FilePublicTicketHandler(
     SupportOpeningDelivery openingDelivery,
     ISupportPublicOptions publicOptions,
     ISupportOrganizationDirectory organizations,
+    ILogger<FilePublicTicketHandler> logger,
     IValidator<FilePublicTicketCommand> validator)
     : ICommandHandler<FilePublicTicketCommand, SupportPublicFiledDto>
 {
@@ -304,7 +306,7 @@ public sealed class FilePublicTicketHandler(
         // 2026-11-16).
         var organization = await SupportPublicOrganization.OfAsync(organizations, tenant.Form, cancellationToken);
         var legal = await SupportServedLegal.ReadAsync(
-            legalDocuments, sanitizer, tenant.TenantId, tenant.Name, organization, cancellationToken);
+            legalDocuments, sanitizer, tenant.TenantId, tenant.Name, organization, logger, cancellationToken);
         if (!IsCurrent(validated, legal))
         {
             throw new SupportDomainException(SupportErrorCodes.PublicLegalTextsOutdated, "The legal texts changed after they were loaded.");

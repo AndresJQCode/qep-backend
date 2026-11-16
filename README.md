@@ -5282,7 +5282,7 @@ empresa en un formulario sin empresa (`organization: null`), o un texto que resu
 **La empresa que responde** (NIT del portal, spec 2026-11-15 §9.3, D-6 y D-8). El tenant elige en Ajustes › Formulario público una de sus
 empresas de Companies (`organizationCompanyId` en `PUT /settings/public-form`), y el portal muestra `organization: { name,
 documentTypeCode, documentNumber }` (`Company.Name`, `Company.DocumentType.ToWire()` y `Company.TaxId`) en `GET /form` (versión publicada)
-y en `GET /consult` (versión vigente, publicada o no). **Es obligatoria para publicar** (`organization_required`). Cambiarla a una que no
+y en `GET /consult` (versión vigente, publicada o no). **Es obligatoria para publicar y mientras está publicado** (`organization_required`: tampoco se puede guardar un formulario publicado sin empresa, porque las variables de los documentos la usan; despublicarlo sin empresa sí). Cambiarla a una que no
 existe, es de otro tenant o está inactiva es `422 support.form.organization_unavailable`; una elegida que después se desactiva **se sigue
 mostrando** y no frena editar el formulario (sólo aparece `organization_inactive` en `publishBlockers`, que impide volver a publicar uno
 sin publicar). **Una empresa que alguna versión del formulario eligió no se puede borrar**: `support.form_versions.organization_company_id`

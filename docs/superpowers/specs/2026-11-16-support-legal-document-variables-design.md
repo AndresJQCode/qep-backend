@@ -92,7 +92,19 @@ Las versiones del cuerpo siguen comparándose contra la versión publicada (una 
 Sin migración: no cambia ninguna columna. La consola puede salir antes o después; sin la consola nueva el campo `variables` se
 ignora, y sin el backend nuevo un token publicado se mostraría literal (por eso el backend sale primero).
 
+**D-8 mientras está publicado** (revisión del bloque). Antes sólo se exigía la empresa al pasar de sin publicar a publicado; ahora
+`PUT …/settings/public-form` con `isPublished: true` y `organizationCompanyId: null` es `422 support.form.organization_required`
+siempre, también sobre un formulario ya publicado (incluido uno publicado antes de D-8: al guardarlo publicado tiene que elegir
+empresa). Despublicar sin empresa sigue permitido. Así ningún guardado de la consola deja al portal con un `{{empresa}}` sin resolver.
+Cuando un documento no se puede servir por sus variables (token de empresa sin empresa, o texto resuelto demasiado largo), el 404 del
+visitante es el de siempre, pero queda un aviso en el log con el tenant, el tipo de documento y el motivo, nunca el contenido.
+
 ## 7. Pendiente
+
+- **Limitación aceptada** (revisión del bloque): `FilePublicTicket.IsCurrent` compara sólo números de versión. Si entre el `GET /form`
+  y el radicado cambia el nombre de la empresa (en Companies) o el del tenant, la foto guarda el texto resuelto con el nombre nuevo, que
+  la persona no vio. Se acepta: la ventana es corta, y cambiar la empresa del formulario sube la versión del formulario
+  (`support.public.form_outdated`).
 
 - Un espacio duro dentro de las llaves (algunos editores lo insertan) llega al HTML saneado como la entidad `&nbsp;` si así lo
   serializa el saneador, y entonces el token se rechaza como desconocido (no se sirve mal: se frena al publicar). Sin verificar

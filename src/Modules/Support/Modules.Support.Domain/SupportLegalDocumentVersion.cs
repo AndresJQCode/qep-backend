@@ -18,6 +18,9 @@ public sealed class SupportLegalDocumentVersion
 
     public const int PolicyUrlMaxLength = 500;
 
+    // Cuánto del token desconocido se muestra en el mensaje del 422.
+    private const int UnknownVariableShownLength = 40;
+
     // EF Core materializes through here; Create and Example are the only code entry points.
     private SupportLegalDocumentVersion()
     {
@@ -106,8 +109,10 @@ public sealed class SupportLegalDocumentVersion
         // portal lo mostraría literal. Se mira el HTML ya saneado, que es lo que se guarda y lo que se resuelve al servir.
         if (SupportLegalVariables.UnknownIn(content.Html).Concat(SupportLegalVariables.UnknownIn(question)).FirstOrDefault() is { } unknown)
         {
+            // Recortado: lo que hay entre llaves puede ser un párrafo entero, y el mensaje viaja en la respuesta y en los logs.
+            var shown = unknown.Length > UnknownVariableShownLength ? unknown[..UnknownVariableShownLength] + "…" : unknown;
             throw new SupportDomainException(
-                SupportErrorCodes.LegalDocumentUnknownVariable, $"The legal document uses an unknown variable: '{{{{{unknown}}}}}'.");
+                SupportErrorCodes.LegalDocumentUnknownVariable, $"The legal document uses an unknown variable: '{{{{{shown}}}}}'.");
         }
 
         return new SupportLegalDocumentVersion

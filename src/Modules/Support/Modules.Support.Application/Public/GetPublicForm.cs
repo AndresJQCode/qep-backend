@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Identification;
+using Microsoft.Extensions.Logging;
 using Modules.Support.Domain;
 
 namespace Modules.Support.Application;
@@ -19,7 +20,8 @@ public sealed class GetPublicFormHandler(
     ISupportLegalDocumentRepository legalDocuments,
     ISupportHtmlSanitizer sanitizer,
     ISupportTenantBranding branding,
-    ISupportOrganizationDirectory organizations)
+    ISupportOrganizationDirectory organizations,
+    ILogger<GetPublicFormHandler> logger)
     : IQueryHandler<GetPublicFormQuery, SupportPublicFormDto>
 {
     /// <summary>La clave de «cualquier otro país» en <see cref="SupportPublicFormDto.DocumentTypesByCountry"/>.</summary>
@@ -32,7 +34,7 @@ public sealed class GetPublicFormHandler(
         // documentos (spec 2026-11-16).
         var organization = await SupportPublicOrganization.OfAsync(organizations, tenant.Form, cancellationToken);
         var legal = await SupportServedLegal.ReadAsync(
-            legalDocuments, sanitizer, tenant.TenantId, tenant.Name, organization, cancellationToken);
+            legalDocuments, sanitizer, tenant.TenantId, tenant.Name, organization, logger, cancellationToken);
         var types = (await ticketTypes.ListAsync(tenant.TenantId, cancellationToken))
             .Where(type => type.IsActive && type.IsPublished)
             .OrderBy(type => type.Position)
