@@ -37,15 +37,35 @@ public sealed class FilePublicTicketValidatorTests
     // Un celular válido del país del solicitante (ver FakePhones).
     private const string AutoMobile = "auto";
 
+    // The versions of the path by default: privacy notice and terms with data, anonymous notice and terms without.
+    private const int ByPath = -1;
+
     private static FilePublicTicketCommand Command(
         SupportPublicRequesterRequest? requester,
         bool anonymous = false,
         bool acceptsDataPolicy = true,
         string? subject = "No me llegó el pedido",
         string? description = "Pagué el lunes y todavía no llega.",
-        SupportFormVersion? form = null) =>
+        SupportFormVersion? form = null,
+        bool acceptsTerms = true,
+        int? privacyNoticeVersion = ByPath,
+        int? anonymousNoticeVersion = ByPath,
+        int? termsVersion = 1) =>
         new FilePublicTicketCommand(
-            "mi-empresa", "203.0.113.7", TypeId, subject, description, anonymous, requester, acceptsDataPolicy, 1, 1, "token")
+            "mi-empresa",
+            "203.0.113.7",
+            TypeId,
+            subject,
+            description,
+            anonymous,
+            requester,
+            acceptsDataPolicy,
+            privacyNoticeVersion == ByPath ? (anonymous ? null : 1) : privacyNoticeVersion,
+            anonymousNoticeVersion == ByPath ? (anonymous ? 1 : null) : anonymousNoticeVersion,
+            acceptsTerms,
+            termsVersion,
+            1,
+            "token")
         {
             Form = form ?? Form(),
         };
@@ -147,7 +167,7 @@ public sealed class FilePublicTicketValidatorTests
     public void TheTypeAndTheVersionsAreRequired()
     {
         var command = new FilePublicTicketCommand(
-            "mi-empresa", "203.0.113.7", null, "Asunto", "Descripción", false, Natural(), true, null, null, "token")
+            "mi-empresa", "203.0.113.7", null, "Asunto", "Descripción", false, Natural(), true, null, null, true, null, null, "token")
         {
             Form = Form(),
         };
@@ -155,8 +175,71 @@ public sealed class FilePublicTicketValidatorTests
         var errors = Errors(command);
 
         Assert.Contains("TicketTypeId", errors);
-        Assert.Contains("LegalTextVersion", errors);
+        Assert.Contains("PrivacyNoticeVersion", errors);
+        Assert.Contains("TermsVersion", errors);
         Assert.Contains("FormVersion", errors);
+    }
+
+    // Plan L15: by HTTP it is validation.failed with errors.AcceptsTerms; the rule carries its own code like AcceptsDataPolicy.
+    [Fact]
+    public void TheTermsMustBeAcceptedOnBothPaths()
+    {
+        var validator = new FilePublicTicketValidator(new FakeCountries(), new FakePhones());
+        var named = validator.Validate(Command(Natural(), acceptsTerms: false));
+        var anonymous = validator.Validate(Command(null, anonymous: true, acceptsDataPolicy: false, acceptsTerms: false));
+
+        Assert.Equal(["AcceptsTerms"], named.Errors.Select(error => error.PropertyName).Distinct());
+        Assert.Equal(["AcceptsTerms"], anonymous.Errors.Select(error => error.PropertyName).Distinct());
+        Assert.All(named.Errors.Concat(anonymous.Errors), error => Assert.Equal(SupportErrorCodes.PublicTermsRequired, error.ErrorCode));
+    }
+
+    // Plan L16: with data, privacy notice and terms; never the anonymous notice.
+    [Fact]
+    public void ANamedBodyNeedsPrivacyAndTermsVersionsAndNoAnonymousNotice()
+    {
+        Assert.Empty(Errors(Command(Natural())));
+        Assert.Equal(["PrivacyNoticeVersion"], Errors(Command(Natural(), privacyNoticeVersion: null)));
+        Assert.Equal(["TermsVersion"], Errors(Command(Natural(), termsVersion: null)));
+        Assert.Equal(["AnonymousNoticeVersion"], Errors(Command(Natural(), anonymousNoticeVersion: 1)));
+    }
+
+    // Plan L16: anonymous, anonymous notice and terms; never the privacy notice.
+    [Fact]
+    public void AnAnonymousBodyNeedsNoticeAndTermsVersionsAndNoPrivacyNotice()
+    {
+        Assert.Empty(Errors(Command(null, anonymous: true)));
+        Assert.Equal(["AnonymousNoticeVersion"], Errors(Command(null, anonymous: true, anonymousNoticeVersion: null)));
+        Assert.Equal(["TermsVersion"], Errors(Command(null, anonymous: true, termsVersion: null)));
+        Assert.Equal(["PrivacyNoticeVersion"], Errors(Command(null, anonymous: true, privacyNoticeVersion: 1)));
+    }
+
+    [Fact]
+    public void AnAnonymousBodyIgnoresAcceptsDataPolicy()
+    {
+        Assert.Empty(Errors(Command(null, anonymous: true, acceptsDataPolicy: false)));
+        Assert.Empty(Errors(Command(null, anonymous: true, acceptsDataPolicy: true)));
+    }
+
+    // Plan L27: the idempotency key is optional, but the empty UUID is a bug of the portal, not a key.
+    [Fact]
+    public void AnEmptyClientRequestIdIsAnError() =>
+        Assert.Equal(["ClientRequestId"], Errors(Command(Natural()) with { ClientRequestId = Guid.Empty }));
+
+    // Owner decision D-10: only a random v4 UUID is a key, like the public upload keys.
+    [Fact]
+    public void AClientRequestIdOfAnotherVersionIsAnError()
+    {
+        Assert.Equal(["ClientRequestId"], Errors(Command(Natural()) with { ClientRequestId = Guid.CreateVersion7() }));
+        Assert.Equal(
+            ["ClientRequestId"],
+            Errors(Command(Natural()) with { ClientRequestId = Guid.Parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8") }));
+    }
+
+    [Fact]
+    public void ANullClientRequestIdIsFine()
+    {
+        Assert.Empty(Errors(Command(Natural()) with { ClientRequestId = null }));
+        Assert.Empty(Errors(Command(Natural()) with { ClientRequestId = Guid.NewGuid() }));
     }
 
     private sealed class FakeCountries : ISupportCountries

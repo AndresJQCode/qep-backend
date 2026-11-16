@@ -106,6 +106,14 @@ public sealed class PublicOrderBuyerAccountApiTests
             Assert.Equal(HttpStatusCode.NoContent, verified.StatusCode);
         }
 
+        public async Task ExecuteAsync(string sql)
+        {
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new NpgsqlCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
         public async Task<long> CountAsync(string sql)
         {
             await using var connection = new NpgsqlConnection(ConnectionString);
@@ -115,7 +123,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         }
     }
 
-    private static async Task<Rig> OpenRigAsync(Action<IServiceCollection>? configure = null, string[]? salesCountries = null)
+    internal static async Task<Rig> OpenRigAsync(Action<IServiceCollection>? configure = null, string[]? salesCountries = null)
     {
         var fixture = await OpenAsync(
             (_, body) =>
@@ -166,7 +174,7 @@ public sealed class PublicOrderBuyerAccountApiTests
             Task.FromResult(true);
     }
 
-    private static Dictionary<string, object?> Billing(Rig rig, string email = "ana@test.co") => new()
+    internal static Dictionary<string, object?> Billing(Rig rig, string email = "ana@test.co") => new()
     {
         ["name"] = "Ana Pérez",
         ["identificationType"] = "CC",
@@ -180,7 +188,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         ["cityName"] = null,
     };
 
-    private static Dictionary<string, object?> Body(Rig rig, Action<Dictionary<string, object?>>? tweak = null)
+    internal static Dictionary<string, object?> Body(Rig rig, Action<Dictionary<string, object?>>? tweak = null)
     {
         var body = new Dictionary<string, object?>
         {
@@ -204,7 +212,7 @@ public sealed class PublicOrderBuyerAccountApiTests
             body["createAccount"] = new { password, acceptsDataPolicy = true };
         });
 
-    private static async Task<HttpResponseMessage> SubmitAsync(Rig rig, object body, string? visitorIp = null, string? session = null)
+    internal static async Task<HttpResponseMessage> SubmitAsync(Rig rig, object body, string? visitorIp = null, string? session = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, Url("/order-requests")) { Content = JsonContent.Create(body) };
         request.Headers.Add("X-Qep-Visitor-Ip", visitorIp ?? NextIp());
@@ -216,7 +224,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         return await rig.Fixture.Storefront.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    private static async Task<JsonNode> CreatedAsync(HttpResponseMessage response)
+    internal static async Task<JsonNode> CreatedAsync(HttpResponseMessage response)
     {
         var json = await JsonAsync(response);
         Assert.True(response.StatusCode == HttpStatusCode.Created, json.ToJsonString());
@@ -419,6 +427,9 @@ public sealed class PublicOrderBuyerAccountApiTests
 
         public Task<Guid?> ResolveAccountIdAsync(string host, string? sessionToken, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("buyers down");
+
+        public Task<Guid?> FindVerifiedAccountIdAsync(string email, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("buyers down");
     }
 
     [Fact]
@@ -442,7 +453,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         Assert.Equal(2, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
     }
 
-    private static async Task<string> LoginAsync(Rig rig, string email = "ana@test.co", string password = "una-contrasena-larga")
+    internal static async Task<string> LoginAsync(Rig rig, string email = "ana@test.co", string password = "una-contrasena-larga")
     {
         var response = await rig.PostBuyerAsync("/session", new { email, password });
         var json = await JsonAsync(response);
@@ -566,7 +577,7 @@ public sealed class PublicOrderBuyerAccountApiTests
     // ---- La cuenta en el pedido (pedidos del comprador §4.2) ----------------------------------------------------------------
 
     // ScalarTextAsync devuelve "" para un NULL de SQL (DBNull.ToString()).
-    private static async Task<string?> OrderBuyerAccountAsync(Rig rig, Guid orderId) =>
+    internal static async Task<string?> OrderBuyerAccountAsync(Rig rig, Guid orderId) =>
         await rig.ScalarTextAsync($"SELECT buyer_account_id::text FROM quotations.orders WHERE id = '{orderId}'") is { Length: > 0 } id
             ? id
             : null;
@@ -582,7 +593,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         return json;
     }
 
-    private static async Task<string> AccountIdAsync(Rig rig, string email) =>
+    internal static async Task<string> AccountIdAsync(Rig rig, string email) =>
         (await rig.ScalarTextAsync($"SELECT id::text FROM buyers.accounts WHERE email = '{email}'"))!;
 
     [Fact]
@@ -615,8 +626,10 @@ public sealed class PublicOrderBuyerAccountApiTests
                 .IssueAsync(accountId, "otra-tienda.lulocrm.com", "203.0.113.5", TestContext.Current.CancellationToken);
         }
 
-        var foreign = await CreatedAsync(await SubmitAsync(rig, Body(rig), session: foreignSession));
-        var anonymous = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+        // Un correo de facturación sin cuenta: si no, la regla del correo (spec 2026-11-15 §3.1) enlazaría los dos pedidos.
+        var guestBody = Body(rig, body => body["billing"] = Billing(rig, "sin-cuenta@test.co"));
+        var foreign = await CreatedAsync(await SubmitAsync(rig, guestBody, session: foreignSession));
+        var anonymous = await CreatedAsync(await SubmitAsync(rig, Body(rig, body => body["billing"] = Billing(rig, "sin-cuenta@test.co"))));
 
         // Sin updateProfile la sesión que no sirve no marca el recibo: el pedido sale como invitado y nada más.
         Assert.False((bool)foreign["buyerSessionRejected"]!);
@@ -645,8 +658,10 @@ public sealed class PublicOrderBuyerAccountApiTests
         Assert.Equal([orderId], listed["items"]!.AsArray().Select(item => (Guid)item!["id"]!));
     }
 
+    // Spec 2026-11-15 §3.1, caso PED-2026-0005: «crear cuenta» con una cuenta ya verificada enlaza el pedido en el checkout, y el
+    // alta sigue mandando el aviso «ya tienes cuenta». Reemplaza la regla anterior, que lo dejaba sin cuenta.
     [Fact]
-    public async Task ADeferredSignupForAVerifiedEmailDoesNotLinkTheOrder()
+    public async Task CreateAccountWithAnAlreadyVerifiedEmailLinksTheOrder()
     {
         await using var rig = await OpenRigAsync();
         await rig.RegisterVerifiedAsync("ana@test.co");
@@ -655,7 +670,53 @@ public sealed class PublicOrderBuyerAccountApiTests
         await rig.DrainBuyerSignupsAsync();
 
         Assert.Single(await rig.OutboxAsync(BuyerIntegrationEvents.ExistingAccountNotice));
+        Assert.Equal(await AccountIdAsync(rig, "ana@test.co"), await OrderBuyerAccountAsync(rig, (Guid)receipt["id"]!));
+    }
+
+    [Fact]
+    public async Task GuestCheckoutWithTheEmailOfAVerifiedAccountLinksTheOrder()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        Assert.Equal(await AccountIdAsync(rig, "ana@test.co"), await OrderBuyerAccountAsync(rig, (Guid)receipt["id"]!));
+    }
+
+    [Fact]
+    public async Task GuestCheckoutWithTheEmailOfAnUnverifiedAccountLeavesItUnlinked()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterAsync("ana@test.co");
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
         Assert.Null(await OrderBuyerAccountAsync(rig, (Guid)receipt["id"]!));
+    }
+
+    [Fact]
+    public async Task CheckoutWithASessionKeepsTheSessionAccountOverTheBillingEmail()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+        await rig.RegisterVerifiedAsync("luis@test.co");
+        var session = await LoginAsync(rig, email: "luis@test.co");
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig), session: session));
+
+        Assert.Equal(await AccountIdAsync(rig, "luis@test.co"), await OrderBuyerAccountAsync(rig, (Guid)receipt["id"]!));
+    }
+
+    [Fact]
+    public async Task GuestCheckoutMatchesTheEmailIgnoringCaseAndSpaces()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig, body => body["billing"] = Billing(rig, " ANA@test.co "))));
+
+        Assert.Equal(await AccountIdAsync(rig, "ana@test.co"), await OrderBuyerAccountAsync(rig, (Guid)receipt["id"]!));
     }
 
     [Fact]

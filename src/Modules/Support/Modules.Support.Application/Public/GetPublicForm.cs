@@ -9,14 +9,17 @@ public sealed record GetPublicFormQuery(string? TenantSlug) : IQuery<SupportPubl
 /// <summary>
 /// La configuración pública del formulario (plan F18, F19 y el contrato «Públicas»): la versión vigente del formulario, los tipos
 /// activos y publicados en orden, los campos de cada variante según <see cref="SupportFormFields"/>, los tipos de documento de la tabla
-/// compartida y la versión vigente de los textos legales. Un formulario publicado siempre tiene textos (plan F15); si no los tuviera, el
-/// mismo 404 que cualquier tenant que no se sirve.
+/// compartida y la versión vigente de los tres documentos legales, saneados otra vez al servirlos, con la pregunta de autorización ya
+/// resuelta y el texto fijo de caracterización (spec 2026-11-15 §6.3 y §9, plan L7, L8 y L17). Un formulario publicado siempre tiene
+/// los tres (plan L18); si le faltara uno, el mismo 404 que cualquier tenant que no se sirve.
 /// </summary>
 public sealed class GetPublicFormHandler(
     SupportPublicResolver resolver,
     ISupportTicketTypeRepository ticketTypes,
-    ISupportLegalTextRepository legalTexts,
-    ISupportTenantBranding branding)
+    ISupportLegalDocumentRepository legalDocuments,
+    ISupportHtmlSanitizer sanitizer,
+    ISupportTenantBranding branding,
+    ISupportOrganizationDirectory organizations)
     : IQueryHandler<GetPublicFormQuery, SupportPublicFormDto>
 {
     /// <summary>La clave de «cualquier otro país» en <see cref="SupportPublicFormDto.DocumentTypesByCountry"/>.</summary>
@@ -25,7 +28,7 @@ public sealed class GetPublicFormHandler(
     public async Task<SupportPublicFormDto> HandleAsync(GetPublicFormQuery query, CancellationToken cancellationToken)
     {
         var tenant = await resolver.ResolveAsync(query.TenantSlug, cancellationToken);
-        var legal = await legalTexts.CurrentAsync(tenant.TenantId, cancellationToken) ?? throw SupportPublicResolver.NotFound();
+        var legal = await SupportServedLegal.ReadAsync(legalDocuments, sanitizer, tenant.TenantId, tenant.Name, cancellationToken);
         var types = (await ticketTypes.ListAsync(tenant.TenantId, cancellationToken))
             .Where(type => type.IsActive && type.IsPublished)
             .OrderBy(type => type.Position)
@@ -51,13 +54,14 @@ public sealed class GetPublicFormHandler(
                 ["ES"] = DocumentTypesByCountry.AllowedFor("ES"),
                 [OtherCountries] = DocumentTypesByCountry.AllowedFor(OtherCountries),
             },
-            new SupportPublicLegalDto(legal.Version, legal.AuthorizationText, legal.PolicyText, legal.PolicyUrl, legal.TermsText),
+            legal.ToDto(),
             form.Version,
             new SupportPublicAttachmentsDto(
                 form.AllowAttachments,
                 SupportPublicAttachmentRules.MaxFiles,
                 SupportPublicAttachmentRules.MaxSizeBytes,
-                SupportPublicAttachmentRules.MimeTypes));
+                SupportPublicAttachmentRules.MimeTypes),
+            await SupportPublicOrganization.OfAsync(organizations, form, cancellationToken));
     }
 
     private static List<SupportPublicFieldDto> Fields(SupportFormVariant variant, SupportFormVersion form) =>

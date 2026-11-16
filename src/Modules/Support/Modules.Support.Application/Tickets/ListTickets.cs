@@ -7,13 +7,28 @@ namespace Modules.Support.Application;
 
 /// <summary>
 /// La bandeja. <c>Status</c> admite varios estados por nombre separados por coma; <c>Assignee</c> es <c>me</c>, <c>unassigned</c> o
-/// el id de una membresía; <c>Due</c> es <c>overdue</c> o <c>dueSoon</c>; <c>Search</c> es el radicado o un texto. Todo vacío no
-/// filtra. Va por <c>receivedAt</c> descendente.
+/// el id de una membresía; <c>Due</c> es <c>overdue</c> o <c>dueSoon</c>; <c>Search</c> es el radicado o un texto; <c>Priority</c>
+/// admite varias prioridades por nombre separadas por coma, como <c>Status</c>. Todo vacío no filtra. <c>Sort</c> vacío o
+/// <c>received</c> va por <c>receivedAt</c> descendente; <c>priority</c>, de <c>Urgent</c> a <c>Low</c> y dentro de cada nivel por
+/// <c>receivedAt</c> descendente (spec 2026-11-15 §5.3).
 /// </summary>
 public sealed record ListTicketsQuery(
-    Guid TenantId, string? Status, Guid? TypeId, string? Assignee, string? Due, string? Search, int Page, int PageSize)
+    Guid TenantId,
+    string? Status,
+    Guid? TypeId,
+    string? Assignee,
+    string? Due,
+    string? Search,
+    string? Priority,
+    string? Sort,
+    int Page,
+    int PageSize)
     : IQuery<SupportTicketPageDto>
 {
+    public const string SortReceived = "received";
+
+    public const string SortPriority = "priority";
+
     public const int DefaultPageSize = 25;
 
     public const int MaxPageSize = 100;
@@ -44,6 +59,12 @@ public sealed class ListTicketsValidator : AbstractValidator<ListTicketsQuery>
             .Must(due => string.IsNullOrWhiteSpace(due) || due is ListTicketsQuery.DueOverdue or ListTicketsQuery.DueSoon)
             .WithMessage("Due must be overdue or dueSoon.");
         RuleFor(query => query.Search).MaximumLength(ListTicketsQuery.SearchMaxLength);
+        RuleFor(query => query.Priority)
+            .Must(priority => ListTicketsHandler.TryParsePriorities(priority, out _))
+            .WithMessage("Priority must list ticket priorities by name, separated by commas.");
+        RuleFor(query => query.Sort)
+            .Must(sort => string.IsNullOrWhiteSpace(sort) || sort is ListTicketsQuery.SortReceived or ListTicketsQuery.SortPriority)
+            .WithMessage("Sort must be received or priority.");
         RuleFor(query => query.Page).GreaterThanOrEqualTo(1);
         RuleFor(query => query.PageSize).InclusiveBetween(1, ListTicketsQuery.MaxPageSize);
     }
@@ -66,26 +87,34 @@ public sealed class ListTicketsHandler(
     IValidator<ListTicketsQuery> validator)
     : IQueryHandler<ListTicketsQuery, SupportTicketPageDto>
 {
-    internal static bool TryParseStatuses(string? text, out IReadOnlyCollection<SupportTicketStatus> statuses)
+    internal static bool TryParseStatuses(string? text, out IReadOnlyCollection<SupportTicketStatus> statuses) =>
+        TryParseNames(text, out statuses);
+
+    internal static bool TryParsePriorities(string? text, out IReadOnlyCollection<SupportTicketPriority> priorities) =>
+        TryParseNames(text, out priorities);
+
+    // Nombres exactos separados por coma; vacío es «todos».
+    private static bool TryParseNames<TEnum>(string? text, out IReadOnlyCollection<TEnum> values)
+        where TEnum : struct, Enum
     {
-        statuses = [];
+        values = [];
         if (string.IsNullOrWhiteSpace(text))
         {
             return true;
         }
 
-        var parsed = new List<SupportTicketStatus>();
+        var parsed = new List<TEnum>();
         foreach (var part in text.Split(','))
         {
-            if (!SupportTicketRules.TryParseExact<SupportTicketStatus>(part.Trim(), out var status))
+            if (!SupportTicketRules.TryParseExact<TEnum>(part.Trim(), out var value))
             {
                 return false;
             }
 
-            parsed.Add(status);
+            parsed.Add(value);
         }
 
-        statuses = parsed;
+        values = parsed;
         return true;
     }
 
@@ -96,6 +125,11 @@ public sealed class ListTicketsHandler(
         if (!TryParseStatuses(query.Status, out var statuses))
         {
             throw new InvalidOperationException($"Status '{query.Status}' passed validation but is not a list of ticket statuses.");
+        }
+
+        if (!TryParsePriorities(query.Priority, out var priorities))
+        {
+            throw new InvalidOperationException($"Priority '{query.Priority}' passed validation but is not a list of ticket priorities.");
         }
 
         await provisioner.EnsureAsync(query.TenantId, cancellationToken);
@@ -117,7 +151,9 @@ public sealed class ListTicketsHandler(
             SearchTerm: null,
             SearchCustomerIds: null,
             query.Page,
-            query.PageSize);
+            query.PageSize,
+            priorities,
+            ByPriority: query.Sort == ListTicketsQuery.SortPriority);
         filter = filter with { AssigneeMemberId = await AssigneeOfAsync(query, cancellationToken) };
         filter = WithDue(filter, query.Due, context.Today, dueSoonLimit);
         filter = await WithSearchAsync(filter, query.Search, cancellationToken);

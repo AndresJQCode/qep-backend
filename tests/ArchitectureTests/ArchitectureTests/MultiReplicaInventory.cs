@@ -211,6 +211,8 @@ public static class MultiReplicaInventory
             "Modules/Integrations/Modules.Integrations.Infrastructure/Verification/ConnectionTesterRegistry.cs:10 — diccionario inmutable de los testers registrados"),
         new("Modules.Messaging.Infrastructure.Webhook.MarketingOptOutButtons", StateClassification.PerPodByDesign,
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/MarketingOptOutButtons.cs:13 — textos de la configuración, inmutables; igual en cada pod"),
+        new("Modules.Support.Infrastructure.Legal.CachingSupportHtmlSanitizer", StateClassification.PerPodByDesign,
+            "Modules/Support/Modules.Support.Infrastructure/Legal/CachingSupportHtmlSanitizer.cs:24 — MemoryCache acotado por caracteres, con clave SHA-256 de la entrada de una función pura; igual en cada pod"),
     ];
 
     /// <summary>
@@ -246,6 +248,8 @@ public static class MultiReplicaInventory
             "Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:95"),
         new("Modules.Quotations.Application.IZenviaWhatsAppSender", "Modules.Quotations.Infrastructure.Whatsapp.ZenviaWhatsAppSender",
             "Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:113"),
+        new("Modules.Support.Application.ISupportHtmlSanitizer", "Modules.Support.Infrastructure.Legal.CachingSupportHtmlSanitizer",
+            "Modules/Support/Modules.Support.Infrastructure/SupportInfrastructureExtensions.cs:45 — envuelve a HtmlSupportSanitizer, sin estado"),
         new("Modules.Storage.Application.IFileScanner", "Modules.Storage.Infrastructure.Scanning.ClamAvFileScanner",
             "Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs:55-60 — con Storage:ClamAv:Enabled"),
         new("Modules.Storage.Application.IFileScanner", "Modules.Storage.Infrastructure.Scanning.NoopFileScanner",

@@ -46,6 +46,28 @@ public sealed class SupportConversationTicketsApiTests(SharedSupportHost sharedH
     }
 
     [Fact]
+    public async Task ATicketFromAConversationTakesItsPriority()
+    {
+        var scenario = await StartAsync(await sharedHost.StartTestAsync());
+        var conversation = await SeedConversationAsync(scenario.Factory, scenario.TenantId);
+        var url = $"{scenario.Url}/conversations/{conversation}/tickets";
+        var typeId = await scenario.TypeIdAsync("Petición general");
+
+        var low = await scenario.Client.PostAsJsonAsync(
+            url, new { ticketTypeId = typeId, subject = "Pedido sin llegar", description = "No ha llegado.", priority = "Low" }, Ct);
+        var lowercase = await scenario.Client.PostAsJsonAsync(
+            url, new { ticketTypeId = typeId, subject = "Pedido sin llegar", description = "No ha llegado.", priority = "high" }, Ct);
+        var absent = await CreateFromConversationAsync(scenario, conversation);
+
+        Assert.True(low.StatusCode == HttpStatusCode.Created, await BodyAsync(low));
+        Assert.Equal("Low", (await JsonAsync(low)).GetProperty("priority").GetString());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, lowercase.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(lowercase));
+        Assert.Equal(["Priority"], await ErrorKeysAsync(lowercase));
+        Assert.Equal("Medium", absent.GetProperty("priority").GetString());
+    }
+
+    [Fact]
     public async Task ATicketFromAConversationWritesTicketOpenedInTheThread()
     {
         var scenario = await StartAsync(await sharedHost.StartTestAsync());

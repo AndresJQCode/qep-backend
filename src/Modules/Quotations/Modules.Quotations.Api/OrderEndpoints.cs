@@ -150,6 +150,27 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-15 §4: el asesor cambia o quita la cuenta de comprador de un pedido de la tienda, con If-Match
+        // como la edición del pedido.
+        collection.MapPut("/{orderId:guid}/buyer-account", SetOrderBuyerAccountAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<OrderBuyerAccountRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        collection.MapDelete("/{orderId:guid}/buyer-account", RemoveOrderBuyerAccountAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/order")
             .WithTags("Orders");
@@ -424,6 +445,45 @@ public static class OrderEndpoints
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
+
+    private static async Task<IResult> SetOrderBuyerAccountAsync(
+        Guid tenantId,
+        Guid orderId,
+        OrderBuyerAccountRequest request,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var expectedVersion = RequireIfMatch(httpContext);
+        var detail = await dispatcher.SendAsync(
+            new SetOrderBuyerAccountCommand(tenantId, orderId, expectedVersion, request.Email ?? string.Empty),
+            cancellationToken);
+        httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static async Task<IResult> RemoveOrderBuyerAccountAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var expectedVersion = RequireIfMatch(httpContext);
+        var detail = await dispatcher.SendAsync(
+            new RemoveOrderBuyerAccountCommand(tenantId, orderId, expectedVersion), cancellationToken);
+        httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static long RequireIfMatch(HttpContext httpContext) =>
+        TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion)
+            ? expectedVersion
+            : throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded order version is required.");
 
     private static async Task<IResult> PreviewOrderEditsAsync(
         Guid tenantId,

@@ -486,6 +486,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.UpdateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
             Modules.Support.Application.UpdateTicketTypeHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Support.Application.DeleteTicketTypeCommand, Modules.Support.Application.DeleteTicketTypeResult>,
+            Modules.Support.Application.DeleteTicketTypeHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Support.Application.ReorderTicketTypesCommand, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
             Modules.Support.Application.ReorderTicketTypesHandler>();
         services.AddScoped<
@@ -494,7 +497,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
             Modules.Support.Application.UpdateSupportSettingsHandler>();
-        // Fase 3: el formulario público y los textos legales, versionados (plan F14 a F16).
+        // Fase 3: el formulario público, versionado (plan F14); los documentos legales del portal, versionados por tipo (spec
+        // 2026-11-15 §7).
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.GetFormSettingsQuery, Modules.Support.Application.SupportFormSettingsDto>,
             Modules.Support.Application.GetFormSettingsHandler>();
@@ -502,17 +506,29 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.UpdateFormSettingsCommand, Modules.Support.Application.SupportFormSettingsDto>,
             Modules.Support.Application.UpdateFormSettingsHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Support.Application.GetLegalTextsQuery, Modules.Support.Application.SupportLegalTextsDto>,
-            Modules.Support.Application.GetLegalTextsHandler>();
+            IQueryHandler<Modules.Support.Application.GetLegalDocumentsQuery, Modules.Support.Application.SupportLegalDocumentsDto>,
+            Modules.Support.Application.GetLegalDocumentsHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Support.Application.PublishLegalTextsCommand, Modules.Support.Application.SupportLegalTextsDto>,
-            Modules.Support.Application.PublishLegalTextsHandler>();
+            IQueryHandler<
+                Modules.Support.Application.GetLegalDocumentHistoryQuery, Modules.Support.Application.SupportLegalDocumentHistoryDto>,
+            Modules.Support.Application.GetLegalDocumentHistoryHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetLegalDocumentVersionQuery, Modules.Support.Application.SupportLegalDocumentDto>,
+            Modules.Support.Application.GetLegalDocumentVersionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PublishLegalDocumentCommand, Modules.Support.Application.SupportLegalDocumentDto>,
+            Modules.Support.Application.PublishLegalDocumentHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.CreateTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.CreateTicketHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.GetTicketQuery, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.GetTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<
+                Modules.Support.Application.GetLegalAcceptanceSnapshotQuery,
+                Modules.Support.Application.SupportLegalAcceptanceSnapshotDto>,
+            Modules.Support.Application.GetLegalAcceptanceSnapshotHandler>();
         services.AddScoped<
             ICommandHandler<
                 Modules.Support.Application.GetTicketAttachmentDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
@@ -527,11 +543,20 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.AssignTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.AssignTicketHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Support.Application.TakeTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.TakeTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ExtendTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ExtendTicketHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Support.Application.ChangeTicketTypeCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.ChangeTicketTypeHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.LinkTicketCustomerCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.LinkTicketCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketPriorityCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketPriorityHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
             Modules.Support.Application.ListTicketsHandler>();
@@ -895,6 +920,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
         services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
         services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
+        // Spec 2026-11-15 §4: el asesor cambia o quita la cuenta de comprador del pedido de la tienda. El validador entra con
+        // AddValidatorsFromAssemblyContaining del módulo.
+        services.AddScoped<
+            ICommandHandler<SetOrderBuyerAccountCommand, OrderDetailDto>,
+            SetOrderBuyerAccountHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveOrderBuyerAccountCommand, OrderDetailDto>,
+            RemoveOrderBuyerAccountHandler>();
         // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
         services.AddScoped<
             ICommandHandler<SendOrderCommand, OrderDetailDto>,
@@ -1599,6 +1632,10 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the public portal is a Companies company, like IPosCompanyLookup.
+        services.AddScoped<Modules.Support.Application.ISupportOrganizationDirectory, SupportOrganizationDirectory>();
+        // Fase 4a (plan G8): el «quién soy» de IsMe; null fuera de una sesión.
+        services.AddScoped<Modules.Support.Application.ISupportViewer, SupportViewer>();
         // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.
         services.AddScoped<Modules.Support.Application.ISupportMemberPermissions, SupportMemberPermissions>();
         Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);
@@ -1788,6 +1825,8 @@ public static class QepServiceCollectionExtensions
         // Mismo patron (CAT-05) entre `quotations` y `geography`: resuelve la ciudad de una parte
         // con datos propios para el Excel de pedidos.
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();
+        // Spec 2026-11-15 §4: el correo de la cuenta de comprador del pedido, sobre el repositorio de Buyers.
+        services.AddScoped<IQuotationBuyerAccountLookup, QuotationBuyerAccountLookup>();
         // Plan 2026-10-21: la cotización y el pedido salen por la conexión de Zenvia del tenant, que vive en Integrations.
         services.AddScoped<IWhatsAppChannelDirectory, QuotationsWhatsAppChannelDirectory>();
         // Spec 2026-10-21 D16/D17: la cotización por la conexión de Meta cruza a Mensajería; scoped por su DbContext.

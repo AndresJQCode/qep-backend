@@ -12,11 +12,18 @@ public static class SupportAuditActions
 
     public const string TicketCustomerChanged = "support.ticket.customer_changed";
 
+    public const string TicketPriorityChanged = "support.ticket.priority_changed";
+
+    /// <summary>Fase 4a (plan G11): la prórroga. Lleva los nombres de campo <c>dueOn</c> y <c>extension</c>, nunca el motivo.</summary>
+    public const string TicketExtended = "support.ticket.extended";
+
     public const string TicketTypeCreated = "support.ticket_type.created";
 
     public const string TicketTypeUpdated = "support.ticket_type.updated";
 
     public const string TicketTypesReordered = "support.ticket_type.reordered";
+
+    public const string TicketTypeDeleted = "support.ticket_type.deleted";
 
     public const string SettingsUpdated = "support.settings.updated";
 
@@ -38,7 +45,9 @@ public static class SupportAuditActions
     // Fase 3 (formulario público): cada guardado crea una versión nueva.
     public const string FormUpdated = "support.form.updated";
 
-    public const string LegalTextsPublished = "support.legal_texts.published";
+    /// <summary>Spec 2026-11-15 §12 (plan L21): a version of a legal document was published. The resource is the version; the
+    /// changed fields are names only, never the content.</summary>
+    public const string LegalDocumentPublished = "support.legal_document.published";
 
     /// <summary>Plan F37: alguien de la consola pidió la URL de un adjunto del formulario público. El recurso es el ticket.</summary>
     public const string TicketAttachmentDownloaded = "support.ticket.attachment_downloaded";
@@ -52,8 +61,8 @@ public static class SupportAuditActions
         /// <summary>La configuración del formulario público del tenant; su id es el del tenant, como <see cref="Settings"/>.</summary>
         public const string PublicForm = "public_form";
 
-        /// <summary>Los textos legales del tenant; su id es el del tenant.</summary>
-        public const string LegalTexts = "legal_texts";
+        /// <summary>A version of a legal document; its id is the version's.</summary>
+        public const string LegalDocument = "legal_document";
 
         public const string Ticket = "ticket";
 

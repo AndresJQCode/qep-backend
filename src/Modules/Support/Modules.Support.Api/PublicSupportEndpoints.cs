@@ -193,7 +193,8 @@ public static class PublicSupportEndpoints
     }
 
     // La IP del visitante: RemoteIpAddress, que UseForwardedHeaders ya tomó de X-Real-IP detrás del ingress de confianza. Va a Turnstile
-    // y al consentimiento; sin IP (sólo en un TestServer sin par) queda un valor fijo, para que el consentimiento no pierda la fila.
+    // y, sólo en el camino con datos, a las aceptaciones del aviso de privacidad y de los términos (legal_acceptances.visitor_ip); un
+    // anónimo no la guarda en ninguna fila. Sin IP (sólo en un TestServer sin par) queda un valor fijo, para que esas filas no se pierdan.
     private static string VisitorIp(HttpContext httpContext) =>
         httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 

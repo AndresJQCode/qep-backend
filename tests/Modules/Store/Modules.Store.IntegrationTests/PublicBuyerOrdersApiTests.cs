@@ -113,11 +113,13 @@ public sealed class PublicBuyerOrdersApiTests
     // ---- Pedidos ------------------------------------------------------------------------------------------------------------
 
     /// <summary>Un pedido por el checkout real (2 × Camiseta a 10.000 COP, Pending, PaymentPending), enlazado a la cuenta por SQL
-    /// si se da una; sin cuenta queda como pedido de invitado.</summary>
+    /// si se da una; sin cuenta queda como pedido de invitado, con un correo de facturación que no es de ninguna cuenta (con el de
+    /// una cuenta verificada el checkout lo enlazaría solo, spec 2026-11-15 §3.1).</summary>
     private static async Task<Guid> SeedBuyerOrderAsync(
         BuyerOrdersRig rig, Guid? accountId, Action<Dictionary<string, object?>>? tweak = null)
     {
-        var orderId = (Guid)(await rig.CheckoutOkAsync(rig.CheckoutBody(tweak: tweak)))["id"]!;
+        var body = accountId is null ? rig.CheckoutBody("invitado@test.co", tweak) : rig.CheckoutBody(tweak: tweak);
+        var orderId = (Guid)(await rig.CheckoutOkAsync(body))["id"]!;
         if (accountId is { } account)
         {
             await rig.ExecuteAsync(
@@ -368,6 +370,9 @@ public sealed class PublicBuyerOrdersApiTests
         var line = Assert.Single(detail["lines"]!.AsArray())!;
         Assert.Equal(orderId, (Guid)detail["id"]!);
         Assert.Equal("Camiseta", (string)line["name"]!);
+        // El producto sembrado no tiene foto: la clave viaja igual, en null.
+        Assert.Equal(["imageUrl", "lineTotal", "name", "quantity", "unitPrice"], Keys(line));
+        Assert.Null((string?)line["imageUrl"]);
         Assert.Equal(2m, (decimal)line["quantity"]!);
         Assert.Equal(10_000m, (decimal)line["unitPrice"]!);
         Assert.Equal((decimal)line["unitPrice"]! * (decimal)line["quantity"]!, (decimal)line["lineTotal"]!);

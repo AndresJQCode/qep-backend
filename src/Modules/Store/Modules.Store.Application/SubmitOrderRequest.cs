@@ -291,7 +291,8 @@ public sealed partial class SubmitOrderRequestHandler(
         var advisor = await ResolveAdvisorAsync(store, cancellationToken);
         var customer = await ResolveCustomerAsync(store.TenantId, billing, cancellationToken);
         await EnsureAddressesAsync(store.TenantId, customer, billing, shipping, cancellationToken);
-        var buyerAccountId = await ResolveBuyerAccountAsync(hostname, command.BuyerSessionToken, cancellationToken);
+        var buyerAccountId = await ResolveBuyerAccountAsync(
+            hostname, command.BuyerSessionToken, body.Billing.Email, cancellationToken);
 
         var draft = new StoreOrderDraft(
             store.TenantId,
@@ -459,9 +460,17 @@ public sealed partial class SubmitOrderRequestHandler(
     }
 
     // Pedidos del comprador §4.2(1): con sesión, la cuenta va en el pedido. Se mira siempre, no sólo con updateProfile, y antes de
-    // crearlo. Una sesión que no sirve deja un pedido de invitado sin marcar el recibo (eso sigue siendo cosa de updateProfile), y una
-    // falla de Buyers sólo se registra: la cuenta nunca hace fallar el pedido.
-    private async Task<Guid?> ResolveBuyerAccountAsync(string storeHost, string? sessionToken, CancellationToken cancellationToken)
+    // crearlo. Una sesión que no sirve no marca el recibo (eso sigue siendo cosa de updateProfile). Sin una sesión que resuelva, va la
+    // cuenta verificada del correo de facturación (spec 2026-11-15 §3.1); la sesión gana siempre, aunque el correo sea de otra cuenta.
+    // Una falla de Buyers sólo se registra: la cuenta nunca hace fallar el pedido.
+    private async Task<Guid?> ResolveBuyerAccountAsync(
+        string storeHost, string? sessionToken, string billingEmail, CancellationToken cancellationToken)
+    {
+        return await ResolveSessionAccountAsync(storeHost, sessionToken, cancellationToken)
+            ?? await FindVerifiedAccountAsync(billingEmail, cancellationToken);
+    }
+
+    private async Task<Guid?> ResolveSessionAccountAsync(string storeHost, string? sessionToken, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(sessionToken))
         {
@@ -475,6 +484,19 @@ public sealed partial class SubmitOrderRequestHandler(
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             LogBuyerAccountLookupFailed(logger, exception.GetType().Name);
+            return null;
+        }
+    }
+
+    private async Task<Guid?> FindVerifiedAccountAsync(string billingEmail, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await buyers.FindVerifiedAccountIdAsync(billingEmail, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogBuyerEmailLookupFailed(logger, exception.GetType().Name);
             return null;
         }
     }
@@ -527,6 +549,11 @@ public sealed partial class SubmitOrderRequestHandler(
     [LoggerMessage(Level = LogLevel.Warning,
         Message = "Resolving the buyer account of the checkout session failed with {ExceptionType}; the order goes out as a guest order.")]
     private static partial void LogBuyerAccountLookupFailed(ILogger logger, string exceptionType);
+
+    // Sólo el tipo de la excepción: ni el correo ni el mensaje, que podría arrastrarlo.
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Looking up the verified buyer account of the billing email failed with {ExceptionType}; the order goes out as a guest order.")]
+    private static partial void LogBuyerEmailLookupFailed(ILogger logger, string exceptionType);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Checkout buyer signup skipped: the billing email does not normalize.")]
     private static partial void LogSignupSkippedInvalidEmail(ILogger logger);

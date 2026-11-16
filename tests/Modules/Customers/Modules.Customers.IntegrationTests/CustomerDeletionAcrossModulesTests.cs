@@ -188,6 +188,7 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                 new AllDaysCalendar(), TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
             var ticket = Modules.Support.Domain.SupportTicket.CreateFromConversation(
                 Modules.Support.Domain.SupportTicketId.New(), tenant, 1, type, "Pedido sin llegar", "No ha llegado.",
+                Modules.Support.Domain.SupportTicketPriority.Medium,
                 new Modules.Support.Domain.SupportConversationRef(conversation, "WhatsApp"), null,
                 new Modules.Support.Domain.TicketRequester("Beto", null, null, null, null, null, null, null, "CO", null),
                 null, Guid.CreateVersion7(), now, calendar);
@@ -971,14 +972,21 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                     ("tenant", tenant), ("customer", customer));
                 break;
             case "supportTicket":
-                // D4 (spec de soporte 2026-11-14): cualquier estado bloquea, también un ticket cerrado.
+                // D4 (spec de soporte 2026-11-14): cualquier estado bloquea, también un ticket cerrado. El tipo va primero: desde la
+                // fase 4a support.tickets tiene FK a support.ticket_types.
                 await SeedAsync(
                     """
+                    WITH type AS (
+                        INSERT INTO support.ticket_types (id, tenant_id, name, term_business_days, term_is_legal, requires_formal_response,
+                            is_published, is_active, position, created_at, updated_at, version)
+                        VALUES (gen_random_uuid(), @tenant, 'Queja ' || gen_random_uuid(), 15, true, true, true, true, 1, now(), now(), 1)
+                        RETURNING id)
                     INSERT INTO support.tickets (id, tenant_id, number, ticket_type_id, type_name, term_is_legal, requires_formal_response,
                         subject, description, intake, reply_channel, status, customer_id, received_at, received_on, last_event_ordinal,
                         created_at, updated_at, version)
-                    VALUES (gen_random_uuid(), @tenant, 1, gen_random_uuid(), 'Queja', true, true, 'Pedido incompleto', 'Faltó una caja.',
-                        'Manual', 'Email', 'Closed', @customer, now(), CURRENT_DATE, 1, now(), now(), 1);
+                    SELECT gen_random_uuid(), @tenant, 1, type.id, 'Queja', true, true, 'Pedido incompleto', 'Faltó una caja.',
+                        'Manual', 'Email', 'Closed', @customer, now(), CURRENT_DATE, 1, now(), now(), 1
+                    FROM type;
                     """,
                     ("tenant", tenant), ("customer", customer));
                 break;

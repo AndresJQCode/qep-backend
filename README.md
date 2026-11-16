@@ -1183,7 +1183,9 @@ Notas:
 Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de la petición; el tenant sale del host, nunca del cuerpo.
 
 - `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status` (`Open` \| `Archived` \| `Cancelled`), `paymentStatus`, `fulfillmentStatus` (`NotPrepared` \| `Prepared`), `invoiced`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`, `isStorePickup` (en la lista para que la tienda muestre «Listo para recoger» o «Enviado» sin abrir el detalle). `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`), `cancelledAt`, `subtotal`, `taxAmount`, `freightTotal` (`subtotal + taxAmount + freightTotal == total`), `carrierName`, `billedTo` (`FinalConsumer | BillingParty | Customer`), `billing` (sólo con `BillingParty`), `shipping` (sin correo ni documento; `null` con recogida) y `buyerNotes`. Con excedente de IVA, las líneas van sin IVA.
-- **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: salvo el pedido que pidió el alta diferida (punto 2), un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
+- **Sólo aparecen los pedidos enlazados a la cuenta** (`buyer_account_id`). Desde el spec 2026-11-15 el enlace también llega por el correo de
+  facturación (puntos 3 y 4), así que un pedido hecho como invitado aparece en cuanto su comprador inicia sesión en esa tienda con una cuenta
+  verificada del mismo correo; los anteriores al despliegue también (spec 2026-11-15 §3.4). Un pedido sin cuenta no se lista ni se puede abrir.
 - **Cómo llega la cuenta al pedido** (`quotations.orders.buyer_account_id`, sin FK):
   1. **En el checkout.** Si llega `X-Qep-Buyer-Session`, Store resuelve la cuenta **antes** de crear el pedido, con o sin `updateProfile`. Una sesión que no
      sirve (vencida, de otro host, de cuenta borrada) o una falla de Buyers (queda un `Warning`) deja un pedido de invitado; sin `updateProfile` el recibo
@@ -1192,6 +1194,17 @@ Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de 
      mensaje (`IBuyerOrderLinker`, después del commit del alta y fuera de él). Si el email ya tenía una cuenta verificada no se enlaza nada: esa rama no
      toca la cuenta. El enlace sólo escribe si el pedido no tiene cuenta, así que nunca pisa la del checkout; si falla, queda un `Warning` y el pedido
      sin cuenta, sin reintento.
+  3. **En el checkout, por el correo de facturación** (spec 2026-11-15 §3.1). Si la sesión no resolvió cuenta, Store busca la cuenta **verificada**
+     del correo de facturación, normalizado como en Buyers (`BuyerEmail.TryNormalize`), y la pone en el pedido. La sesión gana siempre: con una
+     sesión válida va su cuenta aunque el correo sea otro. Una cuenta sin verificar no enlaza, y una falla de la búsqueda deja el pedido de invitado
+     (queda un `Warning`, sin el correo).
+  4. **Al iniciar sesión** (spec 2026-11-15 §3.2). Después de confirmar la sesión y fuera de su transacción, `POST /buyer/session` enlaza los pedidos
+     del tenant de la tienda con origen `Store`, sin cuenta, sin decisión del asesor y cuyo correo de facturación recortado y en minúsculas es el de
+     la cuenta. Una sola sentencia que no sube la versión. Una falla (también una cancelación) se registra con el id de la cuenta y el ingreso
+     responde igual.
+- **La decisión del asesor manda** (`quotations.orders.buyer_account_set_by_member`). Cuando alguien de la consola cambia o quita la cuenta
+  (`PUT`/`DELETE /orders/{id}/buyer-account`, ver «Cuenta de comprador del pedido» en § Pedidos), la marca queda en `true` y ningún camino
+  automático (alta diferida, inicio de sesión) vuelve a tocar la cuenta de ese pedido.
 - **La anulación del comprador es más estricta que la del equipo** (D5, spec 2026-11-10): sólo si `Status == Open`, `PaymentStatus == PaymentPending`, no hay ningún comprobante de pago registrado, el pedido no está preparado **y** no está facturado (`Order.CanBeCancelledByBuyer`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
 - Orden de chequeos: IP del visitante (422 `store.public.visitor_ip_required`), host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
 #### Cambios en `POST /order-requests`
@@ -1702,6 +1715,26 @@ Todos nacen `Open` y publican `quotations.order.created.v1` con `source` y `quot
 del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?source=`), el
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
+
+#### Cuenta de comprador del pedido
+
+Spec 2026-11-15 §4 (`docs/superpowers/specs/2026-11-15-store-order-buyer-link-design.md`). Sólo pedidos con `source = Store`.
+
+- El detalle (`GET /orders/{id}` y las respuestas de escritura que devuelven `OrderDetailResponse`) trae en la raíz `buyerAccount`:
+  `{ "id", "email" }` o `null`. Es `null` sin cuenta y también si la cuenta se borró: borrarla no limpia `buyer_account_id` del pedido.
+  El listado no lo trae.
+- `PUT /api/v1/tenants/{tenantId}/orders/{orderId}/buyer-account` con `{ "email": "…" }` enlaza el pedido a la cuenta **verificada** de ese
+  correo (las cuentas son de la plataforma, no del tenant). `DELETE` en la misma ruta la quita; sobre un pedido sin cuenta también vale y
+  significa «no lo enlaces solo».
+- Los dos: permiso `quotations.order.manage`, `If-Match` con la versión del pedido (sin él `428 precondition.if_match_required`, viejo
+  `412 concurrency.conflict`), responden `200` con el `OrderDetailResponse` completo y el `ETag` nuevo. Suben la versión, ponen la marca
+  `buyer_account_set_by_member` y auditan `quotation.order.buyer_account_changed` con el id anterior y el nuevo, nunca correos. Además
+  dejan en el historial del pedido una entrada `BuyerAccountChanged` con el asesor como autor, cuyo texto sí nombra el correo anterior y
+  el nuevo («Cambió la cuenta de comprador de … a …»); los enlaces automáticos no escriben historial. Un `PUT` con la misma cuenta y la
+  marca ya puesta responde `200` sin cambiar nada, sin historial ni auditoría.
+- Errores: `422 validation.failed` (`Email` vacío, inválido o de más de 254 caracteres), `422 order.buyer_account.not_found` (no hay cuenta
+  con ese correo o no está verificada: un solo código para los dos), `422 order.order.source_invalid` (el pedido no es de la tienda), `403`
+  (sin permiso o de otro tenant, nunca 404).
 
 #### Los cuatro ejes del pedido
 
@@ -4961,10 +4994,12 @@ precondition.if_match_required`; vieja, `412 concurrency.conflict`).
 | `POST /tickets` | `support.ticket.manage` | Alta manual (`201` + `Location`, `SupportTicketDetailDto`) |
 | `GET /tickets/{ticketId}` | `support.ticket.view` | Detalle con la traza y las transiciones permitidas |
 | `PUT /tickets/{ticketId}/status` · `/assignee` · `/type` · `/customer` | `support.ticket.manage` | Cambia estado, responsable, tipo o cliente |
+| `POST /tickets/{ticketId}/take` · `/extension` | `support.ticket.manage` | «Asignármelo» y la prórroga del plazo (fase 4a, `If-Match`) |
 | `GET /assignees` | `support.ticket.view` | Miembros activos que pueden ser responsables (tienen `manage`) |
 | `GET /ticket-types` | `support.ticket.view` | Todos los tipos, también los inactivos (el selector los marca), para el ticket |
 | `GET` · `POST /settings/ticket-types` | `support.settings.manage` | Los mismos tipos para la tabla de ajustes, y alta de uno |
 | `PUT /settings/ticket-types/{typeId}` | `support.settings.manage` | Edita un tipo (`If-Match`) |
+| `DELETE /settings/ticket-types/{typeId}` | `support.settings.manage` | Borra un tipo que ningún ticket usa (fase 4a, `If-Match`, `204`) |
 | `PUT /settings/ticket-types/order` | `support.settings.manage` | Reordena todos los tipos |
 | `GET /settings` · `PUT /settings` | `support.settings.view` · `support.settings.manage` | Umbral de «por vencer» (con `ETag`) |
 
@@ -4973,7 +5008,8 @@ primer acceso (`SupportProvisioner`, `INSERT … ON CONFLICT (tenant_id) DO NOTH
 ocho tipos, en este orden y todos activos y publicados: Petición general (15 días hábiles), Petición de documentos o información (10),
 Consulta (30), Queja (15), Reclamo (15), Sugerencia (15), Felicitación (15) y Soporte técnico (sin término). Los siete primeros son
 «legales»; los cinco primeros piden respuesta formal. Una consulta directa a `support.ticket_types` de un tenant que nunca abrió
-Soporte devuelve cero filas: no es un error. Un tipo no se borra (no hay `DELETE`): se desactiva. Un tipo sin término no vence y no
+Soporte devuelve cero filas: no es un error. Un tipo con tickets no se borra, se desactiva; uno sin tickets sí se borra desde la fase 4a
+(ver [Gestión y plazos de Soporte](#gestión-y-plazos-de-soporte-fase-4a)). Un tipo sin término no vence y no
 puede ser legal; el nombre es único por tenant sin distinguir mayúsculas (`409 support.ticket_type.name_taken`).
 
 **Radicado.** `SOP-` más seis dígitos, por tenant (`SOP-000001` el primero). El contador es `next_ticket_number` de
@@ -5193,7 +5229,9 @@ con una variable.
 
 #### Formulario público de Soporte (fase 3)
 
-Plan `docs/superpowers/plans/2026-11-15-support-phase-3-public-form-backend.md` (spec §9). La página `soporte.lulocrm.com/{tenantSlug}`
+Plan `docs/superpowers/plans/2026-11-15-support-phase-3-public-form-backend.md` (spec §9); los documentos legales, plan
+`docs/superpowers/plans/2026-11-15-support-portal-legal-documents-backend.md` (spec `2026-11-15-support-portal-legal-documents-design.md`).
+La página es el portal `qep-frontend-support` (`soporte.lulocrm.com/{tenantSlug}`) y
 llama directo desde el navegador, sin BFF, a un grupo **anónimo**: `/api/v1/public/support/{tenantSlug}`. Ningún handler del grupo lee el
 contexto de ejecución ni la cookie de sesión, no hay CSRF (exención por prefijo, `SupportPublicPaths`), toda respuesta —también 404, 413
 y 429— lleva `Cache-Control: no-store` y ningún cuerpo pasa de 64 KB (`413 support.public.body_too_large`; un JSON ilegible es `400
@@ -5209,27 +5247,82 @@ del ingress) y cada uno tiene su propia cubeta.
 
 | Método y ruta | Cuerpo | Éxito | Turnstile | Límite por IP |
 | --- | --- | --- | --- | --- |
-| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país y textos legales vigentes | No | 60 / min |
-| `GET /consult` | — | `{ tenantName, logoUrl, accentColor }` para dibujar la página de consulta; `accentColor` es el de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
+| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país, `legal`: los tres documentos vigentes y el texto de caracterización (abajo), y `organization`, la empresa que responde | No | 60 / min |
+| `GET /consult` | — | `{ tenantName, logoUrl, accentColor, organization }` para dibujar la página de consulta; `accentColor` y `organization` son los de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
 | `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
 | `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
 | `POST /attachments/{fileId}/complete` | `{ uploadKey }` | `200` `{ status }`: `available` o `rejected` | No | 20 / 10 min |
-| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` opcional | `201` `{ number, pin, dueOn, successMessage, pinEmailed, consultUrl }` | Sí | 5 / 10 min |
-| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, plazo y respuestas | Sí | 10 / min |
+| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` y `clientRequestId` opcionales | `201` `{ number, pin, receivedAt, dueOn, termBusinessDays, termIsLegal, successMessage, pinEmailed, consultUrl }` | Sí (no en un reintento, abajo) | 5 / 10 min |
+| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, radicación, plazo (`termIsLegal`, `termBusinessDays`) y respuestas | Sí | 10 / min |
 | `POST /tickets/resend-pin` | `{ number, turnstileToken }` | `202` vacío, siempre | Sí | 5 / 10 min |
+
+**Documentos legales del portal** (spec 2026-11-15). `GET /form` trae en `legal` los tres documentos vigentes del tenant, cada uno
+**saneado otra vez al servirlo** (`ISupportHtmlSanitizer`, lista blanca `p br strong em u s h2 h3 h4 ul ol li blockquote hr` y `a` con
+`https`/`mailto`/`tel`): `privacyNotice` `{ version, contentHtml, authorizationQuestion, policyUrl }`, `anonymousNotice` y `terms` `{ version,
+contentHtml }`, y `characterizationNotice`, un texto plano fijo e igual para todos los tenants que va al pie del paso de datos.
+`authorizationQuestion` llega resuelta: la del tenant o «¿Autorizas a {nombre del tenant} para el tratamiento de los datos personales
+suministrados en este formulario?». `policyUrl` `null` es que el paso no muestra el enlace a la política. Si al tenant le falta cualquiera
+de los tres, o si uno guardado ya no pasa el saneador (sin texto visible, demasiado grande, demasiado anidado o inestable: sólo una fila
+escrita a mano), `GET /form` responde el mismo `404 support.public.not_found` que con el formulario sin publicar. La página pinta
+`contentHtml` como HTML y no lo vuelve a sanear. La salida del saneador se guarda en una caché acotada por pod, con clave SHA-256 del
+contenido guardado: una fila cambiada a mano tiene otra clave y se vuelve a sanear.
+
+**La empresa que responde** (NIT del portal, spec 2026-11-15 §9.3, D-6 y D-8). El tenant elige en Ajustes › Formulario público una de sus
+empresas de Companies (`organizationCompanyId` en `PUT /settings/public-form`), y el portal muestra `organization: { name,
+documentTypeCode, documentNumber }` (`Company.Name`, `Company.DocumentType.ToWire()` y `Company.TaxId`) en `GET /form` (versión publicada)
+y en `GET /consult` (versión vigente, publicada o no). **Es obligatoria para publicar** (`organization_required`). Cambiarla a una que no
+existe, es de otro tenant o está inactiva es `422 support.form.organization_unavailable`; una elegida que después se desactiva **se sigue
+mostrando** y no frena editar el formulario (sólo aparece `organization_inactive` en `publishBlockers`, que impide volver a publicar uno
+sin publicar). **Una empresa que alguna versión del formulario eligió no se puede borrar**: `support.form_versions.organization_company_id`
+tiene FK real a `companies.companies` con `ON DELETE RESTRICT`, y `DELETE …/companies/{id}` responde `422 companies.company.in_use` (sí se
+puede desactivar). Soporte la lee por el puerto `ISupportOrganizationDirectory`, cuyo adaptador vive en Bootstrapper; no referencia
+Companies. `organization: null` = formulario publicado antes de este cambio o tenant que nunca eligió: el portal no pinta la línea.
 
 **Radicar.** Con solicitante o anónimo. Los campos que se piden y cuáles son obligatorios los dice la versión vigente del formulario
 (`SupportFormFields`); el tipo de documento sale de `DocumentTypesByCountry`; el celular se guarda en E.164; en Colombia la ciudad es de
-Geography (`cityId`) y fuera, texto libre (`cityName`). `formVersion` y `legalTextVersion` son las que la página cargó: si cambiaron, `422
-support.public.form_outdated` o `support.public.legal_texts_outdated` y la página recarga. Todo lo que puede responder 422 va antes de la
-transacción, así un rechazo no gasta radicado. Con solicitante se guarda el consentimiento (foto del texto aceptado e IP) y, con
-`customers` prendido y un único cliente con ese documento, el ticket queda vinculado; con cero o varios, el detalle los ofrece como
-candidatos. **Un anónimo** no guarda cliente —tampoco se lo vincula la consola: `PUT …/tickets/{id}/customer` responde `422
-support.ticket.anonymous_has_no_customer` y el detalle no ofrece candidatos—, foto del solicitante, documento, IP ni consentimiento, y sólo se responde por la página de
-consulta (canal `Portal`). La base lo respalda con `CK_tickets_anonymous` (migración `AddSupportAnonymousTicketCheck`): un anónimo no
-puede tener `customer_id` ni ninguna columna `requester_*`, tampoco por SQL crudo. Una fila de consentimiento por ticket
-(`IX_consents_ticket`); un segundo consentimiento del mismo ticket es `409 support.public.consent_duplicate`, que hoy ningún camino
-alcanza.
+Geography (`cityId`) y fuera, texto libre (`cityName`). Cada camino manda las versiones de sus documentos, las que la página cargó: con
+solicitante `privacyNoticeVersion` y `termsVersion` (`anonymousNoticeVersion` en `null`, `acceptsDataPolicy: true`); anónimo
+`anonymousNoticeVersion` y `termsVersion` (`privacyNoticeVersion` en `null`; `acceptsDataPolicy` se ignora). Los dos mandan
+`acceptsTerms: true`. Si `formVersion` o alguna versión que aplica ya no es la vigente, `422 support.public.form_outdated` o
+`support.public.legal_texts_outdated` y la página recarga. `acceptsDataPolicy` o `acceptsTerms` en falso, una versión que falta o una que
+no aplica salen como **`422 validation.failed`** con el campo en `errors` (`AcceptsDataPolicy`, `AcceptsTerms`, `PrivacyNoticeVersion`,
+`AnonymousNoticeVersion`, `TermsVersion`), no con un código propio: `ApiExceptionHandler` no publica el `ErrorCode` del validador. Todo lo
+que puede responder 422 va antes de la transacción, así un rechazo no gasta radicado. En la misma transacción que el ticket se guarda
+una fila de `support.legal_acceptances` por documento aceptado, con el HTML **tal como lo sirvió** `GET /form`: con solicitante, el aviso de
+privacidad (IP, pregunta mostrada, URL y caracterización) y los términos con la IP; anónimo, el aviso anónimo y los términos, **los dos sin
+IP**. Con solicitante y `customers` prendido y un único cliente con ese documento, el ticket queda vinculado; con cero o varios, el
+detalle los ofrece como candidatos. **Un anónimo** no guarda cliente —tampoco se lo vincula la consola: `PUT …/tickets/{id}/customer`
+responde `422 support.ticket.anonymous_has_no_customer` y el detalle no ofrece candidatos—, foto del solicitante, documento ni IP, y sólo
+se responde por la página de consulta (canal `Portal`). La base lo respalda con `CK_tickets_anonymous` (migración
+`AddSupportAnonymousTicketCheck`): un anónimo no puede tener `customer_id` ni ninguna columna `requester_*`, tampoco por SQL crudo, y con
+`CK_legal_acceptances_ip`: el aviso anónimo nunca lleva IP y el de privacidad siempre. Una aceptación por ticket y tipo
+(`IX_legal_acceptances_ticket_kind`, `409 support.public.legal_acceptance_duplicate`, que hoy ningún camino alcanza).
+
+**Fecha de radicación y término** (spec 2026-11-15 §9.1, D-6). La respuesta del radicado trae `receivedAt` (la radicación),
+`termBusinessDays` (`null` = el tipo no tiene término) y `termIsLegal` («plazo legal» u «objetivo»); la de `POST /tickets/lookup` suma
+`termBusinessDays`. Los dos salen de la **foto del tipo en el ticket**, nunca del tipo vivo: editar el tipo después no cambia lo que ve el
+solicitante.
+
+**Radicado idempotente** (`clientRequestId`, spec 2026-11-15 §9.2, D-7). El portal genera un UUID al empezar a radicar y lo manda en cada
+reintento de ese mismo radicado (timeout, red caída, 5xx). Un reintento con la misma clave en el mismo tenant responde `201` con el mismo
+`number`, `receivedAt`, `dueOn`, `termBusinessDays`, `termIsLegal`, `successMessage` (el de la versión del formulario con que se radicó) y
+`consultUrl`: no crea otro ticket, no gasta número y no vuelve a mandar el correo de apertura. **La clave se mira antes de Turnstile**, del
+validador y de las versiones, **y el cuerpo no se compara** (como el checkout de la tienda). Eso salta Turnstile **sólo cuando el primer
+intento ya confirmó**: mientras el original sigue corriendo, la clave todavía no existe, y un reintento con el token ya gastado responde
+`422 support.public.captcha_invalid`. El portal entonces vuelve a correr Turnstile y reenvía con el **mismo** `clientRequestId`.
+Dos `POST` simultáneos con la misma clave dan un solo ticket: dentro de la transacción, después de tomar el número (el `UPDATE … RETURNING`
+del contador serializa las altas del tenant), la clave se vuelve a buscar; si otro la confirmó, la transacción se deshace (el número
+vuelve) y se responde el ganador. El índice único parcial `IX_tickets_tenant_client_request` es el respaldo. Sin clave, cada `POST` es
+un radicado nuevo; la clave no se audita ni va a la traza, y el reintento cuenta para el limitador. **`clientRequestId` es un UUID v4**
+(decisión del owner D-10, 2026-11-15; lo que da `crypto.randomUUID()`, como las claves de subida): vacío (`00000000-…`) u otra versión (un
+v7, por ejemplo) es `422 validation.failed` con `errors.ClientRequestId`. **El portal nunca tiene dos radicados en vuelo** y pinta sólo la
+última respuesta: un reintento de un anónimo rota el PIN, así que el PIN de una respuesta anterior ya no sirve.
+
+| El PIN del primer intento | `pin` del reintento | `pinEmailed` |
+| --- | --- | --- |
+| Salió por correo (`last_sent_channel = Email`, sin fallo) | `null`: no se vuelve a mostrar ni a mandar | `true` |
+| El correo del primer intento todavía no se anotó, y el PIN se emitió hace 10 minutos o menos (en vuelo) | `null`: un PIN nuevo invalidaría el que va en el correo | `true` |
+| No salió por ningún canal (anónimo, `send_failed`, `send_pending`), o el correo sigue sin anotarse más de 10 minutos después del PIN (el proceso murió entre confirmar y anotar) | Uno **nuevo**; el anterior deja de servir. Sólo en la respuesta, sin correo | `false` |
 
 **Turnstile se gasta antes de validar los adjuntos.** El token es de un solo uso y radicar lo verifica primero (anti-abuso: nada más
 corre sin él). Por eso **la página reinicia el widget después de cualquier `422` de `POST /tickets`** —un adjunto inválido, un campo, la
@@ -5323,9 +5416,19 @@ si sale `available`, mandar el par al radicar.
 
 | Método y ruta | Política | Qué hace |
 | --- | --- | --- |
-| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión |
-| `GET` · `POST /settings/legal-texts` | `support.settings.view` · `support.settings.manage` | Textos legales; cada publicación es una versión nueva |
+| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) y la empresa que responde (`organization_required`, `organization_inactive` → `422 support.form.organization_required` / `organization_inactive`). La respuesta trae `organization` (la elegida, con `isActive`) y `organizationOptions` (las activas del tenant, por nombre: el selector no necesita `companies.company.read`); el cuerpo del `PUT` suma `organizationCompanyId` (`null` = sin empresa) |
+| `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`) |
+| `GET /settings/legal-documents/{kind}/versions` · `…/versions/{version}` | `support.settings.view` | Historial de un tipo, de la más nueva a la más vieja, y una versión vieja |
+| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada; la respuesta es lo guardado |
+| `GET /tickets/{ticketId}/legal-acceptances/{kind}` | `support.ticket.view` | La foto de lo que el solicitante aceptó: HTML servido, pregunta, URL, caracterización e IP. Sin fila, `404 support.legal_acceptance.not_found` |
 | `GET /tickets/{ticketId}/attachments/{attachmentId}/download` | `support.ticket.view` | URL firmada del adjunto (arriba) |
+
+`{kind}` ∈ `privacy-notice`, `anonymous-notice`, `terms` (otro es `404 support.legal_documents.kind_not_found`); en los cuerpos viaja como
+`PrivacyNotice`, `AnonymousNotice`, `Terms`. El detalle del ticket trae `legalAcceptances` (`kind`, `version`, `acceptedAt`, `visitorIp`, sin el
+contenido), en ese orden y `[]` en un ticket manual. Las rutas `…/settings/legal-texts` de la fase 3 ya no existen. **`contentHtml` llega
+saneado en toda lectura** de la consola (documento vigente, versión vieja, respuesta del `POST` y foto de una aceptación): lo guardado ya es
+punto fijo del saneador, así que los bytes no cambian y la prueba guardada no se toca. `authorizationQuestion`, `organization.*`,
+`tenantName` y `successMessage` son texto plano: nunca van a `innerHTML`. El autor (`createdBy`) trae `isMe` contra quien lee.
 
 **Configuración** `Support:PublicForm` (`appsettings.json`, defaults en código):
 
@@ -5336,23 +5439,42 @@ si sale `available`, mandar el par al radicar.
 | `AllowedOrigins` | vacía | Orígenes exactos de la página para la política CORS `support-public` (sin credenciales, `GET` y `POST`, sólo `Content-Type`) |
 
 `AllowedOrigins` sigue las reglas de `Cors:AllowedOrigins`: https exacto, sin comodín, ruta ni barra final; `http://localhost[:puerto]`
-sólo en `Development` (`appsettings.Development.json` trae `http://localhost:3002`, el puerto de la página en local). En `Production` es
+sólo en `Development` (`appsettings.Development.json` trae `http://localhost:4322`, el puerto fijo del portal `qep-frontend-support` en
+local; `3002` es la consola, que no llama al grupo público). En `Production` es
 obligatoria y no puede traer un `#{…}#` sin resolver: el pod no arranca (`SupportPublicFormOptionsValidator`). Turnstile es el de la tienda
 (`Store:Turnstile:*`, ver [Tienda pública](#secretos)). **El bucket privado de R2 necesita CORS para el origen de la página**, porque el
 `PUT` del adjunto sale del navegador: `PUT` con los headers `Content-Type` e `If-None-Match` desde `https://soporte.lulocrm.com` (y
-`http://localhost:3002` para probar en local).
+`http://localhost:4322` para probar en local).
+
+**El alias estable de `develop` del portal en Vercel** todavía no existe (el proyecto de Vercel no se ha creado). Cuando exista, se agrega
+como `Support__PublicForm__AllowedOrigins__N` del backend de desarrollo y en el CORS del bucket de desarrollo; no va en `appsettings*.json`.
 
 **Slugs reservados.** Las rutas fijas del host (`consultar`, `calificar`, `api`…) no pueden ser slug de un tenant nuevo (`422
 tenancy.slug.reserved`). Antes de desplegar se corre la consulta de los avisos de [Soporte](#soporte) contra producción.
 
-**Prueba legal.** `support.legal_text_versions` y `support.consents` son insert-only: ningún método edita ni borra, `consents` no tiene FK
-(ni al ticket ni a la versión: guarda su propia foto del texto) y el `Down` de `AddSupportPublicForm` no las borra.
+**Prueba legal.** `support.legal_document_versions` y `support.legal_acceptances` son insert-only: ningún método edita ni borra,
+`legal_acceptances` no tiene FK (ni al ticket ni a la versión: guarda su propia foto del HTML servido) y el `Down` de
+`AddSupportLegalDocuments` no las borra. **Todo HTML de un documento pasa por `ISupportHtmlSanitizer`**: al publicar (se guarda la salida),
+al servir `GET /form` y al escribir la foto. El saneador corre hasta que la salida no cambia y rechaza (`422 validation.failed` en
+`ContentHtml`) un HTML de más de 10 000 elementos o más de 100 niveles de anidamiento. Las tablas de la fase 3,
+`support.legal_text_versions` y `support.consents`, se quedan con sus filas y **sin escritor ni lector**: siguen mapeadas en
+`SupportDbContext` sólo para que EF no las borre, y el `Down` de `AddSupportPublicForm` tampoco las borra.
 
 **Migraciones:** `Support` `AddSupportPublicForm` (`form_versions`, `legal_text_versions`, `consents`, `ticket_access` y las columnas del
 formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attachments`), `Support` `AddSupportFormAllowAttachments`
 (`form_versions.allow_attachments`, `true` por defecto), `Support` `AddSupportAnonymousTicketCheck` (`CK_tickets_anonymous`) y `Storage`
 `AddFileResourceTenantOwnerCreatedIndex` (`IX_file_resources_tenant_owner_created`, para el tope de subidas). `SupportTicket` se guarda
-por nombre en `owner_type`, sin migración.
+por nombre en `owner_type`, sin migración. `Support` `AddSupportLegalDocuments` (`legal_document_versions` y `legal_acceptances`) es
+aditiva y **rellena**: la versión vigente de los textos de la fase 3 de cada tenant pasa a `PrivacyNotice` versión 1 (autorización más
+política, como HTML canónico: escapa `&`, `<`, `>`, un párrafo por línea en blanco, `<br>` por salto) y, si tenía términos, a `Terms`
+versión 1, con el autor y la fecha de origen; ningún `AnonymousNotice`, y un texto sólo de espacios no se copia. Si un texto convertido
+pasa de 60 000 caracteres la migración **se detiene** con el id del tenant (`tenant … legal text exceeds 60000 characters after
+escaping`) en vez de recortar un texto legal: se acorta a mano y se vuelve a desplegar. `Support` `AddSupportTicketClientRequestId`
+(`tickets.client_request_id` y el índice único parcial `IX_tickets_tenant_client_request`) es aditiva y sin relleno; su `Down` quita
+índice y columna. `Support` `AddSupportFormOrganization` (`form_versions.organization_company_id`, `IX_form_versions_organization_company`
+y la FK `FK_form_versions_companies_organization_company_id` a `companies.companies` con `ON DELETE RESTRICT`, escrita a mano porque EF no
+modela relaciones entre contextos, como `pos.cash_sessions`) es aditiva; su `Down` quita FK, índice y columna. Companies migra antes que
+Support.
 
 #### Tiempo real y notas internas de Soporte
 
@@ -5406,6 +5528,85 @@ formulario cuenta sólo claves v4 (las suyas), así que una subida de nota, adju
 con un `uploadKey` que no es v4 responde `422 support.public.attachment_invalid` (`SupportPublicUploads`).
 
 **Migración:** `Support` `AddSupportTicketNotes` (`ticket_notes`, `ticket_note_files`), aditiva.
+
+#### Gestión y plazos de Soporte (fase 4a)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-4a-management-and-deadlines-backend.md` (spec §7.2, §7.5, §9.4 y §12). Cuatro
+ajustes de gestión y la prórroga del plazo. Todas las escrituras de ticket auditan en la misma transacción y avisan por el hub después
+de confirmar; un cambio que no cambia nada no sube `version`, no audita y no avisa.
+
+| Método y ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `POST /tickets` (cambia) | `support.ticket.manage` | `CreateTicketRequest` + `anonymous` (`bool?`, null = `false`) | `201 SupportTicketDetailDto`; `issuedPin` sólo si es anónimo |
+| `DELETE /settings/ticket-types/{typeId}` (`If-Match`) | `support.settings.manage` | — | `204`; 404, 412, `422 support.ticket_type.in_use`, 428 |
+| `POST /tickets/{ticketId}/take` (`If-Match`) | `support.ticket.manage` | — | `SupportTicketDetailDto`; 404, 412, 422, 428 |
+| `POST /tickets/{ticketId}/extension` (`If-Match`) | `support.ticket.manage` | `{ businessDays, reason }` | `SupportTicketDetailDto`; 404, 412, 422, 428 |
+
+**Alta manual anónima.** Con `anonymous: true`, `customerId` y `requester` tienen que venir `null` y `replyChannel` tiene que ser
+`Portal`; si no, `422 validation.failed` en `CustomerId`, `Requester` o `ReplyChannel`. Sin anónimo, `Portal` también es
+`422 validation.failed` en `ReplyChannel`. `manualMedium` sigue obligatorio. El ticket nace con `isAnonymous: true`, sin cliente ni foto
+del solicitante, y con PIN como cualquier otro: **el PIN viaja una sola vez**, en `issuedPin` del `201` del alta, para que el asesor se
+lo dicte a quien llamó o vino en persona (es su única forma de consultar el radicado). En el `GET` del detalle, en la respuesta de cualquier
+acción y en la auditoría es `null` o no está. No se manda nada al abrir (no hay a dónde): `consultAccess.channel` queda `null`.
+
+**Borrar un tipo de ticket.** Sólo uno que ningún ticket usa, en cualquier estado (si no, `422 support.ticket_type.in_use`: se
+desactiva). La regla la cierra la base con la FK `FK_tickets_ticket_types_ticket_type_id` (`ON DELETE RESTRICT`), que
+`SupportUnitOfWork` traduce por nombre: un borrado que choca con un ticket (`23001`) es `in_use`, y un alta o cambio de tipo contra un
+tipo recién borrado (`23503`) es `422 support.ticket_type.unavailable`. El handler pregunta antes solo para responder rápido. Los tipos
+sembrados también se borran y no se vuelven a sembrar. `SupportTicketTypeDto` trae `inUse` para que la tabla de ajustes ofrezca
+«Eliminar» o sólo «Desactivar». Audita `support.ticket_type.deleted`.
+
+**«Asignármelo».** Asigna el ticket a la membresía de quien llama, con la misma regla del responsable (membresía activa con
+`support.ticket.manage`). Ya suyo: `200` sin cambio de versión. Resuelto o cerrado: `422 support.ticket.not_editable`. Audita
+`support.ticket.assigned`. Todo `SupportMemberDto` trae `isMe`, falso fuera de una sesión (consulta pública, worker del hilo).
+
+**Prórroga del plazo** (spec §7.2). Una sola por ticket, con motivo, antes de que venza, y nunca mayor que el término inicial (el plazo
+total no pasa del doble). Se guarda en **días hábiles** (`extension_business_days`) y no como fecha: el vencimiento es siempre
+término + prórroga + pausas desde la radicación, así una pausa posterior o un cambio de tipo la siguen contando (cambiar de tipo conserva
+los días de prórroga y recalcula con el término nuevo). `businessDays` va de 1 a 365 y `reason` de 1 a 1 000 caracteres recortado
+(si no, `422 validation.failed` en `BusinessDays` o `Reason`). Las reglas del dominio, en este orden:
+
+| Código (422) | Cuándo |
+| --- | --- |
+| `support.ticket.not_editable` | El ticket está `Resolved` o `Closed` |
+| `support.ticket.extension_already_used` | Ya se prorrogó |
+| `support.ticket.extension_no_term` | El tipo no tiene término |
+| `support.ticket.extension_clock_stopped` | El reloj está detenido (`WaitingOnCustomer`) |
+| `support.ticket.extension_overdue` | Hoy (fecha local del tenant) es posterior al vencimiento; el mismo día del vencimiento todavía se puede |
+| `support.ticket.extension_too_long` | `businessDays` es mayor que el término del ticket |
+
+El detalle trae en `clock` la prórroga hecha (`extension: { businessDays, reason, extendedAt }`) y `maxExtensionBusinessDays`: el
+término si hoy se puede prorrogar, `null` si no; con eso la pantalla muestra u oculta «Prorrogar» sin repetir las reglas. La traza
+suma el evento `Extended` con `extensionBusinessDays`, `fromDueOn`, `toDueOn` y `reason`. Audita `support.ticket.extended` con los
+campos `dueOn` y `extension`, **nunca el motivo**. El backend no le avisa al solicitante: el asesor manda el aviso como una respuesta
+normal (`POST …/replies`), por el canal del ticket.
+
+**Migraciones:** `Support` `AddTicketTypeForeignKey` (la FK) y `Support` `AddTicketExtension` (`extension_business_days int not null
+default 0`, `extension_reason varchar(1000)`, `extended_at timestamptz`, el CHECK `CK_tickets_extension` y `Extended` en
+`CK_ticket_events_kind`). Las dos son aditivas.
+
+**Avisos para quien opera:**
+
+- **Antes de desplegar `AddTicketTypeForeignKey`**, en producción esta consulta tiene que dar `0`; si no, la FK no se crea y la
+  migración falla (un ticket apunta a un tipo que ya no existe, cosa que hasta hoy ningún camino del código hacía):
+
+  ```sql
+  SELECT count(*) FROM support.tickets t WHERE NOT EXISTS (SELECT 1 FROM support.ticket_types y WHERE y.id = t.ticket_type_id);
+  ```
+
+- **Durante el rollout**, un pod viejo no conoce el valor `Extended` de `ticket_events.kind`: EF lo lee con `Enum.Parse`, así que el
+  detalle de un ticket ya prorrogado responde `500` en ese pod (los demás tickets, no). Es el mismo caso que los eventos nuevos de la
+  fase 2 y se arregla solo al terminar el rollout; para evitarlo, nadie prorroga hasta que no quede un pod viejo.
+- **Un pod viejo también recalcula `due_on` sin la prórroga.** Al reanudar un ticket que esperaba al cliente (lo hace solo
+  `SupportThreadFollower` cuando el cliente escribe) o al cambiarle el tipo, el código viejo escribe término + pausas y pierde los
+  días prorrogados; nada lo corrige hasta otra reanudación o cambio de tipo en un pod nuevo. Por eso la regla de no prorrogar vale
+  hasta que no quede un pod viejo.
+- **Rollback del código:** con tickets ya prorrogados, el código viejo da `500` en el detalle de cada uno, en todos los pods y para
+  siempre (no lee `Extended`), y les recalcula el vencimiento sin la prórroga. Un rollback después de la primera prórroga exige
+  volver a desplegar el código nuevo; no lo hagas sin revisar `SELECT count(*) FROM support.tickets WHERE extended_at IS NOT NULL;`.
+- **«El doble del término» se mide contra el término vigente al prorrogar** (P-3 y P-5). Si después le cambias el tipo a uno de
+  término menor, la prórroga se conserva y el total puede pasar del doble del término nuevo. Es lo decidido: no lo «arregles»
+  recortando la prórroga.
 
 ### API externa
 

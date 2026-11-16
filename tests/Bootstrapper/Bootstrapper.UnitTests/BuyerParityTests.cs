@@ -26,6 +26,11 @@ public sealed class BuyerParityTests
         Assert.Equal(PasswordRules.MaxLength, BuyerPasswordRules.MaxLength);
     }
 
+    // Spec 2026-11-15 §4: Quotations no ve Buyers, así que el tope del correo con el que el asesor enlaza un pedido es una copia.
+    [Fact]
+    public void TheOrderBuyerAccountEmailLimitMatchesBuyers() =>
+        Assert.Equal(BuyerEmail.MaxLength, Modules.Quotations.Application.OrderBuyerAccountRules.EmailMaxLength);
+
     [Fact]
     public void TheSignupEventContractMatches()
     {

@@ -307,7 +307,10 @@ public sealed record CreateCustomerRequest(
     bool? WithRetention = null,
     /// <summary>Spec ReteICA por empresa §9.3: los municipios donde el cliente es agente retenedor. Ausente o <c>null</c> no
     /// toca lo guardado (en el alta, ninguno); una lista vacía los quita.</summary>
-    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null);
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
+    /// <summary>Spec 2026-11-15 «Contacto de» en el alta: la empresa de la que el cliente nace como contacto. Ausente o
+    /// <c>null</c> lo crea sin empresa. Sólo en el alta: editar no lo toca, el vínculo va por <c>PUT …/company</c>.</summary>
+    Guid? CompanyId = null);
 
 public sealed record UpdateCustomerRequest(
     string Name,

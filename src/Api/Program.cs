@@ -505,8 +505,9 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     await services.InitializeLoansDatabaseAsync(
         cancellationToken);
 
-    // Support (spec 2026-11-14): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
-    // referencias blandas.
+    // Support (spec 2026-11-14): después de Audit (escribe en audit.entries) y de Companies: support.form_versions lleva una FK real a
+    // companies.companies (spec 2026-11-15 §9.3, plan L29), así que esa tabla tiene que existir cuando esta migración corre. Clientes y
+    // membresías siguen siendo referencias blandas.
     await services.InitializeSupportDatabaseAsync(
         cancellationToken);
 

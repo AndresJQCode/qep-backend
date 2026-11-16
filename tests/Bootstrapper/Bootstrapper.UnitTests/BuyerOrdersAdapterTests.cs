@@ -50,11 +50,18 @@ public sealed class BuyerOrdersAdapterTests
 
         public Task<bool> LinkAsync(Guid tenantId, Guid orderId, Guid buyerAccountId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<int> LinkByEmailAsync(
+            Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private static BuyerOrderDetail SampleDetail() =>
         new(OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa",
-            [new BuyerOrderLine("Camisa", 1.5m, 10m, 17.85m), new BuyerOrderLine("Gorra", 2m, 50m, 101.65m)],
+            [
+                new BuyerOrderLine("Camisa", 1.5m, 10m, 17.85m, "https://cdn.test/camisa.webp"),
+                new BuyerOrderLine("Gorra", 2m, 50m, 101.65m, null),
+            ],
             Cancelled, false, 84.03m, 15.97m, 19.5m, false, "Coordinadora", "BillingParty",
             new BuyerOrderBilling("Ana Pérez", "CC", "123456", "ana@test.co", "3001234567", "Calle 1 # 2-3", "CO", "Antioquia", "Medellín"),
             new BuyerOrderShipping("Luis Gómez", "3009876543", "Carrera 4 # 5-6", "CO", "Cundinamarca", "Bogotá"),
@@ -105,8 +112,8 @@ public sealed class BuyerOrdersAdapterTests
         Assert.False(detail.CanCancel);
         Assert.Collection(
             detail.Lines,
-            line => Assert.Equal(new BuyerOrderLineDto("Camisa", 1.5m, 10m, 17.85m), line),
-            line => Assert.Equal(new BuyerOrderLineDto("Gorra", 2m, 50m, 101.65m), line));
+            line => Assert.Equal(new BuyerOrderLineDto("Camisa", 1.5m, 10m, 17.85m, "https://cdn.test/camisa.webp"), line),
+            line => Assert.Equal(new BuyerOrderLineDto("Gorra", 2m, 50m, 101.65m, null), line));
     }
 
     [Fact]

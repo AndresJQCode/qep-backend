@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
@@ -7,8 +8,10 @@ namespace Modules.Support.Application;
 
 /// <summary>Lo que una petición necesita para evaluar plazos y fechar lo que escribe: el calendario y la zona del tenant, el instante
 /// <paramref name="Now"/> y su «hoy» local, y el umbral de «por vencer». Se lee una vez por petición: el reloj del tenant no se vuelve a
-/// pedir para fechar el cambio (revisión final, B5).</summary>
-public sealed record SupportReadContext(SupportClockContext Clock, DateTimeOffset Now, DateOnly Today, int DueSoonBusinessDays);
+/// pedir para fechar el cambio (revisión final, B5). <paramref name="ViewerMemberId"/> (fase 4a, plan G8) es la membresía de quien
+/// pide, para el <c>IsMe</c> de cada miembro; null fuera de una sesión.</summary>
+public sealed record SupportReadContext(
+    SupportClockContext Clock, DateTimeOffset Now, DateOnly Today, int DueSoonBusinessDays, Guid? ViewerMemberId = null);
 
 /// <summary>
 /// Arma las respuestas de ticket del contrato: el <see cref="SupportTicketDetailDto"/> de leer, crear y operar, y las filas de la
@@ -26,7 +29,9 @@ public sealed class SupportTicketDtoComposer(
     ISupportUnclassifiedRepository unclassified,
     ISupportTicketAccessRepository accesses,
     ISupportTicketAttachmentRepository attachments,
-    ITenantModules tenantModules)
+    ISupportLegalAcceptanceRepository legalAcceptances,
+    ITenantModules tenantModules,
+    ISupportViewer viewer)
 {
     /// <summary>Lo que el contrato muestra de un miembro o cliente que ya no se resuelve (un miembro removido, un cliente borrado).</summary>
     internal const string UnknownName = "Sin nombre";
@@ -39,12 +44,15 @@ public sealed class SupportTicketDtoComposer(
         var clock = await calendars.GetAsync(tenantId, tenantCalendar.TimeZone, cancellationToken);
         var tenantSettings = await settings.GetAsync(tenantId, cancellationToken);
         var now = tenantCalendar.UtcNow;
-        return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays);
+        // Quién mira, una sola vez por petición (plan G8): null sin sesión, así el worker del hilo compone sin lanzar.
+        var viewerMemberId = await viewer.MemberIdAsync(tenantId, cancellationToken);
+        return new SupportReadContext(clock, now, clock.LocalDate(now), tenantSettings.DueSoonBusinessDays, viewerMemberId);
     }
 
     /// <summary>Las mismas lecturas que <see cref="ReadContextAsync"/>, sin exigir la fila de ajustes: <c>null</c> si el tenant nunca se
     /// aprovisionó (entonces tampoco tiene tickets). La usa la consulta pública, que no aprovisiona y lee el contexto también cuando el
-    /// radicado no existe, para que el tiempo no lo delate (triage #4 del Bloque F).</summary>
+    /// radicado no existe, para que el tiempo no lo delate (triage #4 del Bloque F). No lee quién mira: la consulta pública no tiene
+    /// sesión ni miembros que marcar.</summary>
     public async Task<SupportReadContext?> TryReadContextAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         var tenantCalendar = await tenantClock.GetAsync(tenantId, cancellationToken);
@@ -91,27 +99,37 @@ public sealed class SupportTicketDtoComposer(
             ticket.Subject,
             ticket.Description,
             ticket.Status.ToString(),
+            ticket.Priority.ToString(),
             SupportTicketStatuses.AllowedFrom(ticket.Status).Select(status => status.ToString()).ToList(),
             new SupportTicketTypeSnapshotDto(
                 ticket.TypeId.Value, ticket.TypeName, ticket.TermBusinessDays, ticket.TermIsLegal, ticket.RequiresFormalResponse),
             new SupportClockDto(
-                ticket.DueOn, dueState.ToString(), daysLeft, ticket.TermBusinessDays, ticket.TermIsLegal, ticket.PausedBusinessDays),
+                ticket.DueOn,
+                dueState.ToString(),
+                daysLeft,
+                ticket.TermBusinessDays,
+                ticket.TermIsLegal,
+                ticket.PausedBusinessDays,
+                ticket is { ExtendedAt: { } extendedAt, ExtensionReason: { } reason }
+                    ? new SupportExtensionDto(ticket.ExtensionBusinessDays, reason, extendedAt)
+                    : null,
+                ticket.MaxExtensionBusinessDays(context.Today)),
             ticket.Intake.ToString(),
             ticket.ManualMedium?.ToString(),
             ticket.ReplyChannel.ToString(),
             ticket.CustomerId is { } customerId ? ToCustomerDto(customerId, customersById) : null,
             ticket.Requester is { } requester ? ToRequesterDto(requester) : null,
-            ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById) : null,
+            ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById, context.ViewerMemberId) : null,
             ticket.ResolutionCount,
             ticket.ReceivedAt,
-            details.Select(item => ToEventDto(item.Event, item.Details, membersById, customersById)).ToList(),
+            details.Select(item => ToEventDto(item.Event, item.Details, membersById, customersById, context.ViewerMemberId)).ToList(),
             ticket.Version,
             ticket.ConversationId,
             ticket.ConversationChannel,
             ticket.FollowThread,
             ticket.FollowOffAt,
             unclassifiedCount,
-            ticketReplies.Select(reply => ToReplyDto(reply, membersById)).ToList(),
+            ticketReplies.Select(reply => ToReplyDto(reply, membersById, context.ViewerMemberId)).ToList(),
             ticket.IsAnonymous,
             await CustomerCandidatesAsync(ticket, cancellationToken),
             await accesses.FindAsync(ticket.TenantId, ticket.Id, cancellationToken) is { } access
@@ -119,7 +137,13 @@ public sealed class SupportTicketDtoComposer(
                 : null,
             (await attachments.ListAsync(ticket.TenantId, ticket.Id, cancellationToken))
                 .Select(item => new SupportAttachmentDto(item.Id, item.FileName, item.MimeType, item.SizeBytes))
-                .ToList());
+                .ToList(),
+            // Spec 2026-11-15 §7 (plan L19): a projection without the snapshot, already in the order of the enum.
+            (await legalAcceptances.ListByTicketAsync(ticket.TenantId, ticket.Id, cancellationToken))
+                .Select(item => new SupportLegalAcceptanceDto(item.Kind.ToString(), item.Version, item.AcceptedAt, item.VisitorIp))
+                .ToList(),
+            // El PIN sólo lo pone el alta anónima, en su 201 (plan G3); toda otra lectura lo deja en null.
+            IssuedPin: null);
     }
 
     // Plan F21: sin cliente y con documento en la foto, los clientes con ese documento (si customers está prendido): al radicar no se
@@ -150,7 +174,8 @@ public sealed class SupportTicketDtoComposer(
     }
 
     /// <summary>Una respuesta como la dibujan el detalle y el resultado de responder.</summary>
-    internal static SupportReplyDto ToReplyDto(SupportTicketReply reply, IReadOnlyDictionary<Guid, string> membersById) => new(
+    internal static SupportReplyDto ToReplyDto(
+        SupportTicketReply reply, IReadOnlyDictionary<Guid, string> membersById, Guid? viewerMemberId) => new(
         reply.Id,
         reply.ClientId,
         reply.Channel.ToString(),
@@ -159,7 +184,7 @@ public sealed class SupportTicketDtoComposer(
         reply.Status.ToString(),
         reply.FailureCode,
         reply.MessageId,
-        ToMemberDto(reply.AuthorMemberId, membersById),
+        ToMemberDto(reply.AuthorMemberId, membersById, viewerMemberId),
         reply.CreatedAt,
         reply.UploadId is not null);
 
@@ -179,9 +204,10 @@ public sealed class SupportTicketDtoComposer(
                     ticket.DisplayNumber,
                     ticket.Subject,
                     ticket.Status.ToString(),
+                    ticket.Priority.ToString(),
                     ticket.TypeName,
                     RequesterDisplayName(ticket, customersById),
-                    ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById) : null,
+                    ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById, context.ViewerMemberId) : null,
                     ticket.ReceivedAt,
                     ticket.DueOn,
                     dueState.ToString(),
@@ -225,8 +251,10 @@ public sealed class SupportTicketDtoComposer(
             : (await customers.FindManyAsync(tenantId, ids, cancellationToken)).ToDictionary(customer => customer.Id);
     }
 
-    private static SupportMemberDto ToMemberDto(Guid memberId, IReadOnlyDictionary<Guid, string> membersById) =>
-        new(memberId, membersById.TryGetValue(memberId, out var name) ? name : UnknownName);
+    /// <summary>Un miembro del contrato con su <c>IsMe</c> (plan G8). Uno que ya no se resuelve sale «Sin nombre», y también puede ser
+    /// quien mira.</summary>
+    internal static SupportMemberDto ToMemberDto(Guid memberId, IReadOnlyDictionary<Guid, string> membersById, Guid? viewerMemberId) =>
+        new(memberId, membersById.TryGetValue(memberId, out var name) ? name : UnknownName, memberId == viewerMemberId);
 
     private static SupportCustomerRefDto ToCustomerDto(Guid customerId, IReadOnlyDictionary<Guid, SupportCustomerRef> customersById) =>
         customersById.TryGetValue(customerId, out var customer)
@@ -249,21 +277,28 @@ public sealed class SupportTicketDtoComposer(
         SupportTicketEvent item,
         EventDetails details,
         IReadOnlyDictionary<Guid, string> membersById,
-        IReadOnlyDictionary<Guid, SupportCustomerRef> customersById) =>
+        IReadOnlyDictionary<Guid, SupportCustomerRef> customersById,
+        Guid? viewerMemberId) =>
         new(
             item.Ordinal,
             item.Kind.ToString(),
             item.OccurredAt,
-            item.ActorMemberId is { } actorId ? ToMemberDto(actorId, membersById) : null,
+            item.ActorMemberId is { } actorId ? ToMemberDto(actorId, membersById, viewerMemberId) : null,
             details.FromStatus,
             details.ToStatus,
-            details.ToMember is { } memberId ? ToMemberDto(memberId, membersById) : null,
+            details.ToMember is { } memberId ? ToMemberDto(memberId, membersById, viewerMemberId) : null,
             details.FromTypeName,
             details.ToTypeName,
             details.ToCustomer is { } customerId ? ToCustomerDto(customerId, customersById) : null,
             details.MessageId,
             details.Follow,
-            details.ReplyChannel);
+            details.ReplyChannel,
+            details.ExtensionBusinessDays,
+            details.FromDueOn,
+            details.ToDueOn,
+            details.Reason,
+            details.FromPriority,
+            details.ToPriority);
 
     /// <summary>
     /// Los campos de <see cref="SupportTicketEvent.Details"/> según su <see cref="SupportTicketEvent.Kind"/>, con la forma que escribe
@@ -271,7 +306,9 @@ public sealed class SupportTicketDtoComposer(
     /// <c>AssigneeChanged</c> y <c>CustomerChanged</c> <c>{"from","to"}</c> ids o null; <c>TypeChanged</c>
     /// <c>{"from":{"id","name"},"to":{"id","name"}}</c>. Fase 2: los cuatro de mensajes <c>{"messageId"}</c>;
     /// <c>FollowThreadChanged</c> <c>{"follow","at"}</c>; <c>ReplySent</c> <c>{"replyId","channel","delivery","messageId"}</c>;
-    /// <c>ConversationLinked</c> <c>{"conversationId","channel"}</c>, que el detalle ya trae arriba.
+    /// <c>ConversationLinked</c> <c>{"conversationId","channel"}</c>, que el detalle ya trae arriba. Fase 4a: <c>Extended</c>
+    /// <c>{"businessDays","reason","fromDueOn","toDueOn"}</c>, con las fechas en <c>yyyy-MM-dd</c>. <c>PriorityChanged</c>
+    /// <c>{"from","to"}</c> prioridades por nombre.
     /// </summary>
     private sealed record EventDetails(
         string? FromStatus,
@@ -282,7 +319,13 @@ public sealed class SupportTicketDtoComposer(
         Guid? ToCustomer,
         Guid? MessageId = null,
         bool? Follow = null,
-        string? ReplyChannel = null)
+        string? ReplyChannel = null,
+        int? ExtensionBusinessDays = null,
+        DateOnly? FromDueOn = null,
+        DateOnly? ToDueOn = null,
+        string? Reason = null,
+        string? FromPriority = null,
+        string? ToPriority = null)
     {
         private static readonly EventDetails Empty = new(null, null, null, null, null, null);
 
@@ -314,6 +357,21 @@ public sealed class SupportTicketDtoComposer(
                     MessageId = Id(root, "messageId"),
                     ReplyChannel = Text(root, "channel"),
                 },
+                SupportTicketEventKind.Extended => Empty with
+                {
+                    ExtensionBusinessDays = Child(root, "businessDays") is { ValueKind: JsonValueKind.Number } days
+                        && days.TryGetInt32(out var value)
+                            ? value
+                            : null,
+                    FromDueOn = Date(root, "fromDueOn"),
+                    ToDueOn = Date(root, "toDueOn"),
+                    Reason = Text(root, "reason"),
+                },
+                SupportTicketEventKind.PriorityChanged => Empty with
+                {
+                    FromPriority = Text(root, "from"),
+                    ToPriority = Text(root, "to"),
+                },
                 _ => Empty,
             };
         }
@@ -323,6 +381,12 @@ public sealed class SupportTicketDtoComposer(
 
         private static string? Text(JsonElement element, string name) =>
             Child(element, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
+
+        private static DateOnly? Date(JsonElement element, string name) =>
+            Text(element, name) is { } text
+            && DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+                ? date
+                : null;
 
         private static Guid? Id(JsonElement element, string name) =>
             Child(element, name) is { ValueKind: JsonValueKind.String } value && value.TryGetGuid(out var id) ? id : null;

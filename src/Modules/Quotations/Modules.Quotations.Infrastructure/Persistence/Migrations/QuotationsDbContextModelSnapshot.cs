@@ -179,6 +179,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("buyer_account_id");
 
+                    b.Property<bool>("BuyerAccountSetByMember")
+                        .HasColumnType("boolean")
+                        .HasColumnName("buyer_account_set_by_member");
+
                     b.Property<string>("BuyerNotes")
                         .HasColumnType("text")
                         .HasColumnName("buyer_notes");

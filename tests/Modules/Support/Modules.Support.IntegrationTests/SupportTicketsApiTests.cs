@@ -57,6 +57,76 @@ public sealed class SupportTicketsApiTests(ClockedSupportHost host) : IClassFixt
         Assert.Equal("2026-12-07", detail.GetProperty("clock").GetProperty("dueOn").GetString());
     }
 
+    /// <summary>Fase 4a (plan G1 y G3, Review Focus 2): el alta manual anónima trae el PIN una sola vez, en el 201.</summary>
+    private static Dictionary<string, object?> AnonymousBody(Guid typeId)
+    {
+        var body = Body(typeId, replyChannel: "Portal");
+        body["requester"] = null;
+        body["anonymous"] = true;
+        return body;
+    }
+
+    [Fact]
+    public async Task AnAnonymousManualTicketReturnsItsPinOnlyOnCreation()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+
+        var response = await scenario.PostAsync(AnonymousBody(await scenario.TypeIdAsync("Queja")));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var ticket = await JsonAsync(response);
+        Assert.True(ticket.GetProperty("isAnonymous").GetBoolean());
+        Assert.Equal("Portal", ticket.GetProperty("replyChannel").GetString());
+        Assert.Equal(JsonValueKind.Null, ticket.GetProperty("requester").ValueKind);
+        var pin = ticket.GetProperty("issuedPin").GetString();
+        Assert.Matches(@"^\d{6}$", pin!);
+        // Sin a dónde mandar la información, la apertura no anota nada (SupportOpeningDelivery): el canal queda null, como en un
+        // manual sin correo.
+        Assert.Equal(JsonValueKind.Null, ticket.GetProperty("consultAccess").GetProperty("channel").ValueKind);
+        var detail = await scenario.DetailAsync(Id(ticket));
+        Assert.Equal(JsonValueKind.Null, detail.GetProperty("issuedPin").ValueKind);
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketCreated, Id(ticket).ToString()));
+        Assert.Equal(0L, await SupportMessagingSeed.ScalarAsync(
+            scenario.Factory,
+            "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND changed_fields::text LIKE '%' || @pin || '%'",
+            ("id", Id(ticket).ToString()),
+            ("pin", pin!)));
+    }
+
+    [Fact]
+    public async Task AnAnonymousManualTicketCanBeConsultedWithItsPin()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync(AnonymousBody(await scenario.TypeIdAsync("Queja")));
+        var slug = await SupportPublicHarness.SlugOfAsync(scenario.Factory, scenario.Tenant);
+        // En Development el Turnstile está apagado (Store:Turnstile:Enabled=false): cualquier token pasa.
+        using var visitor = scenario.Factory.CreateClient();
+
+        var lookup = await SupportPublicHarness.PostJsonAsync(
+            visitor,
+            SupportPublicHarness.PublicUrl(slug, "/tickets/lookup"),
+            new
+            {
+                number = ticket.GetProperty("number").GetString(),
+                pin = ticket.GetProperty("issuedPin").GetString(),
+                turnstileToken = "any",
+            });
+
+        Assert.True(lookup.StatusCode == HttpStatusCode.OK, await BodyAsync(lookup));
+        Assert.Equal(ticket.GetProperty("number").GetString(), (await JsonAsync(lookup)).GetProperty("number").GetString());
+    }
+
+    [Fact]
+    public async Task ANamedManualTicketDoesNotReturnAPin()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+
+        var ticket = await scenario.CreateAsync();
+
+        Assert.False(ticket.GetProperty("isAnonymous").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, ticket.GetProperty("issuedPin").ValueKind);
+    }
+
     [Fact]
     public async Task ConcurrentCreationsGetDistinctConsecutiveNumbers()
     {
@@ -73,6 +143,51 @@ public sealed class SupportTicketsApiTests(ClockedSupportHost host) : IClassFixt
         }
 
         Assert.Equal(Enumerable.Range(1, 10).Select(number => $"SOP-{number:D6}"), numbers.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task CreatingWithAPriorityKeepsIt()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var body = Body(await scenario.TypeIdAsync("Queja"));
+        body["priority"] = "Urgent";
+
+        var ticket = await scenario.CreateAsync(body);
+
+        Assert.Equal("Urgent", ticket.GetProperty("priority").GetString());
+        Assert.Equal("Urgent", (await scenario.DetailAsync(Id(ticket))).GetProperty("priority").GetString());
+    }
+
+    // Spec §5.3: ausente o null es Media, como lo manda un frontend que todavía no conoce el campo.
+    [Fact]
+    public async Task CreatingWithoutAPriorityIsMedium()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var withNull = Body(await scenario.TypeIdAsync("Queja"));
+        withNull["priority"] = null;
+
+        var absent = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Queja")));
+        var nulled = await scenario.CreateAsync(withNull);
+
+        Assert.Equal("Medium", absent.GetProperty("priority").GetString());
+        Assert.Equal("Medium", nulled.GetProperty("priority").GetString());
+    }
+
+    [Theory]
+    [InlineData("urgent")]
+    [InlineData("Foo")]
+    [InlineData("")]
+    public async Task CreatingWithALowercasePriorityIs422(string priority)
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var body = Body(await scenario.TypeIdAsync("Queja"));
+        body["priority"] = priority;
+
+        var response = await scenario.PostAsync(body);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Equal(["Priority"], await ErrorKeysAsync(response));
     }
 
     [Fact]
@@ -337,6 +452,27 @@ public sealed class SupportTicketsApiTests(ClockedSupportHost host) : IClassFixt
         Assert.Equal(
             [(admin, "Ana Admin"), (advisor, "Beto Asesor"), (scenario.CallerMemberId, "Zoe Llamante")],
             items.Select(item => (item.GetProperty("id").GetGuid(), item.GetProperty("displayName").GetString()!)));
+    }
+
+    // Fase 4a (plan G8): el SPA no conoce su memberId; cada referencia a un miembro dice si es quien llama.
+    [Fact]
+    public async Task IsMeIsTrueOnlyForTheCaller()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var advisor = await SeedMemberAsync(
+            scenario.Factory, $"advisor-{scenario.Tenant}@example.com", "Beto Asesor", "advisor", tenantId: scenario.Tenant);
+        var created = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Queja"), assignee: advisor));
+
+        var detail = await scenario.DetailAsync(Id(created));
+        var assignees = (await JsonAsync(await scenario.Client.GetAsync($"{scenario.Url}/assignees", Ct)))
+            .GetProperty("items").EnumerateArray().ToList();
+
+        Assert.Equal(advisor, detail.GetProperty("assignee").GetProperty("id").GetGuid());
+        Assert.False(detail.GetProperty("assignee").GetProperty("isMe").GetBoolean());
+        var createdEvent = detail.GetProperty("events").EnumerateArray().Single(item => item.GetProperty("kind").GetString() == "Created");
+        Assert.True(createdEvent.GetProperty("actor").GetProperty("isMe").GetBoolean());
+        var mine = Assert.Single(assignees, item => item.GetProperty("isMe").GetBoolean());
+        Assert.Equal(scenario.CallerMemberId, mine.GetProperty("id").GetGuid());
     }
 
     private static List<string> Strings(JsonElement array) => array.EnumerateArray().Select(item => item.GetString()!).ToList();

@@ -6,6 +6,7 @@ using Modules.Support.Domain;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
+using static Modules.Support.IntegrationTests.SupportMessagingSeed;
 
 namespace Modules.Support.IntegrationTests;
 
@@ -121,14 +122,42 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         {
             scope.ServiceProvider.GetRequiredService<ISupportFormRepository>().Add(SupportFormVersion.Create(
                 Guid.CreateVersion7(), tenant, 1, false, true, true, true, true, false, null, null, null, formAuthor, Now));
-            scope.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>().Add(SupportLegalTextVersion.Create(
-                Guid.CreateVersion7(), tenant, 1, "Autorizo el tratamiento de mis datos.", null, "https://example.com/politica", null,
-                textAuthor, Now));
             await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         }
 
+        // The phase 3 legal texts have no writer any more (spec 2026-11-15 §5.4): the old row goes in by raw SQL.
+        await ExecuteAsync(
+            factory,
+            """
+            INSERT INTO support.legal_text_versions
+                (id, tenant_id, version, authorization_text, policy_text, policy_url, terms_text, created_at, created_by)
+            VALUES (gen_random_uuid(), @tenant, 1, 'Autorizo el tratamiento de mis datos.', NULL, 'https://example.com/politica', NULL,
+                    now(), @author)
+            """,
+            ("tenant", tenant), ("author", textAuthor));
+
         Assert.True(await RetainsAsync(factory, formUser));
         Assert.True(await RetainsAsync(factory, textUser));
+    }
+
+    // Spec 2026-11-15 §5.4 (plan L22): legal_document_versions.created_by is a membership id, so the author keeps the user.
+    [Fact]
+    public async Task ALegalDocumentAuthorIsReferenced()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var author = await SeedMemberAsync(factory, $"doc-{Guid.CreateVersion7():N}@example.com", "Iris", "admin", tenantId: tenant.ToString());
+        var user = await UserOfAsync(factory, author);
+        Assert.False(await RetainsAsync(factory, user));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ISupportLegalDocumentRepository>().Add(SupportLegalDocumentVersion.Create(
+                Guid.CreateVersion7(), tenant, SupportLegalDocumentKind.Terms, 1, new SanitizedHtml("<p>Términos.</p>", true), null, null,
+                author, Now));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        Assert.True(await RetainsAsync(factory, user));
     }
 
     // Spec 2026-11-15 §5.4 (plan N23): ticket_notes.author_member_id is a membership id, so the note's author keeps the user.
@@ -166,7 +195,8 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         await scope.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(tenant, Ct);
         var type = (await scope.ServiceProvider.GetRequiredService<ISupportTicketTypeRepository>().ListAsync(tenant, Ct))[0];
         var ticket = SupportTicket.CreateManual(
-            SupportTicketId.New(), tenant, 1, type, "Asunto", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email, null,
+            SupportTicketId.New(), tenant, 1, type, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email, null,
             new TicketRequester("Ana", "Gómez", null, null, null, "ana@example.com", null, null, "CO", null),
             assignee, actor, Now, Clock);
         scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().Add(ticket);

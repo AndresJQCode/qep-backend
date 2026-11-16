@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Modules.Companies.Application;
+using Modules.Companies.Domain;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using Modules.Tenancy.Application;
@@ -81,9 +83,9 @@ internal static class SupportPublicHarness
 
     /// <summary>
     /// Un tenant con el formulario publicado: su fila y sus módulos, los tipos por defecto (todos publicados), la versión 1 de los
-    /// textos legales y la versión 1 del formulario. Por SQL de dominio y no por la consola: el host puede tener la autenticación real.
-    /// Con adjuntos salvo <paramref name="allowAttachments"/> en false, como el formulario por defecto (owner, 2026-11-15, E2). Devuelve
-    /// el slug.
+    /// tres documentos legales (spec 2026-11-15) y la versión 1 del formulario. Por SQL de dominio y no por la consola: el host puede tener la autenticación real.
+    /// Con adjuntos salvo <paramref name="allowAttachments"/> en false, como el formulario por defecto (owner, 2026-11-15, E2). Con una
+    /// empresa activa del tenant elegida salvo <paramref name="withOrganization"/> en false (spec 2026-11-15 §15 D-8). Devuelve el slug.
     /// </summary>
     public static async Task<string> SeedPublishedTenantAsync(
         QepApiFactory factory,
@@ -94,9 +96,12 @@ internal static class SupportPublicHarness
         bool showAddress = true,
         bool showLandline = true,
         bool businessNameRequired = true,
-        bool allowAttachments = true)
+        bool allowAttachments = true,
+        bool withOrganization = true)
     {
         await SeedTenantAsync(factory, tenantId, modules);
+        // Spec 2026-11-15 §15 D-8: a form published from the console always has its company; the seed chooses one too.
+        Guid? organization = withOrganization ? await SeedCompanyAsync(factory, tenantId) : null;
         var tenant = Guid.Parse(tenantId);
         var now = DateTimeOffset.UtcNow;
         await using (var provision = factory.Services.CreateAsyncScope())
@@ -104,27 +109,81 @@ internal static class SupportPublicHarness
             await provision.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(tenant, Ct);
         }
 
+        foreach (var kind in SupportLegalDocumentKinds.All)
+        {
+            await PublishLegalDocumentAsync(factory, tenantId, kind, 1, $"<p>{kind}, versión 1.</p>");
+        }
+
         await using (var scope = factory.Services.CreateAsyncScope())
         {
-            scope.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>().Add(SupportLegalTextVersion.Create(
-                Guid.CreateVersion7(), tenant, 1, "Autorizo el tratamiento de mis datos personales, versión 1.", null,
-                "https://example.com/politica", "Términos, versión 1.", Guid.CreateVersion7(), now));
             scope.ServiceProvider.GetRequiredService<ISupportFormRepository>().Add(SupportFormVersion.Create(
                 Guid.CreateVersion7(), tenant, 1, published, showDocument, showAddress, showLandline, businessNameRequired,
-                allowAttachments, "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.", Guid.CreateVersion7(), now));
+                allowAttachments, "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.", Guid.CreateVersion7(), now, organization));
             await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         }
 
         return await SlugOfAsync(factory, tenantId);
     }
 
-    /// <summary>Publica una versión nueva de los textos legales, como si el tenant los editara.</summary>
-    public static async Task PublishLegalTextsAsync(QepApiFactory factory, string tenantId, int version, string authorizationText)
+    /// <summary>
+    /// A Colombian company of the tenant with NIT, created through the Companies domain and repository (not its API: the host may have
+    /// real authentication). <paramref name="active"/> false leaves it deactivated. Spec 2026-11-15 §9.3: the public form shows the
+    /// one it chose, and D-8 makes it required to publish.
+    /// </summary>
+    public static async Task<Guid> SeedCompanyAsync(
+        QepApiFactory factory, string tenantId, string name = "Verde S.A.S.", string taxId = "900123456", bool active = true)
+    {
+        var cityId = await AnyCityIdAsync(factory);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var now = DateTimeOffset.UtcNow;
+        var company = Company.Create(
+            CompanyId.New(),
+            Guid.Parse(tenantId),
+            name,
+            [new CompanyBankAccount { BankName = "Bancolombia", AccountNumber = $"CTA-{Guid.CreateVersion7():N}", Currency = "COP" }],
+            taxId,
+            Company.ColombiaCountryCode,
+            CompanyDocumentType.Nit,
+            cityId,
+            null,
+            CompanyContactInfo.Empty,
+            now);
+        if (!active)
+        {
+            company.Deactivate(now);
+        }
+
+        scope.ServiceProvider.GetRequiredService<ICompanyRepository>().Add(company);
+        await scope.ServiceProvider.GetRequiredService<ICompaniesUnitOfWork>().SaveChangesAsync(Ct);
+        return company.Id.Value;
+    }
+
+    /// <summary>Deactivates a company of the tenant, as Companies would.</summary>
+    public static async Task DeactivateCompanyAsync(QepApiFactory factory, string tenantId, Guid companyId)
     {
         await using var scope = factory.Services.CreateAsyncScope();
-        scope.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>().Add(SupportLegalTextVersion.Create(
-            Guid.CreateVersion7(), Guid.Parse(tenantId), version, authorizationText, null, "https://example.com/politica", null,
-            Guid.CreateVersion7(), DateTimeOffset.UtcNow));
+        var company = await scope.ServiceProvider.GetRequiredService<ICompanyRepository>()
+            .FindAsync(Guid.Parse(tenantId), new CompanyId(companyId), Ct);
+        company!.Deactivate(DateTimeOffset.UtcNow);
+        await scope.ServiceProvider.GetRequiredService<ICompaniesUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
+    /// <summary>Publica una versión nueva de un documento legal, como si el tenant la publicara desde la consola. El HTML pasa por el
+    /// saneador real, como en <c>PublishLegalDocumentHandler</c>. La pregunta y la URL, sólo con el aviso de privacidad.</summary>
+    public static async Task PublishLegalDocumentAsync(
+        QepApiFactory factory,
+        string tenantId,
+        SupportLegalDocumentKind kind,
+        int version,
+        string html,
+        string? authorizationQuestion = null,
+        string? policyUrl = null)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var content = scope.ServiceProvider.GetRequiredService<ISupportHtmlSanitizer>().Sanitize(html);
+        scope.ServiceProvider.GetRequiredService<ISupportLegalDocumentRepository>().Add(SupportLegalDocumentVersion.Create(
+            Guid.CreateVersion7(), Guid.Parse(tenantId), kind, version, content, authorizationQuestion, policyUrl, Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow));
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
     }
 
@@ -138,11 +197,21 @@ internal static class SupportPublicHarness
             "SELECT id::text FROM support.ticket_types WHERE tenant_id = @tenant AND is_active AND is_published ORDER BY position LIMIT 1",
             ("tenant", Guid.Parse(tenantId))))!);
 
+    /// <summary>A default type of the tenant by name (<c>SupportTicketTypeDefaults</c>): «Petición general» has 15 legal business days,
+    /// «Soporte técnico» has no term.</summary>
+    public static async Task<Guid> TypeIdNamedAsync(QepApiFactory factory, string tenantId, string name) =>
+        Guid.Parse((await TextAsync(
+            factory,
+            "SELECT id::text FROM support.ticket_types WHERE tenant_id = @tenant AND name = @name",
+            ("tenant", Guid.Parse(tenantId)),
+            ("name", name)))!);
+
     /// <summary>Una ciudad cualquiera de Geography (la sembró su migración).</summary>
     public static async Task<Guid> AnyCityIdAsync(QepApiFactory factory) =>
         Guid.Parse((await TextAsync(factory, "SELECT id::text FROM geography.cities ORDER BY id LIMIT 1"))!);
 
-    /// <summary>Un radicado con nombre, de Colombia, con todo lo que pide el formulario por defecto.</summary>
+    /// <summary>Un radicado con nombre, de Colombia, con todo lo que pide el formulario por defecto: acepta el aviso de privacidad y
+    /// los términos en las versiones dadas (plan 2026-11-15, L16).</summary>
     public static object NamedBody(
         Guid typeId,
         Guid cityId,
@@ -150,12 +219,16 @@ internal static class SupportPublicHarness
         string documentType = "CC",
         string documentNumber = "1020304050",
         string token = FakeSupportCaptcha.ValidToken,
-        int legalTextVersion = 1,
-        int formVersion = 1) =>
+        int privacyNoticeVersion = 1,
+        int termsVersion = 1,
+        bool acceptsTerms = true,
+        int formVersion = 1,
+        Guid? clientRequestId = null,
+        string subject = "No me llegó el pedido") =>
         new
         {
             ticketTypeId = typeId,
-            subject = "No me llegó el pedido",
+            subject,
             description = "Pagué el lunes y todavía no llega.",
             anonymous = false,
             requester = new
@@ -174,13 +247,23 @@ internal static class SupportPublicHarness
                 email,
             },
             acceptsDataPolicy = true,
-            legalTextVersion,
+            privacyNoticeVersion,
+            anonymousNoticeVersion = (int?)null,
+            acceptsTerms,
+            termsVersion,
             formVersion,
             turnstileToken = token,
+            clientRequestId,
         };
 
-    /// <summary>Un radicado anónimo: sin solicitante ni consentimiento.</summary>
-    public static object AnonymousBody(Guid typeId, string token = FakeSupportCaptcha.ValidToken) =>
+    /// <summary>Un radicado anónimo: sin solicitante ni aviso de privacidad; con el aviso anónimo y los términos.</summary>
+    public static object AnonymousBody(
+        Guid typeId,
+        string token = FakeSupportCaptcha.ValidToken,
+        int anonymousNoticeVersion = 1,
+        int termsVersion = 1,
+        bool acceptsTerms = true,
+        Guid? clientRequestId = null) =>
         new
         {
             ticketTypeId = typeId,
@@ -189,9 +272,13 @@ internal static class SupportPublicHarness
             anonymous = true,
             requester = (object?)null,
             acceptsDataPolicy = false,
-            legalTextVersion = (int?)null,
+            privacyNoticeVersion = (int?)null,
+            anonymousNoticeVersion,
+            acceptsTerms,
+            termsVersion,
             formVersion = 1,
             turnstileToken = token,
+            clientRequestId,
         };
 
     /// <summary>Un cliente con documento, insertado por SQL como <see cref="SupportApiHarness.SeedCustomerAsync"/>. El tipo va con el

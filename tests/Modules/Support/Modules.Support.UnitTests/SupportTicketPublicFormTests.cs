@@ -95,6 +95,47 @@ public sealed class SupportTicketPublicFormTests
             SupportTicketId.New(), TenantId, 3, Petition, "Asunto", "Descripción", Person, null, Guid.Empty, Received, Clock));
     }
 
+    // Plan L27 (spec 2026-11-15 §9.2): the idempotency key of the public filing stays with the ticket; without one it is null, and the
+    // empty UUID is never a key.
+    [Fact]
+    public void TheTicketKeepsItsClientRequestId()
+    {
+        var key = Guid.NewGuid();
+
+        var ticket = SupportTicket.CreateFromPublicForm(
+            SupportTicketId.New(), TenantId, 3, Petition, "Asunto", "Descripción", Person, null, FormVersion, Received, Clock,
+            clientRequestId: key);
+
+        Assert.Equal(key, ticket.ClientRequestId);
+        Assert.Null(FromForm(Person).ClientRequestId);
+        Assert.Throws<ArgumentException>(() => SupportTicket.CreateFromPublicForm(
+            SupportTicketId.New(), TenantId, 3, Petition, "Asunto", "Descripción", Person, null, FormVersion, Received, Clock,
+            clientRequestId: Guid.Empty));
+    }
+
+    // Plan L29 (spec 2026-11-15 §9.3): each form version keeps the tenant company it shows on the portal; the empty UUID is not a
+    // company.
+    [Fact]
+    public void TheVersionKeepsItsOrganization()
+    {
+        var company = Guid.CreateVersion7();
+
+        var form = SupportFormVersion.Create(
+            Guid.CreateVersion7(), TenantId, 1, true, true, true, true, true, true, null, null, null, Guid.CreateVersion7(), Received,
+            organizationCompanyId: company);
+        var without = SupportFormVersion.Create(
+            Guid.CreateVersion7(), TenantId, 2, true, true, true, true, true, true, null, null, null, Guid.CreateVersion7(), Received);
+
+        Assert.Equal(company, form.OrganizationCompanyId);
+        Assert.Null(without.OrganizationCompanyId);
+        Assert.Throws<ArgumentException>(() => SupportFormVersion.Create(
+            Guid.CreateVersion7(), TenantId, 3, true, true, true, true, true, true, null, null, null, Guid.CreateVersion7(), Received,
+            organizationCompanyId: Guid.Empty));
+    }
+
+    [Fact]
+    public void TheDefaultFormHasNoOrganization() => Assert.Null(SupportFormVersion.Default(TenantId).OrganizationCompanyId);
+
     [Fact]
     public void ANitWithoutBusinessNameShowsAsNitAndNumber()
     {
@@ -114,10 +155,12 @@ public sealed class SupportTicketPublicFormTests
     public void ManualAndConversationStillRejectAMissingRequester()
     {
         var manual = Assert.Throws<SupportDomainException>(() => SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email,
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email,
             customerId: null, requester: null, assigneeMemberId: null, Guid.CreateVersion7(), Received, Clock));
         var conversation = Assert.Throws<SupportDomainException>(() => SupportTicket.CreateFromConversation(
             SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción",
+            SupportTicketPriority.Medium,
             new SupportConversationRef(Guid.CreateVersion7(), "WhatsApp"), customerId: null, requester: null,
             assigneeMemberId: null, Guid.CreateVersion7(), Received, Clock));
 
@@ -129,7 +172,8 @@ public sealed class SupportTicketPublicFormTests
     public void ManualAndConversationTicketsAreNotAnonymous()
     {
         var manual = SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone, SupportReplyChannel.Email,
+            SupportTicketId.New(), TenantId, 1, Petition, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email,
             null, Person, null, Guid.CreateVersion7(), Received, Clock);
 
         Assert.False(manual.IsAnonymous);

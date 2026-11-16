@@ -6,7 +6,9 @@ namespace Modules.Support.Application;
 // de textos lo tiene el frontend.
 
 /// <summary>Un tipo de ticket como lo dibujan el selector del alta y la tabla de ajustes. <c>Version</c> va en el <c>If-Match</c> del
-/// <c>PUT</c>; <c>Position</c> es el orden en que la pantalla los lista.</summary>
+/// <c>PUT</c>; <c>Position</c> es el orden en que la pantalla los lista. <c>InUse</c> (fase 4a, plan G6) dice si algún ticket, en
+/// cualquier estado, usa el tipo: la tabla de ajustes ofrece «Eliminar» sólo si es falso, y si no, sólo «Desactivar», sin probar el
+/// <c>DELETE</c> para enterarse del 422.</summary>
 public sealed record SupportTicketTypeDto(
     Guid Id,
     string Name,
@@ -16,7 +18,8 @@ public sealed record SupportTicketTypeDto(
     bool IsPublished,
     bool IsActive,
     int Position,
-    long Version);
+    long Version,
+    bool InUse);
 
 /// <summary>El umbral de «por vencer» del tenant [owner 2026-11-14]. Viaja con su rango (<c>Min</c> y <c>Max</c>) para que el
 /// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3.</summary>
@@ -25,9 +28,12 @@ public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonB
 /// <summary>
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
 /// formulario por defecto, sin publicar) y va en el <c>If-Match</c> del <c>PUT</c>. <c>PublishBlockers</c> dice por qué no se puede
-/// publicar (<c>legal_texts_required</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
+/// publicar (<c>privacy_notice_required</c>, <c>anonymous_notice_required</c>, <c>terms_required</c>, <c>organization_required</c>,
+/// <c>organization_inactive</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
 /// <c>PublicUrl</c> es el enlace que el tenant comparte. <c>AllowAttachments</c> dice si la página ofrece adjuntos (spec §9.3; apagado
-/// por defecto).
+/// por defecto). <c>Organization</c> es la empresa elegida (null = ninguna; <c>IsActive</c> false si se desactivó después) y
+/// <c>OrganizationOptions</c> las activas del tenant, por nombre: el selector las usa en vez de <c>GET …/companies</c>, que exige
+/// <c>companies.company.read</c> (spec 2026-11-15 §9.3, plan L32).
 /// </summary>
 public sealed record SupportFormSettingsDto(
     int Version,
@@ -41,21 +47,40 @@ public sealed record SupportFormSettingsDto(
     string? IntroText,
     string? SuccessMessage,
     string PublicUrl,
-    IReadOnlyList<string> PublishBlockers);
+    IReadOnlyList<string> PublishBlockers,
+    SupportFormOrganizationDto? Organization,
+    IReadOnlyList<SupportFormOrganizationDto> OrganizationOptions);
+
+/// <summary>A tenant company in the public form settings. <c>DocumentTypeCode</c> ∈ <c>NIT</c>, <c>CC</c>, <c>CE</c>,
+/// <c>PASAPORTE</c>, <c>NIF</c>, <c>NIE</c>, <c>TAX_ID</c>; <c>DocumentNumber</c> is the company's tax id. <c>IsActive</c> false can only
+/// come in <c>Organization</c> (one chosen and deactivated later), never in <c>OrganizationOptions</c>.</summary>
+public sealed record SupportFormOrganizationDto(Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive);
+
+/// <summary>The current version of each legal document, or its example (spec 2026-11-15 §7).</summary>
+public sealed record SupportLegalDocumentsDto(
+    SupportLegalDocumentDto PrivacyNotice, SupportLegalDocumentDto AnonymousNotice, SupportLegalDocumentDto Terms);
 
 /// <summary>
-/// La versión vigente de los textos legales (fase 3, plan F16). Sin ninguna publicada, el texto base de QEP con <c>IsExample</c> en
-/// verdadero, <c>Version</c> 0 y sin autor: la pantalla lo marca como ejemplo y nada se guarda hasta publicar.
+/// One version of a legal document: the current one, an old one or the example (<c>Version</c> 0, <c>IsExample</c>, without
+/// <c>CreatedAt</c> nor <c>CreatedBy</c>). <c>ContentHtml</c> is always sanitized. <c>AuthorizationQuestion</c>, <c>PolicyUrl</c> and
+/// <c>DefaultAuthorizationQuestion</c> are null except on <c>PrivacyNotice</c>; <c>DefaultAuthorizationQuestion</c> is the question
+/// the portal shows when <c>AuthorizationQuestion</c> is null, so the editor offers it without building it in the browser.
 /// </summary>
-public sealed record SupportLegalTextsDto(
+public sealed record SupportLegalDocumentDto(
+    string Kind,
     int Version,
     bool IsExample,
-    string AuthorizationText,
-    string? PolicyText,
+    string ContentHtml,
+    string? AuthorizationQuestion,
     string? PolicyUrl,
-    string? TermsText,
+    string? DefaultAuthorizationQuestion,
     DateTimeOffset? CreatedAt,
     SupportMemberDto? CreatedBy);
+
+/// <summary>The published versions of a kind, newest first, without content; empty if none was published.</summary>
+public sealed record SupportLegalDocumentHistoryDto(string Kind, IReadOnlyList<SupportLegalDocumentVersionItemDto> Versions);
+
+public sealed record SupportLegalDocumentVersionItemDto(int Version, DateTimeOffset CreatedAt, SupportMemberDto CreatedBy);
 
 /// <summary>Una página de la bandeja. <c>Summary</c> es del tenant entero, no de la página ni del filtro: las pestañas cuentan siempre
 /// lo mismo, filtres lo que filtres.</summary>
@@ -69,12 +94,14 @@ public sealed record SupportStatusCountDto(string Status, int Count);
 
 /// <summary>Una fila de la bandeja. <c>RequesterDisplayName</c> lo resuelve el backend (cliente vinculado; si no, nombres y
 /// apellidos; si no, razón social; si no, «NIT número») para que la fila no repita la regla. <c>DueState</c> y
-/// <c>BusinessDaysLeft</c> ya vienen evaluados con el calendario y el umbral del tenant.</summary>
+/// <c>BusinessDaysLeft</c> ya vienen evaluados con el calendario y el umbral del tenant. <c>Priority</c> ∈ <c>Low</c>, <c>Medium</c>,
+/// <c>High</c>, <c>Urgent</c>.</summary>
 public sealed record SupportTicketListItemDto(
     Guid Id,
     string Number,
     string Subject,
     string Status,
+    string Priority,
     string TypeName,
     string RequesterDisplayName,
     SupportMemberDto? Assignee,
@@ -84,13 +111,16 @@ public sealed record SupportTicketListItemDto(
     int? BusinessDaysLeft);
 
 /// <summary>El detalle del ticket. <c>AllowedTransitions</c> sale de la máquina de estados del dominio: el selector de estado no la
-/// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones.</summary>
+/// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones. <c>IssuedPin</c> (fase 4a, plan G3) trae el PIN de consulta sólo
+/// en el <c>201</c> del alta manual anónima, para que el asesor se lo dicte a quien llamó o vino en persona: ese ticket no tiene a dónde
+/// recibirlo. En toda otra respuesta es <c>null</c>.</summary>
 public sealed record SupportTicketDetailDto(
     Guid Id,
     string Number,
     string Subject,
     string Description,
     string Status,
+    string Priority,
     IReadOnlyList<string> AllowedTransitions,
     SupportTicketTypeSnapshotDto Type,
     SupportClockDto Clock,
@@ -113,7 +143,31 @@ public sealed record SupportTicketDetailDto(
     bool IsAnonymous,
     IReadOnlyList<SupportCustomerCandidateDto> CustomerCandidates,
     SupportConsultAccessDto? ConsultAccess,
-    IReadOnlyList<SupportAttachmentDto> Attachments);
+    IReadOnlyList<SupportAttachmentDto> Attachments,
+    IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances,
+    string? IssuedPin);
+
+/// <summary>
+/// One legal acceptance of a public filing (spec 2026-11-15 §7, plan L19), in the order <c>PrivacyNotice</c>, <c>AnonymousNotice</c>,
+/// <c>Terms</c>; an empty list if the ticket has none (a manual ticket), never <c>null</c>. No content: it opens with
+/// <c>GET …/tickets/{id}/legal-acceptances/{kind}</c>. On <c>AnonymousNotice</c>, <c>AcceptedAt</c> means «continued after reading it».
+/// <c>VisitorIp</c> is null on both rows of an anonymous ticket.
+/// </summary>
+public sealed record SupportLegalAcceptanceDto(string Kind, int Version, DateTimeOffset AcceptedAt, string? VisitorIp);
+
+/// <summary>
+/// What the requester was shown and accepted (spec 2026-11-15 §7, plan L20): the sanitized HTML as it was served, the question shown,
+/// the policy URL and the characterization notice (the last three only on <c>PrivacyNotice</c>). Never today's document.
+/// </summary>
+public sealed record SupportLegalAcceptanceSnapshotDto(
+    string Kind,
+    int Version,
+    DateTimeOffset AcceptedAt,
+    string? VisitorIp,
+    string ContentHtml,
+    string? AuthorizationQuestion,
+    string? PolicyUrl,
+    string? CharacterizationText);
 
 /// <summary>Un adjunto del formulario público (plan F37), en el orden en que se adjuntó. El archivo se baja con
 /// <c>GET …/tickets/{id}/attachments/{attachmentId}/download</c>: la pantalla no necesita <c>storage.file.read</c>. Una lista vacía
@@ -176,9 +230,23 @@ public sealed record SupportConversationTicketDto(SupportTicketListItemDto Ticke
 public sealed record SupportTicketTypeSnapshotDto(Guid Id, string Name, int? TermBusinessDays, bool TermIsLegal, bool RequiresFormalResponse);
 
 /// <summary><c>DueState</c> ∈ <c>NoTerm</c>, <c>OnTrack</c>, <c>DueSoon</c>, <c>Overdue</c>, <c>Paused</c>, <c>Finished</c>.
-/// <c>TermIsLegal</c> decide si la pantalla dice «vence el plazo legal» o «vence el objetivo».</summary>
+/// <c>TermIsLegal</c> decide si la pantalla dice «vence el plazo legal» o «vence el objetivo». Fase 4a (plan G9 a G13):
+/// <c>Extension</c> es la prórroga ya hecha (null sin prórroga). <c>MaxExtensionBusinessDays</c> decide si la pantalla ofrece
+/// «Prorrogar» y su tope: es el término del ticket si hoy se puede prorrogar y null si no (ya prorrogado, sin término, esperando al
+/// cliente, vencido, resuelto o cerrado), así la pantalla no repite las reglas. El aviso al solicitante lo manda el asesor como
+/// respuesta (plan G13); <c>Extension</c> sirve para prellenarlo.</summary>
 public sealed record SupportClockDto(
-    DateOnly? DueOn, string DueState, int? BusinessDaysLeft, int? TermBusinessDays, bool TermIsLegal, int PausedBusinessDays);
+    DateOnly? DueOn,
+    string DueState,
+    int? BusinessDaysLeft,
+    int? TermBusinessDays,
+    bool TermIsLegal,
+    int PausedBusinessDays,
+    SupportExtensionDto? Extension,
+    int? MaxExtensionBusinessDays);
+
+/// <summary>La prórroga del ticket. Sin autor: quién la hizo está en la traza, en el evento <c>Extended</c>.</summary>
+public sealed record SupportExtensionDto(int BusinessDays, string Reason, DateTimeOffset ExtendedAt);
 
 /// <summary>Una entrada de la traza, con campos planos y nulos según <c>Kind</c> y los nombres ya resueltos: la pantalla no lee
 /// JSON ni busca miembros. Un miembro o cliente que ya no se encuentra sale como «Sin nombre».</summary>
@@ -195,12 +263,22 @@ public sealed record SupportTicketEventDto(
     SupportCustomerRefDto? Customer,
     Guid? MessageId,
     bool? Follow,
-    string? ReplyChannel);
+    string? ReplyChannel,
+    int? ExtensionBusinessDays,
+    DateOnly? FromDueOn,
+    DateOnly? ToDueOn,
+    string? Reason,
+    string? FromPriority,
+    string? ToPriority);
 
 // Fase 2: MessageId es el mensaje de MessagePinned, MessageReleased, MessageClassified, MessageDismissed y ReplySent; Follow, el nuevo
 // valor de FollowThreadChanged; ReplyChannel, el canal de ReplySent. Planos por la misma razón que los de la fase 1.
+// Fase 4a (plan G11): ExtensionBusinessDays, FromDueOn, ToDueOn y Reason sólo vienen llenos en Extended.
+// Prioridad (spec 2026-11-15 §5.2): FromPriority y ToPriority son los nombres de PriorityChanged, nulos en los demás.
 
-public sealed record SupportMemberDto(Guid Id, string DisplayName);
+/// <summary><c>IsMe</c> (fase 4a, plan G8): si el miembro es quien hace la petición. El SPA no conoce su <c>memberId</c>, y sin este
+/// campo no puede decir «tú» ni ocultar «Asignármelo» en un ticket que ya es suyo. Fuera de una sesión siempre es falso.</summary>
+public sealed record SupportMemberDto(Guid Id, string DisplayName, bool IsMe);
 
 /// <summary><c>IsActive</c> falso: el cliente se desactivó o se fusionó; la pantalla lo marca.</summary>
 public sealed record SupportCustomerRefDto(Guid Id, string Name, bool IsActive);
@@ -301,7 +379,7 @@ public sealed record SupportTicketNotesDto(IReadOnlyList<SupportTicketNoteDto> I
 
 internal static class SupportDtoMapping
 {
-    public static SupportTicketTypeDto ToDto(SupportTicketType type) => new(
+    public static SupportTicketTypeDto ToDto(SupportTicketType type, bool inUse) => new(
         type.Id.Value,
         type.Name,
         type.TermBusinessDays,
@@ -310,7 +388,8 @@ internal static class SupportDtoMapping
         type.IsPublished,
         type.IsActive,
         type.Position,
-        type.Version);
+        type.Version,
+        inUse);
 
     public static SupportSettingsDto ToDto(SupportTenantSettings settings) => new(
         settings.DueSoonBusinessDays,

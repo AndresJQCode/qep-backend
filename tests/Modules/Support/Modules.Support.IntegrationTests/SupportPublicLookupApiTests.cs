@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
@@ -47,6 +48,58 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
         var raw = await BodyAsync(response);
         Assert.DoesNotContain("Gómez", raw, StringComparison.Ordinal);
         Assert.DoesNotContain(filed.Pin, raw, StringComparison.Ordinal);
+    }
+
+    // Plan L26 (spec 2026-11-15 §9.1): the consult carries the term in business days, null for a type without term.
+    [Theory]
+    [InlineData("Petición general", 15, true)]
+    [InlineData("Soporte técnico", null, false)]
+    public async Task TheConsultCarriesTheTermBusinessDays(string typeName, int? termBusinessDays, bool termIsLegal)
+    {
+        var rig = await RigAsync();
+        var filed = await FileNamedAsync(rig, typeId: await TypeIdNamedAsync(rig.Factory, rig.TenantId.ToString(), typeName));
+
+        var response = await LookupAsync(rig, filed.Number, filed.Pin);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var ticket = await response.Content.ReadFromJsonAsync<SupportPublicTicketDto>(Ct);
+        Assert.NotNull(ticket);
+        Assert.Equal(termBusinessDays, ticket.TermBusinessDays);
+        Assert.Equal(termIsLegal, ticket.TermIsLegal);
+        Assert.True((await JsonAsync(response)).TryGetProperty("termBusinessDays", out _));
+    }
+
+    // Plan L26: the term is the ticket's snapshot of its type, never the live type. Changing the type afterwards from the console does
+    // not change what the requester sees.
+    [Fact]
+    public async Task TheTermIsTheTicketsSnapshot()
+    {
+        var rig = await RigAsync();
+        var typeId = await TypeIdNamedAsync(rig.Factory, rig.TenantId.ToString(), "Petición general");
+        var filed = await FileNamedAsync(rig, typeId: typeId);
+        using var console = CreateClient(rig.Factory, Guid.CreateVersion7().ToString(), rig.TenantId.ToString(), SupportPermissions.SettingsManage);
+        var changed = await PutAsync(
+            console,
+            $"{SupportUrl(rig.TenantId.ToString())}/settings/ticket-types/{typeId}",
+            new
+            {
+                name = "Petición general",
+                termBusinessDays = 30,
+                termIsLegal = false,
+                requiresFormalResponse = true,
+                isPublished = true,
+                isActive = true,
+            },
+            version: 1);
+        Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+
+        var response = await LookupAsync(rig, filed.Number, filed.Pin);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var ticket = await response.Content.ReadFromJsonAsync<SupportPublicTicketDto>(Ct);
+        Assert.NotNull(ticket);
+        Assert.Equal(15, ticket.TermBusinessDays);
+        Assert.True(ticket.TermIsLegal);
     }
 
     // Spec 2026-11-15 §5.4 and Review Focus 5: an internal note never reaches the requester's consult page.
@@ -349,10 +402,12 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
     }
 
     // Cada radicado llega desde su propia IP: el cupo de radicar es de 5 cada 10 minutos.
-    private static async Task<(string Number, string Pin)> FileNamedAsync(Rig rig, string? visitorIp = null, string? email = null)
+    private static async Task<(string Number, string Pin)> FileNamedAsync(
+        Rig rig, string? visitorIp = null, string? email = null, Guid? typeId = null)
     {
         using var client = VisitorClient(rig.Factory, visitorIp ?? NextIp());
-        var response = await PostJsonAsync(client, PublicUrl(rig.Slug, "/tickets"), NamedBody(rig.TypeId, rig.CityId, email ?? Email()));
+        var response = await PostJsonAsync(
+            client, PublicUrl(rig.Slug, "/tickets"), NamedBody(typeId ?? rig.TypeId, rig.CityId, email ?? Email()));
         Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
         var body = await JsonAsync(response);
         return (body.GetProperty("number").GetString()!, body.GetProperty("pin").GetString()!);

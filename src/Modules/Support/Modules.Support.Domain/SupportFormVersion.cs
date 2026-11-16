@@ -49,6 +49,11 @@ public sealed partial class SupportFormVersion
 
     public string? SuccessMessage { get; private set; }
 
+    /// <summary>Spec 2026-11-15 §9.3 (plan L29): the tenant company that answers on the portal (name, document type and number). Real FK
+    /// to <c>companies.companies</c> with <c>ON DELETE RESTRICT</c>, written by hand in <c>AddSupportFormOrganization</c>: a company
+    /// some version chose cannot be deleted. Null = none chosen; required to publish (D-8).</summary>
+    public Guid? OrganizationCompanyId { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     /// <summary>La membresía que guardó la versión. Entra en <c>SupportUserReferenceProbe</c>.</summary>
@@ -70,12 +75,18 @@ public sealed partial class SupportFormVersion
         string? introText,
         string? successMessage,
         Guid createdBy,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Guid? organizationCompanyId = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(version);
         if (id == Guid.Empty || createdBy == Guid.Empty)
         {
             throw new ArgumentException("A form version needs its id and its author.", nameof(id));
+        }
+
+        if (organizationCompanyId == Guid.Empty)
+        {
+            throw new ArgumentException("The organization company cannot be the empty UUID.", nameof(organizationCompanyId));
         }
 
         return new SupportFormVersion
@@ -92,6 +103,7 @@ public sealed partial class SupportFormVersion
             AccentColor = ValidAccentColor(accentColor),
             IntroText = OptionalText(introText, IntroTextMaxLength, nameof(introText)),
             SuccessMessage = OptionalText(successMessage, SuccessMessageMaxLength, nameof(successMessage)),
+            OrganizationCompanyId = organizationCompanyId,
             CreatedAt = now,
             CreatedBy = createdBy,
         };

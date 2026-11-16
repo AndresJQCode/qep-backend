@@ -21,7 +21,10 @@ public sealed record TicketRequesterRequest(
     string? CountryCode,
     string? Address);
 
-/// <summary>El cuerpo de <c>POST /tickets</c>, todo anulable para que su ausencia sea un <c>validation.failed</c> con el campo.</summary>
+/// <summary>El cuerpo de <c>POST /tickets</c>, todo anulable para que su ausencia sea un <c>validation.failed</c> con el campo.
+/// Fase 4a (plan G1): <c>Anonymous</c> en <c>true</c> radica un anónimo, sin cliente ni solicitante y con <c>ReplyChannel</c>
+/// <c>Portal</c>; <c>null</c> es <c>false</c>. <c>Priority</c> es la excepción a «todo ausente es un error»: sin ella el ticket nace
+/// en <c>Medium</c> (spec 2026-11-15 §5.3).</summary>
 public sealed record CreateTicketRequest(
     Guid? TicketTypeId,
     string? Subject,
@@ -30,8 +33,11 @@ public sealed record CreateTicketRequest(
     string? ReplyChannel,
     Guid? CustomerId,
     TicketRequesterRequest? Requester,
-    Guid? AssigneeMemberId);
+    Guid? AssigneeMemberId,
+    bool? Anonymous = null,
+    string? Priority = null);
 
+/// <param name="Priority">El nombre exacto del cuerpo; <c>null</c> es <c>Medium</c>.</param>
 public sealed record CreateTicketCommand(
     Guid TenantId,
     Guid TicketTypeId,
@@ -41,7 +47,9 @@ public sealed record CreateTicketCommand(
     string ReplyChannel,
     Guid? CustomerId,
     TicketRequesterRequest? Requester,
-    Guid? AssigneeMemberId)
+    Guid? AssigneeMemberId,
+    bool Anonymous = false,
+    string? Priority = null)
     : ICommand<SupportTicketDetailDto>
 {
     /// <summary>El país del tenant, con que se juzga el tipo de documento si el solicitante no trae el suyo. No viaja por el cable:
@@ -57,7 +65,9 @@ public sealed record CreateTicketCommand(
         request.ReplyChannel ?? string.Empty,
         request.CustomerId,
         request.Requester,
-        request.AssigneeMemberId);
+        request.AssigneeMemberId,
+        request.Anonymous ?? false,
+        request.Priority);
 }
 
 /// <summary>
@@ -77,7 +87,22 @@ public sealed class CreateTicketValidator : AbstractValidator<CreateTicketComman
             .WithMessage("ManualMedium must be Phone, InPerson, Email, Letter or Other.");
         RuleFor(command => command.ReplyChannel)
             .Must(text => SupportTicketRules.TryParseExact<SupportReplyChannel>(text, out _))
-            .WithMessage("ReplyChannel must be Thread, WhatsAppTemplate or Email.");
+            .WithMessage("ReplyChannel must be Thread, WhatsAppTemplate, Email or Portal.");
+        RuleFor(command => command.Priority).MustBeAPriority();
+        // Fase 4a (plan G1): el anónimo se responde sólo por la página de consulta y no lleva cliente ni solicitante; sin anónimo,
+        // Portal no es un canal (no habría PIN que dictar).
+        When(command => command.Anonymous, () =>
+        {
+            RuleFor(command => command.CustomerId).Null().WithMessage("An anonymous ticket cannot have a customer.");
+            RuleFor(command => command.Requester).Null().WithMessage("An anonymous ticket cannot have a requester.");
+            RuleFor(command => command.ReplyChannel)
+                .Equal(nameof(SupportReplyChannel.Portal))
+                .WithMessage("An anonymous ticket is answered only through Portal.");
+        });
+        Unless(command => command.Anonymous, () =>
+            RuleFor(command => command.ReplyChannel)
+                .NotEqual(nameof(SupportReplyChannel.Portal))
+                .WithMessage("Portal is only for anonymous tickets."));
         RuleFor(command => command.AssigneeMemberId).NotEqual(Guid.Empty);
         RuleFor(command => command.CustomerId).NotEqual(Guid.Empty);
         When(command => command.Requester is not null, () =>
@@ -227,6 +252,24 @@ internal static class SupportTextRules
                 : $"The text cannot exceed {max} characters.");
 }
 
+/// <summary>La prioridad que elige el asesor al crear (spec 2026-11-15 §5.3): opcional, y si viene, uno de los cuatro nombres exactos.
+/// Las fábricas del dominio no acotan el enum, así que nada fuera de esos nombres pasa de acá.</summary>
+internal static class SupportPriorityRules
+{
+    public const string Message = "Priority must be Low, Medium, High or Urgent.";
+
+    public static IRuleBuilderOptions<T, string?> MustBeAPriority<T>(this IRuleBuilder<T, string?> rule) =>
+        rule.Must(text => text is null || SupportTicketRules.TryParseExact<SupportTicketPriority>(text, out _)).WithMessage(Message);
+
+    /// <summary>Sin prioridad, <c>Medium</c>. Se llama después de validar.</summary>
+    public static SupportTicketPriority Parse(string? text) =>
+        text is null
+            ? SupportTicketPriority.Medium
+            : SupportTicketRules.TryParseExact<SupportTicketPriority>(text, out var priority)
+                ? priority
+                : throw new InvalidOperationException($"Priority '{text}' passed validation but is not a ticket priority.");
+}
+
 /// <summary>
 /// El alta manual (spec §8.3, plan D6–D8 y D14). Orden: autorización → membresía de quien actúa → validador → solicitante →
 /// provisión → tipo activo → cliente (y su contacto de respaldo en la foto) → responsable → canal → transacción → candado del
@@ -237,6 +280,8 @@ internal static class SupportTextRules
 /// Fase 3 (plan F26): todo ticket manual nace con PIN. Con canal <c>Email</c>, después de confirmar sale el correo de apertura; con
 /// <c>WhatsAppTemplate</c> o <c>Thread</c> no sale nada (no tiene conversación, y mandar a un celular nuevo pide elegir conexión). El
 /// envío no cambia el ticket ni su versión (<see cref="SupportOpeningDelivery"/>).
+/// Fase 4a (plan G1–G3): con <c>Anonymous</c> salta el solicitante, el cliente y el canal (el validador ya exigió que no vinieran y
+/// que el canal fuera <c>Portal</c>); no sale nada, y el PIN vuelve una sola vez en <see cref="SupportTicketDetailDto.IssuedPin"/>.
 /// </summary>
 public sealed class CreateTicketHandler(
     IExecutionContext executionContext,
@@ -261,7 +306,8 @@ public sealed class CreateTicketHandler(
     : ICommandHandler<CreateTicketCommand, SupportTicketDetailDto>
 {
     private static readonly string[] CreatedFields =
-        ["ticketTypeId", "subject", "description", "manualMedium", "replyChannel", "customerId", "requester", "assigneeMemberId"];
+        ["ticketTypeId", "subject", "description", "manualMedium", "replyChannel", "customerId", "requester", "assigneeMemberId",
+         "isAnonymous", "priority"];
 
     public async Task<SupportTicketDetailDto> HandleAsync(CreateTicketCommand command, CancellationToken cancellationToken)
     {
@@ -281,12 +327,16 @@ public sealed class CreateTicketHandler(
             throw new InvalidOperationException("ManualMedium or ReplyChannel passed validation but is not a known value.");
         }
 
-        var requester = TicketRequesterNormalizer.Normalize(validated.Requester, tenantCountry);
-        SupportTicketRules.EnsureRequester(validated.CustomerId, requester);
+        // Un anónimo (plan G1) no tiene solicitante, cliente ni otro canal que la página: el validador ya lo exigió.
+        var requester = validated.Anonymous ? null : TicketRequesterNormalizer.Normalize(validated.Requester, tenantCountry);
+        if (!validated.Anonymous)
+        {
+            SupportTicketRules.EnsureRequester(validated.CustomerId, requester);
+        }
 
         await provisioner.EnsureAsync(validated.TenantId, cancellationToken);
         var type = await SupportTicketRules.EnsureTypeAsync(types, validated.TenantId, validated.TicketTypeId, cancellationToken);
-        if (validated.CustomerId is { } customerId)
+        if (!validated.Anonymous && validated.CustomerId is { } customerId)
         {
             var customer = await SupportTicketRules.EnsureCustomerAsync(
                 tenantModules, customers, validated.TenantId, customerId, cancellationToken);
@@ -295,7 +345,10 @@ public sealed class CreateTicketHandler(
         }
 
         await SupportTicketRules.EnsureAssigneeAsync(members, validated.TenantId, validated.AssigneeMemberId, cancellationToken);
-        SupportTicketRules.EnsureReplyChannel(channel, requester);
+        if (!validated.Anonymous)
+        {
+            SupportTicketRules.EnsureReplyChannel(channel, requester);
+        }
         var slug = await SupportOpeningDelivery.SlugAsync(tenantDirectory, validated.TenantId, cancellationToken);
 
         var pin = SupportPin.Generate();
@@ -323,6 +376,7 @@ public sealed class CreateTicketHandler(
                 type,
                 validated.Subject,
                 validated.Description,
+                SupportPriorityRules.Parse(validated.Priority),
                 medium,
                 channel,
                 validated.CustomerId,
@@ -330,7 +384,8 @@ public sealed class CreateTicketHandler(
                 validated.AssigneeMemberId,
                 actor,
                 now,
-                context.Clock);
+                context.Clock,
+                validated.Anonymous);
             tickets.Add(ticket);
             // La clave de consulta nace con el ticket, tenga o no a dónde mandarse: sólo su hash, nunca en la auditoría ni en la traza.
             access = SupportTicketAccess.Issue(ticket.Id, validated.TenantId, pinHasher.Hash(pin), now);
@@ -352,6 +407,9 @@ public sealed class CreateTicketHandler(
         await openingDelivery.DeliverAsync(
             ticket, access, pin, SupportOpeningSender.ConsultUrl(publicOptions, slug, ticket.DisplayNumber), context.Now,
             cancellationToken);
-        return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
+        var detail = await composer.ComposeDetailAsync(ticket, context, cancellationToken);
+        // Plan G3 (owner, P-1): el anónimo no tiene a dónde recibir el PIN, así que viaja una sola vez, en esta respuesta, para que el
+        // asesor se lo dicte. Ninguna otra lectura lo trae, y nunca va a la auditoría ni a la traza.
+        return ticket.IsAnonymous ? detail with { IssuedPin = pin } : detail;
     }
 }

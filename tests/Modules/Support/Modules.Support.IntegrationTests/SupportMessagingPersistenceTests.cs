@@ -246,6 +246,7 @@ public sealed class SupportMessagingPersistenceTests(SharedSupportHost sharedHos
         var type = (await scope.ServiceProvider.GetRequiredService<ISupportTicketTypeRepository>().ListAsync(tenant, Ct))[0];
         return SupportTicket.CreateFromConversation(
             SupportTicketId.New(), tenant, number, type, $"Asunto {number}", "Lo escribió por el hilo.",
+            SupportTicketPriority.Medium,
             new SupportConversationRef(conversation, channel), customerId, Person, null, Guid.CreateVersion7(), Now, Clock);
     }
 

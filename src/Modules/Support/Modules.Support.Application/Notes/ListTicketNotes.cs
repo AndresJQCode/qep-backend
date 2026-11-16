@@ -35,6 +35,7 @@ public sealed class ListTicketNotesHandler(
     ISupportTicketRepository tickets,
     ISupportTicketNoteRepository notes,
     ISupportMemberDirectory members,
+    ISupportViewer viewer,
     IValidator<ListTicketNotesQuery> validator)
     : IQueryHandler<ListTicketNotesQuery, SupportTicketNotesDto>
 {
@@ -49,7 +50,7 @@ public sealed class ListTicketNotesHandler(
         // One more than the page, to know whether another follows without counting.
         var page = await notes.ListAsync(query.TenantId, ticketId, before, query.Take + 1, cancellationToken);
         var visible = page.Take(query.Take).ToList();
-        var items = await SupportNoteDtos.ComposeAsync(members, query.TenantId, visible, cancellationToken);
+        var items = await SupportNoteDtos.ComposeAsync(members, viewer, query.TenantId, visible, cancellationToken);
         var next = page.Count > query.Take && visible.Count > 0
             ? new SupportMessageCursorDto(SupportMessageCursor.Encode(visible[^1].CreatedAt, visible[^1].Id))
             : null;

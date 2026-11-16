@@ -183,7 +183,7 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
-    private static void MapTicketPost(RouteGroupBuilder group, string action, Delegate handler) =>
+    private static RouteHandlerBuilder MapTicketPost(RouteGroupBuilder group, string action, Delegate handler) =>
         group.MapPost($"/tickets/{{ticketId:guid}}/{action}", handler)
             .RequireAuthorization(SupportPermissions.Manage)
             .Produces<SupportTicketDetailDto>()
@@ -305,6 +305,13 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Spec 2026-11-15 §7 (plan L20): what the requester was shown and accepted when filing. Seeing the ticket is enough.
+        group.MapGet("/tickets/{ticketId:guid}/legal-acceptances/{kind}", GetLegalAcceptanceSnapshotAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportLegalAcceptanceSnapshotDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         // Fase 3 (plan F37): la URL firmada de un adjunto del formulario público. Con ver el ticket alcanza: no pide storage.file.read.
         group.MapGet("/tickets/{ticketId:guid}/attachments/{attachmentId:guid}/download", DownloadAttachmentAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -314,8 +321,13 @@ public static class SupportEndpoints
 
         MapTicketAction<ChangeTicketStatusRequest>(group, "status", ChangeStatusAsync);
         MapTicketAction<AssignTicketRequest>(group, "assignee", AssignAsync);
+        // Fase 4a (plan G7): «Asignármelo», sin cuerpo; el responsable sale de la sesión.
+        MapTicketPost(group, "take", TakeAsync);
+        // Fase 4a (plan G9): la prórroga única del plazo.
+        MapTicketPost(group, "extension", ExtendAsync).Accepts<ExtendTicketRequest>("application/json");
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
         MapTicketAction<LinkTicketCustomerRequest>(group, "customer", LinkCustomerAsync);
+        MapTicketAction<ChangeTicketPriorityRequest>(group, "priority", ChangePriorityAsync);
 
         group.MapGet("/assignees", ListAssigneesAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -373,6 +385,16 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        // Fase 4a (plan G4): sólo un tipo sin tickets; uno usado responde 422 support.ticket_type.in_use y se desactiva con el PUT.
+        group.MapDelete("/settings/ticket-types/{typeId:guid}", DeleteTicketTypeAsync)
+            .RequireAuthorization(SupportPermissions.SettingsManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
 
     private static void MapSettings(RouteGroupBuilder group)
@@ -391,7 +413,7 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
-        // Fase 3 (plan F14 a F16): el formulario público y los textos legales son versionados e insert-only. El If-Match es el número
+        // Fase 3 (plan F14 a F16): el formulario público y los documentos legales son versionados e insert-only. El If-Match es el número
         // de la versión vigente, y 0 vale: es la de un tenant que todavía no guardó nada.
         group.MapGet("/settings/public-form", GetFormSettingsAsync)
             .RequireAuthorization(SupportPolicies.SettingsView)
@@ -408,16 +430,31 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
-        group.MapGet("/settings/legal-texts", GetLegalTextsAsync)
+        // Spec 2026-11-15 §7: the three legal documents of the portal, each versioned on its own. {kind} is privacy-notice,
+        // anonymous-notice or terms; the handler answers 404 for any other. The phase 3 legal-texts routes are gone (no consumer).
+        group.MapGet("/settings/legal-documents", GetLegalDocumentsAsync)
             .RequireAuthorization(SupportPolicies.SettingsView)
-            .Produces<SupportLegalTextsDto>()
+            .Produces<SupportLegalDocumentsDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
-        group.MapPost("/settings/legal-texts", PublishLegalTextsAsync)
-            .RequireAuthorization(SupportPermissions.SettingsManage)
-            .Accepts<PublishLegalTextsRequest>("application/json")
-            .Produces<SupportLegalTextsDto>(StatusCodes.Status201Created)
+        group.MapGet("/settings/legal-documents/{kind}/versions", GetLegalDocumentHistoryAsync)
+            .RequireAuthorization(SupportPolicies.SettingsView)
+            .Produces<SupportLegalDocumentHistoryDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapGet("/settings/legal-documents/{kind}/versions/{version:int}", GetLegalDocumentVersionAsync)
+            .RequireAuthorization(SupportPolicies.SettingsView)
+            .Produces<SupportLegalDocumentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/settings/legal-documents/{kind}", PublishLegalDocumentAsync)
+            .RequireAuthorization(SupportPermissions.SettingsManage)
+            .Accepts<PublishLegalDocumentRequest>("application/json")
+            .Produces<SupportLegalDocumentDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
@@ -445,25 +482,32 @@ public static class SupportEndpoints
         return Results.Ok(form);
     }
 
-    private static async Task<IResult> GetLegalTextsAsync(
-        Guid tenantId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
-    {
-        var texts = await dispatcher.QueryAsync(new GetLegalTextsQuery(tenantId), cancellationToken);
-        SetETag(httpContext, texts.Version);
-        return Results.Ok(texts);
-    }
+    private static async Task<IResult> GetLegalDocumentsAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetLegalDocumentsQuery(tenantId), cancellationToken));
 
-    private static async Task<IResult> PublishLegalTextsAsync(
+    private static async Task<IResult> GetLegalDocumentHistoryAsync(
+        Guid tenantId, string kind, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetLegalDocumentHistoryQuery(tenantId, kind), cancellationToken));
+
+    private static async Task<IResult> GetLegalDocumentVersionAsync(
+        Guid tenantId, string kind, int version, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetLegalDocumentVersionQuery(tenantId, kind, version), cancellationToken));
+
+    private static async Task<IResult> PublishLegalDocumentAsync(
         Guid tenantId,
-        PublishLegalTextsRequest request,
+        string kind,
+        PublishLegalDocumentRequest request,
         HttpContext httpContext,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        var expectedVersion = RequireVersion(httpContext, "legal texts", allowZero: true);
-        var texts = await dispatcher.SendAsync(PublishLegalTextsCommand.From(tenantId, request, expectedVersion), cancellationToken);
-        SetETag(httpContext, texts.Version);
-        return Results.Created($"/api/v1/tenants/{tenantId}/support/settings/legal-texts", texts);
+        var expectedVersion = RequireVersion(httpContext, "legal document", allowZero: true);
+        var document = await dispatcher.SendAsync(
+            PublishLegalDocumentCommand.From(tenantId, kind, request, expectedVersion), cancellationToken);
+        SetETag(httpContext, document.Version);
+        return Results.Created(
+            $"/api/v1/tenants/{tenantId}/support/settings/legal-documents/{kind}/versions/{document.Version}", document);
     }
 
     private static void SetETag(HttpContext httpContext, long version) =>
@@ -476,12 +520,14 @@ public static class SupportEndpoints
         string? assignee,
         string? due,
         string? search,
+        string? priority,
+        string? sort,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
         int page = 1,
         int pageSize = ListTicketsQuery.DefaultPageSize) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, page, pageSize), cancellationToken));
+            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, priority, sort, page, pageSize), cancellationToken));
 
     private static async Task<IResult> CreateTicketAsync(
         Guid tenantId, CreateTicketRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -493,6 +539,10 @@ public static class SupportEndpoints
     private static async Task<IResult> GetTicketAsync(
         Guid tenantId, Guid ticketId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetTicketQuery(tenantId, ticketId), cancellationToken));
+
+    private static async Task<IResult> GetLegalAcceptanceSnapshotAsync(
+        Guid tenantId, Guid ticketId, string kind, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetLegalAcceptanceSnapshotQuery(tenantId, ticketId, kind), cancellationToken));
 
     private static async Task<IResult> DownloadAttachmentAsync(
         Guid tenantId, Guid ticketId, Guid attachmentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -519,6 +569,21 @@ public static class SupportEndpoints
         Results.Ok(await dispatcher.SendAsync(
             AssignTicketCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
 
+    private static async Task<IResult> TakeAsync(
+        Guid tenantId, Guid ticketId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new TakeTicketCommand(tenantId, ticketId, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ExtendAsync(
+        Guid tenantId,
+        Guid ticketId,
+        ExtendTicketRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            ExtendTicketCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
     private static async Task<IResult> ChangeTypeAsync(
         Guid tenantId,
         Guid ticketId,
@@ -538,6 +603,16 @@ public static class SupportEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             LinkTicketCustomerCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ChangePriorityAsync(
+        Guid tenantId,
+        Guid ticketId,
+        ChangeTicketPriorityRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            ChangeTicketPriorityCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
 
     private static async Task<IResult> ListAssigneesAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -567,6 +642,14 @@ public static class SupportEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             UpdateTicketTypeCommand.From(tenantId, typeId, request, RequireVersion(httpContext, "ticket type")), cancellationToken));
+
+    private static async Task<IResult> DeleteTicketTypeAsync(
+        Guid tenantId, Guid typeId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteTicketTypeCommand(tenantId, typeId, RequireVersion(httpContext, "ticket type")), cancellationToken);
+        return Results.NoContent();
+    }
 
     private static async Task<IResult> ReorderTicketTypesAsync(
         Guid tenantId, ReorderTicketTypesRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

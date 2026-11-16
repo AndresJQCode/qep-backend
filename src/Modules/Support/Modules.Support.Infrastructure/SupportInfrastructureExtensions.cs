@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
+using Modules.Support.Infrastructure.Legal;
 using Modules.Support.Infrastructure.Persistence;
 
 namespace Modules.Support.Infrastructure;
@@ -38,9 +39,12 @@ public static class SupportInfrastructureExtensions
         // Fase 3, formulario público (plan F7, F8, F14, F16, F17).
         services.AddScoped<ISupportTicketAccessRepository, SupportTicketAccessRepository>();
         services.AddScoped<ISupportFormRepository, SupportFormRepository>();
-        services.AddScoped<ISupportLegalTextRepository, SupportLegalTextRepository>();
-        services.AddScoped<ISupportConsentRepository, SupportConsentRepository>();
         services.AddSingleton<ISupportPinHasher, Pbkdf2SupportPinHasher>();
+        // Spec 2026-11-15 §6.3 (plan L2): HtmlSupportSanitizer is stateless, it builds its HtmlSanitizer on each call; the decorator caches
+        // its output by the SHA-256 of the input (final review S1), bounded and per pod (MultiReplicaInventory).
+        services.AddSingleton<ISupportHtmlSanitizer>(_ => new CachingSupportHtmlSanitizer(new HtmlSupportSanitizer()));
+        services.AddScoped<ISupportLegalDocumentRepository, SupportLegalDocumentRepository>();
+        services.AddScoped<ISupportLegalAcceptanceRepository, SupportLegalAcceptanceRepository>();
         // Plan F35 y F36: los adjuntos del formulario, y la sonda que le dice al barrido de Storage cuáles ya reclamó un ticket.
         services.AddScoped<ISupportTicketAttachmentRepository, SupportTicketAttachmentRepository>();
         services.AddScoped<ISupportTicketNoteRepository, SupportTicketNoteRepository>();

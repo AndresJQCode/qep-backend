@@ -32,6 +32,28 @@ public static class SupportErrorCodes
 
     public const string TicketTypeOrderIncomplete = "support.ticket_type.order_incomplete";
 
+    /// <summary>Fase 4a (plan G4/G5): un tipo con algún ticket, en cualquier estado, no se borra; se desactiva.</summary>
+    public const string TicketTypeInUse = "support.ticket_type.in_use";
+
+    // Fase 4a (spec §7.2, plan G10): la prórroga es única, antes de que venza y no pasa del término inicial. Las guardas del dominio
+    // van en este orden: not_editable, extension_already_used, extension_no_term, extension_clock_stopped, extension_overdue y
+    // extension_too_long.
+
+    /// <summary>El ticket ya usó su única prórroga.</summary>
+    public const string ExtensionAlreadyUsed = "support.ticket.extension_already_used";
+
+    /// <summary>Un ticket de un tipo sin término no tiene plazo que prorrogar.</summary>
+    public const string ExtensionNoTerm = "support.ticket.extension_no_term";
+
+    /// <summary>Con el reloj detenido (esperando al cliente) no se prorroga (owner, P-4).</summary>
+    public const string ExtensionClockStopped = "support.ticket.extension_clock_stopped";
+
+    /// <summary>El plazo ya venció: el mismo día del vencimiento todavía se puede, el siguiente ya no.</summary>
+    public const string ExtensionOverdue = "support.ticket.extension_overdue";
+
+    /// <summary>La prórroga pasa del término inicial, o sea que el plazo total pasaría del doble (owner, P-3).</summary>
+    public const string ExtensionTooLong = "support.ticket.extension_too_long";
+
     // Fase 2, Mensajería (spec §8.1 a §8.3).
     public const string ConversationNotFound = "support.conversation.not_found";
 
@@ -86,16 +108,15 @@ public static class SupportErrorCodes
 
     public const string PublicCaptchaInvalid = "support.public.captcha_invalid";
 
-    /// <summary>La versión de los textos legales que aceptó la persona ya no es la vigente: la pantalla recarga (plan F17).</summary>
+    /// <summary>Alguna versión de los documentos legales que aplican al camino (aviso de privacidad o anónimo, y términos) ya no es la
+    /// vigente: la pantalla recarga (spec 2026-11-15 §9, plan L14).</summary>
     public const string PublicLegalTextsOutdated = "support.public.legal_texts_outdated";
 
     public const string PublicFormOutdated = "support.public.form_outdated";
 
+    /// <summary>El <c>ErrorCode</c> de la regla del validador sobre <c>AcceptsDataPolicy</c>. Por HTTP sale como
+    /// <c>422 validation.failed</c> con <c>errors.AcceptsDataPolicy</c>: <c>ApiExceptionHandler</c> no publica el código (plan L15).</summary>
     public const string PublicConsentRequired = "support.public.consent_required";
-
-    /// <summary>Triage #2 del Bloque F: el ticket ya tiene su consentimiento (<c>IX_consents_ticket</c>, traducido por nombre, 409). Hoy no
-    /// se alcanza: el consentimiento se escribe sólo con un ticket recién creado, en la misma transacción.</summary>
-    public const string PublicConsentDuplicate = "support.public.consent_duplicate";
 
     public const string PublicDepartmentNotFound = "support.public.department_not_found";
 
@@ -127,19 +148,50 @@ public static class SupportErrorCodes
     /// <summary>El adjunto no es de ese ticket del tenant (consola, plan F37).</summary>
     public const string AttachmentNotFound = "support.attachment.not_found";
 
-    /// <summary>Publicar el formulario exige una versión de los textos legales (plan F15).</summary>
+    /// <summary>Publicar el formulario exige una versión de cada documento legal (spec 2026-11-15 §7; el bloqueador dice cuál falta).</summary>
     public const string FormLegalTextsRequired = "support.form.legal_texts_required";
 
     public const string FormNoPublishedTypes = "support.form.no_published_types";
 
+    /// <summary>Spec 2026-11-15 §9.3 (plan L31): a <c>PUT</c> that changes the company to one that does not exist, is of another tenant
+    /// or is inactive.</summary>
+    public const string FormOrganizationUnavailable = "support.form.organization_unavailable";
+
+    /// <summary>Plan L32, D-8: publishing without a chosen company.</summary>
+    public const string FormOrganizationRequired = "support.form.organization_required";
+
+    /// <summary>Plan L32: publishing with the chosen company deactivated.</summary>
+    public const string FormOrganizationInactive = "support.form.organization_inactive";
+
     /// <summary>Traducido por nombre de índice (<c>IX_form_versions_tenant_version</c>): dos guardados de la misma versión.</summary>
     public const string FormVersionTaken = "support.form.version_taken";
 
-    /// <summary>Traducido por nombre de índice (<c>IX_legal_text_versions_tenant_version</c>).</summary>
-    public const string LegalTextsVersionTaken = "support.legal_texts.version_taken";
+    // Spec 2026-11-15 (legal documents of the portal, §10).
 
-    /// <summary>Los textos legales necesitan la política como texto o como URL (spec §9.5).</summary>
-    public const string LegalTextsPolicyRequired = "support.legal_texts.policy_required";
+    /// <summary>After sanitizing, the document has no visible text (422).</summary>
+    public const string LegalDocumentsContentEmpty = "support.legal_documents.content_empty";
+
+    /// <summary>After sanitizing, the document has more than <c>SupportLegalDocumentVersion.ContentMaxLength</c> characters (422).</summary>
+    public const string LegalDocumentsContentTooLong = "support.legal_documents.content_too_long";
+
+    /// <summary>The <c>{kind}</c> of the route is not <c>privacy-notice</c>, <c>anonymous-notice</c> or <c>terms</c> (404).</summary>
+    public const string LegalDocumentsKindNotFound = "support.legal_documents.kind_not_found";
+
+    public const string LegalDocumentsVersionNotFound = "support.legal_documents.version_not_found";
+
+    /// <summary>Translated by index name (<c>IX_legal_document_versions_tenant_kind_version</c>): two publications at once (409).</summary>
+    public const string LegalDocumentsVersionTaken = "support.legal_documents.version_taken";
+
+    /// <summary>The ticket has no acceptance of that kind (404).</summary>
+    public const string LegalAcceptanceNotFound = "support.legal_acceptance.not_found";
+
+    /// <summary>The <c>ErrorCode</c> of the validator's rule on <c>AcceptsTerms</c>, like <see cref="PublicConsentRequired"/>. Over HTTP
+    /// it is <c>422 validation.failed</c> with <c>errors.AcceptsTerms</c>: <c>ApiExceptionHandler</c> does not publish the code.</summary>
+    public const string PublicTermsRequired = "support.public.terms_required";
+
+    /// <summary>Translated by index name (<c>IX_legal_acceptances_ticket_kind</c>, 409). Unreachable today: the acceptances are written
+    /// only with a ticket just created, in the same transaction.</summary>
+    public const string PublicLegalAcceptanceDuplicate = "support.public.legal_acceptance_duplicate";
 
     /// <summary>Un ticket anónimo sólo se responde por la página de consulta (plan F12).</summary>
     public const string ReplyPortalOnly = "support.reply.portal_only";

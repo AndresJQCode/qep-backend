@@ -446,6 +446,10 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt) => Actions.Add(action);
 
+    public void PublishWithDetails(
+        Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details) => Actions.Add(action);
+
     public void PublishByIntegration(
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
         Actions.Add(action);
@@ -456,6 +460,12 @@ internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt)
+    {
+    }
+
+    public void PublishWithDetails(
+        Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details)
     {
     }
 
@@ -1068,6 +1078,13 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         }
     }
 
+    // Es SQL: lo cubre la integración (BuyerLoginOrderLinkApiTests).
+    public Task<int> LinkStoreOrdersByBillingEmailAsync(
+        Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public void ForceBuyerAccountWrite(Order order) => throw new NotSupportedException();
+
     public Task<Order?> FindByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken)
     {
@@ -1268,10 +1285,16 @@ internal sealed class StubQuotationProductLookup(
 {
     public int FindManyCalls { get; private set; }
 
+    public IReadOnlyCollection<Guid> LastRequestedIds { get; private set; } = [];
+
+    public Guid? LastTenantId { get; private set; }
+
     public Task<IReadOnlyDictionary<Guid, QuotationVariantRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
     {
         FindManyCalls++;
+        LastRequestedIds = productIds;
+        LastTenantId = tenantId;
         return Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantRef>>(
             productIds.Where(products.ContainsKey).Distinct().ToDictionary(id => id, id => products[id]));
     }
@@ -1283,6 +1306,23 @@ internal sealed class StubQuotationCompanyLookup(
     public Task<QuotationCompanyRef?> FindAsync(
         Guid tenantId, Guid companyId, CancellationToken cancellationToken) =>
         Task.FromResult(companies.GetValueOrDefault(companyId));
+}
+
+/// <summary>Las cuentas de comprador que existen (spec 2026-11-15 §4); cualquier otra se responde como borrada. Cuenta
+/// las búsquedas por id para que una prueba afirme que un pedido sin cuenta no consulta a Buyers.</summary>
+internal sealed class StubQuotationBuyerAccountLookup(params QuotationBuyerAccountRef[] accounts) : IQuotationBuyerAccountLookup
+{
+    public int FindCalls { get; private set; }
+
+    public Task<QuotationBuyerAccountRef?> FindAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(accounts.FirstOrDefault(account => account.Id == accountId));
+    }
+
+    public Task<QuotationBuyerAccountRef?> FindVerifiedByEmailAsync(string email, CancellationToken cancellationToken) =>
+        Task.FromResult(accounts.FirstOrDefault(
+            account => string.Equals(account.Email, email.Trim(), StringComparison.OrdinalIgnoreCase)));
 }
 
 /// <summary>Los nombres del DANE en <paramref name="cityNames"/> y los de Coordinadora en

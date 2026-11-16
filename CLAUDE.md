@@ -895,6 +895,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   sesión válida (por eso la contraseña actual mala es `422 store.buyer.password_incorrect`).
 - **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Open && PaymentStatus == PaymentPending && PaymentProofs.Count == 0 && !IsPrepared && !IsInvoiced` (D5 y spec 2026-11-10, `Order.CanBeCancelledByBuyer`: un pedido con cualquier comprobante, preparado o facturado ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
 - **`Order.LinkBuyerAccount` no sube `Version`, pero `Version` es token de concurrencia.** El enlace del alta diferida es invisible para el `If-Match` de la consola, y aun así su `UPDATE` lleva `WHERE version = …`: si otra escritura ganó, `BuyerOrderGateway.LinkAsync` relee y reintenta una vez (sólo si sigue vacío). El checkout resuelve la sesión del comprador siempre que llega el header, no sólo con `updateProfile`; `ScalarTextAsync` de las pruebas de Store devuelve `""` para un `NULL`.
+- **El enlace del pedido de la tienda con la cuenta del comprador lo deciden el correo de facturación y la marca `buyer_account_set_by_member`** (spec 2026-11-15). El checkout y el inicio de sesión enlazan por correo verificado, sólo en pedidos de origen `Store`. Cuando un asesor cambia o quita la cuenta (`PUT`/`DELETE …/orders/{id}/buyer-account`, `Order.SetBuyerAccountByMember`) la marca queda en `true`, también al quitar sobre un pedido sin cuenta, y con la marca en `true` ningún camino automático (`LinkBuyerAccount`, `LinkStoreOrdersByBillingEmailAsync`) toca la cuenta. Un camino automático nuevo respeta la marca, o deshace la decisión del asesor en el siguiente inicio de sesión del comprador. El correo del detalle lo resuelve `IQuotationBuyerAccountLookup` (adaptador en Bootstrapper): una cuenta borrada deja el id en el pedido y el detalle responde `buyerAccount: null`. La auditoría (`quotation.order.buyer_account_changed`) lleva sólo los dos ids en `changedFields`, nunca correos; el historial del pedido (`BuyerAccountChanged`, sólo la decisión del asesor) sí nombra los correos, a propósito (owner, 2026-11-15). No «unifiques» las dos reglas.
 - **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9; Shopify desde el spec 2026-11-14). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`, y en un pedido de Shopify lleva «Shopify #N» y la dirección cruda, nunca la nota del comprador, y no viaja a Shopify. `BuyerNotes` la escriben `CreateFromStore`, la importación de Shopify (`CreateExternal`) y la sincronización de Shopify, y el asesor **sólo** en pedidos de Shopify (`UpdateExternalBuyerNotes`, que responde `order.order.source_invalid` en cualquier otro origen; `EditExternalShippingParty` no la toca). En un pedido de la tienda pública sigue intocable: un método nuevo que la edite ahí le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill), y los de Shopify importados antes del spec 2026-11-14 también: su nota sigue dentro de `Notes`.
 - **`support.ticket.view` es una política, no un permiso: exige `support.ticket.read` o `support.ticket.manage`** (plan de soporte
   fase 1, D5; el owner fijó que quien tenga cualquiera de los dos ve todos los tickets del tenant). Vive en `SupportPolicies.TicketView`,
@@ -905,8 +906,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
 - **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
   `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id`,
-  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by`, `legal_text_versions.created_by` y
-  `ticket_notes.author_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
+  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by`, `legal_text_versions.created_by`,
+  `legal_document_versions.created_by` y `ticket_notes.author_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
   referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
   `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
   nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
@@ -924,6 +925,26 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   Reemplazó a `support.ticket.follow_closed`, que ya no existe. Responder se permite en cualquier estado. Los caminos del sistema no pasan
   por esa guarda: el worker del hilo vincula entrantes (`SupportThreadFollower`), la fusión y el borrado de clientes son SQL crudo, y
   clasificar desde «sin clasificar» o «De ninguno» (`MessageClassified`, `MessageDismissed`) tampoco la toman.
+- **Un tipo de ticket sin tickets sí se borra, pero la regla la cierra la FK, no la consulta previa** (fase 4a, plan G5).
+  `FK_tickets_ticket_types_ticket_type_id` es `ON DELETE RESTRICT` y `SupportUnitOfWork` la traduce **por nombre** y SQLSTATE: `23001`
+  (borrar un tipo usado) → `422 support.ticket_type.in_use`, `23503` (radicar o cambiar a un tipo recién borrado) →
+  `support.ticket_type.unavailable`. La pregunta de `DeleteTicketTypeHandler` (`AnyOfTypeAsync`) es sólo la respuesta amable: sola, un
+  `DELETE` y un alta a la vez dejan un ticket con `ticket_type_id` huérfano. No la cambies por la consulta. Lo amarran
+  `TheForeignKeyTurnsADeleteOfAUsedTypeInto422InUse` y `TheForeignKeyTurnsATicketOnADeletedTypeInto422Unavailable`.
+- **La prórroga se guarda en días hábiles y entra en `SupportTicket.DueOnFor`, el único cálculo del vencimiento** (fase 4a, plan G9).
+  `DueOn` = radicación + término + `ExtensionBusinessDays` + `PausedBusinessDays`; así una pausa posterior y un cambio de tipo la siguen
+  contando (G12: cambiar de tipo conserva los días). Un camino nuevo que recalcule el vencimiento pasa por `DueOnFor` o pierde la
+  prórroga sin error. Las guardas de `Extend` van en un orden fijo (`not_editable`, `extension_already_used`, `extension_no_term`,
+  `extension_clock_stopped`, `extension_overdue`, `extension_too_long`) y `MaxExtensionBusinessDays` usa las mismas cinco primeras: el
+  DTO no las repite. La auditoría `support.ticket.extended` lleva nombres de campo, **nunca el motivo**. `Extended` es el último valor
+  de `SupportTicketEventKind` y un pod viejo no lo lee (EF hace `Enum.Parse`): el detalle de un ticket prorrogado da 500 ahí durante el
+  rollout, y al reanudar o cambiar el tipo el código viejo reescribe `due_on` sin la prórroga. Nadie prorroga hasta que no quede un
+  pod viejo, y un rollback después de la primera prórroga no se hace (README, «Gestión y plazos de Soporte»). El doble del término se
+  mide contra el término vigente al prorrogar: un cambio de tipo a uno más corto conserva la prórroga (P-5), no la recortes.
+- **`IssuedPin` sólo viaja en el `201` del alta manual anónima** (fase 4a, plan G3). `CreateTicketHandler` lo pone con `with` sobre el
+  detalle compuesto; el composer siempre lo deja en `null`, así que el `GET`, las acciones y la auditoría nunca lo llevan. Un camino nuevo
+  que componga el detalle no lo copia: es la única vez que el asesor puede dictárselo al solicitante. Lo amarra
+  `AnAnonymousManualTicketReturnsItsPinOnlyOnCreation`.
 - **El teléfono del cliente vinculado va al fijo de la foto del solicitante, nunca al celular** (owner, 2026-11-15, P3;
   `TicketRequesterNormalizer.WithCustomerContact`). `customers.phone_e164` puede ser fijo, y una plantilla de WhatsApp a un fijo la
   rechaza Meta: la respuesta queda `Failed` sin que el alta lo advierta. El celular de la foto sale sólo del solicitante o del `wa_id`
@@ -1030,11 +1051,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   lea la sesión. Lo que toca CSRF, cookie o CORS va en `SupportPublicRealAuthHost` (precedente `ShopifyApiHarness.WithRealAuthentication`;
   lo amarra `ThePublicGroupIgnoresTheSessionCookieWithRealAuth`). Ningún handler del grupo lee `IExecutionContext` ni la cookie: el
   tenant sale del slug (`SupportPublicResolver`), nunca de la sesión de quien navega.
-- **`support.consents` y `support.legal_text_versions` son prueba legal: sólo se insertan** (spec §9.5, plan F16 y F17). Ningún método de
-  dominio los edita ni los borra, `consents` no tiene FK (ni al ticket ni a la versión: guarda su foto del texto, que es lo que prueba) y
-  el `Down` de `AddSupportPublicForm` no las borra. **Ese `Down` no se corre en producción**: el rollback es revertir el código. Una
-  purga futura de tickets tiene que dejar los consentimientos fuera, y una migración nueva de Support que las toque tampoco puede
-  borrarlas en su `Down`.
+- **`support.legal_document_versions` y `support.legal_acceptances` son prueba legal: sólo se insertan** (spec 2026-11-15 §5). Ningún
+  método de dominio las edita ni las borra, `legal_acceptances` no tiene FK (ni al ticket ni a la versión: guarda su foto del HTML
+  servido, que es lo que prueba) y el `Down` de `AddSupportLegalDocuments` no las borra. **Ese `Down` no se corre en producción**: el
+  rollback es revertir el código. Una purga futura de tickets tiene que dejar las aceptaciones fuera, y una migración nueva de Support que
+  las toque tampoco puede borrarlas en su `Down`. Lo mismo vale para `support.consents` y `support.legal_text_versions` de la fase 3, que
+  conservan sus filas.
+- **Todo HTML de un documento legal pasa por `ISupportHtmlSanitizer`**: al publicar, al servir `GET /form` y en la foto. Un camino nuevo
+  que escriba `content_html` sin el puerto abre XSS en el portal público. `legal_text_versions` y `consents` siguen mapeadas sin
+  escritor: quitarlas del modelo hace que EF las borre en la siguiente migración.
 - **El PIN de consulta nunca sale a logs, auditoría, eventos ni trazas: sólo se guarda su hash** (`ticket_access.pin_hash`, PBKDF2).
   Viaja dos veces y nada más: en la respuesta del radicado y en el envío al destino registrado del ticket. Un log nuevo en el formulario
   público lleva el id del ticket y el tipo de la excepción, nunca el PIN, el radicado ni el destinatario; lo amarra
@@ -1043,6 +1068,18 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   ese radicado 15 minutos, y mirar el bloqueo y anotar el intento van con la fila tomada (`LockByNumberAsync`, `SELECT … FOR UPDATE`):
   sin el candado, intentos a la vez leen el mismo contador, se pisan y el quinto fallo no bloquea (`ConcurrentWrongPinsStillLockTheTicket`). Un camino
   nuevo que lea o escriba la clave (otra forma de consulta, un reenvío por otro canal) toma la misma fila y nunca desbloquea.
+- **El reintento del radicado público se reconoce por `clientRequestId` antes de Turnstile y bajo el candado del contador** (spec
+  2026-11-15 §9.2). No muevas la búsqueda después de Turnstile: el token ya se gastó en el primer intento y el reintento fallaría con
+  `captcha_invalid`. Un reintento no reenvía el correo; si el PIN no salió por ningún canal, emite uno nuevo y el viejo deja de servir.
+  Con el correo de apertura todavía en vuelo (destino `Email` y nada anotado en `ticket_access`) no rota: invalidaría el PIN que va en el
+  correo. Ese «en vuelo» vence a los 10 minutos de `pin_issued_at` (`OpeningDeliveryGrace`, plan L33): después rota, porque el proceso
+  murió entre confirmar y anotar. La clave es UUID v4 (D-10): otra versión es `422`. La búsqueda va siempre filtrada por tenant
+  (`FindByClientRequestAsync`), y la clave no se audita ni va a `ticket_events`.
+- **`support.form_versions.organization_company_id` tiene FK real a `companies.companies`** (`ON DELETE RESTRICT`, a mano en la
+  migración `AddSupportFormOrganization`, como `pos.cash_sessions`): una empresa que alguna versión del formulario público eligió no se
+  borra, sólo se desactiva (`422 companies.company.in_use`). Soporte la lee por `ISupportOrganizationDirectory` (Bootstrapper), nunca
+  referenciando Companies (`SupportDoesNotReferenceCompanies`). Es obligatoria para publicar (D-8): una siembra de prueba que publica un
+  formulario por la consola tiene que elegir una empresa activa del tenant (`SupportPublicHarness.SeedCompanyAsync`).
 - **`uploadKey` es el único vínculo entre la subida anónima de un adjunto y quien la abrió** (plan F32). Es un `Guid.NewGuid()` (v4) que
   Soporte genera, devuelve una vez y Storage guarda como `OwnerId` del archivo `SupportTicket`; completar y radicar exigen el par
   `(fileId, uploadKey)`. No lo cambies por un v7 (`Guid.CreateVersion7`, el de los ids de Storage): se adivina por la hora y cualquiera

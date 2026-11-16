@@ -201,16 +201,23 @@ public sealed class CustomerMergeAcrossModulesApiTests
     private static Task<Guid> LoanCustomerAsync(string connectionString, Guid loanId) =>
         ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM loans.loans WHERE id = @id", ("id", loanId));
 
-    // Soporte: el número sigue al último del tenant para no chocar con el índice único (tenant_id, number); no hay FK al tipo.
+    // Soporte: el número sigue al último del tenant para no chocar con el índice único (tenant_id, number). Desde la fase 4a
+    // support.tickets tiene FK a support.ticket_types, así que el tipo se siembra primero (con nombre único por el índice del tenant).
     private static Task<int> InsertSupportTicketAsync(string connectionString, Guid ticketId, Guid tenantId, Guid customerId) =>
         ExecuteAsync(connectionString,
             """
+            WITH type AS (
+                INSERT INTO support.ticket_types (id, tenant_id, name, term_business_days, term_is_legal, requires_formal_response,
+                    is_published, is_active, position, created_at, updated_at, version)
+                VALUES (gen_random_uuid(), @tenant, 'Queja ' || gen_random_uuid(), 15, true, true, true, true, 1, now(), now(), 1)
+                RETURNING id)
             INSERT INTO support.tickets (id, tenant_id, number, ticket_type_id, type_name, term_is_legal, requires_formal_response,
                 subject, description, intake, reply_channel, status, customer_id, received_at, received_on, last_event_ordinal,
                 created_at, updated_at, version)
-            VALUES (@id, @tenant, (SELECT coalesce(max(number), 0) + 1 FROM support.tickets WHERE tenant_id = @tenant), gen_random_uuid(),
+            SELECT @id, @tenant, (SELECT coalesce(max(number), 0) + 1 FROM support.tickets WHERE tenant_id = @tenant), type.id,
                 'Queja', true, true, 'Pedido incompleto', 'Faltó una caja.', 'Manual', 'Email', 'Open', @customer, now(), CURRENT_DATE, 1,
-                now(), now(), 1)
+                now(), now(), 1
+            FROM type
             """,
             ("id", ticketId), ("tenant", tenantId), ("customer", customerId));
 

@@ -252,11 +252,19 @@ public sealed class BuyerSignupRequestedWorkerTests
 
             return Task.CompletedTask;
         }
+
+        public Task<int> LinkByEmailAsync(
+            Guid tenantId, Guid accountId, string normalizedEmail, CancellationToken cancellationToken) =>
+            Task.FromResult(0);
     }
 
     private sealed class ThrowingLinker : IBuyerOrderLinker
     {
         public Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("quotations down");
+
+        public Task<int> LinkByEmailAsync(
+            Guid tenantId, Guid accountId, string normalizedEmail, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("quotations down");
     }
 

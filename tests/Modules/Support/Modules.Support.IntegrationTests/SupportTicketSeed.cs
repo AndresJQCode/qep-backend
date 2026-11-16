@@ -35,6 +35,7 @@ internal static class SupportTicketSeed
         var number = await services.GetRequiredService<ISupportTicketNumberGenerator>().NextAsync(tenantId, Ct);
         var ticket = SupportTicket.CreateFromConversation(
             SupportTicketId.New(), tenantId, number, type, "Pedido sin llegar", "El pedido no ha llegado.",
+            SupportTicketPriority.Medium,
             new SupportConversationRef(conversationId, channel), customerId,
             new TicketRequester("Ana", "Gómez", null, null, null, null, "+573001234567", null, "CO", null),
             null, actorMemberId ?? Guid.CreateVersion7(), followSince, Clock);

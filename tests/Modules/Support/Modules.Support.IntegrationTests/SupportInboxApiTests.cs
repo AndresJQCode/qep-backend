@@ -188,6 +188,115 @@ public sealed class SupportInboxApiTests(ClockedSupportHost host) : IClassFixtur
         Assert.Equal(["Due", "PageSize"], await ErrorKeysAsync(response));
     }
 
+    [Fact]
+    public async Task FilteringByPriorityKeepsOnlyThoseLevels()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var high = await CreateAtAsync(scenario, "High", day: 13);
+        await CreateAtAsync(scenario, "Medium", day: 14);
+        var urgent = await CreateAtAsync(scenario, "Urgent", day: 15);
+        await CreateAtAsync(scenario, "Low", day: 16);
+
+        var page = await ListAsync(scenario, "priority=High,Urgent");
+
+        Assert.Equal([urgent, high], Ids(page));
+        Assert.Equal(2, page.GetProperty("total").GetInt32());
+        Assert.Equal(["Urgent", "High"], page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("priority").GetString()));
+    }
+
+    // Spec §5.3: Urgent, High, Medium, Low; dentro de cada nivel, el más reciente primero. Las fechas van al revés de la prioridad
+    // para que ni el orden por recibido ni uno alfabético por nombre den esta lista.
+    [Fact]
+    public async Task SortingByPriorityPutsUrgentFirstThenNewest()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var high = await CreateAtAsync(scenario, "High", day: 13);
+        var olderUrgent = await CreateAtAsync(scenario, "Urgent", day: 14);
+        var newerUrgent = await CreateAtAsync(scenario, "Urgent", day: 15);
+        var medium = await CreateAtAsync(scenario, "Medium", day: 16);
+        var low = await CreateAtAsync(scenario, "Low", day: 17);
+
+        var page = await ListAsync(scenario, "sort=priority");
+
+        Assert.Equal([newerUrgent, olderUrgent, high, medium, low], Ids(page));
+    }
+
+    // Empates de nivel y de hora: el id desempata, así ninguna página repite ni pierde un ticket.
+    [Fact]
+    public async Task SortingByPriorityPagesWithoutRepeats()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        await CreateAtAsync(scenario, "High", day: 13);
+        await CreateAtAsync(scenario, "High", day: 13);
+        await CreateAtAsync(scenario, "High", day: 13);
+        await CreateAtAsync(scenario, "Urgent", day: 13);
+        var whole = Ids(await ListAsync(scenario, "sort=priority"));
+
+        var first = await ListAsync(scenario, "sort=priority&pageSize=2&page=1");
+        var second = await ListAsync(scenario, "sort=priority&pageSize=2&page=2");
+
+        Assert.Equal(4, whole.Count);
+        Assert.Equal(4, first.GetProperty("total").GetInt32());
+        Assert.Equal(whole, Ids(first).Concat(Ids(second)));
+        Assert.Equal("Urgent", first.GetProperty("items")[0].GetProperty("priority").GetString());
+    }
+
+    [Fact]
+    public async Task WithoutSortTheInboxStaysNewestFirst()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var urgent = await CreateAtAsync(scenario, "Urgent", day: 13);
+        var medium = await CreateAtAsync(scenario, "Medium", day: 14);
+        var low = await CreateAtAsync(scenario, "Low", day: 15);
+
+        var unsorted = await ListAsync(scenario, string.Empty);
+        var received = await ListAsync(scenario, "sort=received");
+
+        Assert.Equal([low, medium, urgent], Ids(unsorted));
+        Assert.Equal([low, medium, urgent], Ids(received));
+    }
+
+    [Fact]
+    public async Task AnUnknownPriorityOrSortIs422()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+
+        var unknown = await scenario.Client.GetAsync($"{scenario.Url}/tickets?priority=Foo&sort=due", Ct);
+        var lowercase = await scenario.Client.GetAsync($"{scenario.Url}/tickets?priority=High,urgent", Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, unknown.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(unknown));
+        Assert.Equal(["Priority", "Sort"], await ErrorKeysAsync(unknown));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, lowercase.StatusCode);
+        Assert.Equal(["Priority"], await ErrorKeysAsync(lowercase));
+    }
+
+    [Fact]
+    public async Task TheSummaryIgnoresThePriorityFilter()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        await CreateAtAsync(scenario, "Urgent", day: 13);
+        await CreateAtAsync(scenario, "Low", day: 14);
+
+        var all = await ListAsync(scenario, string.Empty);
+        var urgent = await ListAsync(scenario, "priority=Urgent");
+
+        Assert.Equal(1, urgent.GetProperty("total").GetInt32());
+        Assert.Equal(
+            all.GetProperty("summary").GetRawText(),
+            urgent.GetProperty("summary").GetRawText());
+        Assert.Equal(2, urgent.GetProperty("summary").GetProperty("byStatus")[0].GetProperty("count").GetInt32());
+    }
+
+    /// <summary>Un alta con la prioridad dada, radicada el día <paramref name="day"/> de noviembre a las 10:00 de Bogotá.</summary>
+    private async Task<Guid> CreateAtAsync(SupportTicketScenario scenario, string priority, int day)
+    {
+        host.Clock.UtcNow = At(11, day);
+        var body = Body(await scenario.TypeIdAsync("Petición general"));
+        body["priority"] = priority;
+        return Id(await scenario.CreateAsync(body));
+    }
+
     private static async Task<JsonElement> ListAsync(SupportTicketScenario scenario, string query)
     {
         var response = await scenario.Client.GetAsync($"{scenario.Url}/tickets?{query}", Ct);

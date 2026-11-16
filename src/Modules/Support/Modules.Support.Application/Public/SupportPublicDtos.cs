@@ -6,7 +6,7 @@ namespace Modules.Support.Application;
 /// <summary>
 /// Lo que la página necesita para dibujar el formulario. <see cref="Fields"/> sale de <c>SupportFormFields</c> y
 /// <see cref="DocumentTypesByCountry"/> de la tabla compartida (<c>CO</c>, <c>ES</c> y <c>*</c> para el resto): la pantalla no conoce
-/// ninguna de las dos reglas. <see cref="FormVersion"/> y <see cref="SupportPublicLegalDto.Version"/> vuelven en el radicado para
+/// ninguna de las dos reglas. <see cref="FormVersion"/> y la versión de cada documento de <see cref="Legal"/> vuelven en el radicado para
 /// detectar que algo cambió mientras la persona escribía. <see cref="Attachments"/> dice si se reciben adjuntos y con qué límites.
 /// </summary>
 public sealed record SupportPublicFormDto(
@@ -20,7 +20,16 @@ public sealed record SupportPublicFormDto(
     IReadOnlyDictionary<string, IReadOnlyList<string>> DocumentTypesByCountry,
     SupportPublicLegalDto Legal,
     int FormVersion,
-    SupportPublicAttachmentsDto Attachments);
+    SupportPublicAttachmentsDto Attachments,
+    SupportPublicOrganizationDto? Organization);
+
+/// <summary>
+/// The tenant company that answers (spec 2026-11-15 §9.3, D-6): <c>Company.Name</c>, <c>Company.DocumentType.ToWire()</c> (<c>NIT</c>,
+/// <c>CC</c>, <c>CE</c>, <c>PASAPORTE</c>, <c>NIF</c>, <c>NIE</c>, <c>TAX_ID</c>) and <c>Company.TaxId</c>. Null = the tenant chose
+/// none. A deactivated company is still shown. <c>GET /form</c> takes it from the published version, <c>GET /consult</c> from the
+/// current one even if unpublished.
+/// </summary>
+public sealed record SupportPublicOrganizationDto(string Name, string DocumentTypeCode, string DocumentNumber);
 
 /// <summary>
 /// Los adjuntos del formulario (spec §9.3; owner, 2026-11-15). Con <see cref="Allowed"/> en false la página no dibuja el control: el
@@ -37,7 +46,8 @@ public sealed record SupportPublicAttachmentsDto(bool Allowed, int MaxFiles, lon
 /// ruta la página no tendría de dónde sacar el nombre, el logo ni el color. <see cref="AccentColor"/> es el de la versión vigente del
 /// formulario, publicada o no; null si no hay ninguna, y la página usa su color por defecto.
 /// </summary>
-public sealed record SupportPublicConsultDto(string TenantName, string? LogoUrl, string? AccentColor);
+public sealed record SupportPublicConsultDto(
+    string TenantName, string? LogoUrl, string? AccentColor, SupportPublicOrganizationDto? Organization);
 
 /// <summary>Un tipo activo y publicado, en el orden de la consola.</summary>
 public sealed record SupportPublicTypeDto(Guid Id, string Name, int? TermBusinessDays);
@@ -52,9 +62,25 @@ public sealed record SupportPublicFieldsDto(
 
 public sealed record SupportPublicFieldDto(string Key, bool Required);
 
-/// <summary>La versión vigente de los textos legales: lo que la persona acepta al radicar.</summary>
+/// <summary>
+/// The current version of the three legal documents (spec 2026-11-15 §6.3 and §9): what the visitor reads and accepts when filing. Each
+/// <c>ContentHtml</c> arrives sanitized and is painted as HTML; the portal does not sanitize or transform it again. Each <c>Version</c>
+/// goes back in the filing. <see cref="CharacterizationNotice"/> is plain text, fixed and the same for every tenant, for the foot of the
+/// requester's data step.
+/// </summary>
 public sealed record SupportPublicLegalDto(
-    int Version, string AuthorizationText, string? PolicyText, string? PolicyUrl, string? TermsText);
+    SupportPublicPrivacyNoticeDto PrivacyNotice,
+    SupportPublicLegalDocumentDto AnonymousNotice,
+    SupportPublicLegalDocumentDto Terms,
+    string CharacterizationNotice);
+
+/// <summary>The privacy notice. <see cref="AuthorizationQuestion"/> is already resolved: the tenant's or «¿Autorizas a {tenant name}
+/// para el tratamiento de los datos personales suministrados en este formulario?». <see cref="PolicyUrl"/> null means the step does
+/// not show «Política de tratamiento de datos».</summary>
+public sealed record SupportPublicPrivacyNoticeDto(int Version, string ContentHtml, string AuthorizationQuestion, string? PolicyUrl);
+
+/// <summary>The anonymous notice or the terms: version and sanitized HTML.</summary>
+public sealed record SupportPublicLegalDocumentDto(int Version, string ContentHtml);
 
 public sealed record SupportPublicGeoListDto(IReadOnlyList<SupportPublicGeoItemDto> Items);
 
@@ -62,9 +88,13 @@ public sealed record SupportPublicGeoItemDto(Guid Id, string Name);
 
 /// <summary>
 /// El radicado del formulario. Todo anulable, para que su ausencia sea un 422 <c>validation.failed</c> con el campo. Con
-/// <see cref="Anonymous"/> no viaja solicitante ni consentimiento. <see cref="LegalTextVersion"/> y <see cref="FormVersion"/> son las
-/// que la página cargó: si cambiaron, 422 y la página recarga. <see cref="Attachments"/> son los archivos ya completados con
-/// <c>available</c>, hasta cinco (plan F35); también para un anónimo.
+/// <see cref="Anonymous"/> no viaja solicitante. Cada camino manda las versiones de sus documentos (spec 2026-11-15 §9, plan L16): con
+/// datos <see cref="PrivacyNoticeVersion"/> y <see cref="TermsVersion"/>, anónimo <see cref="AnonymousNoticeVersion"/> y
+/// <see cref="TermsVersion"/>; la del otro camino va null. <see cref="AcceptsTerms"/> en los dos; <see cref="AcceptsDataPolicy"/> se
+/// ignora en el anónimo. Las versiones y <see cref="FormVersion"/> son las que la página cargó: si cambiaron, 422 y la página recarga.
+/// <see cref="Attachments"/> son los archivos ya completados con <c>available</c>, hasta cinco (plan F35); también para un anónimo.
+/// <see cref="ClientRequestId"/> es opcional (spec 2026-11-15 §9.2, plan L27): un UUID por intento de radicar, el mismo en cada
+/// reintento; con él, un reintento responde el ticket ya radicado en vez de crear otro.
 /// </summary>
 public sealed record SupportPublicFileRequest(
     Guid? TicketTypeId,
@@ -73,10 +103,14 @@ public sealed record SupportPublicFileRequest(
     bool Anonymous,
     SupportPublicRequesterRequest? Requester,
     bool AcceptsDataPolicy,
-    int? LegalTextVersion,
+    int? PrivacyNoticeVersion,
+    int? AnonymousNoticeVersion,
+    bool AcceptsTerms,
+    int? TermsVersion,
     int? FormVersion,
     string? TurnstileToken,
-    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null);
+    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null,
+    Guid? ClientRequestId = null);
 
 /// <summary>Un adjunto del radicado: el par que devolvió <c>POST …/attachments</c>. Sin el <c>uploadKey</c> que lo abrió, el
 /// <c>fileId</c> no sirve (plan F32).</summary>
@@ -117,9 +151,20 @@ public sealed record SupportPublicRequesterRequest(
     string? Email);
 
 /// <summary>El radicado. <see cref="Pin"/> viaja sólo aquí, una vez: después sólo se puede reenviar uno nuevo al correo registrado.
-/// <see cref="PinEmailed"/> dice si el correo de apertura salió; la pantalla lo muestra igual.</summary>
+/// <see cref="PinEmailed"/> dice si el correo de apertura salió; la pantalla lo muestra igual. <see cref="ReceivedAt"/>,
+/// <see cref="TermBusinessDays"/> y <see cref="TermIsLegal"/> son la fecha de radicación y la foto del término del tipo en el ticket
+/// (spec 2026-11-15 §9.1, plan L26): editar el tipo después no los cambia. <see cref="TermBusinessDays"/> null = el tipo no tiene
+/// término. <see cref="Pin"/> null sólo en un reintento cuyo PIN ya salió por correo (plan L28).</summary>
 public sealed record SupportPublicFiledDto(
-    string Number, string Pin, DateOnly? DueOn, string? SuccessMessage, bool PinEmailed, string ConsultUrl);
+    string Number,
+    string? Pin,
+    DateTimeOffset ReceivedAt,
+    DateOnly? DueOn,
+    int? TermBusinessDays,
+    bool TermIsLegal,
+    string? SuccessMessage,
+    bool PinEmailed,
+    string ConsultUrl);
 
 /// <summary>La consulta de un ticket: radicado (con o sin prefijo), PIN y el token de Turnstile. El PIN viaja en el cuerpo y no en la
 /// URL, para que no quede en logs (plan F9).</summary>
@@ -132,6 +177,7 @@ public sealed record SupportPublicResendPinRequest(string? Number, string? Turns
 /// Lo que la consulta muestra (plan F13): el radicado, el tipo, el estado, la radicación, el vencimiento y cómo va el plazo
 /// (<c>DueState</c> como en la consola; <c>TermIsLegal</c> decide si la página dice «plazo legal» u «objetivo»), y todas las
 /// respuestas que salieron, de cualquier canal. Nada más del expediente: ni el solicitante, ni el asunto, ni la traza.
+/// <c>TermBusinessDays</c> es la foto del término en el ticket (spec 2026-11-15 §9.1, plan L26); null = el tipo no tiene término.
 /// </summary>
 public sealed record SupportPublicTicketDto(
     string Number,
@@ -141,6 +187,7 @@ public sealed record SupportPublicTicketDto(
     DateOnly? DueOn,
     string? DueState,
     bool TermIsLegal,
+    int? TermBusinessDays,
     IReadOnlyList<SupportPublicReplyDto> Replies);
 
 /// <summary>Una respuesta que salió: su texto, cuándo y por qué canal (<c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>,

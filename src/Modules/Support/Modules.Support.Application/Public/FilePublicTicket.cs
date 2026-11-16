@@ -8,8 +8,8 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Support.Application;
 
-/// <param name="VisitorIp">La IP del visitante (<c>RemoteIpAddress</c>, ya corregida por <c>X-Real-IP</c>): para Turnstile y para el
-/// consentimiento. Nunca para un anónimo.</param>
+/// <param name="VisitorIp">La IP del visitante (<c>RemoteIpAddress</c>, ya corregida por <c>X-Real-IP</c>): para Turnstile y para las
+/// aceptaciones legales del camino con datos. Nunca se guarda para un anónimo.</param>
 public sealed record FilePublicTicketCommand(
     string? TenantSlug,
     string VisitorIp,
@@ -19,10 +19,14 @@ public sealed record FilePublicTicketCommand(
     bool Anonymous,
     SupportPublicRequesterRequest? Requester,
     bool AcceptsDataPolicy,
-    int? LegalTextVersion,
+    int? PrivacyNoticeVersion,
+    int? AnonymousNoticeVersion,
+    bool AcceptsTerms,
+    int? TermsVersion,
     int? FormVersion,
     string? TurnstileToken,
-    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null)
+    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null,
+    Guid? ClientRequestId = null)
     : ICommand<SupportPublicFiledDto>
 {
     /// <summary>La versión vigente del formulario del tenant, con la que se juzgan los campos. No viaja por el cable: la pone el handler
@@ -41,15 +45,19 @@ public sealed record FilePublicTicketCommand(
             request.Anonymous,
             request.Requester,
             request.AcceptsDataPolicy,
-            request.LegalTextVersion,
+            request.PrivacyNoticeVersion,
+            request.AnonymousNoticeVersion,
+            request.AcceptsTerms,
+            request.TermsVersion,
             request.FormVersion,
             request.TurnstileToken,
-            request.Attachments);
+            request.Attachments,
+            request.ClientRequestId);
     }
 }
 
 /// <summary>
-/// El radicado del formulario público (plan F18 a F20). Qué campos se piden y cuáles son obligatorios lo dice
+/// El radicado del formulario público (plan F18 a F20; spec 2026-11-15 §9, plan L15 y L16). Qué campos se piden y cuáles son obligatorios lo dice
 /// <see cref="SupportFormFields"/> con la versión del formulario: este validador no repite la regla, sólo la aplica. Un campo que el
 /// formulario oculta no se valida (y el handler no lo guarda). Las claves del mapa <c>errors</c> son las del cuerpo. Mide los textos
 /// recortados, como se guardan.
@@ -57,6 +65,14 @@ public sealed record FilePublicTicketCommand(
 public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTicketCommand>
 {
     private const string Colombia = "CO";
+
+    /// <summary>Owner decision D-10 (2026-11-15): the idempotency key is a random RFC 9562 v4 UUID, what the portal's
+    /// <c>crypto.randomUUID()</c> gives, like the public upload keys (<see cref="SupportPublicUploads.KeyVersion"/>). A time-ordered one
+    /// (v7) could be guessed from the moment of the filing.</summary>
+    internal const int ClientRequestIdVersion = 4;
+
+    /// <summary>Whether <paramref name="key"/> can be a client request id: not empty and v4.</summary>
+    internal static bool IsClientRequestId(Guid key) => key != Guid.Empty && key.Version == ClientRequestIdVersion;
 
     public FilePublicTicketValidator(ISupportCountries countries, ISupportPhoneNormalizer phones)
     {
@@ -67,6 +83,17 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
         RuleFor(command => command.Subject).MustFit(1, SupportTicket.SubjectMaxLength);
         RuleFor(command => command.Description).MustFit(1, SupportTicket.DescriptionMaxLength);
         RuleFor(command => command.FormVersion).NotNull();
+        // Plan L27 and owner decision D-10: optional, but when present a v4 UUID; the empty one or another version is a bug of the portal.
+        RuleFor(command => command.ClientRequestId)
+            .Must(key => key is not { } value || IsClientRequestId(value))
+            .WithMessage("The client request id must be a random (version 4) UUID.");
+        // Spec 2026-11-15 §9 (plan L15 y L16): los dos caminos aceptan los términos. Por HTTP sale como validation.failed con
+        // errors.AcceptsTerms: ApiExceptionHandler no publica el ErrorCode.
+        RuleFor(command => command.TermsVersion).NotNull();
+        RuleFor(command => command.AcceptsTerms)
+            .Equal(true)
+            .WithErrorCode(SupportErrorCodes.PublicTermsRequired)
+            .WithMessage("The terms and conditions must be accepted.");
         // Plan F34 y F35: hasta cinco, cada uno con su par completo y sin repetir. Que existan y estén disponibles lo mira el handler,
         // con la misma respuesta para todos los casos.
         RuleFor(command => command.Attachments)
@@ -74,15 +101,25 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
             .WithMessage(
                 $"Up to {SupportPublicAttachmentRules.MaxFiles} different attachments, each with its fileId and uploadKey.");
 
+        // Plan L16: cada camino manda la versión de su aviso y no la del otro. AcceptsDataPolicy se ignora en el anónimo.
         When(command => command.Anonymous, () =>
+        {
             RuleFor(command => command.Requester)
                 .Null()
-                .WithMessage("An anonymous ticket cannot carry requester data."));
+                .WithMessage("An anonymous ticket cannot carry requester data.");
+            RuleFor(command => command.AnonymousNoticeVersion).NotNull();
+            RuleFor(command => command.PrivacyNoticeVersion)
+                .Null()
+                .WithMessage("An anonymous ticket does not accept the privacy notice.");
+        });
 
         When(command => !command.Anonymous, () =>
         {
             RuleFor(command => command.Requester).NotNull();
-            RuleFor(command => command.LegalTextVersion).NotNull();
+            RuleFor(command => command.PrivacyNoticeVersion).NotNull();
+            RuleFor(command => command.AnonymousNoticeVersion)
+                .Null()
+                .WithMessage("A ticket with requester data does not accept the anonymous notice.");
             RuleFor(command => command.AcceptsDataPolicy)
                 .Equal(true)
                 .WithErrorCode(SupportErrorCodes.PublicConsentRequired)
@@ -187,17 +224,26 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
 }
 
 /// <summary>
-/// Radicar desde el formulario público (spec §9.3 y §9.4, plan F17 y F21 a F23). Orden: resolver el tenant → Turnstile → validador →
-/// versiones del formulario (y si permite adjuntos, spec §9.3) y de los textos legales → tipo activo y publicado → foto del solicitante (con la ciudad de Geography) →
-/// adjuntos disponibles con su <c>uploadKey</c> (plan F35) → provisión → cliente por documento → transacción (candado del cliente,
-/// radicado, ticket, clave, consentimiento, adjuntos, auditoría del sistema) → confirmar → correo de apertura → su resultado en un segundo guardado de la clave. Todo lo que puede responder 422 va antes
+/// Radicar desde el formulario público (spec §9.3 y §9.4, plan F17 y F21 a F23; spec 2026-11-15 §5.2 y §9, plan L14). Orden: resolver el
+/// tenant → Turnstile → validador → versiones del formulario (y si permite adjuntos, spec §9.3) y de los documentos legales que aplican al
+/// camino → tipo activo y publicado → foto del solicitante (con la ciudad de Geography) → adjuntos disponibles con su <c>uploadKey</c>
+/// (plan F35) → provisión → cliente por documento → transacción (candado del cliente, radicado, ticket, clave, las dos aceptaciones
+/// legales, adjuntos, auditoría del sistema) → confirmar → correo de apertura → su resultado en un segundo guardado de la clave. Cada
+/// aceptación guarda el HTML tal como lo sirvió <c>GET /form</c> (<see cref="SupportServedLegal"/>): con datos, el aviso de privacidad y
+/// los términos con la IP; anónimo, el aviso anónimo y los términos sin IP. Todo lo que puede responder 422 va antes
 /// de la transacción, así un rechazo no gasta un radicado. El correo va después de confirmar: el radicado no depende de él (F23). Nada de
 /// esto lee el contexto de ejecución ni la sesión, y el PIN no va a logs, auditoría ni traza: sólo su hash se guarda.
+/// <para>Idempotente por <c>clientRequestId</c> (spec 2026-11-15 §9.2, plan L27 y L28): con clave, el ticket de ese tenant con esa clave
+/// se busca <b>antes de Turnstile</b> y, si existe, se responde como reintento (<see cref="RetryAsync"/>) sin mirar el cuerpo. Dentro de
+/// la transacción, después de tomar el número, se vuelve a buscar bajo el candado del contador: si otro radicado con la misma clave ganó,
+/// la transacción se deshace (el número vuelve) y se responde con el ganador; el índice único es el respaldo.</para>
 /// </summary>
 public sealed class FilePublicTicketHandler(
     SupportPublicResolver resolver,
     ISupportCaptcha captcha,
-    ISupportLegalTextRepository legalTexts,
+    ISupportFormRepository forms,
+    ISupportLegalDocumentRepository legalDocuments,
+    ISupportHtmlSanitizer sanitizer,
     ISupportTicketTypeRepository types,
     ISupportGeography geography,
     ISupportPhoneNormalizer phones,
@@ -207,7 +253,7 @@ public sealed class FilePublicTicketHandler(
     ISupportTicketNumberGenerator numbers,
     ISupportTicketRepository tickets,
     ISupportTicketAccessRepository accesses,
-    ISupportConsentRepository consents,
+    ISupportLegalAcceptanceRepository legalAcceptances,
     ISupportAttachmentStorage attachmentStorage,
     ISupportTicketAttachmentRepository attachments,
     ISupportPinHasher pinHasher,
@@ -221,11 +267,19 @@ public sealed class FilePublicTicketHandler(
     : ICommandHandler<FilePublicTicketCommand, SupportPublicFiledDto>
 {
     private static readonly string[] CreatedFields =
-        ["ticketTypeId", "subject", "description", "intake", "replyChannel", "customerId", "requester", "isAnonymous"];
+        ["ticketTypeId", "subject", "description", "intake", "replyChannel", "customerId", "requester", "isAnonymous", "legalAcceptances"];
 
     public async Task<SupportPublicFiledDto> HandleAsync(FilePublicTicketCommand command, CancellationToken cancellationToken)
     {
         var tenant = await resolver.ResolveAsync(command.TenantSlug, cancellationToken);
+        // Plan L27: a retry is recognized before Turnstile (its token was spent by the first attempt), the validator and the version
+        // checks, and the body is not compared. Always by tenant. Only a v4 key is looked up (D-10): the validator rejects any other below.
+        var key = command.ClientRequestId is { } requested && FilePublicTicketValidator.IsClientRequestId(requested) ? requested : (Guid?)null;
+        if (key is { } retryKey && await tickets.FindByClientRequestAsync(tenant.TenantId, retryKey, cancellationToken) is { } earlier)
+        {
+            return await RetryAsync(tenant, earlier, cancellationToken);
+        }
+
         if (!await captcha.VerifyAsync(command.TurnstileToken?.Trim() ?? string.Empty, command.VisitorIp, cancellationToken))
         {
             throw new SupportDomainException(SupportErrorCodes.PublicCaptchaInvalid, "The anti-bot challenge was not passed.");
@@ -245,8 +299,8 @@ public sealed class FilePublicTicketHandler(
             CompletePublicAttachmentHandler.EnsureAllowed(tenant.Form);
         }
 
-        var legal = await legalTexts.CurrentAsync(tenant.TenantId, cancellationToken) ?? throw SupportPublicResolver.NotFound();
-        if (!validated.Anonymous && validated.LegalTextVersion != legal.Version)
+        var legal = await SupportServedLegal.ReadAsync(legalDocuments, sanitizer, tenant.TenantId, tenant.Name, cancellationToken);
+        if (!IsCurrent(validated, legal))
         {
             throw new SupportDomainException(SupportErrorCodes.PublicLegalTextsOutdated, "The legal texts changed after they were loaded.");
         }
@@ -265,11 +319,13 @@ public sealed class FilePublicTicketHandler(
         var customerId = await LinkedCustomerAsync(tenant.TenantId, requester, cancellationToken);
 
         var pin = SupportPin.Generate();
-        SupportTicket ticket;
-        SupportTicketAccess access;
-        DateTimeOffset now;
-        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
+        SupportTicket ticket = null!;
+        SupportTicketAccess access = null!;
+        DateTimeOffset now = default;
+        SupportTicket? winner = null;
+        try
         {
+            await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
             // El candado del cliente antes que la fila del radicado, como el alta manual (revisión final de la fase 1, m1).
             if (customerId is { } heldCustomerId)
             {
@@ -277,48 +333,33 @@ public sealed class FilePublicTicketHandler(
             }
 
             var number = await numbers.NextAsync(tenant.TenantId, cancellationToken);
-            var context = await composer.ReadContextAsync(tenant.TenantId, cancellationToken);
-            now = context.Now;
-            ticket = SupportTicket.CreateFromPublicForm(
-                SupportTicketId.New(),
-                tenant.TenantId,
-                number,
-                type,
-                validated.Subject!,
-                validated.Description!,
-                requester,
-                customerId,
-                tenant.Form.Id,
-                now,
-                context.Clock);
-            tickets.Add(ticket);
-            access = SupportTicketAccess.Issue(ticket.Id, tenant.TenantId, pinHasher.Hash(pin), now);
-            accesses.Add(access);
-            // Plan F17: la prueba legal va en la misma transacción que el ticket, con el texto que la persona vio. Un anónimo no deja
-            // consentimiento ni IP.
-            if (requester is not null)
+            // Plan L27: the UPDATE … RETURNING of the counter serializes the filings of the tenant, so under its lock a concurrent filing
+            // with the same key is already committed and visible. The winner answers; disposing the transaction without commit rolls
+            // back the number, so no number is spent.
+            if (key is { } racedKey
+                && await tickets.FindByClientRequestAsync(tenant.TenantId, racedKey, cancellationToken) is { } raced)
             {
-                consents.Add(SupportConsent.Record(Guid.CreateVersion7(), tenant.TenantId, ticket.Id, legal, command.VisitorIp, now));
+                winner = raced;
             }
-
-            // Plan F35: en la misma transacción. Si otra radicación ya reclamó un archivo, IX_ticket_attachments_file lo rechaza al
-            // guardar (SupportUnitOfWork lo traduce por nombre a support.public.attachment_invalid) y la transacción entera se
-            // deshace, radicado incluido.
-            foreach (var file in files)
+            else
             {
-                attachments.Add(SupportTicketAttachment.Attach(
-                    Guid.CreateVersion7(), tenant.TenantId, ticket.Id, file.FileId, file.Name, file.MimeType, file.SizeBytes, now));
+                (ticket, access, now) = await CreateAsync(
+                    validated, tenant, legal, type, requester, customerId, files, number, key, pin, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
             }
+        }
+        // The backstop of the same race (plan L27): the unique index, translated by name in SupportUnitOfWork.
+        catch (SupportClientRequestTakenException)
+        {
+            unitOfWork.DiscardChanges();
+            winner = await tickets.FindByClientRequestAsync(tenant.TenantId, key!.Value, cancellationToken)
+                ?? throw new InvalidOperationException("The ticket that took the client request id was not found.");
+        }
 
-            auditPublisher.PublishSystem(
-                tenant.TenantId,
-                SupportAuditActions.TicketCreated,
-                SupportAuditActions.Resources.Ticket,
-                ticket.Id.ToString(),
-                files.Count > 0 ? [.. CreatedFields, "attachments"] : CreatedFields,
-                now);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+        if (winner is not null)
+        {
+            unitOfWork.DiscardChanges();
+            return await RetryAsync(tenant, winner, cancellationToken);
         }
 
         await realtime.TicketChangedAsync(tenant.TenantId, ticket.Id.Value, CancellationToken.None);
@@ -328,7 +369,177 @@ public sealed class FilePublicTicketHandler(
         var outcome = await openingDelivery.DeliverAsync(ticket, access, pin, consultUrl, now, cancellationToken);
         var emailed = outcome is { Channel: SupportOpeningSender.EmailChannel, Sent: true };
 
-        return new SupportPublicFiledDto(ticket.DisplayNumber, pin, ticket.DueOn, tenant.Form.SuccessMessage, emailed, consultUrl);
+        return Filed(ticket, pin, tenant.Form.SuccessMessage, emailed, consultUrl);
+    }
+
+    // Inside the transaction, after the number: the ticket (with its idempotency key), its access, the legal acceptances, the
+    // attachments and the system audit, saved and not committed. The key is not audited (plan L27).
+    private async Task<(SupportTicket Ticket, SupportTicketAccess Access, DateTimeOffset Now)> CreateAsync(
+        FilePublicTicketCommand validated,
+        SupportPublicTenant tenant,
+        SupportServedLegal legal,
+        SupportTicketType type,
+        TicketRequester? requester,
+        Guid? customerId,
+        IReadOnlyList<SupportAttachmentFile> files,
+        long number,
+        Guid? key,
+        string pin,
+        CancellationToken cancellationToken)
+    {
+        var context = await composer.ReadContextAsync(tenant.TenantId, cancellationToken);
+        var now = context.Now;
+        var ticket = SupportTicket.CreateFromPublicForm(
+            SupportTicketId.New(),
+            tenant.TenantId,
+            number,
+            type,
+            validated.Subject!,
+            validated.Description!,
+            requester,
+            customerId,
+            tenant.Form.Id,
+            now,
+            context.Clock,
+            key);
+        tickets.Add(ticket);
+        var access = SupportTicketAccess.Issue(ticket.Id, tenant.TenantId, pinHasher.Hash(pin), now);
+        accesses.Add(access);
+        // Spec 2026-11-15 §5.2 (plan L13 y L14): la prueba legal va en la misma transacción que el ticket, con el texto que la
+        // persona vio. Un anónimo no deja IP en ninguna fila.
+        foreach (var acceptance in Acceptances(legal, tenant.TenantId, ticket.Id, validated.Anonymous, validated.VisitorIp, now))
+        {
+            legalAcceptances.Add(acceptance);
+        }
+
+        // Plan F35: en la misma transacción. Si otra radicación ya reclamó un archivo, IX_ticket_attachments_file lo rechaza al
+        // guardar (SupportUnitOfWork lo traduce por nombre a support.public.attachment_invalid) y la transacción entera se
+        // deshace, radicado incluido.
+        foreach (var file in files)
+        {
+            attachments.Add(SupportTicketAttachment.Attach(
+                Guid.CreateVersion7(), tenant.TenantId, ticket.Id, file.FileId, file.Name, file.MimeType, file.SizeBytes, now));
+        }
+
+        auditPublisher.PublishSystem(
+            tenant.TenantId,
+            SupportAuditActions.TicketCreated,
+            SupportAuditActions.Resources.Ticket,
+            ticket.Id.ToString(),
+            files.Count > 0 ? [.. CreatedFields, "attachments"] : CreatedFields,
+            now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return (ticket, access, now);
+    }
+
+    /// <summary>
+    /// The answer to a retry (spec 2026-11-15 §9.2 and §15 D-7, plan L28): the same number, filing date, due date, term, success message
+    /// (the one of the form version the ticket was filed with) and consult link; nothing new is created and the opening email is not
+    /// sent again. The PIN: if it went out by email (<c>Email</c> without failure), null with <c>PinEmailed</c> true and nothing is
+    /// written. If the ticket has an email destination and no delivery is recorded yet, the opening email of the first attempt is still
+    /// in flight: treated the same, because issuing a new PIN would invalidate the one being emailed, but only for
+    /// <see cref="OpeningDeliveryGrace"/> after the PIN was issued; past that the delivery is taken as failed (the process died between
+    /// commit and recording it). Otherwise (anonymous, a failed send, or one unrecorded past the grace) a new PIN replaces the old one, in
+    /// a short transaction with the access row locked, and it travels only in this response: no email.
+    /// </summary>
+    private async Task<SupportPublicFiledDto> RetryAsync(
+        SupportPublicTenant tenant, SupportTicket ticket, CancellationToken cancellationToken)
+    {
+        var consultUrl = SupportOpeningSender.ConsultUrl(publicOptions, tenant.Slug, ticket.DisplayNumber);
+        var successMessage = ticket.FormVersionId is { } formId
+            ? (await forms.FindAsync(tenant.TenantId, formId, cancellationToken))?.SuccessMessage ?? tenant.Form.SuccessMessage
+            : tenant.Form.SuccessMessage;
+
+        string? pin = null;
+        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
+        {
+            var found = await accesses.LockByNumberAsync(tenant.TenantId, ticket.Number, cancellationToken);
+            if (found is { } match)
+            {
+                var now = (await composer.ReadContextAsync(tenant.TenantId, cancellationToken)).Now;
+                if (MustRotate(ticket, match.Access, now))
+                {
+                    pin = SupportPin.Generate();
+                    match.Access.Reissue(pinHasher.Hash(pin), now);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
+                }
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        return Filed(ticket, pin, successMessage, pinEmailed: pin is null, consultUrl);
+    }
+
+    /// <summary>Final review S3 (C-2): how long an opening delivery may stay unrecorded before a retry takes it as failed. The send has
+    /// timeouts far below this; a delivery still unrecorded after it means the process died between the commit and recording it, and
+    /// without the rotation the visitor would never get a PIN.</summary>
+    internal static readonly TimeSpan OpeningDeliveryGrace = TimeSpan.FromMinutes(10);
+
+    // Plan L28: a new PIN only when the current one went out by no channel. An unrecorded delivery is in flight (C-2) only within
+    // OpeningDeliveryGrace of the PIN; past it, it is a failed one.
+    internal static bool MustRotate(SupportTicket ticket, SupportTicketAccess access, DateTimeOffset now)
+    {
+        if (!SupportOpeningSender.HasDestination(ticket))
+        {
+            return true;
+        }
+
+        if (access.LastSentChannel is null)
+        {
+            return now - access.PinIssuedAt > OpeningDeliveryGrace;
+        }
+
+        return access.LastSentChannel != SupportOpeningSender.EmailChannel || access.LastFailureCode is not null;
+    }
+
+    // Plan L26: la fecha de radicación y el término salen de la foto del ticket, nunca del tipo vivo.
+    private static SupportPublicFiledDto Filed(
+        SupportTicket ticket, string? pin, string? successMessage, bool pinEmailed, string consultUrl) =>
+        new(
+            ticket.DisplayNumber,
+            pin,
+            ticket.ReceivedAt,
+            ticket.DueOn,
+            ticket.TermBusinessDays,
+            ticket.TermIsLegal,
+            successMessage,
+            pinEmailed,
+            consultUrl);
+
+    // Plan L16: las versiones que aplican al camino tienen que ser las vigentes. La que no aplica ya la rechazó el validador.
+    private static bool IsCurrent(FilePublicTicketCommand command, SupportServedLegal legal) =>
+        command.TermsVersion == legal.Terms.Version.Version
+        && (command.Anonymous
+            ? command.AnonymousNoticeVersion == legal.AnonymousNotice.Version.Version
+            : command.PrivacyNoticeVersion == legal.PrivacyNotice.Version.Version);
+
+    // Spec 2026-11-15 §5.2: con datos, el aviso de privacidad (IP, pregunta mostrada y caracterización) y los términos con la IP;
+    // anónimo, el aviso anónimo y los términos, los dos sin IP.
+    private static IEnumerable<SupportLegalAcceptance> Acceptances(
+        SupportServedLegal legal, Guid tenantId, SupportTicketId ticketId, bool anonymous, string visitorIp, DateTimeOffset now)
+    {
+        if (anonymous)
+        {
+            yield return SupportLegalAcceptance.Record(
+                Guid.CreateVersion7(), tenantId, ticketId, legal.AnonymousNotice.Version, legal.AnonymousNotice.Html, null, null, null, now);
+            yield return SupportLegalAcceptance.Record(
+                Guid.CreateVersion7(), tenantId, ticketId, legal.Terms.Version, legal.Terms.Html, null, null, null, now);
+            yield break;
+        }
+
+        yield return SupportLegalAcceptance.Record(
+            Guid.CreateVersion7(),
+            tenantId,
+            ticketId,
+            legal.PrivacyNotice.Version,
+            legal.PrivacyNotice.Html,
+            legal.AuthorizationQuestion,
+            SupportLegalNotices.Characterization,
+            visitorIp,
+            now);
+        yield return SupportLegalAcceptance.Record(
+            Guid.CreateVersion7(), tenantId, ticketId, legal.Terms.Version, legal.Terms.Html, null, null, visitorIp, now);
     }
 
     // La foto del solicitante: sólo los campos que el formulario muestra, recortados, el celular en E.164 y la ciudad de Geography en
