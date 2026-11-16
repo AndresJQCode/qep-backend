@@ -164,7 +164,8 @@ public static class OrderResponses
             order.RetentionAmount,
             order.NetTotal,
             order.Notes,
-            order.BillingAccount,
+            // A pending account (company without account, previews only — spec 2026-11-16) is never answered.
+            order.BillingAccount is { IsPending: true } ? null : order.BillingAccount,
             order.Parties
                 .Select(party => new QuotationPartyResponse(
                     party.Id, party.Role, party.Name, party.IdentificationNumber, party.Phone, party.Email,

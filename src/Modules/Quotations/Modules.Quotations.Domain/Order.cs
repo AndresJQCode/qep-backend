@@ -98,8 +98,9 @@ public sealed class Order
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
         // La misma regla que Quotation: la cuenta fija la moneda y, sin ella, manda la del encabezado, que
-        // Application llena con la moneda por defecto del tenant. Sólo el cálculo previo llega acá sin cuenta.
-        Currency = BillingAccount?.Currency ?? header.Currency;
+        // Application llena con la moneda por defecto del tenant. Sólo el cálculo previo llega acá sin cuenta, o con una
+        // cuenta pendiente (sólo la empresa, spec 2026-11-16), que tampoco fija la moneda.
+        Currency = BillingAccount is { IsPending: false } account ? account.Currency : header.Currency;
         Status = OrderStatus.Open;
         FulfillmentStatus = OrderFulfillmentStatus.NotPrepared;
         // Null = lo calculan los comprobantes, que se agregan después (ver CalculatedPaymentStatus).
