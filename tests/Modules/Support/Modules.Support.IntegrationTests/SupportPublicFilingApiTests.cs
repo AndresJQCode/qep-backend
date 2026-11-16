@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
+using Modules.Support.Domain;
 using Modules.Tenancy.Domain;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 using static Modules.Support.IntegrationTests.SupportMessagingSeed;
@@ -112,9 +113,10 @@ public sealed class SupportPublicFilingApiTests(SupportPublicLoggedHost host) : 
         Assert.DoesNotContain(host.Logs.Entries, standalone.IsMatch);
     }
 
-    // Review Focus 5: un anónimo no deja cliente, foto del solicitante, IP ni consentimiento. Se responde por la página.
+    // Review Focus 3: un anónimo no deja cliente, foto del solicitante ni IP. Deja el aviso anónimo y los términos, los dos sin IP, y
+    // nada del aviso de privacidad ni de los consentimientos de la fase 3. Se responde por la página.
     [Fact]
-    public async Task AnAnonymousTicketStoresNoRequesterNoIpAndNoConsent()
+    public async Task AnAnonymousTicketStoresTheNoticeAndTermsWithoutIp()
     {
         var rig = await RigAsync();
         var sentBefore = host.Emails.Sent.Count;
@@ -135,39 +137,166 @@ public sealed class SupportPublicFilingApiTests(SupportPublicLoggedHost host) : 
         Assert.Equal(0L, await CountAsync(rig, "SELECT count(*) FROM support.consents WHERE tenant_id = @tenant"));
         Assert.Equal(1L, await CountAsync(rig, "SELECT count(*) FROM support.ticket_access WHERE tenant_id = @tenant"));
         Assert.Equal(sentBefore, host.Emails.Sent.Count);
+
+        var ticketId = await TicketIdAsync(rig);
+        Assert.Equal(2L, await CountAsync(
+            rig, $"SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND ticket_id = '{ticketId}'"));
+        Assert.Equal(1L, await CountAsync(
+            rig,
+            """
+            SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND kind = 'AnonymousNotice'
+                AND document_version = 1 AND content_html = '<p>AnonymousNotice, versión 1.</p>' AND visitor_ip IS NULL
+                AND authorization_question IS NULL AND characterization_text IS NULL
+            """));
+        Assert.Equal(1L, await CountAsync(
+            rig,
+            """
+            SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND kind = 'Terms'
+                AND document_version = 1 AND content_html = '<p>Terms, versión 1.</p>' AND visitor_ip IS NULL
+            """));
+        Assert.Equal(0L, await CountAsync(
+            rig, "SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND kind = 'PrivacyNotice'"));
+        Assert.Equal(0L, await CountAsync(
+            rig, "SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND visitor_ip IS NOT NULL"));
     }
 
-    // Review Focus 5: la fila guarda el texto que la persona aceptó, aunque el tenant publique otro después.
     [Fact]
-    public async Task TheConsentKeepsTheTextTheRequesterAccepted()
+    public async Task ANamedTicketStoresPrivacyAndTermsWithTheVisitorIp()
     {
         var visitorIp = NextIp();
         var rig = await RigAsync(visitorIp);
+
+        var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, NamedBody(rig.TypeId, rig.CityId, Email()));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var ticketId = await TicketIdAsync(rig);
+        Assert.Equal(2L, await CountAsync(
+            rig, $"SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND ticket_id = '{ticketId}'"));
+        Assert.Equal(1L, await ScalarAsync(
+            rig.Factory,
+            """
+            SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND kind = 'PrivacyNotice'
+                AND document_version = 1 AND content_html = '<p>PrivacyNotice, versión 1.</p>' AND visitor_ip = @ip
+                AND authorization_question = @question AND characterization_text = @characterization AND policy_url IS NULL
+            """,
+            ("tenant", rig.TenantId),
+            ("ip", visitorIp),
+            ("question", "¿Autorizas a Support API Tests para el tratamiento de los datos personales suministrados en este formulario?"),
+            ("characterization", SupportLegalNotices.Characterization)));
+        Assert.Equal(1L, await ScalarAsync(
+            rig.Factory,
+            """
+            SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND kind = 'Terms'
+                AND document_version = 1 AND content_html = '<p>Terms, versión 1.</p>' AND visitor_ip = @ip
+                AND authorization_question IS NULL AND characterization_text IS NULL
+            """,
+            ("tenant", rig.TenantId),
+            ("ip", visitorIp)));
+        Assert.Equal(0L, await CountAsync(
+            rig, "SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND kind = 'AnonymousNotice'"));
+        Assert.Equal(0L, await CountAsync(rig, "SELECT count(*) FROM support.consents WHERE tenant_id = @tenant"));
+    }
+
+    // Review Focus 4: la fila guarda el texto que la persona vio, aunque el tenant publique otro después.
+    [Fact]
+    public async Task TheAcceptanceKeepsTheTextTheRequesterSaw()
+    {
+        var rig = await RigAsync();
         Assert.Equal(
             HttpStatusCode.Created,
             (await PostJsonAsync(rig.Client, rig.TicketsUrl, NamedBody(rig.TypeId, rig.CityId, Email()))).StatusCode);
 
-        await PublishLegalTextsAsync(rig.Factory, rig.Tenant, 2, "Autorizo, versión 2.");
+        foreach (var kind in SupportLegalDocumentKinds.All)
+        {
+            await PublishLegalDocumentAsync(rig.Factory, rig.Tenant, kind, 2, $"<p>{kind}, versión 2.</p>");
+        }
 
         Assert.Equal(
-            "Autorizo el tratamiento de mis datos personales, versión 1.",
-            await TextAsync(rig.Factory, "SELECT authorization_text FROM support.consents WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
-        Assert.Equal(1L, await CountAsync(rig, "SELECT count(*) FROM support.consents WHERE tenant_id = @tenant AND legal_text_version = 1"));
+            "<p>PrivacyNotice, versión 1.</p>",
+            await TextAsync(
+                rig.Factory,
+                "SELECT content_html FROM support.legal_acceptances WHERE tenant_id = @tenant AND kind = 'PrivacyNotice'",
+                ("tenant", rig.TenantId)));
         Assert.Equal(
-            visitorIp,
-            await TextAsync(rig.Factory, "SELECT visitor_ip FROM support.consents WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+            "<p>Terms, versión 1.</p>",
+            await TextAsync(
+                rig.Factory,
+                "SELECT content_html FROM support.legal_acceptances WHERE tenant_id = @tenant AND kind = 'Terms'",
+                ("tenant", rig.TenantId)));
+        Assert.Equal(2L, await CountAsync(
+            rig, "SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant AND document_version = 1"));
     }
 
-    [Fact]
-    public async Task AnOutdatedLegalTextVersionIs422()
+    // Plan L14: any version that applies and is no longer current is 422 before the transaction, so no number is spent.
+    [Theory]
+    [InlineData("privacy")]
+    [InlineData("anonymous")]
+    [InlineData("terms")]
+    public async Task EachOutdatedVersionIs422(string outdated)
     {
         var rig = await RigAsync();
-        await PublishLegalTextsAsync(rig.Factory, rig.Tenant, 2, "Autorizo, versión 2.");
+        var kind = outdated switch
+        {
+            "privacy" => SupportLegalDocumentKind.PrivacyNotice,
+            "anonymous" => SupportLegalDocumentKind.AnonymousNotice,
+            _ => SupportLegalDocumentKind.Terms,
+        };
+        await PublishLegalDocumentAsync(rig.Factory, rig.Tenant, kind, 2, "<p>Versión 2.</p>");
 
-        var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, NamedBody(rig.TypeId, rig.CityId, Email(), legalTextVersion: 1));
+        var stale = outdated == "anonymous"
+            ? AnonymousBody(rig.TypeId)
+            : NamedBody(rig.TypeId, rig.CityId, Email());
+        var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, stale);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("support.public.legal_texts_outdated", await CodeOfAsync(response));
+        Assert.Equal(0L, await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant"));
+
+        var current = outdated switch
+        {
+            "privacy" => NamedBody(rig.TypeId, rig.CityId, Email(), privacyNoticeVersion: 2),
+            "anonymous" => AnonymousBody(rig.TypeId, anonymousNoticeVersion: 2),
+            _ => NamedBody(rig.TypeId, rig.CityId, Email(), termsVersion: 2),
+        };
+        var filed = await PostJsonAsync(rig.Client, rig.TicketsUrl, current);
+        Assert.Equal(HttpStatusCode.Created, filed.StatusCode);
+        Assert.Equal("SOP-000001", (await JsonAsync(filed)).GetProperty("number").GetString());
+    }
+
+    // Plan L15: the terms not accepted are validation.failed with the field, like the data policy.
+    [Fact]
+    public async Task TermsNotAcceptedIs422WithTheField()
+    {
+        var rig = await RigAsync();
+
+        var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, NamedBody(rig.TypeId, rig.CityId, Email(), acceptsTerms: false));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Contains("AcceptsTerms", await ErrorKeysAsync(response));
+        Assert.Equal(0L, await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant"));
+    }
+
+    [Fact]
+    public async Task ARejectedFilingStoresNoAcceptance()
+    {
+        var rig = await RigAsync();
+        await PublishLegalDocumentAsync(rig.Factory, rig.Tenant, SupportLegalDocumentKind.Terms, 2, "<p>Términos, versión 2.</p>");
+
+        var rejected = new[]
+        {
+            NamedBody(rig.TypeId, rig.CityId, Email(), token: "bot", termsVersion: 2),
+            NamedBody(rig.TypeId, rig.CityId, Email(), termsVersion: 2, acceptsTerms: false),
+            NamedBody(rig.TypeId, rig.CityId, Email(), termsVersion: 2, formVersion: 0),
+            NamedBody(rig.TypeId, rig.CityId, Email()),
+            AnonymousBody(rig.TypeId),
+        };
+        foreach (var body in rejected)
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await PostJsonAsync(rig.Client, rig.TicketsUrl, body)).StatusCode);
+        }
+
+        Assert.Equal(0L, await CountAsync(rig, "SELECT count(*) FROM support.legal_acceptances WHERE tenant_id = @tenant"));
         Assert.Equal(0L, await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant"));
     }
 

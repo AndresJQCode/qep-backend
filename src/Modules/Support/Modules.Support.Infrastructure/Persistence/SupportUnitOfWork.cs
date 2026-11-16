@@ -84,15 +84,7 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "This version of the public form already exists.",
                 exception);
         }
-        // Triage #2 del Bloque F: una fila de consentimiento por ticket. Inalcanzable hoy; traducido igual para que un camino nuevo que
-        // lo duplique reciba un 409 con código y no un 500.
-        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.ConsentTicketIndex))
-        {
-            throw new ResourceConflictException(
-                SupportErrorCodes.PublicConsentDuplicate,
-                "The ticket already has its consent.",
-                exception);
-        }
+        // Los consentimientos de la fase 3 ya no tienen escritor (spec 2026-11-15 §5.4): IX_consents_ticket no se traduce.
         // Spec 2026-11-15 §10: two publications of the same kind that read the same current version. The If-Match already filtered
         // most of them; this is the race.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.LegalDocumentVersionIndex))

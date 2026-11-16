@@ -39,8 +39,6 @@ public static class SupportInfrastructureExtensions
         // Fase 3, formulario público (plan F7, F8, F14, F16, F17).
         services.AddScoped<ISupportTicketAccessRepository, SupportTicketAccessRepository>();
         services.AddScoped<ISupportFormRepository, SupportFormRepository>();
-        services.AddScoped<ISupportLegalTextRepository, SupportLegalTextRepository>();
-        services.AddScoped<ISupportConsentRepository, SupportConsentRepository>();
         services.AddSingleton<ISupportPinHasher, Pbkdf2SupportPinHasher>();
         // Spec 2026-11-15 §6.3 (plan L2): stateless, it builds its HtmlSanitizer on each call.
         services.AddSingleton<ISupportHtmlSanitizer, HtmlSupportSanitizer>();

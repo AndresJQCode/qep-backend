@@ -86,16 +86,15 @@ public static class SupportErrorCodes
 
     public const string PublicCaptchaInvalid = "support.public.captcha_invalid";
 
-    /// <summary>La versión de los textos legales que aceptó la persona ya no es la vigente: la pantalla recarga (plan F17).</summary>
+    /// <summary>Alguna versión de los documentos legales que aplican al camino (aviso de privacidad o anónimo, y términos) ya no es la
+    /// vigente: la pantalla recarga (spec 2026-11-15 §9, plan L14).</summary>
     public const string PublicLegalTextsOutdated = "support.public.legal_texts_outdated";
 
     public const string PublicFormOutdated = "support.public.form_outdated";
 
+    /// <summary>El <c>ErrorCode</c> de la regla del validador sobre <c>AcceptsDataPolicy</c>. Por HTTP sale como
+    /// <c>422 validation.failed</c> con <c>errors.AcceptsDataPolicy</c>: <c>ApiExceptionHandler</c> no publica el código (plan L15).</summary>
     public const string PublicConsentRequired = "support.public.consent_required";
-
-    /// <summary>Triage #2 del Bloque F: el ticket ya tiene su consentimiento (<c>IX_consents_ticket</c>, traducido por nombre, 409). Hoy no
-    /// se alcanza: el consentimiento se escribe sólo con un ticket recién creado, en la misma transacción.</summary>
-    public const string PublicConsentDuplicate = "support.public.consent_duplicate";
 
     public const string PublicDepartmentNotFound = "support.public.department_not_found";
 

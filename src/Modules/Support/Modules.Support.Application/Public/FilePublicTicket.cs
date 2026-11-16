@@ -8,8 +8,8 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Support.Application;
 
-/// <param name="VisitorIp">La IP del visitante (<c>RemoteIpAddress</c>, ya corregida por <c>X-Real-IP</c>): para Turnstile y para el
-/// consentimiento. Nunca para un anónimo.</param>
+/// <param name="VisitorIp">La IP del visitante (<c>RemoteIpAddress</c>, ya corregida por <c>X-Real-IP</c>): para Turnstile y para las
+/// aceptaciones legales del camino con datos. Nunca se guarda para un anónimo.</param>
 public sealed record FilePublicTicketCommand(
     string? TenantSlug,
     string VisitorIp,
@@ -19,7 +19,10 @@ public sealed record FilePublicTicketCommand(
     bool Anonymous,
     SupportPublicRequesterRequest? Requester,
     bool AcceptsDataPolicy,
-    int? LegalTextVersion,
+    int? PrivacyNoticeVersion,
+    int? AnonymousNoticeVersion,
+    bool AcceptsTerms,
+    int? TermsVersion,
     int? FormVersion,
     string? TurnstileToken,
     IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null)
@@ -41,7 +44,10 @@ public sealed record FilePublicTicketCommand(
             request.Anonymous,
             request.Requester,
             request.AcceptsDataPolicy,
-            request.LegalTextVersion,
+            request.PrivacyNoticeVersion,
+            request.AnonymousNoticeVersion,
+            request.AcceptsTerms,
+            request.TermsVersion,
             request.FormVersion,
             request.TurnstileToken,
             request.Attachments);
@@ -49,7 +55,7 @@ public sealed record FilePublicTicketCommand(
 }
 
 /// <summary>
-/// El radicado del formulario público (plan F18 a F20). Qué campos se piden y cuáles son obligatorios lo dice
+/// El radicado del formulario público (plan F18 a F20; spec 2026-11-15 §9, plan L15 y L16). Qué campos se piden y cuáles son obligatorios lo dice
 /// <see cref="SupportFormFields"/> con la versión del formulario: este validador no repite la regla, sólo la aplica. Un campo que el
 /// formulario oculta no se valida (y el handler no lo guarda). Las claves del mapa <c>errors</c> son las del cuerpo. Mide los textos
 /// recortados, como se guardan.
@@ -67,6 +73,13 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
         RuleFor(command => command.Subject).MustFit(1, SupportTicket.SubjectMaxLength);
         RuleFor(command => command.Description).MustFit(1, SupportTicket.DescriptionMaxLength);
         RuleFor(command => command.FormVersion).NotNull();
+        // Spec 2026-11-15 §9 (plan L15 y L16): los dos caminos aceptan los términos. Por HTTP sale como validation.failed con
+        // errors.AcceptsTerms: ApiExceptionHandler no publica el ErrorCode.
+        RuleFor(command => command.TermsVersion).NotNull();
+        RuleFor(command => command.AcceptsTerms)
+            .Equal(true)
+            .WithErrorCode(SupportErrorCodes.PublicTermsRequired)
+            .WithMessage("The terms and conditions must be accepted.");
         // Plan F34 y F35: hasta cinco, cada uno con su par completo y sin repetir. Que existan y estén disponibles lo mira el handler,
         // con la misma respuesta para todos los casos.
         RuleFor(command => command.Attachments)
@@ -74,15 +87,25 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
             .WithMessage(
                 $"Up to {SupportPublicAttachmentRules.MaxFiles} different attachments, each with its fileId and uploadKey.");
 
+        // Plan L16: cada camino manda la versión de su aviso y no la del otro. AcceptsDataPolicy se ignora en el anónimo.
         When(command => command.Anonymous, () =>
+        {
             RuleFor(command => command.Requester)
                 .Null()
-                .WithMessage("An anonymous ticket cannot carry requester data."));
+                .WithMessage("An anonymous ticket cannot carry requester data.");
+            RuleFor(command => command.AnonymousNoticeVersion).NotNull();
+            RuleFor(command => command.PrivacyNoticeVersion)
+                .Null()
+                .WithMessage("An anonymous ticket does not accept the privacy notice.");
+        });
 
         When(command => !command.Anonymous, () =>
         {
             RuleFor(command => command.Requester).NotNull();
-            RuleFor(command => command.LegalTextVersion).NotNull();
+            RuleFor(command => command.PrivacyNoticeVersion).NotNull();
+            RuleFor(command => command.AnonymousNoticeVersion)
+                .Null()
+                .WithMessage("A ticket with requester data does not accept the anonymous notice.");
             RuleFor(command => command.AcceptsDataPolicy)
                 .Equal(true)
                 .WithErrorCode(SupportErrorCodes.PublicConsentRequired)
@@ -187,17 +210,21 @@ public sealed class FilePublicTicketValidator : AbstractValidator<FilePublicTick
 }
 
 /// <summary>
-/// Radicar desde el formulario público (spec §9.3 y §9.4, plan F17 y F21 a F23). Orden: resolver el tenant → Turnstile → validador →
-/// versiones del formulario (y si permite adjuntos, spec §9.3) y de los textos legales → tipo activo y publicado → foto del solicitante (con la ciudad de Geography) →
-/// adjuntos disponibles con su <c>uploadKey</c> (plan F35) → provisión → cliente por documento → transacción (candado del cliente,
-/// radicado, ticket, clave, consentimiento, adjuntos, auditoría del sistema) → confirmar → correo de apertura → su resultado en un segundo guardado de la clave. Todo lo que puede responder 422 va antes
+/// Radicar desde el formulario público (spec §9.3 y §9.4, plan F17 y F21 a F23; spec 2026-11-15 §5.2 y §9, plan L14). Orden: resolver el
+/// tenant → Turnstile → validador → versiones del formulario (y si permite adjuntos, spec §9.3) y de los documentos legales que aplican al
+/// camino → tipo activo y publicado → foto del solicitante (con la ciudad de Geography) → adjuntos disponibles con su <c>uploadKey</c>
+/// (plan F35) → provisión → cliente por documento → transacción (candado del cliente, radicado, ticket, clave, las dos aceptaciones
+/// legales, adjuntos, auditoría del sistema) → confirmar → correo de apertura → su resultado en un segundo guardado de la clave. Cada
+/// aceptación guarda el HTML tal como lo sirvió <c>GET /form</c> (<see cref="SupportServedLegal"/>): con datos, el aviso de privacidad y
+/// los términos con la IP; anónimo, el aviso anónimo y los términos sin IP. Todo lo que puede responder 422 va antes
 /// de la transacción, así un rechazo no gasta un radicado. El correo va después de confirmar: el radicado no depende de él (F23). Nada de
 /// esto lee el contexto de ejecución ni la sesión, y el PIN no va a logs, auditoría ni traza: sólo su hash se guarda.
 /// </summary>
 public sealed class FilePublicTicketHandler(
     SupportPublicResolver resolver,
     ISupportCaptcha captcha,
-    ISupportLegalTextRepository legalTexts,
+    ISupportLegalDocumentRepository legalDocuments,
+    ISupportHtmlSanitizer sanitizer,
     ISupportTicketTypeRepository types,
     ISupportGeography geography,
     ISupportPhoneNormalizer phones,
@@ -207,7 +234,7 @@ public sealed class FilePublicTicketHandler(
     ISupportTicketNumberGenerator numbers,
     ISupportTicketRepository tickets,
     ISupportTicketAccessRepository accesses,
-    ISupportConsentRepository consents,
+    ISupportLegalAcceptanceRepository legalAcceptances,
     ISupportAttachmentStorage attachmentStorage,
     ISupportTicketAttachmentRepository attachments,
     ISupportPinHasher pinHasher,
@@ -221,7 +248,7 @@ public sealed class FilePublicTicketHandler(
     : ICommandHandler<FilePublicTicketCommand, SupportPublicFiledDto>
 {
     private static readonly string[] CreatedFields =
-        ["ticketTypeId", "subject", "description", "intake", "replyChannel", "customerId", "requester", "isAnonymous"];
+        ["ticketTypeId", "subject", "description", "intake", "replyChannel", "customerId", "requester", "isAnonymous", "legalAcceptances"];
 
     public async Task<SupportPublicFiledDto> HandleAsync(FilePublicTicketCommand command, CancellationToken cancellationToken)
     {
@@ -245,8 +272,8 @@ public sealed class FilePublicTicketHandler(
             CompletePublicAttachmentHandler.EnsureAllowed(tenant.Form);
         }
 
-        var legal = await legalTexts.CurrentAsync(tenant.TenantId, cancellationToken) ?? throw SupportPublicResolver.NotFound();
-        if (!validated.Anonymous && validated.LegalTextVersion != legal.Version)
+        var legal = await SupportServedLegal.ReadAsync(legalDocuments, sanitizer, tenant.TenantId, tenant.Name, cancellationToken);
+        if (!IsCurrent(validated, legal))
         {
             throw new SupportDomainException(SupportErrorCodes.PublicLegalTextsOutdated, "The legal texts changed after they were loaded.");
         }
@@ -294,11 +321,11 @@ public sealed class FilePublicTicketHandler(
             tickets.Add(ticket);
             access = SupportTicketAccess.Issue(ticket.Id, tenant.TenantId, pinHasher.Hash(pin), now);
             accesses.Add(access);
-            // Plan F17: la prueba legal va en la misma transacción que el ticket, con el texto que la persona vio. Un anónimo no deja
-            // consentimiento ni IP.
-            if (requester is not null)
+            // Spec 2026-11-15 §5.2 (plan L13 y L14): la prueba legal va en la misma transacción que el ticket, con el texto que la
+            // persona vio. Un anónimo no deja IP en ninguna fila.
+            foreach (var acceptance in Acceptances(legal, tenant.TenantId, ticket.Id, validated.Anonymous, command.VisitorIp, now))
             {
-                consents.Add(SupportConsent.Record(Guid.CreateVersion7(), tenant.TenantId, ticket.Id, legal, command.VisitorIp, now));
+                legalAcceptances.Add(acceptance);
             }
 
             // Plan F35: en la misma transacción. Si otra radicación ya reclamó un archivo, IX_ticket_attachments_file lo rechaza al
@@ -329,6 +356,41 @@ public sealed class FilePublicTicketHandler(
         var emailed = outcome is { Channel: SupportOpeningSender.EmailChannel, Sent: true };
 
         return new SupportPublicFiledDto(ticket.DisplayNumber, pin, ticket.DueOn, tenant.Form.SuccessMessage, emailed, consultUrl);
+    }
+
+    // Plan L16: las versiones que aplican al camino tienen que ser las vigentes. La que no aplica ya la rechazó el validador.
+    private static bool IsCurrent(FilePublicTicketCommand command, SupportServedLegal legal) =>
+        command.TermsVersion == legal.Terms.Version.Version
+        && (command.Anonymous
+            ? command.AnonymousNoticeVersion == legal.AnonymousNotice.Version.Version
+            : command.PrivacyNoticeVersion == legal.PrivacyNotice.Version.Version);
+
+    // Spec 2026-11-15 §5.2: con datos, el aviso de privacidad (IP, pregunta mostrada y caracterización) y los términos con la IP;
+    // anónimo, el aviso anónimo y los términos, los dos sin IP.
+    private static IEnumerable<SupportLegalAcceptance> Acceptances(
+        SupportServedLegal legal, Guid tenantId, SupportTicketId ticketId, bool anonymous, string visitorIp, DateTimeOffset now)
+    {
+        if (anonymous)
+        {
+            yield return SupportLegalAcceptance.Record(
+                Guid.CreateVersion7(), tenantId, ticketId, legal.AnonymousNotice.Version, legal.AnonymousNotice.Html, null, null, null, now);
+            yield return SupportLegalAcceptance.Record(
+                Guid.CreateVersion7(), tenantId, ticketId, legal.Terms.Version, legal.Terms.Html, null, null, null, now);
+            yield break;
+        }
+
+        yield return SupportLegalAcceptance.Record(
+            Guid.CreateVersion7(),
+            tenantId,
+            ticketId,
+            legal.PrivacyNotice.Version,
+            legal.PrivacyNotice.Html,
+            legal.AuthorizationQuestion,
+            SupportLegalNotices.Characterization,
+            visitorIp,
+            now);
+        yield return SupportLegalAcceptance.Record(
+            Guid.CreateVersion7(), tenantId, ticketId, legal.Terms.Version, legal.Terms.Html, null, null, visitorIp, now);
     }
 
     // La foto del solicitante: sólo los campos que el formulario muestra, recortados, el celular en E.164 y la ciudad de Geography en

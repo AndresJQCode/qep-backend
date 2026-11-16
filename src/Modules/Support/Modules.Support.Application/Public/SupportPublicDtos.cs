@@ -78,9 +78,11 @@ public sealed record SupportPublicGeoItemDto(Guid Id, string Name);
 
 /// <summary>
 /// El radicado del formulario. Todo anulable, para que su ausencia sea un 422 <c>validation.failed</c> con el campo. Con
-/// <see cref="Anonymous"/> no viaja solicitante ni consentimiento. <see cref="LegalTextVersion"/> y <see cref="FormVersion"/> son las
-/// que la página cargó: si cambiaron, 422 y la página recarga. <see cref="Attachments"/> son los archivos ya completados con
-/// <c>available</c>, hasta cinco (plan F35); también para un anónimo.
+/// <see cref="Anonymous"/> no viaja solicitante. Cada camino manda las versiones de sus documentos (spec 2026-11-15 §9, plan L16): con
+/// datos <see cref="PrivacyNoticeVersion"/> y <see cref="TermsVersion"/>, anónimo <see cref="AnonymousNoticeVersion"/> y
+/// <see cref="TermsVersion"/>; la del otro camino va null. <see cref="AcceptsTerms"/> en los dos; <see cref="AcceptsDataPolicy"/> se
+/// ignora en el anónimo. Las versiones y <see cref="FormVersion"/> son las que la página cargó: si cambiaron, 422 y la página recarga.
+/// <see cref="Attachments"/> son los archivos ya completados con <c>available</c>, hasta cinco (plan F35); también para un anónimo.
 /// </summary>
 public sealed record SupportPublicFileRequest(
     Guid? TicketTypeId,
@@ -89,7 +91,10 @@ public sealed record SupportPublicFileRequest(
     bool Anonymous,
     SupportPublicRequesterRequest? Requester,
     bool AcceptsDataPolicy,
-    int? LegalTextVersion,
+    int? PrivacyNoticeVersion,
+    int? AnonymousNoticeVersion,
+    bool AcceptsTerms,
+    int? TermsVersion,
     int? FormVersion,
     string? TurnstileToken,
     IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null);

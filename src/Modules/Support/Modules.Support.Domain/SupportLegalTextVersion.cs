@@ -39,8 +39,4 @@ public sealed class SupportLegalTextVersion
 
     /// <summary>La membresía que publicó la versión. Sigue en <c>SupportUserReferenceProbe</c>.</summary>
     public Guid CreatedBy { get; private set; }
-
-    /// <summary>Siempre falso en una fila leída; ignorado por EF. Lo mira el consentimiento de la fase 3 mientras el radicado público
-    /// no escriba las aceptaciones nuevas (plan 2026-11-15, Bloque B).</summary>
-    public bool IsExample { get; private set; }
 }

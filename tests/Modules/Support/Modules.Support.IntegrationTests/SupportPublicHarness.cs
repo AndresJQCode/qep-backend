@@ -104,9 +104,6 @@ internal static class SupportPublicHarness
             await provision.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(tenant, Ct);
         }
 
-        // Interim until the public paths read the new documents (plan 2026-11-15, Block B): GET /form and POST /tickets still read
-        // the phase 3 legal texts, which have no writer any more, so their version 1 goes in by raw SQL. Block B removes it.
-        await PublishLegalTextsAsync(factory, tenantId, 1, "Autorizo el tratamiento de mis datos personales, versión 1.");
         foreach (var kind in SupportLegalDocumentKinds.All)
         {
             await PublishLegalDocumentAsync(factory, tenantId, kind, 1, $"<p>{kind}, versión 1.</p>");
@@ -142,22 +139,6 @@ internal static class SupportPublicHarness
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
     }
 
-    /// <summary>
-    /// A new version of the phase 3 legal texts, by raw SQL: they have no writer any more (spec 2026-11-15 §5.4). Interim, for the
-    /// public tests while GET /form and POST /tickets still read them; Block B of the plan replaces them with
-    /// <see cref="PublishLegalDocumentAsync"/>.
-    /// </summary>
-    public static Task PublishLegalTextsAsync(QepApiFactory factory, string tenantId, int version, string authorizationText) =>
-        ExecuteAsync(
-            factory,
-            """
-            INSERT INTO support.legal_text_versions
-                (id, tenant_id, version, authorization_text, policy_text, policy_url, terms_text, created_at, created_by)
-            VALUES (gen_random_uuid(), @tenant, @version, @authorization, NULL, 'https://example.com/politica',
-                    CASE WHEN @version = 1 THEN 'Términos, versión 1.' END, now(), gen_random_uuid())
-            """,
-            ("tenant", Guid.Parse(tenantId)), ("version", version), ("authorization", authorizationText));
-
     public static Task<HttpResponseMessage> PostJsonAsync(HttpClient client, string url, object body) =>
         client.PostAsJsonAsync(url, body, Ct);
 
@@ -172,7 +153,8 @@ internal static class SupportPublicHarness
     public static async Task<Guid> AnyCityIdAsync(QepApiFactory factory) =>
         Guid.Parse((await TextAsync(factory, "SELECT id::text FROM geography.cities ORDER BY id LIMIT 1"))!);
 
-    /// <summary>Un radicado con nombre, de Colombia, con todo lo que pide el formulario por defecto.</summary>
+    /// <summary>Un radicado con nombre, de Colombia, con todo lo que pide el formulario por defecto: acepta el aviso de privacidad y
+    /// los términos en las versiones dadas (plan 2026-11-15, L16).</summary>
     public static object NamedBody(
         Guid typeId,
         Guid cityId,
@@ -180,7 +162,9 @@ internal static class SupportPublicHarness
         string documentType = "CC",
         string documentNumber = "1020304050",
         string token = FakeSupportCaptcha.ValidToken,
-        int legalTextVersion = 1,
+        int privacyNoticeVersion = 1,
+        int termsVersion = 1,
+        bool acceptsTerms = true,
         int formVersion = 1) =>
         new
         {
@@ -204,13 +188,21 @@ internal static class SupportPublicHarness
                 email,
             },
             acceptsDataPolicy = true,
-            legalTextVersion,
+            privacyNoticeVersion,
+            anonymousNoticeVersion = (int?)null,
+            acceptsTerms,
+            termsVersion,
             formVersion,
             turnstileToken = token,
         };
 
-    /// <summary>Un radicado anónimo: sin solicitante ni consentimiento.</summary>
-    public static object AnonymousBody(Guid typeId, string token = FakeSupportCaptcha.ValidToken) =>
+    /// <summary>Un radicado anónimo: sin solicitante ni aviso de privacidad; con el aviso anónimo y los términos.</summary>
+    public static object AnonymousBody(
+        Guid typeId,
+        string token = FakeSupportCaptcha.ValidToken,
+        int anonymousNoticeVersion = 1,
+        int termsVersion = 1,
+        bool acceptsTerms = true) =>
         new
         {
             ticketTypeId = typeId,
@@ -219,7 +211,10 @@ internal static class SupportPublicHarness
             anonymous = true,
             requester = (object?)null,
             acceptsDataPolicy = false,
-            legalTextVersion = (int?)null,
+            privacyNoticeVersion = (int?)null,
+            anonymousNoticeVersion,
+            acceptsTerms,
+            termsVersion,
             formVersion = 1,
             turnstileToken = token,
         };

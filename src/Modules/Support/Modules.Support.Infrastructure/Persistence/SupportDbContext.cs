@@ -288,7 +288,6 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         text.Property(value => value.TermsText).HasColumnName("terms_text").HasMaxLength(SupportLegalTextVersion.TextMaxLength);
         text.Property(value => value.CreatedAt).HasColumnName("created_at");
         text.Property(value => value.CreatedBy).HasColumnName("created_by");
-        text.Ignore(value => value.IsExample);
         text.HasIndex(value => new { value.TenantId, value.Version }).IsUnique().HasDatabaseName(LegalTextVersionIndex);
         // Para SupportUserReferenceProbe, que busca por membresía sola.
         text.HasIndex(value => value.CreatedBy).HasDatabaseName("IX_legal_text_versions_created_by");
