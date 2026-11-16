@@ -309,7 +309,11 @@ public sealed record QuotationBillingAccountDto(
     string? Country = null,
     /// <summary>El municipio de la empresa congelado con la cuenta (<c>billing_company_city_id</c>, A12); null en un
     /// documento anterior que todavía no reenvió la cuenta.</summary>
-    Guid? CityId = null);
+    Guid? CityId = null,
+    /// <summary>The company of a preview without its bank account yet (spec 2026-11-16 withholdings by company): it feeds
+    /// the withholding explanation and the composers answer no billing account for it. Never serialised: the HTTP
+    /// contract only ever sees a real account or null.</summary>
+    [property: JsonIgnore] bool IsPending = false);
 
 /// <summary>
 /// La cuenta elegida, tal como viaja en el request. Llegan los cuatro campos y no sólo el id de
@@ -392,7 +396,8 @@ public sealed record QuotationPartiesRequest(
 /// cantidad; precio, escala, descuentos y tasa los resuelve el backend. Ausentes, los tres campos dan lo de antes:
 /// sin líneas, sin piso, no detal.
 /// </summary>
-public sealed record CreateQuotationRequest(
+// Not sealed: PreviewNewQuotationRequest extends it with the preview-only billingCompanyId.
+public record CreateQuotationRequest(
     Guid ClientId,
     DateOnly? ValidUntil,
     string? PaymentMethod,
@@ -424,6 +429,31 @@ public sealed record CreateQuotationRequest(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement OperationCityId { get; init; }
 }
+
+/// <summary>
+/// The body of <c>POST /quotations/preview</c>: the creation body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
+/// withholdings by company). Its own type so <c>POST /quotations</c> never learns the field: creating keeps requiring
+/// the full account to have one.
+/// </summary>
+public sealed record PreviewNewQuotationRequest(
+    Guid ClientId,
+    DateOnly? ValidUntil,
+    string? PaymentMethod,
+    string? Notes,
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount,
+    ShippingRequest? Shipping = null,
+    IReadOnlyList<QuotationEditItemRequest>? Items = null,
+    int? GlobalScaleFloor = null,
+    bool IsRetail = false,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    /// <summary>The billing company chosen before its bank account: the preview paints its withholdings and answers
+    /// <c>billingAccount: null</c>. Ignored when <c>billingAccount</c> is present.</summary>
+    Guid? BillingCompanyId = null)
+    : CreateQuotationRequest(
+        ClientId, ValidUntil, PaymentMethod, Notes, Parties, BillingAccount, Shipping, Items, GlobalScaleFloor, IsRetail,
+        WithholdingPercentages, ClearedWithholdingTypes);
 
 /// <summary>
 /// La entrega por envío de una cotización tal como la pide el editor (spec 2026-10-17 §5.1). Viaja aparte de
@@ -536,7 +566,8 @@ public sealed record QuotationEditItemRequest(Guid VariantId, decimal Quantity);
 /// viene se limpia. <c>Items</c> es la lista **completa** de líneas deseadas, no un delta —
 /// ausente o null equivale a vacía, o sea "sin productos".
 /// </summary>
-public sealed record SaveQuotationRequest(
+// Not sealed: PreviewQuotationRequest extends it with the preview-only billingCompanyId.
+public record SaveQuotationRequest(
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
@@ -568,6 +599,30 @@ public sealed record SaveQuotationRequest(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement OperationCityId { get; init; }
 }
+
+/// <summary>
+/// The body of <c>POST /quotations/{quotationId}/preview</c>: the save body plus <see cref="BillingCompanyId"/> (spec
+/// 2026-11-16 withholdings by company). Its own type so <c>PUT /quotations/{quotationId}</c> never learns the field: the
+/// save keeps requiring the full account.
+/// </summary>
+public sealed record PreviewQuotationRequest(
+    DateOnly? ValidUntil,
+    string? PaymentMethod,
+    string? Notes,
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount,
+    IReadOnlyList<QuotationEditItemRequest>? Items,
+    int? GlobalScaleFloor = null,
+    bool IsRetail = false,
+    ShippingRequest? Shipping = null,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    /// <summary>The billing company chosen before its bank account: the preview paints its withholdings and answers
+    /// <c>billingAccount: null</c>. Ignored when <c>billingAccount</c> is present.</summary>
+    Guid? BillingCompanyId = null)
+    : SaveQuotationRequest(
+        ValidUntil, PaymentMethod, Notes, Parties, BillingAccount, Items, GlobalScaleFloor, IsRetail, Shipping,
+        WithholdingPercentages, ClearedWithholdingTypes);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>

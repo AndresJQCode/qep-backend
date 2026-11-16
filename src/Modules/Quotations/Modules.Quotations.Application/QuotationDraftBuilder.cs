@@ -58,13 +58,14 @@ public sealed class QuotationDraftBuilder(
         var customer = await customerLookup.FindAsync(input.TenantId, input.ClientId, cancellationToken);
         QuotationCustomerEligibility.Ensure(customer, input.TenantId, input.ClientId);
 
-        var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
-            companyLookup, input.TenantId, edits.BillingAccount, cancellationToken);
-
         // Sin cuenta de cobro, la cotización nace en la moneda por defecto del tenant. Se lee siempre, haya
-        // cuenta o no: el agregado decide cuál gana, no el handler.
+        // cuenta o no: el agregado decide cuál gana, no el handler. Antes de resolver la cuenta porque la empresa sola
+        // del cálculo previo (spec 2026-11-16) arma una cuenta pendiente en esa moneda.
         var defaultCurrency = Currencies.Normalize(
             await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
+
+        var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
+            companyLookup, input.TenantId, edits.BillingAccount, edits.BillingCompanyId, defaultCurrency, cancellationToken);
 
         // Se resuelve acá y queda guardada: calcularla al leer haría que la misma cotización mostrara una fecha
         // distinta cada día. Y antes de ApplyAsync, porque UpdateDetails con null la borra.
@@ -129,6 +130,7 @@ public sealed class QuotationDraftBuilder(
         && edits.Notes is null
         && edits.Parties is null
         && edits.BillingAccount is null
+        && edits.BillingCompanyId is null
         && edits.Shipping is null
         && edits.Items.Count == 0
         && edits.GlobalScaleFloor is null
@@ -149,6 +151,8 @@ public sealed class QuotationDraftBuilder(
         public QuotationPartiesRequest? Parties => Body.Parties;
 
         public QuotationBillingAccountRequest? BillingAccount => Body.BillingAccount;
+
+        public Guid? BillingCompanyId => Body.BillingCompanyId;
 
         public IReadOnlyList<QuotationItemAddition> Items => Body.Items;
 

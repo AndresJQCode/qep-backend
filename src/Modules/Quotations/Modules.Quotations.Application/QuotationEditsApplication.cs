@@ -55,8 +55,10 @@ internal static class QuotationEditsApplication
         CancellationToken cancellationToken,
         MunicipalContext? municipal = null)
     {
+        // A company without account (previews only, spec 2026-11-16) resolves to a pending account in the quotation's own
+        // currency: it paints the company's withholdings and never reprices the lines.
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
-            companyLookup, tenantId, edits.BillingAccount, cancellationToken);
+            companyLookup, tenantId, edits.BillingAccount, edits.BillingCompanyId, quotation.Currency, cancellationToken);
 
         // «Sin retención» se valida antes de tocar el agregado y siempre, también con cambio de empresa o de municipio
         // (plan P12): una marca contradictoria es 422, nunca un id ignorado en silencio como los de A11.

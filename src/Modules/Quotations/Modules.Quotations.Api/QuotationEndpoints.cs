@@ -58,7 +58,7 @@ public static class QuotationEndpoints
         // `/preview` no choca con `/{quotationId:guid}`: la restricción de guid no lo acepta.
         group.MapPost("/preview", PreviewNewQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
-            .Accepts<CreateQuotationRequest>("application/json")
+            .Accepts<PreviewNewQuotationRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -81,7 +81,7 @@ public static class QuotationEndpoints
         // no es un guid.
         group.MapPost("/{quotationId:guid}/preview", PreviewQuotationAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
-            .Accepts<SaveQuotationRequest>("application/json")
+            .Accepts<PreviewQuotationRequest>("application/json")
             .Produces<QuotationResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -282,7 +282,7 @@ public static class QuotationEndpoints
 
     private static async Task<IResult> PreviewNewQuotationAsync(
         Guid tenantId,
-        CreateQuotationRequest request,
+        PreviewNewQuotationRequest request,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
@@ -299,7 +299,8 @@ public static class QuotationEndpoints
                 ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
                 OperationCityChoices.From(request.OperationCityId, "quotation"),
                 request.WithholdingPercentages,
-                request.ClearedWithholdingTypes),
+                request.ClearedWithholdingTypes,
+                request.BillingCompanyId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -344,7 +345,7 @@ public static class QuotationEndpoints
     private static async Task<IResult> PreviewQuotationAsync(
         Guid tenantId,
         Guid quotationId,
-        SaveQuotationRequest request,
+        PreviewQuotationRequest request,
         IRequestDispatcher dispatcher,
         IQuotationResponseComposer composer,
         CancellationToken cancellationToken)
@@ -361,7 +362,8 @@ public static class QuotationEndpoints
                 ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping,
                 OperationCityChoices.From(request.OperationCityId, "quotation"),
                 request.WithholdingPercentages,
-                request.ClearedWithholdingTypes),
+                request.ClearedWithholdingTypes,
+                request.BillingCompanyId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
