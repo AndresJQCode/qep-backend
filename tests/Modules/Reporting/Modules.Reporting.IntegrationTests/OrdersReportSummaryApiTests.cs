@@ -245,6 +245,35 @@ public sealed class OrdersReportSummaryApiTests
         Assert.Equal([new MoneyAmount("COP", quotation.Total)], month.Totals);
     }
 
+    // Spec 2026-11-16 §5: el período y la serie mensual van sobre la fecha del pedido. Un pedido de hoy movido al 31 de
+    // octubre cuenta en octubre: entra en un período de octubre y su fila mensual es la de octubre.
+    [Fact]
+    public async Task AMovedOrderCountsInItsOrderDateMonth()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        await MoveOrderDateAsync(client, tenant.TenantId, order.Id, new DateOnly(2026, 10, 31));
+
+        var october = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?from=2026-10-01&to=2026-10-31",
+            TestContext.Current.CancellationToken);
+        var everything = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(october);
+        Assert.Equal(1, october.OrderCount);
+        Assert.NotNull(everything);
+        var month = Assert.Single(everything.Monthly);
+        Assert.Equal((2026, 10, 1), (month.Year, month.Month, month.Count));
+    }
+
     /// <summary>
     /// Un tenant sin pedidos devuelve ceros y listas vacias, **no un 404 ni un cuerpo nulo**: el
     /// panel tiene que poder distinguir "no hay pedidos" de "no se pudo cargar", y un agregado

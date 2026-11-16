@@ -50,12 +50,10 @@ public sealed class OrdersExportProcessor(
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
-        // Un calendario por job (spec 2026-09-17). El rango se corta en la zona de quien lo pidió, la
-        // misma con que vio la tabla; las fechas del archivo siguen en el día del tenant, porque las
-        // importa su ERP.
+        // Un calendario por job (spec 2026-09-17): las fechas del archivo van en el día del tenant, porque las importa su
+        // ERP. El rango corta por la fecha del pedido, que ya es un día del tenant (spec 2026-11-16 §4): la zona guardada
+        // en el trabajo no lo mueve.
         var calendar = await tenantClock.GetAsync(job.TenantId, cancellationToken);
-        var converted = TenantDayRange.Of(
-            OrderListing.CalendarFor(calendar, filters.TimeZone), filters.ConvertedFrom, filters.ConvertedTo);
         var generatedAt = calendar.UtcNow;
 
         var storedLayout = await layoutRepository.FindAsync(job.TenantId, cancellationToken);
@@ -75,8 +73,8 @@ public sealed class OrdersExportProcessor(
                 paymentStatus,
                 fulfillmentStatus,
                 invoiced,
-                converted.From,
-                converted.Before,
+                filters.ConvertedFrom,
+                filters.ConvertedTo,
                 filters.OrderNumber,
                 source,
                 after,
@@ -92,7 +90,7 @@ public sealed class OrdersExportProcessor(
                 exportedRows += rows.Length;
                 return rows;
             },
-            order => new OrderExportCursor(order.ConvertedAt, order.OrderNumber),
+            order => new OrderExportCursor(order.OrderDate, order.ConvertedAt, order.OrderNumber),
             cancellationToken);
 
         if (orderCount == 0)
@@ -261,7 +259,8 @@ public sealed class OrdersExportProcessor(
         var shippingContact = ShippingContactFor(shipping, customer, context.CityNames, context.DepartmentNames);
         // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
         // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
-        var orderDate = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        // Spec 2026-11-16 §5: la fecha del pedido, que el asesor puede corregir; ya es un día del tenant.
+        var orderDate = order.OrderDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // Spec 2026-10-15 §6.4 (y el hotfix del mismo día): las observaciones son las del pedido, que
         // al convertir heredó las de la cotización.

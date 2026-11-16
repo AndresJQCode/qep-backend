@@ -3,8 +3,8 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>Posición de keyset para la exportación de pedidos (spec 2026-09-12, D8): el orden del
-/// listado, fecha de conversión y número como desempate.</summary>
-public sealed record OrderExportCursor(DateTimeOffset ConvertedAt, string OrderNumber);
+/// listado, fecha del pedido, instante de creación y número como desempate (spec 2026-11-16 §5).</summary>
+public sealed record OrderExportCursor(DateOnly OrderDate, DateTimeOffset ConvertedAt, string OrderNumber);
 
 public sealed record OrderExportPaymentProof(
     OrderPaymentProofId Id,
@@ -66,8 +66,8 @@ public interface IOrderRepository
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         int page,
@@ -109,8 +109,8 @@ public interface IOrderRepository
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         CancellationToken cancellationToken);
@@ -124,8 +124,8 @@ public interface IOrderRepository
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         OrderExportCursor? after,

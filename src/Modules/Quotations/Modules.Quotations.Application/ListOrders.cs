@@ -21,8 +21,8 @@ public sealed record ListOrdersQuery(
     string? Source,
     int Page,
     int PageSize,
-    /// <summary>La zona IANA de quien filtra (<see cref="OrderListing.CalendarFor"/>). Sin ella, los
-    /// días son los del tenant.</summary>
+    /// <summary>La zona IANA de quien filtra. Se acepta por contrato pero ya no mueve el filtro: las fechas cortan por la
+    /// fecha del pedido, que es un día del tenant (spec 2026-11-16 §4).</summary>
     string? TimeZone = null,
     string? FulfillmentStatus = null,
     string? Invoiced = null) : IQuery<OrderPage>;
@@ -66,8 +66,7 @@ public sealed class ListOrdersHandler(
     IQuotationRepository quotationRepository,
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
-    IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    IExecutionContext executionContext)
     : IQueryHandler<ListOrdersQuery, OrderPage>
 {
     public async Task<OrderPage> HandleAsync(
@@ -90,15 +89,9 @@ public sealed class ListOrdersHandler(
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, query.TenantId, query.ClientCuc, cancellationToken);
 
-        // El rango se corta en el día de quien filtra, o en el del tenant si no manda su zona (spec
-        // 2026-09-17, punto 3). Sin fechas no se consulta el huso.
-        var converted = query.ConvertedFrom is null && query.ConvertedTo is null
-            ? new TenantInstantRange(null, null)
-            : TenantDayRange.Of(
-                OrderListing.CalendarFor(await tenantClock.GetAsync(query.TenantId, cancellationToken), query.TimeZone),
-                query.ConvertedFrom,
-                query.ConvertedTo);
-
+        // Spec 2026-11-16 §4: convertedFrom/convertedTo conservan su nombre pero cortan por la fecha del pedido, que ya es
+        // un día del tenant: no hay huso que aplicar, así que TimeZone se sigue aceptando (y validando) y no se usa.
+        OrderListing.EnsureValidTimeZone(query.TimeZone);
         var (rows, total) = await repository.SearchAsync(
             query.TenantId,
             query.ClientId,
@@ -108,8 +101,8 @@ public sealed class ListOrdersHandler(
             paymentStatus,
             fulfillmentStatus,
             invoiced,
-            converted.From,
-            converted.Before,
+            query.ConvertedFrom,
+            query.ConvertedTo,
             query.OrderNumber,
             source,
             page,

@@ -107,8 +107,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         int page,
@@ -116,10 +116,12 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, convertedFrom, convertedBefore, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
         var total = await orders.CountAsync(cancellationToken);
+        // Spec 2026-11-16 §5: primero la fecha del pedido; dentro del mismo día, el instante en que se creó.
         var items = await orders
-            .OrderByDescending(order => order.ConvertedAt)
+            .OrderByDescending(order => order.OrderDate)
+            .ThenByDescending(order => order.ConvertedAt)
             .ThenByDescending(order => order.OrderNumber)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -191,12 +193,12 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         CancellationToken cancellationToken) =>
-        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, convertedFrom, convertedBefore, orderNumber, source)
+        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source)
             .AnyAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Order>> ListForExportAsync(
@@ -208,8 +210,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         OrderExportCursor? after,
@@ -217,18 +219,21 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, convertedFrom, convertedBefore, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
         if (after is not null)
         {
+            // El cursor es el orden del listado entero (spec 2026-11-16 §5): fecha del pedido, instante y número.
+            var orderDate = after.OrderDate;
             var convertedAt = after.ConvertedAt;
             var number = after.OrderNumber;
             orders = orders.Where(order => EF.Functions.LessThan(
-                ValueTuple.Create(order.ConvertedAt, order.OrderNumber),
-                ValueTuple.Create(convertedAt, number)));
+                ValueTuple.Create(order.OrderDate, order.ConvertedAt, order.OrderNumber),
+                ValueTuple.Create(orderDate, convertedAt, number)));
         }
 
         return await orders
-            .OrderByDescending(order => order.ConvertedAt)
+            .OrderByDescending(order => order.OrderDate)
+            .ThenByDescending(order => order.ConvertedAt)
             .ThenByDescending(order => order.OrderNumber)
             .Take(limit)
             .ToListAsync(cancellationToken);
@@ -245,8 +250,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         OrderPaymentStatus? paymentStatus,
         OrderFulfillmentStatus? fulfillmentStatus,
         bool? invoiced,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source)
     {
@@ -287,14 +292,15 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 EF.Functions.ILike(order.OrderNumber, orderNumberPattern, LikeEscapeCharacter));
         }
 
-        if (convertedFrom is { } from)
+        // Spec 2026-11-16 §4: el filtro de fechas corta por la fecha del pedido, inclusive en las dos puntas y sin huso.
+        if (orderDateFrom is { } from)
         {
-            orders = orders.Where(order => order.ConvertedAt >= from);
+            orders = orders.Where(order => order.OrderDate >= from);
         }
 
-        if (convertedBefore is { } before)
+        if (orderDateTo is { } to)
         {
-            orders = orders.Where(order => order.ConvertedAt < before);
+            orders = orders.Where(order => order.OrderDate <= to);
         }
 
         if (clientId is { } client)

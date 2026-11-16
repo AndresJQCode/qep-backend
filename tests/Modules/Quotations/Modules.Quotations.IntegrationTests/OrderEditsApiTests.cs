@@ -755,7 +755,7 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         var response = await PutEditsAsync(
             client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest(
-                [new OrderEditItemRequest(productId, 1m)], null, null, OrderDate: BogotaToday().AddDays(2)));
+                [new OrderEditItemRequest(productId, 1m)], null, null, OrderDate: TodayInBogota().AddDays(2)));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await ReadProblemAsync(response);
@@ -811,10 +811,6 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.Equal("order.order.not_editable", (await ReadProblemAsync(response)).Code);
         Assert.Equal(order.OrderDate, (await GetDetailAsync(client, tenantId, order.Id)).Order.OrderDate);
     }
-
-    // El tenant de prueba se registra en America/Bogota (default del registro).
-    private static DateOnly BogotaToday() => DateOnly.FromDateTime(
-        TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("America/Bogota")).DateTime);
 
     // Spec 2026-10-26, «Editar pedido» cambia la facturación. El tenant de prueba es colombiano, así que la
     // regla NIT de la jurídica aplica.
