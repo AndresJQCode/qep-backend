@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,6 +46,38 @@ public sealed class SupportPublicFilingApiTests(SupportPublicLoggedHost host) : 
         Assert.True(rig.Factory.Services.GetRequiredService<ISupportPinHasher>().Verify(hash, pin));
         // La configuración del formulario no lo vuelve a mostrar: el PIN viaja una sola vez.
         Assert.DoesNotContain(pin, await BodyAsync(await rig.Client.GetAsync(PublicUrl(rig.Slug, "/form"), Ct)), StringComparison.Ordinal);
+    }
+
+    // Plan L26 (spec 2026-11-15 §9.1, D-6): the filing response carries the filing date and the term from the ticket's snapshot of
+    // its type. dueOn does not change.
+    [Theory]
+    [InlineData("Petición general", 15, true)]
+    [InlineData("Soporte técnico", null, false)]
+    public async Task TheFilingResponseCarriesReceivedAtAndTheTerm(string typeName, int? termBusinessDays, bool termIsLegal)
+    {
+        var rig = await RigAsync();
+        var typeId = await TypeIdNamedAsync(rig.Factory, rig.Tenant, typeName);
+
+        var response = await PostJsonAsync(rig.Client, rig.TicketsUrl, NamedBody(typeId, rig.CityId, Email()));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var filed = await response.Content.ReadFromJsonAsync<SupportPublicFiledDto>(Ct);
+        Assert.NotNull(filed);
+        Assert.Equal(ClockedSupportHost.Reception, filed.ReceivedAt);
+        Assert.Equal(1L, await ScalarAsync(
+            rig.Factory,
+            "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant AND received_at = @receivedAt",
+            ("tenant", rig.TenantId),
+            ("receivedAt", filed.ReceivedAt.ToUniversalTime())));
+        Assert.Equal(termBusinessDays, filed.TermBusinessDays);
+        Assert.Equal(termIsLegal, filed.TermIsLegal);
+        var dueOn = await TextAsync(
+            rig.Factory, "SELECT due_on::text FROM support.tickets WHERE tenant_id = @tenant", ("tenant", rig.TenantId));
+        Assert.Equal(dueOn, filed.DueOn?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+        var raw = await JsonAsync(response);
+        Assert.True(raw.TryGetProperty("receivedAt", out _));
+        Assert.True(raw.TryGetProperty("termBusinessDays", out _));
+        Assert.True(raw.TryGetProperty("termIsLegal", out _));
     }
 
     [Fact]

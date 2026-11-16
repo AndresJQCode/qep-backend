@@ -149,6 +149,15 @@ internal static class SupportPublicHarness
             "SELECT id::text FROM support.ticket_types WHERE tenant_id = @tenant AND is_active AND is_published ORDER BY position LIMIT 1",
             ("tenant", Guid.Parse(tenantId))))!);
 
+    /// <summary>A default type of the tenant by name (<c>SupportTicketTypeDefaults</c>): «Petición general» has 15 legal business days,
+    /// «Soporte técnico» has no term.</summary>
+    public static async Task<Guid> TypeIdNamedAsync(QepApiFactory factory, string tenantId, string name) =>
+        Guid.Parse((await TextAsync(
+            factory,
+            "SELECT id::text FROM support.ticket_types WHERE tenant_id = @tenant AND name = @name",
+            ("tenant", Guid.Parse(tenantId)),
+            ("name", name)))!);
+
     /// <summary>Una ciudad cualquiera de Geography (la sembró su migración).</summary>
     public static async Task<Guid> AnyCityIdAsync(QepApiFactory factory) =>
         Guid.Parse((await TextAsync(factory, "SELECT id::text FROM geography.cities ORDER BY id LIMIT 1"))!);

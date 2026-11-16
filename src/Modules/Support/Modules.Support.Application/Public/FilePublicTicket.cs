@@ -355,8 +355,22 @@ public sealed class FilePublicTicketHandler(
         var outcome = await openingDelivery.DeliverAsync(ticket, access, pin, consultUrl, now, cancellationToken);
         var emailed = outcome is { Channel: SupportOpeningSender.EmailChannel, Sent: true };
 
-        return new SupportPublicFiledDto(ticket.DisplayNumber, pin, ticket.DueOn, tenant.Form.SuccessMessage, emailed, consultUrl);
+        return Filed(ticket, pin, tenant.Form.SuccessMessage, emailed, consultUrl);
     }
+
+    // Plan L26: la fecha de radicación y el término salen de la foto del ticket, nunca del tipo vivo.
+    private static SupportPublicFiledDto Filed(
+        SupportTicket ticket, string? pin, string? successMessage, bool pinEmailed, string consultUrl) =>
+        new(
+            ticket.DisplayNumber,
+            pin,
+            ticket.ReceivedAt,
+            ticket.DueOn,
+            ticket.TermBusinessDays,
+            ticket.TermIsLegal,
+            successMessage,
+            pinEmailed,
+            consultUrl);
 
     // Plan L16: las versiones que aplican al camino tienen que ser las vigentes. La que no aplica ya la rechazó el validador.
     private static bool IsCurrent(FilePublicTicketCommand command, SupportServedLegal legal) =>

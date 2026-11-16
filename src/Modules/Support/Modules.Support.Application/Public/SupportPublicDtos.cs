@@ -138,9 +138,20 @@ public sealed record SupportPublicRequesterRequest(
     string? Email);
 
 /// <summary>El radicado. <see cref="Pin"/> viaja sólo aquí, una vez: después sólo se puede reenviar uno nuevo al correo registrado.
-/// <see cref="PinEmailed"/> dice si el correo de apertura salió; la pantalla lo muestra igual.</summary>
+/// <see cref="PinEmailed"/> dice si el correo de apertura salió; la pantalla lo muestra igual. <see cref="ReceivedAt"/>,
+/// <see cref="TermBusinessDays"/> y <see cref="TermIsLegal"/> son la fecha de radicación y la foto del término del tipo en el ticket
+/// (spec 2026-11-15 §9.1, plan L26): editar el tipo después no los cambia. <see cref="TermBusinessDays"/> null = el tipo no tiene
+/// término. <see cref="Pin"/> null sólo en un reintento cuyo PIN ya salió por correo (plan L28).</summary>
 public sealed record SupportPublicFiledDto(
-    string Number, string Pin, DateOnly? DueOn, string? SuccessMessage, bool PinEmailed, string ConsultUrl);
+    string Number,
+    string? Pin,
+    DateTimeOffset ReceivedAt,
+    DateOnly? DueOn,
+    int? TermBusinessDays,
+    bool TermIsLegal,
+    string? SuccessMessage,
+    bool PinEmailed,
+    string ConsultUrl);
 
 /// <summary>La consulta de un ticket: radicado (con o sin prefijo), PIN y el token de Turnstile. El PIN viaja en el cuerpo y no en la
 /// URL, para que no quede en logs (plan F9).</summary>
@@ -153,6 +164,7 @@ public sealed record SupportPublicResendPinRequest(string? Number, string? Turns
 /// Lo que la consulta muestra (plan F13): el radicado, el tipo, el estado, la radicación, el vencimiento y cómo va el plazo
 /// (<c>DueState</c> como en la consola; <c>TermIsLegal</c> decide si la página dice «plazo legal» u «objetivo»), y todas las
 /// respuestas que salieron, de cualquier canal. Nada más del expediente: ni el solicitante, ni el asunto, ni la traza.
+/// <c>TermBusinessDays</c> es la foto del término en el ticket (spec 2026-11-15 §9.1, plan L26); null = el tipo no tiene término.
 /// </summary>
 public sealed record SupportPublicTicketDto(
     string Number,
@@ -162,6 +174,7 @@ public sealed record SupportPublicTicketDto(
     DateOnly? DueOn,
     string? DueState,
     bool TermIsLegal,
+    int? TermBusinessDays,
     IReadOnlyList<SupportPublicReplyDto> Replies);
 
 /// <summary>Una respuesta que salió: su texto, cuándo y por qué canal (<c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>,
