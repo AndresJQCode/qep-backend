@@ -31,6 +31,12 @@ public sealed record WithholdingRate(
     /// </summary>
     public decimal CatalogPercentage { get; init; } = Percentage;
 
+    /// <summary>
+    /// El año de la UVT congelada en <see cref="TaxUnitValue"/> (spec retenciones por UVT §5.2): menor al del documento
+    /// cuando la del año en curso no estaba cargada. Null sin unidad, o en una fila anterior a esta columna que no casó.
+    /// </summary>
+    public int? TaxUnitYear { get; init; }
+
     /// <summary>Si el asesor cambió el porcentaje del catálogo en este documento.</summary>
     public bool Overridden => Percentage != CatalogPercentage;
 

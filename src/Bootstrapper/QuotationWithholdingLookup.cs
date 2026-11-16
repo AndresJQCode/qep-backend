@@ -118,6 +118,9 @@ internal sealed class QuotationWithholdingLookup(
     private static WithholdingRate Photo(TaxRate rate, IReadOnlyList<TaxUnitValue> values, DateOnly documentDate)
     {
         var unit = rate.MinimumBase is null ? null : UnitOf(rate);
+        // Sin unidad (base en dinero) o sin base no hay nada que congelar; sin un año cargado queda null y la tasa no
+        // aplica (D20). El año viaja con el valor para mostrar una UVT desactualizada (spec retenciones por UVT §5.2).
+        var taxUnit = unit is null ? null : TaxUnitValues.Resolve(values, rate.Country, documentDate.Year);
         return new WithholdingRate(
             rate.Id.Value,
             rate.Name,
@@ -126,12 +129,13 @@ internal sealed class QuotationWithholdingLookup(
             rate.Percentage,
             rate.MinimumBase,
             unit,
-            // Sin unidad (base en dinero) o sin base no hay nada que congelar; sin un año cargado queda null y la
-            // tasa no aplica (D20).
-            unit is null ? null : TaxUnitValues.ValueFor(values, rate.Country, documentDate.Year),
+            taxUnit?.Value,
             // El municipio de una municipal viaja en la foto: las reglas de la cotización y el pedido comparan con él
             // (spec ReteICA por empresa §7.5).
-            rate.CityId);
+            rate.CityId)
+        {
+            TaxUnitYear = taxUnit?.Year,
+        };
     }
 
     // TaxRate.Withholds lanza con un país o un tipo que la tabla no conoce; acá eso es «no retiene», y el selector lo
