@@ -163,7 +163,10 @@ public sealed partial class RichTextHtmlReader : IRichTextReader
                     "em" or "i" => style with { Italic = true },
                     "u" => style with { Underline = true },
                     "s" => style with { Strike = true },
-                    "a" when element.GetAttribute("href") is { } href => style with { Href = href },
+                    // Defensa en profundidad: el HTML guardado ya viene saneado, pero un enlace con otro esquema (javascript:, una
+                    // ruta relativa) conserva su texto y pierde el enlace.
+                    "a" when element.GetAttribute("href") is { } href && RichTextHtmlSanitizer.IsAllowedLink(href)
+                        => style with { Href = href },
                     _ => style,
                 };
                 foreach (var child in element.ChildNodes)

@@ -28,6 +28,13 @@ public sealed class RichTextHtmlSanitizer : IRichTextSanitizer
 
     private static readonly string[] AllowedSchemes = ["https", "mailto", "tel"];
 
+    /// <summary>Si <paramref name="url"/> es un enlace que el saneador deja pasar: absoluto y con esquema <c>https</c>, <c>mailto</c> o
+    /// <c>tel</c>. Lo usa también <see cref="RichTextHtmlReader"/>, para no repetir la lista.</summary>
+    internal static bool IsAllowedLink(string? url) =>
+        url is not null
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && AllowedSchemes.Contains(uri.Scheme, StringComparer.OrdinalIgnoreCase);
+
     // Se quitan con su contenido antes de sanear. Con KeepChildNodes, el código de un <script> quedaría como texto visible, y el
     // contenido foráneo (svg, math) y los elementos de texto crudo son donde vive el XSS por mutación.
     private static readonly HashSet<string> DroppedWithContent = new(StringComparer.OrdinalIgnoreCase)
@@ -155,9 +162,7 @@ public sealed class RichTextHtmlSanitizer : IRichTextSanitizer
         sanitizer.FilterUrl += (_, args) =>
         {
             // La librería conserva las URL relativas (no hay URL base): sólo sobrevive un https, mailto o tel absoluto.
-            if (args.SanitizedUrl is not { } url
-                || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                || !AllowedSchemes.Contains(uri.Scheme, StringComparer.OrdinalIgnoreCase))
+            if (!IsAllowedLink(args.SanitizedUrl))
             {
                 args.SanitizedUrl = null;
             }

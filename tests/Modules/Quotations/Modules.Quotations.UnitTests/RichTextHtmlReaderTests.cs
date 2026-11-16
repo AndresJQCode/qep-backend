@@ -87,6 +87,18 @@ public sealed class RichTextHtmlReaderTests
         Assert.Equal(new RichTextRun("x", Href: "https://x.co"), Assert.Single(paragraph.Runs!));
     }
 
+    // Defensa en profundidad: aunque el HTML guardado ya pasó por el saneador, el lector sólo enlaza https, mailto y tel.
+    [Fact]
+    public void AHrefOutsideTheAllowedSchemesIsDropped()
+    {
+        var blocks = Reader.Read("<p><a href=\"javascript:alert(1)\">x</a></p>");
+
+        var paragraph = Assert.Single(blocks);
+        var run = Assert.Single(paragraph.Runs!);
+        Assert.Equal("x", run.Text);
+        Assert.Null(run.Href);
+    }
+
     [Fact]
     public void AdjacentRunsWithTheSameMarksMerge()
     {
