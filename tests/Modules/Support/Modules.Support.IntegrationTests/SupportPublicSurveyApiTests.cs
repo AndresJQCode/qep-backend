@@ -138,6 +138,10 @@ public sealed class SupportPublicSurveyApiTests(SupportPublicLoggedHost host) : 
             "5", await TextAsync(rig.Factory, "SELECT failed_attempts::text FROM support.ticket_access WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
         Assert.Equal(
             "", await TextAsync(rig.Factory, "SELECT coalesce(rating, '') FROM support.ticket_surveys WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+        // Revisión del bloque D: el bloqueo que se alcanzó por la calificación es el mismo de la consulta.
+        var lookup = await LookupAsync(rig, filed.Number, filed.Pin);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, lookup.StatusCode);
+        Assert.Equal("support.public.lookup_failed", await CodeOfAsync(lookup));
     }
 
     // H21 (Q-10): reabierto, esa resolución ya no se juzga: con el PIN correcto, 422 support.survey.closed.

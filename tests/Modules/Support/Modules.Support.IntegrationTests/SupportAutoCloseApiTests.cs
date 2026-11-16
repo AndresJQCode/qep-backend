@@ -268,6 +268,102 @@ public sealed class SupportAutoCloseApiTests : IAsyncLifetime
         Assert.Contains(rig.TicketId, _realtime.Tickets);
     }
 
+    // Revisión del bloque D: el candidato se leyó en otra resolución (se reabrió y se volvió a resolver entre la lista y el cierre): el
+    // cierre no lo toca.
+    [Fact]
+    public async Task ACandidateOfAnotherResolutionIsNotClosed()
+    {
+        var rig = await ResolvedTicketAsync();
+        var closeOn = await AutoCloseOnAsync(rig);
+        _clock.UtcNow = new DateTimeOffset(closeOn.AddDays(1).ToDateTime(new TimeOnly(12, 0)), TimeSpan.FromHours(-5));
+        var candidate = Assert.Single(await CandidatesAsync());
+
+        bool closed;
+        await using (var scope = Factory.Services.CreateAsyncScope())
+        {
+            closed = await scope.ServiceProvider.GetRequiredService<SupportAutoCloser>()
+                .CloseIfDueAsync(candidate with { ResolvedAt = candidate.ResolvedAt.AddSeconds(-1) }, Ct);
+        }
+
+        Assert.False(closed);
+        Assert.Equal("Resolved", (await rig.Scenario.DetailAsync(rig.TicketId)).GetProperty("status").GetString());
+    }
+
+    // Revisión del bloque D: el recorrido va por páginas de 100 (cursor por resolved_at e id): con más de una página, los cierra todos.
+    [Fact]
+    public async Task TheScanPagesThroughMoreThanOnePage()
+    {
+        _clock.UtcNow = ClockedSupportHost.Reception;
+        var scenario = await StartAsync(Factory);
+        var conversation = await SeedConversationAsync(Factory, scenario.TenantId);
+        const int tickets = SupportAutoCloser.DefaultBatchSize + 5;
+        for (var index = 0; index < tickets; index++)
+        {
+            await SupportTicketSeed.SaveConversationTicketAsync(Factory, scenario.TenantId, conversation, ClockedSupportHost.Reception);
+        }
+
+        await ExecuteAsync(
+            Factory,
+            """
+            UPDATE support.tickets SET status = 'Resolved', resolved_at = @at, resolution_count = 1
+            WHERE tenant_id = @tenant
+            """,
+            ("at", ClockedSupportHost.Reception), ("tenant", scenario.TenantId));
+
+        _clock.UtcNow = ClockedSupportHost.Reception.AddDays(30);
+        var closed = await ActivatorUtilities.CreateInstance<Modules.Support.Infrastructure.SupportAutoCloseWorker>(Factory.Services)
+            .RunOnceAsync(Ct);
+
+        Assert.Equal(tickets, closed);
+        Assert.Equal(
+            0L,
+            await ScalarAsync(
+                Factory, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant AND status <> 'Closed'", ("tenant", scenario.TenantId)));
+    }
+
+    // Revisión del bloque D: dos cierres a la vez del mismo ticket (dos réplicas en el mismo tick) dejan un solo TicketClosed en el
+    // hilo y una sola auditoría: el segundo pierde por la versión del ticket y su transacción se deshace entera.
+    [Fact]
+    public async Task TwoConcurrentClosesLeaveOneClosedEventAndOneAudit()
+    {
+        var rig = await ResolvedTicketAsync();
+        var closeOn = await AutoCloseOnAsync(rig);
+        _clock.UtcNow = new DateTimeOffset(closeOn.AddDays(1).ToDateTime(new TimeOnly(12, 0)), TimeSpan.FromHours(-5));
+        var candidate = Assert.Single(await CandidatesAsync());
+
+        var outcomes = await Task.WhenAll(CloseAsync(candidate), CloseAsync(candidate));
+
+        Assert.Single(outcomes, closed => closed);
+        Assert.Equal("Closed", (await rig.Scenario.DetailAsync(rig.TicketId)).GetProperty("status").GetString());
+        Assert.Equal(1L, await CountTicketEventsAsync(Factory, rig.Conversation, rig.TicketId, "TicketClosed"));
+        Assert.Equal(
+            1L,
+            await ScalarAsync(
+                Factory,
+                "SELECT count(*) FROM audit.entries WHERE action = @action AND resource_id = @id AND actor_id = @system",
+                ("action", SupportAuditActions.TicketStatusChanged), ("id", rig.TicketId.ToString()), ("system", Guid.Empty)));
+    }
+
+    private async Task<IReadOnlyList<SupportAutoCloseCandidate>> CandidatesAsync()
+    {
+        await using var scope = Factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<SupportAutoCloser>().ListCandidatesAsync(100, null, Ct);
+    }
+
+    // Como el worker: una RequestConcurrencyException es «otro le ganó».
+    private async Task<bool> CloseAsync(SupportAutoCloseCandidate candidate)
+    {
+        try
+        {
+            await using var scope = Factory.Services.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<SupportAutoCloser>().CloseIfDueAsync(candidate, Ct);
+        }
+        catch (BuildingBlocks.Application.RequestConcurrencyException)
+        {
+            return false;
+        }
+    }
+
     // Un ticket de una conversación, resuelto por la API con el reloj en la radicación (viernes 13 de noviembre de 2026).
     private async Task<Rig> ResolvedTicketAsync()
     {

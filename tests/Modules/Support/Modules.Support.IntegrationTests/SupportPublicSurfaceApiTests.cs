@@ -268,6 +268,32 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
         Assert.Equal(HttpStatusCode.NotFound, (await PostJsonAsync(second, url, LookupBody)).StatusCode);
     }
 
+    // Fase 4b (revisión del bloque D): calificar por la consulta y por el enlace usan el mismo limitador que consultar: la undécima por
+    // IP es 429, en cada una de las tres rutas.
+    [Theory]
+    [InlineData("/tickets/rating")]
+    [InlineData("/surveys/lookup")]
+    [InlineData("/surveys/answer")]
+    public async Task TheSurveyRoutesUseTheLookupLimiter(string path)
+    {
+        var factory = await host.StartTestAsync();
+        using var client = VisitorClient(factory);
+        var url = PublicUrl("no-existe-este-slug", path);
+        object body = path == "/tickets/rating"
+            ? new { number = "SOP-000001", pin = "123456", turnstileToken = FakeSupportCaptcha.ValidToken, rating = "Good" }
+            : new { token = SupportSurveyTokens.NewToken(), rating = "Good" };
+
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, (await PostJsonAsync(client, url, body)).StatusCode);
+        }
+
+        var limited = await PostJsonAsync(client, url, body);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.Equal("no-store", limited.Headers.CacheControl?.ToString());
+    }
+
     private static async Task SuspendAsync(QepApiFactory factory, string slug)
     {
         await using var scope = factory.Services.CreateAsyncScope();
