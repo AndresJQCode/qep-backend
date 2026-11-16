@@ -10,6 +10,25 @@ internal sealed class SupportReplyRepository(SupportDbContext dbContext) : ISupp
 
     public void Remove(SupportTicketReply reply) => dbContext.TicketReplies.Remove(reply);
 
+    public void AddDocument(SupportReplyDocument document) => dbContext.ReplyDocuments.Add(document);
+
+    public Task<SupportReplyDocument?> FindDocumentAsync(
+        Guid tenantId, SupportTicketId ticketId, Guid replyId, CancellationToken cancellationToken) =>
+        dbContext.ReplyDocuments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                document => document.TenantId == tenantId && document.TicketId == ticketId && document.ReplyId == replyId,
+                cancellationToken);
+
+    public async Task<IReadOnlyList<SupportReplyDocument>> ListDocumentsAsync(
+        Guid tenantId, SupportTicketId ticketId, CancellationToken cancellationToken) =>
+        await dbContext.ReplyDocuments
+            .AsNoTracking()
+            .Where(document => document.TenantId == tenantId && document.TicketId == ticketId)
+            .OrderBy(document => document.CreatedAt)
+            .ThenBy(document => document.ReplyId)
+            .ToListAsync(cancellationToken);
+
     public Task<SupportTicketReply?> FindByClientIdAsync(
         Guid tenantId, SupportTicketId ticketId, Guid clientId, CancellationToken cancellationToken) =>
         dbContext.TicketReplies.FirstOrDefaultAsync(

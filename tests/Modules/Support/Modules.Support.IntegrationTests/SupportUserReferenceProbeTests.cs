@@ -181,6 +181,35 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         Assert.True(await RetainsAsync(factory, authorUser));
     }
 
+    // Fase 4b (H3, owner 2026-11-16, Q-7): firma la respuesta formal el responsable del ticket, y su membresía queda en
+    // ticket_reply_documents.signer_member_id. El autor de la respuesta es otro miembro, para que sólo la firma retenga al firmante.
+    [Fact]
+    public async Task TheSignerOfAFormalReplyHoldsTheUser()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var actor = await SeedMemberAsync(factory, $"actor-{Guid.CreateVersion7():N}@example.com", "Beto", "admin", tenantId: tenant.ToString());
+        var signer = await SeedMemberAsync(factory, $"signer-{Guid.CreateVersion7():N}@example.com", "Julia", "admin", tenantId: tenant.ToString());
+        var signerUser = await UserOfAsync(factory, signer);
+        var ticketId = await SaveTicketAsync(factory, tenant, assignee: null, actor);
+        Assert.False(await RetainsAsync(factory, signerUser));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var reply = SupportTicketReply.Start(
+                tenant, ticketId, Guid.CreateVersion7(), SupportReplyChannel.Email, SupportReplyDelivery.Email,
+                "Te enviamos la respuesta formal.", null, actor, Now.AddMinutes(5));
+            var replies = scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>();
+            replies.Add(reply);
+            replies.AddDocument(SupportReplyDocument.Create(
+                reply, "Decidimos devolver el dinero.", null, signer, "Julia", "Coordinadora", [],
+                $"support/tenants/{tenant:N}/replies/2026/11/{Guid.CreateVersion7():N}.pdf", "Respuesta-SOP-000001.pdf",
+                [0x25, 0x50, 0x44, 0x46], new DateOnly(2026, 11, 13), Now.AddMinutes(5)));
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        Assert.True(await RetainsAsync(factory, signerUser));
+    }
+
     private async Task<(QepApiFactory Factory, Guid Tenant)> NewTenantAsync()
     {
         var factory = await sharedHost.StartTestAsync();

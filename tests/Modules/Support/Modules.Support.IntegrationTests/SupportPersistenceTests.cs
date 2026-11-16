@@ -658,6 +658,104 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal(1, await update.ExecuteNonQueryAsync(Ct));
     }
 
+    // Fase 4b (H9): el documento de la respuesta formal se guarda en el mismo SaveChanges que la respuesta y se lee igual: la decisión
+    // con sus saltos de línea, los anexos en orden (jsonb), la firma y el hash.
+    [Fact]
+    public async Task AReplyDocumentRoundTrips()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var ticket = NewTicket(tenant, (await TypesAsync(factory, tenant))[0], 1, Now, Guid.CreateVersion7());
+        await SaveAsync(factory, ticket);
+        var (reply, document) = NewFormalReply(tenant, ticket, ["Factura 123", "Extracto de octubre"]);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var replies = scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>();
+            replies.Add(reply);
+            replies.AddDocument(document);
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var readScope = factory.Services.CreateAsyncScope();
+        var repository = readScope.ServiceProvider.GetRequiredService<ISupportReplyRepository>();
+        var found = await repository.FindDocumentAsync(tenant, ticket.Id, reply.Id, Ct);
+        var listed = await repository.ListDocumentsAsync(tenant, ticket.Id, Ct);
+
+        Assert.NotNull(found);
+        Assert.Equal(document.Decision, found.Decision);
+        Assert.Equal(document.NextStep, found.NextStep);
+        Assert.Equal(document.SignerMemberId, found.SignerMemberId);
+        Assert.Equal("Ana Gómez", found.SignerName);
+        Assert.Equal("Coordinadora de servicio", found.SignerTitle);
+        Assert.Equal(["Factura 123", "Extracto de octubre"], found.Annexes);
+        Assert.Equal(document.StorageKey, found.StorageKey);
+        Assert.Equal(document.FileName, found.FileName);
+        Assert.Equal(document.SizeBytes, found.SizeBytes);
+        Assert.Equal(document.Sha256Hex, found.Sha256Hex);
+        Assert.Equal(document.RespondedOn, found.RespondedOn);
+        Assert.Equal(document.DocumentClientId, found.DocumentClientId);
+        Assert.Equal(ticket.Id, found.TicketId);
+        Assert.Equal([reply.Id], listed.Select(item => item.ReplyId));
+        Assert.Null(await repository.FindDocumentAsync(Guid.CreateVersion7(), ticket.Id, reply.Id, Ct));
+        Assert.Empty(await repository.ListDocumentsAsync(Guid.CreateVersion7(), ticket.Id, Ct));
+    }
+
+    // H9: el único borrado de un documento es la cascada de una respuesta que el canal rechazó antes de enviar (SendTicketReply la
+    // quita): para el solicitante esa respuesta nunca existió.
+    [Fact]
+    public async Task RemovingANeverSentReplyRemovesItsDocument()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var ticket = NewTicket(tenant, (await TypesAsync(factory, tenant))[0], 1, Now, Guid.CreateVersion7());
+        await SaveAsync(factory, ticket);
+        var (reply, document) = NewFormalReply(tenant, ticket, []);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var replies = scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>();
+            replies.Add(reply);
+            replies.AddDocument(document);
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var replies = scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>();
+            replies.Remove((await replies.FindByClientIdAsync(tenant, ticket.Id, reply.ClientId, Ct))!);
+            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var count = new NpgsqlCommand(
+            "SELECT count(*) FROM support.ticket_reply_documents WHERE reply_id = @id", connection);
+        count.Parameters.AddWithValue("id", reply.Id);
+        Assert.Equal(0L, (long)(await count.ExecuteScalarAsync(Ct))!);
+    }
+
+    private static (SupportTicketReply Reply, SupportReplyDocument Document) NewFormalReply(
+        Guid tenant, SupportTicket ticket, IReadOnlyList<string> annexes)
+    {
+        var reply = SupportTicketReply.Start(
+            tenant, ticket.Id, Guid.CreateVersion7(), SupportReplyChannel.Email, SupportReplyDelivery.Email,
+            "Te enviamos la respuesta formal.", null, Guid.CreateVersion7(), Now);
+        var document = SupportReplyDocument.Create(
+            reply,
+            "Revisamos tu caso.\n\nDecidimos devolver el dinero.",
+            "Puedes acudir a la SIC.",
+            Guid.CreateVersion7(),
+            "Ana Gómez",
+            "Coordinadora de servicio",
+            annexes,
+            $"support/tenants/{tenant:N}/replies/2026/11/{Guid.CreateVersion7():N}.pdf",
+            SupportReplyDocument.FileNameFor(ticket.DisplayNumber),
+            [0x25, 0x50, 0x44, 0x46],
+            new DateOnly(2026, 11, 13),
+            Now);
+        return (reply, document);
+    }
+
     // Revisión final m2: SupportUserReferenceProbe busca por membresía sola, sin tenant, en las dos columnas.
     [Theory]
     [InlineData("IX_tickets_assignee", "tickets", "(assignee_member_id)")]

@@ -98,6 +98,21 @@ public static class SupportErrorCodes
 
     public const string ReplyDuplicateClientId = "support.reply.duplicate_client_id";
 
+    // Fase 4b, respuesta formal (H3, H5, H7, H13).
+
+    /// <summary>H5 (owner 2026-11-16, Q-6): ni la versión del formulario del ticket ni la vigente eligieron una empresa, así que el PDF
+    /// no tiene membrete (422).</summary>
+    public const string ReplyFormalOrganizationRequired = "support.reply.formal_organization_required";
+
+    /// <summary>H7: <c>qcode-pdf</c> no devolvió el PDF; no se guarda nada (422, como <c>quotation.pdf.render_failed</c>).</summary>
+    public const string ReplyDocumentRenderFailed = "support.reply.document_render_failed";
+
+    /// <summary>H13: la respuesta no existe en el ticket o no tiene documento (404).</summary>
+    public const string ReplyDocumentNotFound = "support.reply.document_not_found";
+
+    /// <summary>H3 (owner 2026-11-16, Q-7): firma el responsable del ticket, y el ticket no tiene (422).</summary>
+    public const string ReplyFormalSignerRequired = "support.reply.formal_signer_required";
+
     // Fase 3, formulario público (spec §9, plan F1 a F37). Los de support.public.* los ve la página pública; el resto, la consola.
 
     /// <summary>Slug desconocido, tenant inactivo, módulo apagado o formulario sin publicar: el mismo 404 (plan F3).</summary>

@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
@@ -51,6 +53,10 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
     public DbSet<SupportUnclassifiedMessage> UnclassifiedMessages => Set<SupportUnclassifiedMessage>();
 
     public DbSet<SupportTicketReply> TicketReplies => Set<SupportTicketReply>();
+
+    /// <summary>Fase 4b (H9): el PDF de la respuesta formal. Insert-only: es prueba legal de lo que se envió. Su único borrado es la
+    /// cascada de una respuesta que nunca salió (<c>SendTicketReplyHandler</c> quita la que el canal rechazó antes de enviar).</summary>
+    public DbSet<SupportReplyDocument> ReplyDocuments => Set<SupportReplyDocument>();
 
     /// <summary>Único de la versión del formulario por tenant (plan F14): dos guardados de la misma versión chocan acá.</summary>
     public const string FormVersionIndex = "IX_form_versions_tenant_version";
@@ -129,6 +135,7 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureTicketMessage(modelBuilder);
         ConfigureUnclassifiedMessage(modelBuilder);
         ConfigureTicketReply(modelBuilder);
+        ConfigureReplyDocument(modelBuilder);
         ConfigureTicketAccess(modelBuilder);
         ConfigureFormVersion(modelBuilder);
         ConfigureLegalTextVersion(modelBuilder);
@@ -735,6 +742,60 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         // Para SupportUserReferenceProbe, que busca por membresía sola.
         reply.HasIndex(value => value.AuthorMemberId).HasDatabaseName("IX_ticket_replies_author");
     }
+
+    // Fase 4b (H9). Insert-only: el modelo no tiene mutadores y nada la actualiza; la cascada desde ticket_replies es su único
+    // borrado. El `Down` de AddSupportReplyDocuments borraría prueba legal: nunca se corre en producción.
+    private static void ConfigureReplyDocument(ModelBuilder modelBuilder)
+    {
+        var document = modelBuilder.Entity<SupportReplyDocument>();
+        document.ToTable("ticket_reply_documents", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_ticket_reply_documents_size", "size_bytes > 0");
+            table.HasCheckConstraint(
+                "CK_ticket_reply_documents_annexes",
+                $"jsonb_typeof(annexes) = 'array' AND jsonb_array_length(annexes) <= {SupportReplyDocument.MaxAnnexes}");
+        });
+        document.HasKey(value => value.ReplyId);
+        document.Property(value => value.ReplyId).HasColumnName("reply_id").ValueGeneratedNever();
+        document.Property(value => value.TenantId).HasColumnName("tenant_id");
+        document.Property(value => value.TicketId)
+            .HasColumnName("ticket_id")
+            .HasConversion(id => id.Value, value => new SupportTicketId(value));
+        document.Property(value => value.Decision).HasColumnName("decision").HasMaxLength(SupportReplyDocument.DecisionMaxLength);
+        document.Property(value => value.NextStep).HasColumnName("next_step").HasMaxLength(SupportFormalNextStep.MaxLength);
+        // Membresía del responsable que firma (H3): referencia blanda, la cuenta SupportUserReferenceProbe.
+        document.Property(value => value.SignerMemberId).HasColumnName("signer_member_id");
+        document.Property(value => value.SignerName).HasColumnName("signer_name").HasMaxLength(SupportReplyDocument.SignerNameMaxLength);
+        document.Property(value => value.SignerTitle).HasColumnName("signer_title").HasMaxLength(SupportReplyDocument.SignerTitleMaxLength);
+        document.Property(value => value.Annexes)
+            .HasColumnName("annexes")
+            .HasColumnType("jsonb")
+            .HasConversion(AnnexesConverter, AnnexesComparer);
+        document.Property(value => value.StorageKey).HasColumnName("storage_key").HasMaxLength(SupportReplyDocument.StorageKeyMaxLength);
+        document.Property(value => value.FileName).HasColumnName("file_name").HasMaxLength(SupportReplyDocument.FileNameMaxLength);
+        document.Property(value => value.SizeBytes).HasColumnName("size_bytes");
+        document.Property(value => value.Sha256Hex).HasColumnName("sha256").HasColumnType("character(64)");
+        document.Property(value => value.RespondedOn).HasColumnName("responded_on");
+        document.Property(value => value.DocumentClientId).HasColumnName("document_client_id");
+        document.Property(value => value.CreatedAt).HasColumnName("created_at");
+        document.HasOne<SupportTicketReply>()
+            .WithOne()
+            .HasForeignKey<SupportReplyDocument>(value => value.ReplyId)
+            .OnDelete(DeleteBehavior.Cascade);
+        document.HasIndex(value => new { value.TenantId, value.TicketId }).HasDatabaseName("IX_ticket_reply_documents_tenant_ticket");
+        // Para SupportUserReferenceProbe, que busca por membresía sola.
+        document.HasIndex(value => value.SignerMemberId).HasDatabaseName("IX_ticket_reply_documents_signer");
+    }
+
+    // Los anexos son una lista corta de textos (H4) que se guarda y se lee entera: jsonb, sin tabla hija.
+    private static readonly ValueConverter<IReadOnlyList<string>, string> AnnexesConverter = new(
+        annexes => JsonSerializer.Serialize(annexes, (JsonSerializerOptions?)null),
+        json => JsonSerializer.Deserialize<string[]>(json, (JsonSerializerOptions?)null) ?? Array.Empty<string>());
+
+    private static readonly ValueComparer<IReadOnlyList<string>> AnnexesComparer = new(
+        (left, right) => left!.SequenceEqual(right!),
+        annexes => annexes.Aggregate(0, (hash, annex) => HashCode.Combine(hash, annex.GetHashCode(StringComparison.Ordinal))),
+        annexes => annexes.ToArray());
 
     private static void ConfigureTicketEvent(ModelBuilder modelBuilder)
     {

@@ -11,7 +11,8 @@ namespace Bootstrapper;
 /// o haya resuelto un entrante sin clasificar (<c>unclassified_messages.resolved_by_member_id</c>), o haya guardado una versión del
 /// formulario público o de los textos legales (<c>form_versions.created_by</c>, <c>legal_text_versions.created_by</c>, fase 3) o de un
 /// documento legal (<c>legal_document_versions.created_by</c>, spec 2026-11-15, plan L22), o haya
-/// escrito una nota interna (<c>ticket_notes.author_member_id</c>, spec 2026-11-15, plan N23), precedente
+/// escrito una nota interna (<c>ticket_notes.author_member_id</c>, spec 2026-11-15, plan N23), o haya firmado una respuesta formal
+/// como responsable del ticket (<c>ticket_reply_documents.signer_member_id</c>, fase 4b, H3), precedente
 /// <see cref="LoansUserReferenceProbe"/>. Vive en el
 /// composition root porque necesita <see cref="IMembershipDirectory"/> (Tenancy) y el <see cref="SupportDbContext"/> a la vez.
 /// </summary>
@@ -42,7 +43,9 @@ internal sealed class SupportUserReferenceProbe(
                 await dbContext.LegalTextVersions.AnyAsync(text => text.CreatedBy == membershipId, cancellationToken) ||
                 await dbContext.LegalDocumentVersions.AnyAsync(
                     document => document.CreatedBy == membershipId, cancellationToken) ||
-                await dbContext.TicketNotes.AnyAsync(note => note.AuthorMemberId == membershipId, cancellationToken))
+                await dbContext.TicketNotes.AnyAsync(note => note.AuthorMemberId == membershipId, cancellationToken) ||
+                await dbContext.ReplyDocuments.AnyAsync(
+                    document => document.SignerMemberId == membershipId, cancellationToken))
             {
                 return true;
             }

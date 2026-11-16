@@ -433,6 +433,101 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Support.Domain.SupportReplyDocument", b =>
+                {
+                    b.Property<Guid>("ReplyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reply_id");
+
+                    b.Property<string>("Annexes")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("annexes");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)")
+                        .HasColumnName("decision");
+
+                    b.Property<Guid>("DocumentClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("document_client_id");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("NextStep")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("next_step");
+
+                    b.Property<DateOnly>("RespondedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("responded_on");
+
+                    b.Property<string>("Sha256Hex")
+                        .IsRequired()
+                        .HasColumnType("character(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<Guid>("SignerMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("signer_member_id");
+
+                    b.Property<string>("SignerName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("signer_name");
+
+                    b.Property<string>("SignerTitle")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("signer_title");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("storage_key");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.HasKey("ReplyId");
+
+                    b.HasIndex("SignerMemberId")
+                        .HasDatabaseName("IX_ticket_reply_documents_signer");
+
+                    b.HasIndex("TenantId", "TicketId")
+                        .HasDatabaseName("IX_ticket_reply_documents_tenant_ticket");
+
+                    b.ToTable("ticket_reply_documents", "support", t =>
+                        {
+                            t.HasCheckConstraint("CK_ticket_reply_documents_annexes", "jsonb_typeof(annexes) = 'array' AND jsonb_array_length(annexes) <= 10");
+
+                            t.HasCheckConstraint("CK_ticket_reply_documents_size", "size_bytes > 0");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Support.Domain.SupportTenantSettings", b =>
                 {
                     b.Property<Guid>("TenantId")
@@ -1244,6 +1339,15 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_unclassified_messages_resolution", "resolution IN ('Assigned','Dismissed','Reassigned')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Support.Domain.SupportReplyDocument", b =>
+                {
+                    b.HasOne("Modules.Support.Domain.SupportTicketReply", null)
+                        .WithOne()
+                        .HasForeignKey("Modules.Support.Domain.SupportReplyDocument", "ReplyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Support.Domain.SupportTicket", b =>
