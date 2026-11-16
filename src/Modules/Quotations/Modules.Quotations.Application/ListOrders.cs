@@ -90,8 +90,13 @@ public sealed class ListOrdersHandler(
             customerLookup, query.TenantId, query.ClientCuc, cancellationToken);
 
         // Spec 2026-11-16 §4: convertedFrom/convertedTo conservan su nombre pero cortan por la fecha del pedido, que ya es
-        // un día del tenant: no hay huso que aplicar, así que TimeZone se sigue aceptando (y validando) y no se usa.
-        OrderListing.EnsureValidTimeZone(query.TimeZone);
+        // un día del tenant: no hay huso que aplicar, así que TimeZone se sigue aceptando y no se usa. Se valida sólo con un
+        // rango, como antes (spec 2026-09-17): sin fechas la zona nunca se miró y una lista simple no responde 422 por ella.
+        if (query.ConvertedFrom is not null || query.ConvertedTo is not null)
+        {
+            OrderListing.EnsureValidTimeZone(query.TimeZone);
+        }
+
         var (rows, total) = await repository.SearchAsync(
             query.TenantId,
             query.ClientId,

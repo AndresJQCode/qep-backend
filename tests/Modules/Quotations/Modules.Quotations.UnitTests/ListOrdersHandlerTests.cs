@@ -198,6 +198,20 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal("order.time_zone_invalid", error.Code);
     }
 
+    // Como antes del spec 2026-11-16: sin rango de fechas la zona no se mira, así que una lista sin filtro de fecha no
+    // responde 422 por una zona que el navegador no supo nombrar.
+    [Fact]
+    public async Task ListWithoutADateRangeIgnoresAnUnknownTimeZone()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(
+            NewQuery() with { TimeZone = "Marte/Olympus" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Single(page.Items);
+    }
+
     // Spec 2026-10-15 §6.1: cliente, asesor y totales salen del pedido; un pedido manual no tiene
     // cotización y la fila lo dice con `Source` y los dos campos de cotización en null.
     [Fact]
