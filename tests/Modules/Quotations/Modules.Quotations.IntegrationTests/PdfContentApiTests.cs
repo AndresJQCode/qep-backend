@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Persistence;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -220,6 +221,54 @@ public sealed class PdfContentApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.Contains("Terms.ContentHtml", audit.PayloadJson, StringComparison.Ordinal);
         Assert.DoesNotContain("PaymentNotice", audit.PayloadJson, StringComparison.Ordinal);
         Assert.DoesNotContain("DeliveryProcess", audit.PayloadJson, StringComparison.Ordinal);
+    }
+
+    // El rechazo del saneador (demasiadas etiquetas) no esconde el error del validador en otra sección: el formulario marca los dos.
+    [Fact]
+    public async Task ASanitizerRejectionDoesNotHideOtherErrors()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var paymentNotice = new PdfSectionDto(false, true, true, new string('t', 121), string.Empty);
+        var terms = new PdfSectionDto(
+            true, true, true, "Términos", string.Concat(Enumerable.Repeat("<i></i>", RichTextHtmlSanitizer.MaxElements + 1)));
+
+        var put = await client.PutAsJsonAsync(
+            Url(tenantId), new { paymentNotice, terms, deliveryProcess = Disabled }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, put.StatusCode);
+        using var body = JsonDocument.Parse(await put.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", body.RootElement.GetProperty("code").GetString());
+        var errors = body.RootElement.GetProperty("errors");
+        Assert.True(errors.TryGetProperty("PaymentNotice.Title", out var _), errors.ToString());
+        Assert.True(errors.TryGetProperty("Terms.ContentHtml", out var _), errors.ToString());
+    }
+
+    [Fact]
+    public async Task AnUnchangedPutIsNotAudited()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var terms = new PdfSectionDto(true, true, true, "Términos", "<p>Sin cambios.</p>");
+        var body = new { paymentNotice = Disabled, terms, deliveryProcess = Disabled };
+
+        var first = await client.PutAsJsonAsync(Url(tenantId), body, TestContext.Current.CancellationToken);
+        var second = await client.PutAsJsonAsync(Url(tenantId), body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        // El segundo guardado responde igual, pero no cambió nada: no deja una entrada de auditoría vacía.
+        Assert.Single(
+            await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"),
+            message => ActionOf(message) == AuditAction && ResourceOf(message) == tenantId.ToString());
+    }
+
+    private static string? ResourceOf(QuotationsOutboxMessage message)
+    {
+        using var payload = JsonDocument.Parse(message.PayloadJson);
+        return payload.RootElement.GetProperty("resourceId").GetString();
     }
 
     private static async Task<PdfContentPayload> GetAsync(HttpClient client, Guid tenantId) =>
