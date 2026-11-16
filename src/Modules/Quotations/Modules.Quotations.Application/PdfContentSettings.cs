@@ -17,9 +17,17 @@ public interface IPdfContentStore
     /// <summary>Upsert de las tres filas, dentro de la transacción del handler (<c>IQuotationsUnitOfWork.BeginTransactionAsync</c>):
     /// así el contenido y la auditoría del outbox confirman juntos.</summary>
     Task SaveAsync(Guid tenantId, PdfContent content, CancellationToken cancellationToken);
+
+    /// <summary>Vence los PDF de cotización guardados del tenant (huella en null), dentro de la misma transacción del handler. La
+    /// huella no incluye la cuenta para el pago (spec 2026-11-16 pdf-payment-account, decisión 5), así que sin esto un PDF cacheado
+    /// seguiría mostrándola, o no, después de cambiarla.</summary>
+    Task InvalidateQuotationPdfsAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 public sealed record PdfSectionDto(bool Enabled, bool InQuotation, bool InOrder, string Title, string ContentHtml);
+
+/// <summary>La cuenta para el pago: sólo los flags, con la misma regla de una sección (spec 2026-11-16 pdf-payment-account).</summary>
+public sealed record PdfPaymentAccountDto(bool Enabled, bool InQuotation, bool InOrder);
 
 /// <summary>El documento entero de la pantalla. <see cref="Variables"/> va último, como en los documentos legales de Soporte: la
 /// consola arma el menú de variables con esa lista y no la conoce por su cuenta (spec §4.2).</summary>
@@ -27,17 +35,19 @@ public sealed record PdfContentDto(
     PdfSectionDto PaymentNotice,
     PdfSectionDto Terms,
     PdfSectionDto DeliveryProcess,
+    PdfPaymentAccountDto PaymentAccount,
     IReadOnlyList<QuotationPdfVariable> Variables);
 
 public sealed record GetPdfContentQuery(Guid TenantId) : IQuery<PdfContentDto>;
 
-/// <summary>Secciones nullable a propósito: un cuerpo al que le falta una llega al validador como null y es un 422, en vez de
-/// borrarla en silencio.</summary>
+/// <summary>Secciones y cuenta nullable a propósito: un cuerpo al que le falta una llega al validador como null y es un 422, en vez
+/// de borrarla o apagarla en silencio.</summary>
 public sealed record UpdatePdfContentCommand(
     Guid TenantId,
     PdfSectionDto? PaymentNotice,
     PdfSectionDto? Terms,
-    PdfSectionDto? DeliveryProcess) : ICommand<PdfContentDto>;
+    PdfSectionDto? DeliveryProcess,
+    PdfPaymentAccountDto? PaymentAccount) : ICommand<PdfContentDto>;
 
 public sealed class GetPdfContentHandler(
     IPdfContentStore store,
@@ -70,6 +80,8 @@ public sealed class UpdatePdfContentValidator : AbstractValidator<UpdatePdfConte
         RuleFor(command => command.DeliveryProcess).NotNull();
         RuleFor(command => command.DeliveryProcess!).SetValidator(new PdfSectionDtoValidator())
             .When(command => command.DeliveryProcess is not null);
+        // Un cliente que no la conoce (una consola vieja) no la apaga sin saberlo: el cuerpo sin cuenta es un 422.
+        RuleFor(command => command.PaymentAccount).NotNull();
     }
 
     private sealed class PdfSectionDtoValidator : AbstractValidator<PdfSectionDto>
@@ -116,11 +128,16 @@ public sealed class UpdatePdfContentHandler(
         }
 
         // Las variables se miran sobre lo saneado: es lo que se guarda y lo que el PDF resuelve.
-        var content = PdfContent.Create(paymentNotice!, terms!, deliveryProcess!);
+        var content = PdfContent.Create(paymentNotice!, terms!, deliveryProcess!, ToDomain(command.PaymentAccount!));
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         var previous = await store.GetAsync(command.TenantId, cancellationToken);
         await store.SaveAsync(command.TenantId, content, cancellationToken);
+        // Sólo la cotización tiene PDF cacheado: un cambio que sólo toca el pedido, o que no cambia nada, no vence ninguno.
+        if (previous.PaymentAccount.PrintsOn(isOrder: false) != content.PaymentAccount.PrintsOn(isOrder: false))
+        {
+            await store.InvalidateQuotationPdfsAsync(command.TenantId, cancellationToken);
+        }
 
         // Sólo los nombres de los campos que cambiaron, nunca el texto (spec §4.2): el contenido lo escribe el tenant y puede traer
         // cualquier cosa. Un PUT que no cambia nada se guarda y responde igual, pero no deja una entrada de auditoría vacía.
@@ -142,6 +159,9 @@ public sealed class UpdatePdfContentHandler(
 
         return PdfContentMapping.ToDto(content);
     }
+
+    private static PdfPaymentAccount ToDomain(PdfPaymentAccountDto account) =>
+        new(account.Enabled, account.InQuotation, account.InOrder);
 
     // Sanea el HTML con la clave de la sección (Terms.ContentHtml) y suma las fallas que sólo se pueden medir después de sanear: el
     // largo y que una sección prendida tenga texto que se vea. Una sección que falta o sin HTML ya la marcó el validador: devuelve
@@ -194,6 +214,7 @@ internal static class PdfContentMapping
         ToDto(content.PaymentNotice),
         ToDto(content.Terms),
         ToDto(content.DeliveryProcess),
+        new PdfPaymentAccountDto(content.PaymentAccount.Enabled, content.PaymentAccount.InQuotation, content.PaymentAccount.InOrder),
         QuotationPdfVariables.All);
 
     // Las rutas con la misma forma que las claves de errors (Terms.ContentHtml), en el orden de las secciones.
@@ -226,6 +247,23 @@ internal static class PdfContentMapping
             {
                 yield return $"{prefix}.{nameof(PdfSection.ContentHtml)}";
             }
+        }
+
+        // La cuenta va después de las secciones, con la misma forma de clave que el campo del 422 (PaymentAccount.Enabled).
+        const string account = nameof(PdfContent.PaymentAccount);
+        if (previous.PaymentAccount.Enabled != current.PaymentAccount.Enabled)
+        {
+            yield return $"{account}.{nameof(PdfPaymentAccount.Enabled)}";
+        }
+
+        if (previous.PaymentAccount.InQuotation != current.PaymentAccount.InQuotation)
+        {
+            yield return $"{account}.{nameof(PdfPaymentAccount.InQuotation)}";
+        }
+
+        if (previous.PaymentAccount.InOrder != current.PaymentAccount.InOrder)
+        {
+            yield return $"{account}.{nameof(PdfPaymentAccount.InOrder)}";
         }
     }
 

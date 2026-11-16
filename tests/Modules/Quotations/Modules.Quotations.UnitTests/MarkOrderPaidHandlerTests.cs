@@ -253,7 +253,7 @@ public sealed class MarkOrderPaidHandlerTests
                 new OrderLineInput(v1, Guid.CreateVersion7(), 1m, 100m, 0m, 0),
                 new OrderLineInput(v2, Guid.CreateVersion7(), 1m, 50m, 0m, 0),
             ],
-            null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         var costs = new RecordingOrderVariantCostLookup(new Dictionary<Guid, decimal> { [v1] = 6000m });
 
         await MarkPaidAsync(NewHandler(row, costs: costs), row);

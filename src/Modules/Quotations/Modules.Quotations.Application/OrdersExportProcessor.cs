@@ -50,12 +50,10 @@ public sealed class OrdersExportProcessor(
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
-        // Un calendario por job (spec 2026-09-17). El rango se corta en la zona de quien lo pidió, la
-        // misma con que vio la tabla; las fechas del archivo siguen en el día del tenant, porque las
-        // importa su ERP.
+        // Un calendario por job (spec 2026-09-17): las fechas del archivo van en el día del tenant, porque las importa su
+        // ERP. El rango corta por la fecha del pedido, que ya es un día del tenant (spec 2026-11-16 §4): la zona guardada
+        // en el trabajo no lo mueve.
         var calendar = await tenantClock.GetAsync(job.TenantId, cancellationToken);
-        var converted = TenantDayRange.Of(
-            OrderListing.CalendarFor(calendar, filters.TimeZone), filters.ConvertedFrom, filters.ConvertedTo);
         var generatedAt = calendar.UtcNow;
 
         var storedLayout = await layoutRepository.FindAsync(job.TenantId, cancellationToken);
@@ -75,8 +73,8 @@ public sealed class OrdersExportProcessor(
                 paymentStatus,
                 fulfillmentStatus,
                 invoiced,
-                converted.From,
-                converted.Before,
+                filters.ConvertedFrom,
+                filters.ConvertedTo,
                 filters.OrderNumber,
                 source,
                 after,
@@ -92,7 +90,7 @@ public sealed class OrdersExportProcessor(
                 exportedRows += rows.Length;
                 return rows;
             },
-            order => new OrderExportCursor(order.ConvertedAt, order.OrderNumber),
+            order => new OrderExportCursor(order.OrderDate, order.ConvertedAt, order.OrderNumber),
             cancellationToken);
 
         if (orderCount == 0)
@@ -261,7 +259,8 @@ public sealed class OrdersExportProcessor(
         var shippingContact = ShippingContactFor(shipping, customer, context.CityNames, context.DepartmentNames);
         // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
         // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
-        var orderDate = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        // Spec 2026-11-16 §5: la fecha del pedido, que el asesor puede corregir; ya es un día del tenant.
+        var orderDate = order.OrderDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // Spec 2026-10-15 §6.4 (y el hotfix del mismo día): las observaciones son las del pedido, que
         // al convertir heredó las de la cotización.
@@ -383,16 +382,11 @@ public sealed class OrdersExportProcessor(
                 WithholdingCell(order, TaxCountries.RetefuenteType),
                 WithholdingCell(order, TaxCountries.ReteIcaType),
                 ExportCell.OfText(order.BuyerNotes ?? string.Empty),
-                WithholdingRateCell(order, TaxCountries.RetefuenteType, PercentScale),
-                WithholdingRateCell(order, TaxCountries.ReteIcaType, PerMilleScale),
+                WithholdingRateCell(order, TaxCountries.RetefuenteType),
+                WithholdingRateCell(order, TaxCountries.ReteIcaType),
             ];
         }
     }
-
-    private const decimal PercentScale = 1m;
-
-    /// <summary>El porcentaje guardado por 10: 1.104 % es 11.04 ‰.</summary>
-    private const decimal PerMilleScale = 10m;
 
     /// <summary>La suma de lo retenido de ese tipo en el pedido; 0 si ninguna aplicó, como «Retencion».</summary>
     private static ExportCell WithholdingCell(Order order, string type) =>
@@ -401,13 +395,14 @@ public sealed class OrdersExportProcessor(
             .Sum(withholding => withholding.Amount));
 
     /// <summary>
-    /// La tarifa efectiva de ese tipo en la escala que pide el import (spec 2026-11-16); 0 si ninguna aplicó. Con varias
-    /// aplicadas del mismo tipo sale la primera por <c>Position</c>: límite conocido, el owner confirmó que no se da hoy.
+    /// La tarifa efectiva de ese tipo en porcentaje, tal como está guardada (spec 2026-11-16); 0 si ninguna aplicó. La
+    /// ReteICA tampoco se escala a por mil (owner, 2026-11-16): 2,8 % sale 2.8, no 28. Con varias aplicadas del mismo
+    /// tipo sale la primera por <c>Position</c>: límite conocido, el owner confirmó que no se da hoy.
     /// </summary>
-    private static ExportCell WithholdingRateCell(Order order, string type, decimal scale) =>
+    private static ExportCell WithholdingRateCell(Order order, string type) =>
         ExportCell.OfNumber(order.AppliedWithholdings
             .FirstOrDefault(withholding => string.Equals(withholding.Type, type, StringComparison.Ordinal)) is { } applied
-            ? applied.Percentage * scale
+            ? applied.Percentage
             : 0m);
 
     private static ExportCell PaymentMethodCell(

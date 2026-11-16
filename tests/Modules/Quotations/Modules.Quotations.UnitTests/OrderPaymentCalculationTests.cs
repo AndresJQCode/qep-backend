@@ -39,12 +39,14 @@ public sealed class OrderPaymentCalculationTests
         OrderHeader? header = null) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", header ?? Header(), QuotationParties.Empty, Account,
-            ShippingDetails.None, lines ?? [Line()], null, Advisor, proofs, Now);
+            ShippingDetails.None, lines ?? [Line()], null, Advisor, proofs, Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static Order ExternalOrder() =>
         Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
-            OrderPaymentStatus.PaymentPending, null, Advisor, [], Now, OrderSource.Shopify, "#1001",
+            OrderPaymentStatus.PaymentPending, null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Shopify, "#1001",
             ShippingDetails.None, "shop:1001", null, OrderLineCosts.None);
 
     private static Order Converted(IReadOnlyCollection<OrderPaymentProofInput> proofs)
@@ -58,7 +60,8 @@ public sealed class OrderPaymentCalculationTests
             [quotation.Items.Single().VariantId] = new("ABC", "Aceite"),
         });
 
-        return Order.FromQuotation(OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor, proofs, Now);
+        return Order.FromQuotation(OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor, proofs, Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
     }
 
     // El pedido puede estar pagado: la línea nueva congela al entrar y necesita su costo buscado.

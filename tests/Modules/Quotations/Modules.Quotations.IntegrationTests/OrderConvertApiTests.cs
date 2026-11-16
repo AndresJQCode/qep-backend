@@ -263,6 +263,58 @@ public sealed class OrderConvertApiTests(SharedQuotationsHost sharedHost) : Orde
         Assert.Equal(0, sent.Total);
     }
 
+    // Spec 2026-11-16 §3: el pedido nace con el día del tenant, no con el UTC. A las 02:00Z del 14 en Bogotá todavía es el
+    // 13. Se lee como texto crudo: el contrato es `orderDate` con la fecha ISO sin hora.
+    [Fact]
+    public async Task ConvertingAQuotationDatesTheOrderOnTheTenantDay()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(), utcNow: new DateTimeOffset(2026, 11, 14, 2, 0, 0, TimeSpan.Zero));
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(null, []),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var converted = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var orderId = converted.RootElement.GetProperty("order").GetProperty("id").GetGuid();
+        var fetched = await client.GetStringAsync(OrderByIdUrl(tenantId, orderId), TestContext.Current.CancellationToken);
+        using var detail = JsonDocument.Parse(fetched);
+        Assert.Equal("2026-11-13", detail.RootElement.GetProperty("order").GetProperty("orderDate").GetString());
+    }
+
+    // Spec 2026-11-16 F-8: el detalle dice cuándo se creó la cotización de origen, para mostrarlo junto a la fecha del pedido.
+    [Fact]
+    public async Task TheDetailCarriesTheSourceQuotationCreationInstant()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var converted = await ReadOrderAsync(await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(null, []),
+            TestContext.Current.CancellationToken));
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            OrderByIdUrl(tenantId, converted.Id), TestContext.Current.CancellationToken);
+        // Releída de la base: la respuesta de la creación trae el instante con más precisión que la columna.
+        var stored = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail?.SourceQuotation);
+        Assert.Equal(stored!.CreatedAt, detail.SourceQuotation.CreatedAt);
+    }
+
     // US-14: sin comprobantes se permite unicamente cuando el pago queda pendiente.
     [Fact]
     public async Task ConvertWithPaymentPendingRequiresNoProofs()

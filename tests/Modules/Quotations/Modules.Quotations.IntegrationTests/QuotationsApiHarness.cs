@@ -57,6 +57,35 @@ internal static class QuotationsApiHarness
         this HttpContent content, CancellationToken cancellationToken) =>
         (await content.ReadFromJsonAsync<OrderDetailResponse>(cancellationToken))?.Order;
 
+    /// <summary>Spec 2026-11-16: mueve la fecha de un pedido abierto con el guardado de «Editar pedido», con las mismas
+    /// líneas y la versión que tiene ahora. Devuelve el detalle guardado.</summary>
+    public static async Task<OrderDetailResponse> MoveOrderDateAsync(
+        HttpClient client, Guid tenantId, Guid orderId, DateOnly orderDate)
+    {
+        var url = $"/api/v1/tenants/{tenantId}/orders/{orderId}";
+        var current = await client.GetFromJsonAsync<OrderDetailResponse>(url, TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+        using var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new SaveOrderEditsRequest(
+                [.. current.Items.Select(item => new OrderEditItemRequest(item.VariantId, item.Quantity))],
+                null,
+                current.Order.Notes,
+                current.Order.GlobalScaleFloor,
+                current.Order.IsRetail,
+                OrderDate: orderDate)),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{current.Order.Version}\"");
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"PUT order date: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
+        var saved = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(saved);
+        Assert.Equal(orderDate, saved.Order.OrderDate);
+        return saved;
+    }
+
     /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá, que en UTC ya es 2027: la frontera
     /// de la spec 2026-09-17. Las pruebas del día del tenant fijan acá el reloj del host.</summary>
     public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);

@@ -61,6 +61,29 @@ public sealed class ManualOrderApiTests(SharedQuotationsHost sharedHost) : IClas
         Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("quotationId").ValueKind);
     }
 
+    // Spec 2026-11-16 §3: el pedido manual nace con el día de su creación en el calendario del tenant (Bogotá en este
+    // harness). Contra convertedAt de la misma respuesta, para no depender de la hora en que corra la prueba.
+    [Fact]
+    public async Task AManualOrderIsDatedTodayInTheTenantCalendar()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var request = await ValidRequestAsync(client, tenantId, clientId, productId);
+
+        var response = await client.PostAsJsonAsync(OrdersUrl(tenantId), request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var order = body.RootElement.GetProperty("order");
+        var createdAt = order.GetProperty("convertedAt").GetDateTimeOffset();
+        var expected = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(createdAt, BogotaTimeZone).DateTime);
+        Assert.Equal(expected.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+            order.GetProperty("orderDate").GetString());
+    }
+
     [Fact]
     public async Task PreviewReturnsTotalsWithoutSaving()
     {

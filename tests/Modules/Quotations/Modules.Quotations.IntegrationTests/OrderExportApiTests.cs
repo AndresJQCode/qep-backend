@@ -283,6 +283,33 @@ public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClas
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
     }
 
+    // Spec 2026-11-16 §5: «Fecha Pedido» es la fecha del pedido y el rango del archivo corta por ella. Un pedido de hoy
+    // movido al 31 de octubre sale al exportar octubre, con esa fecha.
+    [Fact]
+    public async Task TheExportDateColumnIsTheOrderDate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var moved = await CreateOrderAsync(client, factory, tenantId);
+        await CreateOrderAsync(client, factory, tenantId);
+        await MoveOrderDateAsync(client, tenantId, moved.Id, new DateOnly(2026, 10, 31));
+
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?convertedFrom=2026-10-01&convertedTo=2026-10-31", content: null,
+            TestContext.Current.CancellationToken);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+
+        var sheet = ExportWorkbookReader.Read(await factory.ObjectStorage.DownloadAsync(
+            $"exports/tenants/{tenantId:N}/jobs/{accepted.JobId:N}.xlsx", TestContext.Current.CancellationToken));
+        var row = Assert.Single(sheet.Rows.Skip(1));
+        Assert.Equal("Fecha Pedido", sheet.Rows[0][33]);
+        Assert.Equal((moved.OrderNumber, "2026-10-31"), (row[14], row[33]));
+    }
+
     // Keyset y no offset (D8, hallazgo 11), sobre el orden del listado de pedidos. Mismo diseño que
     // la de cotizaciones: de a una fila, un pedido convertido entre el lote 1 y el 2 (con offset,
     // se repetiría la del borde) y uno ya leído que sale del filtro entre el 2 y el 3 (con offset,
@@ -318,9 +345,9 @@ public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClas
     private static async Task<IReadOnlyList<Order>> ReadPendingBatchAsync(
         QepApiFactory factory, Guid tenantId, OrderExportCursor? after, int limit)
     {
-        // El repositorio recibe instantes desde la spec 2026-09-17 (punto 3): la ventana es amplia a
-        // propósito, lo que se prueba es el keyset.
-        var now = DateTimeOffset.UtcNow;
+        // El repositorio recibe días de la fecha del pedido (spec 2026-11-16 §4): la ventana es amplia a propósito, lo que
+        // se prueba es el keyset.
+        var today = TodayInBogota();
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IOrderRepository>().ListForExportAsync(
             tenantId,
@@ -331,8 +358,8 @@ public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClas
             paymentStatus: null,
             fulfillmentStatus: null,
             invoiced: null,
-            now.AddDays(-7),
-            now.AddDays(2),
+            today.AddDays(-7),
+            today.AddDays(2),
             orderNumber: null,
             source: null,
             after,
@@ -341,7 +368,7 @@ public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClas
     }
 
     private static OrderExportCursor CursorOf(IReadOnlyList<Order> batch) =>
-        new(batch[^1].ConvertedAt, batch[^1].OrderNumber);
+        new(batch[^1].OrderDate, batch[^1].ConvertedAt, batch[^1].OrderNumber);
 
     // Directo en la base: lo que se prueba es la lectura, no la aprobación.
     private static async Task SetOrderStatusAsync(QepApiFactory factory, OrderId orderId, OrderStatus status)

@@ -75,7 +75,7 @@ public static class QuotationPdfDocumentMapper
     /// motivos que <see cref="From"/>. Todo sale del pedido —partes, cuenta de cobro, líneas, totales,
     /// envío—, nunca de la cotización de origen, que puede no existir (pedido manual o de Shopify).
     ///
-    /// La emisión es el día en que se creó el pedido, en el día del tenant. No hay vigencia: un pedido
+    /// La emisión es la fecha del pedido (<see cref="OrderResponse.OrderDate"/>, spec 2026-11-16). No hay vigencia: un pedido
     /// no vence, y la plantilla omite el renglón con <see cref="QuotationPdfKind.Order"/>.
     /// </summary>
     public static QuotationPdfDocument FromOrder(
@@ -88,7 +88,8 @@ public static class QuotationPdfDocumentMapper
         var (thousands, decimals) = RegionalNumberFormat.Separators(numberFormat);
         return new(
             header.OrderNumber,
-            DateOnly.FromDateTime(calendar.ToLocal(header.CreatedAt).DateTime),
+            // Spec 2026-11-16 §5: la fecha del pedido, que el asesor puede corregir; ya es un día del tenant.
+            header.OrderDate,
             ValidUntil: null,
             order.Client?.Name ?? string.Empty,
             order.Client?.Cuc ?? string.Empty,

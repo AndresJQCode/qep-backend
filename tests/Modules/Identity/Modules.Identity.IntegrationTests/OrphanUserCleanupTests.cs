@@ -864,7 +864,8 @@ public sealed class OrphanUserCleanupTests
             notes: null,
             convertedBy,
             proofs: [],
-            occurredAt);
+            occurredAt,
+            orderDate: DateOnly.FromDateTime(occurredAt.UtcDateTime));
 
         if (approvedByMembershipId is { } approvedBy)
         {

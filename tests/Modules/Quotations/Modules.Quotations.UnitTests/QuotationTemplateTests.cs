@@ -128,7 +128,54 @@ public sealed partial class QuotationTemplateTests
     // Y con el objeto presente pero cada sección en `none` (ninguna sale en este documento).
     [Fact]
     public async Task TheTemplateCompilesWithEverySectionLeftOut() =>
-        await AssertCompilesAsync(Complete() with { Sections = new QuotationPdfSections(null, null, null) });
+        await AssertCompilesAsync(Complete() with { Sections = new QuotationPdfSections(null, null, null, ShowPaymentAccount: true) });
+
+    // La cuenta apagada por el tenant (spec 2026-11-16 pdf-payment-account): salen las tres líneas de la cuenta y nada más; el
+    // recuadro sigue por la forma de pago. El caso con la cuenta encendida es el control de que el texto se lee de verdad.
+    [Fact]
+    public async Task PaymentAccountHiddenPrintsNoAccountLines()
+    {
+        var shown = await RenderedTextAsync(Complete());
+        var hidden = await RenderedTextAsync(Complete() with { Sections = AllSections() with { ShowPaymentAccount = false } });
+
+        // Typst parte «Número:» en dos nodos y el texto plano los une con un espacio: se busca la palabra, que en la plantilla
+        // sólo aparece en el renglón del número de cuenta.
+        Assert.Contains("Cuenta para el pago", shown, StringComparison.Ordinal);
+        Assert.Contains("Número", shown, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cuenta para el pago", hidden, StringComparison.Ordinal);
+        Assert.DoesNotContain("Número", hidden, StringComparison.Ordinal);
+        Assert.Contains("Forma de pago", hidden, StringComparison.Ordinal);
+        Assert.Contains(PaymentBox, hidden, StringComparison.Ordinal);
+    }
+
+    // Sin cuenta que mostrar, sin forma de pago y sin contraentrega, el recuadro no tiene nada que decir: no se dibuja vacío.
+    [Fact]
+    public async Task PaymentAccountHiddenWithoutPaymentMethodPrintsNoPaymentBox()
+    {
+        var text = await RenderedTextAsync(Complete() with
+        {
+            PaymentMethod = null,
+            CashOnDelivery = false,
+            Sections = AllSections() with { ShowPaymentAccount = false },
+        });
+
+        Assert.DoesNotContain(PaymentBox, text, StringComparison.Ordinal);
+    }
+
+    // El aviso ya no depende de la cuenta (decisión 4): sin cuenta y sin recuadro, sale solo.
+    [Fact]
+    public async Task PaymentNoticePrintsWithoutBillingAccount()
+    {
+        var text = await RenderedTextAsync(Complete() with
+        {
+            BillingAccount = null,
+            PaymentMethod = null,
+            CashOnDelivery = false,
+        });
+
+        Assert.DoesNotContain(PaymentBox, text, StringComparison.Ordinal);
+        Assert.Contains("Ten en cuenta:", text, StringComparison.Ordinal);
+    }
 
     // El texto del tenant sale literal: lo que en Typst sería código, matemática, escape, contenido,
     // negrita, énfasis, referencia o etiqueta no se interpreta, así que tampoco rompe la compilación.
@@ -141,7 +188,8 @@ public sealed partial class QuotationTemplateTests
                 new QuotationPdfSection(
                     "] #pagebreak() [",
                     [Paragraph(new RichTextRun("#let x = 1 $a$ \\ [b] *c* _d_ @e <f>", Bold: true, Href: "https://ejemplo.co/#[x]"))]),
-                null),
+                null,
+                ShowPaymentAccount: true),
         });
 
     [Fact]
@@ -404,52 +452,14 @@ public sealed partial class QuotationTemplateTests
 
     private static async Task AssertCompilesAsync(QuotationPdfDocument document)
     {
-        var typst = FindTypst();
-        if (typst is null)
-        {
-            // En CI la ausencia del binario no puede ser un skip: seria el mismo agujero con otra
-            // forma, y en verde. El workflow instala la version clavada en el contenedor.
-            Assert.SkipWhen(
-                !RunningOnCi,
-                "`typst` no esta en PATH ni en TYPST_BIN. Instalalo para ejercer esta prueba: " +
-                "https://github.com/typst/typst/releases");
-
-            Assert.Fail("`typst` tiene que estar instalado en CI para compilar la plantilla.");
-        }
-
-        var (source, data, assets) = await CapturedRequestAsync(document);
-
-        // Mismo layout que arma `qcode-pdf`: la plantilla y su `data.json` en el mismo directorio,
-        // porque la ruta de `--input` se resuelve relativa al `.typ` y no al directorio de trabajo.
-        var workspace = Directory.CreateTempSubdirectory("qep-typst");
+        var typst = RequireTypst();
+        var workspace = await WorkspaceForAsync(document);
         try
         {
             var template = Path.Combine(workspace.FullName, "quotation.typ");
-            await File.WriteAllTextAsync(
-                template, source, TestContext.Current.CancellationToken);
-            await File.WriteAllTextAsync(
-                Path.Combine(workspace.FullName, "data.json"),
-                data.GetRawText(),
-                TestContext.Current.CancellationToken);
-
-            // `qcode-pdf` deja cada asset en `assets/<nombre>` junto al `.typ` (README, "assets"),
-            // que es lo que resuelve el `#image("assets/" + data.logo.fileName)` de la plantilla.
-            if (assets is { } adjuntos)
-            {
-                var carpeta = Directory.CreateDirectory(
-                    Path.Combine(workspace.FullName, "assets"));
-                foreach (var adjunto in adjuntos.EnumerateObject())
-                {
-                    await File.WriteAllBytesAsync(
-                        Path.Combine(carpeta.FullName, adjunto.Name),
-                        Convert.FromBase64String(adjunto.Value.GetString()!),
-                        TestContext.Current.CancellationToken);
-                }
-            }
-
             var output = Path.Combine(workspace.FullName, "quotation.pdf");
-            var (exitCode, diagnostics) = await RunAsync(
-                typst!, workspace.FullName, ["compile", "--input", "data=data.json", template, output]);
+            var (exitCode, _, diagnostics) = await RunAsync(
+                typst, workspace.FullName, ["compile", "--input", "data=data.json", template, output]);
 
             Assert.True(exitCode == 0, $"typst no pudo compilar la plantilla:\n{diagnostics}");
             Assert.True(File.Exists(output), "typst devolvio 0 pero no dejo el PDF.");
@@ -463,7 +473,106 @@ public sealed partial class QuotationTemplateTests
         }
     }
 
-    private static async Task<(int ExitCode, string Diagnostics)> RunAsync(
+    // Marca que `TextoPlano` antepone a un `block` con borde. En la plantilla el único es el recuadro de condiciones de pago, así
+    // que su presencia en el texto dice si el recuadro se dibuja.
+    private const string PaymentBox = "[recuadro]";
+
+    // Un envoltorio que incluye la plantilla tal cual y recorre el contenido que produce, campo por campo, hasta el texto. El PDF
+    // lleva el texto comprimido y con fuentes recortadas, y el export HTML de Typst descarta `grid`: leer el árbol de contenido
+    // es la forma de ver qué imprime la plantilla sin agregar dependencias. El pie va en `context` y no se ve, lo que acá sobra.
+    private const string TextoPlano = """
+        #let plano(c) = {
+          if type(c) == str { return c }
+          if type(c) != content { return "" }
+          if c.func() == linebreak { return "\n" }
+          let campos = c.fields()
+          if "text" in campos and type(campos.text) == str { return campos.text }
+          let partes = ()
+          if c.func() == block and "stroke" in campos { partes.push("[recuadro]") }
+          for (_, valor) in campos {
+            if type(valor) == content { partes.push(plano(valor)) }
+            else if type(valor) == array {
+              for elemento in valor { if type(elemento) == content { partes.push(plano(elemento)) } }
+            }
+          }
+          if partes.len() == 0 { "" } else { partes.join(" ") }
+        }
+        #metadata(plano(include "quotation.typ")) <texto>
+        """;
+
+    private static async Task<string> RenderedTextAsync(QuotationPdfDocument document)
+    {
+        var typst = RequireTypst();
+        var workspace = await WorkspaceForAsync(document);
+        try
+        {
+            var wrapper = Path.Combine(workspace.FullName, "texto.typ");
+            await File.WriteAllTextAsync(wrapper, TextoPlano, TestContext.Current.CancellationToken);
+            var (exitCode, output, diagnostics) = await RunAsync(
+                typst,
+                workspace.FullName,
+                ["query", "--input", "data=data.json", wrapper, "<texto>", "--field", "value", "--one"]);
+
+            Assert.True(exitCode == 0, $"typst no pudo leer el texto de la plantilla:\n{diagnostics}");
+            return JsonSerializer.Deserialize<string>(output)!;
+        }
+        finally
+        {
+            workspace.Delete(recursive: true);
+        }
+    }
+
+    private static string RequireTypst()
+    {
+        var typst = FindTypst();
+        if (typst is null)
+        {
+            // En CI la ausencia del binario no puede ser un skip: seria el mismo agujero con otra
+            // forma, y en verde. El workflow instala la version clavada en el contenedor.
+            Assert.SkipWhen(
+                !RunningOnCi,
+                "`typst` no esta en PATH ni en TYPST_BIN. Instalalo para ejercer esta prueba: " +
+                "https://github.com/typst/typst/releases");
+
+            Assert.Fail("`typst` tiene que estar instalado en CI para compilar la plantilla.");
+        }
+
+        return typst!;
+    }
+
+    private static async Task<DirectoryInfo> WorkspaceForAsync(QuotationPdfDocument document)
+    {
+        var (source, data, assets) = await CapturedRequestAsync(document);
+
+        // Mismo layout que arma `qcode-pdf`: la plantilla y su `data.json` en el mismo directorio,
+        // porque la ruta de `--input` se resuelve relativa al `.typ` y no al directorio de trabajo.
+        var workspace = Directory.CreateTempSubdirectory("qep-typst");
+        await File.WriteAllTextAsync(
+            Path.Combine(workspace.FullName, "quotation.typ"), source, TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            Path.Combine(workspace.FullName, "data.json"),
+            data.GetRawText(),
+            TestContext.Current.CancellationToken);
+
+        // `qcode-pdf` deja cada asset en `assets/<nombre>` junto al `.typ` (README, "assets"),
+        // que es lo que resuelve el `#image("assets/" + data.logo.fileName)` de la plantilla.
+        if (assets is { } adjuntos)
+        {
+            var carpeta = Directory.CreateDirectory(
+                Path.Combine(workspace.FullName, "assets"));
+            foreach (var adjunto in adjuntos.EnumerateObject())
+            {
+                await File.WriteAllBytesAsync(
+                    Path.Combine(carpeta.FullName, adjunto.Name),
+                    Convert.FromBase64String(adjunto.Value.GetString()!),
+                    TestContext.Current.CancellationToken);
+            }
+        }
+
+        return workspace;
+    }
+
+    private static async Task<(int ExitCode, string Output, string Diagnostics)> RunAsync(
         string executable, string workingDirectory, string[] arguments)
     {
         var startInfo = new ProcessStartInfo(executable)
@@ -482,12 +591,13 @@ public sealed partial class QuotationTemplateTests
             ?? throw new InvalidOperationException($"No se pudo iniciar {executable}.");
 
         // `typst` avisa por `warning` cuando una fuente no existe y cae a la serif por defecto,
-        // asi que la salida de error importa incluso con exit 0.
-        var diagnostics = await process.StandardError.ReadToEndAsync(
-            TestContext.Current.CancellationToken);
+        // asi que la salida de error importa incluso con exit 0. Las dos salidas se leen a la vez:
+        // una sola leída hasta el final puede bloquear al proceso si la otra llena su buffer.
+        var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var diagnostics = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         await process.WaitForExitAsync(TestContext.Current.CancellationToken);
 
-        return (process.ExitCode, diagnostics);
+        return (process.ExitCode, await output, await diagnostics);
     }
 
     // `TYPST_BIN` es la misma variable que el `Dockerfile` de `qcode-pdf` le fija al servicio.
@@ -709,7 +819,8 @@ public sealed partial class QuotationTemplateTests
                 new RichTextBlock(
                     RichTextBlockKind.List,
                     Items: [[Paragraph(new RichTextRun("Cajas en buen estado"))], [Paragraph(new RichTextRun("Cinta sin abrir"))]]),
-            ]));
+            ]),
+        ShowPaymentAccount: true);
 
     private static RichTextBlock Paragraph(params RichTextRun[] runs) =>
         new(RichTextBlockKind.Paragraph, Runs: runs);

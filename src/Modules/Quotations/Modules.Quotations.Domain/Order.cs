@@ -70,6 +70,7 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
         bool allowNoClient = false)
     {
         Id = id;
@@ -108,6 +109,7 @@ public sealed class Order
         Notes = NormalizeNotes(notes);
         ConvertedAt = occurredAt;
         ConvertedBy = createdBy;
+        OrderDate = orderDate;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
         Version = 1;
@@ -317,6 +319,14 @@ public sealed class Order
 
     public DateTimeOffset ConvertedAt { get; private set; }
 
+    /// <summary>
+    /// «Fecha del pedido» (spec 2026-11-16, F-1 y F-2): el día del negocio en el calendario del tenant. Nace con el día
+    /// local de la creación, que Application resuelve porque el dominio no conoce el huso, y se corrige con
+    /// <see cref="ChangeOrderDate"/>. Va aparte de <see cref="ConvertedAt"/>, que es el registro técnico de cuándo nació y
+    /// no cambia nunca.
+    /// </summary>
+    public DateOnly OrderDate { get; private set; }
+
     public MemberId ConvertedBy { get; private set; }
 
     /// <summary>Cuándo se marcó como pagado, y quién (spec 2026-11-10 §3.2). Null si nadie lo marcó: un pago de la
@@ -397,6 +407,7 @@ public sealed class Order
         MemberId convertedBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
         IReadOnlyDictionary<string, TaxUnitPhoto>? taxUnits = null)
     {
         ArgumentNullException.ThrowIfNull(quotation);
@@ -426,7 +437,7 @@ public sealed class Order
             BillingVatSurplus: quotation.PartyVatSurplus);
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
-            quotation.BillingAccount, paymentStatus: null, notes ?? quotation.Notes, convertedBy, occurredAt);
+            quotation.BillingAccount, paymentStatus: null, notes ?? quotation.Notes, convertedBy, occurredAt, orderDate);
         // Spec ReteICA por empresa §7.5: hereda el municipio de la operación junto con la foto, y las filas con su
         // porcentaje efectivo y el del catálogo (los lleva Rate).
         order.OperationCityId = quotation.OperationCityId;
@@ -478,12 +489,13 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        DateOnly orderDate)
     {
         ArgumentNullException.ThrowIfNull(billingAccount);
         return Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
-            paymentStatus: null, notes, createdBy, proofs, occurredAt, OrderLineCosts.None);
+            paymentStatus: null, notes, createdBy, proofs, occurredAt, orderDate, OrderLineCosts.None);
     }
 
     /// <summary>
@@ -506,10 +518,11 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
-        DateTimeOffset occurredAt) =>
+        DateTimeOffset occurredAt,
+        DateOnly orderDate) =>
         Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
-            paymentStatus: null, notes, createdBy, proofs, occurredAt, OrderLineCosts.None);
+            paymentStatus: null, notes, createdBy, proofs, occurredAt, orderDate, OrderLineCosts.None);
 
     /// <summary>Un pedido que trae una integración (Shopify y las que vengan). La elegibilidad del cliente
     /// —completo o incompleto— vive en Application: el dominio sólo exige que haya un id. Si nace
@@ -529,6 +542,7 @@ public sealed class Order
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
         OrderSource source,
         string externalReference,
         ShippingDetails shipping,
@@ -557,7 +571,7 @@ public sealed class Order
         // no se valida contra la transportadora ni contra los modos que el tenant tenga habilitados (D-F18).
         var order = Build(
             id, tenantId, orderNumber, source, externalReference, header, parties, billingAccount,
-            shipping, lines, paymentStatus, notes, createdBy, proofs, occurredAt, costs);
+            shipping, lines, paymentStatus, notes, createdBy, proofs, occurredAt, orderDate, costs);
         order.ExternalKey = key;
         order.ExternalShippingTitle = NormalizeExternalShippingTitle(externalShippingTitle);
         order.BuyerNotes = NormalizeNotes(buyerNotes);
@@ -583,6 +597,7 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
         string externalKey,
         Guid? buyerAccountId = null)
     {
@@ -590,7 +605,7 @@ public sealed class Order
         var key = NormalizeExternalKey(externalKey);
         var order = Build(
             id, tenantId, orderNumber, OrderSource.Store, externalReference: null, header, parties, billingAccount,
-            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt,
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt, orderDate,
             OrderLineCosts.None);
         order.ExternalKey = key;
         order.BuyerAccountId = buyerAccountId;
@@ -610,13 +625,14 @@ public sealed class Order
         string currency,
         bool isRetail,
         IReadOnlyCollection<OrderLineInput> lines,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        DateOnly orderDate)
     {
         var nobody = new MemberId(Guid.Empty);
         var header = new OrderHeader(Guid.Empty, nobody, currency, null, isRetail, null, false, []);
         return Build(
             OrderId.New(), tenantId, "STORE-QUOTE", OrderSource.Store, null, header, QuotationParties.Empty, null,
-            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, null, nobody, [], occurredAt,
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, null, nobody, [], occurredAt, orderDate,
             OrderLineCosts.None, allowNoClient: true);
     }
 
@@ -636,6 +652,7 @@ public sealed class Order
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
         OrderLineCosts costs,
         bool allowNoClient = false)
     {
@@ -644,7 +661,7 @@ public sealed class Order
         ArgumentNullException.ThrowIfNull(costs);
         var order = new Order(
             id, tenantId, orderNumber, source, null, externalReference, header, parties, billingAccount,
-            paymentStatus, notes, createdBy, occurredAt, allowNoClient);
+            paymentStatus, notes, createdBy, occurredAt, orderDate, allowNoClient);
         order.AssignShipping(shipping.Validated(order.IsStorePickup, order.Currency, "order.order"));
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var line in lines)
@@ -1678,6 +1695,34 @@ public sealed class Order
         }
 
         Notes = normalized;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-16 §3 (F-4, F-5): corrige la «Fecha del pedido» con el patrón de <see cref="UpdateNotes"/>. Sólo en un
+    /// pedido <see cref="IsEditable"/>, y nunca después de <paramref name="today"/>, que es hoy en el calendario del tenant
+    /// (lo resuelve Application); hacia atrás no hay tope. <c>false</c> si es la misma fecha: el guardado responde «sin
+    /// cambios» sin subir la versión ni escribir historial. No toca <see cref="ConvertedAt"/> ni recalcula impuestos (§8, P-1).
+    /// </summary>
+    public bool ChangeOrderDate(DateOnly date, DateOnly today, DateTimeOffset occurredAt)
+    {
+        EnsureEditable("The order date can only be edited on an editable order.");
+        // Antes que el tope: reenviar la fecha ya guardada nunca es un cambio, aunque haya quedado después de «hoy».
+        if (date == OrderDate)
+        {
+            return false;
+        }
+
+        if (date > today)
+        {
+            throw new QuotationsDomainException(
+                "order.order_date.in_future",
+                "The order date cannot be later than today in the tenant calendar.");
+        }
+
+        OrderDate = date;
         UpdatedAt = occurredAt;
         Version++;
         return true;

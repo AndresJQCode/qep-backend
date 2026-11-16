@@ -151,6 +151,25 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal(
             ["TenantId", "ConvertedAt", "OrderNumber"],
             orders.Properties.Select(property => property.Name));
+
+        // Spec 2026-11-16 §5 y §6: la lista y el cursor de la exportación pasan a ordenar por la fecha del pedido; el índice
+        // de arriba se queda para la ventana de sincronización.
+        var byOrderDate = model.FindEntityType(typeof(Order))!.GetIndexes()
+            .Single(index => index.GetDatabaseName() == "IX_orders_tenant_order_date_converted_at_number");
+        Assert.Equal(
+            ["TenantId", "OrderDate", "ConvertedAt", "OrderNumber"],
+            byOrderDate.Properties.Select(property => property.Name));
+    }
+
+    // Spec 2026-11-16 §6: «Fecha del pedido» es un día sin hora y obligatorio.
+    [Fact]
+    public void TheOrderDateIsARequiredDateColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var column = model.FindEntityType(typeof(Order))!.FindProperty(nameof(Order.OrderDate))!;
+        Assert.Equal(("order_date", "date", false), (column.GetColumnName(), column.GetColumnType(), column.IsNullable));
     }
 
     /// <summary>
@@ -174,7 +193,7 @@ public sealed class QuotationsDbContextMappingTests
             ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_advisor", "IX_orders_tenant_buyer_created",
              "IX_orders_tenant_client",
              "IX_orders_tenant_converted_at_number", "IX_orders_tenant_external_key", "IX_orders_tenant_number",
-             "IX_orders_tenant_paid_at", "IX_orders_tenant_source"],
+             "IX_orders_tenant_order_date_converted_at_number", "IX_orders_tenant_paid_at", "IX_orders_tenant_source"],
             order.GetIndexes().Select(index => index.GetDatabaseName()!).Order(StringComparer.Ordinal));
         Assert.Equal(
             "FK_orders_quotations_quotation_id",

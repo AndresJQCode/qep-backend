@@ -334,6 +334,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("operation_city_id");
 
+                    b.Property<DateOnly>("OrderDate")
+                        .HasColumnType("date")
+                        .HasColumnName("order_date");
+
                     b.Property<string>("OrderNumber")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -490,6 +494,9 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_orders_tenant_external_key")
                         .HasFilter("external_key IS NOT NULL");
+
+                    b.HasIndex("TenantId", "OrderDate", "ConvertedAt", "OrderNumber")
+                        .HasDatabaseName("IX_orders_tenant_order_date_converted_at_number");
 
                     b.ToTable("orders", "quotations", t =>
                         {
@@ -1360,6 +1367,34 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId", "Year");
 
                     b.ToTable("order_number_counters", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.PdfPaymentAccountRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<bool>("InOrder")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_order");
+
+                    b.Property<bool>("InQuotation")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_quotation");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("pdf_payment_account", "quotations");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.PdfSectionRow", b =>

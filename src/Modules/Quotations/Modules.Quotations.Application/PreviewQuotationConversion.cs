@@ -97,11 +97,13 @@ public sealed class PreviewQuotationConversionHandler(
         // «Antes» es el pedido con la foto de la cotización; «después», el mismo pedido con la UVT del día. Ninguno se
         // agrega al repositorio: la consulta no tiene unidad de trabajo y nada se guarda.
         // Sin filas en unidades (taxUnits null) los dos serían el mismo pedido: no se arma el segundo.
-        var after = PreviewOrder(query.TenantId, quotation, now, taxUnits).ToDto();
+        // El mismo día local que ConvertQuotationToOrderHandler le pone al pedido (spec 2026-11-16 §3).
+        var orderDate = DocumentDates.LocalDate(calendar, now);
+        var after = PreviewOrder(query.TenantId, quotation, now, orderDate, taxUnits).ToDto();
         TaxUnitChangeDto? change = null;
         if (taxUnits is not null)
         {
-            var before = PreviewOrder(query.TenantId, quotation, now, taxUnits: null).ToDto();
+            var before = PreviewOrder(query.TenantId, quotation, now, orderDate, taxUnits: null).ToDto();
             change = QuotationConversionPreview.Compare(
                 before.WithholdingBreakdown ?? [], before.NetTotal, after.WithholdingBreakdown ?? [], after.NetTotal);
         }
@@ -111,9 +113,14 @@ public sealed class PreviewQuotationConversionHandler(
     }
 
     private static Order PreviewOrder(
-        Guid tenantId, Quotation quotation, DateTimeOffset now, IReadOnlyDictionary<string, TaxUnitPhoto>? taxUnits) =>
+        Guid tenantId,
+        Quotation quotation,
+        DateTimeOffset now,
+        DateOnly orderDate,
+        IReadOnlyDictionary<string, TaxUnitPhoto>? taxUnits) =>
         Order.FromQuotation(
-            OrderId.New(), tenantId, PreviewOrderNumber, quotation, notes: null, quotation.AdvisorId, [], now, taxUnits);
+            OrderId.New(), tenantId, PreviewOrderNumber, quotation, notes: null, quotation.AdvisorId, [], now, orderDate,
+            taxUnits);
 }
 
 internal static class QuotationConversionPreview

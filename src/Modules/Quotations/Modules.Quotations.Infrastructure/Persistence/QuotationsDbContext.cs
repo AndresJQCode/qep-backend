@@ -49,6 +49,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<PdfSectionRow> PdfSections => Set<PdfSectionRow>();
 
+    internal DbSet<PdfPaymentAccountRow> PdfPaymentAccounts => Set<PdfPaymentAccountRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -70,6 +72,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureTenantWhatsAppChannel(modelBuilder);
         ConfigureCarrier(modelBuilder);
         ConfigurePdfSections(modelBuilder);
+        ConfigurePdfPaymentAccount(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -733,6 +736,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // D9 (spec 2026-11-10): la nota que escribió el comprador en el checkout; Notes es la del asesor.
         order.Property(value => value.BuyerNotes).HasColumnName("buyer_notes").HasColumnType("text");
         order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
+        // Spec 2026-11-16 §6: «Fecha del pedido», un día sin hora (date) del calendario del tenant.
+        order.Property(value => value.OrderDate).HasColumnName("order_date");
         order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
@@ -800,6 +805,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // tenant.
         order.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.OrderNumber })
             .HasDatabaseName("IX_orders_tenant_converted_at_number");
+        // Spec 2026-11-16 §5 y §6: el orden nuevo de la lista y del cursor de la exportación (fecha del pedido, después
+        // la conversión y el número como desempate). El índice de arriba se queda: lo usa la ventana de sincronización.
+        order.HasIndex(value => new { value.TenantId, value.OrderDate, value.ConvertedAt, value.OrderNumber })
+            .HasDatabaseName("IX_orders_tenant_order_date_converted_at_number");
         // El período del reporte de margen (spec costo de producto §6.3) filtra por paid_at detrás del tenant.
         order.HasIndex(value => new { value.TenantId, value.PaidAt }).HasDatabaseName("IX_orders_tenant_paid_at");
 
@@ -1137,6 +1146,21 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(Modules.Quotations.Application.PdfContentRules.MaxTitleLength).IsRequired();
         section.Property(value => value.ContentHtml).HasColumnName("content_html").HasColumnType("text").IsRequired();
         section.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+    }
+
+    // Si el PDF imprime la cuenta para el pago (spec 2026-11-16 pdf-payment-account, decisión 3): una fila por tenant que la guardó;
+    // sin fila está apagada. Tabla propia y no una cuarta clave de pdf_sections, que exige texto a una sección prendida. Sin FK al
+    // tenant, que es de Tenancy.
+    private static void ConfigurePdfPaymentAccount(ModelBuilder modelBuilder)
+    {
+        var account = modelBuilder.Entity<PdfPaymentAccountRow>();
+        account.ToTable("pdf_payment_account", "quotations");
+        account.HasKey(value => value.TenantId);
+        account.Property(value => value.TenantId).HasColumnName("tenant_id");
+        account.Property(value => value.Enabled).HasColumnName("enabled");
+        account.Property(value => value.InQuotation).HasColumnName("in_quotation");
+        account.Property(value => value.InOrder).HasColumnName("in_order");
+        account.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)

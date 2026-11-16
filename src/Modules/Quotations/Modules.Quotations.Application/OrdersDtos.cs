@@ -103,14 +103,19 @@ public sealed record OrderDto(
     Guid? BuyerAccountId = null,
     /// <summary>El veredicto de cada tasa del pedido, aplique o no, en su orden (spec retenciones por UVT §6). Ver
     /// <see cref="QuotationDto.WithholdingBreakdown"/>.</summary>
-    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null);
+    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null,
+    /// <summary>La fecha del pedido en el calendario del tenant (spec 2026-11-16 §4), aparte de <see cref="ConvertedAt"/>,
+    /// que no cambia. Lleva default sólo porque va después de los opcionales: <c>OrderMapping.ToDto</c> la escribe siempre.</summary>
+    DateOnly OrderDate = default);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
-/// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
+/// Ya no viaja la cotización entera (spec 2026-10-15 §6.2). <c>QuotationCreatedAt</c> es el <c>CreatedAt</c> de esa
+/// cotización (spec 2026-11-16 F-8); null sin cotización o en las rutas que no la leen.</summary>
 public sealed record OrderDetailDto(
     OrderDto Order,
     string? QuotationNumber,
-    IReadOnlyCollection<OrderHistoryEntryDto> History);
+    IReadOnlyCollection<OrderHistoryEntryDto> History,
+    DateTimeOffset? QuotationCreatedAt = null);
 
 public sealed record OrderPaymentProofRequest(Guid FileId, decimal Amount, DateOnly? PaidOn = null);
 
@@ -241,7 +246,10 @@ public record SaveOrderEditsRequest(
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     /// <summary>Los tipos municipales con «Sin retención» elegido (owner 2026-11-13): quitan la fila de ese tipo del
     /// pedido. Ausente, null o vacío = sin marca.</summary>
-    IReadOnlyList<string>? ClearedWithholdingTypes = null)
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    /// <summary>La fecha del pedido (spec 2026-11-16 §4). <b>Ausente o null conserva</b> la guardada: un frontend viejo no
+    /// la toca. No puede ser posterior a hoy en el calendario del tenant (<c>order.order_date.in_future</c>).</summary>
+    DateOnly? OrderDate = null)
 {
     /// <summary>
     /// El municipio de la operación (plan P1): ausente conserva el guardado (o el de la empresa si cambia, A6),
@@ -395,7 +403,9 @@ public sealed record OrderResponse(
     /// <summary>Todas las tasas del pedido con su veredicto (spec retenciones por UVT §6), como en
     /// <see cref="QuotationResponse.WithholdingBreakdown"/>. Viaja en toda respuesta que trae <see cref="Withholdings"/>,
     /// también las de /approve, /cancel… (<see cref="IOrderResponseComposer.ComposeOrderAsync"/>).</summary>
-    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown);
+    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown,
+    /// <summary>Ver <see cref="OrderDto.OrderDate"/>. Viaja como <c>"yyyy-MM-dd"</c>.</summary>
+    DateOnly OrderDate);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y
@@ -423,9 +433,13 @@ public sealed record OrderListItemResponse(
     string? ExternalReference,
     /// <summary>La entrega por envío de la fila, misma forma que en el detalle (con el subtotal y el IVA del
     /// envío adentro): la grilla muestra transportadora y contraentrega sin pedir el pedido entero.</summary>
-    ShippingResponse Shipping);
+    ShippingResponse Shipping,
+    /// <summary>La fecha del pedido (spec 2026-11-16 §4): la que filtra y ordena la lista.</summary>
+    DateOnly OrderDate);
 
-public sealed record SourceQuotationResponse(Guid Id, string QuotationNumber);
+/// <summary>La cotización de origen del detalle. <c>CreatedAt</c> es el de la cotización (spec 2026-11-16 F-8): el detalle
+/// lo muestra junto a la fecha del pedido.</summary>
+public sealed record SourceQuotationResponse(Guid Id, string QuotationNumber, DateTimeOffset CreatedAt);
 
 public sealed record OrderHistoryEntryResponse(
     Guid Id, string EventType, DateTimeOffset EventAt, Guid? MemberId, string? MemberName, string? Details);

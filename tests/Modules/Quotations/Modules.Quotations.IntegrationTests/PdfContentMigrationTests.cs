@@ -32,10 +32,11 @@ public sealed class PdfContentMigrationTests
         "<p><strong>Alistamiento y Entrega:</strong><br>El proveedor preparará los pedidos bajo filmación y los entregará a la empresa transportadora dentro de los 8 días hábiles siguientes a la confirmación del pedido, siempre que estos hayan sido solicitados y pagados por el mayorista.</p><p><strong>Recepción de la Mercancía:</strong><br>Al recibir los productos de la transportadora, el mayorista deberá revisar el estado del paquete. No recibir en caso de detectar:</p><ul><li>Cinta contramarcada deteriorada</li><li>Cajas dañadas y/o abiertas</li><li>Cintas, zunchos o cajas diferentes a las del proveedor</li></ul><p>Si decide recibir el paquete a pesar de alguna de estas irregularidades, lo hará bajo su responsabilidad. En este caso, deberá:</p><ul><li>Dejar constancia de la novedad en la guía de recepción de la transportadora.</li><li>Informar de inmediato al proveedor.</li><li>Enviar fotografías como evidencia.</li></ul><p><strong>Verificación del Contenido:</strong><br>Una vez recibido el pedido, el mayorista deberá grabar un video al abrir las cajas o paquetes, evidenciando el estado y la cantidad de los productos.</p><p><strong>Reporte de Novedades:</strong><br>Si detecta daños, faltantes o deterioro en los productos, deberá informar al proveedor en un plazo máximo de 1 día hábil después de recibirlos. El reporte debe incluir:</p><ul><li>Video de la apertura del paquete.</li><li>Fotografías de las cajas.</li><li>Imágenes de los 3 stickers identificativos del proveedor.</li></ul>";
 
     // La base sólo tiene Quotations: la migración lee de tenancy.tenants sólo el id y el slug, así que alcanza con una réplica
-    // mínima hecha a mano (como las de CatalogVariantUsageCheckerTests).
+    // mínima hecha a mano (como las de CatalogVariantUsageCheckerTests). time_zone porque la prueba sigue hasta la última
+    // migración y AddOrderDate (spec 2026-11-16 §6) lo lee de la misma tabla.
     private const string TenantsSql = $"""
         CREATE SCHEMA IF NOT EXISTS tenancy;
-        CREATE TABLE tenancy.tenants (id uuid PRIMARY KEY, slug text NOT NULL);
+        CREATE TABLE tenancy.tenants (id uuid PRIMARY KEY, slug text NOT NULL, time_zone text NULL);
         INSERT INTO tenancy.tenants (id, slug) VALUES
             ('{OrigenBotanicoId}', 'origen-botanico'),
             ('{OtherTenantId}', 'otro-tenant');
@@ -63,6 +64,27 @@ public sealed class PdfContentMigrationTests
         await using var database = await MigrateWithTenantsAsync();
 
         Assert.Empty(await RowsAsync(database.GetConnectionString(), OtherTenantId));
+    }
+
+    // AddPdfPaymentAccount (spec 2026-11-16 pdf-payment-account, decisión 2): Origen Botánico sigue imprimiendo la cuenta en los dos
+    // documentos; los demás tenants no tienen fila y leen la cuenta apagada.
+    [Fact]
+    public async Task MigrationSeedsThePaymentAccountOnForOrigenBotanicoOnly()
+    {
+        await using var database = await MigrateWithTenantsAsync();
+        var connectionString = database.GetConnectionString();
+
+        Assert.Equal([(true, true, true)], await PaymentAccountRowsAsync(connectionString, OrigenBotanicoId));
+        Assert.Empty(await PaymentAccountRowsAsync(connectionString, OtherTenantId));
+
+        await using var context = NewContext(connectionString);
+        var store = new PdfContentStore(context);
+        Assert.Equal(
+            new PdfPaymentAccount(true, true, true),
+            (await store.GetAsync(Guid.Parse(OrigenBotanicoId), TestContext.Current.CancellationToken)).PaymentAccount);
+        Assert.Equal(
+            PdfPaymentAccount.Empty,
+            (await store.GetAsync(Guid.Parse(OtherTenantId), TestContext.Current.CancellationToken)).PaymentAccount);
     }
 
     // Si el texto sembrado no fuera un punto fijo del saneador, el primer guardado desde la consola lo cambiaría sin que nadie lo
@@ -190,6 +212,24 @@ public sealed class PdfContentMigrationTests
         {
             rows.Add((reader.GetString(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetBoolean(3), reader.GetString(4),
                 reader.GetString(5)));
+        }
+
+        return rows;
+    }
+
+    private static async Task<List<(bool Enabled, bool InQuotation, bool InOrder)>> PaymentAccountRowsAsync(
+        string connectionString, string tenantId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT enabled, in_quotation, in_order FROM quotations.pdf_payment_account WHERE tenant_id = @tenantId", connection);
+        command.Parameters.AddWithValue("tenantId", Guid.Parse(tenantId));
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var rows = new List<(bool, bool, bool)>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            rows.Add((reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2)));
         }
 
         return rows;

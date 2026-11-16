@@ -9,15 +9,28 @@ namespace Modules.Reporting.Application;
 /// <see cref="Start"/> es el 00:00 local del "desde" y <see cref="EndExclusive"/> el 00:00 local del
 /// día siguiente al "hasta", los dos como instantes. <see cref="TimeZone"/> viaja para la serie
 /// mensual (punto 5). Cierra la decisión de producto que el antiguo corte de días en UTC dejaba
-/// abierta: los orígenes comparan instantes y no deciden husos.
+/// abierta: los orígenes comparan instantes y no deciden husos. <see cref="From"/> y <see cref="To"/> son los mismos días
+/// sin convertir (inclusivos): los usa el reporte de pedidos, que corta por la fecha del pedido, que ya es un día del
+/// tenant (spec 2026-11-16 §5).
+///
+/// Ojo: pedidos filtran por <see cref="From"/>/<see cref="To"/> (días) y el POS por <see cref="Start"/>/<see cref="EndExclusive"/>
+/// (instantes). Un período armado sin <see cref="Of"/> (sólo con los instantes) dejaría los pedidos sin filtrar: armarlo
+/// siempre con <see cref="Of"/>.
 /// </summary>
-public sealed record ReportPeriod(DateTimeOffset? Start, DateTimeOffset? EndExclusive, TimeZoneInfo TimeZone)
+public sealed record ReportPeriod(
+    DateTimeOffset? Start,
+    DateTimeOffset? EndExclusive,
+    TimeZoneInfo TimeZone,
+    DateOnly? From = null,
+    DateOnly? To = null)
 {
     public static ReportPeriod Of(TenantCalendar calendar, DateOnly? from, DateOnly? to) =>
         new(
             from is { } start ? calendar.StartOfDayUtc(start) : (DateTimeOffset?)null,
             to is { } end ? calendar.EndOfDayExclusiveUtc(end) : (DateTimeOffset?)null,
-            calendar.TimeZone);
+            calendar.TimeZone,
+            from,
+            to);
 }
 
 /// <summary>

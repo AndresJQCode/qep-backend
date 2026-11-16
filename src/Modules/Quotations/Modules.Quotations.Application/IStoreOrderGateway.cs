@@ -122,11 +122,12 @@ public sealed class StoreOrderGateway(
         var currency = Currencies.Normalize(request.Currency);
         var lines = await drafts.PriceLinesAsync(
             request.TenantId, MergeRepeated(request.Lines), currency, request.IsRetail, cancellationToken);
-        var now = (await tenantClock.GetAsync(request.TenantId, cancellationToken)).UtcNow;
+        var calendar = await tenantClock.GetAsync(request.TenantId, cancellationToken);
+        var now = calendar.UtcNow;
 
         // Un cálculo en memoria: el pedido tiene número de relleno y cliente vacío, así que nada de esto toca el
         // repositorio ni el unit of work.
-        var order = Order.QuoteForStore(request.TenantId, currency, request.IsRetail, lines, now);
+        var order = Order.QuoteForStore(request.TenantId, currency, request.IsRetail, lines, now, calendar.Today);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, request.TenantId, order, now, cancellationToken);
 
@@ -204,7 +205,7 @@ public sealed class StoreOrderGateway(
             {
                 var order = Order.CreateFromStore(
                     OrderId.New(), draft.TenantId, orderNumber, header, parties, billingAccount, lines, draft.Notes,
-                    advisor, now, externalKey, draft.BuyerAccountId);
+                    advisor, now, DocumentDates.LocalDate(calendar, now), externalKey, draft.BuyerAccountId);
                 await OrderPricingRecalculation.ApplyAsync(
                     pricingLookup, settingsStore, priceRounding, draft.TenantId, order, now, cancellationToken);
                 return order;

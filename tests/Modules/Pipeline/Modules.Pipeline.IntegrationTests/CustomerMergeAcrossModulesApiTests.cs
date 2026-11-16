@@ -118,9 +118,9 @@ public sealed class CustomerMergeAcrossModulesApiTests
             VALUES (@quotation, @tenant, 'COT-' || @suffix, @customer, @advisor, 'Draft', now(), 0, 0, 0, 0, 0, @advisor, now(), 1);
             INSERT INTO quotations.orders (id, tenant_id, order_number, status, payment_status, converted_at, converted_by, created_at,
                 updated_at, version, client_id, advisor_id, currency, billing_company_id, billing_bank_name, billing_account_number,
-                billing_account_currency, source)
+                billing_account_currency, source, order_date)
             VALUES (@order, @tenant, 'PED-' || @suffix, 'Open', 'PaymentPending', now(), @advisor, now(), now(), 1, @customer,
-                @advisor, 'COP', @advisor, 'Banco', '123', 'COP', 'Manual');
+                @advisor, 'COP', @advisor, 'Banco', '123', 'COP', 'Manual', current_date);
             INSERT INTO pos.cash_sessions (id, tenant_id, cashier_id, cashier_name, company_id, company_name, company_tax_id, company_document_type, status,
                 opening_float, opened_at, sales_count, voided_count, sales_total, cash_total, card_total, transfer_total, version,
                 created_at, updated_at)

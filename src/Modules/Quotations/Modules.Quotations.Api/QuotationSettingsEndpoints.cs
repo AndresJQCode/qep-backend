@@ -72,7 +72,8 @@ public static class QuotationSettingsEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
-            new UpdatePdfContentCommand(tenantId, request.PaymentNotice, request.Terms, request.DeliveryProcess),
+            new UpdatePdfContentCommand(
+                tenantId, request.PaymentNotice, request.Terms, request.DeliveryProcess, request.PaymentAccount),
             cancellationToken));
 
     private static QuotationSettingsResponse ToResponse(QuotationSettingsDto settings) =>
@@ -89,9 +90,10 @@ public sealed record QuotationSettingsResponse(
     int MinimumUnits,
     IReadOnlyDictionary<string, decimal> MinimumTotals);
 
-/// <summary>Las tres secciones completas, sin <c>variables</c>. Nullable a propósito: una sección que falta llega al validador como
+/// <summary>Las tres secciones completas y la cuenta para el pago, sin <c>variables</c>. Nullable a propósito: una sección que falta llega al validador como
 /// null y es un 422, no un borrado en silencio.</summary>
 public sealed record UpdatePdfContentRequest(
     PdfSectionDto? PaymentNotice,
     PdfSectionDto? Terms,
-    PdfSectionDto? DeliveryProcess);
+    PdfSectionDto? DeliveryProcess,
+    PdfPaymentAccountDto? PaymentAccount);

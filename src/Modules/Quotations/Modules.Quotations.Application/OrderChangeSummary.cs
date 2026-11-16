@@ -1,3 +1,4 @@
+using System.Globalization;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -44,6 +45,11 @@ public static class OrderChangeSummary
         QuotationChangeSummary.GlobalScaleFloorChanged(floor, format);
 
     public static string NotesChanged() => "Editó las notas.";
+
+    /// <summary>Spec 2026-11-16 §3 (F-6): las dos fechas en ISO, con cultura invariante para que el texto no dependa del
+    /// servidor.</summary>
+    public static string OrderDateChanged(DateOnly from, DateOnly to) => string.Create(
+        CultureInfo.InvariantCulture, $"Cambió la fecha del pedido de {from:yyyy-MM-dd} a {to:yyyy-MM-dd}.");
 
     /// <summary>Spec 2026-11-14 §5: el asesor corrigió la parte de envío de un pedido de Shopify (viaja a Shopify).</summary>
     public static string ShippingPartyEdited() => "Editó la dirección de envío.";

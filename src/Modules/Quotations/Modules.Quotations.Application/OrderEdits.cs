@@ -81,6 +81,9 @@ public interface IOrderEdits
 
     /// <summary>Los tipos municipales con «Sin retención» (owner 2026-11-13); null o vacío = sin marca.</summary>
     IReadOnlyList<string>? ClearedWithholdingTypes { get; }
+
+    /// <summary>La fecha del pedido (spec 2026-11-16 §4). <b>Null es «no la toques»</b>, como <see cref="Shipping"/>.</summary>
+    DateOnly? OrderDate { get; }
 }
 
 /// <summary>Aplica el bloque <c>billing</c> de la edición al pedido. Lo comparten el guardado y el cálculo
