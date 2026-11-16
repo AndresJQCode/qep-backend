@@ -1193,6 +1193,9 @@ public static class QepServiceCollectionExtensions
         // Soporte fase 2: la plantilla «Aviso de respuesta», calcada de la de pedido sin encabezado.
         services.AddScoped<ICommandHandler<ProvisionSupportReplyTemplateCommand, ManagedTemplateDto>, ProvisionSupportReplyTemplateHandler>();
         services.AddScoped<IQueryHandler<GetSupportReplyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportReplyTemplateDraftHandler>();
+        // Soporte fase 4b: la plantilla «Respuesta formal», calcada de la de pedido con el PDF de encabezado.
+        services.AddScoped<ICommandHandler<ProvisionSupportFormalReplyTemplateCommand, ManagedTemplateDto>, ProvisionSupportFormalReplyTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetSupportFormalReplyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportFormalReplyTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.

@@ -126,6 +126,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IOrderTemplateReadiness, OrderTemplateReadiness>();
         // Soporte fase 2: la de «Aviso de respuesta», para las opciones de respuesta de un ticket y su envío por plantilla.
         services.AddScoped<ISupportReplyTemplateReadiness, SupportReplyTemplateReadiness>();
+        // Soporte fase 4b: la de «Respuesta formal», para las opciones de respuesta formal y su envío por plantilla con el PDF.
+        services.AddScoped<ISupportFormalReplyTemplateReadiness, SupportFormalReplyTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

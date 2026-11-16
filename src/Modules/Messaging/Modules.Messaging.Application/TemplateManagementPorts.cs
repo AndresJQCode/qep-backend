@@ -28,6 +28,12 @@ public interface IMessageTemplateRepository
     /// <summary>Soporte fase 2: la única fila <c>SupportReply</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindSupportReplyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Soporte fase 4b: la única fila <c>SupportFormalReply</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindSupportFormalReplyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>Soporte fase 4b: la única fila <c>SupportSurvey</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindSupportSurveyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Todas, con tracking, por nombre e idioma en orden ordinal: el refresco las recorre y las modifica.</summary>
     Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -69,6 +75,13 @@ public interface IOrderTemplateReadiness
 /// <c>SupportReply</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la leen las opciones de respuesta de un ticket y el
 /// envío por plantilla (<c>ISupportReplyOutbound</c>).</summary>
 public interface ISupportReplyTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Soporte fase 4b (H10): la señal de la plantilla «Respuesta formal», hermana de <see cref="ISupportReplyTemplateReadiness"/>. Devuelve
+/// la fila <c>SupportFormalReply</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>.</summary>
+public interface ISupportFormalReplyTemplateReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }

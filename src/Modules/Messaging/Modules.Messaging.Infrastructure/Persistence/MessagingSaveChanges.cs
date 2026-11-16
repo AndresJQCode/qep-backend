@@ -106,6 +106,23 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateSupportReplyExists, "This connection already has its support reply template.", exception);
         }
+        // Soporte fase 4b: lo mismo para la «Respuesta formal» y la encuesta.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateSupportFormalReplyIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateSupportFormalReplyExists, "This connection already has its support formal reply template.", exception);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateSupportSurveyIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateSupportSurveyExists, "This connection already has its support survey template.", exception);
+        }
         // Spec 2026-11-09: un programado activo por conversación y un clientId por conversación. Los dos son 409 ya_existe: el handler de
         // crear relee por clientId y devuelve el existente si fue el mismo reintento.
         catch (DbUpdateException exception)
