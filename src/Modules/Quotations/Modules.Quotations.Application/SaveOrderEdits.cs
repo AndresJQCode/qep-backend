@@ -353,6 +353,11 @@ public sealed class SaveOrderEditsHandler(
                 orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                     OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.OrderDateChanged, updatedBy,
                     OrderChangeSummary.OrderDateChanged(previousOrderDate, order.OrderDate), now));
+                // Owner, 2026-11-16: la fecha mueve el pedido en filtros, exportación y reportes, así que el cambio
+                // también queda en la auditoría, no sólo en el historial del pedido.
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.order_date_changed",
+                    order.Id.ToString(), "success", now);
             }
 
             for (var index = 0; index < removedProofIds.Length; index++)

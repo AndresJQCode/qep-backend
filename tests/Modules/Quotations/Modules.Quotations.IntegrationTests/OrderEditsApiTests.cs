@@ -702,6 +702,12 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         var entry = Assert.Single(saved.History, history => history.EventType == "OrderDateChanged");
         Assert.Equal($"Cambió la fecha del pedido de {order.OrderDate:yyyy-MM-dd} a 2026-11-10.", entry.Details);
         Assert.Equal(moved, (await GetDetailAsync(client, tenantId, order.Id)).Order.OrderDate);
+
+        // Owner, 2026-11-16: además del historial, el cambio de fecha queda en la auditoría.
+        var auditActions = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"))
+            .Select(ActionOf)
+            .ToArray();
+        Assert.Contains("quotation.order.order_date_changed", auditActions);
     }
 
     // §4: sin `orderDate` en el cuerpo (un frontend viejo) la fecha guardada no se toca.
@@ -740,6 +746,9 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         var saved = await ReadDetailAsync(response);
         Assert.Equal(order.Version, saved.Order.Version);
         Assert.DoesNotContain(saved.History, history => history.EventType == "OrderDateChanged");
+        Assert.DoesNotContain(
+            "quotation.order.order_date_changed",
+            (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1")).Select(ActionOf));
     }
 
     // F-5: el tope es hoy en el calendario del tenant. Dos días después de hoy en Bogotá (la zona del tenant de prueba) es
