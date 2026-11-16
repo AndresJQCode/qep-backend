@@ -87,6 +87,7 @@ public static class AuthorizationCatalogEndpoints
         Guid tenantId,
         IExecutionContext executionContext,
         IRoleCatalog roleCatalog,
+        ITenantRoleCatalog tenantRoleCatalog,
         ITenantModules tenantModules,
         ModuleEntitlementMask entitlementMask,
         IOperatorTenant operatorTenant,
@@ -109,7 +110,9 @@ public static class AuthorizationCatalogEndpoints
 
         return Results.Ok(new AuthorizationCatalogResponse(
             roleCatalog.CatalogVersion,
-            roleCatalog.ListRoles()
+            // Spec 2026-11-16: los roles del tenant (sistema y custom), no sólo los del build. La pantalla
+            // de miembros ofrece lo que viene acá; sin los custom no se podían asignar aunque la API los aceptara.
+            (await tenantRoleCatalog.ListRolesAsync(tenantId, cancellationToken))
                 .Select(role =>
                 {
                     // Spec 2026-11-15: el mismo cálculo que RoleReferenceValidator, para que la pantalla
