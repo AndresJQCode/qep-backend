@@ -24,8 +24,9 @@ public sealed class AssignTicketValidator : AbstractValidator<AssignTicketComman
     }
 }
 
-/// <summary>Asigna o quita el responsable, en cualquier estado (pre-flight R9: también resuelto o cerrado, sin cambiar el estado).
-/// El responsable es una membresía activa con <c>support.ticket.manage</c>.</summary>
+/// <summary>Asigna o quita el responsable. Un ticket resuelto o cerrado lo rechaza con <c>422 support.ticket.not_editable</c>, también
+/// con el mismo valor (R9, owner 2026-11-15, en <c>SupportTicket.EnsureEditable</c>). El responsable es una membresía activa con
+/// <c>support.ticket.manage</c>. «Asignármelo» es <see cref="TakeTicketHandler"/>.</summary>
 public sealed class AssignTicketHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,

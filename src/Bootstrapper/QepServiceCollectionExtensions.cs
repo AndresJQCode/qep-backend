@@ -486,6 +486,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.UpdateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
             Modules.Support.Application.UpdateTicketTypeHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Support.Application.DeleteTicketTypeCommand, Modules.Support.Application.DeleteTicketTypeResult>,
+            Modules.Support.Application.DeleteTicketTypeHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Support.Application.ReorderTicketTypesCommand, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
             Modules.Support.Application.ReorderTicketTypesHandler>();
         services.AddScoped<
@@ -540,11 +543,20 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.AssignTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.AssignTicketHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Support.Application.TakeTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.TakeTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ExtendTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ExtendTicketHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Support.Application.ChangeTicketTypeCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.ChangeTicketTypeHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.LinkTicketCustomerCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.LinkTicketCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketPriorityCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketPriorityHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
             Modules.Support.Application.ListTicketsHandler>();
@@ -1622,6 +1634,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
         // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the public portal is a Companies company, like IPosCompanyLookup.
         services.AddScoped<Modules.Support.Application.ISupportOrganizationDirectory, SupportOrganizationDirectory>();
+        // Fase 4a (plan G8): el «quién soy» de IsMe; null fuera de una sesión.
+        services.AddScoped<Modules.Support.Application.ISupportViewer, SupportViewer>();
         // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.
         services.AddScoped<Modules.Support.Application.ISupportMemberPermissions, SupportMemberPermissions>();
         Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);

@@ -221,6 +221,126 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
         Assert.Equal([9, 10], positions.Order());
     }
 
+    // Fase 4a (plan G4–G6): borrar un tipo que ningún ticket usa.
+    [Fact]
+    public async Task DeletingAnUnusedTypeRemovesItAndAudits()
+    {
+        var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var created = await JsonAsync(
+            await client.PostAsJsonAsync($"{SupportUrl(tenant)}/settings/ticket-types", TypeBody("Garantía", 15, true), Ct));
+        var id = created.GetProperty("id").GetGuid();
+
+        var response = await DeleteAsync(client, tenant, id, created.GetProperty("version").GetInt64());
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        var listed = await JsonAsync(await client.GetAsync($"{SupportUrl(tenant)}/settings/ticket-types", Ct));
+        Assert.DoesNotContain(listed.EnumerateArray(), type => type.GetProperty("id").GetGuid() == id);
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, SupportAuditActions.TicketTypeDeleted, id.ToString()));
+    }
+
+    [Fact]
+    public async Task DeletingATypeWithAClosedTicketIs422InUse()
+    {
+        var scenario = await SupportTicketScenario.StartAsync(await sharedHost.StartTestAsync());
+        var ticket = await scenario.CreateAsync("Queja");
+        ticket = await scenario.MoveAsync(ticket, "Resolved");
+        await scenario.MoveAsync(ticket, "Closed");
+        var queja = await TypeNamedAsync(scenario.Client, scenario.Tenant, "Queja");
+        var id = queja.GetProperty("id").GetGuid();
+
+        var response = await DeleteAsync(scenario.Client, scenario.Tenant, id, queja.GetProperty("version").GetInt64());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket_type.in_use", await CodeOfAsync(response));
+        Assert.Equal(id, (await TypeNamedAsync(scenario.Client, scenario.Tenant, "Queja")).GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task DeletingWithoutIfMatchIs428AndWithAnOldVersionIs412()
+    {
+        var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var sugerencia = await TypeNamedAsync(client, tenant, "Sugerencia");
+        var id = sugerencia.GetProperty("id").GetGuid();
+        var renamed = await PutAsync(
+            client, $"{SupportUrl(tenant)}/settings/ticket-types/{id}", UpdateBody("Sugerencias", 15, true, true), version: 1);
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+
+        var withoutVersion = await DeleteAsync(client, tenant, id, version: null);
+        var stale = await DeleteAsync(client, tenant, id, version: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, withoutVersion.StatusCode);
+        Assert.Equal("precondition.if_match_required", await CodeOfAsync(withoutVersion));
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal("concurrency.conflict", await CodeOfAsync(stale));
+        Assert.Equal(id, (await TypeNamedAsync(client, tenant, "Sugerencias")).GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task DeletingATypeOfAnotherTenantIs404()
+    {
+        var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var (_, otherClient, other) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var foreign = await TypeNamedAsync(otherClient, other, "Felicitación");
+
+        var response = await DeleteAsync(client, tenant, foreign.GetProperty("id").GetGuid(), version: 1);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("support.ticket_type.not_found", await CodeOfAsync(response));
+        Assert.Equal(8, (await JsonAsync(await otherClient.GetAsync($"{SupportUrl(other)}/settings/ticket-types", Ct))).GetArrayLength());
+    }
+
+    [Fact]
+    public async Task AReaderCannotDelete()
+    {
+        var (factory, manager, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var felicitacion = await TypeNamedAsync(manager, tenant, "Felicitación");
+        using var reader = CreateClient(factory, SubjectId, tenant, SupportPermissions.Read);
+
+        var response = await DeleteAsync(reader, tenant, felicitacion.GetProperty("id").GetGuid(), version: 1);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TheSettingsListSaysWhichTypesAreInUse()
+    {
+        var scenario = await SupportTicketScenario.StartAsync(await sharedHost.StartTestAsync());
+        await scenario.CreateAsync("Queja");
+
+        var listed = (await JsonAsync(await scenario.Client.GetAsync($"{scenario.Url}/settings/ticket-types", Ct))).EnumerateArray().ToList();
+
+        Assert.Equal(8, listed.Count);
+        Assert.All(listed, type => Assert.Equal(
+            type.GetProperty("name").GetString() == "Queja", type.GetProperty("inUse").GetBoolean()));
+        var forTickets = (await JsonAsync(await scenario.Client.GetAsync($"{scenario.Url}/ticket-types", Ct))).EnumerateArray();
+        Assert.True(forTickets.Single(type => type.GetProperty("name").GetString() == "Queja").GetProperty("inUse").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ADeletedSeedTypeIsNotSeededAgain()
+    {
+        var (_, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
+        var felicitacion = await TypeNamedAsync(client, tenant, "Felicitación");
+
+        var response = await DeleteAsync(client, tenant, felicitacion.GetProperty("id").GetGuid(), version: 1);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        var listed = (await JsonAsync(await client.GetAsync($"{SupportUrl(tenant)}/settings/ticket-types", Ct))).EnumerateArray().ToList();
+        Assert.Equal(7, listed.Count);
+        Assert.DoesNotContain(listed, type => type.GetProperty("name").GetString() == "Felicitación");
+    }
+
+    private static async Task<HttpResponseMessage> DeleteAsync(HttpClient client, string tenant, Guid typeId, long? version)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"{SupportUrl(tenant)}/settings/ticket-types/{typeId}");
+        if (version is { } value)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", $"\"{value}\"");
+        }
+
+        return await client.SendAsync(request, Ct);
+    }
+
     private static int? Term(JsonElement type) =>
         type.GetProperty("termBusinessDays").ValueKind == JsonValueKind.Null ? null : type.GetProperty("termBusinessDays").GetInt32();
 

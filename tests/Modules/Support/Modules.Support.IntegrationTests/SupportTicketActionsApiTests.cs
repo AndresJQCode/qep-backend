@@ -7,7 +7,7 @@ using static Modules.Support.IntegrationTests.SupportTicketScenario;
 namespace Modules.Support.IntegrationTests;
 
 /// <summary>
-/// Las acciones del ticket: estado (con la máquina, la pausa y los ciclos de resolución), responsable, tipo y cliente, cada una con
+/// Las acciones del ticket: estado (con la máquina, la pausa y los ciclos de resolución), responsable, tipo, cliente y prioridad, cada una con
 /// <c>If-Match</c>, un evento y una entrada de auditoría. Host propio de la clase con el reloj movible
 /// (<see cref="ClockedSupportHost"/>); el alta es el viernes 2026-11-13 a las 10:00 de Bogotá con «Petición general» (vence el
 /// 2026-12-07).
@@ -355,7 +355,392 @@ public sealed class SupportTicketActionsApiTests(ClockedSupportHost host) : ICla
         }
     }
 
+    [Fact]
+    public async Task ChangingThePriorityAnswersTheDetailAndAddsTheEvent()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        var before = host.Publisher.Of(scenario.TenantId).Count;
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("High"), version: 1);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var body = await JsonAsync(response);
+        Assert.Equal("High", body.GetProperty("priority").GetString());
+        Assert.Equal(2L, body.GetProperty("version").GetInt64());
+        var last = body.GetProperty("events").EnumerateArray().Last();
+        Assert.Equal("PriorityChanged", last.GetProperty("kind").GetString());
+        Assert.Equal("Medium", last.GetProperty("fromPriority").GetString());
+        Assert.Equal("High", last.GetProperty("toPriority").GetString());
+        Assert.Equal(scenario.CallerMemberId, last.GetProperty("actor").GetProperty("id").GetGuid());
+        Assert.Equal("High", (await scenario.DetailAsync(Id(ticket))).GetProperty("priority").GetString());
+        Assert.Equal(
+            "[\"priority\"]",
+            await SupportMessagingSeed.TextAsync(
+                scenario.Factory,
+                "SELECT changed_fields::text FROM audit.entries WHERE action = @action AND resource_id = @id",
+                ("action", SupportAuditActions.TicketPriorityChanged),
+                ("id", Id(ticket).ToString())));
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketPriorityChanged, Id(ticket).ToString()));
+        Assert.All(host.Publisher.Of(scenario.TenantId).Skip(before), notice => Assert.Equal(Id(ticket), notice.TicketId));
+        Assert.Equal(2, host.Publisher.Of(scenario.TenantId).Count - before);
+    }
+
+    [Fact]
+    public async Task TheSamePriorityAnswers200WithoutANewVersion()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        var before = host.Publisher.Of(scenario.TenantId).Count;
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("Medium"), version: 1);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var body = await JsonAsync(response);
+        Assert.Equal("Medium", body.GetProperty("priority").GetString());
+        Assert.Equal(1L, body.GetProperty("version").GetInt64());
+        Assert.Single(body.GetProperty("events").EnumerateArray());
+        Assert.Equal(0, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketPriorityChanged, Id(ticket).ToString()));
+        Assert.Equal(before, host.Publisher.Of(scenario.TenantId).Count);
+    }
+
+    [Fact]
+    public async Task AStalePriorityChangeIs412()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        ticket = await scenario.MoveAsync(ticket, "Open");
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("Urgent"), version: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+        Assert.Equal("concurrency.conflict", await CodeOfAsync(response));
+        Assert.Equal("Medium", (await scenario.DetailAsync(Id(ticket))).GetProperty("priority").GetString());
+    }
+
+    [Fact]
+    public async Task APriorityChangeWithoutIfMatchFailsLikeTheTypeChange()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var priority = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("High"), version: null);
+        var type = await scenario.ActAsync(Id(ticket), "type", new ChangeTicketTypeRequest(await scenario.TypeIdAsync("Queja")), version: null);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, type.StatusCode);
+        Assert.Equal(type.StatusCode, priority.StatusCode);
+        Assert.Equal("precondition.if_match_required", await CodeOfAsync(priority));
+        Assert.Equal(1L, (await scenario.DetailAsync(Id(ticket))).GetProperty("version").GetInt64());
+    }
+
+    // Spec §5.1 [owner 2026-11-15]: resuelto o cerrado, la prioridad no cambia.
+    [Theory]
+    [InlineData("Resolved")]
+    [InlineData("Closed")]
+    public async Task AResolvedTicketRejectsThePriorityWith422NotEditable(string finished)
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        ticket = await scenario.MoveAsync(ticket, "Resolved");
+        if (finished == "Closed")
+        {
+            ticket = await scenario.MoveAsync(ticket, "Closed");
+        }
+
+        var version = ticket.GetProperty("version").GetInt64();
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest("Urgent"), version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket.not_editable", await CodeOfAsync(response));
+        var reread = await scenario.DetailAsync(Id(ticket));
+        Assert.Equal("Medium", reread.GetProperty("priority").GetString());
+        Assert.Equal(version, reread.GetProperty("version").GetInt64());
+    }
+
+    // Sensible a mayúsculas, como el estado: «urgent» no es «Urgent».
+    [Theory]
+    [InlineData("Foo")]
+    [InlineData("urgent")]
+    [InlineData("2")]
+    [InlineData(null)]
+    public async Task AnUnknownPriorityIs422(string? priority)
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var response = await scenario.ActAsync(Id(ticket), "priority", new ChangeTicketPriorityRequest(priority), version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Equal(["Priority"], await ErrorKeysAsync(response));
+        Assert.Equal(1L, (await scenario.DetailAsync(Id(ticket))).GetProperty("version").GetInt64());
+    }
+
+    [Fact]
+    public async Task ReadingWithoutManageCannotChangeThePriority()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        using var reader = CreateClient(scenario.Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read);
+        var url = $"{scenario.Url}/tickets/{Id(ticket)}";
+
+        var priority = await PutAsync(reader, $"{url}/priority", new ChangeTicketPriorityRequest("High"), version: 1);
+        var type = await PutAsync(reader, $"{url}/type", new ChangeTicketTypeRequest(await scenario.TypeIdAsync("Queja")), version: 1);
+
+        Assert.Equal(HttpStatusCode.Forbidden, type.StatusCode);
+        Assert.Equal(type.StatusCode, priority.StatusCode);
+        Assert.Equal("Medium", (await scenario.DetailAsync(Id(ticket))).GetProperty("priority").GetString());
+    }
+
     private static DateTimeOffset At(int month, int day) => new(2026, month, day, 15, 0, 0, TimeSpan.Zero);
+
+    // Fase 4a (plan G7): «Asignármelo».
+    [Fact]
+    public async Task TakeAssignsTheTicketToTheCaller()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var response = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, version: 1);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonAsync(response);
+        var assignee = body.GetProperty("assignee");
+        Assert.Equal(scenario.CallerMemberId, assignee.GetProperty("id").GetGuid());
+        Assert.True(assignee.GetProperty("isMe").GetBoolean());
+        Assert.Equal(2L, body.GetProperty("version").GetInt64());
+        var changed = body.GetProperty("events").EnumerateArray().Last();
+        Assert.Equal("AssigneeChanged", changed.GetProperty("kind").GetString());
+        Assert.Equal(scenario.CallerMemberId, changed.GetProperty("assignee").GetProperty("id").GetGuid());
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketAssigned, Id(ticket).ToString()));
+    }
+
+    [Fact]
+    public async Task TakingATicketAlreadyMineKeepsTheVersion()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var first = await JsonAsync(await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, version: 1));
+        var second = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, Version(first));
+
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(Version(first), Version(await JsonAsync(second)));
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketAssigned, Id(ticket).ToString()));
+    }
+
+    [Fact]
+    public async Task TakeWithoutIfMatchIs428AndWithAnOldVersionIs412()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        await scenario.MoveAsync(ticket, "Open");
+
+        var withoutVersion = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, version: null);
+        var stale = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, version: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, withoutVersion.StatusCode);
+        Assert.Equal("precondition.if_match_required", await CodeOfAsync(withoutVersion));
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal("concurrency.conflict", await CodeOfAsync(stale));
+        Assert.Equal(JsonValueKind.Null, (await scenario.DetailAsync(Id(ticket))).GetProperty("assignee").ValueKind);
+    }
+
+    [Theory]
+    [InlineData("Resolved")]
+    public async Task TakingAResolvedTicketIs422NotEditable(string finished)
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.MoveAsync(await scenario.CreateAsync(), finished);
+
+        var response = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, Version(ticket));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket.not_editable", await CodeOfAsync(response));
+        Assert.Equal(Version(ticket), Version(await scenario.DetailAsync(Id(ticket))));
+    }
+
+    [Fact]
+    public async Task AReaderCannotTake()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        using var reader = CreateClient(scenario.Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{scenario.Url}/tickets/{Id(ticket)}/take");
+        request.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
+
+        var response = await reader.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await scenario.DetailAsync(Id(ticket))).GetProperty("assignee").ValueKind);
+    }
+
+    // Fase 4a (plan G9 a G11): la prórroga. El alta del viernes 2026-11-13 vence el 2026-12-07; con 5 días hábiles más, el 2026-12-15
+    // (el 2026-12-08 es festivo).
+    private const string ExtensionReason = "Falta respuesta del proveedor";
+
+    [Fact]
+    public async Task ExtendingMovesTheDueDateAndShowsItInTheClockAndTrace()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        host.Clock.UtcNow = At(11, 17);
+
+        var response = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/extension", new ExtendTicketRequest(5, $"  {ExtensionReason}  "), version: 1);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonAsync(response);
+        Assert.Equal(2L, Version(body));
+        var clock = body.GetProperty("clock");
+        Assert.Equal("2026-12-15", clock.GetProperty("dueOn").GetString());
+        var extension = clock.GetProperty("extension");
+        Assert.Equal(5, extension.GetProperty("businessDays").GetInt32());
+        Assert.Equal(ExtensionReason, extension.GetProperty("reason").GetString());
+        Assert.Equal(At(11, 17), extension.GetProperty("extendedAt").GetDateTimeOffset());
+        Assert.Equal(JsonValueKind.Null, clock.GetProperty("maxExtensionBusinessDays").ValueKind);
+        var extended = body.GetProperty("events").EnumerateArray().Last();
+        Assert.Equal("Extended", extended.GetProperty("kind").GetString());
+        Assert.Equal(scenario.CallerMemberId, extended.GetProperty("actor").GetProperty("id").GetGuid());
+        Assert.Equal(5, extended.GetProperty("extensionBusinessDays").GetInt32());
+        Assert.Equal("2026-12-07", extended.GetProperty("fromDueOn").GetString());
+        Assert.Equal("2026-12-15", extended.GetProperty("toDueOn").GetString());
+        Assert.Equal(ExtensionReason, extended.GetProperty("reason").GetString());
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketExtended, Id(ticket).ToString()));
+        // La auditoría lleva nombres de campo, nunca el motivo (plan G11).
+        Assert.Equal(0L, await SupportMessagingSeed.ScalarAsync(
+            scenario.Factory,
+            "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND changed_fields::text LIKE '%proveedor%'",
+            ("id", Id(ticket).ToString())));
+    }
+
+    [Fact]
+    public async Task AnExtendableTicketAdvertisesItsMaximum()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var clock = ticket.GetProperty("clock");
+
+        Assert.Equal(15, clock.GetProperty("maxExtensionBusinessDays").GetInt32());
+        Assert.Equal(JsonValueKind.Null, clock.GetProperty("extension").ValueKind);
+        Assert.All(
+            ticket.GetProperty("events").EnumerateArray(),
+            item => Assert.Equal(JsonValueKind.Null, item.GetProperty("extensionBusinessDays").ValueKind));
+    }
+
+    [Fact]
+    public async Task ExtendingAnOverdueTicketIs422()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        host.Clock.UtcNow = At(12, 9);
+
+        var response = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/extension", new ExtendTicketRequest(5, ExtensionReason), version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket.extension_overdue", await CodeOfAsync(response));
+        var detail = await scenario.DetailAsync(Id(ticket));
+        Assert.Equal(1L, Version(detail));
+        Assert.Equal("2026-12-07", detail.GetProperty("clock").GetProperty("dueOn").GetString());
+        Assert.Equal(JsonValueKind.Null, detail.GetProperty("clock").GetProperty("maxExtensionBusinessDays").ValueKind);
+    }
+
+    [Fact]
+    public async Task ExtendingTwiceIs422AlreadyUsed()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        var first = await JsonAsync(await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/extension", new ExtendTicketRequest(5, ExtensionReason), version: 1));
+
+        var second = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/extension", new ExtendTicketRequest(3, "Otra vez"), Version(first));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
+        Assert.Equal("support.ticket.extension_already_used", await CodeOfAsync(second));
+        Assert.Equal(
+            5, (await scenario.DetailAsync(Id(ticket))).GetProperty("clock").GetProperty("extension").GetProperty("businessDays").GetInt32());
+        Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketExtended, Id(ticket).ToString()));
+    }
+
+    [Fact]
+    public async Task AnInvalidExtensionBodyIs422OnTheFields()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+
+        var response = await scenario.PostActionAsync($"tickets/{Id(ticket)}/extension", new ExtendTicketRequest(null, " "), version: 1);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.Equal(["BusinessDays", "Reason"], await ErrorKeysAsync(response));
+    }
+
+    [Fact]
+    public async Task ExtendWithoutIfMatchIs428AndWithAnOldVersionIs412()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        await scenario.MoveAsync(ticket, "Open");
+        var body = new ExtendTicketRequest(5, ExtensionReason);
+
+        var withoutVersion = await scenario.PostActionAsync($"tickets/{Id(ticket)}/extension", body, version: null);
+        var stale = await scenario.PostActionAsync($"tickets/{Id(ticket)}/extension", body, version: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, withoutVersion.StatusCode);
+        Assert.Equal("precondition.if_match_required", await CodeOfAsync(withoutVersion));
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal("concurrency.conflict", await CodeOfAsync(stale));
+        Assert.Equal(JsonValueKind.Null, (await scenario.DetailAsync(Id(ticket))).GetProperty("clock").GetProperty("extension").ValueKind);
+    }
+
+    [Fact]
+    public async Task AReaderCannotExtend()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        using var reader = CreateClient(scenario.Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{scenario.Url}/tickets/{Id(ticket)}/extension")
+        {
+            Content = System.Net.Http.Json.JsonContent.Create(new ExtendTicketRequest(5, ExtensionReason)),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
+
+        var response = await reader.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await scenario.DetailAsync(Id(ticket))).GetProperty("clock").GetProperty("extension").ValueKind);
+    }
+
+    // Con el umbral por defecto (3 días), el 2026-12-02 el ticket está «por vencer»; prorrogado vence el 2026-12-15 y sale de la cuenta.
+    [Fact]
+    public async Task TheInboxCountsAnExtendedTicketByItsNewDueDate()
+    {
+        var scenario = await StartAsync(await host.StartTestAsync());
+        var ticket = await scenario.CreateAsync();
+        host.Clock.UtcNow = At(12, 2);
+        var before = await InboxAsync(scenario);
+
+        var extended = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/extension", new ExtendTicketRequest(5, ExtensionReason), version: 1);
+        var after = await InboxAsync(scenario);
+
+        Assert.Equal(HttpStatusCode.OK, extended.StatusCode);
+        Assert.Equal(1, before.GetProperty("summary").GetProperty("dueSoon").GetInt32());
+        Assert.Equal(0, after.GetProperty("summary").GetProperty("dueSoon").GetInt32());
+        Assert.Equal("OnTrack", after.GetProperty("items")[0].GetProperty("dueState").GetString());
+        Assert.Equal("2026-12-15", after.GetProperty("items")[0].GetProperty("dueOn").GetString());
+    }
+
+    private static async Task<JsonElement> InboxAsync(SupportTicketScenario scenario)
+    {
+        var response = await scenario.Client.GetAsync($"{scenario.Url}/tickets", TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        return await JsonAsync(response);
+    }
 
     private static List<string> Strings(JsonElement array) => array.EnumerateArray().Select(item => item.GetString()!).ToList();
 }

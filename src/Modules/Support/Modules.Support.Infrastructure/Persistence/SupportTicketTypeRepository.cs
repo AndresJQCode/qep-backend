@@ -17,4 +17,6 @@ internal sealed class SupportTicketTypeRepository(SupportDbContext dbContext) : 
         dbContext.TicketTypes.FirstOrDefaultAsync(type => type.TenantId == tenantId && type.Id == id, cancellationToken);
 
     public void Add(SupportTicketType type) => dbContext.TicketTypes.Add(type);
+
+    public void Remove(SupportTicketType type) => dbContext.TicketTypes.Remove(type);
 }

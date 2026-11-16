@@ -1,3 +1,4 @@
+using BuildingBlocks.Application.Realtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Tenancy.Application;
@@ -21,6 +22,9 @@ public sealed class ClockedSupportHost : IAsyncLifetime
 
     internal MutableTenantClock Clock { get; } = new(Reception);
 
+    /// <summary>Los avisos de tiempo real del host: las acciones del ticket prueban que anuncian sólo cuando cambian algo.</summary>
+    internal RecordingRealtimePublisher Publisher { get; } = new();
+
     /// <summary>El host de la clase, con el reloj de vuelta en <see cref="Reception"/>.</summary>
     internal Task<SupportApiHarness.QepApiFactory> StartTestAsync()
     {
@@ -37,6 +41,8 @@ public sealed class ClockedSupportHost : IAsyncLifetime
             {
                 services.RemoveAll<ITenantClock>();
                 services.AddSingleton<ITenantClock>(Clock);
+                services.RemoveAll<IRealtimePublisher>();
+                services.AddSingleton<IRealtimePublisher>(Publisher);
             });
     }
 

@@ -814,8 +814,10 @@ las pruebas de integración que arman cuerpos a mano.
      rigiendo «un tipo usado no se borra: se desactiva» (§7).
    - **«Asignármelo».** Endpoint propio, como «Tomar» de Mensajería, que resuelve el miembro por la
      sesión, y `IsMe` en `SupportMemberDto`: el SPA no conoce su `memberId`.
-   - **Responsable fijo en `Resolved` y `Closed`.** Cambiar el responsable de un ticket resuelto o
-     cerrado responde 422; hoy se permite. Tipo y cliente no cambian de regla.
+   - **Responsable fijo en `Resolved` y `Closed`.** Cambiar el responsable, el tipo o el cliente de un
+     ticket resuelto o cerrado responde `422 support.ticket.not_editable`, también con el mismo valor.
+     Ya lo hace el código desde `203ccb3a` (R9, owner 2026-11-15, `SupportTicket.EnsureEditable`): la
+     fase 4a no lo construye, sólo corrige esta línea, que decía que hoy se permitía.
 
 Cada fase deja el módulo usable y se mergea a `develop` por separado.
 

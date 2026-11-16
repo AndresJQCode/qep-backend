@@ -45,8 +45,8 @@ public sealed class UpdateTicketTypeValidator : AbstractValidator<UpdateTicketTy
 }
 
 /// <summary>
-/// Edita el tipo entero (también desactivarlo: un tipo usado no se borra). No mueve vencimientos ya calculados: el ticket guardó su
-/// foto del tipo (spec §7.2). Sin cambios, no sube la versión ni audita.
+/// Edita el tipo entero (también desactivarlo: un tipo usado no se borra, se desactiva; <see cref="DeleteTicketTypeHandler"/>). No
+/// mueve vencimientos ya calculados: el ticket guardó su foto del tipo (spec §7.2). Sin cambios, no sube la versión ni audita.
 /// </summary>
 public sealed class UpdateTicketTypeHandler(
     IExecutionContext executionContext,
@@ -54,6 +54,7 @@ public sealed class UpdateTicketTypeHandler(
     ITenantClock tenantClock,
     ISupportProvisioner provisioner,
     ISupportTicketTypeRepository types,
+    ISupportTicketRepository tickets,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     IValidator<UpdateTicketTypeCommand> validator)
@@ -73,7 +74,8 @@ public sealed class UpdateTicketTypeHandler(
             throw new RequestConcurrencyException("concurrency.conflict", "The ticket type changed after it was loaded.");
         }
 
-        var before = SupportDtoMapping.ToDto(type);
+        var inUse = await tickets.AnyOfTypeAsync(command.TenantId, type.Id, cancellationToken);
+        var before = SupportDtoMapping.ToDto(type, inUse);
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         type.Update(
             command.Name,
@@ -92,12 +94,12 @@ public sealed class UpdateTicketTypeHandler(
                 SupportAuditActions.Resources.TicketType,
                 type.Id.ToString(),
                 "success",
-                ChangedFields(before, SupportDtoMapping.ToDto(type)),
+                ChangedFields(before, SupportDtoMapping.ToDto(type, inUse)),
                 now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
-        return SupportDtoMapping.ToDto(type);
+        return SupportDtoMapping.ToDto(type, inUse);
     }
 
     private static List<string> ChangedFields(SupportTicketTypeDto before, SupportTicketTypeDto after)

@@ -12,6 +12,18 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
 
     public void Add(SupportTicket ticket) => dbContext.Tickets.Add(ticket);
 
+    // El índice IX_tickets_ticket_type_id de la FK cubre las dos lecturas.
+    public Task<bool> AnyOfTypeAsync(Guid tenantId, SupportTicketTypeId typeId, CancellationToken cancellationToken) =>
+        dbContext.Tickets.AnyAsync(ticket => ticket.TenantId == tenantId && ticket.TypeId == typeId, cancellationToken);
+
+    public async Task<IReadOnlySet<SupportTicketTypeId>> UsedTypeIdsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await dbContext.Tickets
+            .Where(ticket => ticket.TenantId == tenantId)
+            .Select(ticket => ticket.TypeId)
+            .Distinct()
+            .ToListAsync(cancellationToken))
+        .ToHashSet();
+
     public Task<SupportTicket?> FindAsync(Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) =>
         dbContext.Tickets.FirstOrDefaultAsync(ticket => ticket.TenantId == tenantId && ticket.Id == id, cancellationToken);
 
@@ -57,8 +69,17 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
     {
         var tickets = Filtered(filter);
         var total = await tickets.CountAsync(cancellationToken);
-        var items = await tickets
-            .OrderByDescending(ticket => ticket.ReceivedAt)
+        // La prioridad se guarda por nombre: el rango va en un CASE, así el orden y la página salen de la base. Sin índice para él: la
+        // consulta ya va acotada al tenant y un índice sobre la columna no sirve para ordenar por la expresión.
+        var ordered = filter.ByPriority
+            ? tickets
+                .OrderBy(ticket => ticket.Priority == SupportTicketPriority.Urgent ? 0
+                    : ticket.Priority == SupportTicketPriority.High ? 1
+                    : ticket.Priority == SupportTicketPriority.Medium ? 2
+                    : 3)
+                .ThenByDescending(ticket => ticket.ReceivedAt)
+            : tickets.OrderByDescending(ticket => ticket.ReceivedAt);
+        var items = await ordered
             .ThenByDescending(ticket => ticket.Id)
             .Skip((filter.Page - 1) * filter.PageSize)
             .Take(filter.PageSize)
@@ -95,6 +116,12 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
         {
             var wanted = statuses.ToArray();
             tickets = tickets.Where(ticket => wanted.Contains(ticket.Status));
+        }
+
+        if (filter.Priorities is { Count: > 0 } priorities)
+        {
+            var wanted = priorities.ToArray();
+            tickets = tickets.Where(ticket => wanted.Contains(ticket.Priority));
         }
 
         if (filter.RunningOnly)

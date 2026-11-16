@@ -17,6 +17,7 @@ public sealed class SupportTicketReplyTests
     private static SupportTicket Ticket() =>
         SupportTicket.CreateFromConversation(
             SupportTicketId.New(), TenantId, 1, SupportTicketTypeDefaults.For(TenantId, Now)[0], "Asunto", "Descripción",
+            SupportTicketPriority.Medium,
             new SupportConversationRef(ConversationId, "WhatsApp"), null,
             new TicketRequester("Ana", null, null, null, null, null, null, null, "CO", null), null, Actor, Now, Clock);
 

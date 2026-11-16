@@ -183,7 +183,7 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
-    private static void MapTicketPost(RouteGroupBuilder group, string action, Delegate handler) =>
+    private static RouteHandlerBuilder MapTicketPost(RouteGroupBuilder group, string action, Delegate handler) =>
         group.MapPost($"/tickets/{{ticketId:guid}}/{action}", handler)
             .RequireAuthorization(SupportPermissions.Manage)
             .Produces<SupportTicketDetailDto>()
@@ -321,8 +321,13 @@ public static class SupportEndpoints
 
         MapTicketAction<ChangeTicketStatusRequest>(group, "status", ChangeStatusAsync);
         MapTicketAction<AssignTicketRequest>(group, "assignee", AssignAsync);
+        // Fase 4a (plan G7): «Asignármelo», sin cuerpo; el responsable sale de la sesión.
+        MapTicketPost(group, "take", TakeAsync);
+        // Fase 4a (plan G9): la prórroga única del plazo.
+        MapTicketPost(group, "extension", ExtendAsync).Accepts<ExtendTicketRequest>("application/json");
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
         MapTicketAction<LinkTicketCustomerRequest>(group, "customer", LinkCustomerAsync);
+        MapTicketAction<ChangeTicketPriorityRequest>(group, "priority", ChangePriorityAsync);
 
         group.MapGet("/assignees", ListAssigneesAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -377,6 +382,16 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        // Fase 4a (plan G4): sólo un tipo sin tickets; uno usado responde 422 support.ticket_type.in_use y se desactiva con el PUT.
+        group.MapDelete("/settings/ticket-types/{typeId:guid}", DeleteTicketTypeAsync)
+            .RequireAuthorization(SupportPermissions.SettingsManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
@@ -505,12 +520,14 @@ public static class SupportEndpoints
         string? assignee,
         string? due,
         string? search,
+        string? priority,
+        string? sort,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
         int page = 1,
         int pageSize = ListTicketsQuery.DefaultPageSize) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, page, pageSize), cancellationToken));
+            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, priority, sort, page, pageSize), cancellationToken));
 
     private static async Task<IResult> CreateTicketAsync(
         Guid tenantId, CreateTicketRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -552,6 +569,21 @@ public static class SupportEndpoints
         Results.Ok(await dispatcher.SendAsync(
             AssignTicketCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
 
+    private static async Task<IResult> TakeAsync(
+        Guid tenantId, Guid ticketId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new TakeTicketCommand(tenantId, ticketId, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ExtendAsync(
+        Guid tenantId,
+        Guid ticketId,
+        ExtendTicketRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            ExtendTicketCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
     private static async Task<IResult> ChangeTypeAsync(
         Guid tenantId,
         Guid ticketId,
@@ -571,6 +603,16 @@ public static class SupportEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             LinkTicketCustomerCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ChangePriorityAsync(
+        Guid tenantId,
+        Guid ticketId,
+        ChangeTicketPriorityRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            ChangeTicketPriorityCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
 
     private static async Task<IResult> ListAssigneesAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -600,6 +642,14 @@ public static class SupportEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             UpdateTicketTypeCommand.From(tenantId, typeId, request, RequireVersion(httpContext, "ticket type")), cancellationToken));
+
+    private static async Task<IResult> DeleteTicketTypeAsync(
+        Guid tenantId, Guid typeId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteTicketTypeCommand(tenantId, typeId, RequireVersion(httpContext, "ticket type")), cancellationToken);
+        return Results.NoContent();
+    }
 
     private static async Task<IResult> ReorderTicketTypesAsync(
         Guid tenantId, ReorderTicketTypesRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

@@ -12,7 +12,8 @@ public sealed class ListTicketTypesHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ISupportProvisioner provisioner,
-    ISupportTicketTypeRepository types)
+    ISupportTicketTypeRepository types,
+    ISupportTicketRepository tickets)
     : IQueryHandler<ListTicketTypesQuery, IReadOnlyList<SupportTicketTypeDto>>
 {
     public async Task<IReadOnlyList<SupportTicketTypeDto>> HandleAsync(ListTicketTypesQuery query, CancellationToken cancellationToken)
@@ -28,6 +29,10 @@ public sealed class ListTicketTypesHandler(
         }
 
         await provisioner.EnsureAsync(query.TenantId, cancellationToken);
-        return (await types.ListAsync(query.TenantId, cancellationToken)).Select(SupportDtoMapping.ToDto).ToList();
+        // Una sola lectura de los tipos usados para toda la lista (plan G6).
+        var used = await tickets.UsedTypeIdsAsync(query.TenantId, cancellationToken);
+        return (await types.ListAsync(query.TenantId, cancellationToken))
+            .Select(type => SupportDtoMapping.ToDto(type, used.Contains(type.Id)))
+            .ToList();
     }
 }

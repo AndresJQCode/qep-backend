@@ -12,7 +12,8 @@ public sealed class GetLegalDocumentHistoryHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ISupportLegalDocumentRepository legalDocuments,
-    ISupportMemberDirectory members)
+    ISupportMemberDirectory members,
+    ISupportViewer viewer)
     : IQueryHandler<GetLegalDocumentHistoryQuery, SupportLegalDocumentHistoryDto>
 {
     public async Task<SupportLegalDocumentHistoryDto> HandleAsync(
@@ -23,11 +24,12 @@ public sealed class GetLegalDocumentHistoryHandler(
 
         var versions = await legalDocuments.ListAsync(query.TenantId, kind, cancellationToken);
         var names = await SupportLegalDocuments.AuthorNamesAsync(query.TenantId, versions, members, cancellationToken);
+        var me = await viewer.MemberIdAsync(query.TenantId, cancellationToken);
         return new SupportLegalDocumentHistoryDto(
             kind.ToString(),
             versions
                 .Select(version => new SupportLegalDocumentVersionItemDto(
-                    version.Version, version.CreatedAt, SupportLegalDocuments.Author(version.CreatedBy, names)))
+                    version.Version, version.CreatedAt, SupportLegalDocuments.Author(version.CreatedBy, names, me)))
                 .ToList());
     }
 }

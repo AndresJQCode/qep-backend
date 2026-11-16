@@ -245,11 +245,13 @@ public sealed class SupportOpeningSenderTests
     private static SupportTicket FromConversation(Guid? assignee = null, int typeIndex = 0) =>
         SupportTicket.CreateFromConversation(
             SupportTicketId.New(), TenantId, 1, Type(typeIndex), "No me llegó el pedido", "Lo escribió por WhatsApp.",
+            SupportTicketPriority.Medium,
             new SupportConversationRef(ConversationId, "WhatsApp"), null, Person, assignee, Creator, Received, Clock);
 
     private static SupportTicket Manual(SupportReplyChannel channel) =>
         SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 2, Type(0), "Asunto", "Descripción", ManualIntakeMedium.Phone, channel, null, Person,
+            SupportTicketId.New(), TenantId, 2, Type(0), "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, channel, null, Person,
             null, Creator, Received, Clock);
 
     private static SupportThreadStatus Thread(DateTimeOffset? windowClosesAt) =>
@@ -346,6 +348,12 @@ public sealed class SupportOpeningSenderTests
             throw new NotSupportedException();
 
         public Task<SupportTicket?> FindByClientRequestAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> AnyOfTypeAsync(Guid tenantId, SupportTicketTypeId typeId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlySet<SupportTicketTypeId>> UsedTypeIdsAsync(Guid tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public void Add(SupportTicket ticket) => throw new NotSupportedException();

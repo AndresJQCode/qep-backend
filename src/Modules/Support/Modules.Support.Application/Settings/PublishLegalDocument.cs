@@ -129,6 +129,7 @@ public sealed class PublishLegalDocumentHandler(
         var defaultQuestion = isPrivacy
             ? await SupportLegalDocuments.DefaultQuestionAsync(command.TenantId, tenantDirectory, cancellationToken)
             : null;
-        return SupportLegalDocuments.ToDto(version, names, defaultQuestion);
+        // The author is whoever publishes, so IsMe is true by construction: no ISupportViewer round trip.
+        return SupportLegalDocuments.ToDto(version, names, defaultQuestion, actor);
     }
 }

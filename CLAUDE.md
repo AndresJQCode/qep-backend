@@ -925,6 +925,26 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   Reemplazó a `support.ticket.follow_closed`, que ya no existe. Responder se permite en cualquier estado. Los caminos del sistema no pasan
   por esa guarda: el worker del hilo vincula entrantes (`SupportThreadFollower`), la fusión y el borrado de clientes son SQL crudo, y
   clasificar desde «sin clasificar» o «De ninguno» (`MessageClassified`, `MessageDismissed`) tampoco la toman.
+- **Un tipo de ticket sin tickets sí se borra, pero la regla la cierra la FK, no la consulta previa** (fase 4a, plan G5).
+  `FK_tickets_ticket_types_ticket_type_id` es `ON DELETE RESTRICT` y `SupportUnitOfWork` la traduce **por nombre** y SQLSTATE: `23001`
+  (borrar un tipo usado) → `422 support.ticket_type.in_use`, `23503` (radicar o cambiar a un tipo recién borrado) →
+  `support.ticket_type.unavailable`. La pregunta de `DeleteTicketTypeHandler` (`AnyOfTypeAsync`) es sólo la respuesta amable: sola, un
+  `DELETE` y un alta a la vez dejan un ticket con `ticket_type_id` huérfano. No la cambies por la consulta. Lo amarran
+  `TheForeignKeyTurnsADeleteOfAUsedTypeInto422InUse` y `TheForeignKeyTurnsATicketOnADeletedTypeInto422Unavailable`.
+- **La prórroga se guarda en días hábiles y entra en `SupportTicket.DueOnFor`, el único cálculo del vencimiento** (fase 4a, plan G9).
+  `DueOn` = radicación + término + `ExtensionBusinessDays` + `PausedBusinessDays`; así una pausa posterior y un cambio de tipo la siguen
+  contando (G12: cambiar de tipo conserva los días). Un camino nuevo que recalcule el vencimiento pasa por `DueOnFor` o pierde la
+  prórroga sin error. Las guardas de `Extend` van en un orden fijo (`not_editable`, `extension_already_used`, `extension_no_term`,
+  `extension_clock_stopped`, `extension_overdue`, `extension_too_long`) y `MaxExtensionBusinessDays` usa las mismas cinco primeras: el
+  DTO no las repite. La auditoría `support.ticket.extended` lleva nombres de campo, **nunca el motivo**. `Extended` es el último valor
+  de `SupportTicketEventKind` y un pod viejo no lo lee (EF hace `Enum.Parse`): el detalle de un ticket prorrogado da 500 ahí durante el
+  rollout, y al reanudar o cambiar el tipo el código viejo reescribe `due_on` sin la prórroga. Nadie prorroga hasta que no quede un
+  pod viejo, y un rollback después de la primera prórroga no se hace (README, «Gestión y plazos de Soporte»). El doble del término se
+  mide contra el término vigente al prorrogar: un cambio de tipo a uno más corto conserva la prórroga (P-5), no la recortes.
+- **`IssuedPin` sólo viaja en el `201` del alta manual anónima** (fase 4a, plan G3). `CreateTicketHandler` lo pone con `with` sobre el
+  detalle compuesto; el composer siempre lo deja en `null`, así que el `GET`, las acciones y la auditoría nunca lo llevan. Un camino nuevo
+  que componga el detalle no lo copia: es la única vez que el asesor puede dictárselo al solicitante. Lo amarra
+  `AnAnonymousManualTicketReturnsItsPinOnlyOnCreation`.
 - **El teléfono del cliente vinculado va al fijo de la foto del solicitante, nunca al celular** (owner, 2026-11-15, P3;
   `TicketRequesterNormalizer.WithCustomerContact`). `customers.phone_e164` puede ser fijo, y una plantilla de WhatsApp a un fijo la
   rechaza Meta: la respuesta queda `Failed` sin que el alta lo advierta. El celular de la foto sale sólo del solicitante o del `wa_id`

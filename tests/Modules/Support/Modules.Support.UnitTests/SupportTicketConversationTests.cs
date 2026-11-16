@@ -25,13 +25,14 @@ public sealed class SupportTicketConversationTests
 
     private static SupportTicket FromConversation(bool withoutCustomer = false, TicketRequester? requester = null) =>
         SupportTicket.CreateFromConversation(
-            SupportTicketId.New(), TenantId, 1, Petition, "No me llegó la factura", "Lo escribió por WhatsApp.", WhatsApp,
+            SupportTicketId.New(), TenantId, 1, Petition, "No me llegó la factura", "Lo escribió por WhatsApp.",
+            SupportTicketPriority.Medium, WhatsApp,
             withoutCustomer ? null : Customer, requester ?? Person, assigneeMemberId: null, Actor, Received, Clock);
 
     private static SupportTicket Manual() =>
         SupportTicket.CreateManual(
-            SupportTicketId.New(), TenantId, 2, Petition, "Asunto", "Descripción", ManualIntakeMedium.Phone,
-            SupportReplyChannel.Email, null, Person, null, Actor, Received, Clock);
+            SupportTicketId.New(), TenantId, 2, Petition, "Asunto", "Descripción", SupportTicketPriority.Medium,
+            ManualIntakeMedium.Phone, SupportReplyChannel.Email, null, Person, null, Actor, Received, Clock);
 
     private static DateTimeOffset Later(int minutes) => Received.AddMinutes(minutes);
 

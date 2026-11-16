@@ -9,8 +9,14 @@ public sealed class ListTicketsValidatorTests
     private static readonly Guid Tenant = Guid.CreateVersion7();
 
     private static ListTicketsQuery Query(
-        string? status = null, string? assignee = null, string? due = null, int page = 1, int pageSize = ListTicketsQuery.DefaultPageSize) =>
-        new(Tenant, status, null, assignee, due, null, page, pageSize);
+        string? status = null,
+        string? assignee = null,
+        string? due = null,
+        int page = 1,
+        int pageSize = ListTicketsQuery.DefaultPageSize,
+        string? priority = null,
+        string? sort = null) =>
+        new(Tenant, status, null, assignee, due, null, priority, sort, page, pageSize);
 
     private static List<string> Errors(ListTicketsQuery query) =>
         new ListTicketsValidator().Validate(query).Errors.Select(error => error.PropertyName).ToList();
@@ -51,5 +57,15 @@ public sealed class ListTicketsValidatorTests
     public void AnUnknownAssigneeFails()
     {
         Assert.Equal(["Assignee"], Errors(Query(assignee: "nobody")));
+    }
+
+    [Fact]
+    public void PrioritiesAreExactNamesAndSortIsReceivedOrPriority()
+    {
+        Assert.Empty(Errors(Query(priority: "High,Urgent", sort: "priority")));
+        Assert.Empty(Errors(Query(priority: "Low", sort: "received")));
+        Assert.Equal(["Priority"], Errors(Query(priority: "High,urgent")));
+        Assert.Equal(["Priority"], Errors(Query(priority: "2")));
+        Assert.Equal(["Sort"], Errors(Query(sort: "Priority")));
     }
 }

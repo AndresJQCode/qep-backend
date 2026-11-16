@@ -14,6 +14,7 @@ public sealed class GetLegalDocumentsHandler(
     ITenantModules tenantModules,
     ISupportLegalDocumentRepository legalDocuments,
     ISupportMemberDirectory members,
+    ISupportViewer viewer,
     ITenantDirectory tenantDirectory)
     : IQueryHandler<GetLegalDocumentsQuery, SupportLegalDocumentsDto>
 {
@@ -27,11 +28,12 @@ public sealed class GetLegalDocumentsHandler(
             .ToList();
         var names = await SupportLegalDocuments.AuthorNamesAsync(query.TenantId, documents, members, cancellationToken);
         var defaultQuestion = await SupportLegalDocuments.DefaultQuestionAsync(query.TenantId, tenantDirectory, cancellationToken);
+        var me = await viewer.MemberIdAsync(query.TenantId, cancellationToken);
 
         return new SupportLegalDocumentsDto(
-            SupportLegalDocuments.ToDto(documents[0], names, defaultQuestion),
-            SupportLegalDocuments.ToDto(documents[1], names, defaultQuestion),
-            SupportLegalDocuments.ToDto(documents[2], names, defaultQuestion));
+            SupportLegalDocuments.ToDto(documents[0], names, defaultQuestion, me),
+            SupportLegalDocuments.ToDto(documents[1], names, defaultQuestion, me),
+            SupportLegalDocuments.ToDto(documents[2], names, defaultQuestion, me));
     }
 }
 
@@ -64,12 +66,13 @@ internal static class SupportLegalDocuments
         members.NamesAsync(
             tenantId, versions.Where(version => !version.IsExample).Select(version => version.CreatedBy).Distinct().ToList(), cancellationToken);
 
-    /// <summary>An author no longer found shows as «Sin nombre», as in the trace.</summary>
-    public static SupportMemberDto Author(Guid memberId, IReadOnlyDictionary<Guid, string> names) =>
-        new(memberId, names.TryGetValue(memberId, out var name) ? name : SupportTicketDtoComposer.UnknownName);
+    /// <summary>An author no longer found shows as «Sin nombre», as in the trace; <c>IsMe</c> is measured against whoever asks
+    /// (phase 4a, plan G8).</summary>
+    public static SupportMemberDto Author(Guid memberId, IReadOnlyDictionary<Guid, string> names, Guid? viewerMemberId) =>
+        SupportTicketDtoComposer.ToMemberDto(memberId, names, viewerMemberId);
 
     public static SupportLegalDocumentDto ToDto(
-        SupportLegalDocumentVersion version, IReadOnlyDictionary<Guid, string> names, string? defaultQuestion)
+        SupportLegalDocumentVersion version, IReadOnlyDictionary<Guid, string> names, string? defaultQuestion, Guid? viewerMemberId)
     {
         var isPrivacy = version.Kind == SupportLegalDocumentKind.PrivacyNotice;
         return new SupportLegalDocumentDto(
@@ -81,6 +84,6 @@ internal static class SupportLegalDocuments
             version.PolicyUrl,
             isPrivacy ? defaultQuestion : null,
             version.IsExample ? null : version.CreatedAt,
-            version.IsExample ? null : Author(version.CreatedBy, names));
+            version.IsExample ? null : Author(version.CreatedBy, names, viewerMemberId));
     }
 }
