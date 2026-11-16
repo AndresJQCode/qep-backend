@@ -61,7 +61,7 @@ reciban el texto resuelto.
   desconocido en contenido y en pregunta.
 - Integración: `GET` lista las variables; publicar con desconocida es 422 sin versión; publicar con conocidas guarda los tokens.
 
-- [ ] RED → GREEN → commit `feat(support): validate and list legal document variables`.
+- [x] RED → GREEN → commit `feat(support): validate and list legal document variables`.
 
 ### Task 2: servir y radicar resuelto
 
@@ -75,7 +75,9 @@ prueba de integración `SupportLegalVariablesApiTests` (nueva) y `SupportPublicH
   guarda en `support.legal_acceptances` el HTML y la pregunta resueltos; sin empresa y con `{{empresa}}` es 404, con sólo
   `{{nombre_comercial}}` es 200.
 
-- [ ] RED → GREEN → commit `feat(support): serve legal documents with their variables resolved`.
+- [x] RED → GREEN → commit `feat(support): serve legal documents with their variables resolved`. (Desvío: estas pruebas son
+  todas HTTP y compilan sin el cambio, así que su RED no es de compilación; es de comportamiento y se ve al correrlas sobre el
+  commit anterior.)
 
 ### Cierre
 

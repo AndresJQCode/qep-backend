@@ -5267,6 +5267,18 @@ escrita a mano), `GET /form` responde el mismo `404 support.public.not_found` qu
 `contentHtml` como HTML y no lo vuelve a sanear. La salida del saneador se guarda en una caché acotada por pod, con clave SHA-256 del
 contenido guardado: una fila cambiada a mano tiene otra clave y se vuelve a sanear.
 
+**Variables de los documentos legales** (spec `2026-11-16-support-legal-document-variables-design.md`). Los tres documentos y la
+pregunta de autorización del tenant aceptan `{{empresa}}`, `{{tipo_documento}}`, `{{documento_identificacion}}` (la empresa que
+responde: `name`, `documentTypeCode` y `documentNumber` de `organization`) y `{{nombre_comercial}}` (el nombre del tenant), con espacios
+opcionales adentro (`{{ empresa }}`). La lista vive en `SupportLegalVariables.All` y la consola la recibe en `variables` de
+`GET …/settings/legal-documents`. Al publicar, todo `{{…}}` que no sea uno de esos nombres, en el HTML saneado o en la pregunta, es
+`422 support.legal_document.unknown_variable` (`{{Empresa}}` y `{{}}` incluidos); lo guardado y lo que lee la consola conserva los
+tokens. **Se resuelven en un solo lugar, `SupportServedLegal.ReadAsync`**, con la empresa de la versión publicada del formulario: en
+`GET /form` y en la foto de cada aceptación, que guarda lo resuelto. En el HTML los valores van codificados (`&` → `&amp;`, `<` →
+`&lt;`…); en la pregunta, tal cual, porque el portal la pinta como texto. La pregunta por defecto no tiene variables. Un token de la
+empresa en un formulario sin empresa (`organization: null`), o un texto que resuelto pasa de 60 000 caracteres (HTML) o de 500
+(pregunta), da el mismo `404 support.public.not_found`. Un token desconocido en una fila escrita a mano se sirve literal.
+
 **La empresa que responde** (NIT del portal, spec 2026-11-15 §9.3, D-6 y D-8). El tenant elige en Ajustes › Formulario público una de sus
 empresas de Companies (`organizationCompanyId` en `PUT /settings/public-form`), y el portal muestra `organization: { name,
 documentTypeCode, documentNumber }` (`Company.Name`, `Company.DocumentType.ToWire()` y `Company.TaxId`) en `GET /form` (versión publicada)
@@ -5419,9 +5431,9 @@ si sale `available`, mandar el par al radicar.
 | Método y ruta | Política | Qué hace |
 | --- | --- | --- |
 | `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) y la empresa que responde (`organization_required`, `organization_inactive` → `422 support.form.organization_required` / `organization_inactive`). La respuesta trae `organization` (la elegida, con `isActive`) y `organizationOptions` (las activas del tenant, por nombre: el selector no necesita `companies.company.read`); el cuerpo del `PUT` suma `organizationCompanyId` (`null` = sin empresa) |
-| `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`) |
+| `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`). Al final, `variables: [{ name, label, example }]`, las que el editor puede insertar |
 | `GET /settings/legal-documents/{kind}/versions` · `…/versions/{version}` | `support.settings.view` | Historial de un tipo, de la más nueva a la más vieja, y una versión vieja |
-| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada; la respuesta es lo guardado |
+| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada y con sus variables sin resolver; la respuesta es lo guardado. Una variable que no está en la lista es `422 support.legal_document.unknown_variable` |
 | `GET /tickets/{ticketId}/legal-acceptances/{kind}` | `support.ticket.view` | La foto de lo que el solicitante aceptó: HTML servido, pregunta, URL, caracterización e IP. Sin fila, `404 support.legal_acceptance.not_found` |
 | `GET /tickets/{ticketId}/attachments/{attachmentId}/download` | `support.ticket.view` | URL firmada del adjunto (arriba) |
 

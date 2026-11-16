@@ -94,5 +94,6 @@ ignora, y sin el backend nuevo un token publicado se mostraría literal (por eso
 
 ## 7. Pendiente
 
-- Un token escrito con un espacio duro (`{{&nbsp;empresa}}`, lo que algunos editores insertan) se rechaza como desconocido: el saneador
-  lo serializa como la entidad. Si el editor lo produce, se resuelve en la consola insertando el token desde la lista.
+- Un espacio duro dentro de las llaves (algunos editores lo insertan) llega al HTML saneado como la entidad `&nbsp;` si así lo
+  serializa el saneador, y entonces el token se rechaza como desconocido (no se sirve mal: se frena al publicar). Sin verificar
+  contra el editor real de la consola; si pasa, la consola inserta el token desde la lista.
