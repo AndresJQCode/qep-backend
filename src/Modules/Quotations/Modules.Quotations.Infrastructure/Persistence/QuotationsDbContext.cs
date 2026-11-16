@@ -49,6 +49,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<PdfSectionRow> PdfSections => Set<PdfSectionRow>();
 
+    internal DbSet<PdfPaymentAccountRow> PdfPaymentAccounts => Set<PdfPaymentAccountRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -70,6 +72,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureTenantWhatsAppChannel(modelBuilder);
         ConfigureCarrier(modelBuilder);
         ConfigurePdfSections(modelBuilder);
+        ConfigurePdfPaymentAccount(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -1133,6 +1136,21 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(Modules.Quotations.Application.PdfContentRules.MaxTitleLength).IsRequired();
         section.Property(value => value.ContentHtml).HasColumnName("content_html").HasColumnType("text").IsRequired();
         section.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+    }
+
+    // Si el PDF imprime la cuenta para el pago (spec 2026-11-16 pdf-payment-account, decisión 3): una fila por tenant que la guardó;
+    // sin fila está apagada. Tabla propia y no una cuarta clave de pdf_sections, que exige texto a una sección prendida. Sin FK al
+    // tenant, que es de Tenancy.
+    private static void ConfigurePdfPaymentAccount(ModelBuilder modelBuilder)
+    {
+        var account = modelBuilder.Entity<PdfPaymentAccountRow>();
+        account.ToTable("pdf_payment_account", "quotations");
+        account.HasKey(value => value.TenantId);
+        account.Property(value => value.TenantId).HasColumnName("tenant_id");
+        account.Property(value => value.Enabled).HasColumnName("enabled");
+        account.Property(value => value.InQuotation).HasColumnName("in_quotation");
+        account.Property(value => value.InOrder).HasColumnName("in_order");
+        account.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)

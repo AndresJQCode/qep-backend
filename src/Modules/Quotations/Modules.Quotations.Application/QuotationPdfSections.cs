@@ -11,11 +11,14 @@ namespace Modules.Quotations.Application;
 public sealed record QuotationPdfSection(string Title, IReadOnlyList<RichTextBlock> Blocks);
 
 /// <summary>Las tres secciones del documento. Una es null si no sale en este tipo de documento; viajan como
-/// <c>data.sections.paymentNotice</c>, <c>.terms</c> y <c>.deliveryProcess</c>.</summary>
+/// <c>data.sections.paymentNotice</c>, <c>.terms</c> y <c>.deliveryProcess</c>. <c>ShowPaymentAccount</c>
+/// (<c>data.sections.showPaymentAccount</c>) dice si el documento imprime las líneas de la cuenta para el pago
+/// (spec 2026-11-16 pdf-payment-account).</summary>
 public sealed record QuotationPdfSections(
     QuotationPdfSection? PaymentNotice,
     QuotationPdfSection? Terms,
-    QuotationPdfSection? DeliveryProcess);
+    QuotationPdfSection? DeliveryProcess,
+    bool ShowPaymentAccount);
 
 /// <summary>
 /// Arma las secciones del documento desde el contenido del tenant (spec 2026-11-16 §4.1, §4.3, §5.3) y calcula la huella con que se
@@ -40,12 +43,12 @@ public static class QuotationPdfSectionsBuilder
         var isOrder = document.Kind == QuotationPdfKind.Order;
         var values = ValuesOf(document);
 
-        // El aviso habla de cómo pagarle a la cuenta: sin cuenta no tiene a qué referirse, igual que el texto fijo de antes.
-        var paymentNotice = document.BillingAccount is null ? null : SectionOf(content.PaymentNotice, isOrder, values, reader);
+        // El aviso sale por sus propias banderas, haya o no cuenta de cobro (spec 2026-11-16 pdf-payment-account, decisión 4).
         return new QuotationPdfSections(
-            paymentNotice,
+            SectionOf(content.PaymentNotice, isOrder, values, reader),
             SectionOf(content.Terms, isOrder, values, reader),
-            SectionOf(content.DeliveryProcess, isOrder, values, reader));
+            SectionOf(content.DeliveryProcess, isOrder, values, reader),
+            content.PaymentAccount.PrintsOn(isOrder));
     }
 
     /// <summary>Los valores de las variables, formateados como los imprime la plantilla (spec 2026-11-16 §4.3). La empresa y su NIT
@@ -71,7 +74,9 @@ public static class QuotationPdfSectionsBuilder
     /// SHA-256 en hex minúscula de <c>Key|Title|ContentHtml</c> de cada sección que sale en ese tipo de documento, unidas con
     /// <c>\n</c> en el orden de <see cref="PdfContent.All"/>; sin secciones, el hash de la cadena vacía. Va el texto guardado, con
     /// los tokens: los valores de las variables salen de la cotización y ya los cubre su versión. Apagar una sección o quitarle el
-    /// tipo de documento la saca de la lista, así que también cambia la huella.
+    /// tipo de documento la saca de la lista, así que también cambia la huella. La cuenta para el pago queda fuera a propósito
+    /// (owner 2026-11-16: el despliegue no regenera ningún PDF); su cambio vence el caché al guardar
+    /// (<c>InvalidateQuotationPdfsAsync</c>).
     /// </summary>
     public static string Fingerprint(PdfContent content, QuotationPdfKind kind)
     {

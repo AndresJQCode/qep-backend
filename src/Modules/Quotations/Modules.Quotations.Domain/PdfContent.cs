@@ -20,31 +20,46 @@ public sealed record PdfSection(PdfSectionKey Key, bool Enabled, bool InQuotatio
     public static PdfSection Empty(PdfSectionKey key) => new(key, false, true, true, string.Empty, string.Empty);
 }
 
-/// <summary>El contenido configurable del PDF de un tenant: las tres secciones, cada una con su clave.</summary>
-public sealed record PdfContent(PdfSection PaymentNotice, PdfSection Terms, PdfSection DeliveryProcess)
+/// <summary>Si el PDF imprime la cuenta para el pago (empresa, banco y número) de la empresa facturadora (spec 2026-11-16
+/// pdf-payment-account). No es una sección: no lleva texto, sólo los mismos tres flags.</summary>
+public sealed record PdfPaymentAccount(bool Enabled, bool InQuotation, bool InOrder)
+{
+    /// <summary>La misma regla que <see cref="PdfSection.PrintsOn"/>.</summary>
+    public bool PrintsOn(bool isOrder) => Enabled && (isOrder ? InOrder : InQuotation);
+
+    /// <summary>Lo que lee un tenant sin fila: apagada, con los dos documentos marcados, como <see cref="PdfSection.Empty"/>
+    /// (decisión 1 del spec: todos arrancan sin cuenta, salvo Origen Botánico, que la migración siembra).</summary>
+    public static PdfPaymentAccount Empty { get; } = new(false, true, true);
+}
+
+/// <summary>El contenido configurable del PDF de un tenant: las tres secciones, cada una con su clave, y la cuenta para el pago.</summary>
+public sealed record PdfContent(PdfSection PaymentNotice, PdfSection Terms, PdfSection DeliveryProcess, PdfPaymentAccount PaymentAccount)
 {
     public const string UnknownVariableCode = "quotation.pdf_content.unknown_variable";
 
     public static PdfContent Empty { get; } = new(
         PdfSection.Empty(PdfSectionKey.PaymentNotice),
         PdfSection.Empty(PdfSectionKey.Terms),
-        PdfSection.Empty(PdfSectionKey.DeliveryProcess));
+        PdfSection.Empty(PdfSectionKey.DeliveryProcess),
+        PdfPaymentAccount.Empty);
 
-    /// <summary>Las tres en el orden de <see cref="PdfSectionKey"/>.</summary>
+    /// <summary>Las tres secciones en el orden de <see cref="PdfSectionKey"/>; la cuenta para el pago no es una sección.</summary>
     public IEnumerable<PdfSection> All => [PaymentNotice, Terms, DeliveryProcess];
 
     /// <summary>Rechaza todo <c>{{…}}</c> que no sea una variable de <see cref="QuotationPdfVariables"/>, en el título o en el HTML de
     /// cualquier sección (spec §4.3): un token desconocido llegaría al PDF como texto literal.</summary>
-    public static PdfContent Create(PdfSection paymentNotice, PdfSection terms, PdfSection deliveryProcess)
+    public static PdfContent Create(
+        PdfSection paymentNotice, PdfSection terms, PdfSection deliveryProcess, PdfPaymentAccount paymentAccount)
     {
         ArgumentNullException.ThrowIfNull(paymentNotice);
         ArgumentNullException.ThrowIfNull(terms);
         ArgumentNullException.ThrowIfNull(deliveryProcess);
+        ArgumentNullException.ThrowIfNull(paymentAccount);
         EnsureKey(paymentNotice, PdfSectionKey.PaymentNotice);
         EnsureKey(terms, PdfSectionKey.Terms);
         EnsureKey(deliveryProcess, PdfSectionKey.DeliveryProcess);
 
-        var content = new PdfContent(paymentNotice, terms, deliveryProcess);
+        var content = new PdfContent(paymentNotice, terms, deliveryProcess, paymentAccount);
         var unknown = content.All
             .SelectMany(section => QuotationPdfVariables.UnknownIn(section.Title).Concat(QuotationPdfVariables.UnknownIn(section.ContentHtml)))
             .Distinct(StringComparer.Ordinal)

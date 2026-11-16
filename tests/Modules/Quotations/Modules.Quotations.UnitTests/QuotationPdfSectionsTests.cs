@@ -43,14 +43,43 @@ public sealed class QuotationPdfSectionsTests
         Assert.NotNull(QuotationPdfSectionsBuilder.Build(content, Order(), Reader).DeliveryProcess);
     }
 
-    // El aviso habla de cómo pagar a la cuenta: sin cuenta no tiene a qué referirse, como el fijo de antes.
+    // El aviso sale por sus propias banderas, haya o no cuenta de cobro (spec 2026-11-16 pdf-payment-account, decisión 4).
     [Fact]
-    public void ThePaymentNoticeIsLeftOutWithoutABillingAccount()
+    public void PaymentNoticePrintsWithoutBillingAccount()
     {
         var content = PdfContent.Empty with { PaymentNotice = Section(PdfSectionKey.PaymentNotice) };
 
         Assert.NotNull(QuotationPdfSectionsBuilder.Build(content, Document(), Reader).PaymentNotice);
-        Assert.Null(QuotationPdfSectionsBuilder.Build(content, Document() with { BillingAccount = null }, Reader).PaymentNotice);
+        Assert.NotNull(QuotationPdfSectionsBuilder.Build(content, Document() with { BillingAccount = null }, Reader).PaymentNotice);
+    }
+
+    // La cuenta para el pago decide con la misma regla que una sección: encendida y marcada para ese tipo de documento.
+    [Fact]
+    public void ShowPaymentAccountFollowsTheFlagOfTheDocument()
+    {
+        var content = PdfContent.Empty with { PaymentAccount = new PdfPaymentAccount(true, InQuotation: true, InOrder: false) };
+
+        Assert.True(QuotationPdfSectionsBuilder.Build(content, Document(), Reader).ShowPaymentAccount);
+        Assert.False(QuotationPdfSectionsBuilder.Build(content, Order(), Reader).ShowPaymentAccount);
+        Assert.False(QuotationPdfSectionsBuilder.Build(PdfContent.Empty, Document(), Reader).ShowPaymentAccount);
+    }
+
+    // Owner 2026-11-16: el despliegue no regenera ningún PDF, así que la cuenta no entra a la huella; el PDF guardado se vence
+    // al guardar un cambio de la cuenta (`InvalidateQuotationPdfsAsync`).
+    [Fact]
+    public void FingerprintIsUnchangedByThePaymentAccount()
+    {
+        var content = PdfContent.Empty with { Terms = Section(PdfSectionKey.Terms) };
+        var on = content with { PaymentAccount = new PdfPaymentAccount(true, true, true) };
+        var off = content with { PaymentAccount = PdfPaymentAccount.Empty };
+
+        Assert.Equal(
+            QuotationPdfSectionsBuilder.Fingerprint(off, QuotationPdfKind.Quotation),
+            QuotationPdfSectionsBuilder.Fingerprint(on, QuotationPdfKind.Quotation));
+        Assert.Equal(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            QuotationPdfSectionsBuilder.Fingerprint(
+                PdfContent.Empty with { PaymentAccount = new PdfPaymentAccount(true, true, true) }, QuotationPdfKind.Quotation));
     }
 
     [Fact]

@@ -65,6 +65,27 @@ public sealed class PdfContentMigrationTests
         Assert.Empty(await RowsAsync(database.GetConnectionString(), OtherTenantId));
     }
 
+    // AddPdfPaymentAccount (spec 2026-11-16 pdf-payment-account, decisión 2): Origen Botánico sigue imprimiendo la cuenta en los dos
+    // documentos; los demás tenants no tienen fila y leen la cuenta apagada.
+    [Fact]
+    public async Task MigrationSeedsThePaymentAccountOnForOrigenBotanicoOnly()
+    {
+        await using var database = await MigrateWithTenantsAsync();
+        var connectionString = database.GetConnectionString();
+
+        Assert.Equal([(true, true, true)], await PaymentAccountRowsAsync(connectionString, OrigenBotanicoId));
+        Assert.Empty(await PaymentAccountRowsAsync(connectionString, OtherTenantId));
+
+        await using var context = NewContext(connectionString);
+        var store = new PdfContentStore(context);
+        Assert.Equal(
+            new PdfPaymentAccount(true, true, true),
+            (await store.GetAsync(Guid.Parse(OrigenBotanicoId), TestContext.Current.CancellationToken)).PaymentAccount);
+        Assert.Equal(
+            PdfPaymentAccount.Empty,
+            (await store.GetAsync(Guid.Parse(OtherTenantId), TestContext.Current.CancellationToken)).PaymentAccount);
+    }
+
     // Si el texto sembrado no fuera un punto fijo del saneador, el primer guardado desde la consola lo cambiaría sin que nadie lo
     // tocara, y el PDF de Origen Botánico se movería.
     [Theory]
@@ -190,6 +211,24 @@ public sealed class PdfContentMigrationTests
         {
             rows.Add((reader.GetString(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetBoolean(3), reader.GetString(4),
                 reader.GetString(5)));
+        }
+
+        return rows;
+    }
+
+    private static async Task<List<(bool Enabled, bool InQuotation, bool InOrder)>> PaymentAccountRowsAsync(
+        string connectionString, string tenantId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT enabled, in_quotation, in_order FROM quotations.pdf_payment_account WHERE tenant_id = @tenantId", connection);
+        command.Parameters.AddWithValue("tenantId", Guid.Parse(tenantId));
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var rows = new List<(bool, bool, bool)>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            rows.Add((reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2)));
         }
 
         return rows;
