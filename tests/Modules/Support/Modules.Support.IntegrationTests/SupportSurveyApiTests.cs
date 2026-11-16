@@ -166,6 +166,48 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         Assert.Equal(5, new Modules.Support.Infrastructure.SupportWorkerOptions().SurveyBatchSize);
     }
 
+    // Revisión del bloque C: una excepción inesperada al mandar no deja la encuesta reclamada para volver a lanzar cada dos minutos para
+    // siempre. El worker la pasa a reintento en un scope nuevo (1, 5 y 15 minutos) y, después del último, queda Failed y auditada.
+    [Fact]
+    public async Task ASurveyWhoseSendThrowsIsRetriedAndThenFails()
+    {
+        var scenario = await StartAsync(Factory);
+        await EnableSurveyAsync(scenario);
+        var resolved = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
+        _email.Throw = new InvalidOperationException("El canal se cayó.");
+        var worker = ActivatorUtilities.CreateInstance<Modules.Support.Infrastructure.SupportSurveyWorker>(Factory.Services);
+
+        Assert.Equal(1, await worker.RunOnceAsync(10, Ct));
+
+        Assert.Equal(
+            "Pending|send_failed|1|t|t",
+            await TextAsync(
+                Factory,
+                """
+                SELECT status || '|' || reason_code || '|' || attempts || '|' || (locked_until IS NULL)::text || '|'
+                    || (next_attempt_at > now() + interval '50 seconds')::text
+                FROM support.ticket_surveys WHERE ticket_id = @id
+                """,
+                ("id", Id(resolved))));
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await ExecuteAsync(
+                Factory, "UPDATE support.ticket_surveys SET next_attempt_at = now() WHERE ticket_id = @id", ("id", Id(resolved)));
+            Assert.Equal(1, await worker.RunOnceAsync(10, Ct));
+        }
+
+        Assert.Equal(
+            "Failed|send_failed|4",
+            await TextAsync(
+                Factory,
+                "SELECT status || '|' || reason_code || '|' || attempts FROM support.ticket_surveys WHERE ticket_id = @id",
+                ("id", Id(resolved))));
+        Assert.Equal(0, await worker.RunOnceAsync(10, Ct));
+        Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketSurveyFailed, Id(resolved).ToString()));
+        Assert.Empty(_email.Sent);
+    }
+
     private Task EnableSurveyAsync(SupportTicketScenario scenario) =>
         ExecuteAsync(
             Factory, "UPDATE support.tenant_settings SET survey_enabled = true WHERE tenant_id = @tenant", ("tenant", scenario.TenantId));

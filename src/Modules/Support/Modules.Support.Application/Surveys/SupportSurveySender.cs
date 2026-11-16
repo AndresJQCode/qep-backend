@@ -75,7 +75,30 @@ public sealed class SupportSurveySender(
         var ticket = await tickets.FindAsync(survey.TenantId, survey.TicketId, cancellationToken)
             ?? throw new InvalidOperationException($"The ticket of survey '{survey.Id}' was not found.");
         await DecideAsync(survey, ticket, await settings.FindAsync(survey.TenantId, cancellationToken), cancellationToken);
+        await SaveAsync(survey, cancellationToken);
+    }
 
+    /// <summary>
+    /// Revisión del bloque C: <see cref="ProcessAsync"/> lanzó algo inesperado con esta encuesta. Se llama en un scope nuevo (el del intento
+    /// fallido puede tener cambios a medias) y la pasa a reintento con <c>send_failed</c>: 1, 5 y 15 minutos y después <c>Failed</c>, como
+    /// un envío que el canal rechazó. Sin esto quedaría reclamada y volvería a lanzar cada vez que vence el reclamo, para siempre. Una que ya
+    /// no está <c>Pending</c> (el intento sí alcanzó a guardar) no se toca.
+    /// </summary>
+    public async Task RetryAfterFailureAsync(Guid surveyId, CancellationToken cancellationToken)
+    {
+        if (await surveys.FindAsync(surveyId, cancellationToken) is not { Status: SupportSurveyStatus.Pending } survey)
+        {
+            return;
+        }
+
+        survey.Retry(SupportChannelReasons.SendFailed, clock.UtcNow);
+        await SaveAsync(survey, cancellationToken);
+    }
+
+    // La auditoría de sistema del resultado (sólo el nombre del campo), el guardado y, después del commit, el aviso del ticket por el hub.
+    private async Task SaveAsync(SupportTicketSurvey survey, CancellationToken cancellationToken)
+    {
+        var ticketId = survey.TicketId;
         var action = survey.Status switch
         {
             SupportSurveyStatus.Sent => SupportAuditActions.TicketSurveySent,
@@ -86,12 +109,12 @@ public sealed class SupportSurveySender(
         if (action is not null)
         {
             auditPublisher.PublishSystem(
-                survey.TenantId, action, SupportAuditActions.Resources.Ticket, ticket.Id.ToString(), SurveyFields, clock.UtcNow);
+                survey.TenantId, action, SupportAuditActions.Resources.Ticket, ticketId.ToString(), SurveyFields, clock.UtcNow);
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         // Plan N13: después del commit, también un reintento (la pantalla muestra el estado de la encuesta).
-        await realtime.TicketChangedAsync(survey.TenantId, ticket.Id.Value, CancellationToken.None);
+        await realtime.TicketChangedAsync(survey.TenantId, ticketId.Value, CancellationToken.None);
     }
 
     /// <summary>La decisión y el envío, sin guardar: deja la encuesta <c>Sent</c>, <c>Skipped</c> o con su reintento.</summary>
