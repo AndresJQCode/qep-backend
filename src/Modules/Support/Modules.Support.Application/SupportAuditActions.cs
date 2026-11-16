@@ -18,6 +18,8 @@ public static class SupportAuditActions
 
     public const string TicketTypesReordered = "support.ticket_type.reordered";
 
+    public const string TicketTypeDeleted = "support.ticket_type.deleted";
+
     public const string SettingsUpdated = "support.settings.updated";
 
     // Fase 2 (Mensajería).

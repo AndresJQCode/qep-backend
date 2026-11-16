@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Support.Application;
 using Modules.Support.Domain;
+using Npgsql;
 
 namespace Modules.Support.Infrastructure.Persistence;
 
@@ -33,6 +34,17 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "concurrency.conflict",
                 "The support record changed while the update was being committed.",
                 exception);
+        }
+        // Fase 4a (plan G5): la FK del tipo, por nombre y SQLSTATE (precedente CatalogUnitOfWork). Del lado del tipo, borrar uno que un
+        // ticket usa es 23001 (restrict): el borrado perdió la carrera contra un alta. Del lado del ticket, radicar o cambiar a un tipo
+        // recién borrado es 23503: el tipo ya no está, el mismo 422 de un tipo inactivo.
+        catch (DbUpdateException exception) when (IsTicketTypeForeignKey(exception, PostgresErrorCodes.RestrictViolation))
+        {
+            throw new SupportDomainException(SupportErrorCodes.TicketTypeInUse, "The ticket type is used by at least one ticket.");
+        }
+        catch (DbUpdateException exception) when (IsTicketTypeForeignKey(exception, PostgresErrorCodes.ForeignKeyViolation))
+        {
+            throw new SupportDomainException(SupportErrorCodes.TicketTypeUnavailable, "The ticket type is no longer available.");
         }
         // Por nombre de índice y no por 23505 (precedente TenancyUnitOfWork): cada índice único es una regla distinta.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketTypeNameIndex))
@@ -137,6 +149,11 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
     }
 
     public void DiscardChanges() => dbContext.ChangeTracker.Clear();
+
+    private static bool IsTicketTypeForeignKey(DbUpdateException exception, string sqlState) =>
+        exception.InnerException is PostgresException postgres
+        && postgres.SqlState == sqlState
+        && string.Equals(postgres.ConstraintName, SupportDbContext.TicketTypeForeignKey, StringComparison.Ordinal);
 
     private static SupportDomainException CustomerNotFound(CustomerReferenceToHold reference) =>
         new(reference.NotFoundCode, $"Customer '{reference.CustomerId}' was not found.");

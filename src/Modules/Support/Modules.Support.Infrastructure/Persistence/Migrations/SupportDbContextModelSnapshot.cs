@@ -500,6 +500,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.HasIndex("AssigneeMemberId")
                         .HasDatabaseName("IX_tickets_assignee");
 
+                    b.HasIndex("TypeId");
+
                     b.HasIndex("TenantId", "ConversationId")
                         .HasDatabaseName("IX_tickets_tenant_conversation")
                         .HasFilter("conversation_id IS NOT NULL");
@@ -1060,6 +1062,13 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Support.Domain.SupportTicket", b =>
                 {
+                    b.HasOne("Modules.Support.Domain.SupportTicketType", null)
+                        .WithMany()
+                        .HasForeignKey("TypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_tickets_ticket_types_ticket_type_id");
+
                     b.OwnsOne("Modules.Support.Domain.TicketRequester", "Requester", b1 =>
                         {
                             b1.Property<Guid>("SupportTicketId")

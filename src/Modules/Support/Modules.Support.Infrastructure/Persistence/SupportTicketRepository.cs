@@ -12,6 +12,18 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
 
     public void Add(SupportTicket ticket) => dbContext.Tickets.Add(ticket);
 
+    // El índice IX_tickets_ticket_type_id de la FK cubre las dos lecturas.
+    public Task<bool> AnyOfTypeAsync(Guid tenantId, SupportTicketTypeId typeId, CancellationToken cancellationToken) =>
+        dbContext.Tickets.AnyAsync(ticket => ticket.TenantId == tenantId && ticket.TypeId == typeId, cancellationToken);
+
+    public async Task<IReadOnlySet<SupportTicketTypeId>> UsedTypeIdsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await dbContext.Tickets
+            .Where(ticket => ticket.TenantId == tenantId)
+            .Select(ticket => ticket.TypeId)
+            .Distinct()
+            .ToListAsync(cancellationToken))
+        .ToHashSet();
+
     public Task<SupportTicket?> FindAsync(Guid tenantId, SupportTicketId id, CancellationToken cancellationToken) =>
         dbContext.Tickets.FirstOrDefaultAsync(ticket => ticket.TenantId == tenantId && ticket.Id == id, cancellationToken);
 

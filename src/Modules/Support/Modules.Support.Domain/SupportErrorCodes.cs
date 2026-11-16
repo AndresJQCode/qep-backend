@@ -32,6 +32,9 @@ public static class SupportErrorCodes
 
     public const string TicketTypeOrderIncomplete = "support.ticket_type.order_incomplete";
 
+    /// <summary>Fase 4a (plan G4/G5): un tipo con algún ticket, en cualquier estado, no se borra; se desactiva.</summary>
+    public const string TicketTypeInUse = "support.ticket_type.in_use";
+
     // Fase 2, Mensajería (spec §8.1 a §8.3).
     public const string ConversationNotFound = "support.conversation.not_found";
 

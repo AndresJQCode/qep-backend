@@ -486,6 +486,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.UpdateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
             Modules.Support.Application.UpdateTicketTypeHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Support.Application.DeleteTicketTypeCommand, Modules.Support.Application.DeleteTicketTypeResult>,
+            Modules.Support.Application.DeleteTicketTypeHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Support.Application.ReorderTicketTypesCommand, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
             Modules.Support.Application.ReorderTicketTypesHandler>();
         services.AddScoped<

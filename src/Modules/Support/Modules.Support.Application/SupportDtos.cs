@@ -6,7 +6,9 @@ namespace Modules.Support.Application;
 // de textos lo tiene el frontend.
 
 /// <summary>Un tipo de ticket como lo dibujan el selector del alta y la tabla de ajustes. <c>Version</c> va en el <c>If-Match</c> del
-/// <c>PUT</c>; <c>Position</c> es el orden en que la pantalla los lista.</summary>
+/// <c>PUT</c>; <c>Position</c> es el orden en que la pantalla los lista. <c>InUse</c> (fase 4a, plan G6) dice si algún ticket, en
+/// cualquier estado, usa el tipo: la tabla de ajustes ofrece «Eliminar» sólo si es falso, y si no, sólo «Desactivar», sin probar el
+/// <c>DELETE</c> para enterarse del 422.</summary>
 public sealed record SupportTicketTypeDto(
     Guid Id,
     string Name,
@@ -16,7 +18,8 @@ public sealed record SupportTicketTypeDto(
     bool IsPublished,
     bool IsActive,
     int Position,
-    long Version);
+    long Version,
+    bool InUse);
 
 /// <summary>El umbral de «por vencer» del tenant [owner 2026-11-14]. Viaja con su rango (<c>Min</c> y <c>Max</c>) para que el
 /// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3.</summary>
@@ -302,7 +305,7 @@ public sealed record SupportTicketNotesDto(IReadOnlyList<SupportTicketNoteDto> I
 
 internal static class SupportDtoMapping
 {
-    public static SupportTicketTypeDto ToDto(SupportTicketType type) => new(
+    public static SupportTicketTypeDto ToDto(SupportTicketType type, bool inUse) => new(
         type.Id.Value,
         type.Name,
         type.TermBusinessDays,
@@ -311,7 +314,8 @@ internal static class SupportDtoMapping
         type.IsPublished,
         type.IsActive,
         type.Position,
-        type.Version);
+        type.Version,
+        inUse);
 
     public static SupportSettingsDto ToDto(SupportTenantSettings settings) => new(
         settings.DueSoonBusinessDays,

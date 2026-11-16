@@ -333,6 +333,45 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         Assert.Equal(SupportErrorCodes.TicketTypeNameTaken, exception.Code);
     }
 
+    // Fase 4a (plan G5, Review Focus 1): la FK RESTRICT cierra la carrera entre borrar un tipo y radicar con él, sin la pregunta previa.
+    [Fact]
+    public async Task TheForeignKeyTurnsADeleteOfAUsedTypeInto422InUse()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var type = (await TypesAsync(factory, tenant))[3];
+        await SaveAsync(factory, NewTicket(tenant, type, 1, Now, Guid.CreateVersion7()));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var types = scope.ServiceProvider.GetRequiredService<ISupportTicketTypeRepository>();
+        types.Remove((await types.FindAsync(tenant, type.Id, Ct))!);
+        var exception = await Assert.ThrowsAsync<SupportDomainException>(
+            () => scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct));
+
+        Assert.Equal(SupportErrorCodes.TicketTypeInUse, exception.Code);
+        Assert.Equal(8, (await TypesAsync(factory, tenant)).Count);
+    }
+
+    [Fact]
+    public async Task TheForeignKeyTurnsATicketOnADeletedTypeInto422Unavailable()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var type = (await TypesAsync(factory, tenant))[6];
+        var ticket = NewTicket(tenant, type, 1, Now, Guid.CreateVersion7());
+        await using (var connection = new NpgsqlConnection(ConnectionString(factory)))
+        {
+            await connection.OpenAsync(Ct);
+            await using var delete = new NpgsqlCommand("DELETE FROM support.ticket_types WHERE id = @id", connection);
+            delete.Parameters.AddWithValue("id", type.Id.Value);
+            Assert.Equal(1, await delete.ExecuteNonQueryAsync(Ct));
+        }
+
+        var exception = await Assert.ThrowsAsync<SupportDomainException>(() => SaveAsync(factory, ticket));
+
+        Assert.Equal(SupportErrorCodes.TicketTypeUnavailable, exception.Code);
+    }
+
     [Fact]
     public async Task TheSameTypeNameInAnotherTenantIsFine()
     {
