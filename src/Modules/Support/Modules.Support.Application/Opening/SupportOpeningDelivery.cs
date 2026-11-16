@@ -10,11 +10,14 @@ namespace Modules.Support.Application;
 /// que nace de una conversación. Se llama <b>después</b> del commit: el ticket ya existe pase lo que pase con el envío. El resultado se
 /// anota en un segundo guardado que toca sólo <c>ticket_access</c>, nunca el ticket ni su versión (el 201 sigue valiendo para el
 /// siguiente <c>If-Match</c>). Si el envío lanza o la anotación falla, se loguea sin el PIN, el radicado ni el destinatario y la respuesta
-/// sigue: lo único que se pierde es lo que la consola ve en <c>ConsultAccess</c>.
+/// sigue: lo único que se pierde es lo que la consola ve en <c>ConsultAccess</c>. Anotado el resultado, avisa
+/// <c>supportTicketChanged</c> otra vez (revisión final S3): el aviso del alta salió antes de la anotación, y sin el segundo las otras
+/// pantallas se quedan con el <c>ConsultAccess</c> de antes del envío.
 /// </summary>
 public sealed partial class SupportOpeningDelivery(
     SupportOpeningSender sender,
     ISupportUnitOfWork unitOfWork,
+    ISupportRealtime realtime,
     ILogger<SupportOpeningDelivery> logger)
 {
     // Sólo el id del ticket y el tipo de la excepción: nunca el PIN, el radicado ni el destinatario.
@@ -48,8 +51,10 @@ public sealed partial class SupportOpeningDelivery(
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             LogDeliveryNotRecorded(logger, ticket.Id.Value, exception.GetType().Name);
+            return outcome;
         }
 
+        await realtime.TicketChangedAsync(ticket.TenantId, ticket.Id.Value, CancellationToken.None);
         return outcome;
     }
 

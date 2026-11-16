@@ -33,6 +33,7 @@ public sealed class ChangeTicketTypeHandler(
     ISupportTicketTypeRepository types,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     IValidator<ChangeTicketTypeCommand> validator)
     : ICommandHandler<ChangeTicketTypeCommand, SupportTicketDetailDto>
@@ -56,6 +57,10 @@ public sealed class ChangeTicketTypeHandler(
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketTypeChanged, ChangedFields, now,
             cancellationToken);
+        if (ticket.Version != version)
+        {
+            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+        }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }

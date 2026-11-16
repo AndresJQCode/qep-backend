@@ -61,7 +61,7 @@ public sealed class OpenPublicAttachmentHandler(
                 SupportErrorCodes.PublicAttachmentsBusy, "The support form is receiving too many attachments; try again later.");
         }
 
-        var uploadKey = Guid.NewGuid();
+        var uploadKey = SupportPublicUploads.NewKey();
         var upload = await storage.OpenAsync(
             tenant.TenantId,
             uploadKey,

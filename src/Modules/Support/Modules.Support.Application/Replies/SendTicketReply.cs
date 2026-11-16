@@ -107,6 +107,7 @@ public sealed class SendTicketReplyHandler(
     ISupportConversationEvents conversationEvents,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     IValidator<SendTicketReplyCommand> validator)
     : ICommandHandler<SendTicketReplyCommand, SupportReplyResultDto>
@@ -412,7 +413,10 @@ public sealed class SendTicketReplyHandler(
         {
             try
             {
-                return await ApplyOnceAsync(ticket, reply, outcome, actor, resolve, cancellationToken);
+                var applied = await ApplyOnceAsync(ticket, reply, outcome, actor, resolve, cancellationToken);
+                // Plan N13: after the commit of the outcome, on the new reply and on a resumed one alike.
+                await realtime.TicketChangedAsync(applied.Ticket.TenantId, applied.Ticket.Id.Value, CancellationToken.None);
+                return applied;
             }
             catch (RequestConcurrencyException) when (attempt == 0)
             {

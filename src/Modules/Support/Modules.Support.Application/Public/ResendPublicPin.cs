@@ -15,7 +15,8 @@ public sealed record ResendPublicPinCommand(string? TenantSlug, string VisitorIp
 /// genera un PIN nuevo y lo manda por <see cref="SupportOpeningSender"/>, al destino del ticket, nunca a uno del visitante: el correo de
 /// su foto o, si tiene conversación, el texto por su hilo con la ventana abierta (cerrada: no sale, <c>window_closed</c>). El PIN nuevo
 /// reemplaza al viejo sólo si salió: si el envío falla, la persona conserva el que tenía. El intento queda anotado (el enfriamiento cuenta
-/// desde él) y no desbloquea un radicado bloqueado. Nada toca el ticket ni su versión.
+/// desde él) y no desbloquea un radicado bloqueado. Nada toca el ticket ni su versión, pero sí su <c>ConsultAccess</c>: con el resultado
+/// anotado avisa <c>supportTicketChanged</c> (revisión final S3).
 /// </summary>
 public sealed class ResendPublicPinHandler(
     SupportPublicResolver resolver,
@@ -25,7 +26,8 @@ public sealed class ResendPublicPinHandler(
     ISupportUnitOfWork unitOfWork,
     ITenantClock tenantClock,
     SupportOpeningDelivery openingDelivery,
-    ISupportPublicOptions publicOptions)
+    ISupportPublicOptions publicOptions,
+    ISupportRealtime realtime)
     : ICommandHandler<ResendPublicPinCommand, bool>
 {
     public async Task<bool> HandleAsync(ResendPublicPinCommand command, CancellationToken cancellationToken)
@@ -81,6 +83,7 @@ public sealed class ResendPublicPinHandler(
 
         access.RecordDelivery(outcome.Channel, outcome.FailureCode, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await realtime.TicketChangedAsync(tenant.TenantId, ticket.Id.Value, CancellationToken.None);
         return outcome.Sent;
     }
 }

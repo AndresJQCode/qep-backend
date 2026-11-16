@@ -873,6 +873,14 @@
           "libphonenumber-csharp": "[9.0.41, )"
         }
       },
+      "modules.support.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Support.Application": "[1.0.0, )",
+          "Modules.Support.Domain": "[1.0.0, )"
+        }
+      },
       "modules.support.application": {
         "type": "Project",
         "dependencies": {

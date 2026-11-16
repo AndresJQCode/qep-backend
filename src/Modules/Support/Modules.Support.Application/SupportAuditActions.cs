@@ -43,6 +43,10 @@ public static class SupportAuditActions
     /// <summary>Plan F37: alguien de la consola pidió la URL de un adjunto del formulario público. El recurso es el ticket.</summary>
     public const string TicketAttachmentDownloaded = "support.ticket.attachment_downloaded";
 
+    /// <summary>Spec 2026-11-15 §5.4 (plan N21): an advisor added an internal note. The resource is the ticket; the text is not
+    /// recorded.</summary>
+    public const string TicketNoteAdded = "support.ticket.note_added";
+
     public static class Resources
     {
         /// <summary>La configuración del formulario público del tenant; su id es el del tenant, como <see cref="Settings"/>.</summary>

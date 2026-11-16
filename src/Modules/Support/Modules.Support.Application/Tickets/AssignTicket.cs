@@ -34,6 +34,7 @@ public sealed class AssignTicketHandler(
     ISupportMemberDirectory members,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     IValidator<AssignTicketCommand> validator)
     : ICommandHandler<AssignTicketCommand, SupportTicketDetailDto>
@@ -56,6 +57,10 @@ public sealed class AssignTicketHandler(
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketAssigned, ChangedFields, now,
             cancellationToken);
+        if (ticket.Version != version)
+        {
+            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+        }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
     }
