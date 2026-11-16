@@ -321,7 +321,8 @@ SupportPublicFileRequest(
     int? AnonymousNoticeVersion,
     bool AcceptsTerms, int? TermsVersion,
     int? FormVersion, string? TurnstileToken,
-    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null)
+    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null,
+    Guid? ClientRequestId = null)      // §9.2
 ```
 
 | Regla | Con datos | Anónimo | Si falla |
@@ -335,8 +336,43 @@ SupportPublicFileRequest(
 
 El handler lee las vigentes después de Turnstile y del validador, como hoy (`FilePublicTicket.cs:248`), y escribe las
 filas de §5.2 en la transacción del ticket. La IP del visitante sólo llega a las filas del camino con datos. La auditoría
-del alta suma `legalAcceptances` a sus `changedFields`. `SupportPublicFiledDto`, la consulta, el reenvío del PIN y los
-adjuntos no cambian.
+del alta suma `legalAcceptances` a sus `changedFields`. El reenvío del PIN y los adjuntos no cambian.
+
+### 9.1 Datos que el portal no omite [owner, 2026-11-15, D-6]
+
+El portal muestra la fecha de radicación y el término en días hábiles («no omitir datos»):
+
+- `SupportPublicFiledDto` (respuesta de `POST /tickets`) suma `DateTimeOffset ReceivedAt` (`SupportTicket.ReceivedAt`, el
+  instante del radicado), `int? TermBusinessDays` y `bool TermIsLegal` (la foto del tipo que guarda el ticket,
+  `SupportTicket.TermBusinessDays`, `SupportTicket.cs:41`; `null` = el tipo no tiene término).
+- `SupportPublicTicketDto` (consulta) ya trae `ReceivedAt`, `DueOn` y `TermIsLegal`; suma `int? TermBusinessDays`, de la
+  misma foto.
+- **El NIT del tenant no se agrega: no existe en el modelo** (§15, D-6). `Tenant` (`Modules.Tenancy.Domain/Tenant.cs`)
+  no tiene razón social ni número de documento, sólo `DisplayName` y `Country`. El NIT vive en `Modules.Companies`
+  (`Company.TaxId`, `Company.DocumentType`, `Company.Name`), pero un tenant tiene **varias** empresas y ninguna está marcada
+  como la propia. Queda pendiente del owner.
+
+### 9.2 Radicado idempotente [owner, 2026-11-15, D-7]
+
+`POST /tickets` acepta `Guid? ClientRequestId`, que el navegador genera una vez por intento de radicar (no por clic). Calca
+el checkout de la tienda (`SubmitOrderRequest.cs:227-232`, `IStoreOrderGateway.cs:155-242`):
+
+- **Columna** `support.tickets.client_request_id` (uuid, nulo) con índice único parcial
+  `IX_tickets_tenant_client_request` sobre `(tenant_id, client_request_id) WHERE client_request_id IS NOT NULL`. Migración
+  aditiva. Se guarda para siempre, como `external_key` del pedido de la tienda: no hay retención aparte.
+- **Orden**: resolver el tenant y el formulario → si viene `ClientRequestId`, buscar el ticket con esa clave → si existe,
+  responder con él **antes** de Turnstile, del validador y de las versiones. Así un reintento después de perder la
+  respuesta no choca con el token de Turnstile ya gastado ni con un formulario que cambió entre medio. Sin clave, todo
+  sigue como hoy.
+- **Cuerpo distinto**: no se compara, igual que la tienda («devuelve el pedido que ya salió … aunque éste nombre otra
+  [moneda]»). La clave identifica el intento; lo que el reintento traiga distinto se ignora.
+- **Carrera**: dos requests con la misma clave a la vez. El índice rechaza al segundo al confirmar; `SupportUnitOfWork` lo
+  reconoce **por nombre** y el handler relee el ganador y responde con él, como `KeyedOrderCommit`. La transacción
+  perdedora se deshace entera, número de radicado incluido: no se consume un segundo radicado.
+- **Respuesta**: la misma forma (`201 SupportPublicFiledDto`), con los datos del ticket guardado. No se reenvía nada que
+  ya salió: el correo de apertura no se manda otra vez. El PIN no se puede repetir (sólo se guarda su hash): ver D-7 en
+  §15 para qué trae `Pin` en un reintento.
+- `ClientRequestId` vacío (`Guid.Empty`) es `422 validation.failed` con `errors.ClientRequestId`, como en la tienda.
 
 El cuerpo del radicado no crece (sólo números de versión): el tope de 64 KB sigue sobrado. La respuesta de `GET /form`
 sí crece (hasta tres documentos de 60 000 caracteres); no tiene tope y sigue `no-store`.
@@ -389,6 +425,10 @@ no hay consola que lo llame.
 
 **Formularios ya publicados en desarrollo** sin `AnonymousNotice` (o sin `Terms`) responden `404` en `GET /form` hasta
 que el tenant publique lo que falta; la consola lo muestra en `PublishBlockers`.
+
+**Radicado idempotente** (§9.2): migración aparte, `AddSupportTicketClientRequestId`, también aditiva: columna nula
+`support.tickets.client_request_id` e índice único parcial `IX_tickets_tenant_client_request`. Sin relleno: los
+tickets existentes quedan con `NULL` y el índice parcial no los mira. Un pod viejo durante el rollout ignora la columna.
 
 ## 12. CORS, limitadores, captcha y auditoría
 
@@ -444,6 +484,12 @@ se itera, la clase completa una vez por bloque, nunca dos corridas de integraci�
   (Review Focus: ninguna fila de un anónimo con IP); `EachOutdatedVersionIs422` (las tres);
   `TheAcceptanceKeepsTheTextTheRequesterSaw` (radicar, publicar una versión nueva, leer la foto).
 - `TheTicketDetailListsTheAcceptances` y `TheSnapshotIsOnlyForTheTicketsTenant`.
+- §9.1: `TheFilingResponseCarriesReceivedAtAndTheTerm` (con término y sin término); `TheConsultCarriesTheTermBusinessDays`.
+- §9.2: `ARetryWithTheSameClientRequestIdReturnsTheSameTicket` (un solo ticket, el número no avanza, un solo correo de
+  apertura); `ARetrySkipsTurnstileAndTheVersionChecks` (token gastado y formulario cambiado: igual `201`);
+  `ARetryWithADifferentBodyStillReturnsTheFirstTicket`; `TwoConcurrentFilingsWithTheSameKeyCreateOneTicket` (dos
+  requests en paralelo: los dos `201` con el mismo número, una fila); `TheSameKeyInAnotherTenantIsAnotherTicket`;
+  `AnEmptyClientRequestIdIs422`; `WithoutAKeyEveryFilingIsNew`; y las de D-7 sobre el PIN del reintento.
 - `TheBackfillCopiesTheCurrentLegacyTexts`: migrar hasta la migración anterior, sembrar `legal_text_versions` (con y sin
   `terms_text`), migrar a `AddSupportLegalDocuments` y leer las filas nuevas.
 
@@ -469,7 +515,8 @@ se itera, la clase completa una vez por bloque, nunca dos corridas de integraci�
 
 ## 15. Decisiones del owner (resueltas 2026-11-15)
 
-El owner aprobó las cinco tal como se recomendaron. El cuerpo del spec ya las aplica.
+El owner aprobó D-1 a D-5 tal como se recomendaron, y agregó D-6 y D-7. El cuerpo del spec ya las aplica, salvo el NIT
+de D-6, que sigue pendiente.
 
 - **D-1 Pregunta de autorización: editable, con una por defecto.** Campo de texto plano opcional en el aviso de
   privacidad (`authorizationQuestion`, 1–500). Sin él, el backend arma la pregunta por defecto con el nombre del tenant
@@ -486,6 +533,26 @@ El owner aprobó las cinco tal como se recomendaron. El cuerpo del spec ya las a
   de desarrollo admite además el alias estable de la rama `develop` del proyecto de Vercel del portal (un origen exacto,
   por configuración), que también entra en el CORS del bucket de desarrollo. Los previews por PR prueban contra un
   backend local.
+
+**Agregadas el 2026-11-15 en la revisión del spec del portal:**
+
+- **D-6 «No omitir datos»: el portal muestra el NIT del tenant, la fecha de radicación y el término en días hábiles**
+  [owner]. Fecha y término quedan en el contrato (§9.1). **El NIT queda PENDIENTE**: el tenant no tiene NIT en el modelo
+  (`Tenant` sólo tiene `DisplayName` y `Country`); los NIT están en `Modules.Companies` (`Company.TaxId`,
+  `DocumentType`, `Name`), un tenant puede tener varias empresas y ninguna está marcada como la propia. No se inventa el
+  campo. Opciones para el owner: (a) que la configuración del formulario público elija una empresa del tenant
+  (`organizationCompanyId`) y `GET /form` y `GET /consult` muestren su nombre, tipo y número de documento, leídos por un
+  puerto de Soporte con adaptador en Bootstrapper; (b) agregar razón social y NIT al tenant en Tenancy, con su pantalla en
+  la consola. **Recomendación:** (a): el dato ya existe, la empresa es la entidad legal que responde la PQRSF y el NIT no
+  se duplica en dos módulos. Sin respuesta, el contrato del portal no trae NIT.
+- **D-7 Radicado idempotente por `clientRequestId`** [owner], calcado del checkout de la tienda (§9.2). **Qué trae `Pin`
+  en un reintento** lo fija este spec dentro de lo que dijo el owner («sin reenviar el PIN si ya se entregó»), y conviene
+  que lo confirme: sólo se guarda el hash del PIN, así que no se puede devolver el mismo. Regla: si el correo de apertura
+  ya salió (`ticket_access.last_sent_channel = 'Email'` sin `last_failure_code`), el reintento trae `Pin: null` y
+  `PinEmailed: true`: el solicitante lo tiene en el correo y puede pedir «Reenviar PIN». Si no salió por ningún canal
+  (anónimo, o el correo falló), se **emite un PIN nuevo** que reemplaza al anterior y viaja sólo en la respuesta, sin
+  correo: sin eso, un anónimo que perdió la primera respuesta perdería su caso. La clave sólo la conoce el navegador que
+  radicó (UUID aleatorio que nunca se muestra), así que rotar el PIN con ella no abre nada a un tercero.
 
 ## 16. Discrepancias encontradas (spec contra código)
 

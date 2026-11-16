@@ -1,6 +1,6 @@
 # Soporte — documentos legales del portal público, backend · Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Las reglas de ejecución de la sección «Antes de empezar» mandan sobre el proceso del skill** (dos bloques con un solo implementador cada uno, una revisión por bloque).
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Las reglas de ejecución de la sección «Antes de empezar» mandan sobre el proceso del skill** (tres bloques con un solo implementador cada uno, una revisión por bloque).
 
 **Goal:** Que cada tenant escriba en texto enriquecido y versione tres documentos —aviso de privacidad, aviso anónimo y Términos y Condiciones del SAC—; que el portal público `qep-frontend-support` los reciba ya saneados en `GET /form`; que cada radicado guarde la foto de lo que la persona aceptó (también los términos, también en el anónimo, sin IP); y que la consola lo vea en el detalle del ticket.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10, ASP.NET Core minimal APIs, EF Core 10 + Npgsql, FluentValidation, `HtmlSanitizer` (mganss, sobre AngleSharp), xUnit v3, Testcontainers (PostgreSQL).
 
-**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-5 resueltas (§15). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
+**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-7 (§15; el NIT de D-6 sigue pendiente). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
 
 ---
 
@@ -33,6 +33,7 @@
   dotnet ef migrations add AddSupportLegalDocuments --project src/Modules/Support/Modules.Support.Infrastructure --context SupportDbContext -o Persistence/Migrations
   ```
   Revisa el `Up` generado: **no** puede traer `DropTable` ni `DropColumn` (L10). El `Down` se edita a mano (L11).
+  El Bloque C agrega otra, después: `dotnet ef migrations add AddSupportTicketClientRequestId` (mismos parámetros).
 - `docs/estado.md` **no se toca** en esta rama.
 
 ## Global Constraints
@@ -50,7 +51,7 @@
 
 ## Decisiones del plan
 
-Mías (planner) sobre lo que el spec deja al implementador. Ninguna queda abierta: D-1 a D-5 del spec están resueltas.
+Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-5 del spec están resueltas; de D-6 queda pendiente el NIT (fuera del plan) y de D-7 la confirmación de L28.
 
 | # | Decisión | Por qué |
 | --- | --- | --- |
@@ -79,6 +80,9 @@ Mías (planner) sobre lo que el spec deja al implementador. Ninguna queda abiert
 | L23 | Origen de desarrollo del portal: `http://localhost:4322`. `appsettings.Development.json` cambia `Support:PublicForm:AllowedOrigins` de `["http://localhost:3002"]` a `["http://localhost:4322"]`. El repo del portal fija ese puerto con `--port 4322` y `strictPort` (el storefront usa 4321). | Spec §12: 3002 es la consola y ya no llama al grupo público. Un valor de configuración, sin código. |
 | L24 | `appsettings.example.json` documenta `Support:PublicForm:{BaseUrl,Hostname,AllowedOrigins}` y `Support:Workers:{BatchSize,FeedLookbackHours,FollowIntervalSeconds}`. | Pone en verde `ConfigurationExampleTests.EveryBoundConfigurationKeyIsDocumentedInTheExample`, en rojo desde la fase 3 (`docs/estado.md`, «Defectos conocidos»), y deja documentada la clave que esta rama cambia. |
 | L25 | El alias estable de `develop` del portal en Vercel (D-5) **no** entra en código ni en `appsettings*.json`: el proyecto de Vercel todavía no existe. El README dice dónde ponerlo (`Support__PublicForm__AllowedOrigins__N` del backend de desarrollo y CORS del bucket de desarrollo) cuando exista. | No se inventa un origen. |
+| L26 | Datos que no se omiten (D-6): `SupportPublicFiledDto` suma `ReceivedAt` (`SupportTicket.ReceivedAt`), `TermBusinessDays` y `TermIsLegal` (la foto del tipo en el ticket: `SupportTicket.TermBusinessDays`, `SupportTicket.cs:41`, y su `TermIsLegal`); `SupportPublicTicketDto` suma `TermBusinessDays` de la misma foto (`LookupPublicTicket.cs:~103`). Nunca del tipo vivo: editar el tipo después no cambia lo que ve el solicitante. **El NIT no entra** (D-6 pendiente: no existe en `Tenant`). | Spec §9.1. |
+| L27 | Idempotencia (D-7), calcada de `SubmitOrderRequest.cs:227-232` y `KeyedOrderCommit`: columna `support.tickets.client_request_id uuid NULL`, índice único parcial `IX_tickets_tenant_client_request (tenant_id, client_request_id) WHERE client_request_id IS NOT NULL`, migración aparte `AddSupportTicketClientRequestId` (aditiva, sin relleno). `SupportTicket.CreateFromPublicForm` recibe `Guid? clientRequestId`. Orden del handler: resolver → si hay clave, `ISupportTicketRepository.FindByClientRequestAsync(tenantId, key)` → si existe, respuesta de reintento (L28) **antes** de Turnstile, validador y versiones. Sin ticket: el flujo de siempre. Carrera: dentro de la transacción, **después** de `numbers.NextAsync` (el `UPDATE … RETURNING` de `SupportTicketNumberGenerator` serializa las altas del tenant), se vuelve a buscar la clave; si la confirmó otro, se deshace la transacción (el número vuelve con el rollback) y se responde con el ganador. Respaldo: `SupportUnitOfWork` traduce `IX_tickets_tenant_client_request` **por nombre** a `SupportClientRequestTakenException` (Application) y el handler la atrapa igual. El cuerpo no se compara (como la tienda). `ClientRequestId == Guid.Empty` → `validation.failed`. La clave no se audita ni va a `ticket_events`. | Spec §9.2; el doble chequeo bajo el candado del contador hace la carrera determinista sin depender del 23505. |
+| L28 | PIN del reintento (D-7): con `ticket_access.last_sent_channel = 'Email'` y `last_failure_code IS NULL` → `Pin = null`, `PinEmailed = true`, nada se escribe. Si no (anónimo, sin canal, `send_failed`, `send_pending`), `SupportTicketAccess.Reissue(hash nuevo, now)` en una transacción corta y `Pin` = el nuevo, `PinEmailed = false`; no se manda correo ni texto. El reintento no pasa por `SupportOpeningDelivery`. | Spec §15 D-7. |
 
 ## Review Focus
 
@@ -87,6 +91,8 @@ Mías (planner) sobre lo que el spec deja al implementador. Ninguna queda abiert
 3. **Anónimo sin IP:** un radicado anónimo deja `AnonymousNotice` y `Terms` con `visitor_ip IS NULL`, ninguna fila `PrivacyNotice`, y nada en `consents`. Tarea 5: `AnAnonymousTicketStoresTheNoticeAndTermsWithoutIp`.
 4. **La foto sobrevive:** radicar, publicar otra versión de cada documento, leer la foto por la consola: es el texto viejo. Tarea 5: `TheAcceptanceKeepsTheTextTheRequesterSaw`; Tarea 6: `TheSnapshotIsTheServedText`.
 5. **La migración no borra nada:** el `Up` no tiene `DropTable`/`DropColumn`; `legal_text_versions` y `consents` siguen con sus filas; el `Down` deja las tablas nuevas. Tarea 2: `TheMigrationDownKeepsTheLegalDocumentTables`, `TheLegacyTablesAreStillThere`.
+6. **Un reintento nunca crea un segundo ticket ni gasta un número:** dos `POST` en paralelo con la misma clave → una fila, los dos `201` con el mismo número, y el siguiente radicado sin clave toma el número siguiente sin hueco. Tarea 9: `TwoConcurrentFilingsWithTheSameKeyCreateOneTicket`, `ARetryWithTheSameClientRequestIdReturnsTheSameTicket`.
+7. **El reintento no reenvía ni filtra el PIN:** con el correo ya enviado, `pin` es `null` y no sale otro correo; sin canal, el PIN viejo deja de servir para consultar y el nuevo sí. La clave de otro tenant no encuentra nada. Tarea 9: `ARetryAfterTheEmailWentOutReturnsNoPin`, `ARetryOfAnAnonymousTicketRotatesThePin`, `TheSameKeyInAnotherTenantIsAnotherTicket`.
 
 ---
 
@@ -158,12 +164,13 @@ Errores de la consola:
 
 ### Portal (`qep-frontend-support`), bajo `/api/v1/public/support/{tenantSlug}`
 
-Anónimo, sin credenciales (CORS `support-public`: `GET` y `POST`, sólo `Content-Type`), `Cache-Control: no-store`, cuerpo ≤ 64 KB, limitadores por IP sin cambio. **Toda llamada sale del navegador**, nunca del render del servidor. Rutas sin cambio salvo los dos cuerpos de abajo: `GET /consult`, geografía, adjuntos, `POST /tickets/lookup` y `POST /tickets/resend-pin` siguen como en la fase 3.
+Anónimo, sin credenciales (CORS `support-public`: `GET` y `POST`, sólo `Content-Type`), `Cache-Control: no-store`, cuerpo ≤ 64 KB, limitadores por IP sin cambio. **Toda llamada sale del navegador**, nunca del render del servidor. Rutas sin cambio salvo lo de la tabla: `GET /consult`, geografía, adjuntos y `POST /tickets/resend-pin` siguen como en la fase 3.
 
 | Método y ruta | Cambio |
 | --- | --- |
 | `GET /form` | `legal` cambia de forma |
-| `POST /tickets` | `legalTextVersion` sale; entran `privacyNoticeVersion`, `anonymousNoticeVersion`, `acceptsTerms`, `termsVersion` |
+| `POST /tickets` | cuerpo: sale `legalTextVersion`; entran `privacyNoticeVersion`, `anonymousNoticeVersion`, `acceptsTerms`, `termsVersion` y `clientRequestId` (opcional, idempotencia). Respuesta: suma `receivedAt`, `termBusinessDays`, `termIsLegal`; `pin` pasa a anulable |
+| `POST /tickets/lookup` | respuesta: suma `termBusinessDays` |
 
 ```csharp
 // SupportPublicFormDto.Legal (los demás campos de SupportPublicFormDto no cambian):
@@ -185,10 +192,31 @@ public sealed record SupportPublicFileRequest(
     int? AnonymousNoticeVersion,
     bool AcceptsTerms, int? TermsVersion,
     int? FormVersion, string? TurnstileToken,
-    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null);
+    IReadOnlyList<SupportPublicAttachmentRef>? Attachments = null,
+    Guid? ClientRequestId = null);               // opcional; un UUID aleatorio por intento de radicar (no por clic)
+
+// Respuesta de POST /tickets (201), primera vez y reintento. Pin null sólo en un reintento cuyo PIN ya salió por correo
+// (L28). TermBusinessDays null = el tipo no tiene término; TermIsLegal decide «plazo legal» u «objetivo».
+public sealed record SupportPublicFiledDto(
+    string Number, string? Pin, DateTimeOffset ReceivedAt, DateOnly? DueOn, int? TermBusinessDays, bool TermIsLegal,
+    string? SuccessMessage, bool PinEmailed, string ConsultUrl);
+
+// Respuesta de POST /tickets/lookup: suma TermBusinessDays a lo de la fase 3.
+public sealed record SupportPublicTicketDto(
+    string Number, string TypeName, string Status, DateTimeOffset ReceivedAt, DateOnly? DueOn, string? DueState,
+    bool TermIsLegal, int? TermBusinessDays, IReadOnlyList<SupportPublicReplyDto> Replies);
 ```
 
-En JSON: `legal.privacyNotice.{version, contentHtml, authorizationQuestion, policyUrl}`, `legal.anonymousNotice.{version, contentHtml}`, `legal.terms.{version, contentHtml}`, `legal.characterizationNotice`; cuerpo `{ …, anonymous, requester, acceptsDataPolicy, privacyNoticeVersion, anonymousNoticeVersion, acceptsTerms, termsVersion, formVersion, turnstileToken, attachments }`.
+En JSON: `legal.privacyNotice.{version, contentHtml, authorizationQuestion, policyUrl}`, `legal.anonymousNotice.{version, contentHtml}`, `legal.terms.{version, contentHtml}`, `legal.characterizationNotice`; cuerpo del radicado `{ …, anonymous, requester, acceptsDataPolicy, privacyNoticeVersion, anonymousNoticeVersion, acceptsTerms, termsVersion, formVersion, turnstileToken, attachments, clientRequestId }`; respuesta del radicado `{ number, pin, receivedAt, dueOn, termBusinessDays, termIsLegal, successMessage, pinEmailed, consultUrl }`; respuesta de la consulta `{ number, typeName, status, receivedAt, dueOn, dueState, termIsLegal, termBusinessDays, replies }`.
+
+**El NIT del tenant no está en este contrato** (spec §15, D-6): el tenant no tiene NIT en el modelo y la fuente queda pendiente del owner. Cuando se decida, entra como un campo nuevo de `GET /form` y `GET /consult`.
+
+**Radicado idempotente** (`clientRequestId`, spec §9.2, L26–L28):
+
+- El portal genera un UUID al empezar a radicar y lo manda en **cada** reintento de ese mismo radicado (timeout, red caída, 5xx). Uno nuevo sólo para otro radicado («Radicar otra solicitud»).
+- Un reintento con la misma clave en el mismo tenant responde `201` con el **mismo** `number`, `receivedAt`, `dueOn`, `termBusinessDays`, `termIsLegal`, `successMessage` y `consultUrl`, aunque el cuerpo cambie, el token de Turnstile ya esté gastado o el formulario o los documentos hayan cambiado: la clave se mira antes que todo eso. No se crea otro ticket ni se gasta otro número, y el correo de apertura no se vuelve a mandar.
+- `pin` en un reintento: `null` con `pinEmailed: true` si el PIN ya salió por correo (el portal dice que se lo enviamos al correo y ofrece la consulta); un PIN **nuevo** con `pinEmailed: false` si no salió por ningún canal (anónimo o correo fallido): el anterior deja de servir y el portal lo muestra como en la primera respuesta.
+- Sin `clientRequestId`, cada `POST` es un radicado nuevo, como en la fase 3. El reintento sigue contando para el limitador `SupportPublicSubmit` (5 cada 10 min por IP).
 
 Qué manda cada camino del portal (pasos del tablero aprobado):
 
@@ -213,6 +241,7 @@ Errores nuevos o cambiados de `POST /tickets`:
 | `422 validation.failed`, `errors.AcceptsDataPolicy` | con datos y `acceptsDataPolicy` falso | no debería pasar: el paso 1 no deja seguir |
 | `422 validation.failed`, `errors.AcceptsTerms` | `acceptsTerms` falso | no debería pasar: el paso 3 no deja seguir |
 | `422 validation.failed`, `errors.PrivacyNoticeVersion` / `errors.AnonymousNoticeVersion` / `errors.TermsVersion` | falta la que aplica o viene la que no aplica | bug del portal |
+| `422 validation.failed`, `errors.ClientRequestId` | `clientRequestId` es el UUID vacío | bug del portal |
 | `422 support.public.legal_texts_outdated` | alguna versión que aplica ya no es la vigente | recargar `GET /form`, volver al paso del documento cambiado y pedir de nuevo la aceptación; reiniciar Turnstile |
 | `422 support.public.form_outdated`, `captcha_invalid`, `attachment_invalid`, `attachments_disabled`, `404 not_found`, `413`, `429` | sin cambio | como en la fase 3 |
 
@@ -229,11 +258,14 @@ src/Modules/Support/
                   Settings/ PublishLegalDocument, GetLegalDocuments, GetLegalDocumentHistory, GetLegalDocumentVersion (nuevos),
                   GetLegalTexts + PublishLegalTexts (borrados), GetFormSettings (L18);
                   Tickets/ GetLegalAcceptanceSnapshot (nuevo); SupportTicketDtoComposer (L19);
-                  Public/ GetPublicForm (L17), FilePublicTicket (L14–L16), SupportPublicDtos;
+                  Public/ GetPublicForm (L17), FilePublicTicket (L14–L16, L27–L28), LookupPublicTicket (L26), SupportPublicDtos;
+                  ISupportTicketRepository (+FindByClientRequestAsync), SupportClientRequestTakenException (nuevo);
                   SupportDtos, SupportAuditActions; ISupportLegalTextRepository + ISupportConsentRepository (borrados)
   Infrastructure/ Legal/HtmlSupportSanitizer (nuevo); Persistence/ SupportLegalDocumentRepositories (nuevo),
                   SupportPublicFormRepositories (quita los dos repositorios viejos), SupportDbContext, SupportUnitOfWork,
-                  Migrations/<ts>_AddSupportLegalDocuments; SupportInfrastructureExtensions; csproj (+HtmlSanitizer); packages.lock.json
+                  Migrations/<ts>_AddSupportLegalDocuments, <ts>_AddSupportTicketClientRequestId; SupportTicketRepository (L27);
+                  SupportInfrastructureExtensions; csproj (+HtmlSanitizer); packages.lock.json
+  Domain/         SupportTicket (+ClientRequestId, L27)
   Api/            SupportEndpoints (rutas nuevas, quita legal-texts)
 src/Bootstrapper/ SupportUserReferenceProbe (L22), QepServiceCollectionExtensions (handlers y validadores a mano)
 src/Api/          appsettings.Development.json (L23), appsettings.example.json (L24)
@@ -437,9 +469,61 @@ README.md (§ Formulario público de Soporte), CLAUDE.md (gotchas)
 
 **Revisión del Bloque B** (un revisor): L13–L20, L23–L25; Review Focus 3 y 4; que el anónimo no deje IP en ninguna tabla; que el contrato de las respuestas sea exactamente el de «Contrato para las pantallas».
 
+## Bloque C — Datos que no se omiten y radicado idempotente (Tareas 8–9, un implementador)
+
+Decisiones del owner del 2026-11-15 en la revisión del spec del portal (spec §9.1, §9.2, §15 D-6 y D-7). Va después del Bloque B: toca `FilePublicTicket.cs`, `SupportPublicDtos.cs` y `SupportPublicHarness.cs`, que el Bloque B ya cambió.
+
+### Task 8: Fecha de radicación y término en el radicado y la consulta
+
+**Files:**
+- Modify: `Public/SupportPublicDtos.cs` (`SupportPublicFiledDto`, `SupportPublicTicketDto`), `Public/FilePublicTicket.cs` (arma el DTO), `Public/LookupPublicTicket.cs`
+- Test: `$SI\SupportPublicFilingApiTests.cs`, `$SI\SupportPublicLookupApiTests.cs`
+
+- [ ] **Paso 1: pruebas**
+  - `SupportPublicFilingApiTests.TheFilingResponseCarriesReceivedAtAndTheTerm` — `[Theory]` con un tipo de 15 días hábiles legales y uno sin término: `receivedAt` igual a `support.tickets.received_at` de la fila, `termBusinessDays` `15`/`null`, `termIsLegal` como el tipo, `dueOn` sin cambio.
+  - `SupportPublicLookupApiTests.TheTermIsTheTicketsSnapshot` — radicar, cambiar el término del tipo por la consola y consultar: sigue el término con que se radicó.
+  - `SupportPublicLookupApiTests.TheConsultCarriesTheTermBusinessDays` — con término y sin término.
+- [ ] **Paso 2: RED** — `dotnet build $SI` falla: `SupportPublicFiledDto` no tiene `ReceivedAt` (`CS1061`).
+- [ ] **Paso 3: implementar** — L26. `Pin` pasa a `string?` en el DTO (lo usa la Tarea 9; acá siempre lleva valor).
+- [ ] **Paso 4: GREEN** — cada prueba filtrada por nombre.
+- [ ] **Paso 5: commit** — `feat(support): show the filing date and the term on the public portal`.
+
+### Task 9: `clientRequestId` — radicado idempotente
+
+**Files:**
+- Create: `Modules.Support.Application/SupportClientRequestTakenException.cs`; migración `AddSupportTicketClientRequestId`
+- Modify: `Modules.Support.Domain/SupportTicket.cs` (`ClientRequestId`, parámetro de `CreateFromPublicForm`), `ISupportTicketRepository` (+`FindByClientRequestAsync(Guid tenantId, Guid clientRequestId, CancellationToken)`, sin tracking) y su implementación, `SupportDbContext.cs` (columna `client_request_id`, índice parcial `IX_tickets_tenant_client_request` con `HasFilter("client_request_id IS NOT NULL")`), `SupportUnitOfWork.cs` (el índice por nombre → `SupportClientRequestTakenException`), `Public/SupportPublicDtos.cs` (`ClientRequestId` en `SupportPublicFileRequest`), `Public/FilePublicTicket.cs` (L27–L28), `README.md` y `CLAUDE.md`
+- Test: `$SU\FilePublicTicketValidatorTests.cs`, `$SU\SupportTicketPublicFormTests.cs`, `$SI\SupportPublicIdempotencyApiTests.cs` (nueva), `$SI\SupportPublicFormPersistenceTests.cs`, `$SI\SupportPublicHarness.cs` (cuerpos con `clientRequestId` opcional)
+
+- [ ] **Paso 1: pruebas**
+  - `FilePublicTicketValidatorTests.AnEmptyClientRequestIdIsAnError` (`["ClientRequestId"]`) y `ANullClientRequestIdIsFine`.
+  - `SupportTicketPublicFormTests.TheTicketKeepsItsClientRequestId`.
+  - `SupportPublicFormPersistenceTests.TwoTicketsWithTheSameClientRequestIdInATenantAreRejected` (SQL crudo: viola `IX_tickets_tenant_client_request`) y `ManyTicketsWithoutAClientRequestIdAreFine`.
+  - `SupportPublicIdempotencyApiTests` (`SharedSupportHost` con `SupportPublicHarness`; cada prueba siembra su tenant):
+    - `ARetryWithTheSameClientRequestIdReturnsTheSameTicket` — dos `POST` iguales → los dos `201`, mismo `number`, `receivedAt`, `dueOn`, `consultUrl`; una sola fila en `support.tickets` con esa clave; `RecordingSupportOpeningEmail` registró un solo correo; el siguiente radicado sin clave toma el número siguiente (sin hueco).
+    - `ARetryAfterTheEmailWentOutReturnsNoPin` — con datos: el reintento trae `pin: null`, `pinEmailed: true`; el PIN de la primera respuesta sigue sirviendo en `POST /tickets/lookup`.
+    - `ARetryOfAnAnonymousTicketRotatesThePin` — anónimo: el reintento trae un `pin` de 6 dígitos y `pinEmailed: false`; con el PIN viejo la consulta da `422 support.public.lookup_failed` y con el nuevo `200`; ningún correo.
+    - `ARetryAfterAFailedEmailRotatesThePin` — `RecordingSupportOpeningEmail` falla en el primer envío: el reintento trae PIN nuevo y no vuelve a intentar el correo.
+    - `ARetrySkipsTurnstileAndTheVersionChecks` — el reintento lleva un token que `FakeSupportCaptcha` rechaza, y entre los dos `POST` se publica una versión nueva del formulario y de `terms`: igual `201` con el mismo número.
+    - `ARetryWithADifferentBodyStillReturnsTheFirstTicket` — otro asunto y otro tipo: mismo número; el ticket guarda el asunto del primero.
+    - `TwoConcurrentFilingsWithTheSameKeyCreateOneTicket` — dos `POST` simultáneos (`Task.WhenAll`) con la misma clave: los dos `201` con el mismo número, una sola fila, un solo par de aceptaciones legales, un solo correo.
+    - `TheSameKeyInAnotherTenantIsAnotherTicket` — misma clave en dos tenants: dos tickets.
+    - `WithoutAKeyEveryFilingIsNew` — dos `POST` sin clave: dos números.
+    - `TheKeyIsNeverInTheTraceNorTheAudit` — `ticket_events` y la auditoría del alta no contienen la clave.
+- [ ] **Paso 2: RED** — `dotnet build $SU` falla: `FilePublicTicketCommand` sin `ClientRequestId`.
+- [ ] **Paso 3: implementar** — dominio, mapeo y `dotnet ef migrations add AddSupportTicketClientRequestId` (revisar que el `Up` sólo agregue la columna y el índice; `Down` los quita, la columna no es prueba legal); handler según L27 y L28. Documentación:
+  - README § «Formulario público de Soporte»: el radicado acepta `clientRequestId`; la tabla de qué trae `pin` en un reintento; que el reintento se mira antes de Turnstile y no compara el cuerpo; la migración `AddSupportTicketClientRequestId`; `receivedAt`, `termBusinessDays` y `termIsLegal` en las respuestas; que el NIT del tenant está pendiente (D-6).
+  - `CLAUDE.md`, gotcha nuevo: «**El reintento del radicado público se reconoce por `clientRequestId` antes de Turnstile y bajo el candado del contador** (spec 2026-11-15 §9.2). No muevas la búsqueda después de Turnstile: el token ya se gastó en el primer intento y el reintento fallaría con `captcha_invalid`. Un reintento no reenvía el correo; si el PIN no salió por ningún canal, emite uno nuevo y el viejo deja de servir.»
+- [ ] **Paso 4: GREEN** — cada prueba filtrada por nombre; `dotnet test $SU --filter "FullyQualifiedName~FilePublicTicketValidatorTests|FullyQualifiedName~SupportTicketPublicFormTests"`.
+- [ ] **Paso 5: commit** — `feat(support): make public filing idempotent by client request id`.
+
+**Cierre del Bloque C:** una corrida por clase: `SupportPublicIdempotencyApiTests`, `SupportPublicFilingApiTests`, `SupportPublicLookupApiTests`, `SupportPublicFormPersistenceTests` en `$SI`, una a la vez; `FilePublicTicketValidatorTests` y `SupportTicketPublicFormTests` en `$SU`.
+
+**Revisión del Bloque C** (un revisor): L26–L28; Review Focus 6 y 7; que la búsqueda por clave vaya antes de Turnstile y siempre filtrada por tenant; que la migración sea aditiva; que el contrato de `POST /tickets` y `POST /tickets/lookup` sea exactamente el de «Contrato para las pantallas».
+
 **Antes de mergear a `develop`:** suites completas de `$SU`, `$SI`, `$BU`, `$AT`, una a la vez, con `-- xUnit.MaxParallelThreads=4` en las de integración; `dotnet format --verify-no-changes`; `dotnet build` limpio; `dotnet restore --locked-mode` limpio.
 
-**Revisión final** (modelo más capaz, toda la rama contra `develop`): saneamiento (lista blanca, idempotencia, re-saneo al servir), prueba legal (insert-only, sin FK, `Down`, foto exacta), anónimo sin IP, migración aditiva con relleno correcto, arquitectura (`SupportLayerTests`) y dependencia nueva fijada.
+**Revisión final** (modelo más capaz, toda la rama contra `develop`): saneamiento (lista blanca, idempotencia, re-saneo al servir), prueba legal (insert-only, sin FK, `Down`, foto exacta), anónimo sin IP, migraciones aditivas con relleno correcto, radicado idempotente sin segundo ticket ni PIN filtrado, arquitectura (`SupportLayerTests`) y dependencia nueva fijada.
 
 ## Textos de ejemplo (L9)
 
@@ -454,7 +538,12 @@ Revisados por el abogado antes de producción (D-4). Se guardan ya en forma can�
 
 ## Decisiones del owner (resueltas 2026-11-15)
 
-D-1 a D-5 del spec §15, aprobadas tal como se recomendaron: pregunta de autorización editable con una por defecto (L7); enlace a la política opcional; `HtmlSanitizer` (L4); ejemplos para los tres tipos con revisión del abogado (L9); en desarrollo, el alias estable de `develop` del portal, que se configura cuando exista (L25). No queda ninguna abierta.
+D-1 a D-5 del spec §15, aprobadas tal como se recomendaron: pregunta de autorización editable con una por defecto (L7); enlace a la política opcional; `HtmlSanitizer` (L4); ejemplos para los tres tipos con revisión del abogado (L9); en desarrollo, el alias estable de `develop` del portal, que se configura cuando exista (L25).
+
+Agregadas el 2026-11-15 en la revisión del spec del portal (Bloque C):
+
+- **D-6 «No omitir datos»:** fecha de radicación y término en días hábiles en el radicado y la consulta (L26, Tarea 8). **El NIT del tenant queda pendiente:** `Tenant` no tiene razón social ni NIT; los NIT están en `Modules.Companies` (`Company.TaxId`, `DocumentType`, `Name`), un tenant tiene varias empresas y ninguna es la propia. Recomendación del spec: que la configuración del formulario público elija una empresa del tenant. Hasta que el owner decida, el plan no agrega el campo.
+- **D-7 Radicado idempotente por `clientRequestId`** (L27, Tarea 9), calcado del checkout de la tienda. Pendiente de confirmar la regla del PIN en un reintento (L28): `null` si ya salió por correo, uno nuevo si no salió por ningún canal.
 
 ## Spec discrepancies (spec contra código)
 
