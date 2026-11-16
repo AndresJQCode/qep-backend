@@ -99,6 +99,24 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "The ticket already has its consent.",
                 exception);
         }
+        // Spec 2026-11-15 §10: two publications of the same kind that read the same current version. The If-Match already filtered
+        // most of them; this is the race.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.LegalDocumentVersionIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.LegalDocumentsVersionTaken,
+                "This version of the legal document already exists.",
+                exception);
+        }
+        // One acceptance per ticket and kind. Unreachable today (written only with a ticket just created); translated anyway so a new
+        // path that duplicates it gets a 409 with a code and not a 500.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.LegalAcceptanceTicketKindIndex))
+        {
+            throw new ResourceConflictException(
+                SupportErrorCodes.PublicLegalAcceptanceDuplicate,
+                "The ticket already has its acceptance of this legal document.",
+                exception);
+        }
         // Plan F35: otra radicación ya reclamó el archivo. El 422 de siempre de un adjunto inválido, no un 409: la página no distingue
         // un archivo ajeno de uno que no existe, y la transacción del radicado se deshace entera.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.TicketAttachmentFileIndex))

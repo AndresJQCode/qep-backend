@@ -141,6 +141,33 @@ public static class SupportErrorCodes
     /// <summary>Los textos legales necesitan la política como texto o como URL (spec §9.5).</summary>
     public const string LegalTextsPolicyRequired = "support.legal_texts.policy_required";
 
+    // Spec 2026-11-15 (legal documents of the portal, §10).
+
+    /// <summary>After sanitizing, the document has no visible text (422).</summary>
+    public const string LegalDocumentsContentEmpty = "support.legal_documents.content_empty";
+
+    /// <summary>After sanitizing, the document has more than <c>SupportLegalDocumentVersion.ContentMaxLength</c> characters (422).</summary>
+    public const string LegalDocumentsContentTooLong = "support.legal_documents.content_too_long";
+
+    /// <summary>The <c>{kind}</c> of the route is not <c>privacy-notice</c>, <c>anonymous-notice</c> or <c>terms</c> (404).</summary>
+    public const string LegalDocumentsKindNotFound = "support.legal_documents.kind_not_found";
+
+    public const string LegalDocumentsVersionNotFound = "support.legal_documents.version_not_found";
+
+    /// <summary>Translated by index name (<c>IX_legal_document_versions_tenant_kind_version</c>): two publications at once (409).</summary>
+    public const string LegalDocumentsVersionTaken = "support.legal_documents.version_taken";
+
+    /// <summary>The ticket has no acceptance of that kind (404).</summary>
+    public const string LegalAcceptanceNotFound = "support.legal_acceptance.not_found";
+
+    /// <summary>The <c>ErrorCode</c> of the validator's rule on <c>AcceptsTerms</c>, like <see cref="PublicConsentRequired"/>. Over HTTP
+    /// it is <c>422 validation.failed</c> with <c>errors.AcceptsTerms</c>: <c>ApiExceptionHandler</c> does not publish the code.</summary>
+    public const string PublicTermsRequired = "support.public.terms_required";
+
+    /// <summary>Translated by index name (<c>IX_legal_acceptances_ticket_kind</c>, 409). Unreachable today: the acceptances are written
+    /// only with a ticket just created, in the same transaction.</summary>
+    public const string PublicLegalAcceptanceDuplicate = "support.public.legal_acceptance_duplicate";
+
     /// <summary>Un ticket anónimo sólo se responde por la página de consulta (plan F12).</summary>
     public const string ReplyPortalOnly = "support.reply.portal_only";
 

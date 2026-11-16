@@ -1,6 +1,7 @@
 using AngleSharp.Dom;
 using Ganss.Xss;
 using Modules.Support.Application;
+using Modules.Support.Domain;
 
 namespace Modules.Support.Infrastructure.Legal;
 

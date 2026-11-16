@@ -44,6 +44,8 @@ public static class SupportInfrastructureExtensions
         services.AddSingleton<ISupportPinHasher, Pbkdf2SupportPinHasher>();
         // Spec 2026-11-15 §6.3 (plan L2): stateless, it builds its HtmlSanitizer on each call.
         services.AddSingleton<ISupportHtmlSanitizer, HtmlSupportSanitizer>();
+        services.AddScoped<ISupportLegalDocumentRepository, SupportLegalDocumentRepository>();
+        services.AddScoped<ISupportLegalAcceptanceRepository, SupportLegalAcceptanceRepository>();
         // Plan F35 y F36: los adjuntos del formulario, y la sonda que le dice al barrido de Storage cuáles ya reclamó un ticket.
         services.AddScoped<ISupportTicketAttachmentRepository, SupportTicketAttachmentRepository>();
         services.AddScoped<ISupportTicketNoteRepository, SupportTicketNoteRepository>();
