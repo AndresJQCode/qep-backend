@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10, ASP.NET Core minimal APIs, EF Core 10 + Npgsql, FluentValidation, `HtmlSanitizer` (mganss, sobre AngleSharp), xUnit v3, Testcontainers (PostgreSQL).
 
-**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-8 (§15; D-8 asumida como se recomienda). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
+**Spec:** [`docs/superpowers/specs/2026-11-15-support-portal-legal-documents-design.md`](../specs/2026-11-15-support-portal-legal-documents-design.md), completo, con D-1 a D-9 (§15; D-8, L28 y D-9 confirmadas por el owner el 2026-11-15). Reemplaza §9.5 del [spec del módulo](../specs/2026-11-14-support-tickets-pqrs-design.md). Plan previo: [`fase 3`](2026-11-15-support-phase-3-public-form-backend.md) (F15–F17 quedan reemplazadas por este plan).
 
 ---
 
@@ -51,7 +51,7 @@
 
 ## Decisiones del plan
 
-Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-7 del spec están resueltas (de D-7 queda por confirmar L28); D-8 (empresa obligatoria para publicar) es nueva y el plan la asume como se recomienda.
+Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-9 del spec están resueltas: L28 (el PIN del reintento) y D-8 (empresa obligatoria para publicar) las confirmó el owner el 2026-11-15, y D-9 (la IP de las aceptaciones la ve `support.ticket.view`) también.
 
 | # | Decisión | Por qué |
 | --- | --- | --- |
@@ -82,7 +82,7 @@ Mías (planner) sobre lo que el spec deja al implementador. D-1 a D-7 del spec e
 | L25 | El alias estable de `develop` del portal en Vercel (D-5) **no** entra en código ni en `appsettings*.json`: el proyecto de Vercel todavía no existe. El README dice dónde ponerlo (`Support__PublicForm__AllowedOrigins__N` del backend de desarrollo y CORS del bucket de desarrollo) cuando exista. | No se inventa un origen. |
 | L26 | Datos que no se omiten (D-6): `SupportPublicFiledDto` suma `ReceivedAt` (`SupportTicket.ReceivedAt`), `TermBusinessDays` y `TermIsLegal` (la foto del tipo en el ticket: `SupportTicket.TermBusinessDays`, `SupportTicket.cs:41`, y su `TermIsLegal`); `SupportPublicTicketDto` suma `TermBusinessDays` de la misma foto (`LookupPublicTicket.cs:~103`). Nunca del tipo vivo: editar el tipo después no cambia lo que ve el solicitante. El NIT va por L29–L32. | Spec §9.1. |
 | L27 | Idempotencia (D-7), calcada de `SubmitOrderRequest.cs:227-232` y `KeyedOrderCommit`: columna `support.tickets.client_request_id uuid NULL`, índice único parcial `IX_tickets_tenant_client_request (tenant_id, client_request_id) WHERE client_request_id IS NOT NULL`, migración aparte `AddSupportTicketClientRequestId` (aditiva, sin relleno). `SupportTicket.CreateFromPublicForm` recibe `Guid? clientRequestId`. Orden del handler: resolver → si hay clave, `ISupportTicketRepository.FindByClientRequestAsync(tenantId, key)` → si existe, respuesta de reintento (L28) **antes** de Turnstile, validador y versiones. Sin ticket: el flujo de siempre. Carrera: dentro de la transacción, **después** de `numbers.NextAsync` (el `UPDATE … RETURNING` de `SupportTicketNumberGenerator` serializa las altas del tenant), se vuelve a buscar la clave; si la confirmó otro, se deshace la transacción (el número vuelve con el rollback) y se responde con el ganador. Respaldo: `SupportUnitOfWork` traduce `IX_tickets_tenant_client_request` **por nombre** a `SupportClientRequestTakenException` (Application) y el handler la atrapa igual. El cuerpo no se compara (como la tienda). `ClientRequestId == Guid.Empty` → `validation.failed`. La clave no se audita ni va a `ticket_events`. | Spec §9.2; el doble chequeo bajo el candado del contador hace la carrera determinista sin depender del 23505. |
-| L28 | PIN del reintento (D-7): con `ticket_access.last_sent_channel = 'Email'` y `last_failure_code IS NULL` → `Pin = null`, `PinEmailed = true`, nada se escribe. Si no (anónimo, sin canal, `send_failed`, `send_pending`), `SupportTicketAccess.Reissue(hash nuevo, now)` en una transacción corta y `Pin` = el nuevo, `PinEmailed = false`; no se manda correo ni texto. El reintento no pasa por `SupportOpeningDelivery`. | Spec §15 D-7. |
+| L28 | PIN del reintento (D-7, **confirmada por el owner el 2026-11-15**): con `ticket_access.last_sent_channel = 'Email'` y `last_failure_code IS NULL` → `Pin = null`, `PinEmailed = true`, nada se escribe. Lo mismo si el ticket tiene destino de correo y nada anotado todavía (el correo de apertura del primer intento sigue en vuelo): rotar invalidaría el PIN que va en ese correo (desvío C-2). Si no (anónimo, sin canal, `send_failed`, `send_pending`), `SupportTicketAccess.Reissue(hash nuevo, now)` en una transacción corta y `Pin` = el nuevo, `PinEmailed = false`; no se manda correo ni texto. El reintento no pasa por `SupportOpeningDelivery`. | Spec §15 D-7. |
 | L29 | Empresa del portal (D-6, opción a): `SupportFormVersion` gana `Guid? OrganizationCompanyId` (parámetro de `Create`; `Default` lo deja `null`). Columna `support.form_versions.organization_company_id uuid NULL`, índice `IX_form_versions_organization_company` y FK `FK_form_versions_companies_organization_company_id` → `companies.companies(id) ON DELETE RESTRICT`, escrita a mano en la migración `AddSupportFormOrganization` con `migrationBuilder.Sql` / `AddForeignKey` con `principalSchema: "companies"` (EF no la modela entre contextos; precedente `PosDbContext.cs:48-50`). El `Down` quita FK, índice y columna. Borrar la empresa responde `422 companies.company.in_use` sin tocar Companies: `CompaniesUnitOfWork.cs:48-54` traduce cualquier FK que frene el `DELETE` de una `Company`. | Spec §9.3. Companies migra antes que Support (`Program.cs:450`, `:510`). |
 | L30 | Puerto `ISupportOrganizationDirectory` (Application) con `SupportOrganizationRef(Guid Id, string Name, string DocumentTypeCode, string DocumentNumber, bool IsActive)`: `Task<IReadOnlyList<SupportOrganizationRef>> ListActiveAsync(Guid tenantId, CancellationToken)` (ordenadas por nombre) y `Task<SupportOrganizationRef?> FindAsync(Guid tenantId, Guid companyId, CancellationToken)` (filtra por tenant; inactiva incluida). Adaptador `SupportOrganizationDirectory` en `src/Bootstrapper/` sobre `ICompanyRepository`, calcado de `PosCompanyLookup.cs` (`SearchAsync(..., CompanyStatusFilter.Active)`, `FindAsync`, `DocumentType.ToWire()`, `TaxId`). Registro en `QepServiceCollectionExtensions` junto a `IPosCompanyLookup`. | Support no referencia `Modules.Companies.*` (`SupportLayerTests`); mismo patrón que POS y Quotations. |
 | L31 | `PUT /settings/public-form`: `UpdateFormSettingsRequest`/`Command` suman `Guid? OrganizationCompanyId` (opcional: `null` = sin empresa). Validador: `Guid.Empty` → `errors.OrganizationCompanyId`. Handler: si el valor **cambia** frente a la versión vigente y no es `null`, `FindAsync` tiene que devolver una empresa del tenant **activa**; si no existe, es de otro tenant o está inactiva → `422 support.form.organization_unavailable` (código nuevo). Si no cambia, no se valida (una empresa desactivada después no bloquea editar). `changedFields` suma `organizationCompanyId`. | Spec §9.3. |
@@ -621,8 +621,39 @@ D-1 a D-5 del spec §15, aprobadas tal como se recomendaron: pregunta de autoriz
 Agregadas el 2026-11-15 en la revisión del spec del portal (Bloque C):
 
 - **D-6 «No omitir datos»:** fecha de radicación y término en días hábiles en el radicado y la consulta (L26, Tarea 8). **NIT, resuelto con la opción (a):** el tenant elige en Ajustes › Formulario público una de sus empresas y el portal muestra su nombre, tipo y número de documento (L29–L32, Tarea 10).
-- **D-8 (nueva, del spec): la empresa es obligatoria para publicar** (`organization_required`). Asumida como se recomienda; si el owner la quiere opcional, se quita ese bloqueador y nada más cambia.
-- **D-7 Radicado idempotente por `clientRequestId`** (L27, Tarea 9), calcado del checkout de la tienda. Pendiente de confirmar la regla del PIN en un reintento (L28): `null` si ya salió por correo, uno nuevo si no salió por ningún canal.
+- **D-8: la empresa es obligatoria para publicar** (`organization_required`). **Confirmada por el owner el 2026-11-15.**
+- **D-7 Radicado idempotente por `clientRequestId`** (L27, Tarea 9), calcado del checkout de la tienda. **La regla del PIN en un reintento (L28) la confirmó el owner el 2026-11-15**: `null` con `pinEmailed: true` si ya salió por correo; uno nuevo, sólo en la respuesta y sin correo, si no salió por ningún canal (el viejo deja de servir).
+- **D-9: la IP del visitante en las aceptaciones la ve quien ve el ticket** (owner, 2026-11-15). `legalAcceptances[].visitorIp` del detalle y la foto de `GET …/legal-acceptances/{kind}` siguen con `support.ticket.view`, como dice el spec §7. Sin cambio de código.
+
+## Desvíos del Bloque C (implementación, 2026-11-15)
+
+Ninguno cambia el «Contrato para las pantallas».
+
+1. **C-1 `SupportPublicIdempotencyApiTests` usa `SupportPublicHost`, no `SharedSupportHost`.** Necesita Turnstile de mentira y el
+   correo de apertura que anota (`FakeSupportCaptcha`, `RecordingSupportOpeningEmail`), que sólo monta el host público.
+2. **C-2 L28 con el correo en vuelo.** Con destino de correo y `ticket_access` sin anotar (`last_sent_channel` `NULL`: el primer intento
+   todavía está mandando, p. ej. dos `POST` simultáneos), el reintento responde `pin: null`, `pinEmailed: true` y no rota. Rotar dejaría
+   sin valor el PIN que va en ese correo. `send_failed` y `send_pending` rotan como dice L28.
+3. **C-3 `successMessage` del reintento** sale de la versión del formulario con que se radicó el ticket (`form_version_id`), no de la
+   vigente: el contrato pide «el mismo `successMessage`» aunque el formulario haya cambiado.
+4. **C-4 Parámetros opcionales al final.** `SupportTicket.CreateFromPublicForm(…, Guid? clientRequestId = null)`,
+   `SupportFormVersion.Create(…, Guid? organizationCompanyId = null)`, `FilePublicTicketCommand(…, Guid? ClientRequestId = null)` y
+   `UpdateFormSettingsRequest(…, Guid? OrganizationCompanyId = null)`: los llamadores existentes no cambian. El dominio rechaza
+   `Guid.Empty` en los dos.
+5. **C-5 Bloqueadores.** `SupportFormSettings.BlockersAsync` recibe la versión candidata y la empresa ya leída; una empresa elegida que
+   no resuelve para el tenant (imposible con la FK y la validación del `PUT`) cuenta como `organization_required`. El orden queda
+   documentos → empresa → tipos.
+6. **C-6 Registro de `ISupportOrganizationDirectory`** junto a los demás puertos de Soporte en `QepServiceCollectionExtensions`, no junto
+   a `IPosCompanyLookup`; mismo archivo.
+7. **C-7 Siembra de empresas en las pruebas** por el dominio y el repositorio de Companies (`SupportPublicHarness.SeedCompanyAsync`), no
+   por SQL: no depende de las columnas de `companies.companies`. `SupportFormSettingsApiTests` se ajustó a D-8: las pruebas que publican
+   eligen una empresa, y los bloqueadores esperados suman `organization_required` donde no la hay.
+8. **C-8 Revisión del Bloque B (opcional): sin caché del HTML saneado por versión.** El re-saneo existe por una fila cambiada a mano, y
+   una caché por id seguiría sirviendo lo de antes del cambio; el costo es a lo sumo tres pasadas del saneador por request. Queda
+   anotado en `SupportServedLegal`.
+9. **C-9 Pruebas no corridas** (owner, 2026-11-15: «no se corre ninguna prueba»): RED y GREEN se reducen a `dotnet build`; las de
+   comportamiento quedan «RED sin evidencia: no se corre». `dotnet format --verify-no-changes` en el checkout de Windows sólo reporta
+   `ENDOFLINE`/`WHITESPACE` por los CRLF del árbol de trabajo (también en archivos no tocados); se corre antes del merge.
 
 ## Spec discrepancies (spec contra código)
 

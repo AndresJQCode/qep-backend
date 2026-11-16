@@ -406,7 +406,9 @@ el checkout de la tienda (`SubmitOrderRequest.cs:227-232`, `IStoreOrderGateway.c
   sigue como hoy.
 - **Cuerpo distinto**: no se compara, igual que la tienda («devuelve el pedido que ya salió … aunque éste nombre otra
   [moneda]»). La clave identifica el intento; lo que el reintento traiga distinto se ignora.
-- **Carrera**: dos requests con la misma clave a la vez. El índice rechaza al segundo al confirmar; `SupportUnitOfWork` lo
+- **Carrera**: dos requests con la misma clave a la vez. Dentro de la transacción, después de tomar el número (el
+  `UPDATE … RETURNING` del contador serializa las altas del tenant), la clave se vuelve a buscar: si el otro ya la
+  confirmó, se responde con él (plan L27). De respaldo, el índice rechaza al segundo al confirmar; `SupportUnitOfWork` lo
   reconoce **por nombre** y el handler relee el ganador y responde con él, como `KeyedOrderCommit`. La transacción
   perdedora se deshace entera, número de radicado incluido: no se consume un segundo radicado.
 - **Respuesta**: la misma forma (`201 SupportPublicFiledDto`), con los datos del ticket guardado. No se reenvía nada que
@@ -555,8 +557,8 @@ se itera, la clase completa una vez por bloque, nunca dos corridas de integraci�
 
 ## 15. Decisiones del owner (resueltas 2026-11-15)
 
-El owner aprobó D-1 a D-5 tal como se recomendaron, y agregó D-6 y D-7. El cuerpo del spec ya las aplica. D-8 es nueva
-(de este spec) y el plan la asume como se recomienda.
+El owner aprobó D-1 a D-5 tal como se recomendaron, y agregó D-6 y D-7. El cuerpo del spec ya las aplica. D-8, la regla
+del PIN de D-7 y D-9 los confirmó el owner el 2026-11-15 (abajo).
 
 - **D-1 Pregunta de autorización: editable, con una por defecto.** Campo de texto plano opcional en el aviso de
   privacidad (`authorizationQuestion`, 1–500). Sin él, el backend arma la pregunta por defecto con el nombre del tenant
@@ -588,13 +590,21 @@ El owner aprobó D-1 a D-5 tal como se recomendaron, y agregó D-6 y D-7. El cue
   `PinEmailed: true`: el solicitante lo tiene en el correo y puede pedir «Reenviar PIN». Si no salió por ningún canal
   (anónimo, o el correo falló), se **emite un PIN nuevo** que reemplaza al anterior y viaja sólo en la respuesta, sin
   correo: sin eso, un anónimo que perdió la primera respuesta perdería su caso. La clave sólo la conoce el navegador que
-  radicó (UUID aleatorio que nunca se muestra), así que rotar el PIN con ella no abre nada a un tercero.
+  radicó (UUID aleatorio que nunca se muestra), así que rotar el PIN con ella no abre nada a un tercero. **Confirmada por
+  el owner el 2026-11-15** tal como está. Nota de implementación (plan L28): con destino de correo y nada anotado todavía
+  en `ticket_access` (el correo de apertura del primer intento sigue en vuelo, p. ej. dos `POST` simultáneos), el
+  reintento se trata como «ya salió por correo» (`Pin: null`, `PinEmailed: true`) y no rota: un PIN nuevo dejaría sin
+  valor el que va en ese correo.
 
-**Nueva, de este spec (2026-11-15), asumida por el plan hasta que el owner responda:**
+**Confirmadas por el owner el 2026-11-15:**
 
-- **D-8 ¿La empresa del portal es obligatoria para publicar?** **Recomendación: sí** (bloqueador `organization_required`,
-  §9.3). El owner pidió no omitir el NIT; un formulario publicado sin empresa lo omitiría. Si el owner prefiere que sea
-  opcional, el bloqueador se quita y `organization` llega `null` hasta que la elijan; nada más cambia.
+- **D-8 La empresa del portal es obligatoria para publicar** [owner]. Bloqueador `organization_required` (§9.3): el owner
+  pidió no omitir el NIT y un formulario publicado sin empresa lo omitiría. Como los demás bloqueadores, sólo frena pasar
+  de sin publicar a publicado; `organization` llega `null` sólo en un formulario publicado antes de este cambio o en la
+  consulta de un tenant que nunca la eligió.
+- **D-9 La IP del visitante en las aceptaciones la ve quien ve el ticket** [owner]. `legalAcceptances[].visitorIp` del
+  detalle y `visitorIp` de `GET /tickets/{ticketId}/legal-acceptances/{kind}` siguen visibles con `support.ticket.view`
+  (§7), sin un permiso aparte. Sin cambio de código.
 
 ## 16. Discrepancias encontradas (spec contra código)
 
