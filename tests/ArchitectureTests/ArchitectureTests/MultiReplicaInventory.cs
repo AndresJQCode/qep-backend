@@ -159,7 +159,7 @@ public static class MultiReplicaInventory
         new("Bootstrapper.Valkey.Presence.PresenceHeartbeatWorker", WorkerClassification.PerPod,
             "Bootstrapper/Valkey/Presence/PresenceHeartbeatWorker.cs:33-56 — late los conectados a su pod (ZADD idempotente); sólo con Valkey:Areas:Presence"),
         new("Bootstrapper.Realtime.RealtimeEventsListener", WorkerClassification.PerPod,
-            "Bootstrapper/Realtime/RealtimeEventsListener.cs:80 — LISTEN qep_realtime por pod para las conexiones del hub global de ese pod (plan 2026-11-15, N7)"),
+            "Bootstrapper/Realtime/RealtimeEventsListener.cs:107 — LISTEN qep_realtime por pod para las conexiones del hub global de ese pod (plan 2026-11-15, N7)"),
         new("Bootstrapper.Realtime.RealtimePresenceSweeper", WorkerClassification.PerPod,
             "Bootstrapper/Realtime/RealtimePresenceSweeper.cs:23 — relee cada 5 s la presencia de los grupos que este pod entregó y la reentrega sólo a sus conexiones, sin NOTIFY (plan 2026-11-15, N10)"),
 

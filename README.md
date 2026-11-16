@@ -5400,7 +5400,8 @@ Los archivos usan la subida sin miembro de Storage con dueño `SupportTicket` y 
 (SHA-256 de `support-note|{ticketId}|{memberId}` marcado como UUID v8, plan N18): sólo quien abrió la subida la usa, y sólo en una nota
 de ese ticket; una subida del formulario público no sirve en una nota ni al revés. `ticket_note_files` guarda la foto del archivo
 (nombre, tipo y tamaño) y la retiene `SupportAttachmentReferenceProbe` frente al barrido de staging. El tope `attachments_busy` del
-formulario cuenta sólo claves v4 (las suyas), así que una subida de nota, adjunta o abandonada, nunca cuenta.
+formulario cuenta sólo claves v4 (las suyas), así que una subida de nota, adjunta o abandonada, nunca cuenta; y completar o radicar
+con un `uploadKey` que no es v4 responde `422 support.public.attachment_invalid` (`SupportPublicUploads`).
 
 **Migración:** `Support` `AddSupportTicketNotes` (`ticket_notes`, `ticket_note_files`), aditiva.
 
