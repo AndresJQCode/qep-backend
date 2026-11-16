@@ -15,6 +15,11 @@ public interface IOrderResponseComposer
     /// <see cref="OrderResponses.ToResponse"/> directo porque el desglose de retenciones necesita el calendario del tenant
     /// (spec retenciones por UVT §5.2).</summary>
     Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken);
+
+    /// <summary>La vista previa de la conversión (spec alerta UVT §5.3). Su desglose pasa por el mismo contexto de UVT que
+    /// el del pedido, con la fecha con que se armó, para que diga lo mismo que dirá el pedido ya creado.</summary>
+    Task<QuotationConversionPreviewResponse> ComposeConversionPreviewAsync(
+        Guid tenantId, QuotationConversionPreviewDto preview, CancellationToken cancellationToken);
 }
 
 public sealed class OrderResponseComposer(
@@ -103,6 +108,19 @@ public sealed class OrderResponseComposer(
         var taxUnits = await QuotationResponseComposer.TaxUnitContextAsync(
             tenantClock, withholdingLookup, tenantId, order.CreatedAt, order.WithholdingBreakdown, cancellationToken);
         return OrderResponses.ToResponse(order, taxUnits);
+    }
+
+    public async Task<QuotationConversionPreviewResponse> ComposeConversionPreviewAsync(
+        Guid tenantId, QuotationConversionPreviewDto preview, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        var taxUnits = await QuotationResponseComposer.TaxUnitContextAsync(
+            tenantClock, withholdingLookup, tenantId, preview.CreatedAt, preview.WithholdingBreakdown, cancellationToken);
+        return new QuotationConversionPreviewResponse(
+            preview.RetentionAmount,
+            preview.NetTotal,
+            QuotationResponseComposer.ToBreakdownResponse(preview.WithholdingBreakdown, taxUnits),
+            preview.TaxUnitChange);
     }
 }
 

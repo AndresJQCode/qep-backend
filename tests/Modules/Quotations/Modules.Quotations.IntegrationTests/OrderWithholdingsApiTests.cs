@@ -368,6 +368,109 @@ public sealed class OrderWithholdingsApiTests
             (entry.TaxUnitYear, entry.TaxUnitOutdated, entry.TaxUnitLatestYear));
     }
 
+    // Spec alerta UVT §5.3: la cotización se envió con la UVT del año anterior (2 × 50.000 = 100.000, aplica: 4.000); cargada
+    // la del año (2 × 60.000), la vista previa dice qué cambia al convertir, con los dos lados calculados en el backend.
+    [Fact]
+    public async Task ConversionPreviewShowsTheTaxUnitChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(factory, taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var preview = await GetConversionPreviewAsync(setup, quotation.Id);
+
+        Assert.NotNull(preview.TaxUnitChange);
+        Assert.Equal(
+            [new TaxUnitShiftDto("CO", thisYear - 1, Uvt, thisYear, 60_000m)], preview.TaxUnitChange.TaxUnits);
+        var row = Assert.Single(preview.TaxUnitChange.Withholdings);
+        Assert.Equal(
+            (servicios, true, false, 4_000m, 0m, (decimal?)100_000m, (decimal?)120_000m),
+            (row.TaxRateId, row.FromApplies, row.ToApplies, row.FromAmount, row.ToAmount, row.FromMinimumBaseAmount,
+                row.ToMinimumBaseAmount));
+        Assert.Equal(
+            (quotation.NetTotal, quotation.Total, quotation.Total, 0m),
+            (preview.TaxUnitChange.FromNetTotal, preview.TaxUnitChange.ToNetTotal, preview.NetTotal, preview.RetentionAmount));
+        var entry = Assert.Single(preview.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)thisYear, false, (int?)thisYear, "BelowMinimumBase"),
+            (entry.TaxUnitYear, entry.TaxUnitOutdated, entry.TaxUnitLatestYear, entry.Reason));
+    }
+
+    // Con la UVT del año ya cargada al cotizar, convertir no cambia nada: no hay alerta.
+    [Fact]
+    public async Task ConversionPreviewWithoutChangeHasNoTaxUnitChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+
+        var preview = await GetConversionPreviewAsync(setup, quotation.Id);
+
+        Assert.Null(preview.TaxUnitChange);
+        Assert.Equal((quotation.NetTotal, quotation.RetentionAmount), (preview.NetTotal, preview.RetentionAmount));
+    }
+
+    // Los números de pedido no tienen huecos: la vista previa no toma el contador, así que el primer pedido del tenant sigue
+    // siendo el 0001 (el formato por defecto de DocumentNumberingApiTests).
+    [Fact]
+    public async Task ConversionPreviewDoesNotSpendTheOrderNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+
+        await GetConversionPreviewAsync(setup, quotation.Id);
+        await GetConversionPreviewAsync(setup, quotation.Id);
+        var order = await ConvertAsync(setup, quotation.Id);
+
+        Assert.Equal($"PED-{TodayInBogota().Year}-0001", order.OrderNumber);
+    }
+
+    // Las mismas precondiciones que la conversión antes de pedir el número: una cotización convertida no se convierte otra vez.
+    [Fact]
+    public async Task ConversionPreviewOfAConvertedQuotationIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        await ConvertAsync(setup, quotation.Id);
+
+        var response = await setup.Client.GetAsync(ConversionPreviewUrl(setup, quotation.Id), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("quotation.quotation.status_not_convertible", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task ConversionPreviewRequiresOrderManage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, OrdersPermissions.OrderRead);
+        using var _ = client;
+
+        var response = await client.GetAsync(
+            $"{QuotationsUrl(tenantId)}/{Guid.CreateVersion7()}/order/preview", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     // Review Focus 3: un pedido facturado ya no es editable; cargar la UVT del año no lo mueve, ni al leerlo ni al
     // intentar editarlo.
     [Fact]
@@ -457,6 +560,19 @@ public sealed class OrderWithholdingsApiTests
         var converted = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(converted);
         return (await GetDetailAsync(setup, converted.Id)).Order;
+    }
+
+    private static string ConversionPreviewUrl(Setup setup, Guid quotationId) =>
+        $"{QuotationsUrl(setup.TenantId)}/{quotationId}/order/preview";
+
+    private static async Task<QuotationConversionPreviewResponse> GetConversionPreviewAsync(Setup setup, Guid quotationId)
+    {
+        var response = await setup.Client.GetAsync(ConversionPreviewUrl(setup, quotationId), TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.IsSuccessStatusCode, $"{(int)response.StatusCode} {text}");
+        var preview = JsonSerializer.Deserialize<QuotationConversionPreviewResponse>(text, JsonSerializerOptions.Web);
+        Assert.NotNull(preview);
+        return preview;
     }
 
     private static async Task<OrderResponse> CreateManualAsync(
