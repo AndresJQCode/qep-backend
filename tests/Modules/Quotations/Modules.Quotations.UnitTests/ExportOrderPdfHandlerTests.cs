@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -118,7 +119,7 @@ public sealed class ExportOrderPdfHandlerTests
                 new StubQuotationBuyerAccountLookup()),
             new OrderPdfProvider(
                 renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
-                new StubTenantDirectory()),
+                new StubTenantDirectory(), new StubPdfContentStore(), new RichTextHtmlReader()),
             storage,
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
