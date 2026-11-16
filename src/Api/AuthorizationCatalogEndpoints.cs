@@ -103,25 +103,28 @@ public static class AuthorizationCatalogEndpoints
         var isOperator = operatorTenant.IsOperator(tenantId);
         bool Offered(string permission) => modules is null || entitlementMask.Allows(permission, modules);
         // Spec 2026-10-08 §2 y D11: operator.* nunca es una casilla (ningún rol personalizado puede
-        // llevarlo), y en roles[] sólo lo ve el tenant operador.
-        bool OfferedInRole(string permission) =>
-            Offered(permission) && (isOperator || !OperatorPermissionFilter.IsOperatorPermission(permission));
+        // llevarlo), y en roles[] sólo lo ve el tenant operador (lo resuelve RoleAssignability).
         bool OfferedAsCheckbox(string permission) =>
             Offered(permission) && !OperatorPermissionFilter.IsOperatorPermission(permission);
 
         return Results.Ok(new AuthorizationCatalogResponse(
             roleCatalog.CatalogVersion,
             roleCatalog.ListRoles()
-                .Select(role => new RoleCatalogItemResponse(
-                    role.Role,
-                    role.DisplayName,
-                    role.Description,
-                    role.Category,
-                    role.RiskLevel,
-                    role.Permissions
-                        .Where(OfferedInRole)
-                        .OrderBy(permission => permission, StringComparer.Ordinal)
-                        .ToArray()))
+                .Select(role =>
+                {
+                    // Spec 2026-11-15: el mismo cálculo que RoleReferenceValidator, para que la pantalla
+                    // no ofrezca un rol que la API rechaza con role_unavailable.
+                    var offered = RoleAssignability.OfferedPermissions(
+                        role.Permissions, modules, isOperator, entitlementMask);
+                    return new RoleCatalogItemResponse(
+                        role.Role,
+                        role.DisplayName,
+                        role.Description,
+                        role.Category,
+                        role.RiskLevel,
+                        offered.OrderBy(permission => permission, StringComparer.Ordinal).ToArray(),
+                        offered.Count > 0);
+                })
                 .ToArray(),
             roleCatalog.ListPermissions()
                 .Where(permission => OfferedAsCheckbox(permission.Permission))
@@ -146,7 +149,11 @@ public sealed record RoleCatalogItemResponse(
     string Description,
     string Category,
     string RiskLevel,
-    IReadOnlyCollection<string> Permissions);
+    IReadOnlyCollection<string> Permissions,
+    // Spec 2026-11-15: false si el rol no concede ningún permiso que el tenant ofrece (Cajero sin pos).
+    // La pantalla no lo ofrece al invitar y sólo deja quitarlo a quien ya lo tiene; la API rechaza
+    // agregarlo con 422 tenancy.membership.role_unavailable.
+    bool Assignable);
 
 public sealed record PermissionCatalogItemResponse(
     string Permission,
