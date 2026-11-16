@@ -1699,6 +1699,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("tax_unit_value");
 
+                            b1.Property<short?>("TaxUnitYear")
+                                .HasColumnType("smallint")
+                                .HasColumnName("tax_unit_year");
+
                             b1.Property<string>("Type")
                                 .IsRequired()
                                 .HasMaxLength(32)
@@ -1919,6 +1923,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasPrecision(14, 2)
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("tax_unit_value");
+
+                            b1.Property<short?>("TaxUnitYear")
+                                .HasColumnType("smallint")
+                                .HasColumnName("tax_unit_year");
 
                             b1.Property<string>("Type")
                                 .IsRequired()

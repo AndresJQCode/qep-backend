@@ -353,6 +353,7 @@ public static class OrderEndpoints
         Guid orderId,
         AddOrderPaymentProofsRequest request,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
@@ -363,7 +364,7 @@ public static class OrderEndpoints
                 request.PaymentProofs,
                 request.UpdatedProofs ?? []),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     private static async Task<IResult> RemoveOrderPaymentProofAsync(
@@ -371,12 +372,13 @@ public static class OrderEndpoints
         Guid orderId,
         Guid proofId,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
             new RemoveOrderPaymentProofCommand(tenantId, orderId, proofId),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     private static async Task<IResult> CreateOrderAsync(
@@ -554,24 +556,26 @@ public static class OrderEndpoints
         Guid orderId,
         CancelOrderRequest request,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
             new CancelOrderCommand(tenantId, orderId, request.Reason),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     private static async Task<IResult> InvoiceOrderAsync(
         Guid tenantId,
         Guid orderId,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
             new InvoiceOrderCommand(tenantId, orderId),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     private static void MapStateAction<TCommand>(
@@ -582,9 +586,16 @@ public static class OrderEndpoints
         where TCommand : ICommand<OrderDto> =>
         collection.MapPost(
                 $"/{{orderId:guid}}/{action}",
-                async (Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-                    Results.Ok(OrderResponses.ToResponse(
-                        await dispatcher.SendAsync(createCommand(tenantId, orderId), cancellationToken))))
+                async (
+                    Guid tenantId,
+                    Guid orderId,
+                    IRequestDispatcher dispatcher,
+                    IOrderResponseComposer composer,
+                    CancellationToken cancellationToken) =>
+                    Results.Ok(await composer.ComposeOrderAsync(
+                        tenantId,
+                        await dispatcher.SendAsync(createCommand(tenantId, orderId), cancellationToken),
+                        cancellationToken)))
             .RequireAuthorization(permission)
             .Produces<OrderResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -595,12 +606,13 @@ public static class OrderEndpoints
         Guid tenantId,
         Guid orderId,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
             new RevertOrderInvoicingCommand(tenantId, orderId),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     // Acepta un ETag fuerte o débil, con o sin comillas: el frontend manda lo que recibió.

@@ -5,7 +5,8 @@ namespace Modules.Quotations.Domain;
 /// <summary>
 /// La foto de una tasa de retención que un documento congela (spec 2026-11-10 §7.5): nombre, tipo, país,
 /// porcentaje, base mínima y el valor de la unidad tributaria resuelto para la fecha del documento.
-/// Editar la tasa en el catálogo o cargar otra UVT no la mueve.
+/// Editar la tasa en el catálogo no la mueve; cargar otra UVT sólo mueve la de un documento editable
+/// (spec retenciones por UVT §5.4, <c>RefreshTaxUnits</c>).
 /// </summary>
 /// <param name="TaxRateId">La tasa del catálogo de la que salió; sin FK, la tasa puede borrarse después.</param>
 /// <param name="MinimumBase">En unidades tributarias si el país tiene unidad, en dinero si no; null = sin base.</param>
@@ -30,6 +31,12 @@ public sealed record WithholdingRate(
     /// <c>rate with { Percentage = p }</c>, que conserva éste.
     /// </summary>
     public decimal CatalogPercentage { get; init; } = Percentage;
+
+    /// <summary>
+    /// El año de la UVT congelada en <see cref="TaxUnitValue"/> (spec retenciones por UVT §5.2): menor al del documento
+    /// cuando la del año en curso no estaba cargada. Null sin unidad, o en una fila anterior a esta columna que no casó.
+    /// </summary>
+    public int? TaxUnitYear { get; init; }
 
     /// <summary>Si el asesor cambió el porcentaje del catálogo en este documento.</summary>
     public bool Overridden => Percentage != CatalogPercentage;

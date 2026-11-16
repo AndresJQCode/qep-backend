@@ -50,6 +50,32 @@ public sealed class QuotationWithholdingLookupTests
         Assert.Null(Assert.Single(rates, rate => rate.TaxRateId == WithBase.Id.Value).TaxUnitValue);
     }
 
+    // Spec retenciones por UVT §5.2: la foto congela el año de la UVT que usó, para que un documento de 2026 con sólo la
+    // de 2025 cargada muestre que está desactualizada. Sin base mínima no hay unidad ni año.
+    [Fact]
+    public async Task PhotoFreezesTheTaxUnitYear()
+    {
+        var rates = await ForCustomerAsync(country: null, new DateOnly(2026, 1, 10), Uvt(2025, 49_799m));
+
+        var withBase = Assert.Single(rates, rate => rate.TaxRateId == WithBase.Id.Value);
+        Assert.Equal(((decimal?)49_799m, (int?)2025), (withBase.TaxUnitValue, withBase.TaxUnitYear));
+        Assert.Null(Assert.Single(rates, rate => rate.TaxRateId == Retefuente.Id.Value).TaxUnitYear);
+    }
+
+    // Spec retenciones por UVT §5.4: el refresco pide la UVT vigente de cada país con la regla de la foto (el año del
+    // documento o el mayor anterior). Un país sin valores no sale en el diccionario.
+    [Fact]
+    public async Task TaxUnitsAsyncResolvesPerCountry()
+    {
+        var lookup = Lookup(new FakeCustomerRepository(), [], Uvt(2025, 47_065m), Uvt(2026, 49_799m));
+
+        var units = await lookup.TaxUnitsAsync(["CO", "ES"], new DateOnly(2026, 3, 1), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            [new KeyValuePair<string, Modules.Quotations.Domain.TaxUnitPhoto>("CO", new(49_799m, 2026))],
+            units.ToArray());
+    }
+
     [Theory]
     [InlineData(null, 2)]
     [InlineData("CO", 2)]

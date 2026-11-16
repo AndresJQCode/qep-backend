@@ -225,9 +225,16 @@ public sealed class SaveOrderEditsHandler(
                 shippingSummary = OrderChangeSummary.ShippingChanged(shippingBefore, order.ShippingDetails, format);
             }
 
+            // Spec retenciones por UVT §5.4: la UVT vigente, después de las ediciones y antes de recalcular el estado de pago
+            // (una retención que deja de aplicar sube el neto). Sin historial propio, pero se guarda aunque sea lo único que
+            // cambió: si no, el pedido seguiría con la UVT vieja después de «guardar».
+            var taxUnitsChanged = await TaxUnitRefresh.RefreshAsync(
+                order, withholdingLookup, TaxUnitRefresh.DocumentDate(tenantClock, command.TenantId, order.CreatedAt),
+                cancellationToken);
+
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
             if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged
-                && !shippingChanged && !billingChanged && !accountChanged && !withholdingsChanged)
+                && !shippingChanged && !billingChanged && !accountChanged && !withholdingsChanged && !taxUnitsChanged)
             {
                 // Nada cambió: ni versión nueva ni historial. El cliente recibe lo que ya tenía.
                 return await OrderDetails.LoadAsync(

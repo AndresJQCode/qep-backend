@@ -160,6 +160,10 @@ internal static class QuotationEditsApplication
 
         var percentageChanges = ApplyPercentages(quotation, edits, reResolution.Triggered, updatedBy, now);
 
+        // Spec retenciones por UVT §5.4: al final, sobre las filas que dejaron los selectores y la re-resolución, con la
+        // fecha del documento. Recalcula por su cuenta y no deja historial: el guardado y la vista previa ven lo mismo.
+        await TaxUnitRefresh.RefreshAsync(quotation, withholdings.Lookup, withholdings.DocumentDate, cancellationToken);
+
         return new QuotationEditsOutcome(before, after, itemEdits)
         {
             Municipal = reResolution,

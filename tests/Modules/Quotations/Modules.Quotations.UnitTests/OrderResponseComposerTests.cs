@@ -37,8 +37,56 @@ public sealed class OrderResponseComposerTests
         var dto = order.ToDto();
 
         Assert.Equal(("Sin cebolla", "Shopify #1001"), (dto.BuyerNotes, dto.Notes));
-        Assert.Equal("Sin cebolla", OrderResponses.ToResponse(dto).BuyerNotes);
+        Assert.Equal("Sin cebolla", OrderResponses.ToResponse(dto, documentYear: null).BuyerNotes);
     }
+
+    // Spec retenciones por UVT §9: año igual → false; anterior → true; sin año (sin unidad o legada) → false.
+    [Theory]
+    [InlineData(2026, 2026, false)]
+    [InlineData(2025, 2026, true)]
+    [InlineData(null, 2026, false)]
+    [InlineData(2025, null, false)]
+    public void TaxUnitOutdatedComparesWithTheDocumentYear(int? taxUnitYear, int? documentYear, bool expected) =>
+        Assert.Equal(expected, QuotationResponseComposer.IsOutdated(taxUnitYear, documentYear));
+
+    // Review Focus 2: el 1 de enero a la 01:00 UTC es todavía 31 de diciembre en Bogotá; la UVT de ese año no está
+    // desactualizada. El año sale del calendario del tenant, no de UTC.
+    [Fact]
+    public async Task TheDocumentYearIsTheTenantLocalYear()
+    {
+        var clock = new FixedTenantClock(Now);
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with
+        {
+            CreatedAt = new DateTimeOffset(2026, 1, 1, 1, 0, 0, TimeSpan.Zero),
+            WithholdingBreakdown = [Verdict(taxUnitYear: 2025)],
+        };
+
+        var response = await Composer(clock: clock).ComposeOrderAsync(TenantId, order, TestContext.Current.CancellationToken);
+
+        Assert.False(Assert.Single(response.WithholdingBreakdown).TaxUnitOutdated);
+        Assert.Equal([TenantId], clock.RequestedTenantIds);
+    }
+
+    // Sin ninguna fila con año no hay nada que comparar: el calendario no se lee.
+    [Fact]
+    public async Task WithoutTaxUnitYearsTheCalendarIsNotRead()
+    {
+        var clock = new FixedTenantClock(Now);
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with
+        {
+            WithholdingBreakdown = [Verdict(taxUnitYear: null)],
+        };
+
+        var response = await Composer(clock: clock).ComposeOrderAsync(TenantId, order, TestContext.Current.CancellationToken);
+
+        Assert.False(Assert.Single(response.WithholdingBreakdown).TaxUnitOutdated);
+        Assert.Empty(clock.RequestedTenantIds);
+    }
+
+    private static WithholdingVerdictDto Verdict(int? taxUnitYear) => new(
+        Guid.CreateVersion7(), "Retefuente servicios 4 %", "Retefuente", "CO", 4m, 4m, false, null, false,
+        "BelowMinimumBase", 100_000m, 4m, taxUnitYear is null ? null : "UVT", taxUnitYear is null ? null : 199_196m,
+        taxUnitYear is null ? null : 49_799m, taxUnitYear, 0m);
 
     [Fact]
     public async Task AStoreOrderComposesLikeAnyOtherOrder()
@@ -172,7 +220,9 @@ public sealed class OrderResponseComposerTests
     }
 
     private static OrderResponseComposer Composer(
-        StubQuotationCustomerLookup? customers = null, StubQuotationBuyerAccountLookup? buyers = null) =>
+        StubQuotationCustomerLookup? customers = null,
+        StubQuotationBuyerAccountLookup? buyers = null,
+        FixedTenantClock? clock = null) =>
         new(
             customers ?? new StubQuotationCustomerLookup(Customer),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
@@ -180,5 +230,6 @@ public sealed class OrderResponseComposerTests
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             new StubQuotationWithholdingLookup(),
             new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
-            buyers ?? new StubQuotationBuyerAccountLookup());
+            buyers ?? new StubQuotationBuyerAccountLookup(),
+            clock ?? new FixedTenantClock(Now));
 }

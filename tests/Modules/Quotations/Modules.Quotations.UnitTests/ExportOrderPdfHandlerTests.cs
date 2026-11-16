@@ -116,7 +116,8 @@ public sealed class ExportOrderPdfHandlerTests
                 new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
                 new StubQuotationWithholdingLookup(),
                 new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
-                new StubQuotationBuyerAccountLookup()),
+                new StubQuotationBuyerAccountLookup(),
+                new FixedTenantClock(Now)),
             new OrderPdfProvider(
                 renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
                 new StubTenantDirectory(), new StubPdfContentStore(), new RichTextHtmlReader()),

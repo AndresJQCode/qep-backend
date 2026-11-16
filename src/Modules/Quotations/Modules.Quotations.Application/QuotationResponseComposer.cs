@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -31,7 +32,8 @@ public sealed class QuotationResponseComposer(
     IQuotationCompanyLookup companyLookup,
     IQuotationSettingsStore settingsStore,
     IQuotationWithholdingLookup withholdingLookup,
-    IQuotationGeographyLookup geographyLookup)
+    IQuotationGeographyLookup geographyLookup,
+    ITenantClock tenantClock)
     : IQuotationResponseComposer
 {
     public async Task<QuotationResponse> ComposeAsync(
@@ -74,6 +76,8 @@ public sealed class QuotationResponseComposer(
             ownBilling ? quotation.BillingWithholdingTaxRates : quotation.CustomerWithholdingTaxRates,
             MunicipalWithholdingExplanation.DateOf(quotation.CreatedAt),
             cancellationToken);
+        var documentYear = await DocumentYearAsync(
+            tenantClock, tenantId, quotation.CreatedAt, quotation.WithholdingBreakdown, cancellationToken);
 
         return new QuotationResponse(
             quotation.Id,
@@ -130,7 +134,8 @@ public sealed class QuotationResponseComposer(
             clientContacts,
             municipal.OperationCity,
             municipal.BillingCompanyCity,
-            municipal.Entries);
+            municipal.Entries,
+            ToBreakdownResponse(quotation.WithholdingBreakdown, documentYear));
     }
 
     /// <summary>Los contactos de la empresa del cliente (spec 2026-11-10 §4.6), en una consulta por documento. Un cliente que no
@@ -146,6 +151,49 @@ public sealed class QuotationResponseComposer(
         var contacts = await customerLookup.ListContactsAsync(tenantId, customer.Id, cancellationToken);
         return [.. contacts.Select(contact => new ClientContactDto(contact.Id, contact.Name, contact.Phone))];
     }
+
+    /// <summary>
+    /// El año del documento con el que se decide si su UVT está desactualizada (spec retenciones por UVT §5.2): el de su
+    /// <c>CreatedAt</c> en la zona del tenant, la misma fecha con que se congeló la foto. El 31 de diciembre a las 20:00 en
+    /// Bogotá ya es el año siguiente en UTC. El calendario se lee sólo si alguna fila trae año: null si ninguna.
+    /// </summary>
+    internal static async Task<int?> DocumentYearAsync(
+        ITenantClock tenantClock,
+        Guid tenantId,
+        DateTimeOffset createdAt,
+        IReadOnlyList<WithholdingVerdictDto>? breakdown,
+        CancellationToken cancellationToken) =>
+        breakdown?.Any(verdict => verdict.TaxUnitYear is not null) == true
+            ? DocumentDates.LocalDate(await tenantClock.GetAsync(tenantId, cancellationToken), createdAt).Year
+            : null;
+
+    /// <summary>El desglose tal como viaja. Una fila sin año (sin unidad o legada sin casar) nunca está desactualizada.</summary>
+    internal static IReadOnlyList<WithholdingBreakdownResponse> ToBreakdownResponse(
+        IReadOnlyList<WithholdingVerdictDto>? breakdown, int? documentYear) =>
+        [
+            .. (breakdown ?? []).Select(verdict => new WithholdingBreakdownResponse(
+                verdict.TaxRateId,
+                verdict.Name,
+                verdict.Type,
+                verdict.Country,
+                verdict.Percentage,
+                verdict.CatalogPercentage,
+                verdict.PercentageOverridden,
+                verdict.CityId,
+                verdict.Applies,
+                verdict.Reason,
+                verdict.Base,
+                verdict.MinimumBase,
+                verdict.MinimumBaseUnit,
+                verdict.MinimumBaseAmount,
+                verdict.TaxUnitValue,
+                verdict.TaxUnitYear,
+                IsOutdated(verdict.TaxUnitYear, documentYear),
+                verdict.Amount)),
+        ];
+
+    internal static bool IsOutdated(int? taxUnitYear, int? documentYear) =>
+        taxUnitYear is { } year && documentYear is { } document && year < document;
 
     // Internos por el mismo motivo que ToClientResponse: el detalle del pedido los pinta igual (OrderResponses).
     internal static WithholdingResponse ToWithholdingResponse(WithholdingDto withholding) => new(

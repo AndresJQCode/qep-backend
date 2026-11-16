@@ -265,6 +265,95 @@ public sealed class OrderWithholdingsApiTests
         Assert.Empty((await GetDetailAsync(setup, created.Id)).Order.BillingWithholdingTaxRates);
     }
 
+    // Spec retenciones por UVT §6: el pedido convertido hereda la foto, así que su desglose es el de la cotización.
+    [Fact]
+    public async Task ConvertedOrderCarriesTheBreakdown()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 4m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+
+        var order = await ConvertAsync(setup, quotation.Id);
+
+        // Base 100.000 < 4 × 50.000.
+        var entry = Assert.Single(order.WithholdingBreakdown);
+        Assert.Equal(
+            (servicios, false, "BelowMinimumBase", 100_000m, (decimal?)200_000m, (int?)TodayInBogota().Year, false, 0m),
+            (entry.TaxRateId, entry.Applies, entry.Reason, entry.Base, entry.MinimumBaseAmount, entry.TaxUnitYear,
+                entry.TaxUnitOutdated, entry.Amount));
+        Assert.Equal(quotation.WithholdingBreakdown, order.WithholdingBreakdown);
+        Assert.Empty(order.Withholdings);
+    }
+
+    // Spec retenciones por UVT §5.4 (owner P1): un pedido editable que se guarda, aunque sea sin cambios, toma la UVT del
+    // año cargada después y recalcula. Base 100.000: con 2 × 50.000 aplica; con 2 × 60.000 ya no.
+    [Fact]
+    public async Task SavingAnEditableOrderRefreshesTheTaxUnit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(factory, taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        var order = await ConvertAsync(setup, quotation.Id);
+        Assert.Equal((4_000m, (int?)(thisYear - 1)), (order.RetentionAmount, Assert.Single(order.WithholdingBreakdown).TaxUnitYear));
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var saved = await ReadDetailAsync(await PutEditsAsync(setup, order, Edits(setup)));
+
+        var entry = Assert.Single(saved.Order.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)thisYear, (decimal?)60_000m, false, "BelowMinimumBase", (decimal?)120_000m),
+            (entry.TaxUnitYear, entry.TaxUnitValue, entry.TaxUnitOutdated, entry.Reason, entry.MinimumBaseAmount));
+        Assert.Equal((0m, saved.Order.Total), (saved.Order.RetentionAmount, saved.Order.NetTotal));
+        Assert.Empty(saved.Order.Withholdings);
+        var fetched = await GetDetailAsync(setup, order.Id);
+        Assert.Equal((int?)thisYear, Assert.Single(fetched.Order.WithholdingBreakdown).TaxUnitYear);
+        Assert.Equal(0m, fetched.Order.RetentionAmount);
+    }
+
+    // Review Focus 3: un pedido facturado ya no es editable; cargar la UVT del año no lo mueve, ni al leerlo ni al
+    // intentar editarlo.
+    [Fact]
+    public async Task InvoicedOrderKeepsItsTaxUnit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(
+            factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice], taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        var order = await ConvertAsync(setup, quotation.Id);
+        (await setup.Client.PostAsync(
+            $"{OrdersUrl(setup.TenantId)}/{order.Id}/mark-paid", null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        (await setup.Client.PostAsync(
+            $"{OrdersUrl(setup.TenantId)}/{order.Id}/invoice", null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var invoiced = await GetDetailAsync(setup, order.Id);
+        var rejected = await PutEditsAsync(setup, invoiced.Order, Edits(setup));
+
+        Assert.Equal("order.order.not_editable", await CodeOfAsync(rejected));
+        var fetched = await GetDetailAsync(setup, order.Id);
+        var entry = Assert.Single(fetched.Order.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)(thisYear - 1), (decimal?)Uvt, true, "Applied"),
+            (entry.TaxUnitYear, entry.TaxUnitValue, entry.TaxUnitOutdated, entry.Reason));
+        Assert.Equal(4_000m, fetched.Order.RetentionAmount);
+    }
+
     private sealed record Setup(
         HttpClient Client,
         Guid TenantId,
@@ -273,10 +362,10 @@ public sealed class OrderWithholdingsApiTests
 
     // Tenant, empresa colombiana con cuenta en COP, UVT del año del documento y un producto de 119.000 con IVA del 19 %
     // adentro (base 100.000 por unidad).
-    private static async Task<Setup> SetUpAsync(QepApiFactory factory, string[]? permissions = null)
+    private static async Task<Setup> SetUpAsync(QepApiFactory factory, string[]? permissions = null, int? taxUnitYear = null)
     {
         var (tenantId, _, client) = await RegisterTenantAsync(factory, permissions ?? ManagerPermissions);
-        await InsertTaxUnitValueAsync(factory, "CO", TodayInBogota().Year, Uvt);
+        await InsertTaxUnitValueAsync(factory, "CO", taxUnitYear ?? TodayInBogota().Year, Uvt);
         var company = await CreateCompanyWithBankAccountAsync(client, tenantId);
         var vat = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
         var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 119_000m, taxRateId: vat);

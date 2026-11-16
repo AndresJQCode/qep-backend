@@ -237,6 +237,13 @@ public sealed class Order
     public IEnumerable<DocumentWithholding> AppliedWithholdings =>
         _withholdings.Where(withholding => withholding.Applied).OrderBy(withholding => withholding.Position);
 
+    /// <summary>Por qué cada tasa del pedido aplica o no, en su orden (spec retenciones por UVT §5.1); las de otro país
+    /// no salen.</summary>
+    public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
+        DocumentWithholding.Explain(
+            [.. _withholdings.OrderBy(withholding => withholding.Position)], BillsToFinalConsumer, BillingAccount, Currency,
+            OperationCityId, Subtotal);
+
     public decimal Subtotal { get; private set; }
 
     public decimal TaxPercentage { get; private set; }
@@ -905,6 +912,18 @@ public sealed class Order
         row.SetPercentage(target);
         Touch(updatedBy, occurredAt);
         return change;
+    }
+
+    /// <summary>
+    /// Pone en cada tasa con base mínima en unidades la UVT vigente de su país y recalcula, mientras el pedido es
+    /// <see cref="IsEditable"/> (spec retenciones por UVT §5.4, owner P1). La clave es el país canónico. No es una
+    /// edición del asesor: no sube la versión ni cambia el autor; el handler que guarda o previsualiza ya lo hace.
+    /// </summary>
+    public void RefreshTaxUnits(IReadOnlyDictionary<string, TaxUnitPhoto> byCountry)
+    {
+        EnsureEditable("The tax unit can only be refreshed while the order is editable.");
+        DocumentWithholding.RefreshTaxUnits(_withholdings, byCountry);
+        RecalculateTotals();
     }
 
     /// <summary>

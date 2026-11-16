@@ -864,6 +864,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             [],
             null,
             null,
+            [],
             []));
 
     // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
@@ -1655,6 +1656,37 @@ internal sealed class StubQuotationWithholdingLookup : IQuotationWithholdingLook
             .Select(id => _catalog[id].Rate)
             .Where(rate => country is null || string.Equals(rate.Country, country, StringComparison.OrdinalIgnoreCase))];
         return Task.FromResult(rates);
+    }
+
+    private Dictionary<string, TaxUnitPhoto>? _taxUnits;
+
+    /// <summary>Las veces que se pidió la UVT vigente (spec retenciones por UVT §5.4), con sus países.</summary>
+    public List<IReadOnlyCollection<string>> TaxUnitRequests { get; } = [];
+
+    /// <summary>La UVT vigente de un país para el refresco. Sin ninguna fijada, el refresco devuelve la que traen las tasas
+    /// del catálogo de este stub: lo mismo que se congeló, así las pruebas que no miran el refresco no lo notan.</summary>
+    public StubQuotationWithholdingLookup WithTaxUnit(string country, decimal value, int year)
+    {
+        _taxUnits ??= [];
+        _taxUnits[country] = new TaxUnitPhoto(value, year);
+        return this;
+    }
+
+    public Task<IReadOnlyDictionary<string, TaxUnitPhoto>> TaxUnitsAsync(
+        IReadOnlyCollection<string> countries, DateOnly documentDate, CancellationToken cancellationToken)
+    {
+        TaxUnitRequests.Add(countries);
+        var source = _taxUnits ?? _catalog.Values
+            .Select(candidate => candidate.Rate)
+            .Where(rate => rate.TaxUnitValue is not null)
+            .GroupBy(rate => rate.Country, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => new TaxUnitPhoto(group.First().TaxUnitValue!.Value, group.First().TaxUnitYear ?? documentDate.Year));
+        IReadOnlyDictionary<string, TaxUnitPhoto> found = source
+            .Where(entry => countries.Contains(entry.Key))
+            .ToDictionary(entry => entry.Key, entry => entry.Value);
+        return Task.FromResult(found);
     }
 
     public Task<IReadOnlyDictionary<Guid, WithholdingRateCandidate>> ForRatesAsync(

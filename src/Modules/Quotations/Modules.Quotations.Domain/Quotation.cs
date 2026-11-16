@@ -389,6 +389,12 @@ public sealed class Quotation
     public IEnumerable<DocumentWithholding> AppliedWithholdings =>
         ActiveWithholdings.Where(withholding => withholding.Applied);
 
+    /// <summary>Por qué cada tasa de la fuente vigente aplica o no, en su orden (spec retenciones por UVT §5.1); las de
+    /// otro país no salen.</summary>
+    public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
+        DocumentWithholding.Explain(
+            [.. ActiveWithholdings], BillsToFinalConsumer, BillingAccount, Currency, OperationCityId, Subtotal);
+
     private WithholdingSource ActiveWithholdingSource =>
         Billing is not null ? WithholdingSource.Billing : WithholdingSource.Customer;
 
@@ -927,6 +933,18 @@ public sealed class Quotation
         row.SetPercentage(target);
         Touch(updatedBy, occurredAt);
         return change;
+    }
+
+    /// <summary>
+    /// Pone en cada tasa con base mínima en unidades la UVT vigente de su país y recalcula (spec retenciones por UVT §5.4,
+    /// owner P1): la de un documento editable sigue a la que hoy daría la foto. La clave es el país canónico. No es una
+    /// edición del asesor: no sube la versión ni cambia el autor; el handler que guarda o previsualiza ya lo hace.
+    /// </summary>
+    public void RefreshTaxUnits(IReadOnlyDictionary<string, TaxUnitPhoto> byCountry)
+    {
+        EnsureEditable();
+        DocumentWithholding.RefreshTaxUnits(_withholdings, byCountry);
+        RecalculateTotals();
     }
 
     /// <summary>

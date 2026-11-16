@@ -1,3 +1,5 @@
+using Modules.Tenancy.Application;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>
@@ -8,6 +10,11 @@ namespace Modules.Quotations.Application;
 public interface IOrderResponseComposer
 {
     Task<OrderDetailResponse> ComposeAsync(Guid tenantId, OrderDetailDto detail, CancellationToken cancellationToken);
+
+    /// <summary>Sólo el pedido, para las rutas que no responden el detalle (/approve, /cancel…). Pasa por acá y no por
+    /// <see cref="OrderResponses.ToResponse"/> directo porque el desglose de retenciones necesita el calendario del tenant
+    /// (spec retenciones por UVT §5.2).</summary>
+    Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken);
 }
 
 public sealed class OrderResponseComposer(
@@ -17,7 +24,8 @@ public sealed class OrderResponseComposer(
     IQuotationCompanyLookup companyLookup,
     IQuotationWithholdingLookup withholdingLookup,
     IQuotationGeographyLookup geographyLookup,
-    IQuotationBuyerAccountLookup buyerAccountLookup)
+    IQuotationBuyerAccountLookup buyerAccountLookup,
+    ITenantClock tenantClock)
     : IOrderResponseComposer
 {
     public async Task<OrderDetailResponse> ComposeAsync(
@@ -61,7 +69,7 @@ public sealed class OrderResponseComposer(
             : null;
 
         return new OrderDetailResponse(
-            OrderResponses.ToResponse(order),
+            await ComposeOrderAsync(tenantId, order, cancellationToken),
             QuotationResponseComposer.ToClientResponse(customer),
             advisor?.DisplayName,
             advisor?.Email,
@@ -88,13 +96,24 @@ public sealed class OrderResponseComposer(
             municipal.Entries,
             buyerAccount is null ? null : new BuyerAccountResponse(buyerAccount.Id, buyerAccount.Email));
     }
+
+    public async Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        var documentYear = await QuotationResponseComposer.DocumentYearAsync(
+            tenantClock, tenantId, order.CreatedAt, order.WithholdingBreakdown, cancellationToken);
+        return OrderResponses.ToResponse(order, documentYear);
+    }
 }
 
 /// <summary>El <see cref="OrderResponse"/> de un <see cref="OrderDto"/>: lo usan los endpoints y el
 /// compositor del detalle.</summary>
 public static class OrderResponses
 {
-    public static OrderResponse ToResponse(OrderDto order)
+    /// <param name="documentYear">El año local del pedido, para decir si la UVT del desglose está desactualizada; null si
+    /// ninguna fila trae año. Lo resuelve <see cref="IOrderResponseComposer.ComposeOrderAsync"/> con el calendario del
+    /// tenant.</param>
+    public static OrderResponse ToResponse(OrderDto order, int? documentYear)
     {
         ArgumentNullException.ThrowIfNull(order);
         return new OrderResponse(
@@ -162,6 +181,7 @@ public static class OrderResponses
             order.ArchivedAt,
             order.ArchivedBy,
             order.Balance,
-            order.BuyerNotes);
+            order.BuyerNotes,
+            QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, documentYear));
     }
 }

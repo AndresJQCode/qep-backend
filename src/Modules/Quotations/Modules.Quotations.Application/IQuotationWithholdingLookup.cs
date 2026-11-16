@@ -34,6 +34,14 @@ public interface IQuotationWithholdingLookup
     /// cliente que no existe no lo es.</summary>
     Task<bool> IsWithholdingAgentAsync(
         Guid tenantId, Guid customerId, string country, string type, Guid cityId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// La unidad tributaria vigente de cada país para <paramref name="documentDate"/>, con la misma regla de la foto (el año
+    /// del documento o el mayor anterior), para refrescar un documento editable (spec retenciones por UVT §5.4). La clave
+    /// es el país canónico; un país sin ningún valor cargado no está en el diccionario.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, TaxUnitPhoto>> TaxUnitsAsync(
+        IReadOnlyCollection<string> countries, DateOnly documentDate, CancellationToken cancellationToken);
 }
 
 /// <summary>Una tasa del catálogo con lo que <see cref="WithholdingSelection"/> necesita para aceptarla en un

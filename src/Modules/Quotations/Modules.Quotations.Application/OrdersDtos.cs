@@ -100,7 +100,10 @@ public sealed record OrderDto(
     string? BuyerNotes = null,
     /// <summary>La cuenta de comprador de un pedido de la tienda (spec 2026-11-15 §4). No viaja en <c>OrderResponse</c>: el
     /// compositor del detalle la resuelve a correo en la raíz de <see cref="OrderDetailResponse"/>.</summary>
-    Guid? BuyerAccountId = null);
+    Guid? BuyerAccountId = null,
+    /// <summary>El veredicto de cada tasa del pedido, aplique o no, en su orden (spec retenciones por UVT §6). Ver
+    /// <see cref="QuotationDto.WithholdingBreakdown"/>.</summary>
+    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
@@ -340,7 +343,11 @@ public sealed record OrderResponse(
     /// fracción de la retención le daría un saldo de centavos que no se ve (spec 2026-11-10 §3.2).</summary>
     decimal Balance,
     /// <summary>Ver <see cref="OrderDto.BuyerNotes"/>.</summary>
-    string? BuyerNotes = null);
+    string? BuyerNotes,
+    /// <summary>Todas las tasas del pedido con su veredicto (spec retenciones por UVT §6), como en
+    /// <see cref="QuotationResponse.WithholdingBreakdown"/>. Viaja en toda respuesta que trae <see cref="Withholdings"/>,
+    /// también las de /approve, /cancel… (<see cref="IOrderResponseComposer.ComposeOrderAsync"/>).</summary>
+    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y

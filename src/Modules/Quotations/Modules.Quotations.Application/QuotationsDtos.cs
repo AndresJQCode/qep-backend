@@ -131,7 +131,10 @@ public sealed record QuotationDto(
     bool IsRetail = false,
     /// <summary>El municipio de la operación (spec ReteICA por empresa §7.5); null sin empresa, fuera de un país con tipos
     /// municipales o en un documento anterior. El compositor lo resuelve a nombre y departamento.</summary>
-    Guid? OperationCityId = null);
+    Guid? OperationCityId = null,
+    /// <summary>El veredicto de cada tasa de la fuente vigente, aplique o no, en su orden (spec retenciones por UVT §6).
+    /// QuotationMapping.ToDto la llena siempre; null sólo en un DTO armado a mano, y el compositor lo lee como vacío.</summary>
+    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null);
 
 /// <summary>Una retención que aplicó (spec impuestos por tipo §9.3): la tasa congelada, la base sobre la que se
 /// calculó y su monto. <c>Type</c> viaja como texto ("Retefuente", "ReteICA").</summary>
@@ -167,6 +170,62 @@ public sealed record WithholdingTaxRateDto(
     decimal CatalogPercentage,
     bool PercentageOverridden,
     Guid? CityId);
+
+/// <summary>
+/// Por qué una tasa de la fuente vigente aplica o no (spec retenciones por UVT §5.1, §6): la tasa congelada, el motivo, la
+/// base que se comparó (el subtotal sin IVA, aunque no aplique), el umbral en dinero y la UVT con su año. Lo decide el
+/// dominio (<c>WithholdingVerdict</c>); el frontend sólo pinta.
+/// </summary>
+/// <param name="Reason">El nombre de <c>WithholdingReason</c>: <c>Applied</c>, <c>BelowMinimumBase</c>,
+/// <c>NoTaxUnitValue</c>, <c>FinalConsumer</c>, <c>NoBillingCompany</c>, <c>CurrencyWithoutTax</c> u
+/// <c>OtherMunicipality</c>.</param>
+/// <param name="MinimumBaseAmount">El umbral en dinero; null sin base mínima o con base en UVT y sin valor cargado.</param>
+/// <param name="TaxUnitYear">El año de la UVT congelada; null sin unidad o en una fila anterior que no casó (§8.2).</param>
+/// <param name="Amount">Lo que guardó el último recálculo; 0 si no aplicó.</param>
+public sealed record WithholdingVerdictDto(
+    Guid TaxRateId,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    decimal CatalogPercentage,
+    bool PercentageOverridden,
+    Guid? CityId,
+    bool Applies,
+    string Reason,
+    decimal Base,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit,
+    decimal? MinimumBaseAmount,
+    decimal? TaxUnitValue,
+    int? TaxUnitYear,
+    decimal Amount);
+
+/// <summary>
+/// Gemelo HTTP de <see cref="WithholdingVerdictDto"/> más <see cref="TaxUnitOutdated"/>, que sale del calendario del
+/// tenant y por eso lo calcula el compositor, no el mapeo estático.
+/// </summary>
+/// <param name="TaxUnitOutdated">Si la UVT congelada es de un año anterior al del documento (su <c>CreatedAt</c> en la
+/// zona del tenant). False con <c>TaxUnitYear</c> null.</param>
+public sealed record WithholdingBreakdownResponse(
+    Guid TaxRateId,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    decimal CatalogPercentage,
+    bool PercentageOverridden,
+    Guid? CityId,
+    bool Applies,
+    string Reason,
+    decimal Base,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit,
+    decimal? MinimumBaseAmount,
+    decimal? TaxUnitValue,
+    int? TaxUnitYear,
+    bool TaxUnitOutdated,
+    decimal Amount);
 
 /// <summary>
 /// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
@@ -711,7 +770,10 @@ public sealed record QuotationResponse(
     /// <summary>Una entrada por tipo municipal del país de la empresa, con la tasa que la empresa tiene hoy ahí y por qué
     /// quedó o no una fila (A14). BFF: la pantalla no puede saber las asignaciones de la empresa ni la lista de agentes del
     /// cliente, así que el porqué se calcula acá y no en el navegador. Vacía sin empresa o sin tipos municipales.</summary>
-    IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings);
+    IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings,
+    /// <summary>Todas las tasas de la fuente vigente con su veredicto, apliquen o no, en su orden (spec retenciones por UVT
+    /// §6). Aditivo: <see cref="Withholdings"/> sigue trayendo sólo las aplicadas.</summary>
+    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown);
 
 /// <summary>Una referencia de municipio (spec ReteICA por empresa §9.1): la misma forma en tasas, empresas, clientes y
 /// documentos.</summary>
