@@ -532,9 +532,14 @@ public static class SupportEndpoints
             new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, priority, sort, page, pageSize), cancellationToken));
 
     private static async Task<IResult> CreateTicketAsync(
-        Guid tenantId, CreateTicketRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+        Guid tenantId,
+        CreateTicketRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
     {
         var ticket = await dispatcher.SendAsync(CreateTicketCommand.From(tenantId, request), cancellationToken);
+        NoStoreWhenPinIssued(httpContext, ticket);
         return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticket.Id}", ticket);
     }
 
@@ -577,9 +582,22 @@ public static class SupportEndpoints
             new TakeTicketCommand(tenantId, ticketId, RequireVersion(httpContext, "ticket")), cancellationToken));
 
     private static async Task<IResult> ReissuePinAsync(
-        Guid tenantId, Guid ticketId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.SendAsync(
-            new ReissueTicketPinCommand(tenantId, ticketId, RequireVersion(httpContext, "ticket")), cancellationToken));
+        Guid tenantId, Guid ticketId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var ticket = await dispatcher.SendAsync(
+            new ReissueTicketPinCommand(tenantId, ticketId, RequireVersion(httpContext, "ticket")), cancellationToken);
+        NoStoreWhenPinIssued(httpContext, ticket);
+        return Results.Ok(ticket);
+    }
+
+    // Una respuesta con el PIN en claro no debe quedar en ninguna caché (navegador, proxy, CDN): el PIN se muestra una sola vez.
+    private static void NoStoreWhenPinIssued(HttpContext httpContext, SupportTicketDetailDto ticket)
+    {
+        if (ticket.IssuedPin is not null)
+        {
+            httpContext.Response.Headers.CacheControl = "no-store";
+        }
+    }
 
     private static async Task<IResult> ExtendAsync(
         Guid tenantId,
