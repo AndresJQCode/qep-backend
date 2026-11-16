@@ -79,7 +79,7 @@ Errores (mapeo central, `ApiExceptionHandler`):
 | Falta una sección, título > 120, HTML > 20 000 después de sanear, sección prendida con texto vacío (sin texto visible después de sanear) | `422 validation.failed` con `errors` (`PaymentNotice.Title`, `Terms.ContentHtml`, …) |
 | Un `{{…}}` que no es variable de la lista, en el título o en el HTML saneado | `422 quotation.pdf_content.unknown_variable`; nada se guarda |
 
-Sin `If-Match`: último que guarda gana, como `PUT …/quotations/settings`. Se audita (`quotation.pdf_content.updated`) con los nombres
+Sin `If-Match`: último que guarda gana, como `PUT …/quotations/settings`. Se audita (`quotations.pdf_content.updated`) con los nombres
 de los campos que cambiaron, nunca el texto.
 
 ### 4.3 Variables (P-3)

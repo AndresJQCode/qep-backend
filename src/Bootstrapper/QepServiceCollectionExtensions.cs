@@ -992,6 +992,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
             UpdateQuotationSettingsHandler>();
+        // El contenido configurable del PDF (spec 2026-11-16 §4.2); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<IQueryHandler<GetPdfContentQuery, PdfContentDto>, GetPdfContentHandler>();
+        services.AddScoped<ICommandHandler<UpdatePdfContentCommand, PdfContentDto>, UpdatePdfContentHandler>();
         // Los ajustes del pedido por tenant (spec 2026-11-10 §6); el validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<
             IQueryHandler<GetOrderSettingsQuery, OrderSettingsDto>,

@@ -47,6 +47,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<Carrier> Carriers => Set<Carrier>();
 
+    internal DbSet<PdfSectionRow> PdfSections => Set<PdfSectionRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -67,6 +69,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureQuotationSettings(modelBuilder);
         ConfigureTenantWhatsAppChannel(modelBuilder);
         ConfigureCarrier(modelBuilder);
+        ConfigurePdfSections(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -1103,6 +1106,25 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasDatabaseName("IX_carrier_names_tenant_name");
         });
         carrier.Navigation(value => value.Names).UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    // El contenido configurable del PDF (spec 2026-11-16 §5.1): una fila por sección escrita; sin fila, la sección está apagada y
+    // vacía. La sección va por nombre, con un CHECK de los tres de PdfSectionKey. Sin FK al tenant, que es de Tenancy.
+    private static void ConfigurePdfSections(ModelBuilder modelBuilder)
+    {
+        var section = modelBuilder.Entity<PdfSectionRow>();
+        section.ToTable("pdf_sections", "quotations", table =>
+            table.HasCheckConstraint(
+                "CK_pdf_sections_section", "section IN ('PaymentNotice', 'Terms', 'DeliveryProcess')"));
+        section.HasKey(value => new { value.TenantId, value.Section });
+        section.Property(value => value.TenantId).HasColumnName("tenant_id");
+        section.Property(value => value.Section).HasColumnName("section").HasColumnType("text");
+        section.Property(value => value.Enabled).HasColumnName("enabled");
+        section.Property(value => value.InQuotation).HasColumnName("in_quotation");
+        section.Property(value => value.InOrder).HasColumnName("in_order");
+        section.Property(value => value.Title).HasColumnName("title").HasMaxLength(120).IsRequired();
+        section.Property(value => value.ContentHtml).HasColumnName("content_html").HasColumnType("text").IsRequired();
+        section.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)

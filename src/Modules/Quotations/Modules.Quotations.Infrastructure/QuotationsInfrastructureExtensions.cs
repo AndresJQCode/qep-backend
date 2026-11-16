@@ -1,4 +1,6 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Application.RichText;
+using BuildingBlocks.Infrastructure.RichText;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -62,6 +64,12 @@ public static class QuotationsInfrastructureExtensions
         // The tenant's minimum purchase (spec 2026-10-08, D7): read by the recalculation and the
         // response composer, written by PUT /quotations/settings, all on the request's DbContext.
         services.AddScoped<IQuotationSettingsStore, QuotationSettingsStore>();
+        // El contenido configurable del PDF (spec 2026-11-16 §5.1): lo leen el GET y el PDF, lo escribe el PUT.
+        services.AddScoped<IPdfContentStore, PdfContentStore>();
+        // Sin estado (cada llamada arma su saneador): una instancia por proceso alcanza. El lector convierte lo saneado en bloques
+        // para la plantilla del PDF (spec §5.3).
+        services.AddSingleton<IRichTextSanitizer, RichTextHtmlSanitizer>();
+        services.AddSingleton<IRichTextReader, RichTextHtmlReader>();
         // La conexión de WhatsApp que el tenant eligió (spec 2026-10-21 D5–D10): la lee y la guarda el envío.
         services.AddScoped<IWhatsAppChannelChoiceStore, WhatsAppChannelChoiceStore>();
         // Las transportadoras del tenant (spec 2026-10-17 §4).
