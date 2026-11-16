@@ -105,6 +105,64 @@ public sealed record SupportInboxSummaryDto(IReadOnlyList<SupportStatusCountDto>
 
 public sealed record SupportStatusCountDto(string Status, int Count);
 
+/// <summary>
+/// Fase 4b (H24, H25): el reporte de Soporte de los tickets radicados entre <see cref="From"/> y <see cref="To"/> (fechas locales del
+/// tenant). Las colecciones de tamaño fijo viajan completas, también en cero: <see cref="ByStatus"/> trae los seis estados,
+/// <see cref="ByType"/> todos los tipos del tenant (activos o no, en su orden) y cada lista de calificaciones las tres, así la pantalla no
+/// conoce los enums del backend para dibujar la que falta. <see cref="OverdueNow"/> son los de la población vencidos hoy, con la misma
+/// regla que la bandeja.
+/// </summary>
+public sealed record SupportReportDto(
+    DateOnly From,
+    DateOnly To,
+    int Received,
+    int Resolved,
+    int OverdueNow,
+    IReadOnlyList<SupportStatusCountDto> ByStatus,
+    IReadOnlyList<SupportReportTypeRowDto> ByType,
+    SupportResolutionTimeDto ResolutionTime,
+    SupportSatisfactionDto Satisfaction);
+
+/// <summary>Una fila por tipo. <see cref="IsActive"/> viaja para que la pantalla marque un tipo desactivado que todavía tiene tickets en el
+/// rango; <see cref="AverageResolutionBusinessDays"/> es null sin resueltos.</summary>
+public sealed record SupportReportTypeRowDto(
+    Guid TypeId,
+    string Name,
+    bool IsActive,
+    int Received,
+    int Resolved,
+    int OverdueNow,
+    decimal? AverageResolutionBusinessDays,
+    IReadOnlyList<SupportRatingCountDto> Ratings);
+
+/// <summary>El tiempo de resolución en días hábiles después de la radicación hasta la última resolución, en bruto (sin descontar pausas),
+/// con un decimal. <c>OnTime + Late + WithoutTerm = Resolved</c>: <see cref="WithoutTerm"/> existe para que la suma cierre con los tickets
+/// de un tipo sin término.</summary>
+public sealed record SupportResolutionTimeDto(
+    int Resolved,
+    decimal? AverageBusinessDays,
+    decimal? MedianBusinessDays,
+    int OnTime,
+    int Late,
+    int WithoutTerm);
+
+/// <summary>Las encuestas de los tickets de la población, de cualquier ciclo. <c>Pending + Sent + WithoutSurvey + Failed + Disabled =
+/// Requested</c>: <see cref="Disabled"/> existe para que la suma cierre cuando el tenant tenía la encuesta apagada, y
+/// <see cref="WithoutSurvey"/> son las demás «sin encuesta» (sin plantilla, contacto bloqueado, reabierto…). <see cref="Answered"/> y
+/// <see cref="Ratings"/> cuentan las respondidas.</summary>
+public sealed record SupportSatisfactionDto(
+    int Requested,
+    int Pending,
+    int Sent,
+    int WithoutSurvey,
+    int Failed,
+    int Disabled,
+    int Answered,
+    IReadOnlyList<SupportRatingCountDto> Ratings);
+
+/// <summary>Una calificación por nombre (<c>Good</c>, <c>Regular</c>, <c>Bad</c>) y cuántas.</summary>
+public sealed record SupportRatingCountDto(string Rating, int Count);
+
 /// <summary>Una fila de la bandeja. <c>RequesterDisplayName</c> lo resuelve el backend (cliente vinculado; si no, nombres y
 /// apellidos; si no, razón social; si no, «NIT número») para que la fila no repita la regla. <c>DueState</c> y
 /// <c>BusinessDaysLeft</c> ya vienen evaluados con el calendario y el umbral del tenant. <c>Priority</c> ∈ <c>Low</c>, <c>Medium</c>,

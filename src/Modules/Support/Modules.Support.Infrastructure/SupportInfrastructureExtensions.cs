@@ -73,6 +73,7 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<SupportThreadFollower>();
         // Fase 4b (H16): la cola de la encuesta de satisfacción y quien la manda.
         services.AddScoped<ISupportSurveyRepository, SupportSurveyRepository>();
+        services.AddScoped<ISupportReportRepository, SupportReportRepository>();
         services.AddScoped<SupportSystemAuthor>();
         services.AddScoped<SupportSurveySender>();
         services.AddScoped<SupportSurveyAnswers>();

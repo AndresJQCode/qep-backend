@@ -286,6 +286,13 @@ public static class SupportEndpoints
 
     private static void MapTickets(RouteGroupBuilder group)
     {
+        // Fase 4b (H24, Q-3, Q-16): el reporte, dentro de Soporte; lo ve quien tenga leer o gestionar.
+        group.MapGet("/reports/summary", GetReportAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportReportDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/tickets", ListTicketsAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
             .Produces<SupportTicketPageDto>()
@@ -535,6 +542,11 @@ public static class SupportEndpoints
         int pageSize = ListTicketsQuery.DefaultPageSize) =>
         Results.Ok(await dispatcher.QueryAsync(
             new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, priority, sort, page, pageSize), cancellationToken));
+
+    // Las fechas llegan como texto: una mal escrita es 422 en su campo (el validador), no un 400 del binder.
+    private static async Task<IResult> GetReportAsync(
+        Guid tenantId, string? from, string? to, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetSupportReportQuery(tenantId, from, to), cancellationToken));
 
     private static async Task<IResult> CreateTicketAsync(
         Guid tenantId, CreateTicketRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)

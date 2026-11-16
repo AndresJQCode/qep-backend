@@ -564,6 +564,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
             Modules.Support.Application.ListTicketsHandler>();
+        // Fase 4b (H24): el reporte de Soporte.
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetSupportReportQuery, Modules.Support.Application.SupportReportDto>,
+            Modules.Support.Application.GetSupportReportHandler>();
         // Fase 2 (Mensajería).
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.CreateTicketFromConversationCommand, Modules.Support.Application.SupportTicketDetailDto>,
