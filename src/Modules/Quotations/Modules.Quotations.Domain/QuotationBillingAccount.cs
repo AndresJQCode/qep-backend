@@ -45,8 +45,9 @@ public sealed record QuotationBillingAccount
 
     /// <summary>
     /// The company was chosen but the bank account is still pending (spec 2026-11-16 withholdings by company): only a
-    /// preview builds it, so withholdings follow the company before an account is picked. Never persisted (EF ignores it)
-    /// and never answered: readiness and the response treat it as no account at all.
+    /// preview builds it, so withholdings follow the company before an account is picked. It has no column, and the
+    /// Quotations DbContext refuses to save a quotation or order that carries one (a bug if it ever happens, since only
+    /// previews build it). Never answered either: readiness and the response treat it as no account at all.
     /// </summary>
     public bool IsPending { get; init; }
 

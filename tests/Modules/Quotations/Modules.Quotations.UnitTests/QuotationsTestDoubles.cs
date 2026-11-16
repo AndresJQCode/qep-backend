@@ -1323,9 +1323,15 @@ internal sealed class StubQuotationProductLookup(
 internal sealed class StubQuotationCompanyLookup(
     IReadOnlyDictionary<Guid, QuotationCompanyRef> companies) : IQuotationCompanyLookup
 {
+    // Counts lookups so a test can assert that a pending account (preview only) does not query Companies.
+    public int FindCalls { get; private set; }
+
     public Task<QuotationCompanyRef?> FindAsync(
-        Guid tenantId, Guid companyId, CancellationToken cancellationToken) =>
-        Task.FromResult(companies.GetValueOrDefault(companyId));
+        Guid tenantId, Guid companyId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(companies.GetValueOrDefault(companyId));
+    }
 }
 
 /// <summary>Las cuentas de comprador que existen (spec 2026-11-15 §4); cualquier otra se responde como borrada. Cuenta

@@ -170,7 +170,109 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
         Assert.Equal(fx.Bogota.CityId, preview.BillingCompanyCity?.Id);
     }
 
+    // The currency belongs to the missing account, not to the company: an edit preview builds the pending account in the
+    // document's own currency (QuotationEditsApplication / OrderEdits pass quotation.Currency / order.Currency). The
+    // company named here bills in COP, the tenant default is COP, and the saved document is in USD: it must stay USD.
+    [Fact]
+    public async Task OrderEditsPreviewWithCompanyOnlyKeepsTheOrdersOwnCurrency()
+    {
+        var fx = await SetUpAsync();
+        var (usdAccount, usdProductId) = await UsdAccountAndProductAsync(fx);
+        var order = await ReadOrderAsync(
+            await fx.Client.PostAsJsonAsync(
+                OrdersUrl(fx.TenantId),
+                new CreateOrderRequest(
+                    fx.ClientId, "Transferencia", null, false, null, null, usdAccount,
+                    [new OrderEditItemRequest(usdProductId, 1m)], []),
+                TestContext.Current.CancellationToken),
+            HttpStatusCode.Created);
+        Assert.Equal("USD", order.Order.Currency);
+
+        var preview = await ReadOrderAsync(await PostOrderEditsPreviewAsync(
+            fx, order,
+            new PreviewOrderEditsRequest([new OrderEditItemRequest(usdProductId, 1m)], null, null) with
+            {
+                BillingCompanyId = fx.BogotaAccount.CompanyId,
+            }));
+
+        Assert.Equal("USD", preview.Order.Currency);
+        Assert.Null(preview.BillingAccount);
+        Assert.Null(preview.Order.BillingAccount);
+        // The company's rates are explained, not applied: CO withholdings do not retain on a USD document.
+        var row = Assert.Single(preview.Order.WithholdingBreakdown);
+        Assert.Equal((fx.ReteIcaBogota, false, "CurrencyWithoutTax"), (row.TaxRateId, row.Applies, row.Reason));
+        Assert.Empty(preview.Order.Withholdings);
+        Assert.Equal(0m, preview.Order.RetentionAmount);
+    }
+
+    [Fact]
+    public async Task QuotationEditsPreviewWithCompanyOnlyKeepsTheQuotationsOwnCurrency()
+    {
+        var fx = await SetUpAsync();
+        var (usdAccount, usdProductId) = await UsdAccountAndProductAsync(fx);
+        var draft = await ReadQuotationAsync(
+            await fx.Client.PostAsJsonAsync(
+                QuotationsUrl(fx.TenantId),
+                new CreateQuotationRequest(
+                    fx.ClientId, TodayInBogota().AddDays(30), null, null, null, usdAccount,
+                    Items: [new QuotationEditItemRequest(usdProductId, 1m)]),
+                TestContext.Current.CancellationToken),
+            HttpStatusCode.Created);
+        Assert.Equal("USD", draft.Currency);
+
+        var preview = await ReadQuotationAsync(await PostQuotationPreviewAsync(
+            fx, draft, EditsBody(draft, account: null) with { BillingCompanyId = fx.BogotaAccount.CompanyId }));
+
+        Assert.Equal("USD", preview.Currency);
+        Assert.Null(preview.BillingAccount);
+        var row = Assert.Single(preview.WithholdingBreakdown);
+        Assert.Equal((fx.ReteIcaBogota, false, "CurrencyWithoutTax"), (row.TaxRateId, row.Applies, row.Reason));
+        Assert.Empty(preview.Withholdings);
+        Assert.Equal(0m, preview.RetentionAmount);
+    }
+
+    // IsPending is [JsonIgnore] on the DTO and the composers null the account; this pins the wire contract of all four.
+    [Fact]
+    public async Task NoCompanyOnlyPreviewAnswersIsPending()
+    {
+        var fx = await SetUpAsync();
+        var order = await CreateOrderAsync(fx);
+        var saved = await ReadQuotationAsync(
+            await fx.Client.PostAsJsonAsync(
+                QuotationsUrl(fx.TenantId),
+                new CreateQuotationRequest(
+                    fx.ClientId, TodayInBogota().AddDays(30), null, null, null, null,
+                    Items: [new QuotationEditItemRequest(fx.ProductId, 1m)]),
+                TestContext.Current.CancellationToken),
+            HttpStatusCode.Created);
+        var company = fx.BogotaAccount.CompanyId;
+
+        HttpResponseMessage[] responses =
+        [
+            await PostNewQuotationPreviewAsync(fx, NewQuotationBody(fx, account: null) with { BillingCompanyId = company }),
+            await PostQuotationPreviewAsync(fx, saved, EditsBody(saved, account: null) with { BillingCompanyId = company }),
+            await PostNewOrderPreviewAsync(fx, NewOrderBody(fx, account: null) with { BillingCompanyId = company }),
+            await PostOrderEditsPreviewAsync(fx, order, OrderEditsBody(fx) with { BillingCompanyId = company }),
+        ];
+
+        foreach (var response in responses)
+        {
+            var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+            Assert.True(response.StatusCode == HttpStatusCode.OK, $"{(int)response.StatusCode} {text}");
+            Assert.DoesNotContain("isPending", text, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     // ---- Fixture ----
+
+    // A USD account of a company in Bogotá and a product priced in USD, for a document whose currency is not the tenant's.
+    private static async Task<(QuotationBillingAccountRequest Account, Guid ProductId)> UsdAccountAndProductAsync(Fixture fx)
+    {
+        var usd = await CreateCompanyWithBankAccountAsync(fx.Client, fx.TenantId, currency: "USD", cityId: fx.Bogota.CityId);
+        var productId = await CreateProductWithScalesAsync(
+            fx.Client, fx.TenantId, prices: new Dictionary<string, decimal> { ["COP"] = 119_000m, ["USD"] = 30m });
+        return (new QuotationBillingAccountRequest(usd.CompanyId, usd.BankName, usd.AccountNumber, usd.Currency), productId);
+    }
 
     private sealed record Fixture(
         QepApiFactory Factory,
