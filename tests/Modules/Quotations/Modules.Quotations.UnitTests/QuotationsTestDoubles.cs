@@ -850,6 +850,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             [],
             null,
             null,
+            [],
             []));
 
     // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the

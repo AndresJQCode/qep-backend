@@ -661,7 +661,8 @@ public sealed class SendOrderHandlerTests
                 new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
                 new StubQuotationWithholdingLookup(),
                 new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
-                new StubQuotationBuyerAccountLookup()),
+                new StubQuotationBuyerAccountLookup(),
+                new FixedTenantClock(Now)),
             new OrderPdfProvider(
                 renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
                 tenant),

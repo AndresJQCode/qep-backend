@@ -67,7 +67,8 @@ public sealed class QuotationDiscountedUnitPriceTests
             new UnresolvedCompanyLookup(),
             new FixedQuotationSettingsStore(),
             new StubQuotationWithholdingLookup(),
-            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            new FixedTenantClock(DateTimeOffset.UtcNow));
 
         var response = await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);

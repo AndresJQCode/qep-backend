@@ -265,6 +265,30 @@ public sealed class OrderWithholdingsApiTests
         Assert.Empty((await GetDetailAsync(setup, created.Id)).Order.BillingWithholdingTaxRates);
     }
 
+    // Spec retenciones por UVT §6: el pedido convertido hereda la foto, así que su desglose es el de la cotización.
+    [Fact]
+    public async Task ConvertedOrderCarriesTheBreakdown()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 4m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+
+        var order = await ConvertAsync(setup, quotation.Id);
+
+        // Base 100.000 < 4 × 50.000.
+        var entry = Assert.Single(order.WithholdingBreakdown);
+        Assert.Equal(
+            (servicios, false, "BelowMinimumBase", 100_000m, (decimal?)200_000m, (int?)TodayInBogota().Year, false, 0m),
+            (entry.TaxRateId, entry.Applies, entry.Reason, entry.Base, entry.MinimumBaseAmount, entry.TaxUnitYear,
+                entry.TaxUnitOutdated, entry.Amount));
+        Assert.Equal(quotation.WithholdingBreakdown, order.WithholdingBreakdown);
+        Assert.Empty(order.Withholdings);
+    }
+
     private sealed record Setup(
         HttpClient Client,
         Guid TenantId,

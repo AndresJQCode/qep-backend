@@ -633,8 +633,9 @@ public sealed class QuotationPdfDocumentMapperTests
         [],
         // El PDF no imprime los contactos: son del diálogo de envío.
         [],
-        // Ni la explicación municipal: es de la pantalla.
+        // Ni la explicación municipal ni el desglose de retenciones: son de la pantalla (spec retenciones por UVT §3).
         null,
         null,
+        [],
         []);
 }

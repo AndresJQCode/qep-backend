@@ -350,6 +350,75 @@ public sealed class QuotationWithholdingsApiTests
         Assert.Equal(2_500m, fetched.RetentionAmount);
     }
 
+    // Spec retenciones por UVT §6: una tasa que no llega a la base mínima no desaparece; el desglose la trae con su
+    // motivo, el umbral en dinero y la UVT con su año, y withholdings sigue siendo sólo las aplicadas.
+    [Fact]
+    public async Task BreakdownExplainsARateBelowTheMinimumBase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 4m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+
+        var quotation = await CreateWithLinesAsync(setup, clientId, quantity: 1m);
+
+        // Base 100.000 < 4 × 50.000.
+        var entry = Assert.Single(quotation.WithholdingBreakdown);
+        Assert.Equal(
+            (servicios, false, "BelowMinimumBase", 100_000m, (decimal?)4m, (string?)"UVT", (decimal?)200_000m,
+                (decimal?)Uvt, (int?)TodayInBogota().Year, false, 0m),
+            (entry.TaxRateId, entry.Applies, entry.Reason, entry.Base, entry.MinimumBase, entry.MinimumBaseUnit,
+                entry.MinimumBaseAmount, entry.TaxUnitValue, entry.TaxUnitYear, entry.TaxUnitOutdated, entry.Amount));
+        Assert.Equal(
+            ("Retefuente servicios 4 %", "Retefuente", "CO", 4m, 4m, false, (Guid?)null),
+            (entry.Name, entry.Type, entry.Country, entry.Percentage, entry.CatalogPercentage, entry.PercentageOverridden,
+                entry.CityId));
+        Assert.Empty(quotation.Withholdings);
+        Assert.Equal(0m, quotation.RetentionAmount);
+    }
+
+    // §5.2: un documento de este año con sólo la UVT del anterior cargada congela ésa y lo dice.
+    [Fact]
+    public async Task BreakdownFlagsAnOutdatedTaxUnit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var lastYear = TodayInBogota().Year - 1;
+        var setup = await SetUpAsync(factory, taxUnitYear: lastYear);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 4m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+
+        var quotation = await CreateWithLinesAsync(setup, clientId, quantity: 3m);
+
+        var entry = Assert.Single(quotation.WithholdingBreakdown);
+        Assert.Equal(
+            (true, "Applied", (int?)lastYear, true, 12_000m),
+            (entry.Applies, entry.Reason, entry.TaxUnitYear, entry.TaxUnitOutdated, entry.Amount));
+        Assert.True(Assert.Single((await GetAsync(setup, quotation.Id)).WithholdingBreakdown).TaxUnitOutdated);
+    }
+
+    // Review Focus 2: creada el 1 de enero a la 01:00 UTC, que en Bogotá es todavía 31 de diciembre. La UVT de ese año
+    // local no está desactualizada: el año del documento sale del calendario del tenant, no de UTC.
+    [Fact]
+    public async Task OutdatedUsesTheTenantLocalYear()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(), utcNow: new DateTimeOffset(2026, 1, 1, 1, 0, 0, TimeSpan.Zero));
+        var setup = await SetUpAsync(factory, taxUnitYear: 2025);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 4m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+
+        var quotation = await CreateWithLinesAsync(setup, clientId, quantity: 1m);
+
+        var entry = Assert.Single(quotation.WithholdingBreakdown);
+        Assert.Equal(((int?)2025, false), (entry.TaxUnitYear, entry.TaxUnitOutdated));
+    }
+
     private sealed record Setup(
         HttpClient Client,
         Guid TenantId,
@@ -358,12 +427,12 @@ public sealed class QuotationWithholdingsApiTests
         QuotationBillingAccountRequest Account,
         CityInDepartment City);
 
-    // Tenant, empresa colombiana con cuenta en COP, UVT del año del documento y un producto de 119.000 con IVA del 19 %
-    // adentro (base 100.000 por unidad).
-    private static async Task<Setup> SetUpAsync(QepApiFactory factory)
+    // Tenant, empresa colombiana con cuenta en COP, UVT del año del documento (u otro, con taxUnitYear) y un producto de
+    // 119.000 con IVA del 19 % adentro (base 100.000 por unidad).
+    private static async Task<Setup> SetUpAsync(QepApiFactory factory, int? taxUnitYear = null)
     {
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
-        await InsertTaxUnitValueAsync(factory, "CO", TodayInBogota().Year, Uvt);
+        await InsertTaxUnitValueAsync(factory, "CO", taxUnitYear ?? TodayInBogota().Year, Uvt);
         var company = await CreateCompanyWithBankAccountAsync(client, tenantId);
         var vat = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
         var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 119_000m, taxRateId: vat);

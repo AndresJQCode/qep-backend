@@ -72,7 +72,8 @@ internal static class OrderMapping
         order.Balance,
         order.OperationCityId,
         order.BuyerNotes,
-        order.BuyerAccountId);
+        order.BuyerAccountId,
+        [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)]);
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>

@@ -65,7 +65,8 @@ public sealed class QuotationItemPriceScalesTests
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             new FixedQuotationSettingsStore(),
             new StubQuotationWithholdingLookup(),
-            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            new FixedTenantClock(DateTimeOffset.UtcNow));
 
         return await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
