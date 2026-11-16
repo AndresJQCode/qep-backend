@@ -91,6 +91,14 @@ public sealed class SupportTicket
 
     public DateTimeOffset? ExtendedAt { get; private set; }
 
+    /// <summary>Owner decision S6 (2026-11-16, spec 2026-11-15 D-11): the term the requester sees, in business days: the type's snapshot
+    /// plus the extension, the same two numbers <see cref="DueOnFor"/> adds before the pauses. Null = the type has no term. Not mapped:
+    /// it has no setter.</summary>
+    public int? CurrentTermBusinessDays => TermBusinessDays is { } days ? days + ExtensionBusinessDays : null;
+
+    /// <summary>Owner decision S6: whether the deadline was extended (<see cref="Extend"/> ran). Not mapped: it has no setter.</summary>
+    public bool IsExtended => ExtendedAt is not null;
+
     /// <summary>Cuántas veces entró a <see cref="SupportTicketStatus.Resolved"/>: reabrir y resolver otra vez es otro ciclo.</summary>
     public int ResolutionCount { get; private set; }
 

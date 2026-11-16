@@ -36,7 +36,8 @@ public sealed class SupportPublicIdempotencyApiTests(SupportPublicHost host) : I
         var one = await JsonAsync(first);
         var two = await JsonAsync(retry);
         Assert.Equal("SOP-000001", one.GetProperty("number").GetString());
-        foreach (var field in new[] { "number", "receivedAt", "dueOn", "termBusinessDays", "termIsLegal", "successMessage", "consultUrl" })
+        foreach (var field in new[]
+                 { "number", "receivedAt", "dueOn", "termBusinessDays", "termExtended", "termIsLegal", "successMessage", "consultUrl" })
         {
             Assert.Equal(one.GetProperty(field).ToString(), two.GetProperty(field).ToString());
         }
@@ -52,6 +53,33 @@ public sealed class SupportPublicIdempotencyApiTests(SupportPublicHost host) : I
         var next = await FileAsync(rig, NamedBody(rig.TypeId, rig.CityId, Email()));
         Assert.Equal(HttpStatusCode.Created, next.StatusCode);
         Assert.Equal("SOP-000002", (await JsonAsync(next)).GetProperty("number").GetString());
+    }
+
+    // Owner decision S6 (spec 2026-11-15 D-11): a retry answers the ticket as it is now. After an extension it carries the current
+    // term (15 + 5), termExtended true and the extended dueOn, not the values of the first answer.
+    [Fact]
+    public async Task ARetryAfterAnExtensionReturnsTheCurrentValues()
+    {
+        var rig = await RigAsync();
+        var typeId = await TypeIdNamedAsync(rig.Factory, rig.Tenant, "Petición general");
+        var email = Email();
+        var key = Guid.NewGuid();
+        var first = await JsonAsync(await FileAsync(rig, NamedBody(typeId, rig.CityId, email, clientRequestId: key)));
+        var ticketId = Guid.Parse((await TextAsync(
+            rig.Factory, "SELECT id::text FROM support.tickets WHERE tenant_id = @tenant", ("tenant", rig.TenantId)))!);
+        var extendedDueOn = await ExtendTicketAsync(rig.Factory, rig.TenantId, ticketId, 5);
+
+        var retry = await FileAsync(rig, NamedBody(typeId, rig.CityId, email, clientRequestId: key));
+
+        Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        var body = await JsonAsync(retry);
+        Assert.Equal(15, first.GetProperty("termBusinessDays").GetInt32());
+        Assert.False(first.GetProperty("termExtended").GetBoolean());
+        Assert.Equal(first.GetProperty("number").GetString(), body.GetProperty("number").GetString());
+        Assert.Equal(20, body.GetProperty("termBusinessDays").GetInt32());
+        Assert.True(body.GetProperty("termExtended").GetBoolean());
+        Assert.Equal(extendedDueOn, DateOnly.Parse(body.GetProperty("dueOn").GetString()!, System.Globalization.CultureInfo.InvariantCulture));
+        Assert.NotEqual(first.GetProperty("dueOn").GetString(), body.GetProperty("dueOn").GetString());
     }
 
     // Review Focus 7: the PIN already went out by email. The retry does not show it again nor send it again, and it still works.
