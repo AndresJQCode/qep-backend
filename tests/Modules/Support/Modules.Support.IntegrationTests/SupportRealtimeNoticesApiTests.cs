@@ -39,6 +39,20 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
         AssertAnnounced(Publisher.Of(scenario.TenantId), Id(ticket), Id(ticket));
     }
 
+    // Fase 4a (plan G1): sin a dónde mandar la apertura, un solo aviso.
+    [Fact]
+    public async Task CreatingAnAnonymousManualTicketAnnouncesIt()
+    {
+        var scenario = await StartAsync(Factory);
+        var body = Body(await scenario.TypeIdAsync("Queja"), replyChannel: "Portal");
+        body["requester"] = null;
+        body["anonymous"] = true;
+
+        var ticket = await scenario.CreateAsync(body);
+
+        AssertAnnounced(Publisher.Of(scenario.TenantId), Id(ticket));
+    }
+
     [Fact]
     public async Task CreatingFromAConversationAnnouncesIt()
     {
@@ -217,6 +231,49 @@ public sealed class SupportRealtimeNoticesApiTests(SupportRealtimeNoticesHost ho
         Assert.Equal(HttpStatusCode.UnprocessableEntity, notEditable.StatusCode);
         Assert.Equal(SupportErrorCodes.NotEditable, await CodeOfAsync(notEditable));
         Assert.Empty(Since(scenario.TenantId, beforeNotEditable));
+    }
+
+    // Fase 4a (plan G7): «Asignármelo» avisa sólo si cambió algo.
+    [Fact]
+    public async Task TakingAnnouncesTheTicket()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync();
+        var before = Publisher.Of(scenario.TenantId).Count;
+
+        var taken = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, Version(ticket));
+
+        Assert.Equal(HttpStatusCode.OK, taken.StatusCode);
+        AssertAnnounced(Since(scenario.TenantId, before), Id(ticket));
+        var beforeAgain = Publisher.Of(scenario.TenantId).Count;
+
+        var again = await scenario.PostActionAsync($"tickets/{Id(ticket)}/take", null, Version(await JsonAsync(taken)));
+
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Empty(Since(scenario.TenantId, beforeAgain));
+    }
+
+    // Fase 4a (plan G9): la prórroga avisa; la segunda, rechazada con 422, no.
+    [Fact]
+    public async Task ExtendingAnnouncesTheTicket()
+    {
+        var scenario = await StartAsync(Factory);
+        var ticket = await scenario.CreateAsync();
+        var before = Publisher.Of(scenario.TenantId).Count;
+
+        var extended = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/extension", new ExtendTicketRequest(5, "Falta respuesta del proveedor"), Version(ticket));
+
+        Assert.Equal(HttpStatusCode.OK, extended.StatusCode);
+        AssertAnnounced(Since(scenario.TenantId, before), Id(ticket));
+        var beforeAgain = Publisher.Of(scenario.TenantId).Count;
+
+        var again = await scenario.PostActionAsync(
+            $"tickets/{Id(ticket)}/extension", new ExtendTicketRequest(3, "Otra vez"), Version(await JsonAsync(extended)));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, again.StatusCode);
+        Assert.Equal(SupportErrorCodes.ExtensionAlreadyUsed, await CodeOfAsync(again));
+        Assert.Empty(Since(scenario.TenantId, beforeAgain));
     }
 
     [Fact]

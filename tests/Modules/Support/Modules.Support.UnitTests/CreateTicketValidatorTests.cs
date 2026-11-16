@@ -104,6 +104,29 @@ public sealed class CreateTicketValidatorTests
         Assert.Equal(["Requester.CountryCode"], Errors(Command(requester: Ana with { CountryCode = "COL" })));
     }
 
+    // Fase 4a (plan G1): el anónimo se responde sólo por la página, sin cliente ni foto.
+    [Fact]
+    public void AnonymousNeedsPortalAndNoCustomerNorRequester()
+    {
+        CreateTicketCommand Anonymous(string channel, Guid? customerId, TicketRequesterRequest? requester) =>
+            CreateTicketCommand.From(
+                Tenant,
+                new CreateTicketRequest(
+                    Guid.CreateVersion7(), "Asunto", "Descripción", "Phone", channel, customerId, requester, null, Anonymous: true))
+            with { TenantCountry = "CO" };
+
+        Assert.Empty(Errors(Anonymous("Portal", null, null)));
+        Assert.Equal(["ReplyChannel"], Errors(Anonymous("Email", null, null)));
+        Assert.Equal(["CustomerId"], Errors(Anonymous("Portal", Guid.CreateVersion7(), null)));
+        Assert.Equal(["Requester"], Errors(Anonymous("Portal", null, Ana)));
+    }
+
+    [Fact]
+    public void PortalWithoutAnonymousIsRejected()
+    {
+        Assert.Equal(["ReplyChannel"], Errors(Command(channel: "Portal")));
+    }
+
     [Fact]
     public void AMissingTypeFails()
     {

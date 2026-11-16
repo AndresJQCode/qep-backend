@@ -26,5 +26,12 @@ public interface ISupportTicketRepository
     Task<IReadOnlyList<SupportTicket>> ListByConversationOrCustomerAsync(
         Guid tenantId, Guid conversationId, Guid? customerId, CancellationToken cancellationToken);
 
+    /// <summary>Fase 4a (plan G4): si algún ticket del tenant, en cualquier estado, usa el tipo. Es la pregunta previa del borrado; la
+    /// regla la cierra la FK.</summary>
+    Task<bool> AnyOfTypeAsync(Guid tenantId, SupportTicketTypeId typeId, CancellationToken cancellationToken);
+
+    /// <summary>Fase 4a (plan G6): los tipos del tenant que algún ticket usa, para el <c>InUse</c> de la lista.</summary>
+    Task<IReadOnlySet<SupportTicketTypeId>> UsedTypeIdsAsync(Guid tenantId, CancellationToken cancellationToken);
+
     void Add(SupportTicket ticket);
 }

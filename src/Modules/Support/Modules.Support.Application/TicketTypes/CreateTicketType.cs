@@ -102,6 +102,7 @@ public sealed class CreateTicketTypeHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        return SupportDtoMapping.ToDto(type);
+        // Recién creado: ningún ticket lo usa todavía.
+        return SupportDtoMapping.ToDto(type, inUse: false);
     }
 }

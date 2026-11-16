@@ -15,6 +15,9 @@ public sealed class SupportTicket
 
     public const int DescriptionMaxLength = 5000;
 
+    /// <summary>Fase 4a (plan G11): el motivo de la prórroga, recortado.</summary>
+    public const int ExtensionReasonMaxLength = 1000;
+
     private readonly List<SupportTicketEvent> events = [];
 
     // EF Core materializa por acá; CreateManual, CreateFromConversation y CreateFromPublicForm son los únicos puntos de entrada de
@@ -80,6 +83,14 @@ public sealed class SupportTicket
 
     public int PausedBusinessDays { get; private set; }
 
+    /// <summary>Fase 4a (plan G9): los días hábiles de la prórroga única; 0 sin prórroga. Se guardan como días y no como fecha para
+    /// que entren en <see cref="DueOnFor"/> igual que las pausas: una pausa posterior o un cambio de tipo la siguen contando.</summary>
+    public int ExtensionBusinessDays { get; private set; }
+
+    public string? ExtensionReason { get; private set; }
+
+    public DateTimeOffset? ExtendedAt { get; private set; }
+
     /// <summary>Cuántas veces entró a <see cref="SupportTicketStatus.Resolved"/>: reabrir y resolver otra vez es otro ciclo.</summary>
     public int ResolutionCount { get; private set; }
 
@@ -123,7 +134,9 @@ public sealed class SupportTicket
 
     public long Version { get; private set; }
 
-    /// <summary>Plan D6: un ticket manual necesita cliente o solicitante con nombre.</summary>
+    /// <summary>Plan D6: un ticket manual necesita cliente o solicitante con nombre. Fase 4a (plan G2): con
+    /// <paramref name="anonymous"/> es el anónimo del alta manual, como el del formulario público: sin cliente ni foto del solicitante,
+    /// y se responde sólo por <see cref="SupportReplyChannel.Portal"/>. El validador lo ataja antes; el dominio no confía.</summary>
     public static SupportTicket CreateManual(
         SupportTicketId id,
         Guid tenantId,
@@ -139,10 +152,33 @@ public sealed class SupportTicket
         Guid? assigneeMemberId,
         Guid actorMemberId,
         DateTimeOffset now,
-        SupportClockContext clock) =>
-        Start(
-            id, tenantId, number, type, subject, description, priority, SupportTicketIntake.Manual, medium, replyChannel,
-            conversation: null, customerId, requester, assigneeMemberId, actorMemberId, now, clock);
+        SupportClockContext clock,
+        bool anonymous = false)
+    {
+        if (!anonymous)
+        {
+            return Start(
+                id, tenantId, number, type, subject, description, priority, SupportTicketIntake.Manual, medium, replyChannel,
+                conversation: null, customerId, requester, assigneeMemberId, actorMemberId, now, clock);
+        }
+
+        if (customerId is not null)
+        {
+            throw new ArgumentException("An anonymous ticket cannot be linked to a customer.", nameof(customerId));
+        }
+
+        if (requester is not null)
+        {
+            throw new ArgumentException("An anonymous ticket has no requester.", nameof(requester));
+        }
+
+        // El canal se fija: un anónimo no tiene otro (spec §9.4).
+        var ticket = Start(
+            id, tenantId, number, type, subject, description, priority, SupportTicketIntake.Manual, medium, SupportReplyChannel.Portal,
+            conversation: null, customerId: null, requester: null, assigneeMemberId, actorMemberId, now, clock, anonymous: true);
+        ticket.IsAnonymous = true;
+        return ticket;
+    }
 
     /// <summary>Spec §8.1: el ticket que abre un asesor desde una conversación. Entra por
     /// <see cref="SupportTicketIntake.Conversation"/>, se responde por el hilo y lo sigue desde ya. La regla del solicitante es la
@@ -215,7 +251,7 @@ public sealed class SupportTicket
     }
 
     // El alta común de las tres entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
-    // constructor vacío. Sin actor sólo entra el formulario público.
+    // constructor vacío. Sin actor sólo entra el formulario público. Con anonymous no se exige solicitante con nombre.
     private static SupportTicket Start(
         SupportTicketId id,
         Guid tenantId,
@@ -233,14 +269,16 @@ public sealed class SupportTicket
         Guid? assigneeMemberId,
         Guid? actorMemberId,
         DateTimeOffset now,
-        SupportClockContext clock)
+        SupportClockContext clock,
+        bool anonymous = false)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
         EnsureSameTenant(tenantId, type);
         conversation?.EnsureValid();
-        if (intake is not SupportTicketIntake.PublicForm && customerId is null && requester is not { HasName: true })
+        // Un anónimo (formulario público o alta manual, plan G2) no tiene a quién nombrar.
+        if (intake is not SupportTicketIntake.PublicForm && !anonymous && customerId is null && requester is not { HasName: true })
         {
             throw RequesterRequired();
         }
@@ -510,6 +548,78 @@ public sealed class SupportTicket
             });
     }
 
+    /// <summary>
+    /// Fase 4a (spec §7.2, plan G9 a G11): la prórroga única del plazo, con su motivo. Las guardas van en el orden de
+    /// <see cref="ExtensionRejection"/> y, al final, el tope: la prórroga no pasa del término inicial (el plazo total no pasa del
+    /// doble). «Hoy» es la fecha local del tenant; el día del vencimiento todavía se puede, porque el plazo vence al final de ese día.
+    /// El evento <see cref="SupportTicketEventKind.Extended"/> lleva los días, el motivo y el vencimiento de antes y de después.
+    /// </summary>
+    public void Extend(int businessDays, string reason, Guid actorMemberId, DateTimeOffset now, SupportClockContext clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(businessDays);
+        var trimmed = Text(reason, ExtensionReasonMaxLength, nameof(reason));
+
+        if (ExtensionRejection(clock.LocalDate(now)) is { } rejection)
+        {
+            throw rejection;
+        }
+
+        if (businessDays > TermBusinessDays)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.ExtensionTooLong,
+                $"An extension of {businessDays} business days is longer than the term of {TermBusinessDays}.");
+        }
+
+        var fromDueOn = DueOn;
+        ExtensionBusinessDays = businessDays;
+        ExtensionReason = trimmed;
+        ExtendedAt = now;
+        DueOn = DueOnFor(TermBusinessDays, clock);
+        AddEvent(
+            SupportTicketEventKind.Extended, actorMemberId, now,
+            new { businessDays, reason = trimmed, fromDueOn, toDueOn = DueOn });
+    }
+
+    /// <summary>El tope de la prórroga si hoy se puede prorrogar (el término inicial), o null si alguna guarda de
+    /// <see cref="Extend"/> la rechaza: la pantalla muestra u oculta «Prorrogar» sin repetir las reglas.</summary>
+    public int? MaxExtensionBusinessDays(DateOnly today) =>
+        ExtensionRejection(today) is null ? TermBusinessDays : null;
+
+    // Las guardas de la prórroga en el orden del plan G10, sin el tope (depende de los días pedidos). Null si hoy se puede.
+    private SupportDomainException? ExtensionRejection(DateOnly today)
+    {
+        if (Status is SupportTicketStatus.Resolved or SupportTicketStatus.Closed)
+        {
+            return new SupportDomainException(SupportErrorCodes.NotEditable, $"A ticket in status '{Status}' cannot be extended.");
+        }
+
+        if (ExtendedAt is not null)
+        {
+            return new SupportDomainException(SupportErrorCodes.ExtensionAlreadyUsed, "The ticket already used its extension.");
+        }
+
+        if (TermBusinessDays is null || DueOn is not { } dueOn)
+        {
+            return new SupportDomainException(SupportErrorCodes.ExtensionNoTerm, "A ticket without a term cannot be extended.");
+        }
+
+        if (SupportTicketStatuses.StopsTheClock(Status))
+        {
+            return new SupportDomainException(
+                SupportErrorCodes.ExtensionClockStopped, "A ticket cannot be extended while its clock is stopped.");
+        }
+
+        if (today > dueOn)
+        {
+            return new SupportDomainException(
+                SupportErrorCodes.ExtensionOverdue, $"The ticket was due on {dueOn:yyyy-MM-dd} and can no longer be extended.");
+        }
+
+        return null;
+    }
+
     private void CopyType(SupportTicketType type, SupportClockContext clock)
     {
         TypeId = type.Id;
@@ -520,8 +630,12 @@ public sealed class SupportTicket
         DueOn = DueOnFor(type.TermBusinessDays, clock);
     }
 
+    // El único cálculo del vencimiento (spec §7.2): término + prórroga + pausas, desde la radicación. Un camino nuevo que lo recalcule
+    // pasa por acá o pierde la prórroga (plan G9, G12).
     private DateOnly? DueOnFor(int? term, SupportClockContext clock) =>
-        term is { } days ? SupportBusinessDays.Add(clock.Calendar, ReceivedOn, days + PausedBusinessDays) : null;
+        term is { } days
+            ? SupportBusinessDays.Add(clock.Calendar, ReceivedOn, days + ExtensionBusinessDays + PausedBusinessDays)
+            : null;
 
     private void AddEvent(SupportTicketEventKind kind, Guid? actorMemberId, DateTimeOffset now, object details)
     {

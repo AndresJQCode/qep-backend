@@ -12,7 +12,8 @@ public sealed class GetLegalTextsHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ISupportLegalTextRepository legalTexts,
-    ISupportMemberDirectory members)
+    ISupportMemberDirectory members,
+    ISupportViewer viewer)
     : IQueryHandler<GetLegalTextsQuery, SupportLegalTextsDto>
 {
     public async Task<SupportLegalTextsDto> HandleAsync(GetLegalTextsQuery query, CancellationToken cancellationToken)
@@ -20,22 +21,23 @@ public sealed class GetLegalTextsHandler(
         await SupportAuthorization.EnsureCanViewSettingsAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
 
         var text = await legalTexts.CurrentAsync(query.TenantId, cancellationToken) ?? SupportLegalTextVersion.Example(query.TenantId);
-        return await SupportLegalTexts.ToDtoAsync(text, members, cancellationToken);
+        return await SupportLegalTexts.ToDtoAsync(text, members, viewer, cancellationToken);
     }
 }
 
 internal static class SupportLegalTexts
 {
-    /// <summary>El ejemplo no tiene autor ni fecha. Un autor que ya no se encuentra sale como «Sin nombre», igual que en la traza.</summary>
+    /// <summary>El ejemplo no tiene autor ni fecha. Un autor que ya no se encuentra sale como «Sin nombre», igual que en la traza; el
+    /// autor lleva <c>IsMe</c> contra quien pide (fase 4a, plan G8).</summary>
     public static async Task<SupportLegalTextsDto> ToDtoAsync(
-        SupportLegalTextVersion text, ISupportMemberDirectory members, CancellationToken cancellationToken)
+        SupportLegalTextVersion text, ISupportMemberDirectory members, ISupportViewer viewer, CancellationToken cancellationToken)
     {
         SupportMemberDto? createdBy = null;
         if (!text.IsExample)
         {
             var names = await members.NamesAsync(text.TenantId, [text.CreatedBy], cancellationToken);
-            createdBy = new SupportMemberDto(
-                text.CreatedBy, names.TryGetValue(text.CreatedBy, out var name) ? name : SupportTicketDtoComposer.UnknownName);
+            createdBy = SupportTicketDtoComposer.ToMemberDto(
+                text.CreatedBy, names, await viewer.MemberIdAsync(text.TenantId, cancellationToken));
         }
 
         return new SupportLegalTextsDto(

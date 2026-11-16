@@ -4994,10 +4994,12 @@ precondition.if_match_required`; vieja, `412 concurrency.conflict`).
 | `POST /tickets` | `support.ticket.manage` | Alta manual (`201` + `Location`, `SupportTicketDetailDto`) |
 | `GET /tickets/{ticketId}` | `support.ticket.view` | Detalle con la traza y las transiciones permitidas |
 | `PUT /tickets/{ticketId}/status` · `/assignee` · `/type` · `/customer` | `support.ticket.manage` | Cambia estado, responsable, tipo o cliente |
+| `POST /tickets/{ticketId}/take` · `/extension` | `support.ticket.manage` | «Asignármelo» y la prórroga del plazo (fase 4a, `If-Match`) |
 | `GET /assignees` | `support.ticket.view` | Miembros activos que pueden ser responsables (tienen `manage`) |
 | `GET /ticket-types` | `support.ticket.view` | Todos los tipos, también los inactivos (el selector los marca), para el ticket |
 | `GET` · `POST /settings/ticket-types` | `support.settings.manage` | Los mismos tipos para la tabla de ajustes, y alta de uno |
 | `PUT /settings/ticket-types/{typeId}` | `support.settings.manage` | Edita un tipo (`If-Match`) |
+| `DELETE /settings/ticket-types/{typeId}` | `support.settings.manage` | Borra un tipo que ningún ticket usa (fase 4a, `If-Match`, `204`) |
 | `PUT /settings/ticket-types/order` | `support.settings.manage` | Reordena todos los tipos |
 | `GET /settings` · `PUT /settings` | `support.settings.view` · `support.settings.manage` | Umbral de «por vencer» (con `ETag`) |
 
@@ -5006,7 +5008,8 @@ primer acceso (`SupportProvisioner`, `INSERT … ON CONFLICT (tenant_id) DO NOTH
 ocho tipos, en este orden y todos activos y publicados: Petición general (15 días hábiles), Petición de documentos o información (10),
 Consulta (30), Queja (15), Reclamo (15), Sugerencia (15), Felicitación (15) y Soporte técnico (sin término). Los siete primeros son
 «legales»; los cinco primeros piden respuesta formal. Una consulta directa a `support.ticket_types` de un tenant que nunca abrió
-Soporte devuelve cero filas: no es un error. Un tipo no se borra (no hay `DELETE`): se desactiva. Un tipo sin término no vence y no
+Soporte devuelve cero filas: no es un error. Un tipo con tickets no se borra, se desactiva; uno sin tickets sí se borra desde la fase 4a
+(ver [Gestión y plazos de Soporte](#gestión-y-plazos-de-soporte-fase-4a)). Un tipo sin término no vence y no
 puede ser legal; el nombre es único por tenant sin distinguir mayúsculas (`409 support.ticket_type.name_taken`).
 
 **Radicado.** `SOP-` más seis dígitos, por tenant (`SOP-000001` el primero). El contador es `next_ticket_number` de
@@ -5437,6 +5440,85 @@ formulario cuenta sólo claves v4 (las suyas), así que una subida de nota, adju
 con un `uploadKey` que no es v4 responde `422 support.public.attachment_invalid` (`SupportPublicUploads`).
 
 **Migración:** `Support` `AddSupportTicketNotes` (`ticket_notes`, `ticket_note_files`), aditiva.
+
+#### Gestión y plazos de Soporte (fase 4a)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-4a-management-and-deadlines-backend.md` (spec §7.2, §7.5, §9.4 y §12). Cuatro
+ajustes de gestión y la prórroga del plazo. Todas las escrituras de ticket auditan en la misma transacción y avisan por el hub después
+de confirmar; un cambio que no cambia nada no sube `version`, no audita y no avisa.
+
+| Método y ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `POST /tickets` (cambia) | `support.ticket.manage` | `CreateTicketRequest` + `anonymous` (`bool?`, null = `false`) | `201 SupportTicketDetailDto`; `issuedPin` sólo si es anónimo |
+| `DELETE /settings/ticket-types/{typeId}` (`If-Match`) | `support.settings.manage` | — | `204`; 404, 412, `422 support.ticket_type.in_use`, 428 |
+| `POST /tickets/{ticketId}/take` (`If-Match`) | `support.ticket.manage` | — | `SupportTicketDetailDto`; 404, 412, 422, 428 |
+| `POST /tickets/{ticketId}/extension` (`If-Match`) | `support.ticket.manage` | `{ businessDays, reason }` | `SupportTicketDetailDto`; 404, 412, 422, 428 |
+
+**Alta manual anónima.** Con `anonymous: true`, `customerId` y `requester` tienen que venir `null` y `replyChannel` tiene que ser
+`Portal`; si no, `422 validation.failed` en `CustomerId`, `Requester` o `ReplyChannel`. Sin anónimo, `Portal` también es
+`422 validation.failed` en `ReplyChannel`. `manualMedium` sigue obligatorio. El ticket nace con `isAnonymous: true`, sin cliente ni foto
+del solicitante, y con PIN como cualquier otro: **el PIN viaja una sola vez**, en `issuedPin` del `201` del alta, para que el asesor se
+lo dicte a quien llamó o vino en persona (es su única forma de consultar el radicado). En el `GET` del detalle, en la respuesta de cualquier
+acción y en la auditoría es `null` o no está. No se manda nada al abrir (no hay a dónde): `consultAccess.channel` queda `null`.
+
+**Borrar un tipo de ticket.** Sólo uno que ningún ticket usa, en cualquier estado (si no, `422 support.ticket_type.in_use`: se
+desactiva). La regla la cierra la base con la FK `FK_tickets_ticket_types_ticket_type_id` (`ON DELETE RESTRICT`), que
+`SupportUnitOfWork` traduce por nombre: un borrado que choca con un ticket (`23001`) es `in_use`, y un alta o cambio de tipo contra un
+tipo recién borrado (`23503`) es `422 support.ticket_type.unavailable`. El handler pregunta antes solo para responder rápido. Los tipos
+sembrados también se borran y no se vuelven a sembrar. `SupportTicketTypeDto` trae `inUse` para que la tabla de ajustes ofrezca
+«Eliminar» o sólo «Desactivar». Audita `support.ticket_type.deleted`.
+
+**«Asignármelo».** Asigna el ticket a la membresía de quien llama, con la misma regla del responsable (membresía activa con
+`support.ticket.manage`). Ya suyo: `200` sin cambio de versión. Resuelto o cerrado: `422 support.ticket.not_editable`. Audita
+`support.ticket.assigned`. Todo `SupportMemberDto` trae `isMe`, falso fuera de una sesión (consulta pública, worker del hilo).
+
+**Prórroga del plazo** (spec §7.2). Una sola por ticket, con motivo, antes de que venza, y nunca mayor que el término inicial (el plazo
+total no pasa del doble). Se guarda en **días hábiles** (`extension_business_days`) y no como fecha: el vencimiento es siempre
+término + prórroga + pausas desde la radicación, así una pausa posterior o un cambio de tipo la siguen contando (cambiar de tipo conserva
+los días de prórroga y recalcula con el término nuevo). `businessDays` va de 1 a 365 y `reason` de 1 a 1 000 caracteres recortado
+(si no, `422 validation.failed` en `BusinessDays` o `Reason`). Las reglas del dominio, en este orden:
+
+| Código (422) | Cuándo |
+| --- | --- |
+| `support.ticket.not_editable` | El ticket está `Resolved` o `Closed` |
+| `support.ticket.extension_already_used` | Ya se prorrogó |
+| `support.ticket.extension_no_term` | El tipo no tiene término |
+| `support.ticket.extension_clock_stopped` | El reloj está detenido (`WaitingOnCustomer`) |
+| `support.ticket.extension_overdue` | Hoy (fecha local del tenant) es posterior al vencimiento; el mismo día del vencimiento todavía se puede |
+| `support.ticket.extension_too_long` | `businessDays` es mayor que el término del ticket |
+
+El detalle trae en `clock` la prórroga hecha (`extension: { businessDays, reason, extendedAt }`) y `maxExtensionBusinessDays`: el
+término si hoy se puede prorrogar, `null` si no; con eso la pantalla muestra u oculta «Prorrogar» sin repetir las reglas. La traza
+suma el evento `Extended` con `extensionBusinessDays`, `fromDueOn`, `toDueOn` y `reason`. Audita `support.ticket.extended` con los
+campos `dueOn` y `extension`, **nunca el motivo**. El backend no le avisa al solicitante: el asesor manda el aviso como una respuesta
+normal (`POST …/replies`), por el canal del ticket.
+
+**Migraciones:** `Support` `AddTicketTypeForeignKey` (la FK) y `Support` `AddTicketExtension` (`extension_business_days int not null
+default 0`, `extension_reason varchar(1000)`, `extended_at timestamptz`, el CHECK `CK_tickets_extension` y `Extended` en
+`CK_ticket_events_kind`). Las dos son aditivas.
+
+**Avisos para quien opera:**
+
+- **Antes de desplegar `AddTicketTypeForeignKey`**, en producción esta consulta tiene que dar `0`; si no, la FK no se crea y la
+  migración falla (un ticket apunta a un tipo que ya no existe, cosa que hasta hoy ningún camino del código hacía):
+
+  ```sql
+  SELECT count(*) FROM support.tickets t WHERE NOT EXISTS (SELECT 1 FROM support.ticket_types y WHERE y.id = t.ticket_type_id);
+  ```
+
+- **Durante el rollout**, un pod viejo no conoce el valor `Extended` de `ticket_events.kind`: EF lo lee con `Enum.Parse`, así que el
+  detalle de un ticket ya prorrogado responde `500` en ese pod (los demás tickets, no). Es el mismo caso que los eventos nuevos de la
+  fase 2 y se arregla solo al terminar el rollout; para evitarlo, nadie prorroga hasta que no quede un pod viejo.
+- **Un pod viejo también recalcula `due_on` sin la prórroga.** Al reanudar un ticket que esperaba al cliente (lo hace solo
+  `SupportThreadFollower` cuando el cliente escribe) o al cambiarle el tipo, el código viejo escribe término + pausas y pierde los
+  días prorrogados; nada lo corrige hasta otra reanudación o cambio de tipo en un pod nuevo. Por eso la regla de no prorrogar vale
+  hasta que no quede un pod viejo.
+- **Rollback del código:** con tickets ya prorrogados, el código viejo da `500` en el detalle de cada uno, en todos los pods y para
+  siempre (no lee `Extended`), y les recalcula el vencimiento sin la prórroga. Un rollback después de la primera prórroga exige
+  volver a desplegar el código nuevo; no lo hagas sin revisar `SELECT count(*) FROM support.tickets WHERE extended_at IS NOT NULL;`.
+- **«El doble del término» se mide contra el término vigente al prorrogar** (P-3 y P-5). Si después le cambias el tipo a uno de
+  término menor, la prórroga se conserva y el total puede pasar del doble del término nuevo. Es lo decidido: no lo «arregles»
+  recortando la prórroga.
 
 ### API externa
 
