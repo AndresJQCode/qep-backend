@@ -37,7 +37,7 @@ public sealed class OrderResponseComposerTests
         var dto = order.ToDto();
 
         Assert.Equal(("Sin cebolla", "Shopify #1001"), (dto.BuyerNotes, dto.Notes));
-        Assert.Equal("Sin cebolla", OrderResponses.ToResponse(dto, documentYear: null).BuyerNotes);
+        Assert.Equal("Sin cebolla", OrderResponses.ToResponse(dto, TaxUnitContext.None).BuyerNotes);
     }
 
     // Spec retenciones por UVT §9: año igual → false; anterior → true; sin año (sin unidad o legada) → false.
@@ -80,6 +80,67 @@ public sealed class OrderResponseComposerTests
         var response = await Composer(clock: clock).ComposeOrderAsync(TenantId, order, TestContext.Current.CancellationToken);
 
         Assert.False(Assert.Single(response.WithholdingBreakdown).TaxUnitOutdated);
+        Assert.Empty(clock.RequestedTenantIds);
+    }
+
+    // Spec alerta UVT §5.4: el año que tomaría la fila si hoy se refrescara, con la fecha del documento. Una sola consulta
+    // por respuesta, con los países distintos de las filas en unidades.
+    [Fact]
+    public async Task LatestYearIsTheLoadedYearForTheCountry()
+    {
+        var withholdings = new StubQuotationWithholdingLookup().WithTaxUnit("CO", 60_000m, 2026);
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with
+        {
+            WithholdingBreakdown = [Verdict(taxUnitYear: 2025), Verdict(taxUnitYear: 2025)],
+        };
+
+        var response = await Composer(withholdings: withholdings)
+            .ComposeOrderAsync(TenantId, order, TestContext.Current.CancellationToken);
+
+        Assert.All(
+            response.WithholdingBreakdown,
+            entry => Assert.Equal(
+                ((int?)2025, true, (int?)2026), (entry.TaxUnitYear, entry.TaxUnitOutdated, entry.TaxUnitLatestYear)));
+        Assert.Equal(["CO"], Assert.Single(withholdings.TaxUnitRequests));
+    }
+
+    // Sin ningún valor cargado para el país no hay año que ofrecer.
+    [Fact]
+    public async Task LatestYearIsNullWithoutAnyLoadedValue()
+    {
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with
+        {
+            WithholdingBreakdown = [Verdict(taxUnitYear: 2025)],
+        };
+
+        var response = await Composer().ComposeOrderAsync(TenantId, order, TestContext.Current.CancellationToken);
+
+        Assert.Null(Assert.Single(response.WithholdingBreakdown).TaxUnitLatestYear);
+    }
+
+    // Una fila sin base en unidades no tiene UVT que refrescar, aunque su país tenga una cargada.
+    [Fact]
+    public void LatestYearIsNullForARowWithoutUnit()
+    {
+        var context = new TaxUnitContext(2026, new Dictionary<string, int> { ["CO"] = 2026 });
+
+        var entry = Assert.Single(QuotationResponseComposer.ToBreakdownResponse([Verdict(taxUnitYear: null)], context));
+
+        Assert.Null(entry.TaxUnitLatestYear);
+    }
+
+    // Lectura perezosa (spec alerta UVT §5.4): sin filas en unidades no se consulta Catalog ni el calendario.
+    [Fact]
+    public async Task NoUnitRowsDoNotQueryTheLookup()
+    {
+        var withholdings = new StubQuotationWithholdingLookup().WithTaxUnit("CO", 60_000m, 2026);
+        var clock = new FixedTenantClock(Now);
+
+        var context = await QuotationResponseComposer.TaxUnitContextAsync(
+            clock, withholdings, TenantId, Now, [Verdict(taxUnitYear: null)], TestContext.Current.CancellationToken);
+
+        Assert.Same(TaxUnitContext.None, context);
+        Assert.Empty(withholdings.TaxUnitRequests);
         Assert.Empty(clock.RequestedTenantIds);
     }
 
@@ -222,13 +283,14 @@ public sealed class OrderResponseComposerTests
     private static OrderResponseComposer Composer(
         StubQuotationCustomerLookup? customers = null,
         StubQuotationBuyerAccountLookup? buyers = null,
-        FixedTenantClock? clock = null) =>
+        FixedTenantClock? clock = null,
+        StubQuotationWithholdingLookup? withholdings = null) =>
         new(
             customers ?? new StubQuotationCustomerLookup(Customer),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            new StubQuotationWithholdingLookup(),
+            withholdings ?? new StubQuotationWithholdingLookup(),
             new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
             buyers ?? new StubQuotationBuyerAccountLookup(),
             clock ?? new FixedTenantClock(Now));

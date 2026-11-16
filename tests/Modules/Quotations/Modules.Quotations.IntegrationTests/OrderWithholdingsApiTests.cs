@@ -344,6 +344,30 @@ public sealed class OrderWithholdingsApiTests
         Assert.Equal((0m, order.Total), (order.RetentionAmount, order.NetTotal));
     }
 
+    // Spec alerta UVT §5.4: el pedido se convirtió con la UVT del año anterior (la única cargada); cargada la del año, el
+    // detalle dice que está desactualizada y cuál tomaría al guardarse, sin que el frontend la deduzca.
+    [Fact]
+    public async Task DetailCarriesTheLatestTaxUnitYear()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(factory, taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        var order = await ConvertAsync(setup, quotation.Id);
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var detail = await GetDetailAsync(setup, order.Id);
+
+        var entry = Assert.Single(detail.Order.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)(thisYear - 1), true, (int?)thisYear),
+            (entry.TaxUnitYear, entry.TaxUnitOutdated, entry.TaxUnitLatestYear));
+    }
+
     // Review Focus 3: un pedido facturado ya no es editable; cargar la UVT del año no lo mueve, ni al leerlo ni al
     // intentar editarlo.
     [Fact]

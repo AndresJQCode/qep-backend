@@ -100,9 +100,9 @@ public sealed class OrderResponseComposer(
     public async Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(order);
-        var documentYear = await QuotationResponseComposer.DocumentYearAsync(
-            tenantClock, tenantId, order.CreatedAt, order.WithholdingBreakdown, cancellationToken);
-        return OrderResponses.ToResponse(order, documentYear);
+        var taxUnits = await QuotationResponseComposer.TaxUnitContextAsync(
+            tenantClock, withholdingLookup, tenantId, order.CreatedAt, order.WithholdingBreakdown, cancellationToken);
+        return OrderResponses.ToResponse(order, taxUnits);
     }
 }
 
@@ -110,10 +110,10 @@ public sealed class OrderResponseComposer(
 /// compositor del detalle.</summary>
 public static class OrderResponses
 {
-    /// <param name="documentYear">El año local del pedido, para decir si la UVT del desglose está desactualizada; null si
-    /// ninguna fila trae año. Lo resuelve <see cref="IOrderResponseComposer.ComposeOrderAsync"/> con el calendario del
-    /// tenant.</param>
-    public static OrderResponse ToResponse(OrderDto order, int? documentYear)
+    /// <param name="context">El año local del pedido y el último año de UVT cargado por país, para decir si la UVT del
+    /// desglose está desactualizada y cuál tomaría (spec alerta UVT §5.4). Lo resuelve
+    /// <see cref="IOrderResponseComposer.ComposeOrderAsync"/> con el calendario del tenant y Catalog.</param>
+    internal static OrderResponse ToResponse(OrderDto order, TaxUnitContext context)
     {
         ArgumentNullException.ThrowIfNull(order);
         return new OrderResponse(
@@ -182,6 +182,6 @@ public static class OrderResponses
             order.ArchivedBy,
             order.Balance,
             order.BuyerNotes,
-            QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, documentYear));
+            QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, context));
     }
 }
