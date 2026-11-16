@@ -1,7 +1,8 @@
 # Soporte (PQRSF y soporte técnico) — diseño
 
 Fecha: 2026-11-14. Estado: borrador para aprobación del owner. Cruza `qep-backend` y `qep-frontend`
-(consola del tenant) más una página pública que sirve el mismo SPA en otro host.
+(consola del tenant) más una página pública que, por corrección del 2026-11-15 (§9.1), vive en el repo
+`qep-frontend-support` y no en el SPA de la consola.
 
 Convención de marcas, como en los demás specs:
 
@@ -519,9 +520,15 @@ rompe el envío en producción sin error de compilación.
 ### 9.1 URL y rutas
 
 - Página: `https://soporte.lulocrm.com/{tenantSlug}` y
-  `https://soporte.lulocrm.com/{tenantSlug}/consultar`. Es el mismo SPA en Vercel con un dominio más
-  y un diseño mínimo, sin consola [owner]. Hace falta el registro DNS `soporte`; el registro
+  `https://soporte.lulocrm.com/{tenantSlug}/consultar`. Hace falta el registro DNS `soporte`; el registro
   explícito gana sobre el comodín de las tiendas. `desk.lulocrm.com/pqrsf` redirige a la ruta nueva.
+- **Corrección (owner, 2026-11-15):** la página **no** es el SPA de la consola. Vive en un repo nuevo,
+  `qep-frontend-support` (Astro con islas Preact, como `qep-storefront`), y el navegador llama directo a
+  `/api/v1/public/support/{tenantSlug}/…`: CORS sin credenciales (política `support-public`, orígenes de
+  `Support:PublicForm:AllowedOrigins`) y limitadores por IP. Ningún render del servidor del portal llama al grupo
+  público: la cubeta de los limitadores sería la IP de Vercel. Los documentos legales que muestra el portal y su
+  paso a paso están en `2026-11-15-support-portal-legal-documents-design.md`, que reemplaza §9.5.
+  Texto anterior, ya no vigente: «Es el mismo SPA en Vercel con un dominio más y un diseño mínimo, sin consola [owner]».
 - API: `/api/v1/public/support/{tenantSlug}/…` con configuración del formulario, radicar y
   consultar. El slug que usa es `Tenant.Slug`, no el de la tienda: son distintos y sólo el primero
   existe siempre.
@@ -684,6 +691,9 @@ Detalle [coordinador]:
   tramitar la petición anónima.
 
 ### 9.5 Textos legales por tenant
+
+> Reemplazada por `2026-11-15-support-portal-legal-documents-design.md` (tres documentos versionados en texto
+> enriquecido y aceptación de los términos por ticket). Se deja como registro de lo que construyó la fase 3.
 
 Siguen el precedente de `customers.data_consents` (prueba insert-only con foto del texto) y no el de
 Store (sólo una URL).
