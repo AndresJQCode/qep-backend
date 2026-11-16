@@ -181,6 +181,10 @@ public sealed record SupportAttachmentDto(Guid Id, string FileName, string MimeT
 /// <summary>La URL firmada de un adjunto: vive 5 minutos y baja el archivo con su nombre.</summary>
 public sealed record SupportAttachmentDownloadDto(string Url);
 
+/// <summary>Fase 4b (H13): la URL firmada del PDF de una respuesta formal, con el nombre del archivo y cuándo vence, para que la pantalla
+/// la abra enseguida y la vuelva a pedir si se demoró.</summary>
+public sealed record SupportDocumentLinkDto(Uri Url, string FileName, DateTimeOffset ExpiresAt);
+
 // Fase 3 (formulario público): IsAnonymous apaga en la pantalla todo lo que pide un solicitante (sólo se responde por la página), y el
 // backend rechaza vincularle cliente (support.ticket.anonymous_has_no_customer);
 // CustomerCandidates son los clientes con el documento de la foto cuando el ticket no tiene cliente (cero o varios al radicar, plan

@@ -1062,6 +1062,68 @@ public sealed class SupportTicketRepliesApiTests : IAsyncLifetime
         Assert.Equal("organization_required", formal.GetProperty("blockedReason").GetString());
     }
 
+    // ---- Fase 4b, Tarea 9: bajar el PDF desde la consola (H13) ----
+
+    [Fact]
+    public async Task TheConsoleDownloadsAFormalDocumentAndAudits()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, replyId) = await FormalEmailReplyAsync(scenario);
+
+        var response = await scenario.Client.GetAsync($"{scenario.Url}/tickets/{Id(ticket)}/replies/{replyId}/document", Ct);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var link = await JsonAsync(response);
+        var fileName = $"Respuesta-{ticket.GetProperty("number").GetString()}.pdf";
+        Assert.Equal(fileName, link.GetProperty("fileName").GetString());
+        var url = link.GetProperty("url").GetString()!;
+        Assert.StartsWith($"https://r2.test/{Assert.Single(_storage.Objects.Keys)}", url, StringComparison.Ordinal);
+        Assert.Contains("seconds=300", url, StringComparison.Ordinal);
+        Assert.InRange(
+            link.GetProperty("expiresAt").GetDateTimeOffset() - DateTimeOffset.UtcNow, TimeSpan.FromMinutes(4), TimeSpan.FromMinutes(6));
+        Assert.Equal(1, await CountAuditEntriesAsync(Factory, SupportAuditActions.TicketReplyDocumentDownloaded, Id(ticket).ToString()));
+    }
+
+    // El documento se busca por ticket y respuesta: el de otro ticket del mismo tenant, o una respuesta sin documento, es 404.
+    [Fact]
+    public async Task ADocumentOfAnotherTicketIs404()
+    {
+        var scenario = await StartAsync(Factory);
+        var (_, replyId) = await FormalEmailReplyAsync(scenario);
+        var other = await scenario.CreateAsync();
+        var plain = await ReplyCreatedAsync(scenario, other, new { clientId = Guid.CreateVersion7(), channel = "Email", text = "Hola." });
+
+        var crossed = await scenario.Client.GetAsync($"{scenario.Url}/tickets/{Id(other)}/replies/{replyId}/document", Ct);
+        var withoutDocument = await scenario.Client.GetAsync(
+            $"{scenario.Url}/tickets/{Id(other)}/replies/{plain.GetProperty("reply").GetProperty("id").GetGuid()}/document", Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, crossed.StatusCode);
+        Assert.Equal("support.reply.document_not_found", await CodeOfAsync(crossed));
+        Assert.Equal(HttpStatusCode.NotFound, withoutDocument.StatusCode);
+        Assert.Equal("support.reply.document_not_found", await CodeOfAsync(withoutDocument));
+    }
+
+    // H13: con ver el ticket alcanza (support.ticket.view acepta read o manage).
+    [Fact]
+    public async Task AReaderCanDownload()
+    {
+        var scenario = await StartAsync(Factory);
+        var (ticket, replyId) = await FormalEmailReplyAsync(scenario);
+        using var reader = CreateClient(Factory, scenario.SubjectId, scenario.Tenant, SupportPermissions.Read);
+
+        var response = await reader.GetAsync($"{scenario.Url}/tickets/{Id(ticket)}/replies/{replyId}/document", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static async Task<(JsonElement Ticket, Guid ReplyId)> FormalEmailReplyAsync(SupportTicketScenario scenario)
+    {
+        var ticket = await scenario.CreateAsync(Body(await scenario.TypeIdAsync("Petición general"), assignee: scenario.CallerMemberId));
+        var result = await ReplyCreatedAsync(
+            scenario, ticket, new { clientId = Guid.CreateVersion7(), channel = "Email", text = FormalText, formal = FormalPart() });
+        return (result.GetProperty("ticket"), result.GetProperty("reply").GetProperty("id").GetGuid());
+    }
+
     private static async Task<JsonElement> AssignAsync(SupportTicketScenario scenario, JsonElement ticket, Guid memberId)
     {
         var response = await scenario.ActAsync(Id(ticket), "assignee", new AssignTicketRequest(memberId), Version(ticket));

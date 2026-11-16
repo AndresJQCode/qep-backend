@@ -533,6 +533,10 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<
                 Modules.Support.Application.GetTicketAttachmentDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
             Modules.Support.Application.GetTicketAttachmentDownloadHandler>();
+        // Fase 4b (H13): el PDF de una respuesta formal desde la consola.
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.GetReplyDocumentDownloadCommand, Modules.Support.Application.SupportDocumentLinkDto>,
+            Modules.Support.Application.GetReplyDocumentDownloadHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListSupportAssigneesQuery, Modules.Support.Application.SupportAssigneesDto>,
             Modules.Support.Application.ListSupportAssigneesHandler>();

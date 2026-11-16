@@ -25,9 +25,13 @@ public sealed partial class LookupPublicTicketHandler(
     ISupportReplyRepository replies,
     ISupportPinHasher pinHasher,
     ISupportUnitOfWork unitOfWork,
-    SupportTicketDtoComposer composer)
+    SupportTicketDtoComposer composer,
+    ISupportDocumentStorage documents)
     : ICommandHandler<LookupPublicTicketCommand, SupportPublicTicketDto>
 {
+    /// <summary>H8: la vida de la URL firmada del PDF en la consulta pública.</summary>
+    public static readonly TimeSpan DocumentLifetime = TimeSpan.FromMinutes(10);
+
     public async Task<SupportPublicTicketDto> HandleAsync(LookupPublicTicketCommand command, CancellationToken cancellationToken)
     {
         if (!await captcha.VerifyAsync(command.TurnstileToken?.Trim() ?? string.Empty, command.VisitorIp, cancellationToken))
@@ -90,11 +94,25 @@ public sealed partial class LookupPublicTicketHandler(
         // La hora de envío es UpdatedAt (triage #6 del Bloque F): la respuesta no tiene columna propia y no hace falta. MarkSent es la
         // última escritura de una respuesta Sent (EnsurePending impide marcarla otra vez), y el borrado de clientes sólo pone message_id
         // en NULL sin tocar updated_at. Un camino nuevo que modifique una respuesta ya enviada tiene que sumar sent_at antes.
-        var sent = (await replies.ListAsync(tenant.TenantId, ticket.Id, cancellationToken))
+        // Fase 4b (H13): el PDF de una respuesta formal enviada, con una URL firmada de 10 minutos. Una que no salió no se muestra, y su
+        // documento tampoco.
+        var sentReplies = (await replies.ListAsync(tenant.TenantId, ticket.Id, cancellationToken))
             .Where(reply => reply.Status is SupportReplyStatus.Sent)
             .OrderBy(reply => reply.UpdatedAt)
-            .Select(reply => new SupportPublicReplyDto(reply.Text, reply.UpdatedAt, reply.Channel.ToString()))
             .ToList();
+        var replyDocuments = sentReplies.Count == 0
+            ? new Dictionary<Guid, SupportReplyDocument>()
+            : (await replies.ListDocumentsAsync(tenant.TenantId, ticket.Id, cancellationToken)).ToDictionary(item => item.ReplyId);
+        var sent = new List<SupportPublicReplyDto>(sentReplies.Count);
+        foreach (var reply in sentReplies)
+        {
+            var document = replyDocuments.GetValueOrDefault(reply.Id);
+            var url = document is null
+                ? null
+                : await documents.CreateDownloadUrlAsync(document.StorageKey, document.FileName, DocumentLifetime, cancellationToken);
+            sent.Add(new SupportPublicReplyDto(
+                reply.Text, reply.UpdatedAt, reply.Channel.ToString(), url?.AbsoluteUri, document?.FileName));
+        }
 
         return new SupportPublicTicketDto(
             ticket.DisplayNumber,

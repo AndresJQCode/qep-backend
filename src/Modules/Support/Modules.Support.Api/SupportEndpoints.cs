@@ -312,6 +312,13 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Fase 4b (H13): la URL firmada del PDF de una respuesta formal, con ver el ticket.
+        group.MapGet("/tickets/{ticketId:guid}/replies/{replyId:guid}/document", DownloadReplyDocumentAsync)
+            .RequireAuthorization(SupportPolicies.TicketView)
+            .Produces<SupportDocumentLinkDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         // Fase 3 (plan F37): la URL firmada de un adjunto del formulario público. Con ver el ticket alcanza: no pide storage.file.read.
         group.MapGet("/tickets/{ticketId:guid}/attachments/{attachmentId:guid}/download", DownloadAttachmentAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -548,6 +555,10 @@ public static class SupportEndpoints
         Guid tenantId, Guid ticketId, Guid attachmentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new GetTicketAttachmentDownloadCommand(tenantId, ticketId, attachmentId), cancellationToken));
+
+    private static async Task<IResult> DownloadReplyDocumentAsync(
+        Guid tenantId, Guid ticketId, Guid replyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new GetReplyDocumentDownloadCommand(tenantId, ticketId, replyId), cancellationToken));
 
     private static async Task<IResult> ChangeStatusAsync(
         Guid tenantId,

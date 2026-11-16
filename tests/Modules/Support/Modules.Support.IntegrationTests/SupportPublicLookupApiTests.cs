@@ -50,6 +50,47 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
         Assert.DoesNotContain(filed.Pin, raw, StringComparison.Ordinal);
     }
 
+    // Fase 4b (H13): la consulta trae el PDF de una respuesta formal enviada, con una URL firmada de 10 minutos; una respuesta sin
+    // documento trae los dos campos en null.
+    [Fact]
+    public async Task TheConsultShowsTheDocumentUrlOfAFormalReply()
+    {
+        var rig = await RigAsync();
+        var filed = await FileNamedAsync(rig);
+        var ticketId = await TicketIdAsync(rig, filed.Number);
+        await SeedReplyAsync(rig, ticketId, "Sin documento.", SupportReplyStatus.Sent);
+        var key = await SeedReplyAsync(rig, ticketId, "Con documento.", SupportReplyStatus.Sent, withDocument: true);
+
+        var response = await LookupAsync(rig, filed.Number, filed.Pin);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var replies = (await JsonAsync(response)).GetProperty("replies").EnumerateArray().ToList();
+        var plain = replies.Single(reply => reply.GetProperty("text").GetString() == "Sin documento.");
+        var formal = replies.Single(reply => reply.GetProperty("text").GetString() == "Con documento.");
+        Assert.Equal(JsonValueKind.Null, plain.GetProperty("documentUrl").ValueKind);
+        Assert.Equal(JsonValueKind.Null, plain.GetProperty("documentFileName").ValueKind);
+        Assert.Equal($"Respuesta-{filed.Number}.pdf", formal.GetProperty("documentFileName").GetString());
+        var url = formal.GetProperty("documentUrl").GetString()!;
+        Assert.StartsWith($"https://r2.test/{key}", url, StringComparison.Ordinal);
+        Assert.Contains("seconds=600", url, StringComparison.Ordinal);
+    }
+
+    // Una respuesta formal que no salió no se muestra, y con ella tampoco su PDF.
+    [Fact]
+    public async Task TheConsultDoesNotShowTheDocumentOfAFailedReply()
+    {
+        var rig = await RigAsync();
+        var filed = await FileNamedAsync(rig);
+        var ticketId = await TicketIdAsync(rig, filed.Number);
+        var key = await SeedReplyAsync(rig, ticketId, "No salió.", SupportReplyStatus.Failed, withDocument: true);
+
+        var response = await LookupAsync(rig, filed.Number, filed.Pin);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty((await JsonAsync(response)).GetProperty("replies").EnumerateArray());
+        Assert.DoesNotContain(key!, await BodyAsync(response), StringComparison.Ordinal);
+    }
+
     // Plan L26 (spec 2026-11-15 §9.1): the consult carries the term in business days, null for a type without term.
     [Theory]
     [InlineData("Petición general", 15, true)]
@@ -444,7 +485,8 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
             new { number, email = "intruso@example.com", turnstileToken = FakeSupportCaptcha.ValidToken });
     }
 
-    private static async Task SeedReplyAsync(Rig rig, Guid ticketId, string text, SupportReplyStatus status)
+    // Con withDocument, también la fila del documento formal y el PDF en el bucket de prueba; devuelve su clave.
+    private async Task<string?> SeedReplyAsync(Rig rig, Guid ticketId, string text, SupportReplyStatus status, bool withDocument = false)
     {
         await using var scope = rig.Factory.Services.CreateAsyncScope();
         var reply = SupportTicketReply.Start(
@@ -459,8 +501,23 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
             reply.MarkFailed(SupportChannelReasons.SendFailed, null, ClockedSupportHost.Reception.AddHours(1));
         }
 
-        scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>().Add(reply);
+        var repository = scope.ServiceProvider.GetRequiredService<ISupportReplyRepository>();
+        repository.Add(reply);
+        string? key = null;
+        if (withDocument)
+        {
+            byte[] content = [0x25, 0x50, 0x44, 0x46];
+            key = await host.Documents.SaveAsync(rig.TenantId, content, Ct);
+            var number = (await TextAsync(
+                rig.Factory, "SELECT number::text FROM support.tickets WHERE id = @id", ("id", ticketId)))!;
+            repository.AddDocument(SupportReplyDocument.Create(
+                reply, "Decisión", null, Guid.CreateVersion7(), "Beto Asesor", "Coordinador", [], key,
+                SupportReplyDocument.FileNameFor(SupportTicketNumber.Format(long.Parse(number, System.Globalization.CultureInfo.InvariantCulture))),
+                content, DateOnly.FromDateTime(ClockedSupportHost.Reception.UtcDateTime), ClockedSupportHost.Reception));
+        }
+
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        return key;
     }
 
     private static async Task<Guid> TicketIdAsync(Rig rig, string number) =>

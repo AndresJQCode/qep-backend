@@ -191,5 +191,7 @@ public sealed record SupportPublicTicketDto(
     IReadOnlyList<SupportPublicReplyDto> Replies);
 
 /// <summary>Una respuesta que salió: su texto, cuándo y por qué canal (<c>Thread</c>, <c>WhatsAppTemplate</c>, <c>Email</c>,
-/// <c>Portal</c>).</summary>
-public sealed record SupportPublicReplyDto(string Text, DateTimeOffset SentAt, string Channel);
+/// <c>Portal</c>). Fase 4b (H13): una respuesta formal trae la URL firmada de su PDF (10 minutos) y el nombre del archivo; sin documento,
+/// los dos en null. Sólo los trae la consulta con el PIN: no hay otra ruta pública para bajarlo.</summary>
+public sealed record SupportPublicReplyDto(
+    string Text, DateTimeOffset SentAt, string Channel, string? DocumentUrl = null, string? DocumentFileName = null);
