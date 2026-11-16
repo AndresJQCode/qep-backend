@@ -1,3 +1,4 @@
+using System.Globalization;
 using BuildingBlocks.Application.RichText;
 using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
@@ -125,6 +126,28 @@ public sealed class QuotationPdfSectionsTests
 
         Assert.Equal("$ 1.250.000", cop.Total);
         Assert.Equal(Currencies.Get("USD").Symbol + " 1,250.50", usd.Total);
+    }
+
+    // La plantilla redondea en coma flotante (`calc.round(valor * 100)`): 1,005 es 1,00499… en double y sale 1,00, no 1,01;
+    // 2,675 × 100 en double da justo 267,5 y sale 2,68. Valores medidos con typst 0.15.1 sobre `json(bytes(...))`.
+    // `{{total}}` tiene que decir lo mismo que la fila del total en el mismo PDF.
+    [Theory]
+    [InlineData("1.005", "1.00")]
+    [InlineData("2.675", "2.68")]
+    [InlineData("1250.5", "1,250.50")]
+    public void TheTotalRoundsHalfCentsLikeTheTemplate(string total, string expected)
+    {
+        var usd = QuotationPdfSectionsBuilder.ValuesOf(Document() with
+        {
+            Currency = "USD",
+            Symbol = Currencies.Get("USD").Symbol,
+            Decimals = 2,
+            Total = decimal.Parse(total, CultureInfo.InvariantCulture),
+            ThousandsSeparator = ",",
+            DecimalSeparator = ".",
+        });
+
+        Assert.Equal(Currencies.Get("USD").Symbol + " " + expected, usd.Total);
     }
 
     [Fact]

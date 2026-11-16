@@ -71,7 +71,7 @@
   - `public sealed record RichTextRun(string Text, bool Bold = false, bool Italic = false, bool Underline = false, bool Strike = false, string? Href = null, bool Break = false);`
   - `public sealed record RichTextBlock(string Kind, int Level = 0, bool Ordered = false, IReadOnlyList<RichTextRun>? Runs = null, IReadOnlyList<IReadOnlyList<RichTextBlock>>? Items = null, IReadOnlyList<RichTextBlock>? Children = null);` — `Kind` ∈ `paragraph` | `heading` (`Level` 2–4, `Runs`) | `list` (`Ordered`, `Items`: cada ítem es una lista de bloques) | `quote` (`Children`) | `rule`.
   - `public interface IRichTextReader { IReadOnlyList<RichTextBlock> Read(string sanitizedHtml); }`
-  - `public static class RichText { public static IReadOnlyList<RichTextBlock> MapText(IReadOnlyList<RichTextBlock> blocks, Func<string, string> map); }` — aplica `map` a cada `Run.Text` que no es `Break`, recursivo.
+  - `public static class RichTextTree { public static IReadOnlyList<RichTextBlock> MapText(IReadOnlyList<RichTextBlock> blocks, Func<string, string> map); }` — aplica `map` a cada `Run.Text` que no es `Break`, recursivo.
   - `public sealed class RichTextHtmlReader : IRichTextReader` (Infrastructure, AngleSharp).
 
 Reglas del lector: texto suelto en un `li` o en `blockquote` va en un `paragraph`; runs contiguos con las mismas marcas se funden en uno (así un token no queda partido por nodos de texto); `<br>` es `new RichTextRun("", Break: true)`; `a[href]` pone `Href` a sus runs; un párrafo vacío (`<p></p>`) se omite.
@@ -194,7 +194,7 @@ Migración `AddPdfSections`, además de la tabla: `INSERT INTO quotations.pdf_se
 - Test: `tests/Modules/Quotations/Modules.Quotations.UnitTests/QuotationPdfSectionsTests.cs`, `QuotationPdfTests.cs`
 
 **Interfaces:**
-- Consumes: `IPdfContentStore` (Tarea 4), `IRichTextReader`/`RichText.MapText` (Tarea 2), `QuotationPdfVariables` (Tarea 3).
+- Consumes: `IPdfContentStore` (Tarea 4), `IRichTextReader`/`RichTextTree.MapText` (Tarea 2), `QuotationPdfVariables` (Tarea 3).
 - Produces:
   - `public sealed record QuotationPdfSection(string Title, IReadOnlyList<RichTextBlock> Blocks);`
   - `public sealed record QuotationPdfSections(QuotationPdfSection? PaymentNotice, QuotationPdfSection? Terms, QuotationPdfSection? DeliveryProcess);` — viaja como `data.sections.paymentNotice.title` / `.blocks`.

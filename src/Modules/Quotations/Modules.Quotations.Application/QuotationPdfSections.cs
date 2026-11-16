@@ -99,16 +99,18 @@ public static class QuotationPdfSectionsBuilder
         $"{date.Day.ToString(CultureInfo.InvariantCulture)} de {Months[date.Month - 1]} de {date.Year.ToString(CultureInfo.InvariantCulture)}";
 
     // Como `importe()` de la plantilla: sin decimales redondea al entero; con decimales imprime siempre dos, sea cual sea
-    // `Decimals`. Typst redondea la mitad lejos del cero, igual que `AwayFromZero`.
+    // `Decimals`. Typst recibe el monto como número JSON y redondea en f64 la mitad lejos del cero, así que el cálculo va en
+    // `double` con `AwayFromZero`: en `decimal`, 1,005 daría 1,01 y la fila del total del mismo PDF dice 1,00.
     private static string AmountText(decimal value, QuotationPdfDocument document)
     {
+        var amount = (double)value;
         if (document.Decimals == 0)
         {
-            return Thousands(decimal.Round(value, 0, MidpointRounding.AwayFromZero), document.ThousandsSeparator);
+            return Thousands((decimal)Math.Round(amount, MidpointRounding.AwayFromZero), document.ThousandsSeparator);
         }
 
         // Un total negativo no existe; si llegara, sale con el signo adelante y no con el redondeo hacia abajo de `calc.quo`.
-        var cents = Math.Abs(decimal.Round(value * 100m, 0, MidpointRounding.AwayFromZero));
+        var cents = Math.Abs((decimal)Math.Round(amount * 100d, MidpointRounding.AwayFromZero));
         var sign = value < 0 && cents > 0 ? "-" : string.Empty;
         return sign + Thousands(decimal.Truncate(cents / 100m), document.ThousandsSeparator) + document.DecimalSeparator
             + (cents % 100m).ToString("00", CultureInfo.InvariantCulture);
