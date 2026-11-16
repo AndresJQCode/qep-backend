@@ -74,20 +74,14 @@ internal sealed class SupportUnitOfWork(SupportDbContext dbContext) : ISupportUn
                 "A reply with this client id already exists for the ticket.",
                 exception);
         }
-        // Fase 3 (plan F14 y F16): dos guardados que crean la misma versión del formulario o de los textos legales. El If-Match ya
-        // filtró la mayoría; esto es la carrera entre dos que leyeron la misma versión vigente.
+        // Fase 3 (plan F14): dos guardados que crean la misma versión del formulario. El If-Match ya filtró la mayoría; esto es la
+        // carrera entre dos que leyeron la misma versión vigente. Los textos legales de la fase 3 ya no tienen escritor (spec 2026-11-15
+        // §5.4): su índice no se traduce.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.FormVersionIndex))
         {
             throw new ResourceConflictException(
                 SupportErrorCodes.FormVersionTaken,
                 "This version of the public form already exists.",
-                exception);
-        }
-        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SupportDbContext.LegalTextVersionIndex))
-        {
-            throw new ResourceConflictException(
-                SupportErrorCodes.LegalTextsVersionTaken,
-                "This version of the legal texts already exists.",
                 exception);
         }
         // Triage #2 del Bloque F: una fila de consentimiento por ticket. Inalcanzable hoy; traducido igual para que un camino nuevo que

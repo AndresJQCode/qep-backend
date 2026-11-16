@@ -14,7 +14,8 @@ namespace Modules.Support.IntegrationTests;
 
 /// <summary>
 /// El esquema de la fase 3 (migración <c>AddSupportPublicForm</c>, plan F7, F14, F16 y F17): la clave de consulta, las versiones del
-/// formulario y de los textos legales, el consentimiento sin FK y la foto del solicitante con ciudad. Comparten host las que sólo leen
+/// formulario, las tablas legales de la fase 3 (sin escritor desde spec 2026-11-15 §5.4: sus pruebas de escritura pasaron a
+/// <c>SupportLegalDocumentsPersistenceTests</c>) y la foto del solicitante con ciudad. Comparten host las que sólo leen
 /// o escriben su tenant; la de la migración levanta su propia base (la baja).
 /// </summary>
 public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHost) : IClassFixture<SharedSupportHost>
@@ -178,28 +179,6 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
             factory, "SELECT count(*) FROM support.tickets WHERE id = @id AND customer_id IS NOT NULL", ("id", ticket.Id.Value)));
     }
 
-    // Triage #2 (Bloque F): IX_consents_ticket se traduce por nombre, como los demás únicos del módulo. Hoy no se alcanza (el
-    // consentimiento se escribe sólo con un ticket recién creado), pero un camino nuevo que lo duplique recibe un 409 con código y no un
-    // 500.
-    [Fact]
-    public async Task ASecondConsentForTheSameTicketIs409()
-    {
-        var (factory, tenant) = await NewTenantAsync();
-        var form = await SaveFormAsync(factory, tenant, 1);
-        var text = await SaveLegalTextAsync(factory, tenant, 1);
-        var ticket = await FromFormAsync(
-            factory, tenant, 1,
-            new TicketRequester("Ana", "Gómez", null, "CC", "1020304050", "ana@example.com", "+573001234567", null, "CO", null, Guid.CreateVersion7(), null),
-            form.Id);
-        await AddConsentAsync(factory, tenant, ticket, text);
-
-        var exception = await Assert.ThrowsAsync<ResourceConflictException>(() => AddConsentAsync(factory, tenant, ticket, text));
-
-        Assert.Equal(SupportErrorCodes.PublicConsentDuplicate, exception.Code);
-        Assert.Equal(1L, await ScalarAsync(
-            factory, "SELECT count(*) FROM support.consents WHERE ticket_id = @ticket", ("ticket", ticket.Id.Value)));
-    }
-
     [Fact]
     public async Task TheReplyChannelCheckAcceptsPortal()
     {
@@ -239,47 +218,6 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         Assert.Null(await forms.CurrentAsync(Guid.CreateVersion7(), Ct));
         Assert.NotNull(await forms.FindAsync(tenant, current.Id, Ct));
         Assert.Null(await forms.FindAsync(Guid.CreateVersion7(), current.Id, Ct));
-    }
-
-    [Fact]
-    public async Task TwoLegalTextVersionsWithTheSameNumberAre409()
-    {
-        var (factory, tenant) = await NewTenantAsync();
-        await SaveLegalTextAsync(factory, tenant, 1);
-
-        var exception = await Assert.ThrowsAsync<ResourceConflictException>(() => SaveLegalTextAsync(factory, tenant, 1));
-
-        Assert.Equal(SupportErrorCodes.LegalTextsVersionTaken, exception.Code);
-        await using var read = factory.Services.CreateAsyncScope();
-        var texts = read.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>();
-        var current = await texts.CurrentAsync(tenant, Ct);
-        Assert.Equal(1, current!.Version);
-        Assert.NotNull(await texts.FindAsync(tenant, current.Id, Ct));
-    }
-
-    [Fact]
-    public async Task TheConsentKeepsItsOwnCopyOfTheText()
-    {
-        var (factory, tenant) = await NewTenantAsync();
-        var form = await SaveFormAsync(factory, tenant, 1);
-        var text = await SaveLegalTextAsync(factory, tenant, 1);
-        var ticket = await FromFormAsync(
-            factory, tenant, 1,
-            new TicketRequester("Ana", "Gómez", null, "CC", "1020304050", "ana@example.com", "+573001234567", null, "CO", null, Guid.CreateVersion7(), null),
-            form.Id);
-        await using (var scope = factory.Services.CreateAsyncScope())
-        {
-            scope.ServiceProvider.GetRequiredService<ISupportConsentRepository>()
-                .Add(SupportConsent.Record(Guid.CreateVersion7(), tenant, ticket.Id, text, "203.0.113.7", Now));
-            await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
-        }
-
-        await SaveLegalTextAsync(factory, tenant, 2);
-
-        Assert.Equal(text.AuthorizationText, await TextAsync(
-            factory, "SELECT authorization_text FROM support.consents WHERE ticket_id = @ticket", ("ticket", ticket.Id.Value)));
-        Assert.Equal("203.0.113.7", await TextAsync(
-            factory, "SELECT visitor_ip FROM support.consents WHERE ticket_id = @ticket", ("ticket", ticket.Id.Value)));
     }
 
     [Fact]
@@ -358,17 +296,6 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         return form;
     }
 
-    private static async Task<SupportLegalTextVersion> SaveLegalTextAsync(QepApiFactory factory, Guid tenant, int version)
-    {
-        var text = SupportLegalTextVersion.Create(
-            Guid.CreateVersion7(), tenant, version, $"Autorizo el tratamiento de mis datos, versión {version}.", null,
-            "https://example.com/politica", null, Guid.CreateVersion7(), Now);
-        await using var scope = factory.Services.CreateAsyncScope();
-        scope.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>().Add(text);
-        await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
-        return text;
-    }
-
     private static async Task<SupportTicket> FromFormAsync(
         QepApiFactory factory, Guid tenant, long number, TicketRequester? requester, Guid formVersionId)
     {
@@ -381,14 +308,6 @@ public sealed class SupportPublicFormPersistenceTests(SharedSupportHost sharedHo
         scope.ServiceProvider.GetRequiredService<ISupportTicketRepository>().Add(ticket);
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
         return ticket;
-    }
-
-    private static async Task AddConsentAsync(QepApiFactory factory, Guid tenant, SupportTicket ticket, SupportLegalTextVersion text)
-    {
-        await using var scope = factory.Services.CreateAsyncScope();
-        scope.ServiceProvider.GetRequiredService<ISupportConsentRepository>()
-            .Add(SupportConsent.Record(Guid.CreateVersion7(), tenant, ticket.Id, text, "203.0.113.7", Now));
-        await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
     }
 
     private static async Task<List<string>> TablesAsync(SupportDbContext context, string[] names)

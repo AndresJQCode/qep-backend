@@ -391,7 +391,7 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
-        // Fase 3 (plan F14 a F16): el formulario público y los textos legales son versionados e insert-only. El If-Match es el número
+        // Fase 3 (plan F14 a F16): el formulario público y los documentos legales son versionados e insert-only. El If-Match es el número
         // de la versión vigente, y 0 vale: es la de un tenant que todavía no guardó nada.
         group.MapGet("/settings/public-form", GetFormSettingsAsync)
             .RequireAuthorization(SupportPolicies.SettingsView)
@@ -408,16 +408,31 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
-        group.MapGet("/settings/legal-texts", GetLegalTextsAsync)
+        // Spec 2026-11-15 §7: the three legal documents of the portal, each versioned on its own. {kind} is privacy-notice,
+        // anonymous-notice or terms; the handler answers 404 for any other. The phase 3 legal-texts routes are gone (no consumer).
+        group.MapGet("/settings/legal-documents", GetLegalDocumentsAsync)
             .RequireAuthorization(SupportPolicies.SettingsView)
-            .Produces<SupportLegalTextsDto>()
+            .Produces<SupportLegalDocumentsDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
-        group.MapPost("/settings/legal-texts", PublishLegalTextsAsync)
-            .RequireAuthorization(SupportPermissions.SettingsManage)
-            .Accepts<PublishLegalTextsRequest>("application/json")
-            .Produces<SupportLegalTextsDto>(StatusCodes.Status201Created)
+        group.MapGet("/settings/legal-documents/{kind}/versions", GetLegalDocumentHistoryAsync)
+            .RequireAuthorization(SupportPolicies.SettingsView)
+            .Produces<SupportLegalDocumentHistoryDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapGet("/settings/legal-documents/{kind}/versions/{version:int}", GetLegalDocumentVersionAsync)
+            .RequireAuthorization(SupportPolicies.SettingsView)
+            .Produces<SupportLegalDocumentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/settings/legal-documents/{kind}", PublishLegalDocumentAsync)
+            .RequireAuthorization(SupportPermissions.SettingsManage)
+            .Accepts<PublishLegalDocumentRequest>("application/json")
+            .Produces<SupportLegalDocumentDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
@@ -445,25 +460,32 @@ public static class SupportEndpoints
         return Results.Ok(form);
     }
 
-    private static async Task<IResult> GetLegalTextsAsync(
-        Guid tenantId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
-    {
-        var texts = await dispatcher.QueryAsync(new GetLegalTextsQuery(tenantId), cancellationToken);
-        SetETag(httpContext, texts.Version);
-        return Results.Ok(texts);
-    }
+    private static async Task<IResult> GetLegalDocumentsAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetLegalDocumentsQuery(tenantId), cancellationToken));
 
-    private static async Task<IResult> PublishLegalTextsAsync(
+    private static async Task<IResult> GetLegalDocumentHistoryAsync(
+        Guid tenantId, string kind, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetLegalDocumentHistoryQuery(tenantId, kind), cancellationToken));
+
+    private static async Task<IResult> GetLegalDocumentVersionAsync(
+        Guid tenantId, string kind, int version, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetLegalDocumentVersionQuery(tenantId, kind, version), cancellationToken));
+
+    private static async Task<IResult> PublishLegalDocumentAsync(
         Guid tenantId,
-        PublishLegalTextsRequest request,
+        string kind,
+        PublishLegalDocumentRequest request,
         HttpContext httpContext,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
-        var expectedVersion = RequireVersion(httpContext, "legal texts", allowZero: true);
-        var texts = await dispatcher.SendAsync(PublishLegalTextsCommand.From(tenantId, request, expectedVersion), cancellationToken);
-        SetETag(httpContext, texts.Version);
-        return Results.Created($"/api/v1/tenants/{tenantId}/support/settings/legal-texts", texts);
+        var expectedVersion = RequireVersion(httpContext, "legal document", allowZero: true);
+        var document = await dispatcher.SendAsync(
+            PublishLegalDocumentCommand.From(tenantId, kind, request, expectedVersion), cancellationToken);
+        SetETag(httpContext, document.Version);
+        return Results.Created(
+            $"/api/v1/tenants/{tenantId}/support/settings/legal-documents/{kind}/versions/{document.Version}", document);
     }
 
     private static void SetETag(HttpContext httpContext, long version) =>

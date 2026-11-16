@@ -25,7 +25,8 @@ public sealed record SupportSettingsDto(int DueSoonBusinessDays, int MinDueSoonB
 /// <summary>
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
 /// formulario por defecto, sin publicar) y va en el <c>If-Match</c> del <c>PUT</c>. <c>PublishBlockers</c> dice por qué no se puede
-/// publicar (<c>legal_texts_required</c>, <c>no_published_types</c>), así la pantalla lo explica sin adivinar; vacía si se puede.
+/// publicar (<c>privacy_notice_required</c>, <c>anonymous_notice_required</c>, <c>terms_required</c>, <c>no_published_types</c>), así
+/// la pantalla lo explica sin adivinar; vacía si se puede.
 /// <c>PublicUrl</c> es el enlace que el tenant comparte. <c>AllowAttachments</c> dice si la página ofrece adjuntos (spec §9.3; apagado
 /// por defecto).
 /// </summary>
@@ -43,19 +44,31 @@ public sealed record SupportFormSettingsDto(
     string PublicUrl,
     IReadOnlyList<string> PublishBlockers);
 
+/// <summary>The current version of each legal document, or its example (spec 2026-11-15 §7).</summary>
+public sealed record SupportLegalDocumentsDto(
+    SupportLegalDocumentDto PrivacyNotice, SupportLegalDocumentDto AnonymousNotice, SupportLegalDocumentDto Terms);
+
 /// <summary>
-/// La versión vigente de los textos legales (fase 3, plan F16). Sin ninguna publicada, el texto base de QEP con <c>IsExample</c> en
-/// verdadero, <c>Version</c> 0 y sin autor: la pantalla lo marca como ejemplo y nada se guarda hasta publicar.
+/// One version of a legal document: the current one, an old one or the example (<c>Version</c> 0, <c>IsExample</c>, without
+/// <c>CreatedAt</c> nor <c>CreatedBy</c>). <c>ContentHtml</c> is always sanitized. <c>AuthorizationQuestion</c>, <c>PolicyUrl</c> and
+/// <c>DefaultAuthorizationQuestion</c> are null except on <c>PrivacyNotice</c>; <c>DefaultAuthorizationQuestion</c> is the question
+/// the portal shows when <c>AuthorizationQuestion</c> is null, so the editor offers it without building it in the browser.
 /// </summary>
-public sealed record SupportLegalTextsDto(
+public sealed record SupportLegalDocumentDto(
+    string Kind,
     int Version,
     bool IsExample,
-    string AuthorizationText,
-    string? PolicyText,
+    string ContentHtml,
+    string? AuthorizationQuestion,
     string? PolicyUrl,
-    string? TermsText,
+    string? DefaultAuthorizationQuestion,
     DateTimeOffset? CreatedAt,
     SupportMemberDto? CreatedBy);
+
+/// <summary>The published versions of a kind, newest first, without content; empty if none was published.</summary>
+public sealed record SupportLegalDocumentHistoryDto(string Kind, IReadOnlyList<SupportLegalDocumentVersionItemDto> Versions);
+
+public sealed record SupportLegalDocumentVersionItemDto(int Version, DateTimeOffset CreatedAt, SupportMemberDto CreatedBy);
 
 /// <summary>Una página de la bandeja. <c>Summary</c> es del tenant entero, no de la página ni del filtro: las pestañas cuentan siempre
 /// lo mismo, filtres lo que filtres.</summary>

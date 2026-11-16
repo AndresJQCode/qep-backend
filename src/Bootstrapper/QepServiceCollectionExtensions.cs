@@ -494,7 +494,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
             Modules.Support.Application.UpdateSupportSettingsHandler>();
-        // Fase 3: el formulario público y los textos legales, versionados (plan F14 a F16).
+        // Fase 3: el formulario público, versionado (plan F14); los documentos legales del portal, versionados por tipo (spec
+        // 2026-11-15 §7).
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.GetFormSettingsQuery, Modules.Support.Application.SupportFormSettingsDto>,
             Modules.Support.Application.GetFormSettingsHandler>();
@@ -502,11 +503,18 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.UpdateFormSettingsCommand, Modules.Support.Application.SupportFormSettingsDto>,
             Modules.Support.Application.UpdateFormSettingsHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Support.Application.GetLegalTextsQuery, Modules.Support.Application.SupportLegalTextsDto>,
-            Modules.Support.Application.GetLegalTextsHandler>();
+            IQueryHandler<Modules.Support.Application.GetLegalDocumentsQuery, Modules.Support.Application.SupportLegalDocumentsDto>,
+            Modules.Support.Application.GetLegalDocumentsHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Support.Application.PublishLegalTextsCommand, Modules.Support.Application.SupportLegalTextsDto>,
-            Modules.Support.Application.PublishLegalTextsHandler>();
+            IQueryHandler<
+                Modules.Support.Application.GetLegalDocumentHistoryQuery, Modules.Support.Application.SupportLegalDocumentHistoryDto>,
+            Modules.Support.Application.GetLegalDocumentHistoryHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetLegalDocumentVersionQuery, Modules.Support.Application.SupportLegalDocumentDto>,
+            Modules.Support.Application.GetLegalDocumentVersionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PublishLegalDocumentCommand, Modules.Support.Application.SupportLegalDocumentDto>,
+            Modules.Support.Application.PublishLegalDocumentHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.CreateTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.CreateTicketHandler>();

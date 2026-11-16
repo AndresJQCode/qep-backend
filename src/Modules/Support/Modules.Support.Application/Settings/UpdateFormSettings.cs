@@ -90,7 +90,7 @@ public sealed class UpdateFormSettingsHandler(
     ITenantClock tenantClock,
     ISupportProvisioner provisioner,
     ISupportFormRepository forms,
-    ISupportLegalTextRepository legalTexts,
+    ISupportLegalDocumentRepository legalDocuments,
     ISupportTicketTypeRepository ticketTypes,
     ITenantDirectory tenantDirectory,
     ISupportPublicOptions publicOptions,
@@ -130,7 +130,7 @@ public sealed class UpdateFormSettingsHandler(
             command.SuccessMessage,
             actor,
             now);
-        var blockers = await SupportFormSettings.BlockersAsync(legalTexts, ticketTypes, command.TenantId, cancellationToken);
+        var blockers = await SupportFormSettings.BlockersAsync(legalDocuments, ticketTypes, command.TenantId, cancellationToken);
 
         var changedFields = ChangedFields(current, candidate);
         if (changedFields.Count == 0)

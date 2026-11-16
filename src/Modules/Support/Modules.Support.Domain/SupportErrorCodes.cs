@@ -127,19 +127,13 @@ public static class SupportErrorCodes
     /// <summary>El adjunto no es de ese ticket del tenant (consola, plan F37).</summary>
     public const string AttachmentNotFound = "support.attachment.not_found";
 
-    /// <summary>Publicar el formulario exige una versión de los textos legales (plan F15).</summary>
+    /// <summary>Publicar el formulario exige una versión de cada documento legal (spec 2026-11-15 §7; el bloqueador dice cuál falta).</summary>
     public const string FormLegalTextsRequired = "support.form.legal_texts_required";
 
     public const string FormNoPublishedTypes = "support.form.no_published_types";
 
     /// <summary>Traducido por nombre de índice (<c>IX_form_versions_tenant_version</c>): dos guardados de la misma versión.</summary>
     public const string FormVersionTaken = "support.form.version_taken";
-
-    /// <summary>Traducido por nombre de índice (<c>IX_legal_text_versions_tenant_version</c>).</summary>
-    public const string LegalTextsVersionTaken = "support.legal_texts.version_taken";
-
-    /// <summary>Los textos legales necesitan la política como texto o como URL (spec §9.5).</summary>
-    public const string LegalTextsPolicyRequired = "support.legal_texts.policy_required";
 
     // Spec 2026-11-15 (legal documents of the portal, §10).
 

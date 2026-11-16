@@ -71,21 +71,15 @@ internal sealed class SupportFormRepository(SupportDbContext dbContext) : ISuppo
             .FirstOrDefaultAsync(form => form.TenantId == tenantId && form.Id == id, cancellationToken);
 }
 
+// Sólo lectura (spec 2026-11-15 §5.4, plan L10): las versiones nuevas son de SupportLegalDocumentRepository.
 internal sealed class SupportLegalTextRepository(SupportDbContext dbContext) : ISupportLegalTextRepository
 {
-    public void Add(SupportLegalTextVersion text) => dbContext.LegalTextVersions.Add(text);
-
     public Task<SupportLegalTextVersion?> CurrentAsync(Guid tenantId, CancellationToken cancellationToken) =>
         dbContext.LegalTextVersions
             .AsNoTracking()
             .Where(text => text.TenantId == tenantId)
             .OrderByDescending(text => text.Version)
             .FirstOrDefaultAsync(cancellationToken);
-
-    public Task<SupportLegalTextVersion?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
-        dbContext.LegalTextVersions
-            .AsNoTracking()
-            .FirstOrDefaultAsync(text => text.TenantId == tenantId && text.Id == id, cancellationToken);
 }
 
 internal sealed class SupportConsentRepository(SupportDbContext dbContext) : ISupportConsentRepository

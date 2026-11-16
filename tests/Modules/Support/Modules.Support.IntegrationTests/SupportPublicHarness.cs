@@ -81,7 +81,7 @@ internal static class SupportPublicHarness
 
     /// <summary>
     /// Un tenant con el formulario publicado: su fila y sus módulos, los tipos por defecto (todos publicados), la versión 1 de los
-    /// textos legales y la versión 1 del formulario. Por SQL de dominio y no por la consola: el host puede tener la autenticación real.
+    /// tres documentos legales (spec 2026-11-15) y la versión 1 del formulario. Por SQL de dominio y no por la consola: el host puede tener la autenticación real.
     /// Con adjuntos salvo <paramref name="allowAttachments"/> en false, como el formulario por defecto (owner, 2026-11-15, E2). Devuelve
     /// el slug.
     /// </summary>
@@ -104,11 +104,16 @@ internal static class SupportPublicHarness
             await provision.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(tenant, Ct);
         }
 
+        // Interim until the public paths read the new documents (plan 2026-11-15, Block B): GET /form and POST /tickets still read
+        // the phase 3 legal texts, which have no writer any more, so their version 1 goes in by raw SQL. Block B removes it.
+        await PublishLegalTextsAsync(factory, tenantId, 1, "Autorizo el tratamiento de mis datos personales, versión 1.");
+        foreach (var kind in SupportLegalDocumentKinds.All)
+        {
+            await PublishLegalDocumentAsync(factory, tenantId, kind, 1, $"<p>{kind}, versión 1.</p>");
+        }
+
         await using (var scope = factory.Services.CreateAsyncScope())
         {
-            scope.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>().Add(SupportLegalTextVersion.Create(
-                Guid.CreateVersion7(), tenant, 1, "Autorizo el tratamiento de mis datos personales, versión 1.", null,
-                "https://example.com/politica", "Términos, versión 1.", Guid.CreateVersion7(), now));
             scope.ServiceProvider.GetRequiredService<ISupportFormRepository>().Add(SupportFormVersion.Create(
                 Guid.CreateVersion7(), tenant, 1, published, showDocument, showAddress, showLandline, businessNameRequired,
                 allowAttachments, "#00B4FF", "Cuéntanos tu caso.", "Recibimos tu caso.", Guid.CreateVersion7(), now));
@@ -118,15 +123,33 @@ internal static class SupportPublicHarness
         return await SlugOfAsync(factory, tenantId);
     }
 
-    /// <summary>Publica una versión nueva de los textos legales, como si el tenant los editara.</summary>
-    public static async Task PublishLegalTextsAsync(QepApiFactory factory, string tenantId, int version, string authorizationText)
+    /// <summary>Publica una versión nueva de un documento legal, como si el tenant la publicara desde la consola. El HTML pasa por el
+    /// saneador real, como en <c>PublishLegalDocumentHandler</c>.</summary>
+    public static async Task PublishLegalDocumentAsync(
+        QepApiFactory factory, string tenantId, SupportLegalDocumentKind kind, int version, string html)
     {
         await using var scope = factory.Services.CreateAsyncScope();
-        scope.ServiceProvider.GetRequiredService<ISupportLegalTextRepository>().Add(SupportLegalTextVersion.Create(
-            Guid.CreateVersion7(), Guid.Parse(tenantId), version, authorizationText, null, "https://example.com/politica", null,
-            Guid.CreateVersion7(), DateTimeOffset.UtcNow));
+        var content = scope.ServiceProvider.GetRequiredService<ISupportHtmlSanitizer>().Sanitize(html);
+        scope.ServiceProvider.GetRequiredService<ISupportLegalDocumentRepository>().Add(SupportLegalDocumentVersion.Create(
+            Guid.CreateVersion7(), Guid.Parse(tenantId), kind, version, content, null, null, Guid.CreateVersion7(), DateTimeOffset.UtcNow));
         await scope.ServiceProvider.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
     }
+
+    /// <summary>
+    /// A new version of the phase 3 legal texts, by raw SQL: they have no writer any more (spec 2026-11-15 §5.4). Interim, for the
+    /// public tests while GET /form and POST /tickets still read them; Block B of the plan replaces them with
+    /// <see cref="PublishLegalDocumentAsync"/>.
+    /// </summary>
+    public static Task PublishLegalTextsAsync(QepApiFactory factory, string tenantId, int version, string authorizationText) =>
+        ExecuteAsync(
+            factory,
+            """
+            INSERT INTO support.legal_text_versions
+                (id, tenant_id, version, authorization_text, policy_text, policy_url, terms_text, created_at, created_by)
+            VALUES (gen_random_uuid(), @tenant, @version, @authorization, NULL, 'https://example.com/politica',
+                    CASE WHEN @version = 1 THEN 'Términos, versión 1.' END, now(), gen_random_uuid())
+            """,
+            ("tenant", Guid.Parse(tenantId)), ("version", version), ("authorization", authorizationText));
 
     public static Task<HttpResponseMessage> PostJsonAsync(HttpClient client, string url, object body) =>
         client.PostAsJsonAsync(url, body, Ct);
