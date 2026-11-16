@@ -2208,8 +2208,8 @@ layout puede tener un ERP leyendo la hoja por defecto. Su encabezado no choca co
 
 **Tarifas de retención** (spec 2026-11-16): dos columnas más al final, para un sistema de facturación (Siigo) que
 busca el impuesto por su tarifa y calcula el monto él mismo. `Tarifa Retefuente` (`withholding_retefuente_rate`)
-lleva el porcentaje (`2.5`); `Tarifa ReteICA` (`withholding_reteica_rate`), la tarifa **por mil** (`11.04` en
-Bogotá), que es el porcentaje guardado × 10. Es la tarifa efectiva —la editada por el asesor, si la editó—, por
+lleva el porcentaje (`2.5`); `Tarifa ReteICA` (`withholding_reteica_rate`), también el porcentaje tal como está
+guardado (`1.104` en Bogotá), **sin** pasarlo a por mil (owner, 2026-11-16). Es la tarifa efectiva —la editada por el asesor, si la editó—, por
 pedido y repetida en cada fila; `0` si el pedido no tiene retención aplicada de ese tipo. **Nacen ocultas.** El
 tenant las prende y les pone el encabezado que su import lee (por ejemplo `Retefuente`); si ya tenía visibles
 `Retefuente` o `ReteICA` (los montos), tiene que ocultarlas o renombrarlas en el mismo guardado, o el `PUT` responde

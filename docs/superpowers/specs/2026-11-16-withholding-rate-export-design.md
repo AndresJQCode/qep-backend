@@ -13,8 +13,8 @@ impuesto.
 ## Lo que pide el sistema de facturación
 
 - **Retefuente:** la tarifa en porcentaje, sin símbolo (`2.5`).
-- **ReteICA:** la tarifa **por mil** (‰), el mismo valor que Siigo muestra como `percentage` del impuesto
-  (Bogotá: `11.04`).
+- **ReteICA:** la tarifa en porcentaje, como Retefuente (Bogotá: `1.104`). El diseño original la pedía por mil
+  (`11.04`); el owner lo corrigió el 2026-11-16 (ver «Diseño»).
 - Sólo el número, sin separador de miles ni `$`. Por pedido, repetido igual en cada fila del pedido.
 - Sin esa retención en el pedido: vacío o `0`.
 
@@ -37,7 +37,8 @@ impuesto.
 - Valor (`OrdersExportProcessor`), sobre `order.AppliedWithholdings` del tipo (`TaxCountries.RetefuenteType`,
   `TaxCountries.ReteIcaType`):
   - Retefuente: `Percentage` tal cual (se guarda en %, `numeric(6,3)`).
-  - ReteICA: `Percentage × 10` (se guarda en %, 1.104 → 11.04 ‰).
+  - ReteICA: `Percentage` tal cual, igual que Retefuente (1.104). **Corregido por el owner el 2026-11-16:** el
+    `× 10` original (11.04 ‰) se quitó; la columna ya no sale por mil.
   - Es el `Percentage` efectivo (el que el asesor pudo editar), no `CatalogPercentage`: es el que dio el monto.
   - Sin retención aplicada de ese tipo: `0`, número (como las columnas de monto).
   - Celda numérica (`ExportCell.OfNumber`): el separador decimal lo pone Excel; la hoja del ERP no lee el formato
