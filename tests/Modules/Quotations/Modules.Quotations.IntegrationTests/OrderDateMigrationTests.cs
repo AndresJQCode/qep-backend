@@ -74,9 +74,10 @@ public sealed class OrderDateMigrationTests
             + "WHERE table_schema = 'quotations' AND table_name = 'orders' AND column_name = 'order_date'"));
     }
 
-    // Expand/contract: un pod viejo inserta sin order_date durante el rollout y el default de la base lo llena.
+    // Despliegue con corte (owner, 2026-11-16): la columna no tiene default, así que un insert sin order_date —lo que
+    // escribiría un pod viejo— falla con not_null_violation en vez de quedar fechado en silencio.
     [Fact]
-    public async Task AnInsertWithoutTheOrderDateGetsTheDatabaseDefault()
+    public async Task AnInsertWithoutTheOrderDateIsRejected()
     {
         await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
@@ -85,16 +86,14 @@ public sealed class OrderDateMigrationTests
             await context.Database.MigrateAsync(TestContext.Current.CancellationToken);
         }
 
-        await ExecuteAsync(connectionString, $"""
+        var error = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => ExecuteAsync(connectionString, $"""
             SET session_replication_role = replica;
             {Order(BogotaOrder, BogotaTenant)}
             RESET session_replication_role;
-            """);
+            """));
 
-        Assert.Equal(
-            await ScalarAsync<string>(connectionString, "SELECT ((now() AT TIME ZONE 'America/Bogota')::date)::text"),
-            await ScalarAsync<string>(
-                connectionString, $"SELECT order_date::text FROM quotations.orders WHERE id = '{BogotaOrder}'"));
+        Assert.Equal(Npgsql.PostgresErrorCodes.NotNullViolation, error.SqlState);
+        Assert.Equal("order_date", error.ColumnName);
     }
 
     // Las columnas de TaxUnitYearMigrationTests: las obligatorias de quotations.orders antes de AddOrderDate, sin order_date,

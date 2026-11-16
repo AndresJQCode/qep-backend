@@ -3,8 +3,8 @@
 > **Estado:** aprobado por el owner 2026-11-16 (decisiones F-1 a F-8 abajo).
 > **Frontend:** `qep-frontend/docs/superpowers/specs/2026-11-16-order-date-design.md` (consume el contrato de §4).
 > **Deploy:** backend primero. La migración corre sola al arrancar la API (`Program.cs`, bloque bajo `RunUnderStartupLockAsync`)
-> y es **aditiva** (expand): `order_date` sale `NOT NULL` con un default de base para los pods viejos. Queda pendiente una migración
-> de contract posterior; ver §6.
+> y **no es aditiva**: `order_date` sale `NOT NULL` sin default, así que el código viejo no puede insertar pedidos. Se despliega
+> **con corte** (pods viejos abajo antes de que arranquen los nuevos; owner 2026-11-16, en un festivo sin uso). Ver §6.
 
 ## 1. Problema
 
@@ -97,22 +97,18 @@ Columna `quotations.orders.order_date date not null`. Una sola migración EF (`A
    antes que Quotations en `Program.cs`, así que la tabla existe.
 3. `AlterColumn` a `NOT NULL`; índice nuevo `(tenant_id, order_date, converted_at, order_number)`. El índice viejo
    `(tenant_id, converted_at, order_number)` se queda (lo sigue usando la ventana de sincronización).
-4. La columna sale con default `((now() AT TIME ZONE 'America/Bogota')::date)` sólo en la base (no en el modelo de EF) para el
-   rollout (expand): los pods viejos insertan pedidos sin `order_date`. Una migración posterior lo quita cuando ya no quede
-   ningún pod viejo (contract).
+4. La columna **no** lleva default (owner, 2026-11-16).
 
-**Rollout: la migración es aditiva (expand).** Mientras convivan pods viejos y nuevos:
+**Despliegue con corte.** La migración rompe al código viejo por dos lados, y por eso no puede convivir con él:
 
-- Un pod viejo inserta pedidos sin `order_date` y la base pone el default: el día **de Bogotá** del momento del insert, no el
-  del huso del tenant ni el de `converted_at`. Para un tenant fuera de Colombia, o un pedido de Shopify con `OccurredAt` de otro
-  día, esa fecha puede quedar corrida.
+- Un pod viejo inserta pedidos sin `order_date` y el `NOT NULL` los rechaza. Eso incluye los caminos sin usuario en la consola:
+  el checkout de la tienda pública y la importación de Shopify.
 - Un pod viejo que lee un pedido con una entrada de historial `OrderDateChanged` falla al parsearla (no conoce el miembro del
-  enum), igual que pasó con `BuyerAccountChanged`. El detalle de ese pedido da error en el pod viejo hasta que termine el rollout.
+  enum), igual que pasó con `BuyerAccountChanged`.
 
-**Migración de contract (posterior, cuando no quede ningún pod viejo).** Quita el default de la columna y vuelve a rellenar
-`order_date` con el día local de `converted_at` en el huso del tenant (el mismo `UPDATE` del paso 2) **sólo** en las filas donde
-`order_date` difiere de ese día **y** el pedido no tiene ninguna entrada de historial `OrderDateChanged` (una fecha que el asesor
-cambió a propósito no se pisa).
+Se descartó la alternativa expand/contract (default de base para los pods viejos y una migración posterior que lo quite): con
+corte no hay pods viejos, y un default escondería en silencio un camino de creación que olvide la fecha. No queda migración de
+contract pendiente.
 
 Después del deploy, filtros, exportación, reportes y PDF dan lo mismo que antes hasta que alguien cambie una fecha: `CreatedAt` y
 `ConvertedAt` se escriben con el mismo `occurredAt` en `Build`, así que su día local es el que queda en `order_date`.

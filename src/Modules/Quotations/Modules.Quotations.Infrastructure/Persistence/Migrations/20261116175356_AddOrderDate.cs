@@ -57,13 +57,9 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                 oldType: "date",
                 oldNullable: true);
 
-            // Expand/contract (CLAUDE.md, spec 2026-10-29 D-5): durante el rollout los pods viejos insertan pedidos sin
-            // order_date, y sin este default el NOT NULL los rechaza. Va sólo en la base, no en el modelo de EF: el código
-            // nuevo siempre escribe la fecha. Una migración posterior lo quita cuando ya no quede ningún pod viejo (contract).
-            // El Down no lo quita aparte: DropColumn se lo lleva con la columna.
-            migrationBuilder.Sql(
-                "ALTER TABLE quotations.orders ALTER COLUMN order_date SET DEFAULT ((now() AT TIME ZONE 'America/Bogota')::date);");
-
+            // Sin default a propósito (owner, 2026-11-16): esta migración rompe al código viejo, que inserta pedidos sin
+            // order_date, y se despliega con corte (CLAUDE.md, expand/contract): ningún pod viejo atiende contra este esquema.
+            // Un default escondería en silencio un camino de creación que olvide la fecha.
             migrationBuilder.CreateIndex(
                 name: "IX_orders_tenant_order_date_converted_at_number",
                 schema: "quotations",
