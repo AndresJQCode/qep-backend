@@ -15,11 +15,11 @@
     <PackageVersion Include="DocumentFormat.OpenXml" Version="3.1.1" />
     <PackageVersion Include="FluentValidation" Version="12.1.1" />
     <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
-    <!-- Spec 2026-10-09 §6.5: phone_e164 de clientes con el país del cliente, sin suponer
-         «10 dígitos = Colombia». Sólo Customers.Infrastructure lo referencia. -->
     <!-- Spec 2026-11-15 §6.3 (D-3): the allowlist sanitizer of Support's legal documents, on AngleSharp. Only
          Modules.Support.Infrastructure references it; SupportLayerTests keeps it out of Domain and Application. -->
     <PackageVersion Include="HtmlSanitizer" Version="11.0.26" />
+    <!-- Spec 2026-10-09 §6.5: phone_e164 de clientes con el país del cliente, sin suponer
+         «10 dígitos = Colombia». Sólo Customers.Infrastructure lo referencia. -->
     <PackageVersion Include="libphonenumber-csharp" Version="9.0.41" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.13" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.13" />
