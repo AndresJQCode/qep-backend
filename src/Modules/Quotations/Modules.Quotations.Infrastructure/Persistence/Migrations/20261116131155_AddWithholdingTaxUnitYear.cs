@@ -28,26 +28,31 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                 type: "smallint",
                 nullable: true);
 
+            // Lee catalog.tax_unit_values, de otro módulo: en una base sin Catalog no hay año que rellenar y no hace nada
+            // (guard de to_regclass, como MigrateRetentionToWithholdings, ruling C11). extract(year …) usa la zona horaria
+            // de la sesión; lo que decide el año es que el valor case.
             migrationBuilder.Sql(
                 """
-                UPDATE quotations.quotation_withholdings w
-                SET tax_unit_year = (
-                  SELECT max(t.year) FROM catalog.tax_unit_values t
-                  WHERE t.country = w.country AND t.value = w.tax_unit_value
-                    AND t.year <= extract(year FROM d.created_at))
-                FROM quotations.quotations d
-                WHERE d.id = w.document_id AND w.tax_unit_value IS NOT NULL;
-                """);
+                DO $$
+                BEGIN
+                  IF to_regclass('catalog.tax_unit_values') IS NOT NULL THEN
+                    UPDATE quotations.quotation_withholdings w
+                    SET tax_unit_year = (
+                      SELECT max(t.year) FROM catalog.tax_unit_values t
+                      WHERE t.country = w.country AND t.value = w.tax_unit_value
+                        AND t.year <= extract(year FROM d.created_at))
+                    FROM quotations.quotations d
+                    WHERE d.id = w.document_id AND w.tax_unit_value IS NOT NULL;
 
-            migrationBuilder.Sql(
-                """
-                UPDATE quotations.order_withholdings w
-                SET tax_unit_year = (
-                  SELECT max(t.year) FROM catalog.tax_unit_values t
-                  WHERE t.country = w.country AND t.value = w.tax_unit_value
-                    AND t.year <= extract(year FROM d.created_at))
-                FROM quotations.orders d
-                WHERE d.id = w.document_id AND w.tax_unit_value IS NOT NULL;
+                    UPDATE quotations.order_withholdings w
+                    SET tax_unit_year = (
+                      SELECT max(t.year) FROM catalog.tax_unit_values t
+                      WHERE t.country = w.country AND t.value = w.tax_unit_value
+                        AND t.year <= extract(year FROM d.created_at))
+                    FROM quotations.orders d
+                    WHERE d.id = w.document_id AND w.tax_unit_value IS NOT NULL;
+                  END IF;
+                END $$;
                 """);
         }
 
