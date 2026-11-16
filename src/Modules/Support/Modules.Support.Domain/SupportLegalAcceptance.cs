@@ -15,7 +15,8 @@ namespace Modules.Support.Domain;
 /// </summary>
 public sealed class SupportLegalAcceptance
 {
-    /// <summary>An IPv6 in text fits in 45 characters.</summary>
+    /// <summary>An IPv6 in text fits in 45 characters. One with a scope id (<c>fe80::1%eth0</c>) can be longer: it is cut to this, like
+    /// <c>BuyerSession.IpAddress</c> (final review N3), instead of failing the filing.</summary>
     public const int VisitorIpMaxLength = 45;
 
     public const int CharacterizationTextMaxLength = 1_000;
@@ -85,7 +86,7 @@ public sealed class SupportLegalAcceptance
         }
 
         var isPrivacy = version.Kind == SupportLegalDocumentKind.PrivacyNotice;
-        var ip = Optional(visitorIp, VisitorIpMaxLength, nameof(visitorIp));
+        var ip = Optional(NormalizedIp(visitorIp), VisitorIpMaxLength, nameof(visitorIp));
         var question = Optional(authorizationQuestion, SupportLegalDocumentVersion.AuthorizationQuestionMaxLength, nameof(authorizationQuestion));
         var characterization = Optional(characterizationText, CharacterizationTextMaxLength, nameof(characterizationText));
 
@@ -124,6 +125,10 @@ public sealed class SupportLegalAcceptance
     }
 
     // Null stays null; a value is trimmed and has to fit. A blank one counts as a value that is not there.
+    // Final review N3: trimmed and cut to the column, like BuyerSession.Issue. Blank stays blank, so Optional still rejects it.
+    private static string? NormalizedIp(string? visitorIp) =>
+        visitorIp?.Trim() is { Length: > VisitorIpMaxLength } trimmed ? trimmed[..VisitorIpMaxLength] : visitorIp;
+
     private static string? Optional(string? value, int maxLength, string name)
     {
         if (value is null)

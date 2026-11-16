@@ -73,6 +73,20 @@ public sealed class SupportLegalAcceptanceTests
         Assert.Null(accepted.CharacterizationText);
     }
 
+    // Final review N3: an IPv6 with a scope id can pass 45 characters; it is cut to the column, like BuyerSession, never a failed filing.
+    [Fact]
+    public void ALongerIpIsCutToTheColumn()
+    {
+        const string scoped = "fe80:0000:0000:0000:0204:61ff:fe9d:f156%ethernet-adapter-12";
+        var privacy = Version(SupportLegalDocumentKind.PrivacyNotice);
+
+        var accepted = Record(privacy, Question, SupportLegalNotices.Characterization, " " + scoped + " ");
+
+        Assert.Equal(SupportLegalAcceptance.VisitorIpMaxLength, accepted.VisitorIp!.Length);
+        Assert.Equal(scoped[..SupportLegalAcceptance.VisitorIpMaxLength], accepted.VisitorIp);
+        Assert.Equal(Ip, Record(Version(SupportLegalDocumentKind.Terms), ip: Ip).VisitorIp);
+    }
+
     [Fact]
     public void TermsTakeAnIpOrNone()
     {
