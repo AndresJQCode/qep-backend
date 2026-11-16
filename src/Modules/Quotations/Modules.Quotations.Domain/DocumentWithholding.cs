@@ -57,6 +57,10 @@ public sealed class DocumentWithholding
 
     public decimal? TaxUnitValue { get; private set; }
 
+    /// <summary>El año de <see cref="TaxUnitValue"/> (spec retenciones por UVT §5.2); null sin unidad o en una fila
+    /// legada que no casó con ningún año cargado.</summary>
+    public int? TaxUnitYear { get; private set; }
+
     /// <summary>El municipio de una tasa municipal; null en las nacionales (spec ReteICA por empresa §7.5).</summary>
     public Guid? CityId { get; private set; }
 
@@ -71,6 +75,7 @@ public sealed class DocumentWithholding
         new(TaxRateId, Name, Type, Country, Percentage, MinimumBase, MinimumBaseUnit, TaxUnitValue, CityId)
         {
             CatalogPercentage = CatalogPercentage,
+            TaxUnitYear = TaxUnitYear,
         };
 
     public decimal BaseAmount { get; private set; }
@@ -94,9 +99,42 @@ public sealed class DocumentWithholding
         MinimumBase = rate.MinimumBase;
         MinimumBaseUnit = rate.MinimumBaseUnit;
         TaxUnitValue = rate.TaxUnitValue;
+        TaxUnitYear = rate.TaxUnitYear;
         CityId = rate.CityId;
         CatalogPercentage = rate.CatalogPercentage;
         Settle(null);
+    }
+
+    /// <summary>
+    /// Pone la UVT vigente en una fila con base mínima en unidades (spec retenciones por UVT §5.4); null = no hay
+    /// ninguna cargada y la tasa deja de aplicar. Las filas sin base o con base en dinero no se tocan. Como en
+    /// <see cref="Replace"/>, el cálculo anterior deja de valer hasta el próximo recálculo del agregado.
+    /// </summary>
+    internal void RefreshTaxUnit(TaxUnitPhoto? taxUnit)
+    {
+        if (MinimumBase is null || MinimumBaseUnit is null)
+        {
+            return;
+        }
+
+        TaxUnitValue = taxUnit?.Value;
+        TaxUnitYear = taxUnit?.Year;
+        Settle(null);
+    }
+
+    /// <summary>
+    /// <see cref="RefreshTaxUnit"/> sobre todas las filas de un documento, de todas las fuentes: la que no es la vigente
+    /// también puede volver a serlo. La clave es el país canónico de la fila; un país ausente deja la fila sin unidad.
+    /// </summary>
+    internal static void RefreshTaxUnits(
+        IEnumerable<DocumentWithholding> rows,
+        IReadOnlyDictionary<string, TaxUnitPhoto> byCountry)
+    {
+        ArgumentNullException.ThrowIfNull(byCountry);
+        foreach (var row in rows)
+        {
+            row.RefreshTaxUnit(byCountry.TryGetValue(row.Country, out var taxUnit) ? taxUnit : null);
+        }
     }
 
     /// <summary>Cambia el porcentaje efectivo de la fila (spec §7.7); el del catálogo no se mueve. Como en

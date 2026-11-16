@@ -930,6 +930,18 @@ public sealed class Quotation
     }
 
     /// <summary>
+    /// Pone en cada tasa con base mínima en unidades la UVT vigente de su país y recalcula (spec retenciones por UVT §5.4,
+    /// owner P1): la de un documento editable sigue a la que hoy daría la foto. La clave es el país canónico. No es una
+    /// edición del asesor: no sube la versión ni cambia el autor; el handler que guarda o previsualiza ya lo hace.
+    /// </summary>
+    public void RefreshTaxUnits(IReadOnlyDictionary<string, TaxUnitPhoto> byCountry)
+    {
+        EnsureEditable();
+        DocumentWithholding.RefreshTaxUnits(_withholdings, byCountry);
+        RecalculateTotals();
+    }
+
+    /// <summary>
     /// «Sin retención» (owner 2026-11-13, plan P12): quita de los selectores de facturación propia la fila de cada tipo
     /// marcado, sea o no la fuente vigente; la del cliente no se toca. Sin fila no hace nada. Que los tipos sean
     /// municipales lo valida la aplicación. Devuelve las filas quitadas que tenían porcentaje editado, para el historial.

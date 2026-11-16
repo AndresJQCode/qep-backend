@@ -264,6 +264,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         withholding.Property(value => value.MinimumBase).HasColumnName("minimum_base").HasPrecision(14, 2);
         withholding.Property(value => value.MinimumBaseUnit).HasColumnName("minimum_base_unit").HasMaxLength(8);
         withholding.Property(value => value.TaxUnitValue).HasColumnName("tax_unit_value").HasPrecision(14, 2);
+        // Spec retenciones por UVT §5.2: el año de la UVT congelada, para mostrarlo y avisar si quedó vieja.
+        withholding.Property(value => value.TaxUnitYear).HasColumnName("tax_unit_year").HasColumnType("smallint");
         withholding.Property(value => value.BaseAmount).HasColumnName("base_amount").HasPrecision(14, 2);
         withholding.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
         // Plan P3: distingue «no aplica» de una tasa al 0 % que sí aplicó.

@@ -908,6 +908,18 @@ public sealed class Order
     }
 
     /// <summary>
+    /// Pone en cada tasa con base mínima en unidades la UVT vigente de su país y recalcula, mientras el pedido es
+    /// <see cref="IsEditable"/> (spec retenciones por UVT §5.4, owner P1). La clave es el país canónico. No es una
+    /// edición del asesor: no sube la versión ni cambia el autor; el handler que guarda o previsualiza ya lo hace.
+    /// </summary>
+    public void RefreshTaxUnits(IReadOnlyDictionary<string, TaxUnitPhoto> byCountry)
+    {
+        EnsureEditable("The tax unit can only be refreshed while the order is editable.");
+        DocumentWithholding.RefreshTaxUnits(_withholdings, byCountry);
+        RecalculateTotals();
+    }
+
+    /// <summary>
     /// «Sin retención» (owner 2026-11-13, plan P12): quita la fila de cada tipo marcado mientras el pedido es
     /// <see cref="IsEditable"/>. Sin fila no hace nada. Que los tipos sean municipales lo valida la aplicación. Devuelve las
     /// filas quitadas que tenían porcentaje editado, para el historial.
