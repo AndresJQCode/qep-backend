@@ -1259,6 +1259,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("quotation_id");
 
+                    b.Property<string>("ContentFingerprint")
+                        .HasColumnType("text")
+                        .HasColumnName("content_fingerprint");
+
                     b.Property<DateTimeOffset>("GeneratedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("generated_at");
@@ -1356,6 +1360,51 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId", "Year");
 
                     b.ToTable("order_number_counters", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.PdfSectionRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Section")
+                        .HasColumnType("text")
+                        .HasColumnName("section");
+
+                    b.Property<string>("ContentHtml")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("content_html");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<bool>("InOrder")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_order");
+
+                    b.Property<bool>("InQuotation")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_quotation");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Section");
+
+                    b.ToTable("pdf_sections", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_pdf_sections_section", "section IN ('PaymentNotice', 'Terms', 'DeliveryProcess')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.QuotationNumberCounter", b =>

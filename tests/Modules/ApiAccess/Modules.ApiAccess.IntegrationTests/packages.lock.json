@@ -853,6 +853,8 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "BuildingBlocks.Domain": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "HtmlSanitizer": "[11.0.26, )",
           "Microsoft.EntityFrameworkCore.Relational": "[10.0.13, )"
         }
       },
@@ -1754,7 +1756,6 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "BuildingBlocks.Infrastructure": "[1.0.0, )",
-          "HtmlSanitizer": "[11.0.26, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
           "Microsoft.Extensions.Identity.Core": "[10.0.13, )",

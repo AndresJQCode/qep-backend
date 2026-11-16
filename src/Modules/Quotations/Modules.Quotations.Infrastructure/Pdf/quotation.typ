@@ -133,6 +133,54 @@
 // ya lee en la cotización que el owner fijó.
 #let renglon(etiqueta, valor) = [#etiqueta: #valor]
 
+// ---------------------------------------------------------------------------- secciones
+
+// Las secciones que configura el tenant (aviso de pago, términos, proceso de entrega; spec 2026-11-16 §5.3) llegan como un árbol
+// de bloques ya resuelto en C#, nunca como markup. El texto de cada tramo se inserta como cadena (`[#run.text]`): un `#`, un `*`,
+// un `$` o un `[` que escriba el tenant sale literal. Nada de lo que trae `data` pasa por una evaluación ni se convierte en markup.
+#let runs(lista) = {
+  for run in lista {
+    if run.break {
+      linebreak()
+    } else {
+      let tramo = [#run.text]
+      if run.bold { tramo = strong(tramo) }
+      if run.italic { tramo = emph(tramo) }
+      if run.underline { tramo = underline(tramo) }
+      if run.strike { tramo = strike(tramo) }
+      // El saneador sólo deja `https`, `mailto` y `tel`: el enlace llega ya filtrado.
+      if run.href != none { tramo = link(run.href, tramo) }
+      tramo
+    }
+  }
+}
+
+// Los títulos del contenido son texto en negrita y no `heading()`: un `heading` entraría al esquema del PDF y a la numeración, y
+// el documento no tiene índice. El tamaño baja con el nivel (2, 3, 4).
+#let bloques(lista) = {
+  for bloque in lista {
+    if bloque.kind == "paragraph" {
+      par[#runs(bloque.runs)]
+    } else if bloque.kind == "heading" {
+      let tamano = if bloque.level == 2 { 10pt } else if bloque.level == 3 { 9.5pt } else { 9pt }
+      par(text(weight: "bold", size: tamano)[#runs(bloque.runs)])
+    } else if bloque.kind == "list" {
+      // Cada ítem es a su vez una lista de bloques: así una lista se anida dentro de otra.
+      let elementos = bloque.items.map(elemento => [#bloques(elemento)])
+      if bloque.ordered { enum(..elementos) } else { list(..elementos) }
+    } else if bloque.kind == "quote" {
+      pad(left: 8pt, text(fill: apagado)[#bloques(bloque.children)])
+    } else if bloque.kind == "rule" {
+      line(length: 100%, stroke: 0.4pt + filete)
+    }
+  }
+}
+
+// Un documento sin secciones trae `data.sections` en `none`; cada sección, en `none` si no sale en este tipo de documento.
+#let aviso = if data.sections == none { none } else { data.sections.paymentNotice }
+#let terminos = if data.sections == none { none } else { data.sections.terms }
+#let proceso = if data.sections == none { none } else { data.sections.deliveryProcess }
+
 // ---------------------------------------------------------------------------- página
 
 // El pie repite el número en cada hoja: una cotización de varias páginas se imprime, se separa
@@ -249,17 +297,13 @@
       ]
     ]
   ]
-  // Aviso fijo del pie de pago, como en la referencia: no es un dato de la cotización —no hay
-  // dónde guardarlo hoy, ni varía de una a otra— sino la política bancaria del negocio que usa
-  // esta plantilla, igual para todos sus documentos.
-  #if data.billingAccount != none [
+  // El aviso de pago del tenant, pegado al recuadro, como en la referencia. Sólo llega con cuenta para el pago: sin cuenta, el
+  // backend lo deja en `none`.
+  #if aviso != none [
     #v(6pt, weak: true)
     #text(size: 7.5pt, fill: naranja)[
-      #text(weight: "bold")[Ten en cuenta:] \
-      no aceptamos pagos por corresponsal bancario, \
-      ni depósitos en entidades bancarias, ni cajeros. \
-      Solo debes pagar el valor de tu pedido, el valor a pagar \
-      debe de ser libre de toda comisión bancaria.
+      #if aviso.title != "" [#text(weight: "bold")[#aviso.title]]
+      #bloques(aviso.blocks)
     ]
   ]
   #v(12pt)
@@ -484,53 +528,26 @@
   )
 ]
 
+// ---------------------------------------------------------------------------- términos
+
+// Después de los totales, en la misma página si caben; si no, fluyen a la siguiente.
+#if terminos != none [
+  #v(14pt)
+  #if terminos.title != "" [
+    #text(size: 10pt, weight: "bold")[#terminos.title]
+    #v(4pt, weak: true)
+  ]
+  #text(size: 8.5pt)[#bloques(terminos.blocks)]
+]
+
 // ---------------------------------------------------------------------------- proceso
-//
-// Segunda página fija, igual que el logo y el aviso de pago: no es un dato de la cotización —no
-// cambia de una a otra— sino la política de logística del negocio que emite el documento, así
-// que va escrita acá y no armada desde `data`.
-#pagebreak()
 
-#text(size: 11pt, weight: "bold")[Proceso de Alistamiento y Recepción de Pedidos.]
-
-#v(10pt)
-
-#text(weight: "bold")[Alistamiento y Entrega:] \
-El proveedor preparará los pedidos bajo filmación y los entregará a la empresa transportadora
-dentro de los 8 días hábiles siguientes a la confirmación del pedido, siempre que estos hayan
-sido solicitados y pagados por el mayorista.
-
-#v(8pt)
-
-#text(weight: "bold")[Recepción de la Mercancía:] \
-Al recibir los productos de la transportadora, el mayorista deberá revisar el estado del
-paquete. No recibir en caso de detectar:
-
-\- Cinta contramarcada deteriorada \
-\- Cajas dañadas y/o abiertas \
-\- Cintas, zunchos o cajas diferentes a las del proveedor
-
-#v(4pt)
-
-Si decide recibir el paquete a pesar de alguna de estas irregularidades, lo hará bajo su
-responsabilidad. En este caso, deberá:
-
-\- Dejar constancia de la novedad en la guía de recepción de la transportadora. \
-\- Informar de inmediato al proveedor. \
-\- Enviar fotografías como evidencia.
-
-#v(8pt)
-
-#text(weight: "bold")[Verificación del Contenido:] \
-Una vez recibido el pedido, el mayorista deberá grabar un video al abrir las cajas o paquetes,
-evidenciando el estado y la cantidad de los productos.
-
-#v(8pt)
-
-#text(weight: "bold")[Reporte de Novedades:] \
-Si detecta daños, faltantes o deterioro en los productos, deberá informar al proveedor en un
-plazo máximo de 1 día hábil después de recibirlos. El reporte debe incluir:
-
-\- Video de la apertura del paquete. \
-\- Fotografías de las cajas. \
-\- Imágenes de los 3 stickers identificativos del proveedor.
+// El proceso de entrega del tenant va en su propia página al final, y sólo si está configurado para este documento.
+#if proceso != none [
+  #pagebreak()
+  #if proceso.title != "" [
+    #text(size: 11pt, weight: "bold")[#proceso.title]
+    #v(10pt)
+  ]
+  #bloques(proceso.blocks)
+]

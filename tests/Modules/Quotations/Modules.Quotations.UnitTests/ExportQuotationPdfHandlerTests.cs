@@ -1,3 +1,4 @@
+using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Domain;
@@ -187,6 +188,36 @@ public sealed class ExportQuotationPdfHandlerTests
         Assert.Equal(TenantNumberFormats.CommaDecimal, repository.Pdf!.NumberFormat);
     }
 
+    // El contenido configurable del PDF vence el caché por su huella (spec 2026-11-16 §5.4): cambiar una sección que sale en la
+    // cotización regenera el documento en el siguiente export.
+    [Fact]
+    public async Task ChangingThePdfContentRegeneratesTheCachedPdf()
+    {
+        var contentStore = new StubPdfContentStore { Content = PdfContent.Empty with { Terms = TermsSection("<p>Texto</p>") } };
+        var (handler, renderer, _, _, _, _) = NewHandler(contentStore: contentStore);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        contentStore.Content = PdfContent.Empty with { Terms = TermsSection("<p>Otro texto</p>") };
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, renderer.Calls);
+    }
+
+    [Fact]
+    public async Task UnchangedPdfContentReusesTheCachedPdf()
+    {
+        var contentStore = new StubPdfContentStore { Content = PdfContent.Empty with { Terms = TermsSection("<p>Texto</p>") } };
+        var (handler, renderer, _, _, _, _) = NewHandler(contentStore: contentStore);
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, renderer.Calls);
+    }
+
+    private static PdfSection TermsSection(string contentHtml) =>
+        new(PdfSectionKey.Terms, Enabled: true, InQuotation: true, InOrder: false, "Términos", contentHtml);
+
     private static ExportQuotationPdfCommand NewCommand(Guid? quotationId = null) =>
         new(TenantId, quotationId ?? CurrentQuotationId);
 
@@ -198,7 +229,7 @@ public sealed class ExportQuotationPdfHandlerTests
         RecordingPdfStorage Storage,
         StubQuotationRepository Repository,
         StubQuotationLogoLookup LogoLookup,
-        Quotation Quotation) NewHandler(StubTenantDirectory? tenantDirectory = null)
+        Quotation Quotation) NewHandler(StubTenantDirectory? tenantDirectory = null, StubPdfContentStore? contentStore = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -234,7 +265,9 @@ public sealed class ExportQuotationPdfHandlerTests
                 storage,
                 new FixedTenantClock(Now),
                 logoLookup,
-                tenantDirectory ?? new StubTenantDirectory()),
+                tenantDirectory ?? new StubTenantDirectory(),
+                contentStore ?? new StubPdfContentStore(),
+                new RichTextHtmlReader()),
             storage,
             new StubExecutionContext(SubjectId, TenantId));
 

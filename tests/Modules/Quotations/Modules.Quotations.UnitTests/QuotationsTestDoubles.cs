@@ -729,6 +729,20 @@ internal sealed class CountingPdfRenderer : IQuotationPdfRenderer
     }
 }
 
+/// <summary>El contenido configurable del PDF que ve el proveedor (spec 2026-11-16): vacío salvo que la prueba lo cambie.</summary>
+internal sealed class StubPdfContentStore : IPdfContentStore
+{
+    public PdfContent Content { get; set; } = PdfContent.Empty;
+
+    public Task<PdfContent> GetAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(Content);
+
+    public Task SaveAsync(Guid tenantId, PdfContent content, CancellationToken cancellationToken)
+    {
+        Content = content;
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>El logo que el export ve, mutable entre dos llamados de la misma prueba — así se
 /// puede simular que el tenant cambió de logo entre dos exportaciones (spec 2026-09-19, decisión
 /// 10).</summary>

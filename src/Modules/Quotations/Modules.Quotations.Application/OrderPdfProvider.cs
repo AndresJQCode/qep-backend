@@ -1,3 +1,4 @@
+using BuildingBlocks.Application.RichText;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -27,7 +28,9 @@ public sealed class OrderPdfProvider(
     IQuotationPdfStorage storage,
     ITenantClock tenantClock,
     IQuotationLogoLookup logoLookup,
-    ITenantDirectory tenantDirectory)
+    ITenantDirectory tenantDirectory,
+    IPdfContentStore pdfContentStore,
+    IRichTextReader richTextReader)
     : IOrderPdfProvider
 {
     public async Task<string> RenderAndSaveAsync(
@@ -44,8 +47,11 @@ public sealed class OrderPdfProvider(
             ? null
             : new QuotationPdfLogo("logo" + logo.Extension, logoContent);
 
+        // Sin caché no hay huella que guardar: las secciones se leen en cada envío (spec 2026-11-16 §5.4).
+        var pdfContent = await pdfContentStore.GetAsync(tenantId, cancellationToken);
+        var mapped = QuotationPdfDocumentMapper.FromOrder(detail, calendar, pdfLogo, regional?.NumberFormat);
         var content = await renderer.RenderAsync(
-            QuotationPdfDocumentMapper.FromOrder(detail, calendar, pdfLogo, regional?.NumberFormat), cancellationToken);
+            mapped with { Sections = QuotationPdfSectionsBuilder.Build(pdfContent, mapped, richTextReader) }, cancellationToken);
         return await storage.SaveOrderAsync(tenantId, orderId, content, cancellationToken);
     }
 }

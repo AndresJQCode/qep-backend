@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -664,7 +665,7 @@ public sealed class SendOrderHandlerTests
                 new StubQuotationBuyerAccountLookup()),
             new OrderPdfProvider(
                 renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
-                tenant),
+                tenant, new StubPdfContentStore(), new RichTextHtmlReader()),
             storage,
             customers,
             whatsAppFailure is null ? sender : new FailingWhatsAppSender(whatsAppFailure),
