@@ -680,6 +680,142 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.Equal("order.order.not_editable", (await ReadProblemAsync(response)).Code);
     }
 
+    // Spec 2026-11-16 §3 y §4 (F-4, F-6): la fecha del pedido se edita en el guardado, sube la versión y deja una entrada
+    // OrderDateChanged con la fecha anterior y la nueva. El 2026-11-10 ya pasó, así que siempre es una fecha aceptada.
+    [Fact]
+    public async Task SavingAnOrderDateChangesItAndRecordsHistory()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var moved = new DateOnly(2026, 11, 10);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, null, OrderDate: moved));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadDetailAsync(response);
+        Assert.Equal(moved, saved.Order.OrderDate);
+        Assert.True(saved.Order.Version > order.Version);
+        var entry = Assert.Single(saved.History, history => history.EventType == "OrderDateChanged");
+        Assert.Equal($"Cambió la fecha del pedido de {order.OrderDate:yyyy-MM-dd} a 2026-11-10.", entry.Details);
+        Assert.Equal(moved, (await GetDetailAsync(client, tenantId, order.Id)).Order.OrderDate);
+    }
+
+    // §4: sin `orderDate` en el cuerpo (un frontend viejo) la fecha guardada no se toca.
+    [Fact]
+    public async Task SavingWithoutOrderDateKeepsIt()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 2m)], null, null));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadDetailAsync(response);
+        Assert.Equal(order.OrderDate, saved.Order.OrderDate);
+        Assert.DoesNotContain(saved.History, history => history.EventType == "OrderDateChanged");
+    }
+
+    // §3: la misma fecha no es un cambio: ni historial ni versión nueva.
+    [Fact]
+    public async Task SavingTheSameOrderDateRecordsNothing()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, null, OrderDate: order.OrderDate));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadDetailAsync(response);
+        Assert.Equal(order.Version, saved.Order.Version);
+        Assert.DoesNotContain(saved.History, history => history.EventType == "OrderDateChanged");
+    }
+
+    // F-5: el tope es hoy en el calendario del tenant. Dos días después de hoy en Bogotá (la zona del tenant de prueba) es
+    // futuro aunque la prueba cruce la medianoche. Código de dominio, sin mapa `errors`.
+    [Fact]
+    public async Task AFutureOrderDateIsUnprocessable()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)], null, null, OrderDate: BogotaToday().AddDays(2)));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await ReadProblemAsync(response);
+        Assert.Equal("order.order_date.in_future", problem.Code);
+        Assert.Null(problem.Errors);
+        Assert.Equal(order.OrderDate, (await GetDetailAsync(client, tenantId, order.Id)).Order.OrderDate);
+    }
+
+    // §4: el preview muestra la fecha nueva y no la guarda.
+    [Fact]
+    public async Task PreviewingAnOrderDateDoesNotPersistIt()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var moved = new DateOnly(2026, 11, 10);
+
+        var response = await client.PostAsJsonAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, null, OrderDate: moved),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var preview = await ReadDetailAsync(response);
+        Assert.Equal(moved, preview.Order.OrderDate);
+        Assert.Equal(order.Version, preview.Order.Version);
+        var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.Equal(order.OrderDate, fetched.Order.OrderDate);
+        Assert.DoesNotContain(fetched.History, history => history.EventType == "OrderDateChanged");
+    }
+
+    // F-4: preparado congela el pedido, también su fecha. Responde lo mismo que cualquier otro cambio del borrador.
+    [Fact]
+    public async Task APreparedOrderCannotChangeItsDate()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var prepare = await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/prepare", null, TestContext.Current.CancellationToken);
+        prepare.EnsureSuccessStatusCode();
+        var prepared = await prepare.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(prepared);
+
+        var response = await PutEditsAsync(
+            client, tenantId, prepared.Id, prepared.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)], null, null, OrderDate: new DateOnly(2026, 11, 10)));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("order.order.not_editable", (await ReadProblemAsync(response)).Code);
+        Assert.Equal(order.OrderDate, (await GetDetailAsync(client, tenantId, order.Id)).Order.OrderDate);
+    }
+
+    // El tenant de prueba se registra en America/Bogota (default del registro).
+    private static DateOnly BogotaToday() => DateOnly.FromDateTime(
+        TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("America/Bogota")).DateTime);
+
     // Spec 2026-10-26, «Editar pedido» cambia la facturación. El tenant de prueba es colombiano, así que la
     // regla NIT de la jurídica aplica.
     private static async Task<OrderBillingEditRequest> BillingEditAsync(

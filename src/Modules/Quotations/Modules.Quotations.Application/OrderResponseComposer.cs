@@ -77,8 +77,12 @@ public sealed class OrderResponseComposer(
             order.Items
                 .Select(item => QuotationResponseComposer.ToItemResponse(item, products, order.GlobalScaleFloor))
                 .ToArray(),
-            order.QuotationId is { } quotationId && detail.QuotationNumber is { } number
-                ? new SourceQuotationResponse(quotationId, number)
+            // Sin el instante no se arma (spec 2026-11-16 F-8): CreatedAt no es opcional en el contrato, y un número sin
+            // cotización detrás no tiene cuándo mostrar.
+            order.QuotationId is { } quotationId
+            && detail.QuotationNumber is { } number
+            && detail.QuotationCreatedAt is { } quotationCreatedAt
+                ? new SourceQuotationResponse(quotationId, number, quotationCreatedAt)
                 : null,
             detail.History
                 .Select(entry => new OrderHistoryEntryResponse(
@@ -182,6 +186,7 @@ public static class OrderResponses
             order.ArchivedBy,
             order.Balance,
             order.BuyerNotes,
-            QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, documentYear));
+            QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, documentYear),
+            order.OrderDate);
     }
 }

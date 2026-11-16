@@ -51,7 +51,9 @@ public sealed record OrderListItemDto(
     string Source,
     string? ExternalReference,
     /// <summary>La entrega por envío, misma forma que en el detalle (ver <see cref="ShippingDto"/>).</summary>
-    ShippingDto Shipping);
+    ShippingDto Shipping,
+    /// <summary>La fecha del pedido (spec 2026-11-16 §4).</summary>
+    DateOnly OrderDate);
 
 public sealed record OrderPage(
     IReadOnlyList<OrderListItemDto> Items,

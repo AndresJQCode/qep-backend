@@ -73,7 +73,8 @@ internal static class OrderMapping
         order.OperationCityId,
         order.BuyerNotes,
         order.BuyerAccountId,
-        [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)]);
+        [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)],
+        order.OrderDate);
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
@@ -109,7 +110,8 @@ internal static class OrderMapping
         order.Total,
         order.Source.ToString(),
         order.ExternalReference,
-        order.ShippingDtoOf());
+        order.ShippingDtoOf(),
+        order.OrderDate);
 
     public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
         entry.Id.Value,

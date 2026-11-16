@@ -26,7 +26,8 @@ public sealed record SaveOrderEditsCommand(
     QuotationBillingAccountRequest? BillingAccount = null,
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
-    IReadOnlyList<string>? ClearedWithholdingTypes = null) : ICommand<OrderDetailDto>, IOrderEdits;
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    DateOnly? OrderDate = null) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
@@ -170,6 +171,11 @@ public sealed class SaveOrderEditsHandler(
             order.AttachPaymentProofs(attachedInputs, updatedBy, now);
 
             var notesChanged = order.UpdateNotes(command.Notes, now);
+            // Spec 2026-11-16 §4: ausente no la toca; el tope es hoy en el calendario del tenant, que se lee sólo si llegó.
+            var previousOrderDate = order.OrderDate;
+            var orderDateChanged = command.OrderDate is { } orderDate
+                && order.ChangeOrderDate(
+                    orderDate, (await tenantClock.GetAsync(command.TenantId, cancellationToken)).Today, now);
             var retailChanged = order.IsRetail != command.IsRetail;
             if (retailChanged)
             {
@@ -233,7 +239,7 @@ public sealed class SaveOrderEditsHandler(
                 cancellationToken);
 
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
-            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged
+            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !orderDateChanged && !floorChanged && !retailChanged
                 && !shippingChanged && !billingChanged && !accountChanged && !withholdingsChanged && !taxUnitsChanged)
             {
                 // Nada cambió: ni versión nueva ni historial. El cliente recibe lo que ya tenía.
@@ -340,6 +346,13 @@ public sealed class SaveOrderEditsHandler(
                 orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                     OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.NotesChanged, updatedBy,
                     OrderChangeSummary.NotesChanged(), now));
+            }
+
+            if (orderDateChanged)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.OrderDateChanged, updatedBy,
+                    OrderChangeSummary.OrderDateChanged(previousOrderDate, order.OrderDate), now));
             }
 
             for (var index = 0; index < removedProofIds.Length; index++)

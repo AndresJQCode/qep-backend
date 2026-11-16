@@ -290,7 +290,8 @@ public static class OrderEndpoints
         order.Total,
         order.Source,
         order.ExternalReference,
-        ShippingResponse.From(order.Shipping));
+        ShippingResponse.From(order.Shipping),
+        order.OrderDate);
 
     private static async Task<IResult> GetOrderAsync(
         Guid tenantId,
@@ -459,7 +460,7 @@ public static class OrderEndpoints
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
                 request.IsRetail, request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
-                request.ClearedWithholdingTypes),
+                request.ClearedWithholdingTypes, request.OrderDate),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
@@ -518,7 +519,7 @@ public static class OrderEndpoints
                 tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail,
                 request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
-                request.ClearedWithholdingTypes),
+                request.ClearedWithholdingTypes, request.OrderDate),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

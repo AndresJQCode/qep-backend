@@ -220,6 +220,55 @@ public sealed class OrderResponseComposerTests
         Assert.Equal(0, buyers.FindCalls);
     }
 
+    // Spec 2026-11-16 F-8: un pedido manual no tiene cotización de origen, así que no hay instante que mostrar.
+    [Fact]
+    public async Task AManualOrderHasNoSourceQuotation()
+    {
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with { QuotationId = null, Source = "Manual" };
+
+        var response = await Composer().ComposeAsync(
+            TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
+
+        Assert.Null(response.SourceQuotation);
+    }
+
+    // F-8: la cotización de origen viaja con su número y su CreatedAt; sin el instante (cotización no encontrada) no viaja.
+    [Fact]
+    public async Task TheSourceQuotationCarriesItsCreationInstant()
+    {
+        var quotationId = Guid.CreateVersion7();
+        var createdAt = Now.AddDays(-3);
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with { QuotationId = quotationId };
+
+        var withInstant = await Composer().ComposeAsync(
+            TenantId, new OrderDetailDto(order, "COT-2026-0001", [], createdAt), TestContext.Current.CancellationToken);
+        var withoutInstant = await Composer().ComposeAsync(
+            TenantId, new OrderDetailDto(order, "COT-2026-0001", []), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new SourceQuotationResponse(quotationId, "COT-2026-0001", createdAt), withInstant.SourceQuotation);
+        Assert.Null(withoutInstant.SourceQuotation);
+    }
+
+    // Spec 2026-11-16 §4: la fecha del pedido viaja en el DTO y en la respuesta.
+    [Fact]
+    public void TheOrderDtoAndResponseCarryTheOrderDate()
+    {
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId);
+
+        var dto = order.ToDto();
+
+        Assert.Equal(order.OrderDate, dto.OrderDate);
+        Assert.Equal(order.OrderDate, OrderResponses.ToResponse(dto, documentYear: null).OrderDate);
+        Assert.Equal(order.OrderDate, order.ToListItemDto(null, null, null).OrderDate);
+    }
+
+    // §3: el texto del historial, con fechas ISO sin depender de la cultura.
+    [Fact]
+    public void TheOrderDateChangeSummaryNamesBothDates() =>
+        Assert.Equal(
+            "Cambió la fecha del pedido de 2026-11-14 a 2026-11-10.",
+            OrderChangeSummary.OrderDateChanged(new DateOnly(2026, 11, 14), new DateOnly(2026, 11, 10)));
+
     private static OrderResponseComposer Composer(
         StubQuotationCustomerLookup? customers = null,
         StubQuotationBuyerAccountLookup? buyers = null,
