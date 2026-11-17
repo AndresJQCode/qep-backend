@@ -89,6 +89,17 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-17: la conversación del cliente sin enviar nada. 201 si se creó, 200 si ya existía. Sin If-Match: quien llama no
+        // tiene una versión que defender (puede no existir aún la conversación).
+        group.MapPost("/conversations/open", OpenCustomerConversationAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Accepts<OpenCustomerConversationRequest>("application/json")
+            .Produces<OpenedCustomerConversationDto>(StatusCodes.Status201Created)
+            .Produces<OpenedCustomerConversationDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Spec 2026-10-11 §4.1: nota de voz en multipart. Ruta propia, para que el Accepts del texto siga en JSON.
         // DisableAntiforgery con el criterio de CustomerEndpoints (/import); el CSRF por X-Qep-Client sigue aplicando.
         // Sin .Accepts("multipart/form-data") a propósito: esa metadata activa el AcceptsMatcherPolicy del routing, que
@@ -429,6 +440,14 @@ public static class MessagingEndpoints
         return result.Created ? Results.Created((string?)null, result.Body) : Results.Ok(result.Body);
     }
 
+    private static async Task<IResult> OpenCustomerConversationAsync(
+        Guid tenantId, OpenCustomerConversationRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var result = await dispatcher.SendAsync(
+            new OpenCustomerConversationCommand(tenantId, request.CustomerId, request.ConnectionId), cancellationToken);
+        return result.Created ? Results.Created((string?)null, result.Body) : Results.Ok(result.Body);
+    }
+
     /// <summary>
     /// Spec 2026-10-11 §6.1. El form se lee a mano y no con un <c>IFormFile</c> en la firma: el binder lo leería entero
     /// antes de entrar acá, con el tope global, y fijar el del endpoint ya no serviría. Primero el tope, después el form.
@@ -635,5 +654,8 @@ public sealed record SendTemplateRequest(Guid? ClientId, string? Name, string? L
 
 /// <summary>Spec 2026-10-11 §5.2: <c>POST /conversations</c>.</summary>
 public sealed record StartConversationRequest(Guid? ClientId, Guid? ConnectionId, Guid? CustomerId, StartConversationTemplateRequest? Template);
+
+/// <summary>Spec 2026-11-17: <c>POST /conversations/open</c>. Sin <c>connectionId</c>, la única conexión de WhatsApp activa.</summary>
+public sealed record OpenCustomerConversationRequest(Guid? CustomerId, Guid? ConnectionId);
 
 public sealed record StartConversationTemplateRequest(string? Name, string? Language, Dictionary<string, string?>? Parameters);
