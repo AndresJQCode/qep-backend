@@ -9,8 +9,9 @@ namespace Bootstrapper.Seeding;
 /// <c>Seed:ExportLoad:Quotations</c> es mayor que 0.
 ///
 /// Arranca después de que la API está en pie, nunca dentro de RunQepSeedAsync. El startupProbe le da
-/// al pod 60 s como máximo (prod-deployment.yaml: 12 intentos cada 5 s), y sembrar decenas de miles de
-/// filas dentro del arranque haría que Kubernetes lo matara. Con maxUnavailable: 0, además, el deploy
+/// al pod 180 s como máximo (prod-deployment.yaml: 36 intentos cada 5 s), y un segundo pod gasta parte
+/// de eso esperando el candado de arranque (StartupLock); sembrar decenas de miles de filas dentro del
+/// arranque haría que Kubernetes lo matara. Con maxUnavailable: 0, además, el deploy
 /// nunca quedaría listo.
 ///
 /// Público y no internal para que las pruebas lo encuentren entre los IHostedService y esperen su

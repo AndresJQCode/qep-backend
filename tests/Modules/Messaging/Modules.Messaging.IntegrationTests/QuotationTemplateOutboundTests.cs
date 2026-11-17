@@ -106,8 +106,9 @@ public sealed class QuotationTemplateOutboundTests
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
         using var __ = f.Host;
+        // Borrar clientes (A-12 y P4): abrir la conversación con cliente toma su candado y comprueba que exista en customers.customers.
         ScriptMetaOk(f.Factory.MetaHandler);
-        var customerId = Guid.CreateVersion7();
+        var customerId = await CreateCustomerAsync(f.Factory, f.Tenant, "LAURA GÓMEZ", "300 555 0101");
 
         var sent = Assert.IsType<QuotationTemplateSendResult.Sent>(await SendAsync(f, Send(f, customerId: customerId)));
 
@@ -221,7 +222,8 @@ public sealed class QuotationTemplateOutboundTests
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
         using var __ = f.Host;
-        var customer = Guid.CreateVersion7();
+        // Borrar clientes (A-12 y P4): abrir la conversación con cliente toma su candado y comprueba que exista en customers.customers.
+        var customer = await CreateCustomerAsync(f.Factory, f.Tenant, "LAURA GÓMEZ", "300 555 0101");
         var customerConversation = await SeedCustomerConversationAsync(f, customer, "573001111111");
         ScriptMetaOk(f.Factory.MetaHandler);
 

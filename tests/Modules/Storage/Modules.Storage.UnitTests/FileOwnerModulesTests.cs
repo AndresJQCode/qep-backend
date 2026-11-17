@@ -34,6 +34,7 @@ public sealed class FileOwnerModulesTests
         Assert.Same(TenantModuleKeys.Catalog, FileOwnerModules.ModuleOf(FileOwnerType.Product));
         Assert.Same(TenantModuleKeys.Orders, FileOwnerModules.ModuleOf(FileOwnerType.PaymentProof));
         Assert.Same(TenantModuleKeys.Store, FileOwnerModules.ModuleOf(FileOwnerType.Store));
+        Assert.Same(TenantModuleKeys.Support, FileOwnerModules.ModuleOf(FileOwnerType.SupportTicket));
         foreach (var core in new[] { FileOwnerType.User, FileOwnerType.Entity, FileOwnerType.System, FileOwnerType.Tenant })
         {
             Assert.Null(FileOwnerModules.ModuleOf(core));
@@ -48,8 +49,9 @@ public sealed class FileOwnerModulesTests
             [FileOwnerType.PaymentProof, FileOwnerType.Store],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
                 TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))).Order());
+        // support no tiene dependencias: sólo sale con su propio módulo apagado.
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.SupportTicket],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.Empty).Order());
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }
@@ -69,6 +71,7 @@ public sealed class FileOwnerModulesTests
     [InlineData(FileOwnerType.Product, "catalog")]
     [InlineData(FileOwnerType.PaymentProof, "orders")]
     [InlineData(FileOwnerType.Store, "store")]
+    [InlineData(FileOwnerType.SupportTicket, "support")]
     public async Task AFileWhoseModuleIsOffIsForbidden(FileOwnerType ownerType, string module)
     {
         var modules = FixedTenantModules.AllBut(TenantModuleKey.Parse(module));

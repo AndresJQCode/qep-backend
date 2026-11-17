@@ -108,7 +108,7 @@ public sealed class PosSale
 
         // Null sólo en pruebas viejas: la de siempre de la moneda de la caja.
         var rule = rounding ?? PriceRounding.LegacyFor(session.Currency);
-        var builtLines = lines.Select((line, index) => PosSaleLine.Create(id, index + 1, line, rule)).ToList();
+        var builtLines = lines.Select((line, index) => PosSaleLine.Create(id, index + 1, line, rule, at)).ToList();
 
         // Idéntico a Quotation.RecalculateTotals sin excedente ni retención.
         var subtotal = VatIncludedLine.Round(builtLines.Sum(line => line.Subtotal));

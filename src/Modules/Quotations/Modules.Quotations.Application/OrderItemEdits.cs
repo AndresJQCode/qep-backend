@@ -30,6 +30,7 @@ internal static class OrderItemEdits
         Order order,
         IReadOnlyCollection<OrderItemAddition> desired,
         IQuotationProductPricingLookup pricingLookup,
+        IOrderVariantCostLookup costLookup,
         Guid tenantId,
         MemberId updatedBy,
         DateTimeOffset occurredAt,
@@ -50,6 +51,12 @@ internal static class OrderItemEdits
                 .Where(line => !current.TryGetValue(line.VariantId, out var item) || item.Quantity != line.Quantity)
                 .Select(line => line.VariantId),
             cancellationToken);
+        var costs = await OrderLineCostsLoader.LoadForAdditionsAsync(
+            costLookup,
+            tenantId,
+            order,
+            desired.Where(line => !current.ContainsKey(line.VariantId)).Select(line => line.VariantId),
+            cancellationToken);
 
         foreach (var line in desired.Where(line => !current.ContainsKey(line.VariantId)))
         {
@@ -59,7 +66,7 @@ internal static class OrderItemEdits
             order.AddItem(
                 OrderItemId.New(), line.VariantId, pricing.ProductId, line.Quantity,
                 pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,
-                pricing.Pricing.TaxPercentage, updatedBy, occurredAt);
+                pricing.Pricing.TaxPercentage, costs, updatedBy, occurredAt);
             edits.Add(new OrderItemEdit(OrderItemEditKind.Added, line.VariantId, pricing.Name, null, line.Quantity));
         }
 

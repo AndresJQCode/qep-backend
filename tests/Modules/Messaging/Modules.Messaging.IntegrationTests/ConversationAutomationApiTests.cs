@@ -276,4 +276,162 @@ public sealed class ConversationAutomationApiTests
         Assert.True(sent.IsSuccessStatusCode);
         Assert.Equal(1L, await EventsAsync(f, "AutomationPaused"));
     }
+
+    // Spec 2026-11-03 D-6: una persona que toma, transfiere, resuelve, devuelve al asistente o responde sobre una conversación con asistente
+    // deja una señal ReleaseRun en la misma transacción; el worker de Automations cierra con ella la corrida viva.
+    private static Task<long> ReleaseRowsAsync(Fixture f) =>
+        CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.automation_inbox WHERE kind = 'ReleaseRun' AND conversation_id = @id", ("id", f.ConversationId));
+
+    private static async Task ClearAssistantAsync(Fixture f) =>
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.conversations SET automation_status='None', automation_started_at=NULL, automation_paused_at=NULL, automation_paused_by_member_id=NULL, automation_pause_reason=NULL, version=version+1 WHERE id = @id",
+            ("id", f.ConversationId));
+
+    [Fact]
+    public async Task ResolvingAnAssistedConversationQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var response = await ActAsync(f, f.Client, "resolve", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            """
+            SELECT count(*) FROM messaging.automation_inbox AS inbox
+             JOIN messaging.messages AS event ON event.direction = 3 AND event.details->>'type' = 'Resolved'
+             WHERE inbox.kind = 'ReleaseRun' AND inbox.created_at = event.occurred_at
+            """));
+    }
+
+    [Fact]
+    public async Task TakingQueuesTheSignalAndTakingAgainDoesNot()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+        var again = await ActAsync(f, f.Client, "take", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task TransferringQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var response = await ActAsync(f, f.Client, "transfer", await VersionAsync(f), new { memberId = f.Beatriz });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task ResumingQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+
+        var response = await ActAsync(f, f.Client, "automation/resume", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2L, await ReleaseRowsAsync(f));
+    }
+
+    // D-6a: pausar a mano no suelta la corrida; la pausa ya la deja esperando y el motor no la toca.
+    [Fact]
+    public async Task PausingDoesNotQueueTheReleaseSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
+
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task TakingAManuallyPausedConversationQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
+
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task ActionsWithoutAssistantQueueNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ClearAssistantAsync(f);
+
+        await ActAsync(f, f.Client, "take", await VersionAsync(f));
+        await ActAsync(f, f.Client, "release", await VersionAsync(f));
+        await ActAsync(f, f.Client, "transfer", await VersionAsync(f), new { memberId = f.Beatriz });
+        var resolved = await ActAsync(f, f.Client, "resolve", await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, resolved.StatusCode);
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task AutoAssigningQueuesTheSignalInItsTransaction()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, MetaSendOk);
+
+        var sent = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId = Guid.CreateVersion7(), text = "hola" });
+
+        Assert.True(sent.IsSuccessStatusCode, await sent.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    // Review Focus 4: el asistente pausado a mano sigue siendo un asistente; responder la autoasigna y debe soltar la corrida.
+    [Fact]
+    public async Task AutoAssigningAManuallyPausedConversationQueuesTheSignal()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, MetaSendOk);
+        await ActAsync(f, f.Client, "automation/pause", await VersionAsync(f));
+
+        var sent = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId = Guid.CreateVersion7(), text = "hola" });
+
+        Assert.True(sent.IsSuccessStatusCode, await sent.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1L, await ReleaseRowsAsync(f));
+    }
+
+    [Fact]
+    public async Task AutoAssigningWithoutAssistantQueuesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, MetaSendOk);
+        await ClearAssistantAsync(f);
+
+        var sent = await SendAsync(f.Client, HttpMethod.Post, MessagesUrl(f.Tenant.TenantId, f.ConversationId), new { clientId = Guid.CreateVersion7(), text = "hola" });
+
+        Assert.True(sent.IsSuccessStatusCode, await sent.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
+    }
 }

@@ -47,6 +47,7 @@ public sealed record PublicStoreContactDto(
 
 /// <param name="Colors">Sólo los colores ya resueltos; los contrastes y los overrides son del backoffice.</param>
 /// <param name="Currencies">Los códigos en el orden guardado; la principal se informa aparte y la tienda decide cuál muestra primero.</param>
+/// <param name="ShowPrices">Sólo visual: los montos siguen viajando en /products, /products/{id}, /cart/quote, el recibo y buyer/orders.</param>
 /// <param name="FeaturedCategories">Las destacadas que tienen productos en alguna de las monedas de la tienda; la app las cruza con la moneda elegida.</param>
 public sealed record PublicStoreDto(
     string Name,
@@ -56,6 +57,7 @@ public sealed record PublicStoreDto(
     PublicStoreContactDto Contact,
     string? DataPolicyUrl,
     string PricingMode,
+    bool ShowPrices,
     IReadOnlyList<string> Currencies,
     string? PrimaryCurrency,
     IReadOnlyList<string> SalesCountries,

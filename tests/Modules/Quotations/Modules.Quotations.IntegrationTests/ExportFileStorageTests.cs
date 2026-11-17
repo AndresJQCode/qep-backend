@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// basura, y el enlace firmado vence a las `Storage:ExportUrlHours` horas, la misma opción que el
 /// export de clientes.
 /// </summary>
-public sealed class ExportFileStorageTests
+public sealed class ExportFileStorageTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Fact]
     public async Task UploadsUnderTheExportsPrefixWithTheJobIdAndSignsForExportUrlHours()
@@ -52,8 +52,7 @@ public sealed class ExportFileStorageTests
     [Fact]
     public async Task ARetryOfTheSameJobOverwritesTheSameObject()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var tenantId = Guid.CreateVersion7();
         var jobId = Guid.CreateVersion7();
         var first = await WriteTempFileAsync([0x01]);

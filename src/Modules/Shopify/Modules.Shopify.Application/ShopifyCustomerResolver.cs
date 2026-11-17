@@ -40,7 +40,7 @@ public sealed class ShopifyCustomerResolver(
 
     private static readonly ShopifyCityResolution NotColombian = new(null, null, null);
 
-    /// <summary>§6.2.1 paso 1: <c>customAttributes[document_attribute_key]</c> y su tipo, o el tipo por defecto de la tienda si no
+    /// <summary>§6.2.1 paso 1: el documento en la ruta <c>document_attribute_key</c> (<see cref="ShopifyDocumentSources.Read"/>) y su tipo, o el tipo por defecto de la tienda si no
     /// viene o no es uno de los cuatro (D-S22). La clave se busca exacta y, si no está, sin mayúsculas ni espacios: la escribe a
     /// mano quien arma el checkout.</summary>
     public static ShopifyBuyerDocument? DocumentOf(ShopifyStore store, ShopifyOrderSnapshot snapshot)

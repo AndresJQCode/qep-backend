@@ -75,7 +75,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task TheRenameKeepsEveryOrderProofAndCounterUnderTheNewNames()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -108,7 +108,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task RevertingTheRenameBringsBackTheOldNamesWithTheRows()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -183,7 +183,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderOwnDataCopiesTheQuotationIntoTheOrder()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -215,7 +215,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderOwnDataRefusesAnOrderWhoseQuotationHasNoLines()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -249,7 +249,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task PendingOrderExportsKeepTheirKindAndTheirNumberFilter()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -276,7 +276,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task RevertingPutsBackTheOldKindAndKey()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -300,7 +300,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderExternalKeyLeavesExistingOrdersWithoutKeyOrTitle()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -329,7 +329,7 @@ public sealed class OrdersMigrationTests
     [Fact]
     public async Task AddOrderBuyerAccountAddsTheColumnAndTheIndex()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -348,6 +348,34 @@ public sealed class OrdersMigrationTests
 
         Assert.Equal(["YES"], await ListAsync(connectionString, columnSql));
         Assert.Equal(["IX_orders_tenant_buyer_created"], await ListAsync(connectionString, indexSql));
+        // Deja la base en la última migración (gotcha de CLAUDE.md).
+        await migrator.MigrateAsync(null, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task AddOrderBuyerNotesAddsANullableTextColumnAndLeavesExistingOrdersNull()
+    {
+        await using var database = await StartEmptyDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using var context = NewContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        const string columnSql = """
+            SELECT data_type || ':' || is_nullable FROM information_schema.columns
+            WHERE table_schema = 'quotations' AND table_name = 'orders' AND column_name = 'buyer_notes'
+            """;
+        await migrator.MigrateAsync(LastMigrationBeforeOwnData, TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, QuotationWithLinesSql);
+        await migrator.MigrateAsync(MigrationId(context, "_AddOrderBuyerAccount"), TestContext.Current.CancellationToken);
+        Assert.Empty(await ListAsync(connectionString, columnSql));
+
+        await migrator.MigrateAsync(MigrationId(context, "_AddOrderBuyerNotes"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["text:YES"], await ListAsync(connectionString, columnSql));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString, $"SELECT count(*) FROM quotations.orders WHERE id = '{OrderId}' AND buyer_notes IS NULL"));
+        // La nota del comprador no se copia de notes: las órdenes que ya existen quedan sin ella.
+        Assert.Equal("Entregar en portería\n\nPago verificado", await ScalarAsync<string>(
+            connectionString, $"SELECT notes FROM quotations.orders WHERE id = '{OrderId}'"));
         // Deja la base en la última migración (gotcha de CLAUDE.md).
         await migrator.MigrateAsync(null, TestContext.Current.CancellationToken);
     }

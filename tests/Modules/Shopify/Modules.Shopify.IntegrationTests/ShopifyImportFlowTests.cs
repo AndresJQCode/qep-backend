@@ -26,6 +26,8 @@ public sealed class ShopifyImportFlowTests
 {
     private const string ShopifyOrderKeyPrefix = "954889:";
 
+    private const string Garantia = "Garantía por 1 año + Envío Prioritario🚛";
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
@@ -50,14 +52,15 @@ public sealed class ShopifyImportFlowTests
     }
 
     [Fact]
-    public async Task ImportWithoutDocumentIncompleteAndPendingOrder()
+    public async Task ImportWithoutDocumentIncompleteAndOpenOrder()
     {
         await using var flow = await Flow.StartAsync();
 
         await flow.DeliverAsync("orders/create", "wh-1", Fixture("no-document"));
 
+        // Spec 2026-11-10: el pedido nace Open; Pending ya no es un estado.
         Assert.Equal(
-            "Incomplete|none|Pending|Shopify",
+            "Incomplete|none|Open|Shopify",
             await flow.ScalarAsync(
                 """
                 SELECT c.completeness || '|' || coalesce(c.cuc, 'none') || '|' || o.status || '|' || o.source
@@ -141,6 +144,37 @@ public sealed class ShopifyImportFlowTests
                 FROM shopify.orders
                 """));
         Assert.Equal(1L, await ScalarAsync<long>(flow.ConnectionString, "SELECT count(*) FROM customers.customers"));
+    }
+
+    // Spec 2026-11-14: la nota del comprador queda en buyer_notes, y notes sólo con «Shopify #N»; el detalle la devuelve.
+    [Fact]
+    public async Task ImportPutsTheBuyerNoteInBuyerNotes()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture("taxes-included", order => order["note"] = "Dejar en portería"));
+
+        Assert.Equal("Shopify #1001|Dejar en portería", await flow.ScalarAsync("SELECT notes || '|' || buyer_notes FROM quotations.orders"));
+        var orderId = await flow.ScalarAsync("SELECT id::text FROM quotations.orders");
+        using var client = flow.Client(OrdersPermissions.OrderRead);
+        var detail = await client.GetFromJsonAsync<JsonObject>($"/api/v1/tenants/{flow.World.TenantId}/orders/{orderId}", Ct);
+        Assert.Equal("Dejar en portería", detail!["order"]!["buyerNotes"]!.GetValue<string>());
+    }
+
+    // Spec 2026-11-14 §2: la importación guarda la versión de Shopify que aplicó y lo que QEP escribió a partir de ella, leído del
+    // pedido después de escribir (plan D4).
+    [Fact]
+    public async Task ImportRecordsTheAppliedPayloadAndProjection()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture("taxes-included", order => order["note"] = "Dejar en portería"));
+
+        Assert.Equal("#1001", await flow.ScalarAsync("SELECT applied_payload ->> 'name' FROM shopify.orders"));
+        Assert.Equal("1", await flow.ScalarAsync("SELECT jsonb_array_length(applied_projection -> 'lines')::text FROM shopify.orders"));
+        Assert.Equal(
+            await flow.ScalarAsync("SELECT buyer_notes FROM quotations.orders"),
+            await flow.ScalarAsync("SELECT applied_projection ->> 'buyerNotes' FROM shopify.orders"));
     }
 
     // §6.2.3: el pedido de Shopify nace sin cotización, así que no aparece en la lista de cotizaciones.
@@ -298,14 +332,16 @@ public sealed class ShopifyImportFlowTests
         Assert.Equal(1L, await ScalarAsync<long>(flow.ConnectionString, "SELECT count(*) FROM quotations.orders"));
     }
 
-    // §6.3: Shopify cancela cuatro pedidos que quedaron en cuatro lugares distintos de QEP. Pendiente y aprobado se anulan; el
-    // facturado no se toca y la fila avisa invoiced_before_cancel; el que esperaba un producto se ignora y nunca nace.
+    // §6.3: Shopify cancela cuatro pedidos que quedaron en cuatro lugares distintos de QEP. El abierto se anula; el preparado
+    // también, porque la anulación de la plataforma gana sobre preparado y conserva la marca (spec 2026-11-10 §3.1); el
+    // facturado no se toca (sigue Open con invoiced_at) y la fila avisa invoiced_before_cancel; el que esperaba un producto se
+    // ignora y nunca nace. El fixture llega pagado, así que el pedido ya nace pagado y facturarlo no pide marcarlo antes.
     [Fact]
-    public async Task CancelOnPendingApprovedInvoicedAndWaiting()
+    public async Task CancelOnOpenPreparedInvoicedAndWaiting()
     {
         await using var flow = await Flow.StartAsync();
-        await flow.DeliverAsync("orders/create", "wh-p", Fixture("taxes-included", order => Renumber(order, 5550000000301, "#1301")));
-        await flow.DeliverAsync("orders/create", "wh-a", Fixture("taxes-included", order => Renumber(order, 5550000000302, "#1302")));
+        await flow.DeliverAsync("orders/create", "wh-o", Fixture("taxes-included", order => Renumber(order, 5550000000301, "#1301")));
+        await flow.DeliverAsync("orders/create", "wh-p", Fixture("taxes-included", order => Renumber(order, 5550000000302, "#1302")));
         await flow.DeliverAsync("orders/create", "wh-i", Fixture("taxes-included", order => Renumber(order, 5550000000303, "#1303")));
         await flow.DeliverAsync("orders/create", "wh-w", Fixture("taxes-included", order =>
         {
@@ -313,12 +349,12 @@ public sealed class ShopifyImportFlowTests
             order["line_items"]![0]!["sku"] = "NO-EXISTE";
         }));
         Assert.Equal("product_unmatched", await flow.MirrorAsync(5550000000304, "wait_reason"));
-        using var approver = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderApprove, OrdersPermissions.OrderInvoice);
-        var approved = await flow.QepOrderAsync(5550000000302);
+        using var operatorClient = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage, OrdersPermissions.OrderInvoice);
+        var prepared = await flow.QepOrderAsync(5550000000302);
         var invoiced = await flow.QepOrderAsync(5550000000303);
-        foreach (var (orderId, action) in new[] { (approved, "approve"), (invoiced, "approve"), (invoiced, "invoice") })
+        foreach (var (orderId, action) in new[] { (prepared, "prepare"), (invoiced, "invoice") })
         {
-            var response = await approver.PostAsync($"/api/v1/tenants/{flow.World.TenantId}/orders/{orderId}/{action}", content: null, Ct);
+            var response = await operatorClient.PostAsync($"/api/v1/tenants/{flow.World.TenantId}/orders/{orderId}/{action}", content: null, Ct);
             Assert.True(response.IsSuccessStatusCode, $"{action} {orderId}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(Ct)}");
         }
 
@@ -329,14 +365,16 @@ public sealed class ShopifyImportFlowTests
 
         Assert.Equal(
             "5550000000301|Cancelled||Cancelled,"
-            + "5550000000302|Cancelled||Cancelled,"
-            + "5550000000303|Cancelled|invoiced_before_cancel|Invoiced,"
+            + "5550000000302|Cancelled||Cancelled prepared,"
+            + "5550000000303|Cancelled|invoiced_before_cancel|Open invoiced,"
             + "5550000000304|Ignored||",
             await flow.ScalarAsync(
                 """
                 SELECT string_agg(
                     m.shopify_order_id || '|' || m.import_state || '|' || coalesce(m.wait_detail ->> 'reason', '') || '|'
-                    || coalesce(o.status, ''), ',' ORDER BY m.shopify_order_id)
+                    || coalesce(o.status, '') || CASE WHEN o.prepared_at IS NOT NULL THEN ' prepared' ELSE '' END
+                    || CASE WHEN o.invoiced_at IS NOT NULL THEN ' invoiced' ELSE '' END,
+                    ',' ORDER BY m.shopify_order_id)
                 FROM shopify.orders m LEFT JOIN quotations.orders o ON o.id = m.qep_order_id AND o.tenant_id = m.tenant_id
                 """));
         Assert.Equal(3L, await ScalarAsync<long>(flow.ConnectionString, "SELECT count(*) FROM quotations.orders"));
@@ -416,6 +454,81 @@ public sealed class ShopifyImportFlowTests
             "Calle 10 # 43-20, Apto 301, CALLI, Valle del Cauca, CO",
             await flow.ScalarAsync("SELECT sample_address FROM geography.unresolved_cities"));
         Assert.Contains("Dirección de envío de Shopify: ", await flow.ScalarAsync("SELECT notes FROM quotations.orders"), StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-13: una línea personalizada sin asociación deja el pedido esperando con su nombre; el asesor la asocia desde la
+    // bandeja (POST) y reintenta, y el pedido se importa con la variante elegida.
+    [Fact]
+    public async Task CustomLineWaitsThenMappingAndRetryImportsWithTheMappedVariant()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture("taxes-included", order => AddCustomLine(order, Garantia)));
+
+        Assert.Equal("Waiting", await flow.MirrorAsync(5550000000001, "import_state"));
+        Assert.Equal("product_unmatched", await flow.MirrorAsync(5550000000001, "wait_reason"));
+        // jsonb reordena los espacios y System.Text.Json escapa el emoji: se compara el JSON, no el texto.
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse("""{"skus": [], "customTitles": ["Garantía por 1 año + Envío Prioritario🚛"]}"""),
+            JsonNode.Parse(await flow.MirrorAsync(5550000000001, "wait_detail::text") ?? "null")));
+        Assert.Equal(0L, await ScalarAsync<long>(flow.ConnectionString, "SELECT count(*) FROM quotations.orders"));
+
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var mapped = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{flow.World.TenantId}/shopify/stores/{flow.World.ConnectionId}/custom-line-mappings",
+            new { title = Garantia, variantId = flow.World.Gorra },
+            Ct);
+        Assert.Equal(HttpStatusCode.Created, mapped.StatusCode);
+        var rowId = await flow.MirrorAsync(5550000000001, "id");
+        var retry = await client.PostAsync($"/api/v1/tenants/{flow.World.TenantId}/shopify/orders/{rowId}/retry", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        Assert.Equal("Imported", await flow.MirrorAsync(5550000000001, "import_state"));
+        var variants = await ScalarAsync<string>(
+            flow.ConnectionString,
+            "SELECT string_agg(variant_id::text, ',' ORDER BY variant_id::text) FROM quotations.order_items WHERE order_id = @o",
+            ("o", await flow.QepOrderAsync(5550000000001)));
+        Assert.Equal(
+            string.Join(',', new[] { flow.World.Camiseta, flow.World.Gorra }.Select(id => id.ToString()).Order(StringComparer.Ordinal)),
+            variants);
+    }
+
+    // Una vez asociado el nombre, el siguiente pedido con ese nombre entra a la primera, sin esperar.
+    [Fact]
+    public async Task ASecondOrderWithTheMappedTitleImportsWithoutWaiting()
+    {
+        await using var flow = await Flow.StartAsync();
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var mapped = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{flow.World.TenantId}/shopify/stores/{flow.World.ConnectionId}/custom-line-mappings",
+            new { title = Garantia, variantId = flow.World.Gorra },
+            Ct);
+        Assert.Equal(HttpStatusCode.Created, mapped.StatusCode);
+
+        await flow.DeliverAsync("orders/create", "wh-2", Fixture("taxes-included", order =>
+        {
+            Renumber(order, 5550000000501, "#1501");
+            AddCustomLine(order, Garantia);
+        }));
+
+        Assert.Equal("Imported", await flow.MirrorAsync(5550000000501, "import_state"));
+        Assert.Equal("1|none|none", await flow.DeliveryAsync("wh-2"));
+    }
+
+    // Una línea personalizada (sin llaves de producto ni de variante) con el título de la asociación; el total sube lo que ella
+    // cuesta para que el pedido no dispare total_difference.
+    private static void AddCustomLine(JsonObject order, string title)
+    {
+        var line = JsonNode.Parse(
+            """
+            {"id":9001,"product_id":null,"variant_id":null,"product_exists":false,"sku":null,"quantity":1,"price":"5000.00",
+             "price_set":{"shop_money":{"amount":"5000.00","currency_code":"COP"}},"total_discount":"0.00","discount_allocations":[]}
+            """)!.AsObject();
+        line["title"] = title;
+        order["line_items"]!.AsArray().Add(line);
+        order["total_price"] = "124000.00";
+        order["total_price_set"]!["shop_money"]!["amount"] = "124000.00";
+        order["total_price_set"]!["presentment_money"]!["amount"] = "124000.00";
     }
 
     private static int Column(IReadOnlyList<string> header, string name)
@@ -600,7 +713,7 @@ public sealed class ShopifyImportFlowTests
 
             var proofs = await client.PostAsJsonAsync(
                 $"/api/v1/tenants/{World.TenantId}/orders/{orderId}/proofs",
-                new AddOrderPaymentProofsRequest("PartialPaymentReceived", [new OrderPaymentProofRequest(fileId, 50_000m)]),
+                new AddOrderPaymentProofsRequest([new OrderPaymentProofRequest(fileId, 50_000m)]),
                 Ct);
             Assert.True(proofs.IsSuccessStatusCode, await proofs.Content.ReadAsStringAsync(Ct));
         }

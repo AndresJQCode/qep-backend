@@ -51,6 +51,54 @@ internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustom
             .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.MergedIntoId, survivor), cancellationToken));
     }
 
+    public async Task<int> CountContactsMovedAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken)
+    {
+        var ids = ToCustomerIds(mergedIds);
+        if (ids.Length == 0)
+        {
+            return 0;
+        }
+
+        return await MovingContacts(tenantId, new CustomerId(survivorId), ids).CountAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Guid>> RepointContactsAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken)
+    {
+        var ids = ToCustomerIds(mergedIds);
+        if (ids.Length == 0)
+        {
+            return [];
+        }
+
+        CustomerId? survivor = new CustomerId(survivorId);
+        var survivorKey = new CustomerId(survivorId);
+        // Leer y después mover no deja hueco: la fusión ya tiene las filas de los fusionados con FOR UPDATE, y vincular un contacto
+        // a una empresa bloquea la fila de la empresa, así que nadie entra ni sale de este conjunto entre las dos sentencias.
+        var moving = await MovingContacts(tenantId, survivorKey, ids).Select(customer => customer.Id).ToListAsync(cancellationToken);
+        if (moving.Count == 0)
+        {
+            return [];
+        }
+
+        var movingIds = moving.ToArray();
+        await CustomersWriteRaces.RunAsync(() => MovingContacts(tenantId, survivorKey, ids)
+            .Where(customer => movingIds.Contains(customer.Id))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.CompanyId, survivor), cancellationToken));
+        return moving.Select(id => id.Value).ToArray();
+    }
+
+    // Sin fusionados: un contacto que también se fusiona queda como tombstone sin empresa, no se mueve. Sin el que queda: no
+    // puede quedar apuntándose a sí mismo (su vínculo, si apuntaba a un fusionado, lo borra FillSurvivor).
+    private IQueryable<Customer> MovingContacts(Guid tenantId, CustomerId survivor, CustomerId[] mergedIds) =>
+        dbContext.Customers.Where(customer =>
+            customer.TenantId == tenantId
+            && customer.CompanyId != null && mergedIds.Contains(customer.CompanyId.Value)
+            && customer.MergedIntoId == null
+            && customer.Id != survivor
+            && !mergedIds.Contains(customer.Id));
+
     public async Task<CustomerMergeOwnedCounts> CountOwnedAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
     {

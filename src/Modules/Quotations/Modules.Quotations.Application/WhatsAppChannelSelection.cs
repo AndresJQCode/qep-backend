@@ -18,15 +18,27 @@ internal static class WhatsAppChannelSelection
     /// disponible se usa esa, y otro id es <c>channel_already_set</c>; con uno solo disponible se usa ese, y otro id es
     /// <c>channel_unavailable</c>; con varios hace falta el id (<c>channel_required</c>), y uno que no está es
     /// <c>channel_unavailable</c>. Una elección guardada que ya no está disponible para este documento cuenta como ninguna.
+    /// <paramref name="thread"/> (spec 2026-11-10 A12): la conexión del hilo desde el que se manda. Si está entre las disponibles
+    /// gana sobre todo lo demás y <b>no se recuerda</b>: no es la elección del tenant. Si no está, la resolución es la de siempre.
     /// </summary>
     public static ResolvedWhatsAppChannel Resolve(
-        IReadOnlyList<WhatsAppChannel> available, Guid? saved, Guid? requested, WhatsAppDocument document = WhatsAppDocument.Quotation)
+        IReadOnlyList<WhatsAppChannel> available,
+        Guid? saved,
+        Guid? requested,
+        WhatsAppDocument document = WhatsAppDocument.Quotation,
+        Guid? thread = null)
     {
         var prefix = WhatsAppDocuments.PrefixOf(document);
         if (available.Count == 0)
         {
             throw new QuotationsDomainException(
                 $"{prefix}.whatsapp.no_channel", "The tenant has no WhatsApp connection available to send documents.");
+        }
+
+        var viaThread = thread is null ? null : available.FirstOrDefault(channel => channel.ConnectionId == thread);
+        if (viaThread is not null)
+        {
+            return new ResolvedWhatsAppChannel(viaThread, Remember: false, PreviousChoice: null);
         }
 
         var chosen = available.FirstOrDefault(channel => channel.ConnectionId == saved);

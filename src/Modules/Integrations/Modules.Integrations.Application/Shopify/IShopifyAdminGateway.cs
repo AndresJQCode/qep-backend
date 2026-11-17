@@ -8,8 +8,15 @@ namespace Modules.Integrations.Application.Shopify;
 /// </summary>
 public interface IShopifyAdminGateway
 {
-    /// <summary><c>POST https://{shop}/admin/oauth/access_token { client_id, client_secret, code }</c> → token offline.</summary>
+    /// <summary><c>POST https://{shop}/admin/oauth/access_token { client_id, client_secret, code, expiring: "1" }</c> → token
+    /// offline que expira, con su refresh token (spec 2026-11-12 §6.1). Una respuesta sin <c>refresh_token</c>,
+    /// <c>expires_in</c> o <c>refresh_token_expires_in</c> es <see cref="ShopifyGatewayFailure.Invalid"/>.</summary>
     Task<ShopifyTokenGrant> ExchangeCodeAsync(string shop, string code, CancellationToken cancellationToken);
+
+    /// <summary>El refresco (spec 2026-11-12 §5): el mismo endpoint, como formulario, con <c>grant_type=refresh_token</c>.
+    /// Shopify rota los dos tokens. Un 4xx (salvo 429) es <see cref="ShopifyGatewayFailure.Rejected"/>: el refresh token ya
+    /// no sirve y sólo lo arregla volver a abrir la app.</summary>
+    Task<ShopifyTokenGrant> RefreshTokenAsync(string shop, string refreshToken, CancellationToken cancellationToken);
 
     /// <summary><c>{ shop { id name myshopifyDomain } }</c> por GraphQL, con <c>X-Shopify-Access-Token</c>.</summary>
     Task<ShopifyShopInfo> GetShopAsync(string shop, string accessToken, CancellationToken cancellationToken);
@@ -22,11 +29,16 @@ public interface IShopifyAdminGateway
         string shop, string token, string topic, Uri callback, CancellationToken cancellationToken);
 }
 
-/// <param name="Scopes">Los scopes concedidos, separados por coma, tal como los devuelve Shopify.</param>
-public sealed record ShopifyTokenGrant(string AccessToken, string Scopes)
+/// <param name="Scopes">Los scopes concedidos, separados por coma, tal como los devuelve Shopify. Vacío si el refresco no
+/// los repite (D13).</param>
+/// <param name="ExpiresIn">Lo que vive el token de acceso (1 hora). Duración y no fecha: el gateway no tiene reloj, y la
+/// fecha la calcula quien guarda con su <c>IClock</c> (D6).</param>
+/// <param name="RefreshTokenExpiresIn">Lo que vive el refresh token (90 días).</param>
+public sealed record ShopifyTokenGrant(
+    string AccessToken, string Scopes, string RefreshToken, TimeSpan ExpiresIn, TimeSpan RefreshTokenExpiresIn)
 {
-    // El ToString de un record imprime el token en cualquier log o mensaje que lo interpole.
-    public override string ToString() => $"ShopifyTokenGrant {{ Scopes = {Scopes} }}";
+    // El ToString de un record imprime los tokens en cualquier log o mensaje que lo interpole.
+    public override string ToString() => $"ShopifyTokenGrant {{ Scopes = {Scopes}, ExpiresIn = {ExpiresIn} }}";
 }
 
 /// <param name="Id">El id numérico de la tienda (el final de <c>gid://shopify/Shop/{id}</c>), como lo traen los webhooks.</param>

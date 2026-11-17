@@ -170,6 +170,44 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
             .Select(group => new { ConnectionId = group.Key, Count = group.Count() })
             .ToDictionaryAsync(group => group.ConnectionId, group => group.Count, cancellationToken);
 
+    // El payload es el snapshot normalizado (ShopifyOrderIngestion.WritePayload): los atributos del checkout, vengan de REST
+    // (note_attributes) o de GraphQL (customAttributes), quedan en el objeto "attributes". Sólo se miran los pedidos más recientes
+    // de la tienda: una tienda vieja tiene miles de filas, y una clave que dejó de usarse hace cientos de pedidos no le sirve al
+    // select. El jsonb_typeof protege de un payload sin el objeto (jsonb_object_keys falla con otro tipo).
+    public async Task<IReadOnlyList<string>> ListAttributeKeysAsync(
+        Guid tenantId, Guid connectionId, int recentOrders, CancellationToken cancellationToken) =>
+        await dbContext.Database.SqlQuery<string>(
+            $"""
+            SELECT DISTINCT keys.key AS "Value"
+            FROM (
+              SELECT payload -> 'attributes' AS attributes
+              FROM shopify.orders
+              WHERE tenant_id = {tenantId} AND connection_id = {connectionId}
+              ORDER BY shopify_created_at DESC, id DESC
+              LIMIT {recentOrders}
+            ) recent
+            CROSS JOIN LATERAL jsonb_object_keys(
+              CASE WHEN jsonb_typeof(recent.attributes) = 'object' THEN recent.attributes ELSE jsonb_build_object() END) AS keys(key)
+            """).ToListAsync(cancellationToken);
+
+    // Por IX_shopify_orders_tenant_qep_order. Con tracking: la corrección y la decisión de un cambio escriben la fila.
+    public Task<ShopifyOrderMirror?> FindByQepOrderIdAsync(Guid tenantId, Guid qepOrderId, CancellationToken cancellationToken) =>
+        dbContext.Orders
+            .Where(row => row.TenantId == tenantId && row.QepOrderId == qepOrderId)
+            .OrderByDescending(row => row.ShopifyCreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<ShopifyOrderMirror>> ListByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        var wanted = ids.ToArray();
+        return wanted.Length == 0
+            ? []
+            : await dbContext.Orders.AsNoTracking()
+                .Where(row => row.TenantId == tenantId && wanted.Contains(row.Id))
+                .ToListAsync(cancellationToken);
+    }
+
     // El resultado de SqlQuery: EF lo llena por nombre de columna.
     private sealed class CountsRow
     {
@@ -181,6 +219,111 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
 
         public int ImportedToday { get; init; }
     }
+}
+
+/// <summary>Spec 2026-11-14 §5: los envíos a Shopify. Con tracking. El pendiente se busca también entre lo agregado y sin guardar:
+/// dos encolados en la misma unidad de trabajo se fusionan en vez de chocar con el índice.</summary>
+internal sealed class ShopifyOrderPushRepository(ShopifyDbContext dbContext) : IShopifyOrderPushRepository
+{
+    private static readonly string Held = nameof(ShopifyOrderPushStatus.Held);
+
+    private static readonly string Pending = nameof(ShopifyOrderPushStatus.Pending);
+
+    public async Task<ShopifyOrderPush?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        dbContext.OrderPushes.Local.FirstOrDefault(push => push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.IsOpen)
+        ?? await dbContext.OrderPushes.SingleOrDefaultAsync(
+            push => push.TenantId == tenantId
+                && push.MirrorOrderId == mirrorOrderId
+                && (push.Status == ShopifyOrderPushStatus.Pending || push.Status == ShopifyOrderPushStatus.Held),
+            cancellationToken);
+
+    public async Task<IReadOnlyDictionary<Guid, int>> CountHeldByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        await dbContext.OrderPushes
+            .AsNoTracking()
+            .Where(push => push.TenantId == tenantId && push.Status == ShopifyOrderPushStatus.Held)
+            .GroupBy(push => push.ConnectionId)
+            .Select(group => new { ConnectionId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(group => group.ConnectionId, group => group.Count, cancellationToken);
+
+    public Task<int> ReleaseHeldAsync(Guid tenantId, Guid connectionId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE shopify.order_pushes
+               SET status = {Pending}, failure_code = NULL, attempts = 0, lease_until = NULL, updated_at = {now}, version = version + 1
+             WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND status = {Held}
+            """,
+            cancellationToken);
+
+    public Task<ShopifyOrderPush?> FindLatestAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        dbContext.OrderPushes
+            .Where(push => push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId)
+            .OrderByDescending(push => push.CreatedAt)
+            .ThenByDescending(push => push.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<ShopifyOrderPush?> FindByIdAsync(Guid id, CancellationToken cancellationToken) =>
+        dbContext.OrderPushes.SingleOrDefaultAsync(push => push.Id == id, cancellationToken);
+
+    public void Add(ShopifyOrderPush push) => dbContext.OrderPushes.Add(push);
+}
+
+/// <summary>Spec 2026-11-14 §3: los cambios de Shopify. Con tracking para escribir; las listas, sin. Todo filtra por
+/// <c>tenant_id</c>.</summary>
+internal sealed class ShopifyOrderEditRepository(ShopifyDbContext dbContext) : IShopifyOrderEditRepository
+{
+    private static readonly ShopifyOrderEditStatus[] ToReview = [ShopifyOrderEditStatus.Pending, ShopifyOrderEditStatus.Blocked];
+
+    // IX_order_edits_mirror_status. El más nuevo, por si una carrera dejó dos abiertos: el siguiente snapshot los reemplaza.
+    public Task<ShopifyOrderEdit?> FindOpenAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        dbContext.OrderEdits
+            .Where(edit => edit.TenantId == tenantId && edit.MirrorOrderId == mirrorOrderId && ToReview.Contains(edit.Status))
+            .OrderByDescending(edit => edit.CreatedAt)
+            .ThenByDescending(edit => edit.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<ShopifyOrderEdit?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+        dbContext.OrderEdits.SingleOrDefaultAsync(edit => edit.TenantId == tenantId && edit.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<ShopifyOrderEdit>> ListByMirrorAsync(
+        Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        await dbContext.OrderEdits
+            .AsNoTracking()
+            .Where(edit => edit.TenantId == tenantId && edit.MirrorOrderId == mirrorOrderId)
+            .OrderByDescending(edit => edit.CreatedAt)
+            .ThenByDescending(edit => edit.Id)
+            .ToListAsync(cancellationToken);
+
+    // IX_order_edits_tenant_status_created (tenant_id, status, created_at).
+    public async Task<(IReadOnlyList<ShopifyOrderEdit> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ShopifyOrderEditStatus> statuses,
+        Guid? connectionId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(statuses);
+        var wanted = statuses.ToArray();
+        var query = dbContext.OrderEdits.AsNoTracking().Where(edit => edit.TenantId == tenantId && wanted.Contains(edit.Status));
+        if (connectionId is { } connection)
+        {
+            query = query.Where(edit => edit.ConnectionId == connection);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(edit => edit.CreatedAt)
+            .ThenByDescending(edit => edit.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return (items, total);
+    }
+
+    public Task<int> CountToReviewAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        dbContext.OrderEdits.CountAsync(edit => edit.TenantId == tenantId && ToReview.Contains(edit.Status), cancellationToken);
+
+    public void Add(ShopifyOrderEdit edit) => dbContext.OrderEdits.Add(edit);
 }
 
 /// <summary>

@@ -18,6 +18,46 @@ namespace Modules.Quotations.Application;
 /// </summary>
 internal static class QuotationBillingAccountResolver
 {
+    /// <summary>
+    /// The previews' variant (spec 2026-11-16 withholdings by company): with no account but a company, a
+    /// <see cref="QuotationBillingAccount.IsPending"/> account of that company, so withholdings follow the company before
+    /// the bank account is picked. The account, when present, already names the company and wins. Write paths never pass
+    /// a company: they use the overload without it and keep requiring the full account.
+    /// </summary>
+    public static async Task<QuotationBillingAccount?> ResolveAsync(
+        IQuotationCompanyLookup lookup,
+        Guid tenantId,
+        QuotationBillingAccountRequest? request,
+        Guid? billingCompanyId,
+        string defaultCurrency,
+        CancellationToken cancellationToken)
+    {
+        if (request is not null || billingCompanyId is not { } companyId)
+        {
+            return await ResolveAsync(lookup, tenantId, request, cancellationToken);
+        }
+
+        ArgumentNullException.ThrowIfNull(lookup);
+        var company = await lookup.FindAsync(tenantId, companyId, cancellationToken)
+            // Same code and message as an account naming an unknown company: unknown and another tenant's look alike.
+            ?? throw new QuotationsDomainException(
+                QuotationBillingAccountVerifier.CompanyNotFoundCode,
+                $"Company '{companyId}' was not found in this tenant.");
+
+        // The currency the caller says the document has without an account (the tenant default, or an existing
+        // document's own): choosing only a company never changes it, because the currency belongs to the missing account.
+        return new QuotationBillingAccount
+        {
+            CompanyId = company.Id,
+            BankName = string.Empty,
+            AccountNumber = string.Empty,
+            Currency = defaultCurrency,
+            Country = company.Country,
+            CityId = company.CityId,
+            IsPending = true,
+        };
+    }
+
     public static async Task<QuotationBillingAccount?> ResolveAsync(
         IQuotationCompanyLookup lookup,
         Guid tenantId,
@@ -43,7 +83,9 @@ internal static class QuotationBillingAccountResolver
             CompanyId = verified.CompanyId,
             BankName = request.BankName,
             AccountNumber = request.AccountNumber,
-            Currency = verified.Currency
+            Currency = verified.Currency,
+            Country = verified.Country,
+            CityId = verified.CityId,
         };
     }
 }

@@ -1,4 +1,5 @@
 using BuildingBlocks.Domain.Identification;
+using BuildingBlocks.Domain.Taxes;
 using FluentValidation;
 using Modules.Customers.Domain;
 
@@ -171,4 +172,111 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
 
     private static string Join(IReadOnlyCollection<string> values) =>
         string.Join(", ", values.Order(StringComparer.Ordinal));
+}
+
+/// <summary>
+/// Las reglas de las retenciones de un cliente que no caben en una regla de forma: hay que preguntarle al catálogo (spec
+/// impuestos por tipo §7.4). Se llama después de autorizar y de validar la forma, y antes de escribir.
+///
+/// Cada id tiene que ser una tasa del tenant, activa y que retiene (un IVA, una tasa inactiva, una inexistente y una de otro
+/// tenant son el mismo error: <c>withholding_tax_rate_invalid</c>), y no puede haber dos del mismo tipo y país
+/// (<c>withholding_type_repeated</c>): dos Retefuente colombianas no se suman, se escoge una.
+/// </summary>
+internal static class CustomerWithholdingRules
+{
+    public static async Task ValidateAsync(
+        ICustomerTaxRateLookup lookup,
+        Guid tenantId,
+        IReadOnlyCollection<Guid> taxRateIds,
+        CancellationToken cancellationToken)
+    {
+        if (taxRateIds.Count == 0)
+        {
+            return;
+        }
+
+        var ids = taxRateIds.Distinct().ToArray();
+        var found = await lookup.FindManyAsync(tenantId, ids, cancellationToken);
+        Validate(found, ids);
+    }
+
+    /// <summary>
+    /// Las mismas reglas sobre tasas ya leidas del catalogo. El Excel carga las del tenant una sola vez por archivo y valida
+    /// cada fila contra ellas, sin una consulta por fila (spec impuestos por tipo §7.4).
+    /// </summary>
+    public static void Validate(
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> found, IReadOnlyCollection<Guid> taxRateIds)
+    {
+        var ids = taxRateIds.Distinct().ToArray();
+        var rates = new List<CustomerTaxRateRef>(ids.Length);
+        foreach (var id in ids)
+        {
+            if (!found.TryGetValue(id, out var rate) || !rate.IsActive || !rate.Withholds)
+            {
+                throw new CustomersDomainException(
+                    "customers.customer.withholding_tax_rate_invalid",
+                    "The withholding tax rate does not exist, is inactive, or does not withhold.");
+            }
+
+            rates.Add(rate);
+        }
+
+        // Spec ReteICA por empresa §7.4 (A15): una tasa municipal es de la empresa facturadora y del municipio de la
+        // operación, nunca del cliente. Se revisa antes que los repetidos para decir lo que de verdad está mal.
+        if (rates.Any(rate => TaxCountries.IsMunicipal(rate.Country, rate.Type)))
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_tax_rate_municipal",
+                "A municipal withholding tax rate cannot be assigned to a customer.");
+        }
+
+        if (rates.GroupBy(rate => (rate.Country, rate.Type)).Any(group => group.Count() > 1))
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_type_repeated",
+                "A customer can have only one withholding tax rate per country and type.");
+        }
+    }
+}
+
+/// <summary>
+/// Qué municipios puede guardar un cliente como agente retenedor (spec ReteICA por empresa §7.4): el tipo tiene que ser
+/// municipal en su país y la ciudad tiene que existir en Geography (que sólo tiene la DIVIPOLA, así que «existe» es «es de
+/// Colombia»). Los repetidos los colapsa el agregado.
+/// </summary>
+internal static class CustomerWithholdingAgentRules
+{
+    public static async Task<IReadOnlyList<WithholdingAgentCityEntry>> ValidateAsync(
+        ICustomerGeographyLookup geography,
+        IReadOnlyCollection<WithholdingAgentCityRequest> entries,
+        CancellationToken cancellationToken)
+    {
+        // Sin municipios no hay nada que preguntarle a Geography: el alta común no paga la consulta.
+        if (entries.Count == 0)
+        {
+            return [];
+        }
+
+        foreach (var entry in entries)
+        {
+            if (!TaxCountries.IsMunicipal(entry.Country, entry.Type))
+            {
+                throw new CustomersDomainException(
+                    "customers.customer.withholding_agent_type_invalid",
+                    $"'{entry.Type}' is not a municipal tax type of country '{entry.Country}'.");
+            }
+        }
+
+        var cityIds = entries.Select(entry => entry.CityId).Distinct().ToArray();
+        var found = await geography.FindCitiesAsync(cityIds, cancellationToken);
+        var missing = cityIds.Where(id => !found.ContainsKey(id)).ToArray();
+        if (missing.Length > 0)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_agent_city_invalid",
+                $"The city '{missing[0]}' does not exist.");
+        }
+
+        return [.. entries.Select(entry => new WithholdingAgentCityEntry(entry.Country, entry.Type, entry.CityId))];
+    }
 }

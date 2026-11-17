@@ -264,8 +264,8 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
     }
 
-    // El aprobador no es el asesor: si compartieran membresía, la prueba no distinguiría si lo
-    // que retiene al usuario es advisor_id (ya cubierto arriba) o approved_by.
+    // Quien marca pagado no es el asesor: si compartieran membresía, la prueba no distinguiría si lo
+    // que retiene al usuario es advisor_id (ya cubierto arriba) o paid_marked_by.
     [Fact]
     public async Task ApprovingAnOrderKeepsTheUser()
     {
@@ -821,14 +821,15 @@ public sealed class OrphanUserCleanupTests
             defaultCurrency: "COP",
             // El cliente de esta cotizacion de prueba no aplica retencion ni excedente de IVA:
             // lo que se ejercita aca es la limpieza de usuarios huerfanos, no los totales.
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             advisor,
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
-    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by,
+    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es paid_marked_by,
     // cancelled_by o invoiced_by, no el resto del contrato de pedidos. Desde el spec 2026-10-15 el
     // pedido tiene datos propios y no necesita cotización: se siembra uno manual.
     private static async Task SeedOrderAsync(
@@ -849,7 +850,7 @@ public sealed class OrphanUserCleanupTests
             OrderId.New(),
             tenantId,
             $"PED-{Guid.NewGuid():N}"[..20],
-            new OrderHeader(Guid.CreateVersion7(), convertedBy, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), convertedBy, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
@@ -860,22 +861,26 @@ public sealed class OrphanUserCleanupTests
             },
             ShippingDetails.None,
             [new OrderLineInput(productId, productId, 1m, 119_000m, 0m, 19)],
-            OrderPaymentStatus.PaymentPending,
             notes: null,
             convertedBy,
             proofs: [],
-            occurredAt);
+            occurredAt,
+            orderDate: DateOnly.FromDateTime(occurredAt.UtcDateTime));
 
         if (approvedByMembershipId is { } approvedBy)
         {
-            order.Approve(new MemberId(approvedBy), occurredAt);
+            order.MarkPaid(
+                new MemberId(approvedBy),
+                requirePaymentProof: false,
+                OrderLineCosts.Of(order.UncostedVariantIds, new Dictionary<Guid, decimal>()),
+                occurredAt);
         }
 
-        // Facturar exige Approved (spec 2026-10-05, decisión 1): quien pida invoicedBy tiene que
+        // Facturar exige pagado (spec 2026-11-10 §3.4, ajuste por defecto): quien pida invoicedBy tiene que
         // pedir también approvedBy.
         if (invoicedByMembershipId is { } invoicedBy)
         {
-            order.Invoice(new MemberId(invoicedBy), occurredAt);
+            order.Invoice(new MemberId(invoicedBy), requireFullPayment: true, occurredAt);
         }
 
         if (cancelledByMembershipId is { } cancelledBy)
@@ -1260,6 +1265,8 @@ public sealed class OrphanUserCleanupTests
 
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

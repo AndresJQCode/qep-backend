@@ -112,8 +112,9 @@ public interface IConversationRunQueries
     Task<IReadOnlyDictionary<Guid, (int Handled, int HandedOff)>> TodayAsync(
         Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, DateTimeOffset dayStartUtc, DateTimeOffset dayEndUtc, CancellationToken cancellationToken);
 
-    /// <summary>¿Hay corridas <c>Running</c> o <c>Waiting</c>? Bloquea el borrado.</summary>
-    Task<bool> HasLiveRunsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
+    /// <summary>Las corridas <c>Running</c> o <c>Waiting</c> del chatbot, sin seguimiento, por <c>started_at</c>. El borrado decide con
+    /// ellas si el bot de verdad atiende alguna conversación (spec 2026-11-03 D-7).</summary>
+    Task<IReadOnlyList<ConversationRun>> ListLiveAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-21 §4.4 y D-M6: una conexión de Mensajería del tenant, en cualquier estado. <see cref="Channel"/> es el nombre
@@ -230,8 +231,12 @@ public interface IAutomationBusinessHours
 }
 
 /// <summary>Spec 2026-10-21 §5.1: una fila reclamada de <c>messaging.automation_inbox</c>. <see cref="Opened"/> (D-M16) dice que el
-/// entrante abrió o reabrió la conversación; <see cref="Attempts"/> ya cuenta el reclamo que la devolvió y es el testigo con que se cierra.</summary>
-public sealed record InboundQueueItem(Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts);
+/// entrante abrió o reabrió la conversación; <see cref="Attempts"/> ya cuenta el reclamo que la devolvió y es el testigo con que se cierra.
+/// Spec 2026-11-03 D-4: <see cref="ReleaseRun"/> marca la señal «una persona tomó la conversación», que sólo cierra la corrida viva del bot
+/// (nunca arranca ni avanza nada); <see cref="CreatedAt"/> es entonces el instante de la señal y <see cref="MessageId"/> no es un mensaje.</summary>
+public sealed record InboundQueueItem(
+    Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts,
+    bool ReleaseRun = false);
 
 /// <summary><see cref="Stored"/>: la copia a R2 ya terminó; mientras sea <c>false</c> el adjunto no se puede servir ni reenviar.</summary>
 public sealed record InboundAttachment(string MimeType, string? FileName, bool Stored);

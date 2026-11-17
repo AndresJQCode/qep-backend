@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Persistence;
 
 namespace Modules.Messaging.Infrastructure.Webhook;
 
@@ -26,6 +27,7 @@ internal sealed partial class WebhookDeliveryProcessor
 
     private async Task<DeliveryOutcome> ProcessInstagramAsync(long deliveryId, string payload, CancellationToken cancellationToken)
     {
+        var outcome = DeliveryOutcome.Processed;
         foreach (var entry in InstagramWebhookPayloadParser.Parse(payload))
         {
             var ignored = entry.Events.OfType<InstagramIgnoredEvent>().ToArray();
@@ -64,7 +66,18 @@ internal sealed partial class WebhookDeliveryProcessor
                             senderResolved = true;
                         }
 
-                        await IngestInstagramAsync(deliveryId, route, sender, message, cancellationToken);
+                        try
+                        {
+                            await IngestInstagramAsync(deliveryId, route, sender, message, cancellationToken);
+                        }
+                        catch (CustomerVanishedException)
+                        {
+                            // A-12 y P4: como en WhatsApp, el cliente se borró mientras la ingesta esperaba el candado; su transacción
+                            // se deshizo y la entrega se reintenta (el mid hace idempotente lo que ya entró).
+                            LogCustomerVanished(logger, deliveryId);
+                            outcome = DeliveryOutcome.RetryLater;
+                        }
+
                         break;
                     case InstagramSeenEvent seen:
                         // Spec 2026-10-14 (tiempo real): como un acuse de WhatsApp, el visto cambió la foto del hilo y quien lo mira lo relee.
@@ -97,7 +110,7 @@ internal sealed partial class WebhookDeliveryProcessor
             }
         }
 
-        return DeliveryOutcome.Processed;
+        return outcome;
     }
 
     /// <summary>Spec 2026-10-14 §8.2: con conversación y cliente no se llama a nadie. Si la conversación es nueva se pide el perfil

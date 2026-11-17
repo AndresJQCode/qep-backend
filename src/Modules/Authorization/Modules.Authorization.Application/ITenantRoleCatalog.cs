@@ -5,7 +5,12 @@ namespace Modules.Authorization.Application;
 /// Si se versiona con el codigo. Un rol de sistema se muestra pero no se edita ni se borra,
 /// y el front necesita saberlo sin reimplementar la lista de claves reservadas.
 /// </param>
+/// <param name="Id">
+/// La fila de un rol custom, que es por donde se edita y se borra. Null en uno de sistema, que
+/// no tiene fila y se identifica por su clave.
+/// </param>
 public sealed record TenantRoleDefinition(
+    Guid? Id,
     string Role,
     string DisplayName,
     string Description,

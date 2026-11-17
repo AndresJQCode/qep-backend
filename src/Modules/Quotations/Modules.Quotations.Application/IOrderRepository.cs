@@ -3,8 +3,8 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>Posición de keyset para la exportación de pedidos (spec 2026-09-12, D8): el orden del
-/// listado, fecha de conversión y número como desempate.</summary>
-public sealed record OrderExportCursor(DateTimeOffset ConvertedAt, string OrderNumber);
+/// listado, fecha del pedido, instante de creación y número como desempate (spec 2026-11-16 §5).</summary>
+public sealed record OrderExportCursor(DateOnly OrderDate, DateTimeOffset ConvertedAt, string OrderNumber);
 
 public sealed record OrderExportPaymentProof(
     OrderPaymentProofId Id,
@@ -51,6 +51,12 @@ public interface IOrderRepository
     Task<int> CountBySourceSinceAsync(
         Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// La página del listado. Sin <paramref name="status"/> no trae los archivados (spec 2026-11-10 §5, como Shopify): para
+    /// verlos se filtra <c>Archived</c>. La exportación (<see cref="AnyForExportAsync"/>, <see cref="ListForExportAsync"/>)
+    /// sigue la misma regla, porque el archivo es «lo que estoy viendo». <paramref name="invoiced"/> mira la marca de
+    /// facturado (<c>InvoicedAt</c>), que un pedido archivado conserva.
+    /// </summary>
     Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -58,8 +64,10 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         int page,
@@ -69,6 +77,24 @@ public interface IOrderRepository
     /// <summary>Los pedidos de un comprador de la tienda, del más reciente al más viejo, sin tracking.</summary>
     Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-15 §3.2: en una sola sentencia, pone <paramref name="buyerAccountId"/> en los pedidos del tenant de origen
+    /// tienda que no tienen cuenta ni decisión de un asesor y cuyo correo de facturación, recortado y en minúsculas, es
+    /// <paramref name="normalizedEmail"/>. Las condiciones van en el <c>WHERE</c> para no pisar una escritura concurrente del
+    /// asesor. No sube la versión (como <see cref="Order.LinkBuyerAccount"/>). Devuelve las filas enlazadas.
+    /// </summary>
+    Task<int> LinkStoreOrdersByBillingEmailAsync(
+        Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Obliga a que el siguiente guardado escriba <c>buyer_account_id</c> aunque el valor no haya cambiado respecto a lo
+    /// leído. Lo necesita la decisión del asesor (spec 2026-11-15 §4): los enlaces automáticos (<see cref="Order.LinkBuyerAccount"/>
+    /// y <see cref="LinkStoreOrdersByBillingEmailAsync"/>) no suben la versión, así que uno que confirme entre la carga y el
+    /// guardado pasa el <c>WHERE version = …</c>; si quitar sobre un pedido cargado sin cuenta no escribiera la columna, la
+    /// fila quedaría con la cuenta automática y la marca del asesor a la vez.
+    /// </summary>
+    void ForceBuyerAccountWrite(Order order);
 
     /// <summary>Un pedido del comprador, con tracking y con sus comprobantes, para poder cancelarlo.</summary>
     Task<Order?> FindByBuyerAsync(
@@ -81,8 +107,10 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         CancellationToken cancellationToken);
@@ -94,8 +122,10 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         OrderExportCursor? after,

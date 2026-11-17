@@ -312,6 +312,88 @@ public sealed class CustomerMergeStoreTests
         Assert.Null(await MergedIntoAsync(fixture.ConnectionString, merged));
     }
 
+    private static Task LinkCompanyAsync(string connectionString, Guid contact, Guid company) =>
+        ExecuteAsync(
+            connectionString,
+            "UPDATE customers.customers SET company_id = @company WHERE id = @contact",
+            ("company", company), ("contact", contact));
+
+    private static async Task<Guid?> CompanyOfAsync(string connectionString, Guid customer) =>
+        (await RowsAsync(connectionString, "SELECT company_id FROM customers.customers WHERE id = @id", ("id", customer)))
+            .Single()[0] as Guid?;
+
+    [Fact]
+    public async Task RepointContactsMovesThemToTheSurvivor()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var fixture = await StartAsync(factory, database.GetConnectionString());
+        using var _client = fixture.Client;
+        var survivor = await fixture.CreateCustomerAsync("Quien Queda");
+        var company = await fixture.CreateCustomerAsync("Empresa Fusionada");
+        var otherCompany = await fixture.CreateCustomerAsync("Otra Empresa");
+        var first = await fixture.CreateCustomerAsync("Contacto 1");
+        var second = await fixture.CreateCustomerAsync("Contacto 2");
+        var bystander = await fixture.CreateCustomerAsync("Contacto de otra");
+        await LinkCompanyAsync(fixture.ConnectionString, first, company);
+        await LinkCompanyAsync(fixture.ConnectionString, second, company);
+        await LinkCompanyAsync(fixture.ConnectionString, bystander, otherCompany);
+
+        await fixture.WithStoreAsync(store =>
+            store.RepointContactsAsync(Tenant, survivor, [company], TestContext.Current.CancellationToken));
+
+        Assert.Equal(survivor, await CompanyOfAsync(fixture.ConnectionString, first));
+        Assert.Equal(survivor, await CompanyOfAsync(fixture.ConnectionString, second));
+        Assert.Equal(otherCompany, await CompanyOfAsync(fixture.ConnectionString, bystander));
+    }
+
+    [Fact]
+    public async Task RepointContactsSkipsTheSurvivorItself()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var fixture = await StartAsync(factory, database.GetConnectionString());
+        using var _client = fixture.Client;
+        var survivor = await fixture.CreateCustomerAsync("Quien Queda");
+        var company = await fixture.CreateCustomerAsync("Empresa Fusionada");
+        await LinkCompanyAsync(fixture.ConnectionString, survivor, company);
+
+        await fixture.WithStoreAsync(store =>
+            store.RepointContactsAsync(Tenant, survivor, [company], TestContext.Current.CancellationToken));
+
+        // El vínculo propio del que queda no se toca: lo borra FillSurvivor, nunca un auto-vínculo.
+        Assert.Equal(company, await CompanyOfAsync(fixture.ConnectionString, survivor));
+        Assert.Equal(
+            0,
+            await fixture.WithStoreAsync(store =>
+                store.CountContactsMovedAsync(Tenant, survivor, [company], TestContext.Current.CancellationToken)));
+    }
+
+    [Fact]
+    public async Task CountContactsMovedExcludesTheSurvivorAndMergedOnes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var fixture = await StartAsync(factory, database.GetConnectionString());
+        using var _client = fixture.Client;
+        var survivor = await fixture.CreateCustomerAsync("Quien Queda");
+        var company = await fixture.CreateCustomerAsync("Empresa Fusionada");
+        var moving = await fixture.CreateCustomerAsync("Contacto que se mueve");
+        var alsoMerged = await fixture.CreateCustomerAsync("Contacto también fusionado");
+        var tombstone = await fixture.CreateCustomerAsync("Contacto ya fusionado");
+        var foreign = await InsertCustomerAsync(fixture.ConnectionString, OtherTenant, "Ajeno");
+        await LinkCompanyAsync(fixture.ConnectionString, survivor, company);
+        await LinkCompanyAsync(fixture.ConnectionString, moving, company);
+        await LinkCompanyAsync(fixture.ConnectionString, alsoMerged, company);
+        await LinkCompanyAsync(fixture.ConnectionString, tombstone, company);
+        await MarkMergedAsync(fixture.ConnectionString, tombstone, survivor);
+
+        var count = await fixture.WithStoreAsync(store =>
+            store.CountContactsMovedAsync(Tenant, survivor, [company, alsoMerged, foreign], TestContext.Current.CancellationToken));
+
+        Assert.Equal(1, count);
+    }
+
     [Fact]
     public async Task CountOwnedCountsNotesAndAddresses()
     {

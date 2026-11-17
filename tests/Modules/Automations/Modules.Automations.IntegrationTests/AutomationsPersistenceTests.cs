@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Automations.Infrastructure.Persistence;
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
+using Modules.Automations.Domain.Engine;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
 namespace Modules.Automations.IntegrationTests;
@@ -213,9 +214,9 @@ public sealed class AutomationsPersistenceTests
 
         Assert.Equal((2, 1), today[chatbotId]);
         Assert.Single(today);
-        Assert.False(await queries.HasLiveRunsAsync(tenantId, chatbotId, Ct));
+        Assert.Empty(await queries.ListLiveAsync(tenantId, chatbotId, Ct)); // sólo Completed y HandedOff
         await InsertRunAsync(connectionString, tenantId, chatbotId, "Waiting", dayStart.AddHours(3));
-        Assert.True(await queries.HasLiveRunsAsync(tenantId, chatbotId, Ct));
+        Assert.Equal(RunStatus.Waiting, Assert.Single(await queries.ListLiveAsync(tenantId, chatbotId, Ct)).Status);
     }
 
     [Fact]

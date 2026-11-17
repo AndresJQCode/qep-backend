@@ -35,13 +35,13 @@ public sealed class OrderPricingRecalculationTests
         var kept = Guid.CreateVersion7();
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [
                 new OrderLineInput(gone, gone, 2m, 10_000m, 10m, 19, new QuotationProductSnapshot("OLD", "Viejo")),
                 new OrderLineInput(kept, kept, 10m, 10_000m, 0m, 19),
             ],
-            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         await OrderPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(kept)), new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(), TenantId, order, Now.AddDays(1),
@@ -60,10 +60,10 @@ public sealed class OrderPricingRecalculationTests
         var productId = Guid.CreateVersion7();
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0002",
-            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [new OrderLineInput(productId, productId, 1m, 150_000m, 5m, 19)],
-            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         order.SetShipping(new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), AdvisorId, Now);
         var settings = QuotationSettings.Create(6, new Dictionary<string, decimal> { ["COP"] = 200_000m });
 
@@ -84,13 +84,13 @@ public sealed class OrderPricingRecalculationTests
         var sizeL = Guid.CreateVersion7();
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0003",
-            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [
                 new OrderLineInput(sizeM, shirt, 6m, 10_000m, 0m, 19),
                 new OrderLineInput(sizeL, shirt, 6m, 10_000m, 0m, 19),
             ],
-            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         var prices = new Dictionary<string, decimal> { ["COP"] = 10_000m };
 
         await OrderPricingRecalculation.ApplyAsync(
@@ -162,7 +162,7 @@ public sealed class OrderPricingRecalculationTests
 
     private static Order UsdOrder(OrderSource source, Guid productId)
     {
-        var header = new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, false);
+        var header = new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, []);
         var account = new QuotationBillingAccount
         {
             CompanyId = Guid.CreateVersion7(),
@@ -182,18 +182,19 @@ public sealed class OrderPricingRecalculationTests
             };
             return Order.CreateFromStore(
                 OrderId.New(), TenantId, "PED-2026-0011", header,
-                new QuotationParties(details, details, BillingWithRetention: false, BillingVatSurplus: false), account,
-                lines, null, AdvisorId, Now, "store-checkout:1");
+                new QuotationParties(details, details, BillingVatSurplus: false), account,
+                lines, null, AdvisorId, Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime), "store-checkout:1");
         }
 
         return source == OrderSource.Manual
             ? Order.CreateManual(
                 OrderId.New(), TenantId, "PED-2026-0009", header, QuotationParties.Empty, account, ShippingDetails.None,
-                lines, OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now)
+                lines, null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime))
             : Order.CreateExternal(
                 OrderId.New(), TenantId, "PED-2026-0010", header, QuotationParties.Empty, account, lines,
-                OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now, source, "1001", ShippingDetails.None,
-                "1:1001", null);
+                OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now,
+                orderDate: DateOnly.FromDateTime(Now.UtcDateTime), source, "1001", ShippingDetails.None,
+                "1:1001", null, OrderLineCosts.None);
     }
 
     private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products) : IQuotationProductPricingLookup

@@ -25,6 +25,10 @@ public static class PipelineErrorCodes
     public const string DealOrderNotFound = "pipeline.deal.order_not_found";
     public const string DealOrderCustomerMismatch = "pipeline.deal.order_customer_mismatch";
     public const string DealOrderAlreadyLinked = "pipeline.deal.order_already_linked";
+
+    /// <summary>Decisión del owner 2026-11-16: un cliente inactivo no recibe un negocio nuevo (triage, ficha). «Incompleto» sí lo
+    /// recibe.</summary>
+    public const string DealCustomerInactive = "pipeline.deal.customer_inactive";
     public const string StageNotFound = "pipeline.stage.not_found";
     public const string StageLayoutInvalid = "pipeline.stage.layout_invalid";
     public const string StageHasDeals = "pipeline.stage.has_deals";
@@ -33,6 +37,10 @@ public static class PipelineErrorCodes
     public const string TriageNotPending = "pipeline.triage.not_pending";
     public const string TriageDismissReasonRequired = "pipeline.triage.dismiss_reason_required";
     public const string TriageDismissReasonNotFound = "pipeline.triage.dismiss_reason_not_found";
+
+    /// <summary>Decisión del owner 2026-11-16: el negocio del triage nace en el contacto de la conversación o en su empresa, a
+    /// elección; cualquier otro <c>customerId</c> se rechaza.</summary>
+    public const string TriageDealCustomerInvalid = "pipeline.triage.deal_customer_invalid";
 
     /// <summary>Spec 2026-10-13 D38: otro asesor ya decidió esta conversación contra el mismo entrante
     /// (<c>IX_triage_decisions_conversation_inbound</c>).</summary>

@@ -37,7 +37,9 @@ public sealed class GetShopifyInstallHandlerTests
                 Guid.NewGuid(), Shop, $"state-{Guid.NewGuid():N}", "https://qep.qcode.co/shopify/callback", tenantId, memberId, IntegrationsTestBed.Now);
             if (exchange)
             {
-                install.MarkExchanged("12345678", "Mi Tienda", "read_orders,read_customers", new ProtectedSecret("test", [1]), IntegrationsTestBed.Now);
+                install.MarkExchanged(
+                    "12345678", "Mi Tienda", "read_orders,read_customers", new ProtectedSecret("test", [1]), new ProtectedSecret("test", [2]),
+                    IntegrationsTestBed.Now.AddHours(1), IntegrationsTestBed.Now.AddDays(90), IntegrationsTestBed.Now);
             }
 
             Installs.Add(install);

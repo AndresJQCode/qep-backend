@@ -32,6 +32,7 @@ public sealed class ShopifyOrderImporter(
     IShopifyBillingAccounts billingAccounts,
     ShopifyCustomerResolver customers,
     IShopifyProductLookup products,
+    IShopifyCustomLineMappingRepository customLines,
     IShopifyShippingLookup shipping,
     IShopifyOrderWriter orders,
     IShopifyOrderChangeReaction changes,
@@ -135,10 +136,11 @@ public sealed class ShopifyOrderImporter(
             return Wait(row, ShopifyWaitReasons.CustomerInactive, new { customerId = found.Id }, now);
         }
 
-        var (lines, unmatched) = await ResolveLinesAsync(tenantId, snapshot, orderCurrency, cancellationToken);
-        if (unmatched.Count > 0)
+        var (lines, unmatchedSkus, unmatchedTitles) = await ResolveLinesAsync(tenantId, row.ConnectionId, snapshot, orderCurrency, cancellationToken);
+        if (unmatchedSkus.Count > 0 || unmatchedTitles.Count > 0)
         {
-            return Wait(row, ShopifyWaitReasons.ProductUnmatched, new { skus = unmatched }, now);
+            // Las dos llaves siempre, en este orden: la bandeja lee las dos (spec 2026-11-13).
+            return Wait(row, ShopifyWaitReasons.ProductUnmatched, new { skus = unmatchedSkus, customTitles = unmatchedTitles }, now);
         }
 
         var shippingResult = await ShippingAsync(tenantId, snapshot, orderCurrency, cancellationToken);
@@ -206,7 +208,7 @@ public sealed class ShopifyOrderImporter(
         if ((result.AlreadyExisted || draft.CashOnDelivery) && snapshot.FinancialStatus.Length > 0)
         {
             var synced = await orders.SyncPaymentStatusAsync(tenantId, result.OrderId, snapshot.FinancialStatus, cancellationToken);
-            // §6.3: payment_has_proofs o not_pending se auditan en la fila y no frenan: después de aprobar, el pago lo lleva QEP.
+            // §6.3: payment_has_proofs o not_editable (anulado o facturado) se auditan en la fila y no frenan: ahí el pago lo lleva QEP.
             syncError = synced.Kind == ShopifyOrderOutcomeKind.Ignored ? synced.Code : null;
         }
 
@@ -230,55 +232,24 @@ public sealed class ShopifyOrderImporter(
             row.RecordLastError(syncError);
         }
 
+        // Spec 2026-11-14 §2: la versión aplicada y lo que QEP escribió a partir de ella, leído del pedido después de escribir (plan
+        // D4). También con AlreadyExisted: el pedido de QEP es el que quedó, y es contra él que se mide lo que toque el asesor.
+        if (await orders.ReadStateAsync(tenantId, result.OrderId, cancellationToken) is { } state)
+        {
+            row.RecordApplied(
+                ShopifyOrderIngestion.WritePayload(snapshot),
+                ShopifyOrderProjection.Write(
+                    ShopifyOrderProjection.From(state, ShopifyCustomerResolver.DocumentOf(store, snapshot), snapshot.Attributes)));
+        }
+
         return new ShopifyImportOutcome(row.ImportState);
     }
 
-    /// <summary>
-    /// §6.2.2: cada SKU contra el <c>Code</c> de una variante activa del tenant (y de un producto activo). Se resuelven <b>todas</b> las líneas antes de decidir,
-    /// para que <c>wait_detail.skus</c> traiga la lista completa. Una línea sin SKU entra a la lista como <c>null</c>: es lo que
-    /// trajo, y el frontend la muestra como «línea sin SKU». El SKU se compara recortado (los espacios de la tienda no son parte
-    /// del código).
-    /// </summary>
-    private async Task<(IReadOnlyList<ShopifyOrderLineDraft> Lines, IReadOnlyList<string?> Unmatched)> ResolveLinesAsync(
-        Guid tenantId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken)
-    {
-        var skus = snapshot.Lines
-            .Select(line => line.Sku?.Trim())
-            .Where(sku => !string.IsNullOrEmpty(sku))
-            .Cast<string>()
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        var found = skus.Length == 0
-            ? new Dictionary<string, ShopifyProductRef>(StringComparer.Ordinal)
-            : await products.FindByCodesAsync(tenantId, skus, cancellationToken);
-
-        var unmatched = new List<string?>();
-        var lines = new List<ShopifyOrderLineDraft>(snapshot.Lines.Count);
-        foreach (var line in snapshot.Lines)
-        {
-            var sku = line.Sku?.Trim();
-            if (string.IsNullOrEmpty(sku) || !found.TryGetValue(sku, out var product) || !product.IsActive)
-            {
-                var listed = string.IsNullOrEmpty(sku) ? null : sku;
-                if (!unmatched.Contains(listed))
-                {
-                    unmatched.Add(listed);
-                }
-
-                continue;
-            }
-
-            lines.Add(new ShopifyOrderLineDraft(
-                product.VariantId,
-                product.ProductId,
-                line.Quantity,
-                ShopifyPricing.UnitPriceWithVat(line.OriginalUnitPrice, snapshot.TaxesIncluded, product.TaxPercentage, currency),
-                ShopifyPricing.DiscountPercentage(line.DiscountAmount, line.OriginalUnitPrice, line.Quantity),
-                product.TaxPercentage));
-        }
-
-        return (lines, unmatched);
-    }
+    /// <summary>§6.2.2: las líneas, con la regla de <see cref="ShopifyLineResolver"/> (la misma del planificador de cambios). El
+    /// <c>wait_detail</c> es <c>{"skus":[…],"customTitles":[…]}</c>.</summary>
+    private Task<(IReadOnlyList<ShopifyOrderLineDraft> Lines, IReadOnlyList<string?> UnmatchedSkus, IReadOnlyList<string> UnmatchedTitles)> ResolveLinesAsync(
+        Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken) =>
+        new ShopifyLineResolver(products, customLines).ResolveAsync(tenantId, connectionId, snapshot, currency, cancellationToken);
 
     /// <summary>D-S23: la clave externa del pedido, <c>"{shopId}:{shopifyOrderId}"</c>. Con el shopId y no con la conexión, para
     /// que borrar y volver a enlazar la tienda no duplique pedidos. La usa también §6.3 (<see cref="ShopifyOrderChanges"/>).</summary>
@@ -288,23 +259,10 @@ public sealed class ShopifyOrderImporter(
         return $"{connection.ShopId}:{shopifyOrderId}";
     }
 
-    /// <summary>§6.2.2 pasos 4 y 5: la transportadora del título de la primera línea y, sólo si el envío se cobra en COP, la tasa
-    /// del envío del tenant. Con recogida o sin líneas no se pregunta nada.</summary>
-    private async Task<ShopifyShippingResult> ShippingAsync(
-        Guid tenantId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken)
-    {
-        if (ShopifyShippingMapper.IsStorePickup(snapshot))
-        {
-            return ShopifyShippingMapper.Map(snapshot, currency, null, null);
-        }
-
-        var title = ShopifyShippingMapper.CarrierTitle(snapshot);
-        var carrier = title is null ? null : await shipping.MatchCarrierAsync(tenantId, title, cancellationToken);
-        var rate = ShopifyPricing.IsCop(currency) && ShopifyShippingMapper.Amount(snapshot) != 0m
-            ? await shipping.GetFreightTaxPercentageAsync(tenantId, cancellationToken)
-            : null;
-        return ShopifyShippingMapper.Map(snapshot, currency, carrier, rate);
-    }
+    /// <summary>§6.2.2 pasos 4 y 5, con la regla de <see cref="ShopifyShippingResolver"/> (la misma del planificador de cambios).</summary>
+    private Task<ShopifyShippingResult> ShippingAsync(
+        Guid tenantId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken) =>
+        new ShopifyShippingResolver(shipping).ResolveAsync(tenantId, snapshot, currency, cancellationToken);
 
     /// <summary>§6.2.3 paso 2 (H25): la dirección de Shopify es la parte de envío sólo si queda completa: nombre, teléfono,
     /// dirección, departamento y ciudad. El nombre y el teléfono, si la dirección no los trae, salen del comprador; el correo es
@@ -473,7 +431,8 @@ public sealed class ShopifyOrderImporter(
             snapshot.CreatedAt,
             shippingResult.Draft,
             ExternalKey(connection, snapshot.OrderId),
-            shippingResult.UnrecognizedTitle);
+            shippingResult.UnrecognizedTitle,
+            Blank(snapshot.Note));
 
     /// <summary>§6.2.3 paso 2 (H24): las pasarelas unidas con <c>", "</c> y recortadas al ancho de la columna.</summary>
     private static string? PaymentMethod(IReadOnlyList<string> gateways)
@@ -482,16 +441,12 @@ public sealed class ShopifyOrderImporter(
         return joined.Length == 0 ? null : joined.Length <= PaymentMethodMaxLength ? joined : joined[..PaymentMethodMaxLength].TrimEnd();
     }
 
-    /// <summary>§6.2.3 paso 2: <c>Shopify #1001</c> y, en otra línea, la nota del comprador; si la dirección no quedó como parte
-    /// de envío, otra línea con la dirección cruda. Sin tope (H24).</summary>
+    /// <summary>§6.2.3 paso 2: <c>Shopify #1001</c> y, si la dirección no quedó como parte de envío, otra línea con la dirección
+    /// cruda. Sin tope (H24). La nota del comprador ya no va acá sino en <see cref="ShopifyOrderDraft.BuyerNotes"/> (spec
+    /// 2026-11-14): las notas son del asesor y no viajan a Shopify.</summary>
     private static string Notes(ShopifyOrderSnapshot snapshot, ShopifyAddress? unresolvedAddress)
     {
         var parts = new List<string> { $"Shopify {snapshot.Name}" };
-        if (Blank(snapshot.Note) is { } note)
-        {
-            parts.Add(note);
-        }
-
         if (unresolvedAddress is { } address && RawAddress(address) is { Length: > 0 } raw)
         {
             parts.Add($"{RawAddressLabel}{raw}");

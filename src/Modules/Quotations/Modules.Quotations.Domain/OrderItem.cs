@@ -76,6 +76,31 @@ public sealed class OrderItem
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
+    /// <summary>
+    /// El costo unitario de la variante cuando la línea contó como vendida (spec 2026-11-10 §4.2), en la moneda
+    /// del pedido. Null con <see cref="CostCapturedAt"/> lleno es «se congeló sin costo»; con él vacío, «todavía
+    /// no se congeló». Nunca se expone por la API de pedidos.
+    /// </summary>
+    public decimal? UnitCost { get; private set; }
+
+    public LineCostSource? CostSource { get; private set; }
+
+    public DateTimeOffset? CostCapturedAt { get; private set; }
+
+    /// <summary>Congela el costo una sola vez (§4.3): una línea ya congelada no se reescribe, aunque el pedido
+    /// salga de pagado y vuelva, o el costo del catálogo cambie.</summary>
+    internal void FreezeCost(decimal? unitCost, DateTimeOffset at)
+    {
+        if (CostCapturedAt is not null)
+        {
+            return;
+        }
+
+        UnitCost = unitCost;
+        CostSource = LineCostSource.Manual;
+        CostCapturedAt = at;
+    }
+
     /// <summary>El unitario de la fórmula con la regla del documento (<see cref="Order.PriceRounding"/>),
     /// la misma con que se cobró la línea. Derivado, no persistido.</summary>
     public decimal DiscountedUnitPriceUnder(PriceRounding rounding) =>
@@ -122,6 +147,33 @@ public sealed class OrderItem
         PriceRounding rounding,
         DateTimeOffset occurredAt) =>
         Apply(quantity, UnitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
+
+    /// <summary>Spec 2026-11-14 §4: la línea que una edición de la plataforma conserva, con el precio y el descuento que la
+    /// plataforma cobró ahora (sin repreciar contra el catálogo). Conserva su id y su costo congelado.</summary>
+    internal void ApplyExternal(
+        decimal quantity,
+        decimal unitPrice,
+        decimal discountPercentage,
+        int taxPercentage,
+        int position,
+        string currency,
+        PriceRounding rounding,
+        DateTimeOffset occurredAt)
+    {
+        DiscountOrigin = QuotationDiscountOrigin.Own;
+        Position = position;
+        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
+    }
+
+    /// <summary>La misma línea, comparada como se guarda: precio redondeado con la regla del documento y sin IVA fuera de
+    /// COP. Así una edición que llega igual a lo que el pedido ya tiene no cuenta como cambio.</summary>
+    internal bool SameAs(OrderItem other) =>
+        VariantId == other.VariantId
+        && ProductId == other.ProductId
+        && Quantity == other.Quantity
+        && UnitPrice == other.UnitPrice
+        && DiscountPercentage == other.DiscountPercentage
+        && TaxPercentage == other.TaxPercentage;
 
     internal void ApplyDiscount(
         decimal discountPercentage,

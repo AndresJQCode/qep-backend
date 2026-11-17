@@ -58,7 +58,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ShippingLookupInactiveRateReturnsNull()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, null, Now);
         var taxRates = new FakeTaxRateRepository(rate);
         var lookup = ShippingLookup(new FakeCarrierRepository(), new FakeQuotationSettingsStore(rate.Id.Value), taxRates);
         Assert.Equal(19, await lookup.GetFreightTaxPercentageAsync(TenantId, Ct));
@@ -76,7 +76,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ProductLookupReadsTaxPercentageByRateId()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, null, Now);
         var taxed = NewProduct("SH-400", rate.Id);
         var untaxed = NewProduct("SH-200", null);
         untaxed.Deactivate(Now);
@@ -94,7 +94,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ShopifyLookupMatchesVariantCodeExactly()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, null, Now);
         var world = VariantWorld.Create(TenantId, Now, taxRateId: rate.Id, largeIsActive: false);
         var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository(rate));
 
@@ -115,6 +115,46 @@ public sealed class ShopifyAdaptersTests
         var found = await lookup.FindByCodesAsync(TenantId, ["CAM-M"], Ct);
 
         Assert.Empty(found);
+    }
+
+    // Spec 2026-11-13: la línea personalizada asociada llega por el id de la variante; la inactiva vuelve marcada.
+    [Fact]
+    public async Task ProductLookupFindsByVariantIdWithItsTaxAndActivity()
+    {
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, null, Now);
+        var world = VariantWorld.Create(TenantId, Now, taxRateId: rate.Id, largeIsActive: false);
+        var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository(rate));
+
+        var found = await lookup.FindByVariantIdsAsync(
+            TenantId, [world.Medium.Id.Value, world.Large.Id.Value, Guid.CreateVersion7()], Ct);
+
+        Assert.Equal(2, found.Count);
+        Assert.Equal(new ShopifyProductRef(world.Medium.Id.Value, world.Product.Id.Value, "CAM-M", true, 19), found[world.Medium.Id.Value]);
+        Assert.False(found[world.Large.Id.Value].IsActive);
+    }
+
+    [Fact]
+    public async Task ProductLookupByVariantIdIgnoresAnotherTenant()
+    {
+        var world = VariantWorld.Create(Guid.CreateVersion7(), Now);
+        var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository());
+
+        var found = await lookup.FindByVariantIdsAsync(TenantId, [world.Medium.Id.Value], Ct);
+
+        Assert.Empty(found);
+    }
+
+    [Fact]
+    public async Task VariantLabelsCarryDisplayNameCodeAndActivity()
+    {
+        var world = VariantWorld.Create(TenantId, Now, largeIsActive: false);
+        var labels = new ShopifyVariantLabels(new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size));
+
+        var found = await labels.DescribeAsync(TenantId, [world.Medium.Id.Value, world.Large.Id.Value, Guid.CreateVersion7()], Ct);
+
+        Assert.Equal(2, found.Count);
+        Assert.Equal(new ShopifyVariantLabel(world.Medium.Id.Value, "Camiseta básica – M", "CAM-M", true), found[world.Medium.Id.Value]);
+        Assert.Equal(new ShopifyVariantLabel(world.Large.Id.Value, "Camiseta básica – L", "CAM-L", false), found[world.Large.Id.Value]);
     }
 
     // ---- Pedido (§6.2.3 y §6.3) ----
@@ -377,9 +417,9 @@ public sealed class ShopifyAdaptersTests
     }
 
     [Theory]
-    [InlineData("order.order.not_pending")]
+    [InlineData("order.order.not_editable")]
     [InlineData("order.order.payment_has_proofs")]
-    public async Task OrderWriterSyncNotPendingOrWithProofsReturnsIgnored(string code)
+    public async Task OrderWriterSyncNotEditableOrWithProofsReturnsIgnored(string code)
     {
         var writer = new FakeExternalOrderWriter { OnSync = () => throw new QuotationsDomainException(code, "No.") };
 
@@ -704,6 +744,47 @@ public sealed class ShopifyAdaptersTests
         });
     }
 
+    // Spec 2026-11-12 §6.4 (D7): un token vencido no vuelve la conexión no operativa (el redact y la ingesta la tratarían como
+    // desinstalada o pausada); sólo deja de viajar el token, para que la conciliación salte la corrida.
+    [Fact]
+    public async Task ConnectionDirectoryKeepsAnExpiredTokenConnectionOperationalWithoutToken()
+    {
+        var world = new ConnectionWorld(ConnectionStatus.Active, shopifyEnabled: true, tokenExpiresAt: "2026-10-18T11:59:00.0000000+00:00");
+
+        var byDomain = await world.Directory.FindByShopDomainAsync(ConnectionWorld.Domain, Ct);
+        var byId = await world.Directory.FindAsync(world.Connection.TenantId, world.Connection.Id, Ct);
+
+        Assert.NotNull(byDomain);
+        Assert.NotNull(byId);
+        Assert.Equal((true, (string?)null), (byDomain.IsOperational, byDomain.AccessToken));
+        Assert.Equal((true, (string?)null), (byId.IsOperational, byId.AccessToken));
+    }
+
+    [Fact]
+    public async Task ConnectionDirectoryListOperationalSkipsAnExpiredToken()
+    {
+        var world = new ConnectionWorld(ConnectionStatus.Active, shopifyEnabled: true, tokenExpiresAt: "2026-10-18T11:59:00.0000000+00:00");
+
+        Assert.Empty(await world.Directory.ListOperationalAsync(Ct));
+    }
+
+    // D14: sin vencimiento guardado (una conexión anterior al cambio), el token sigue viajando hasta que el worker la marque.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("no-es-fecha")]
+    [InlineData("2026-10-18T12:01:00.0000000+00:00")]
+    public async Task ConnectionDirectoryWithoutExpiryStillCarriesTheToken(string? tokenExpiresAt)
+    {
+        var world = new ConnectionWorld(ConnectionStatus.Active, shopifyEnabled: true, tokenExpiresAt);
+
+        var found = await world.Directory.FindByShopDomainAsync(ConnectionWorld.Domain, Ct);
+        var listed = Assert.Single(await world.Directory.ListOperationalAsync(Ct));
+
+        Assert.NotNull(found);
+        Assert.Equal((true, (string?)ConnectionWorld.Token), (found.IsOperational, found.AccessToken));
+        Assert.Equal(ConnectionWorld.Token, listed.AccessToken);
+    }
+
     [Fact]
     public async Task ConnectionHealthReportsUninstalledAndRejectedWithTheirCodes()
     {
@@ -754,6 +835,25 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(new ShopifyCityLookup(valle.Id.Value, null), await lookup.LookupCityAsync("VALLE DEL CAUCA", "Pueblo Perdido", Ct));
         Assert.Equal(new ShopifyCityLookup(valle.Id.Value, null), await lookup.LookupCityAsync("VALLE DEL CAUCA", "  ", Ct));
         Assert.Equal(new ShopifyCityLookup(null, null), await lookup.LookupCityAsync("Narnia", "Cali", Ct));
+    }
+
+    // Owner 2026-11-15: la corrección del pedido distingue el departamento que no existe de la ciudad que no existe o es de otro
+    // departamento, y el envío a Shopify no describe una ciudad fuera de su departamento.
+    [Fact]
+    public async Task GeographyLookupChecksTheCityBelongsToItsDepartment()
+    {
+        var antioquia = Department.Create(DepartmentId.New(), "05", "ANTIOQUIA");
+        var cundinamarca = Department.Create(DepartmentId.New(), "25", "CUNDINAMARCA");
+        var medellin = City.Create(CityId.New(), "05001", "MEDELLÍN", antioquia.Id);
+        var soacha = City.Create(CityId.New(), "25754", "SOACHA", cundinamarca.Id);
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia, cundinamarca), new NamedCities(medellin, soacha));
+
+        Assert.Equal(ShopifyCityCheck.Matches, await lookup.CheckCityAsync(antioquia.Id.Value, medellin.Id.Value, Ct));
+        Assert.Equal(ShopifyCityCheck.CityNotInDepartment, await lookup.CheckCityAsync(antioquia.Id.Value, soacha.Id.Value, Ct));
+        Assert.Equal(ShopifyCityCheck.CityNotInDepartment, await lookup.CheckCityAsync(antioquia.Id.Value, Guid.CreateVersion7(), Ct));
+        Assert.Equal(ShopifyCityCheck.DepartmentNotFound, await lookup.CheckCityAsync(Guid.CreateVersion7(), medellin.Id.Value, Ct));
+        Assert.Equal(new ShopifyCityName("MEDELLÍN", "ANTIOQUIA"), await lookup.DescribeCityAsync(antioquia.Id.Value, medellin.Id.Value, Ct));
+        Assert.Null(await lookup.DescribeCityAsync(antioquia.Id.Value, soacha.Id.Value, Ct));
     }
 
     // Spec 2026-10-26 §4.2: Shopify reporta con su origen y la fila del espejo como referencia; lo que vuelve es el resultado y,
@@ -838,7 +938,7 @@ public sealed class ShopifyAdaptersTests
             (new(ExternalShippingOutcomeKind.AlreadyApplied, persisted, null), new(ShopifyCityWriteKind.AlreadyApplied, fingerprint, null, null)),
             (new(ExternalShippingOutcomeKind.NotFound, null, null), new(ShopifyCityWriteKind.NotFound, null, null, null)),
             (new(ExternalShippingOutcomeKind.NotExternal, null, null), new(ShopifyCityWriteKind.NotFound, null, null, "order.order.source_invalid")),
-            (new(ExternalShippingOutcomeKind.NotPending, persisted, OrderStatus.Approved), new(ShopifyCityWriteKind.NotPending, null, null, "Approved")),
+            (new(ExternalShippingOutcomeKind.NotPending, persisted, OrderStatus.Archived), new(ShopifyCityWriteKind.NotPending, null, null, "Archived")),
             (new(ExternalShippingOutcomeKind.StorePickup, null, null), new(ShopifyCityWriteKind.StorePickup, null, null, null)),
             (new(ExternalShippingOutcomeKind.ShippingPresent, persisted, null), new(ShopifyCityWriteKind.ShippingPresent, null, null, null)),
             (new(ExternalShippingOutcomeKind.ShippingChanged, persisted, null), new(ShopifyCityWriteKind.ShippingChanged, null, null, null)),
@@ -926,12 +1026,14 @@ public sealed class ShopifyAdaptersTests
             new ExternalShippingParty("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", Guid.CreateVersion7(), Guid.CreateVersion7()));
         var label = ShopifyOrderImporter.RawAddressLabel;
         var orders = new FakeExternalOrderWriter();
-        orders.ShippingStates[(TenantId, orderId)] = new ExternalShippingState(OrderStatus.Pending, false, null, $"Shopify #1001\n{label}Cra 5, CALLI");
-        orders.ShippingStates[(TenantId, other)] = new ExternalShippingState(OrderStatus.Approved, true, party, $"Shopify #1002 {label}no es una línea\n");
+        orders.ShippingStates[(TenantId, orderId)] = new ExternalShippingState(
+            OrderStatus.Open, false, null, $"Shopify #1001\n{label}Cra 5, CALLI", IsEditable: true);
+        orders.ShippingStates[(TenantId, other)] = new ExternalShippingState(
+            OrderStatus.Archived, true, party, $"Shopify #1002 {label}no es una línea\n", IsEditable: false);
         var adapter = CityCorrectionWriter(orders: orders);
 
-        Assert.Equal(new ShopifyOrderCityState("Pending", false, false, true), await adapter.ReadOrderCityStateAsync(TenantId, orderId, Ct));
-        Assert.Equal(new ShopifyOrderCityState("Approved", true, true, false), await adapter.ReadOrderCityStateAsync(TenantId, other, Ct));
+        Assert.Equal(new ShopifyOrderCityState("Open", false, false, true, IsEditable: true), await adapter.ReadOrderCityStateAsync(TenantId, orderId, Ct));
+        Assert.Equal(new ShopifyOrderCityState("Archived", true, true, false, IsEditable: false), await adapter.ReadOrderCityStateAsync(TenantId, other, Ct));
         Assert.Null(await adapter.ReadOrderCityStateAsync(TenantId, Guid.CreateVersion7(), Ct));
         Assert.Null(await adapter.ReadOrderCityStateAsync(Guid.CreateVersion7(), orderId, Ct));
     }
@@ -958,6 +1060,79 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(new ShopifyCitySynonymRef(deleted.Id.Value, valle.Value, cali.Value, true), await lookup.FindAsync(deleted.Id.Value, Ct));
         Assert.Null(await lookup.FindAsync(Guid.CreateVersion7(), Ct));
         Assert.Equal(3, scopes);
+    }
+
+    // ---- Ediciones de Shopify (spec 2026-11-14 §4) ----
+
+    private static ExternalOrderEditState EditState(
+        Guid orderId,
+        OrderStatus status = OrderStatus.Open,
+        bool isPrepared = false,
+        bool isInvoiced = false,
+        OrderPaymentStatus paymentStatus = OrderPaymentStatus.PaymentPending,
+        string? shippingCountry = null) =>
+        new(
+            orderId, 3, status, status == OrderStatus.Open && !isPrepared && !isInvoiced, isPrepared, isInvoiced, paymentStatus,
+            Guid.CreateVersion7(), "COP", false,
+            [new ExternalOrderLineState(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19)],
+            ShippingDetails.None,
+            new ExternalShippingParty("Laura Gómez", "3001112233", "laura@verde.co", "Cra 5", Guid.CreateVersion7(), Guid.CreateVersion7()),
+            shippingCountry,
+            "Sin cebolla",
+            "Shopify #1001");
+
+    [Fact]
+    public async Task ApplyEditMapsNotEditableToRejected()
+    {
+        var orderId = Guid.CreateVersion7();
+        var orders = new FakeExternalOrderWriter
+        {
+            OnApplyEdit = _ => throw new QuotationsDomainException("order.order.not_editable", "Not editable."),
+        };
+
+        var outcome = await OrderWriter(orders).ApplyEditAsync(
+            new ShopifyOrderEditDraft(TenantId, orderId, 3, null, null, null, true, "Otra", Now), Ct);
+
+        Assert.Equal(new ShopifyOrderEditOutcome(null, "order.order.not_editable"), outcome);
+        var sent = Assert.Single(orders.Edits);
+        Assert.Equal(
+            (OrderSource.Shopify, ShopifyOrderImporter.RawAddressLabel, 3L, true, "Otra"),
+            (sent.Source, sent.NotesLinePrefix, sent.ExpectedVersion, sent.ReplaceBuyerNotes, sent.BuyerNotes));
+    }
+
+    [Fact]
+    public async Task ReadStateMapsThePaymentStatusByName()
+    {
+        var orderId = Guid.CreateVersion7();
+        var orders = new FakeExternalOrderWriter();
+        orders.EditStates[(TenantId, orderId)] = EditState(orderId);
+
+        var state = await OrderWriter(orders).ReadStateAsync(TenantId, orderId, Ct);
+
+        Assert.Equal("PaymentPending", state?.PaymentStatus);
+        Assert.Null(await OrderWriter(orders).ReadStateAsync(TenantId, Guid.CreateVersion7(), Ct));
+    }
+
+    [Fact]
+    public async Task ReadStateCarriesStatusPreparedInvoicedCurrencyAndShippingCountry()
+    {
+        var orderId = Guid.CreateVersion7();
+        var orders = new FakeExternalOrderWriter();
+        var source = EditState(orderId, isPrepared: true);
+        orders.EditStates[(TenantId, orderId)] = source;
+
+        var state = await OrderWriter(orders).ReadStateAsync(TenantId, orderId, Ct);
+
+        Assert.NotNull(state);
+        Assert.Equal(
+            ("Open", false, true, false, "COP", (string?)null),
+            (state.Status, state.IsEditable, state.IsPrepared, state.IsInvoiced, state.Currency, state.ShippingCountry));
+        Assert.Equal((3L, source.ClientId, "Sin cebolla"), (state.Version, state.ClientId, state.BuyerNotes));
+        Assert.Equal(new ShopifyOrderLineState(source.Lines[0].VariantId, source.Lines[0].ProductId, 2m, 11_900m, 0m, 19), Assert.Single(state.Lines));
+        Assert.Equal(new ShopifyShippingDraft(false, null, null, null, 0m, 0, false), state.Shipping);
+        Assert.Equal(
+            ShopifyOrderWriter.Fingerprint(source.ShippingParty),
+            state.ShippingParty);
     }
 
     // ---- Armado ----

@@ -27,6 +27,7 @@ public sealed class GetPublicStoreHandler(
             PublicStoreContactDto.From(store.Contact),
             store.DataPolicyUrl,
             store.PricingMode.ToString(),
+            store.ShowPrices,
             store.CurrenciesForVisitors(),
             store.PrimaryCurrency,
             store.SalesCountries.ToList(),

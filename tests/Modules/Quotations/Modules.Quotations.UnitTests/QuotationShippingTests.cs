@@ -22,7 +22,7 @@ public sealed class QuotationShippingTests
         Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", Guid.CreateVersion7(), Advisor, new DateOnly(2026, 11, 1),
             null, null, new QuotationParties(null, null, IsStorePickup: isStorePickup), Account(currency), currency,
-            customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+            customerVatSurplus: false, customerWithholdings: [], MunicipalContext.None, Advisor, Now);
 
     // Una línea de 10 × 11.900 con IVA del 19 %: subtotal 100.000, IVA 19.000, total 119.000.
     private static Quotation QuotationWithALineOf119000()
@@ -167,7 +167,7 @@ public sealed class QuotationShippingTests
 
         quotation.UpdateDetails(
             new DateOnly(2026, 11, 1), null, null, QuotationParties.Empty, Account("USD"), repricing: null,
-            isRetail: false, globalScaleFloor: null, Advisor, Now);
+            isRetail: false, globalScaleFloor: null, MunicipalContext.None, Advisor, Now);
 
         Assert.Equal("USD", quotation.Currency);
         Assert.Null(quotation.FreightChargeMode);
@@ -185,7 +185,7 @@ public sealed class QuotationShippingTests
 
         quotation.UpdateDetails(
             new DateOnly(2026, 11, 1), null, null, QuotationParties.Empty, Account("COP"), repricing: null,
-            isRetail: false, globalScaleFloor: null, Advisor, Now);
+            isRetail: false, globalScaleFloor: null, MunicipalContext.None, Advisor, Now);
 
         Assert.Equal((FreightChargeMode.Charged, 15_000m, 19), (quotation.FreightChargeMode, quotation.FreightAmount, quotation.FreightTaxPercentage));
     }

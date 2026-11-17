@@ -1200,6 +1200,8 @@ public sealed partial class RunProcessorTests
 
         public RecordingAudit Audit { get; } = new();
 
+        public NoUnitOfWork Unit { get; } = new(onLock, lockBusy);
+
         public RunProcessor Processor()
         {
             var conversations = Conversations;
@@ -1210,7 +1212,7 @@ public sealed partial class RunProcessorTests
                 Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, DataConsents, new ServingChatbots(flow, engineSettings, trigger),
                 NullLogger<RunEffects>.Instance);
             return new RunProcessor(
-                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow, engineSettings, trigger), Inbox, conversations, new TenantNames(), new Connections(), hours,
+                Unit, Runs, new ServingChatbots(flow, engineSettings, trigger), Inbox, conversations, new TenantNames(), new Connections(), hours,
                 files, new ModuleStatus(moduleEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
@@ -1382,9 +1384,25 @@ public sealed partial class RunProcessorTests
 
         public int Reads { get; private set; }
 
+        /// <summary>Spec 2026-11-03: la conversación ya no existe (<c>GetAsync</c> responde <c>null</c>).</summary>
+        public bool Missing { get; set; }
+
+        /// <summary>Spec 2026-11-03: la lectura de la conversación falla con una excepción no prevista.</summary>
+        public Exception? ReadFailure { get; set; }
+
         public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
         {
             Reads++;
+            if (ReadFailure is not null)
+            {
+                return Task.FromException<AutomationConversationState?>(ReadFailure);
+            }
+
+            if (Missing)
+            {
+                return Task.FromResult<AutomationConversationState?>(null);
+            }
+
             return Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
         }

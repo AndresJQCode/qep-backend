@@ -19,6 +19,7 @@ namespace Modules.Automations.Infrastructure.Engine;
 /// en su propio bucle para que uno largo no frene las respuestas del bot.
 /// </summary>
 internal sealed partial class AutomationInboxWorker(
+    IQueueDoorbell doorbell,
     IServiceScopeFactory scopeFactory,
     IOptions<AutomationsWorkerOptions> options,
     ILogger<AutomationInboxWorker> logger) : BackgroundService
@@ -54,25 +55,34 @@ internal sealed partial class AutomationInboxWorker(
             EveryIntervalAsync(options.Value.AbandonSweepMinutes, SweepAsync, stoppingToken),
             EveryIntervalAsync(options.Value.SimulationSweepMinutes, SweepSimulationsAsync, stoppingToken));
 
+    /// <summary>
+    /// Spec 2026-11-13 (Valkey), D-7: espera el timbre de <c>automation</c> hasta su red de seguridad (15 s); con el área apagada o
+    /// Valkey caído, <c>InboxPollSeconds</c> como antes. Un lote lleno repite sin esperar: puede haber más filas.
+    /// </summary>
     private async Task PollAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, options.Value.InboxPollSeconds)));
-        do
-        {
-            try
+        using var listener = doorbell.Listen(DoorbellQueues.Automation);
+        await DoorbellPolling.RunAsync(
+            listener,
+            TimeSpan.FromSeconds(Math.Max(1, options.Value.InboxPollSeconds)),
+            DoorbellQueues.SafetyNet(DoorbellQueues.Automation),
+            async _ =>
             {
-                await DrainAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+                try
+                {
+                    return await DrainAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    LogTickFailed(logger, exception);
+                    return false;
+                }
+            },
+            stoppingToken);
     }
 
     /// <summary>El primer barrido espera un intervalo: una corrida abandonada ya esperó 24 h (una simulación vencida, 2 h) y no hay apuro al
@@ -215,11 +225,13 @@ internal sealed partial class AutomationInboxWorker(
     /// <summary>
     /// Una pasada: hasta <c>InboxBatchSize</c> filas. Ruling P2-R24: se reclaman de a una, justo antes de procesarla, para que cada unidad
     /// empiece con su lease entero (30 s el primer intento). Reclamadas en lote, la vigésima esperaría a las diecinueve de antes con su lease
-    /// corriendo, y otra réplica podría volver a tomarla a mitad de su unidad. Internal para las pruebas.
+    /// corriendo, y otra réplica podría volver a tomarla a mitad de su unidad. Internal para las pruebas. Devuelve <c>true</c> si llenó el
+    /// lote (puede haber más filas y el bucle repite sin esperar).
     /// </summary>
-    internal async Task DrainAsync(CancellationToken cancellationToken)
+    internal async Task<bool> DrainAsync(CancellationToken cancellationToken)
     {
-        for (var processed = 0; processed < Math.Max(1, options.Value.InboxBatchSize); processed++)
+        var batchSize = Math.Max(1, options.Value.InboxBatchSize);
+        for (var processed = 0; processed < batchSize; processed++)
         {
             // Un scope por fila: el tracker de Automations y la transacción de la unidad no se comparten entre conversaciones.
             await using var scope = scopeFactory.CreateAsyncScope();
@@ -227,7 +239,7 @@ internal sealed partial class AutomationInboxWorker(
             var claimed = await scope.ServiceProvider.GetRequiredService<IAutomationInboundQueue>().ClaimAsync(now, 1, cancellationToken);
             if (claimed.Count == 0)
             {
-                return;
+                return false;
             }
 
             var item = claimed[0];
@@ -244,5 +256,7 @@ internal sealed partial class AutomationInboxWorker(
                 LogUnitFailed(logger, exception, item.TenantId, item.MessageId, item.Attempts);
             }
         }
+
+        return true;
     }
 }

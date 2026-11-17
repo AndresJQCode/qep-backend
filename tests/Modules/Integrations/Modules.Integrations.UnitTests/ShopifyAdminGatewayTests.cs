@@ -31,6 +31,8 @@ public sealed class ShopifyAdminGatewayTests : IDisposable
 
     private const string Token = "shpat_token-SENTINEL-gw";
 
+    private const string RefreshToken = "shprt_SENTINEL-gw";
+
     private readonly StubShopifyHandler _shopify = new();
     private readonly UnitTestLogs _logs = new();
     private readonly ServiceProvider _services;
@@ -63,7 +65,7 @@ public sealed class ShopifyAdminGatewayTests : IDisposable
     [Fact]
     public async Task ExchangeCodePostsClientIdSecretCode()
     {
-        _shopify.Body = $$"""{"access_token":"{{Token}}","scope":"read_orders,read_customers"}""";
+        _shopify.Body = ExpiringGrant("read_orders,read_customers");
 
         var grant = await Gateway.ExchangeCodeAsync(Shop, Code, Ct);
 
@@ -161,7 +163,7 @@ public sealed class ShopifyAdminGatewayTests : IDisposable
     [Fact]
     public async Task ExchangeWithScopesLongerThanTheColumnIsInvalid()
     {
-        _shopify.Body = $$"""{"access_token":"{{Token}}","scope":"{{new string('a', ShopifyInstall.ScopesMaxLength + 1)}}"}""";
+        _shopify.Body = ExpiringGrant(new string('a', ShopifyInstall.ScopesMaxLength + 1));
 
         var error = await Assert.ThrowsAsync<ShopifyGatewayException>(() => Gateway.ExchangeCodeAsync(Shop, Code, Ct));
 
@@ -242,6 +244,118 @@ public sealed class ShopifyAdminGatewayTests : IDisposable
 
         Assert.Equal(ShopifyGatewayFailure.Rejected, error.Kind);
     }
+
+    // Spec 2026-11-12 §6.1: el canje pide un token que expira y devuelve el par con sus duraciones.
+    [Fact]
+    public async Task ExchangeCodeAsksForAnExpiringToken()
+    {
+        _shopify.Body = ExpiringGrant("read_orders");
+
+        var grant = await Gateway.ExchangeCodeAsync(Shop, Code, Ct);
+
+        var request = Assert.Single(_shopify.Requests);
+        Assert.Contains("\"expiring\":\"1\"", request.Body, StringComparison.Ordinal);
+        Assert.Equal(RefreshToken, grant.RefreshToken);
+        Assert.Equal(TimeSpan.FromHours(1), grant.ExpiresIn);
+        Assert.Equal(TimeSpan.FromDays(90), grant.RefreshTokenExpiresIn);
+        Assert.DoesNotContain(RefreshToken, grant.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Token, grant.ToString(), StringComparison.Ordinal);
+    }
+
+    // Sin refresh token o sin vencimiento, el token no expira: desde el 2027-01-01 no sirve, y no se guarda.
+    [Theory]
+    [InlineData("""{"access_token":"shpat_token-SENTINEL-gw","scope":"read_orders","expires_in":3600,"refresh_token_expires_in":7776000}""")]
+    [InlineData("""{"access_token":"shpat_token-SENTINEL-gw","scope":"read_orders","refresh_token":"shprt_SENTINEL-gw","refresh_token_expires_in":7776000}""")]
+    [InlineData("""{"access_token":"shpat_token-SENTINEL-gw","scope":"read_orders","expires_in":0,"refresh_token":"shprt_SENTINEL-gw","refresh_token_expires_in":7776000}""")]
+    [InlineData("""{"access_token":"shpat_token-SENTINEL-gw","scope":"read_orders","expires_in":3600,"refresh_token":"shprt_SENTINEL-gw"}""")]
+    [InlineData("""{"access_token":"shpat_token-SENTINEL-gw","scope":"read_orders","expires_in":3600,"refresh_token":"","refresh_token_expires_in":7776000}""")]
+    public async Task ExchangeWithoutAnExpiringTokenIsInvalid(string body)
+    {
+        _shopify.Body = body;
+
+        var error = await Assert.ThrowsAsync<ShopifyGatewayException>(() => Gateway.ExchangeCodeAsync(Shop, Code, Ct));
+
+        Assert.Equal(ShopifyGatewayFailure.Invalid, error.Kind);
+    }
+
+    [Fact]
+    public async Task RefreshPostsAFormWithTheRefreshToken()
+    {
+        _shopify.Body = ExpiringGrant("read_orders");
+
+        var grant = await Gateway.RefreshTokenAsync(Shop, RefreshToken, Ct);
+
+        Assert.Equal(Token, grant.AccessToken);
+        Assert.Equal(RefreshToken, grant.RefreshToken);
+        Assert.Equal(TimeSpan.FromHours(1), grant.ExpiresIn);
+        var request = Assert.Single(_shopify.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("https://mi-tienda.myshopify.com/admin/oauth/access_token", request.Uri!.ToString());
+        Assert.Equal("application/x-www-form-urlencoded", request.ContentType);
+        Assert.Contains("grant_type=refresh_token", request.Body, StringComparison.Ordinal);
+        Assert.Contains("refresh_token=shprt_SENTINEL-gw", request.Body, StringComparison.Ordinal);
+        Assert.Contains("client_id=shopify-client-id-gw", request.Body, StringComparison.Ordinal);
+        Assert.Null(request.AccessToken);
+    }
+
+    // D13: la forma del refresco no está publicada; sin scope se toma vacío.
+    [Fact]
+    public async Task RefreshWithoutScopeKeepsAnEmptyScope()
+    {
+        _shopify.Body = $$"""{"access_token":"{{Token}}","expires_in":3600,"refresh_token":"{{RefreshToken}}","refresh_token_expires_in":7776000}""";
+
+        var grant = await Gateway.RefreshTokenAsync(Shop, RefreshToken, Ct);
+
+        Assert.Equal(string.Empty, grant.Scopes);
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(400)]
+    public async Task RefreshRejectedIsRejected(int status)
+    {
+        _shopify.Status = (HttpStatusCode)status;
+        _shopify.Body = """{"error":"invalid_request"}""";
+
+        var error = await Assert.ThrowsAsync<ShopifyGatewayException>(() => Gateway.RefreshTokenAsync(Shop, RefreshToken, Ct));
+
+        Assert.Equal(ShopifyGatewayFailure.Rejected, error.Kind);
+        Assert.Equal(status, error.Status);
+    }
+
+    [Theory]
+    [InlineData(429)]
+    [InlineData(503)]
+    public async Task RefreshThrottledOrDownIsUnreachable(int status)
+    {
+        _shopify.Status = (HttpStatusCode)status;
+
+        var error = await Assert.ThrowsAsync<ShopifyGatewayException>(() => Gateway.RefreshTokenAsync(Shop, RefreshToken, Ct));
+
+        Assert.Equal(ShopifyGatewayFailure.Unreachable, error.Kind);
+    }
+
+    [Fact]
+    public async Task NoTokenOrBodyReachesTheLogs()
+    {
+        _shopify.Body = ExpiringGrant("read_orders");
+        await Gateway.ExchangeCodeAsync(Shop, Code, Ct);
+        await Gateway.RefreshTokenAsync(Shop, RefreshToken, Ct);
+        _shopify.Status = HttpStatusCode.Unauthorized;
+        _shopify.Body = $$"""{"error":"invalid_request","echo":"{{RefreshToken}}"}""";
+
+        var error = await Assert.ThrowsAsync<ShopifyGatewayException>(() => Gateway.RefreshTokenAsync(Shop, RefreshToken, Ct));
+
+        Assert.Contains("oauth-refresh", _logs.AllText, StringComparison.Ordinal);
+        AssertNothingSecretLogged();
+        Assert.DoesNotContain(RefreshToken, _logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain("invalid_request", _logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain(RefreshToken, error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("invalid_request", error.ToString(), StringComparison.Ordinal);
+    }
+
+    private static string ExpiringGrant(string scopes) =>
+        $$"""{"access_token":"{{Token}}","scope":"{{scopes}}","expires_in":3600,"refresh_token":"{{RefreshToken}}","refresh_token_expires_in":7776000}""";
 
     private void AssertNothingSecretLogged()
     {

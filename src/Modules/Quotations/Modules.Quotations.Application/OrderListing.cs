@@ -6,25 +6,23 @@ namespace Modules.Quotations.Application;
 internal static class OrderListing
 {
     /// <summary>
-    /// El calendario con que se cortan los días del filtro: el de la zona de quien filtra, que el
-    /// navegador manda como ID IANA, o el del tenant si no la manda. Un pedido creado a la 01:00 del
-    /// 15 en Madrid es del 15 para quien filtra desde Madrid, aunque en Colombia todavía fuera el 14
-    /// (pedido del owner, 2026-10-15). Sólo IANA, por lo mismo que <c>Tenant.ValidateTimeZone</c>: es
-    /// lo que el navegador conoce, y un ID de Windows no lo manda ningún cliente nuestro.
+    /// La zona de quien filtra, que el navegador manda como ID IANA. Desde el spec 2026-11-16 §4 ya no corta los días: el
+    /// filtro va sobre la fecha del pedido, que es un día del tenant. Se sigue validando para no cambiar el contrato (un
+    /// valor inválido sigue siendo <c>order.time_zone_invalid</c>). Sólo IANA, por lo mismo que <c>Tenant.ValidateTimeZone</c>:
+    /// es lo que el navegador conoce, y un ID de Windows no lo manda ningún cliente nuestro.
     /// </summary>
-    public static TenantCalendar CalendarFor(TenantCalendar tenantCalendar, string? timeZone)
+    public static void EnsureValidTimeZone(string? timeZone)
     {
         if (string.IsNullOrWhiteSpace(timeZone))
         {
-            return tenantCalendar;
+            return;
         }
 
         try
         {
-            var zone = TimeZoneInfo.FindSystemTimeZoneById(timeZone.Trim());
-            if (zone.HasIanaId)
+            if (TimeZoneInfo.FindSystemTimeZoneById(timeZone.Trim()).HasIanaId)
             {
-                return new TenantCalendar(tenantCalendar.UtcNow, zone);
+                return;
             }
         }
         catch (TimeZoneNotFoundException)
@@ -64,6 +62,38 @@ internal static class OrderListing
             : throw new QuotationsDomainException(
                 "order.order.payment_status_invalid",
                 $"'{paymentStatus}' is not a valid order payment status.");
+    }
+
+    /// <summary>Spec 2026-11-10 §5: el filtro por envío; sin valor, todos.</summary>
+    public static OrderFulfillmentStatus? ParseFulfillmentStatus(string? fulfillmentStatus)
+    {
+        if (string.IsNullOrWhiteSpace(fulfillmentStatus))
+        {
+            return null;
+        }
+
+        return Enum.TryParse<OrderFulfillmentStatus>(fulfillmentStatus, ignoreCase: true, out var parsed)
+            && Enum.IsDefined(parsed)
+            ? parsed
+            : throw new QuotationsDomainException(
+                "order.order.fulfillment_status_invalid",
+                $"'{fulfillmentStatus}' is not a valid order fulfillment status.");
+    }
+
+    /// <summary>Spec 2026-11-10 §5: el filtro por la marca de facturado. Sólo <c>true</c> o <c>false</c>, sin
+    /// distinguir mayúsculas; sin valor, todos.</summary>
+    public static bool? ParseInvoiced(string? invoiced)
+    {
+        if (string.IsNullOrWhiteSpace(invoiced))
+        {
+            return null;
+        }
+
+        return bool.TryParse(invoiced, out var parsed)
+            ? parsed
+            : throw new QuotationsDomainException(
+                "order.order.invoiced_invalid",
+                $"'{invoiced}' is not a valid invoiced filter; use true or false.");
     }
 
     /// <summary>Spec 2026-10-15 §6.1: el filtro por origen del pedido; sin valor, todos.</summary>

@@ -38,4 +38,7 @@ public static class ReportingPermissions
     /// <c>module.resource.action</c> de los demás; <c>reporting.advisors.all</c> no tendría verbo.
     /// </summary>
     public const string AllAdvisorsRead = "reporting.all_advisors.read";
+
+    /// <summary>Ventas netas, costo y margen bruto por producto (spec 2026-11-10 §5). Dato comercial sensible: sólo admin de fábrica.</summary>
+    public const string MarginRead = "reporting.margin.read";
 }

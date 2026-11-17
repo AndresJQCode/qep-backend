@@ -49,7 +49,7 @@ public sealed class CustomerFieldPolicyRequirementTests
         string country = "CO",
         Guid? cityId = null,
         string? cityName = null) =>
-        new(Tenant, Guid.NewGuid(), "Verde", null, type, number, "3109352187", null, null, country, cityId, cityName, null, false, false);
+        new(Tenant, Guid.NewGuid(), "Verde", null, type, number, "3109352187", null, null, country, cityId, cityName, null, false);
 
     private static Task Ensure(UpdateCustomerCommand command, CustomerFieldPolicy? policy, Customer? current = null) =>
         CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(

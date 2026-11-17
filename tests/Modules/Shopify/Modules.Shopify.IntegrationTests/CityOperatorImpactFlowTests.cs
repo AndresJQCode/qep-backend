@@ -42,10 +42,10 @@ public sealed class CityOperatorImpactFlowTests
             baseline.CustomersStayIncomplete.Count));
         Assert.Equal("CALI", baseline.City.Name);
 
-        // El pedido se aprueba y alguien edita al cliente: el pedido pasa a la lista de los que no se tocan, con su número y su
-        // estado; el cliente (que sólo necesitaba la ciudad) ya no está en ningún grupo.
+        // El pedido se prepara (sigue abierto, pero ya no es editable) y alguien edita al cliente: el pedido pasa a la lista de
+        // los que no se tocan, con su número y su estado; el cliente (que sólo necesitaba la ciudad) ya no está en ningún grupo.
         await ExecuteAsync(
-            shop.ConnectionString, "UPDATE quotations.orders SET status = 'Approved' WHERE id = @order", ("order", shop.OrderId));
+            shop.ConnectionString, "UPDATE quotations.orders SET fulfillment_status = 'Prepared' WHERE id = @order", ("order", shop.OrderId));
         await ExecuteAsync(
             shop.ConnectionString, "UPDATE customers.customers SET version = version + 1 WHERE id = @customer", ("customer", shop.CustomerId));
 
@@ -54,7 +54,7 @@ public sealed class CityOperatorImpactFlowTests
         Assert.Equal((0, 0), (changed.OrdersToFix.Count, changed.CustomersToComplete.Count));
         Assert.Equal(0, changed.CustomersStayIncomplete.Count);
         var notPending = Assert.Single(changed.OrdersNotPending.Orders);
-        Assert.Equal((shop.World.TenantId, shop.OrderId, "Approved"), (notPending.TenantId, notPending.OrderId, notPending.Status));
+        Assert.Equal((shop.World.TenantId, shop.OrderId, "Open"), (notPending.TenantId, notPending.OrderId, notPending.Status));
         Assert.False(string.IsNullOrWhiteSpace(notPending.OrderNumber));
         // El impacto no escribe: la fila sigue Pending y sin cambios.
         Assert.Equal("Pending|1", await ScalarAsync<string>(

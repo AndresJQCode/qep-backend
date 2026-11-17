@@ -17,8 +17,12 @@ namespace Modules.Integrations.Infrastructure.Shopify;
 /// le manda pedidos a QEP, así que la conexión no está sana aunque el token sirva.</item>
 /// </list>
 /// Sin <c>WebhookCallbackUrl</c> (local sin túnel) sólo se refresca el nombre.
+/// <para>Spec 2026-11-12 (D11): un token vencido según <c>tokenExpiresAt</c> espera al worker del refresco. Llamar con él daría
+/// 401 y marcaría <c>credentials_rejected</c> una tienda sana, así que responde «no pude verificar»
+/// (<c>token_refresh_pending</c>) sin llamar a Shopify. Sin la fecha se prueba como siempre.</para>
 /// </summary>
-internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, IShopifyAppSettings shopifyApp) : IProviderConnectionTester
+internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, IShopifyAppSettings shopifyApp, TimeProvider time)
+    : IProviderConnectionTester
 {
     public string ProviderKey => IntegrationProviders.Shopify.Key;
 
@@ -33,6 +37,11 @@ internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, ISho
             || !string.Equals(normalized, shop, StringComparison.Ordinal))
         {
             return ConnectionTestResult.RejectedWith(ConnectionFailureCodes.CredentialsRejected);
+        }
+
+        if (ShopifyTokenRefresh.IsExpired(fields.GetValueOrDefault(ShopifyFieldKeys.TokenExpiresAt), time.GetUtcNow()))
+        {
+            return ConnectionTestResult.Unreachable("token_refresh_pending");
         }
 
         ShopifyShopInfo info;

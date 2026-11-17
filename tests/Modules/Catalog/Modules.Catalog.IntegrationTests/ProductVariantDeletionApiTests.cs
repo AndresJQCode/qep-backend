@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -380,7 +380,7 @@ public sealed class ProductVariantDeletionApiTests
         return product;
     }
 
-    private static async Task<long> CountVariantRowsAsync(PostgreSqlContainer database, Guid variantId)
+    private static async Task<long> CountVariantRowsAsync(TestDatabase database, Guid variantId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -388,17 +388,6 @@ public sealed class ProductVariantDeletionApiTests
             "SELECT count(*) FROM catalog.product_variants WHERE id = @id", connection);
         command.Parameters.AddWithValue("id", variantId);
         return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(QepApiFactory factory)
@@ -449,6 +438,8 @@ public sealed class ProductVariantDeletionApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

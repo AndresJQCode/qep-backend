@@ -11,6 +11,13 @@ public interface IBuyerAccountRepository
     void Add(BuyerAccount account);
 
     void Remove(BuyerAccount account);
+
+    /// <summary>
+    /// Bloquea la fila de la cuenta (<c>FOR UPDATE</c>) hasta el fin de la transacción en curso; fuera de una transacción no
+    /// retiene nada. Choca con el <c>FOR KEY SHARE</c> que toma la clave foránea al insertar una sesión: un login concurrente o
+    /// confirmó antes y se ve, o espera.
+    /// </summary>
+    Task LockAsync(Guid id, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -20,6 +27,12 @@ public interface IBuyerAccountRepository
 public interface IBuyerOrderLinker
 {
     Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-15 §3.2: al iniciar sesión, enlaza a la cuenta los pedidos de la tienda de ese tenant que siguen sin cuenta, sin
+    /// decisión de un asesor y con el correo de facturación igual a <paramref name="normalizedEmail"/>. Devuelve cuántos enlazó.
+    /// </summary>
+    Task<int> LinkByEmailAsync(Guid tenantId, Guid accountId, string normalizedEmail, CancellationToken cancellationToken);
 }
 
 public interface IBuyerProfileRepository
@@ -43,9 +56,42 @@ public interface IBuyerSessionRepository
     /// <summary>
     /// Revoca con una sola sentencia toda sesión sin revocar de la cuenta salvo <paramref name="keepSessionId"/>. A diferencia de
     /// revocar una lista leída antes, alcanza también la sesión que un login concurrente confirmó entre la lectura y el guardado.
+    /// Devuelve las que revocó (id y hash): la caché de sesión saca sus entradas.
     /// </summary>
-    Task RevokeActiveAsync(
+    Task<IReadOnlyList<RevokedBuyerSession>> RevokeActiveAsync(
         Guid accountId, Guid? keepSessionId, DateTimeOffset now, string reason, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// La foto de una sesión de comprador válida que guarda la caché (spec 2026-11-13, D-4): lo necesario para reconstruirla con
+/// <see cref="BuyerSession.Restore"/> y volver a exigir <see cref="BuyerSession.IsValidFor"/>.
+/// </summary>
+public sealed record CachedBuyerSession(
+    Guid SessionId,
+    Guid AccountId,
+    string StoreHost,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset LastSeenAt,
+    DateTimeOffset ExpiresAt);
+
+/// <summary>Una sesión de comprador revocada o borrada: el id va al log de una falla, el hash es la clave de su entrada.</summary>
+public sealed record RevokedBuyerSession(Guid SessionId, string TokenHash);
+
+/// <summary>
+/// Caché de las sesiones de comprador (spec 2026-11-13, D-4). La clave es el hash del token, nunca el token crudo. Ninguna
+/// operación lanza por un fallo de la caché: la lectura devuelve <c>null</c> y se lee Postgres. Quien revoca llama
+/// <see cref="RemoveAsync"/> antes del commit y otra vez después.
+/// </summary>
+public interface IBuyerSessionCache
+{
+    /// <returns>La entrada, o <c>null</c> si no está, si la sesión se marcó revocada o si la caché no respondió.</returns>
+    Task<CachedBuyerSession?> GetAsync(string tokenHash, CancellationToken cancellationToken);
+
+    /// <summary>Guarda la foto con TTL <c>min(lo que le queda, 15 min)</c>. Nunca lanza.</summary>
+    Task SetAsync(string tokenHash, CachedBuyerSession session, CancellationToken cancellationToken);
+
+    /// <summary>Marca cada sesión como revocada y borra su entrada. Nunca lanza; si falla, lo loguea con el id de cada sesión.</summary>
+    Task RemoveAsync(IReadOnlyCollection<RevokedBuyerSession> sessions, CancellationToken cancellationToken);
 }
 
 public interface IBuyerEmailTokenRepository
@@ -96,6 +142,13 @@ public interface IBuyersUnitOfWork
     /// traducciones que <see cref="SaveChangesAsync(CancellationToken)"/>.
     /// </summary>
     Task SaveChangesAsync(Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Como <see cref="SaveChangesAsync(Func{CancellationToken, Task}, CancellationToken)"/>, y además corre
+    /// <paramref name="beforeSave"/> dentro de la misma transacción, antes del guardado (por ejemplo, un candado y una lectura).
+    /// </summary>
+    Task SaveChangesAsync(
+        Func<CancellationToken, Task> beforeSave, Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken);
 
     void DiscardPendingChanges();
 }

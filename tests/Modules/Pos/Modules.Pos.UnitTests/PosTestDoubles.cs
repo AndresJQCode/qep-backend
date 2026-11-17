@@ -290,6 +290,24 @@ internal sealed class FakeCashierLookup : IPosCashierLookup
         Task.FromResult(Names.TryGetValue(membershipId, out var name) ? name : null);
 }
 
+/// <summary>Costos por moneda y variante; registra cada consulta para probar que una repetición no consulta.</summary>
+internal sealed class FakeVariantCostLookup : IPosVariantCostLookup
+{
+    public Dictionary<(string Currency, Guid VariantId), decimal> Costs { get; } = [];
+
+    public List<(string Currency, Guid[] VariantIds)> Calls { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, decimal>> FindAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        Calls.Add((currency, variantIds.ToArray()));
+        IReadOnlyDictionary<Guid, decimal> found = variantIds
+            .Where(id => Costs.ContainsKey((currency, id)))
+            .ToDictionary(id => id, id => Costs[(currency, id)]);
+        return Task.FromResult(found);
+    }
+}
+
 /// <summary>
 /// Variantes de la caja. <c>id</c> es el id de la variante; sin <c>productId</c> es la variante por
 /// defecto, con el mismo id que su producto (como la migración). Para un producto con opciones se
@@ -539,6 +557,8 @@ internal sealed class PosTestBed
     public FakeCashierLookup Cashiers { get; } = new();
 
     public FakeProductLookup Products { get; } = new();
+
+    public FakeVariantCostLookup Costs { get; } = new();
 
     public FakeCategoryLookup Categories { get; } = new();
 

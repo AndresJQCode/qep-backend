@@ -21,7 +21,13 @@ public sealed record SaveOrderEditsCommand(
     int? GlobalScaleFloor,
     bool IsRetail,
     ShippingRequest? Shipping = null,
-    OrderBillingEditRequest? Billing = null) : ICommand<OrderDetailDto>, IOrderEdits;
+    OrderBillingEditRequest? Billing = null,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    QuotationBillingAccountRequest? BillingAccount = null,
+    OperationCityChoice OperationCity = default,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    DateOnly? OrderDate = null) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
@@ -40,7 +46,6 @@ public sealed class SaveOrderEditsHandler(
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
     IQuotationProductLookup productLookup,
-    IQuotationCustomerLookup customerLookup,
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
@@ -49,7 +54,12 @@ public sealed class SaveOrderEditsHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<SaveOrderEditsCommand> validator)
+    IValidator<SaveOrderEditsCommand> validator,
+    IQuotationCompanyLookup companyLookup,
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantClock tenantClock,
+    IOrderVariantCostLookup costLookup,
+    IQuotationGeographyLookup geographyLookup)
     : ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -63,12 +73,23 @@ public sealed class SaveOrderEditsHandler(
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
-        if (order.Status != OrderStatus.Pending)
+        if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "An order can only be edited while it is pending.");
+                ExternalOrderErrors.NotEditable,
+                "An order can only be edited while it is open, not prepared and not invoiced.");
         }
+
+        if (command.Proofs.RemoveIds.Count > 0)
+        {
+            PaidOrderProofRemoval.EnsureAuthorized(executionContext, command.TenantId, order);
+        }
+
+        PaidOrderProofRemoval.EnsureAmountCorrectionAuthorized(
+            executionContext,
+            command.TenantId,
+            order,
+            command.Proofs.Update.Select(update => (update.ProofId, update.Amount)));
 
         // El If-Match se comprueba contra lo cargado, antes de tocar nada: un 412 no deja ni la
         // copia pública de un comprobante publicada.
@@ -79,13 +100,8 @@ public sealed class SaveOrderEditsHandler(
                 "The order changed after it was loaded.");
         }
 
-        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular.
-        var customer = await customerLookup.FindAsync(command.TenantId, order.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            order.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
-        }
-
+        // El neto de antes de tocar nada: el recálculo del pago compara contra él (spec 2026-11-10 §3.2).
+        var previousNetTotal = order.NetTotal;
         foreach (var addition in command.Proofs.Add)
         {
             await OrderPaymentProofResolver.ResolveAsync(
@@ -123,7 +139,7 @@ public sealed class SaveOrderEditsHandler(
         try
         {
             var itemEdits = await OrderItemEdits.ApplyAsync(
-                order, command.Items, pricingLookup, command.TenantId, updatedBy, now, command.IsRetail, cancellationToken);
+                order, command.Items, pricingLookup, costLookup, command.TenantId, updatedBy, now, command.IsRetail, cancellationToken);
 
             foreach (var proofId in removedProofIds)
             {
@@ -155,6 +171,11 @@ public sealed class SaveOrderEditsHandler(
             order.AttachPaymentProofs(attachedInputs, updatedBy, now);
 
             var notesChanged = order.UpdateNotes(command.Notes, now);
+            // Spec 2026-11-16 §4: ausente no la toca; el tope es hoy en el calendario del tenant, que se lee sólo si llegó.
+            var previousOrderDate = order.OrderDate;
+            var orderDateChanged = command.OrderDate is { } orderDate
+                && order.ChangeOrderDate(
+                    orderDate, (await tenantClock.GetAsync(command.TenantId, cancellationToken)).Today, now);
             var retailChanged = order.IsRetail != command.IsRetail;
             if (retailChanged)
             {
@@ -183,6 +204,18 @@ public sealed class SaveOrderEditsHandler(
 
             var billingChanged = billingSummary is not null;
 
+            // La empresa y los selectores de retención (spec impuestos por tipo D21, D22), también antes de recalcular el
+            // estado de pago: una retención baja el neto que los comprobantes cubren.
+            var withholdingEdits = await OrderWithholdingEdits.ApplyAsync(
+                order, command,
+                new OrderWithholdingEditsContext(
+                    companyLookup, withholdingLookup, geographyLookup, tenantClock, command.TenantId),
+                updatedBy, now, cancellationToken);
+            var accountChanged = withholdingEdits.BillingAccountSummary is not null;
+            var municipalTexts = await OrderMunicipalHistory.DescribeAsync(
+                geographyLookup, withholdingEdits, format, cancellationToken);
+            var withholdingsChanged = withholdingEdits.Changed;
+
             // El envío con la moneda y la recogida del pedido, que no cambian después de creado (P5). Antes de
             // RecalculatePaymentStatus, más abajo: un envío cobrado sube el neto que los comprobantes cubren.
             var shippingBefore = order.ShippingDetails;
@@ -198,9 +231,16 @@ public sealed class SaveOrderEditsHandler(
                 shippingSummary = OrderChangeSummary.ShippingChanged(shippingBefore, order.ShippingDetails, format);
             }
 
+            // Spec retenciones por UVT §5.4: la UVT vigente, después de las ediciones y antes de recalcular el estado de pago
+            // (una retención que deja de aplicar sube el neto). Sin historial propio, pero se guarda aunque sea lo único que
+            // cambió: si no, el pedido seguiría con la UVT vieja después de «guardar».
+            var taxUnitsChanged = await TaxUnitRefresh.RefreshAsync(
+                order, withholdingLookup, TaxUnitRefresh.DocumentDate(tenantClock, command.TenantId, order.CreatedAt),
+                cancellationToken);
+
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
-            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged
-                && !shippingChanged && !billingChanged)
+            if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !orderDateChanged && !floorChanged && !retailChanged
+                && !shippingChanged && !billingChanged && !accountChanged && !withholdingsChanged && !taxUnitsChanged)
             {
                 // Nada cambió: ni versión nueva ni historial. El cliente recibe lo que ya tenía.
                 return await OrderDetails.LoadAsync(
@@ -260,11 +300,64 @@ public sealed class SaveOrderEditsHandler(
                     order.Id.ToString(), "success", now);
             }
 
+            if (accountChanged)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    withholdingEdits.BillingAccountSummary!, now));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.billing_account_changed",
+                    order.Id.ToString(), "success", now);
+            }
+
+            // Spec ReteICA por empresa §7.8: el cambio de municipio, como el de la cuenta, es un PartiesChanged.
+            if (municipalTexts.OperationCitySummary is { } citySummary)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    citySummary, now));
+            }
+
+            if (municipalTexts.WithholdingsSummary is { } withholdingsSummary)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    withholdingsSummary, now));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.withholdings_changed",
+                    order.Id.ToString(), "success", now);
+            }
+
+            // Una entrada por tarifa descartada, quitada o editada, cada una un microsegundo después de la anterior: el
+            // historial ordena por fecha y el orden es parte de lo que cuenta (spec §7.7).
+            var position = 0;
+            foreach (var text in municipalTexts.RateEdited)
+            {
+                var at = now.AddTicks(TimeSpan.TicksPerMicrosecond * ++position);
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.WithholdingRateEdited, updatedBy, text, at));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, OrderMunicipalHistory.RateEditedAuditAction,
+                    order.Id.ToString(), "success", at);
+            }
+
             if (notesChanged)
             {
                 orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                     OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.NotesChanged, updatedBy,
                     OrderChangeSummary.NotesChanged(), now));
+            }
+
+            if (orderDateChanged)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.OrderDateChanged, updatedBy,
+                    OrderChangeSummary.OrderDateChanged(previousOrderDate, order.OrderDate), now));
+                // Owner, 2026-11-16: la fecha mueve el pedido en filtros, exportación y reportes, así que el cambio
+                // también queda en la auditoría, no sólo en el historial del pedido.
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.order_date_changed",
+                    order.Id.ToString(), "success", now);
             }
 
             for (var index = 0; index < removedProofIds.Length; index++)
@@ -309,7 +402,13 @@ public sealed class SaveOrderEditsHandler(
             // con ellas, y el detal o el piso cambian todos los descuentos.
             await OrderPricingRecalculation.ApplyAsync(
                 pricingLookup, settingsStore, priceRounding, command.TenantId, order, now, cancellationToken);
-            order.RecalculatePaymentStatus(now);
+            if (order.RecalculatePaymentStatus(previousNetTotal, now) is { } paymentChange)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentStatusRecalculated, updatedBy,
+                    OrderChangeSummary.PaymentStatusRecalculated(paymentChange, format), now));
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch

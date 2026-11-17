@@ -40,7 +40,8 @@ public sealed class IntegrationsLayerTests
         Assert.DoesNotContain(ReferenceNamesOf(Application), name =>
             name is not null &&
             (name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal) ||
-             name.StartsWith("Npgsql", StringComparison.Ordinal)));
+             name.StartsWith("Npgsql", StringComparison.Ordinal) ||
+             name.StartsWith("StackExchange.Redis", StringComparison.Ordinal)));
 
     // Spec, «Proyectos»: Tenancy (ITenantModules, IExecutionContext) y Audit (AuditActorType de la
     // auditoría atómica propia, P1 del plan). Ningún otro Modules.*.

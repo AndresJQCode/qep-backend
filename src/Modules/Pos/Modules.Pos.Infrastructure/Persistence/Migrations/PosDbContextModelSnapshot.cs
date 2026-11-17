@@ -369,6 +369,15 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTimeOffset?>("CostCapturedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cost_captured_at");
+
+                    b.Property<string>("CostSource")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("cost_source");
+
                     b.Property<decimal>("DiscountAmount")
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)")
@@ -421,6 +430,11 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
                     b.Property<int>("TaxPercentage")
                         .HasColumnType("integer")
                         .HasColumnName("tax_percentage");
+
+                    b.Property<decimal?>("UnitCost")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("unit_cost");
 
                     b.Property<decimal>("UnitPrice")
                         .HasPrecision(14, 2)

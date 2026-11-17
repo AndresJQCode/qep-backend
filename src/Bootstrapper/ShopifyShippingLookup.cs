@@ -38,6 +38,6 @@ internal sealed class ShopifyShippingLookup(
 
         // Inactiva cuenta como faltante, igual que en ShippingResolver: freight_tax_rate_missing.
         var rate = await taxRates.FindAsync(tenantId, new TaxRateId(rateId), cancellationToken);
-        return rate is { IsActive: true } ? rate.Percentage : null;
+        return rate is { IsActive: true } ? rate.VatPercentage : null;
     }
 }

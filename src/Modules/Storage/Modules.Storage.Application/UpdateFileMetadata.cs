@@ -33,6 +33,8 @@ public sealed class UpdateFileMetadataHandler(
                 "storage.file.not_found", "The file resource was not found.");
         }
 
+        SystemOwnedFileGuard.EnsureVisibleToMembers(resource);
+
         // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
         // de cualquier otra regla o efecto.
         await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);

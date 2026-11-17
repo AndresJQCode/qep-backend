@@ -1,3 +1,4 @@
+using Modules.Catalog.Application;
 using Modules.Geography.Domain;
 
 namespace Bootstrapper.UnitTests;
@@ -54,5 +55,25 @@ public sealed class GeographyLookupTests
         Assert.Equal("Antioquia", Assert.Single(found).Value.DepartmentName);
         Assert.Equal(1, cities.Calls);
         Assert.Equal(1, departments.Calls);
+    }
+
+    // Spec ReteICA por empresa §7.2: la tasa municipal se pinta con municipio y departamento, y una ciudad que no existe no
+    // aparece (el handler la convierte en catalog.tax_rate.city_invalid).
+    [Fact]
+    public async Task TaxRateGeographyLookupReturnsNameAndDepartment()
+    {
+        var antioquia = Department.Create(DepartmentId.New(), "05", "Antioquia");
+        var medellin = City.Create(CityId.New(), "05001", "Medellín", antioquia.Id);
+        var cities = new CountingCityRepository(medellin);
+        var departments = new CountingDepartmentRepository(antioquia);
+        var lookup = new TaxRateGeographyLookup(cities, departments);
+
+        var found = await lookup.FindCitiesAsync(
+            [medellin.Id.Value, Guid.CreateVersion7()], TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new TaxRateCityRef(medellin.Id.Value, "Medellín", antioquia.Id.Value, "Antioquia"),
+            Assert.Single(found).Value);
+        Assert.Empty(await lookup.FindCitiesAsync([], TestContext.Current.CancellationToken));
     }
 }

@@ -6,14 +6,15 @@ using Modules.Tenancy.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Aprobar exige el tipo de persona de a quien se factura (spec 2026-10-26). Es un 422 de dominio con
+/// Marcar pagado y facturar exigen el tipo de persona de a quien se factura (spec 2026-10-26; desde spec
+/// 2026-11-10 §3.2 en esos dos momentos, antes al aprobar). Es un 422 de dominio con
 /// <c>missingOn</c> para que la pantalla sepa a dónde mandar a la persona: a la fila de facturación del
 /// pedido (<c>"BillingParty"</c>) o a la ficha del cliente (<c>"Customer"</c>).
 /// </summary>
 public sealed class BilledPersonTypeRequiredException(string missingOn)
     : DomainException(
         BilledPersonTypeRequired.Code,
-        "The tenant requires the person type of whoever is invoiced before approving the order."),
+        "The tenant requires the person type of whoever is invoiced before marking the order paid or invoicing it."),
       IHasProblemExtensions
 {
     public IReadOnlyDictionary<string, object?> ProblemExtensions { get; } =
@@ -29,7 +30,8 @@ internal static class BilledPersonTypeRequired
     public const string MissingOnCustomer = "Customer";
 
     /// <summary>
-    /// Sólo con el requisito efectivo <c>OnOrderApproval</c> (vale en todos los países). El
+    /// Sólo con el requisito efectivo <c>OnOrderApproval</c> (vale en todos los países; el nombre del valor se
+    /// conserva porque está persistido y hoy significa «al marcar pagado y al facturar»). El
     /// consumidor final está exento. Lo barato primero: no se lee el tenant para un consumidor final.
     /// </summary>
     public static async Task EnsureSatisfiedAsync(

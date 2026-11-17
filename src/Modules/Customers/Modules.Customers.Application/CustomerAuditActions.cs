@@ -25,6 +25,12 @@ public static class CustomerAuditActions
     /// <summary>Spec 2026-10-24 §3.2 paso 6: una fila por cliente de la fusión, el que queda y cada fusionado.</summary>
     public const string Merged = "customers.customer.merged";
 
+    /// <summary>Spec 2026-11-10 (borrar clientes) A-8: una fila por cliente borrado, con su foto en <c>changedFields</c>.</summary>
+    public const string Deleted = "customers.customer.deleted";
+
+    /// <summary>Spec 2026-11-10 §4.1: se vinculó o se desvinculó la empresa de un cliente. El recurso auditado es el contacto.</summary>
+    public const string CompanyChanged = "customers.customer.company_changed";
+
     // Spec 2026-10-26 D-9. El recurso auditado es el cliente en que quedó la fila (el que quedó, si estaba fusionado).
     public const string DataConsentAccepted = "customers.customer.data_consent_accepted";
     public const string DataConsentRejected = "customers.customer.data_consent_rejected";

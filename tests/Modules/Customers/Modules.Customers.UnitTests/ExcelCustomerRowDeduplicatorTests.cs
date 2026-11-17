@@ -24,7 +24,7 @@ public sealed class ExcelCustomerRowDeduplicatorTests
             "Antioquia",
             "Medellin",
             "Mayorista",
-            "No",
+            null,
             "No");
 
     [Fact]

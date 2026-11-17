@@ -31,6 +31,14 @@ public interface IQuotationSettingsStore
     /// bloquea la fila, y sin fila la crea con el mínimo de compra por defecto. Los modos y el por defecto se
     /// guardan juntos porque el uno depende de los otros: el por defecto tiene que estar activo.</summary>
     Task SetFreightChargeModesAsync(Guid tenantId, FreightChargeModeSettings settings, CancellationToken cancellationToken);
+
+    /// <summary>Los ajustes del pedido (spec 2026-11-10 §6), aparte de <see cref="GetAsync"/> por lo mismo que la
+    /// tasa (P2). <see cref="OrderSettings.Default"/> sin fila.</summary>
+    Task<OrderSettings> GetOrderSettingsAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Mismo contrato que <see cref="SetFreightChargeModesAsync"/>: dentro de la transacción, que bloquea la
+    /// fila, y sin fila la crea con el mínimo de compra por defecto.</summary>
+    Task SetOrderSettingsAsync(Guid tenantId, OrderSettings settings, CancellationToken cancellationToken);
 }
 
 /// <summary>Las opciones de «¿Quién paga el envío?» activas del tenant (§4.4) y la que el formulario elige por

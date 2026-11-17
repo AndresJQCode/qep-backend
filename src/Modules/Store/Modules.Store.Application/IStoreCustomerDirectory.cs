@@ -1,7 +1,9 @@
 namespace Modules.Store.Application;
 
-/// <summary>Un cliente del tenant visto desde la tienda. <c>WithRetention</c> y <c>VatSurplus</c> son el perfil tributario que el checkout le pone a la parte de facturación del pedido.</summary>
-public sealed record StoreCustomerRef(Guid Id, bool IsComplete, bool WithRetention, bool VatSurplus);
+/// <summary>Un cliente del tenant visto desde la tienda. <c>VatSurplus</c> es el excedente de IVA que el checkout le pone a la parte de
+/// facturación del pedido; las retenciones las congela el motor de pedidos con las tasas del cliente (spec impuestos por tipo D16,
+/// excepción de la tienda).</summary>
+public sealed record StoreCustomerRef(Guid Id, bool IsComplete, bool VatSurplus);
 
 /// <summary>El bloque de facturación del checkout, tal como se usa para crear o completar al cliente.</summary>
 public sealed record StoreNewCustomer(

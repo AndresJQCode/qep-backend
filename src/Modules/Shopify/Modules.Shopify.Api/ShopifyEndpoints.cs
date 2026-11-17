@@ -26,6 +26,11 @@ public static class ShopifyEndpoints
             .Produces<ShopifyStoreDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        group.MapGet("/stores/{connectionId:guid}/document-sources", GetDocumentSourcesAsync)
+            .RequireAuthorization(ShopifyPermissions.ConnectionRead)
+            .Produces<ShopifyDocumentSourcesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapPut("/stores/{connectionId:guid}", UpdateStoreAsync)
             .RequireAuthorization(ShopifyPermissions.ConnectionManage)
             .Produces<ShopifyStoreDto>()
@@ -81,6 +86,10 @@ public static class ShopifyEndpoints
         return Results.Ok(store);
     }
 
+    private static async Task<IResult> GetDocumentSourcesAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetShopifyDocumentSourcesQuery(tenantId, connectionId), cancellationToken));
+
     // Mismo contrato que el resto del repo: sin If-Match 428, versión vieja 412 (en el handler), y el ETag trae la nueva.
     private static async Task<IResult> UpdateStoreAsync(
         Guid tenantId,
@@ -103,6 +112,9 @@ public static class ShopifyEndpoints
                 request.DocumentAttributeKey,
                 request.DocumentTypeAttributeKey,
                 request.DefaultIdentificationType,
+                request.HistoryDays,
+                request.EditSync,
+                request.EditPaymentStatuses,
                 RequireVersion(httpContext)),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{store.Version}\"";
@@ -151,7 +163,7 @@ public static class ShopifyEndpoints
                 "A valid If-Match header containing the loaded store version is required.");
 
     // Acepta lo que la SPA ya manda en el resto del repo: "7" y también el débil W/"7".
-    private static bool TryParseVersion(string? etag, out long version)
+    internal static bool TryParseVersion(string? etag, out long version)
     {
         version = 0;
         if (string.IsNullOrWhiteSpace(etag))
@@ -181,4 +193,7 @@ public sealed record UpdateShopifyStoreRequest(
     Guid? DefaultClassificationId,
     string? DocumentAttributeKey,
     string? DocumentTypeAttributeKey,
-    string? DefaultIdentificationType);
+    string? DefaultIdentificationType,
+    int? HistoryDays,
+    string? EditSync = null,
+    IReadOnlyList<string>? EditPaymentStatuses = null);

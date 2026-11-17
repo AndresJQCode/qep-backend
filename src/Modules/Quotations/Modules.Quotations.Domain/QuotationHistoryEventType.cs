@@ -27,5 +27,11 @@ public enum QuotationHistoryEventType
     SendFailed,
     Voided,
     Expired,
-    Approved
+    Approved,
+
+    /// <summary>
+    /// Cambió el porcentaje de una retención municipal (spec ReteICA por empresa §7.8): el asesor lo editó o lo
+    /// restableció, o una re-resolución descartó uno editado. Va al final: se guarda como texto.
+    /// </summary>
+    WithholdingRateEdited,
 }

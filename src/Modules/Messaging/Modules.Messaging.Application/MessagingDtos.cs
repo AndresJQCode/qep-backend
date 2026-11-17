@@ -11,9 +11,13 @@ namespace Modules.Messaging.Application;
 /// <c>waId</c> es <c>null</c> cuando Meta no mandó el teléfono. Al menos uno viene (CK_conversations_identity).</summary>
 public sealed record ContactDto(string? UserId, string? WaId, string? Username, string? ProfileName);
 
+/// <summary>Spec 2026-11-10: la empresa del cliente de la conversación. <c>name</c> ya es la etiqueta (<c>BusinessName</c> o, si no hay,
+/// <c>Name</c>); <c>isActive</c> deja que el hilo avise de una empresa desactivada.</summary>
+public sealed record CustomerCompanyRefDto(Guid Id, string Name, bool IsComplete, bool IsActive);
+
 /// <summary>Spec 2026-10-10 §5.1 (D-A8): <c>isComplete</c> viaja para que el encabezado del hilo ofrezca «Completar
 /// ficha» sin otra llamada.</summary>
-public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete)
+public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete, CustomerCompanyRefDto? Company = null)
 {
     /// <summary>Spec qep-frontend 2026-10-15 (BFF): los chips de la fila de la bandeja. Siempre viaja, vacía si no tiene: la
     /// pantalla no sabe qué etiquetas tiene cada cliente sin otra llamada por fila.</summary>
@@ -144,11 +148,13 @@ public sealed record EventCustomerRefDto(Guid Id, string Name);
 /// CustomerChanged como evento desconocido, sin romperse. <c>handoff</c> sólo en un <c>AutomationPaused</c> con
 /// <c>pauseReason = Handoff</c> (spec 2026-10-24 §6); ausente en eventos viejos. <c>chatbot</c> sólo en un <c>Resolved</c> hecho
 /// por el bot (bloque «Resolver»), con <c>actor</c> null: el hilo dice «El asistente «X» resolvió la conversación» en vez de
-/// «Alguien»; resuelto al leer como <c>SentByChatbot</c>, con «Chatbot» si ya no existe.</summary>
+/// «Alguien»; resuelto al leer como <c>SentByChatbot</c>, con «Chatbot» si ya no existe. <c>ticketId</c> y <c>ticketNumber</c> sólo en
+/// <c>TicketOpened</c>/<c>TicketClosed</c> (Soporte fase 2): el número (<c>SOP-000127</c>) se resuelve al leer para que el hilo diga
+/// «Se abrió el ticket SOP-000127» sin otra consulta; <c>null</c> si el ticket ya no está, y el hilo dibuja el evento sin número.</summary>
 public sealed record MessageEventDto(
     string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null,
     EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null,
-    ChatbotRefDto? Chatbot = null);
+    ChatbotRefDto? Chatbot = null, Guid? TicketId = null, string? TicketNumber = null);
 
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
 /// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>, <c>AttemptsExhausted</c>, <c>DataConsentRejected</c>, <c>DataConsentUnavailable</c>): uno desconocido
@@ -198,7 +204,29 @@ public sealed record MessageDto(
     /// <c>SentByChatbot</c>.</summary>
     ApiKeyRefDto? SentByApiKey = null,
     /// <summary>Spec 2026-11-09 D8b: un <c>Failed</c> descartado desde «Programados»; el SPA oculta «Reintentar». Un backend viejo no lo manda.</summary>
-    bool RetryDisabled = false);
+    bool RetryDisabled = false,
+    /// <summary>Las tarjetas de un <c>Contacts</c> (la persona compartió contactos de su agenda); <c>null</c> en todo otro kind o si el
+    /// <c>details</c> guardado no se puede leer.</summary>
+    IReadOnlyList<SharedContactDto>? Contacts = null);
+
+/// <summary>Un contacto que el cliente compartió desde su agenda (<c>messages[].contacts</c> de Meta). BFF: la burbuja del asesor
+/// necesita los números y correos para llamar o escribir; antes de esto sólo se veía el nombre, que viaja en <c>text</c>.
+/// <c>Phones</c> y <c>Emails</c> viajan siempre, vacíos si no hay: la burbuja no tiene que distinguir ausente de vacío.</summary>
+public sealed record SharedContactDto(
+    string? Name, string? Organization, IReadOnlyList<SharedContactPhoneDto> Phones, IReadOnlyList<SharedContactEmailDto> Emails);
+
+/// <summary>Un teléfono de la tarjeta. Meta puede mandar <c>phone</c> sin <c>wa_id</c> (el número no tiene WhatsApp) o al revés;
+/// uno sin ninguno de los dos no se manda. <c>Type</c> es el de Meta (<c>CELL</c>, <c>HOME</c>, <c>WORK</c>…), tal cual.
+/// Spec 2026-11-10, BFF: la tarjeta tiene que saber si el número ya es un cliente (<c>Customer</c>, por la regla de
+/// <c>ResolveSharedPhonesAsync</c>: activo y no fusionado) para ofrecer «Escribirle» o «Agregar como contacto», y el formulario de cliente
+/// pide el país y el número nacional por separado (<c>Country</c> y <c>NationalNumber</c>; su campo sólo acepta dígitos). Prellenar el
+/// <c>waId</c> entero con país <c>CO</c> deja <c>PhoneE164</c> en <c>null</c> y <c>StartConversation</c> falla con
+/// <c>422 messaging.customer.unreachable</c>. Los tres son <c>null</c> sin <c>waId</c> o si el número no es válido.</summary>
+public sealed record SharedContactPhoneDto(
+    string? Phone, string? WaId, string? Type, CustomerRefDto? Customer = null, string? Country = null, string? NationalNumber = null);
+
+/// <summary>Un correo de la tarjeta; <c>Type</c> es el de Meta (<c>HOME</c>, <c>WORK</c>), tal cual.</summary>
+public sealed record SharedContactEmailDto(string Email, string? Type);
 
 /// <summary>Spec 2026-10-30 §4.4: la clave de API autora de un mensaje.</summary>
 public sealed record ApiKeyRefDto(Guid Id, string Name);
@@ -221,8 +249,12 @@ public sealed record InteractiveListRowDto(string Id, string Title, string? Desc
 public sealed record InteractiveCtaDto(string DisplayText, string Url);
 
 /// <summary>Spec 2026-10-11 §5.2: con qué plantilla salió un mensaje <c>Template</c>. El texto ya trae las variables
-/// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»).</summary>
-public sealed record MessageTemplateRefDto(string Name, string Language);
+/// sustituidas; esto sólo deja a la burbuja rotularlo («Plantilla · nombre»). Spec 2026-11-13: <c>Header</c> es el encabezado multimedia
+/// que mandó la API externa por enlace, para que la burbuja lo muestre; <c>null</c> si no lo hubo.</summary>
+public sealed record MessageTemplateRefDto(string Name, string Language, MessageTemplateHeaderDto? Header = null);
+
+/// <summary>Spec 2026-11-13: <c>Type</c> es <c>image</c>, <c>video</c> o <c>document</c>; <c>Link</c> la URL https que se entregó a Meta.</summary>
+public sealed record MessageTemplateHeaderDto(string Type, string Link, string? Filename);
 
 public sealed record MessagePageDto(IReadOnlyList<MessageDto> Items, bool HasMore);
 

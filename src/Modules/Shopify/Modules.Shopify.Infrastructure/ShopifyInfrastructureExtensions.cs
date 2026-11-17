@@ -38,8 +38,12 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyWebhookDeliveryQueue>(provider => provider.GetRequiredService<WebhookDeliveries>());
         services.AddScoped<IShopifyStoreRepository, ShopifyStoreRepository>();
         services.AddScoped<IShopifyOrderMirrorRepository, ShopifyOrderMirrorRepository>();
+        services.AddScoped<IShopifyOrderEditRepository, ShopifyOrderEditRepository>();
+        services.AddScoped<IShopifyOrderPushRepository, ShopifyOrderPushRepository>();
+        services.AddScoped<ShopifyOrderPushes>();
         services.AddScoped<IShopifyCityCorrectionRepository, ShopifyCityCorrectionRepository>();
         services.AddScoped<IShopifyCityCorrectionJobRepository, ShopifyCityCorrectionJobRepository>();
+        services.AddScoped<IShopifyCustomLineMappingRepository, ShopifyCustomLineMappingRepository>();
         services.AddSingleton<IShopifyOrderPayloadParser, ShopifyOrderPayloadParser>();
 
         // §5.3: la conciliación. El cliente GraphQL es scoped (lleva el estado del balde de Shopify de una corrida) y su
@@ -69,6 +73,8 @@ public static class ShopifyInfrastructureExtensions
         // La reacción de §6.3 vacía por defecto; Bootstrapper registra ShopifyOrderChanges antes de llamar a este método, y el
         // TryAdd no la pisa.
         services.TryAddScoped<IShopifyOrderChangeReaction, NoShopifyOrderChangeReaction>();
+        // Spec 2026-11-14 §3: la detección de ediciones, con el mismo patrón (Bootstrapper registra ShopifyOrderEdits antes).
+        services.TryAddScoped<IShopifyOrderEditDetector, NoShopifyOrderEditDetector>();
         services.AddScoped<ShopifyOrderIngestion>();
         services.AddScoped<ShopifyWebhookDeliveryProcessor>();
         // §5.3: la conciliación y «Sincronizar ahora» pasan cada pedido por la misma ingesta; necesitan también
@@ -101,6 +107,22 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyCityCorrectionJobs, ShopifyCityCorrectionJobs>();
         services.AddScoped<ShopifyCityCorrectionProcessor>();
         services.AddHostedService<ShopifyCityCorrectionWorker>();
+        return services;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-14 §5: el envío a Shopify de las correcciones (<c>orderUpdate</c>) y su worker. El cliente usa el mismo
+    /// <c>shopify.admin</c> (sin redirecciones, sin loggers de headers) que registra <see cref="AddShopifyInfrastructure"/>. El
+    /// procesador depende de <see cref="IShopifyConnectionDirectory"/>, <see cref="IShopifyOrderWriter"/> e
+    /// <see cref="IShopifyGeographyLookup"/>, que registra Bootstrapper. Las pruebas quitan el worker y lo corren a mano
+    /// (<c>DrainAsync</c>).
+    /// </summary>
+    public static IServiceCollection AddShopifyOrderPushes(this IServiceCollection services)
+    {
+        services.AddScoped<IShopifyOrderUpdater, ShopifyOrderUpdateClient>();
+        services.AddScoped<IShopifyOrderPushQueue, ShopifyOrderPushQueue>();
+        services.AddScoped<ShopifyOrderPushProcessor>();
+        services.AddHostedService<ShopifyOrderPushWorker>();
         return services;
     }
 

@@ -98,10 +98,13 @@ internal static class NotificationsDeliveryHarness
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
-    // Los cinco derivan de OutboxDeliveryWorker (spec 2026-09-13, A6): un worker de correo nuevo queda
-    // afuera de las pruebas sin que nadie tenga que acordarse de agregarlo acá.
+    // Los consumidores de correo ya no son hosted services: los drena un solo bucle, NotificationsDeliveryWorker
+    // (spec 2026-11-13, D-7). Sacar ese hosted deja afuera a todos, también a uno nuevo, sin que nadie tenga que
+    // acordarse de agregarlo acá. Las definiciones (OutboxDeliveryWorker) se siguen reconociendo por si alguna vuelve
+    // a registrarse como hosted.
     public static bool IsDeliveryWorker(Type? type) =>
-        type is not null && typeof(OutboxDeliveryWorker).IsAssignableFrom(type);
+        type is not null
+        && (type == typeof(NotificationsDeliveryWorker) || typeof(OutboxDeliveryWorker).IsAssignableFrom(type));
 
     // register-tenant es la única forma de tener un usuario con correo en identity.users sin la vuelta
     // de Google: el stub toma el correo del header X-Email. Mismo mecanismo que
@@ -269,13 +272,21 @@ internal sealed class RecordingEmailChannel : IEmailChannel
 internal sealed class NotificationsApiFactory(
     string connectionString,
     IEmailChannel? emailChannel = null,
-    bool runDeliveryWorkers = false)
+    bool runDeliveryWorkers = false,
+    IReadOnlyDictionary<string, string>? settings = null)
     : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+        {
+            builder.UseSetting(key, value);
+        }
+
         builder.UseEnvironment("Development");
         builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+        // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+        builder.UseSetting("Seed:Enabled", "false");
         builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
         builder.UseSetting("Storage:R2:AccountId", "test-account");
         builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

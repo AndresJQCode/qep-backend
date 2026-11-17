@@ -14,7 +14,8 @@ public sealed class ActivateTaxRateHandler(
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    ITaxRateGeographyLookup geography)
     : ICommandHandler<ActivateTaxRateCommand, TaxRateDto>
 {
     public async Task<TaxRateDto> HandleAsync(
@@ -41,6 +42,6 @@ public sealed class ActivateTaxRateHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return taxRate.ToDto();
+        return await taxRate.ToDtoAsync(geography, cancellationToken);
     }
 }

@@ -24,6 +24,19 @@ public sealed class ColombiaProvinceCodesTests
     public void DepartmentNameForIgnoresCaseSpacesAndTheCountryPrefix(string code, string expected) =>
         Assert.Equal(expected, ColombiaProvinceCodes.DepartmentNameFor(code));
 
+    // Spec 2026-11-14 §5: el envío a Shopify lleva el departamento de QEP como provinceCode.
+    [Fact]
+    public void CodeForIsTheInverseOfDepartmentNameFor()
+    {
+        foreach (var code in ColombiaProvinceCodes.All.Keys)
+        {
+            Assert.Equal(code, ColombiaProvinceCodes.CodeFor(ColombiaProvinceCodes.DepartmentNameFor(code)!));
+        }
+
+        Assert.Equal("ANT", ColombiaProvinceCodes.CodeFor(" antioquia "));
+        Assert.Null(ColombiaProvinceCodes.CodeFor("NO EXISTE"));
+    }
+
     [Theory]
     [InlineData("XX")]
     [InlineData("")]

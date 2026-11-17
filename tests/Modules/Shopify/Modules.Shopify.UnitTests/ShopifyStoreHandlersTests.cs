@@ -105,6 +105,7 @@ public sealed class ShopifyStoreHandlersTests
             DocumentAttributeKey = new string('d', ShopifyStore.AttributeKeyMaxLength + 1),
             DocumentTypeAttributeKey = null,
             DefaultIdentificationType = "RUT",
+            HistoryDays = ShopifyStore.HistoryDaysMax + 1,
             ExpectedVersion = 0,
         };
 
@@ -114,9 +115,167 @@ public sealed class ShopifyStoreHandlersTests
             [
                 "advisorMembershipId", "billingAccountNumber", "billingBankName", "billingCompanyId", "billingCurrency",
                 "defaultClassificationId", "defaultIdentificationType", "documentAttributeKey", "documentTypeAttributeKey",
-                "expectedVersion",
+                "expectedVersion", "historyDays",
             ],
             result.Errors.Select(error => error.PropertyName).Distinct().Order(StringComparer.Ordinal));
+    }
+
+    // Spec 2026-10-21: los días de historial son entrada del usuario; fuera de 1..30 el validador da el campo (422 con errors).
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    [InlineData(-1)]
+    public void PutHistoryDaysOutOfRangeValidationErrors(int historyDays)
+    {
+        var world = new StoreHandlersWorld();
+
+        var result = new UpdateShopifyStoreValidator().Validate(world.Command() with { HistoryDays = historyDays });
+
+        Assert.Equal(["historyDays"], result.Errors.Select(error => error.PropertyName));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    [InlineData(30)]
+    public void PutHistoryDaysInRangeOrNoneIsValid(int? historyDays)
+    {
+        var world = new StoreHandlersWorld();
+
+        var result = new UpdateShopifyStoreValidator().Validate(world.Command() with { HistoryDays = historyDays });
+
+        Assert.True(result.IsValid);
+    }
+
+    // Spec 2026-11-14 (D15): un frontend viejo no manda editSync ni editPaymentStatuses; null conserva lo guardado.
+    [Fact]
+    public async Task UpdateWithoutEditFieldsKeepsTheSavedOnes()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command() with { EditSync = "Automatic", EditPaymentStatuses = ["PaymentPending"] });
+
+        var dto = await world.PutAsync(world.Command() with { ExpectedVersion = 2 });
+
+        var store = world.Database.Stores[StoreHandlersWorld.ConnectionId];
+        Assert.Equal((ShopifyEditSync.Automatic, 3L), (store.EditSync, store.Version));
+        Assert.Equal(["PaymentPending"], store.EditPaymentStatuses);
+        Assert.Equal("Automatic", dto.EditSync);
+        Assert.Equal(["PaymentPending"], dto.EditPaymentStatuses);
+    }
+
+    [Fact]
+    public async Task PutSavesAndReturnsTheEditSyncAndPaymentStatuses()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var dto = await world.PutAsync(world.Command() with
+        {
+            EditSync = "Automatic",
+            EditPaymentStatuses = ["PendingVerification", "PaymentPending"],
+        });
+
+        var store = world.Database.Stores[StoreHandlersWorld.ConnectionId];
+        Assert.Equal(ShopifyEditSync.Automatic, store.EditSync);
+        Assert.Equal(["PendingVerification", "PaymentPending"], store.EditPaymentStatuses);
+        Assert.Equal("Automatic", dto.EditSync);
+        Assert.Equal(["PendingVerification", "PaymentPending"], dto.EditPaymentStatuses);
+    }
+
+    // Una tienda sin configurar sale con lo que nace: Manual y los cuatro estados.
+    [Fact]
+    public async Task GetOfANewStoreReturnsManualAndEveryPaymentStatus()
+    {
+        var world = new StoreHandlersWorld();
+
+        var dto = await world.GetAsync();
+
+        Assert.Equal("Manual", dto.EditSync);
+        Assert.Equal(ShopifyPaymentStatuses.All, dto.EditPaymentStatuses);
+    }
+
+    // Los enums viajan por nombre y se comparan ordinal: ni «automatic» ni un número ni un nombre a medias.
+    [Theory]
+    [InlineData("automatic")]
+    [InlineData("Auto")]
+    [InlineData("1")]
+    public async Task AnUnknownEditSyncIsAValidationError(string value)
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => world.PutAsync(world.Command() with { EditSync = value }));
+
+        Assert.Equal(["editSync"], error.Errors.Select(failure => failure.PropertyName));
+        Assert.Equal(0, world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ARepeatedPaymentStatusIsAValidationError()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var error = await Assert.ThrowsAsync<ValidationException>(
+            () => world.PutAsync(world.Command() with { EditPaymentStatuses = ["PaymentPending", "PaymentPending"] }));
+
+        Assert.Equal(["editPaymentStatuses"], error.Errors.Select(failure => failure.PropertyName));
+    }
+
+    // Contrato con el frontend: las claves de errors son exactamente éstas (camelCase; el índice lo agrega FluentValidation).
+    [Fact]
+    public void StoreValidationErrorKeysAreTheContractOnes()
+    {
+        var world = new StoreHandlersWorld();
+        var validator = new UpdateShopifyStoreValidator();
+
+        string[] Keys(UpdateShopifyStoreCommand command) =>
+            [.. validator.Validate(command).Errors.Select(failure => failure.PropertyName).Distinct().Order(StringComparer.Ordinal)];
+
+        Assert.Equal(
+            ["editPaymentStatuses[1]", "editSync"],
+            Keys(world.Command() with { EditSync = "x", EditPaymentStatuses = ["PaymentPending", "Paid"] }));
+        Assert.Equal(["editPaymentStatuses"], Keys(world.Command() with { EditPaymentStatuses = [] }));
+        Assert.Equal(["editPaymentStatuses"], Keys(world.Command() with { EditPaymentStatuses = ["PaymentPending", "PaymentPending"] }));
+        Assert.Empty(Keys(world.Command() with { EditSync = "Manual", EditPaymentStatuses = ShopifyPaymentStatuses.All }));
+    }
+
+    [Fact]
+    public async Task PutSavesAndReturnsTheHistoryDays()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var dto = await world.PutAsync(world.Command() with { HistoryDays = 7 });
+
+        Assert.Equal(((int?)7, (int?)7), (world.Database.Stores[StoreHandlersWorld.ConnectionId].HistoryDays, dto.HistoryDays));
+    }
+
+    // El PUT reemplaza la configuración entera: sin historyDays, el historial se apaga.
+    [Fact]
+    public async Task PutWithoutHistoryDaysTurnsTheHistoryOff()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command() with { HistoryDays = 7 });
+
+        var dto = await world.PutAsync(world.Command() with { HistoryDays = null, ExpectedVersion = 2 });
+
+        Assert.Equal(((int?)null, (int?)null), (world.Database.Stores[StoreHandlersWorld.ConnectionId].HistoryDays, dto.HistoryDays));
+    }
+
+    // Cambiar los días de historial queda en la auditoría del PUT, sólo por nombre.
+    [Fact]
+    public async Task PutChangingHistoryDaysIsAudited()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command());
+
+        await world.PutAsync(world.Command() with { HistoryDays = 10, ExpectedVersion = 2 });
+
+        Assert.Equal("""["historyDays"]""", world.Database.Audit[^1].Fields);
     }
 
     [Fact]
@@ -452,6 +611,9 @@ internal sealed class StoreHandlersWorld
         "Documento",
         "Tipo de documento",
         "CC",
+        null,
+        null,
+        null,
         1);
 
     public Task<ShopifyStoreDto> PutAsync(UpdateShopifyStoreCommand command) =>
@@ -467,7 +629,7 @@ internal sealed class StoreHandlersWorld
     public Task<ShopifyOrderRowDto> RetryAsync(Guid rowId)
     {
         var ingestion = new ShopifyOrderIngestion(
-            Stores, Mirrors, Importer, new NoShopifyOrderChangeReaction(), UnitOfWork, Clock);
+            Stores, Mirrors, Importer, new NoShopifyOrderChangeReaction(), new NoShopifyOrderEditDetector(), UnitOfWork, Clock);
         return new RetryShopifyOrderHandler(Context, new ShopifyEnabledModules(), Mirrors, Stores, Connections, ingestion, UnitOfWork, Mapper)
             .HandleAsync(new RetryShopifyOrderCommand(TenantId, rowId), TestContext.Current.CancellationToken);
     }
@@ -479,7 +641,8 @@ internal sealed class StoreHandlersWorld
         ReviewHandler.HandleAsync(new ReviewShopifyOrderWarningsCommand(TenantId, rowId), TestContext.Current.CancellationToken);
 
     public Task<ShopifyOrdersSummaryDto> SummaryAsync(string timeZone, DateTimeOffset now) =>
-        new GetShopifyOrdersSummaryHandler(Context, new ShopifyEnabledModules(), Mirrors, new FixedTenantClock(timeZone, now))
+        new GetShopifyOrdersSummaryHandler(
+                Context, new ShopifyEnabledModules(), Mirrors, new FakeOrderEditRepository(Database), new FixedTenantClock(timeZone, now))
             .HandleAsync(new GetShopifyOrdersSummaryQuery(TenantId), TestContext.Current.CancellationToken);
 
     public ShopifyStore SeedStore()

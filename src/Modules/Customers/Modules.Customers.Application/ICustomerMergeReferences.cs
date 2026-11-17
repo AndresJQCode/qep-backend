@@ -14,6 +14,14 @@ public sealed record CustomerMergeReferenceCounts(int Quotations, int Orders, in
 public interface ICustomerMergeReferences
 {
     /// <summary>
+    /// Borrar clientes (final review I-1): toma el candado exclusivo de referencias de estos clientes, en orden de id, el mismo
+    /// que toma el borrado en bloque (<c>ICustomerDeletionReferences.LockAsync</c>). Así fusión y borrado se serializan sólo por
+    /// candados consultivos y ninguno mueve referencias a un cliente que el otro borra. Exige la transacción del
+    /// <c>CustomersDbContext</c>; sin ids no consulta.
+    /// </summary>
+    Task LockAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Pasa al que queda toda referencia viva de los ids. Corre en la conexión y la transacción del <c>CustomersDbContext</c>
     /// del scope: un error de cualquier <c>UPDATE</c> deshace también lo de Customers. Sin ids no consulta. No sube la
     /// versión de nada fuera de Customers salvo la de las campañas cuya audiencia reescribe.

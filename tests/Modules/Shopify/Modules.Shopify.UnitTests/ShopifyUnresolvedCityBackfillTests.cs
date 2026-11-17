@@ -23,9 +23,9 @@ public sealed class ShopifyUnresolvedCityBackfillTests
         ["Tipo de documento"] = "CC",
     };
 
-    /// <summary>El estado de un pedido que el recorrido sí reporta: <c>Pending</c>, sin parte de envío, no es de recoger en tienda y
-    /// con la línea de la dirección cruda en las notas.</summary>
-    private static readonly ShopifyOrderCityState Waiting = new("Pending", false, false, true);
+    /// <summary>El estado de un pedido que el recorrido sí reporta: editable (abierto, sin preparar ni facturar), sin parte de
+    /// envío, no es de recoger en tienda y con la línea de la dirección cruda en las notas.</summary>
+    private static readonly ShopifyOrderCityState Waiting = new("Open", false, false, true, IsEditable: true);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -51,10 +51,23 @@ public sealed class ShopifyUnresolvedCityBackfillTests
     }
 
     [Fact]
-    public async Task AnApprovedOrderIsSkipped()
+    public async Task AnArchivedOrderIsSkipped()
     {
         var world = new BackfillWorld();
-        world.Imported(ImporterWorld.Order(address: Calli), Waiting with { Status = "Approved" });
+        world.Imported(ImporterWorld.Order(address: Calli), Waiting with { Status = "Archived", IsEditable = false });
+
+        var result = await world.Backfill.RunAsync(Ct);
+
+        Assert.Equal(new ShopifyCityBackfillResult(1, 0, 0, 0, 1), result);
+        Assert.Empty(world.Shop.UnresolvedCities.Reports);
+    }
+
+    // Review Focus 5 (spec 2026-11-10): un pedido abierto pero preparado ya no es editable, aunque su estado diga Open.
+    [Fact]
+    public async Task ABackfillSkipsAPreparedOrder()
+    {
+        var world = new BackfillWorld();
+        world.Imported(ImporterWorld.Order(address: Calli), Waiting with { IsEditable = false });
 
         var result = await world.Backfill.RunAsync(Ct);
 

@@ -179,4 +179,47 @@ public sealed class CustomerSelectableSearchTests
         Assert.Equal("Cliente 25", found[0].Name);
         Assert.Equal("Cliente 06", found[^1].Name);
     }
+
+    // G4 (spec 2026-11-10): FilteredQuery lo comparten el listado, la exportación y esta búsqueda; la razón social y el esconder
+    // contactos son parámetros que el POS no activa.
+    [Fact]
+    public async Task ThePosSearchStillIgnoresTheBusinessName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await AddAsync(factory, normalizer => [WithDocument(normalizer, Tenant, "Contacto Acme", "1020304050", Base)]);
+        await ExecuteAsync(
+            database.GetConnectionString(),
+            $"UPDATE customers.customers SET business_name = 'Industrial Delta S.A.S.' WHERE tenant_id = '{Tenant}' AND name = 'Contacto Acme'");
+
+        var byBusinessName = await SearchAsync(factory, "Delta", 20);
+        var byName = await SearchAsync(factory, "Acme", 20);
+
+        Assert.Empty(byBusinessName);
+        Assert.Equal("Contacto Acme", Assert.Single(byName).Name);
+    }
+
+    [Fact]
+    public async Task ThePosSearchStillReturnsContacts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await AddAsync(factory, normalizer =>
+            [
+                WithDocument(normalizer, Tenant, "Empresa Delta", "1020304050", Base),
+                WithDocument(normalizer, Tenant, "Laura Pérez", "1020304051", Base),
+            ]);
+        await ExecuteAsync(
+            database.GetConnectionString(),
+            "UPDATE customers.customers SET company_id = (SELECT id FROM customers.customers WHERE name = 'Empresa Delta') "
+            + $"WHERE tenant_id = '{Tenant}' AND name = 'Laura Pérez'");
+
+        var withText = await SearchAsync(factory, "Laura", 20);
+        var withoutText = await SearchAsync(factory, null, 20);
+
+        Assert.Equal("Laura Pérez", Assert.Single(withText).Name);
+        Assert.Contains(withoutText, customer => customer.Name == "Laura Pérez");
+    }
 }

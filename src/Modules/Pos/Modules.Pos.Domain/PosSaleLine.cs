@@ -55,10 +55,21 @@ public sealed class PosSaleLine
 
     public decimal Subtotal { get; private set; }
 
+    /// <summary>
+    /// El costo unitario de la variante al vender (spec 2026-11-10 §4.2), en la moneda de la venta.
+    /// Null es «sin costo conocido»: se congela igual, para que un costo cargado después no cambie una
+    /// venta vieja. Nunca se expone por la API del POS (§6.2).
+    /// </summary>
+    public decimal? UnitCost { get; private set; }
+
+    public LineCostSource? CostSource { get; private set; }
+
+    public DateTimeOffset? CostCapturedAt { get; private set; }
+
     /// <summary>Derivado y no persistido, como el precio con descuento de Quotations.</summary>
     public decimal LineTotal => Subtotal + TaxAmount;
 
-    internal static PosSaleLine Create(PosSaleId saleId, int position, PosSaleLineInput input, PriceRounding rounding)
+    internal static PosSaleLine Create(PosSaleId saleId, int position, PosSaleLineInput input, PriceRounding rounding, DateTimeOffset at)
     {
         if (input.Quantity <= 0 || input.Quantity > PosLimits.MaxQuantity || !PosLimits.HasValidScale(input.Quantity))
         {
@@ -99,6 +110,9 @@ public sealed class PosSaleLine
             DiscountAmount = amounts.DiscountAmount,
             TaxAmount = amounts.TaxAmount,
             Subtotal = amounts.Subtotal,
+            UnitCost = input.UnitCost,
+            CostSource = LineCostSource.Manual,
+            CostCapturedAt = at,
         };
     }
 }

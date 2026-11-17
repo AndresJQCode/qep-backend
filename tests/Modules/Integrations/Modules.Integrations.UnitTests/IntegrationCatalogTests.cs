@@ -39,7 +39,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
         Assert.Equal(
-            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi],
+            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi, IntegrationProviders.Anthropic],
             IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
     }
@@ -85,12 +85,21 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(IntegrationProviders.DefaultMaxConnections, provider.MaxConnections);
         Assert.Equal(ProviderOnboarding.ShopifyOAuth, provider.Onboarding);
         Assert.Equal(
-            [ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes, ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.AccessToken],
+            [
+                ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes,
+                ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.TokenExpiresAt, ShopifyFieldKeys.RefreshTokenExpiresAt,
+                ShopifyFieldKeys.AccessToken, ShopifyFieldKeys.RefreshToken,
+            ],
             provider.Fields.Select(field => field.Key));
-        Assert.Equal(["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "accessToken"], provider.Fields.Select(field => field.Key));
+        Assert.Equal(
+            ["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "tokenExpiresAt", "refreshTokenExpiresAt", "accessToken", "refreshToken"],
+            provider.Fields.Select(field => field.Key));
         Assert.Equal(["shopDomain", "shopName"], provider.CatalogFields.Select(field => field.Key));
-        Assert.Equal(["accessToken"], provider.SecretFields.Select(field => field.Key));
+        Assert.Equal(["accessToken", "refreshToken"], provider.SecretFields.Select(field => field.Key));
         Assert.True(provider.FindField("accessToken")!.Internal);
+        Assert.True(provider.FindField("refreshToken")!.Internal);
+        Assert.True(provider.FindField("tokenExpiresAt")!.Internal);
+        Assert.True(provider.FindField("refreshTokenExpiresAt")!.Internal);
         Assert.Same(provider, IntegrationProviders.Parse("shopify"));
         Assert.Equal("app_uninstalled", ConnectionFailureCodes.AppUninstalled);
         Assert.Equal("webhooks_not_registered", ConnectionFailureCodes.WebhooksNotRegistered);
@@ -148,6 +157,45 @@ public sealed class IntegrationCatalogTests
         Assert.All(provider.Fields, field => Assert.False(field.Internal));
         Assert.Same(provider, IntegrationProviders.Parse("external-api"));
     }
+
+    // Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant (BYOK, P-13). La consume ai, se conecta por formulario,
+    // una por tenant, sin habilitación por tenant (P-16) y deja ver los últimos 4 caracteres de la clave (D-A23).
+    [Fact]
+    public void AnthropicIsAFormProviderConsumedByAi()
+    {
+        var provider = IntegrationProviders.Anthropic;
+
+        Assert.Equal("anthropic", provider.Key);
+        Assert.Equal("Anthropic (Claude)", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Ai, provider.Category);
+        Assert.Equal([TenantModuleKeys.Ai], provider.ConsumingModules);
+        Assert.Equal(1, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
+        Assert.False(provider.RequiresTenantEnablement);
+        Assert.Empty(provider.PublicFields);
+        var apiKey = Assert.Single(provider.SecretFields);
+        Assert.Equal("apiKey", apiKey.Key);
+        Assert.True(apiKey.Required);
+        Assert.Equal(256, apiKey.MaxLength);
+        Assert.Equal(4, apiKey.RevealSuffix);
+        Assert.False(apiKey.Internal);
+        Assert.Same(provider, IntegrationProviders.Parse("anthropic"));
+    }
+
+    [Theory]
+    [InlineData("sk-ant-api03-abc_DEF-123", true)]
+    [InlineData("sk-ant api03", false)]
+    [InlineData("sk-ant-api03\n", false)]
+    public void TheAnthropicKeyHasNoSpaces(string value, bool valid) =>
+        Assert.Equal(valid, IntegrationProviders.Anthropic.FindField("apiKey")!.HasValidShape(value.Replace("\\n", "\n", StringComparison.Ordinal)));
+
+    // Ningún otro campo secreto deja ver una parte: sólo los que lo declaran.
+    [Fact]
+    public void OnlyTheAnthropicKeyRevealsASuffix() =>
+        Assert.Equal(
+            ["anthropic.apiKey"],
+            IntegrationProviders.All
+                .SelectMany(provider => provider.Fields.Where(field => field.RevealSuffix > 0).Select(field => $"{provider.Key}.{field.Key}")));
 
     [Theory]
     [InlineData("https://api-clasic.qcode.co", true)]

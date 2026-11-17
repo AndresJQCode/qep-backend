@@ -14,8 +14,9 @@ namespace Modules.Quotations.Domain;
 /// referencia entre módulos.
 ///
 /// Nulo es válido y es el estado inicial: una cotización en borrador todavía no eligió con qué
-/// cuenta se cobra, y <c>EnsureSendable</c> no lo exige a propósito. Quien sí lo exige es
-/// <c>EnsureConvertibleToOrder</c>: un pedido tiene que decir a dónde se paga.
+/// cuenta se cobra, y se puede guardar así. Lo exigen <c>EnsureSendable</c> (spec impuestos por tipo
+/// §7.7: sin empresa no hay país, y sin país no se sabe qué retenciones aplican) y
+/// <c>EnsureConvertibleToOrder</c> (un pedido tiene que decir a dónde se paga).
 /// </summary>
 public sealed record QuotationBillingAccount
 {
@@ -28,6 +29,28 @@ public sealed record QuotationBillingAccount
     /// <summary>Código ISO 4217 de tres letras, en mayúsculas.</summary>
     public required string Currency { get; init; }
 
+    /// <summary>
+    /// El país de la empresa (ISO 3166-1 alfa-2, en mayúsculas), congelado con la cuenta (plan P1): decide qué
+    /// retenciones aplican (spec §7.5) y los montos se recalculan en cada edición, sin poder ir a Companies.
+    /// Null en una cuenta armada sin él; ahí no aplica ninguna retención.
+    /// </summary>
+    public string? Country { get; init; }
+
+    /// <summary>
+    /// El municipio de la empresa (spec ReteICA por empresa §7.5), congelado con la cuenta: es el municipio de la
+    /// operación por defecto (A6). Null en un documento anterior a este trabajo, hasta que el cuerpo vuelva a traer la
+    /// cuenta, y en una empresa sin municipio.
+    /// </summary>
+    public Guid? CityId { get; init; }
+
+    /// <summary>
+    /// The company was chosen but the bank account is still pending (spec 2026-11-16 withholdings by company): only a
+    /// preview builds it, so withholdings follow the company before an account is picked. It has no column, and the
+    /// Quotations DbContext refuses to save a quotation or order that carries one (a bug if it ever happens, since only
+    /// previews build it). Never answered either: readiness and the response treat it as no account at all.
+    /// </summary>
+    public bool IsPending { get; init; }
+
     // Espejan los anchos de companies.company_bank_accounts: esto es una copia de esa fila y no
     // puede aceptar más de lo que el original acepta.
     public const int BankNameMaxLength = 120;
@@ -36,6 +59,8 @@ public sealed record QuotationBillingAccount
 
     public const int CurrencyLength = 3;
 
+    public const int CountryLength = 2;
+
     internal QuotationBillingAccount Normalized() => new()
     {
         CompanyId = CompanyId == Guid.Empty
@@ -43,21 +68,25 @@ public sealed record QuotationBillingAccount
                 "quotation.billing.company_required",
                 "The billing company is required.")
             : CompanyId,
-        BankName = NormalizeRequired(
+        // A pending account has no bank data on purpose; requiring it would make the company-only preview impossible.
+        BankName = IsPending ? string.Empty : NormalizeRequired(
             BankName,
             BankNameMaxLength,
             "quotation.billing.bank_name_required",
             "The billing bank name is required.",
             "quotation.billing.bank_name_too_long",
             $"The billing bank name cannot exceed {BankNameMaxLength} characters."),
-        AccountNumber = NormalizeRequired(
+        AccountNumber = IsPending ? string.Empty : NormalizeRequired(
             AccountNumber,
             AccountNumberMaxLength,
             "quotation.billing.account_number_required",
             "The billing account number is required.",
             "quotation.billing.account_number_too_long",
             $"The billing account number cannot exceed {AccountNumberMaxLength} characters."),
-        Currency = NormalizeCurrency(Currency)
+        Currency = NormalizeCurrency(Currency),
+        Country = string.IsNullOrWhiteSpace(Country) ? null : Country.Trim().ToUpperInvariant(),
+        CityId = CityId,
+        IsPending = IsPending,
     };
 
     private static string NormalizeRequired(

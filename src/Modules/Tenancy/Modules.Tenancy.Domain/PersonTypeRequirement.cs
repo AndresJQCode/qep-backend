@@ -9,6 +9,9 @@ public enum PersonTypeRequirement
 {
     Never,
     OnCustomerSave,
+
+    /// <summary>Al marcar el pedido como pagado y al facturarlo (spec 2026-11-10 §6). El nombre viene de
+    /// cuando era «al aprobar» y no se renombra: es valor persistido y contrato con el frontend.</summary>
     OnOrderApproval
 }
 

@@ -24,7 +24,7 @@ public sealed class ReconcileStoreTests
     {
         var world = new World().WithStore(LastReconciled);
 
-        await world.Reconcile.RunAsync(world.Connection, Ct);
+        await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         var call = Assert.Single(world.Source.Calls);
         Assert.Equal(LastReconciled.AddMinutes(-5), call.Since);
@@ -38,7 +38,7 @@ public sealed class ReconcileStoreTests
     {
         var world = new World();
 
-        await world.Reconcile.RunAsync(world.Connection, Ct);
+        await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal(Now.AddMinutes(-5), Assert.Single(world.Source.Calls).Since);
         var store = Assert.Single(world.Database.Stores.Values);
@@ -55,10 +55,97 @@ public sealed class ReconcileStoreTests
         world.Source.FilterBySince = true;
         world.Source.Catalog.Add(Order(55, updatedAt: Now.AddMinutes(-30)));
 
-        await world.Reconcile.RunAsync(linked, Ct);
+        await world.Reconcile.RunAsync(linked, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal(Now.AddMinutes(-45), Assert.Single(world.Source.Calls).Since);
         Assert.Contains((ConnectionId, 55L), world.Database.Orders.Keys);
+    }
+
+    // Spec 2026-10-21: ComputeSince es la ventana de la corrida, sin Shopify. Sin días de historial, la de siempre.
+    [Fact]
+    public void ComputeSinceWithoutHistoryDaysIsTheNormalWindow()
+    {
+        var since = ReconcileStore.ComputeSince(LastReconciled, Now, Now.AddDays(-10), null, ShopifyReconcileMode.Manual);
+
+        Assert.Equal(LastReconciled.AddMinutes(-5), since);
+    }
+
+    // Cuenta desde el enlace, no desde hoy: con un enlace de hace 10 días y 3 de historial, desde 13 días atrás.
+    [Fact]
+    public void ComputeSinceManualWithHistoryStartsHistoryDaysBeforeTheLink()
+    {
+        var linkedAt = Now.AddDays(-10);
+
+        var since = ReconcileStore.ComputeSince(LastReconciled, Now, linkedAt, 3, ShopifyReconcileMode.Manual);
+
+        Assert.Equal(linkedAt.AddDays(-3), since);
+    }
+
+    // La ventana nunca se acorta: si la normal ya es más vieja que LinkedAt − N, gana ella.
+    [Fact]
+    public void ComputeSinceKeepsTheNormalWindowWhenItIsOlder()
+    {
+        var lastReconciled = Now.AddDays(-20);
+
+        var since = ReconcileStore.ComputeSince(lastReconciled, Now, Now.AddDays(-10), 3, ShopifyReconcileMode.Manual);
+
+        Assert.Equal(lastReconciled.AddMinutes(-5), since);
+    }
+
+    // Sin la fecha del enlace no se inventa una: se ignora el historial.
+    [Fact]
+    public void ComputeSinceWithoutLinkedAtIgnoresTheHistory()
+    {
+        var since = ReconcileStore.ComputeSince(LastReconciled, Now, null, 30, ShopifyReconcileMode.Manual);
+
+        Assert.Equal(LastReconciled.AddMinutes(-5), since);
+    }
+
+    // El cron no relee el historial en cada ciclo: sólo «Sincronizar ahora» lo usa.
+    [Fact]
+    public void ComputeSinceScheduledIgnoresTheHistory()
+    {
+        var since = ReconcileStore.ComputeSince(LastReconciled, Now, Now.AddDays(-10), 30, ShopifyReconcileMode.Scheduled);
+
+        Assert.Equal(LastReconciled.AddMinutes(-5), since);
+    }
+
+    [Fact]
+    public void ComputeSinceWithoutLastReconciledStartsFromTheRun()
+    {
+        var since = ReconcileStore.ComputeSince(null, Now, null, null, ShopifyReconcileMode.Scheduled);
+
+        Assert.Equal(Now.AddMinutes(-5), since);
+    }
+
+    // «Sincronizar ahora» con días de historial trae lo anterior al enlace, y la ventana se mueve igual que hoy: a startedAt.
+    [Fact]
+    public async Task ReconcileManualWithHistoryDaysBringsOrdersFromBeforeTheLink()
+    {
+        var world = new World().WithStore(LastReconciled, historyDays: 5);
+        var linked = world.Connection with { LinkedAt = Now.AddDays(-2) };
+        world.Source.FilterBySince = true;
+        world.Source.Catalog.Add(Order(61, updatedAt: Now.AddDays(-6)));
+        world.Source.Catalog.Add(Order(62, updatedAt: Now.AddDays(-8)));
+
+        var result = await world.Reconcile.RunAsync(linked, ShopifyReconcileMode.Manual, Ct);
+
+        Assert.Equal(Now.AddDays(-7), Assert.Single(world.Source.Calls).Since);
+        Assert.Contains((ConnectionId, 61L), world.Database.Orders.Keys);
+        Assert.DoesNotContain((ConnectionId, 62L), world.Database.Orders.Keys);
+        Assert.Equal(1, result.Fetched);
+        Assert.Equal([Now], world.Leases.Reconciled);
+    }
+
+    [Fact]
+    public async Task ReconcileScheduledIgnoresTheStoreHistoryDays()
+    {
+        var world = new World().WithStore(LastReconciled, historyDays: 5);
+        var linked = world.Connection with { LinkedAt = Now.AddDays(-2) };
+
+        await world.Reconcile.RunAsync(linked, ShopifyReconcileMode.Scheduled, Ct);
+
+        Assert.Equal(LastReconciled.AddMinutes(-5), Assert.Single(world.Source.Calls).Since);
     }
 
     // El primer contacto también puede ser un webhook: la tienda que crea la ingesta nace con la ventana en el enlace.
@@ -81,7 +168,7 @@ public sealed class ReconcileStoreTests
         var world = new World().WithStore(LastReconciled).WithWaiting(1, Now.AddDays(-1));
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1, currency: "PESOS"), Order(2)], null));
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.StartsWith("invalid_payload", world.Database.Orders[(ConnectionId, 1L)].LastError, StringComparison.Ordinal);
         Assert.Contains((ConnectionId, 2L), world.Database.Orders.Keys);
@@ -95,7 +182,7 @@ public sealed class ReconcileStoreTests
         var world = new World().WithStore(LastReconciled);
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1, currency: "PESOS")], null));
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Empty(world.Database.Orders);
         Assert.Equal([Now], world.Leases.Reconciled);
@@ -116,7 +203,7 @@ public sealed class ReconcileStoreTests
         var world = new World().WithStore(LastReconciled).WithWaiting(3, Now.AddDays(-1));
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(2)], null) { Skipped = [new ShopifySkippedOrder(3, "invalid_payload: updatedAt")] });
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal("invalid_payload: updatedAt", world.Database.Orders[(ConnectionId, 3L)].LastError);
         Assert.Equal([Now], world.Leases.Reconciled);
@@ -133,7 +220,7 @@ public sealed class ReconcileStoreTests
         var world = new World().WithStore(LastReconciled);
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([], null) { Skipped = [new ShopifySkippedOrder(null, "invalid_payload: id: The Shopify order payload has no 'id'.")] });
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal(1, result.Skipped);
         Assert.Equal([Now], world.Leases.Reconciled);
@@ -154,7 +241,7 @@ public sealed class ReconcileStoreTests
     {
         var world = new World().WithStore(LastReconciled).WithWaiting(4, Now.AddDays(-1), payload: "{");
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.StartsWith("invalid_payload", world.Database.Orders[(ConnectionId, 4L)].LastError, StringComparison.Ordinal);
         Assert.Equal([Now], world.Leases.Reconciled);
@@ -168,7 +255,7 @@ public sealed class ReconcileStoreTests
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1), Order(2)], "cursor-1"));
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(3)], null));
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal([null, "cursor-1"], world.Source.Calls.Select(call => call.Cursor));
         Assert.All(world.Source.Calls, call => Assert.Equal(LastReconciled.AddMinutes(-5), call.Since));
@@ -184,7 +271,7 @@ public sealed class ReconcileStoreTests
         world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Throttled, TimeSpan.FromSeconds(7)));
         world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Throttled, TimeSpan.FromSeconds(7)));
 
-        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => world.Reconcile.RunAsync(world.Connection, Ct));
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct));
 
         Assert.Equal(ShopifyErrorCodes.StoreSyncUnavailable, error.Code);
         Assert.Equal(3, world.Source.Calls.Count);
@@ -202,7 +289,7 @@ public sealed class ReconcileStoreTests
         world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Throttled, null));
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1)], null));
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal([TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2)], world.Time.Delays);
         Assert.Equal(1, result.Fetched);
@@ -215,7 +302,7 @@ public sealed class ReconcileStoreTests
         var world = new World().WithStore(LastReconciled).WithWaiting(9, Now.AddDays(-1));
         world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
 
-        var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Reconcile.RunAsync(world.Connection, Ct));
+        var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct));
 
         Assert.Equal(ShopifyErrorCodes.StoreNotOperational, error.Code);
         Assert.Equal([(TenantId, ConnectionId)], world.Health.Rejected);
@@ -226,13 +313,84 @@ public sealed class ReconcileStoreTests
         Assert.Equal(1, world.Leases.Released);
     }
 
+    // Spec 2026-11-12 §6.4 (D8): el directorio entrega la conexión operativa sin token mientras el worker de Integrations va tarde.
+    // La corrida se salta con 503 sin llamar a Shopify ni reportar nada: un reporte marcaría NeedsAttention una tienda sana.
+    [Fact]
+    public async Task ReconcileWithAnExpiredTokenSkipsWithoutCallingOrReporting()
+    {
+        var world = new World().WithStore(LastReconciled);
+        var expired = world.Connection with { AccessToken = null };
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => world.Reconcile.RunAsync(expired, ShopifyReconcileMode.Scheduled, Ct));
+
+        Assert.Equal(ShopifyErrorCodes.StoreSyncUnavailable, error.Code);
+        Assert.Empty(world.Source.Calls);
+        Assert.Empty(world.Health.Rejected);
+        Assert.Empty(world.Leases.Acquired);
+        Assert.Equal(0, world.Leases.Released);
+    }
+
+    // §6.4, la red ante un 401: el worker rotó el token entre la lectura y la llamada. Se relee una vez y se sigue con el nuevo,
+    // también en las páginas siguientes.
+    [Fact]
+    public async Task Reconcile401WithARotatedTokenRereadsAndRetriesOnce()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Directory.Connections[world.Connection.ShopDomain] = world.Connection with { AccessToken = "shpat_rotated" };
+        world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1)], "cursor-2"));
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(2)], null));
+
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
+
+        Assert.Equal(["shpat_x", "shpat_rotated", "shpat_rotated"], world.Source.Calls.Select(call => call.Connection.AccessToken));
+        Assert.Empty(world.Health.Rejected);
+        Assert.Equal(2, result.Fetched);
+        Assert.Equal([Now], world.Leases.Reconciled);
+    }
+
+    // Review Focus 6: el 401 llegó porque el token venció a mitad de corrida y el worker todavía no lo refrescó. Se salta la
+    // corrida sin reportar credentials_rejected.
+    [Fact]
+    public async Task Reconcile401WhileTheTokenExpiredSkipsWithoutReporting()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Directory.Connections[world.Connection.ShopDomain] = world.Connection with { AccessToken = null };
+        world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct));
+
+        Assert.Equal(ShopifyErrorCodes.StoreSyncUnavailable, error.Code);
+        Assert.Single(world.Source.Calls);
+        Assert.Empty(world.Health.Rejected);
+        Assert.Empty(world.Leases.Reconciled);
+        Assert.Equal(1, world.Leases.Released);
+    }
+
+    // La red se usa una sola vez por corrida: con el token releído también rechazado, la tienda se reporta como hoy.
+    [Fact]
+    public async Task Reconcile401TwiceWithARotatedTokenReportsOnce()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Directory.Connections[world.Connection.ShopDomain] = world.Connection with { AccessToken = "shpat_rotated" };
+        world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
+        world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
+
+        var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct));
+
+        Assert.Equal(ShopifyErrorCodes.StoreNotOperational, error.Code);
+        Assert.Equal(["shpat_x", "shpat_rotated"], world.Source.Calls.Select(call => call.Connection.AccessToken));
+        Assert.Equal([(TenantId, ConnectionId)], world.Health.Rejected);
+        Assert.Equal(1, world.Leases.Released);
+    }
+
     [Fact]
     public async Task ReconcileUnreachableShopifyKeepsTheWindow()
     {
         var world = new World().WithStore(LastReconciled);
         world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Unavailable, null));
 
-        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => world.Reconcile.RunAsync(world.Connection, Ct));
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct));
 
         Assert.Equal(ShopifyErrorCodes.StoreSyncUnavailable, error.Code);
         Assert.Empty(world.Health.Rejected);
@@ -250,7 +408,7 @@ public sealed class ReconcileStoreTests
             world.WithWaiting(id, Now.AddDays(-1).AddMinutes(-id));
         }
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal(200, world.Importer.Calls.Count);
         Assert.Equal(Enumerable.Range(6, 200).Select(id => (long)id).Reverse(), world.Importer.Calls.Select(call => call.Row.ShopifyOrderId));
@@ -265,7 +423,7 @@ public sealed class ReconcileStoreTests
         var world = new World().WithStore(LastReconciled).WithWaiting(1, Now.AddDays(-1)).WithWaiting(2, Now.AddDays(-2));
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1, updatedAt: Now.AddMinutes(-1))], null));
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal([1L, 2L], world.Importer.Calls.Select(call => call.Row.ShopifyOrderId));
         Assert.Equal((1, 2), (result.Fetched, result.Waiting));
@@ -277,7 +435,7 @@ public sealed class ReconcileStoreTests
         var world = new World().WithStore(LastReconciled);
         world.Leases.Held = true;
 
-        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => world.Reconcile.RunAsync(world.Connection, Ct));
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct));
 
         Assert.Equal(ShopifyErrorCodes.StoreSyncInProgress, error.Code);
         Assert.Empty(world.Source.Calls);
@@ -295,7 +453,7 @@ public sealed class ReconcileStoreTests
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1)], null));
         world.Source.OnFetch = () => world.Clock.UtcNow = Now.AddMinutes(20);
 
-        await world.Reconcile.RunAsync(world.Connection, Ct);
+        await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal([Now], world.Leases.Reconciled);
         Assert.Equal(1, world.Leases.Released);
@@ -321,9 +479,9 @@ public sealed class ReconcileStoreTests
             }
         };
 
-        await world.Reconcile.RunAsync(world.Connection, Ct);
+        await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
         Assert.Empty(world.Database.Orders);
-        await world.Reconcile.RunAsync(world.Connection, Ct);
+        await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal(Now.AddMinutes(-5), world.Source.Calls[^1].Since);
         Assert.Contains((ConnectionId, 77L), world.Database.Orders.Keys);
@@ -338,7 +496,7 @@ public sealed class ReconcileStoreTests
         world.Reaction.FailuresLeft = int.MaxValue;
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1, financialStatus: "refunded"), Order(2)], null));
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Contains((ConnectionId, 2L), world.Database.Orders.Keys);
         Assert.True(world.UnitOfWork.Discards >= 1);
@@ -359,7 +517,7 @@ public sealed class ReconcileStoreTests
             ShopifyOrderWriteResult.Written(Guid.CreateVersion7(), "PED-0042", 100_000m, alreadyExisted: true, Guid.CreateVersion7());
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1) with { CancelledAt = Now.AddMinutes(-3) }], null));
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal([Now], world.Leases.Reconciled);
         Assert.Equal((0, 1), (result.Failed, result.Waiting));
@@ -380,7 +538,7 @@ public sealed class ReconcileStoreTests
         };
         world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1), Order(2), Order(3)], null));
 
-        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Scheduled, Ct);
 
         Assert.Equal((3, 1, 2, 0, 1), (result.Fetched, result.Imported, result.Waiting, result.Cancelled, result.Ignored));
         Assert.True(result.DurationMs >= 0);
@@ -392,7 +550,7 @@ public sealed class ReconcileStoreTests
         var world = new World().WithStore(LastReconciled);
         var paused = world.Connection with { IsOperational = false, AccessToken = null };
 
-        var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Reconcile.RunAsync(paused, Ct));
+        var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Reconcile.RunAsync(paused, ShopifyReconcileMode.Scheduled, Ct));
 
         Assert.Equal(ShopifyErrorCodes.StoreNotOperational, error.Code);
         Assert.Empty(world.Source.Calls);
@@ -415,10 +573,14 @@ public sealed class ReconcileStoreTests
             var stores = new FakeStoreRepository(Database);
             var mirrors = new FakeOrderMirrorRepository(Database);
             IShopifyOrderChangeReaction reaction = realReaction ? new ShopifyOrderChanges(Writer, new FakeCustomerDirectory(), Clock) : Reaction;
-            Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, reaction, UnitOfWork, Clock);
+            Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, reaction, new NoShopifyOrderEditDetector(), UnitOfWork, Clock);
             Leases = new FakeReconcileLeases(Database);
-            Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, UnitOfWork, Clock, Time, Logs);
+            Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, Directory, UnitOfWork, Clock, Time, Logs);
+            Directory.Connections[Connection.ShopDomain] = Connection;
         }
+
+        /// <summary>Lo que la conciliación relee ante un 401 (spec 2026-11-12 §6.4). Por defecto, la misma conexión de la corrida.</summary>
+        public FakeConnectionDirectory Directory { get; } = new();
 
         public FakeShopifyDatabase Database { get; } = new();
 
@@ -451,9 +613,18 @@ public sealed class ReconcileStoreTests
         public ShopifyConnectionRef Connection { get; } =
             new(TenantId, ConnectionId, "954889", "mi-tienda.myshopify.com", true, "shpat_x");
 
-        public World WithStore(DateTimeOffset lastReconciledAt)
+        public World WithStore(DateTimeOffset lastReconciledAt, int? historyDays = null)
         {
             Store = ShopifyStore.Create(ConnectionId, TenantId, lastReconciledAt);
+            if (historyDays is not null)
+            {
+                Store.Configure(
+                    Guid.CreateVersion7(), new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP"), null,
+                    ShopifyStore.DefaultDocumentAttributeKey, ShopifyStore.DefaultDocumentTypeAttributeKey,
+                    ShopifyStore.DefaultIdentificationTypeCode, historyDays, ShopifyEditSync.Manual, ShopifyPaymentStatuses.All,
+                    Guid.CreateVersion7(), lastReconciledAt);
+            }
+
             Database.Stores[ConnectionId] = Store;
             return this;
         }

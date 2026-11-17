@@ -806,9 +806,21 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("kind = 'Quotation'");
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_support_formal_reply")
+                        .IsUnique()
+                        .HasFilter("kind = 'SupportFormalReply'");
+
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_support_reply")
+                        .IsUnique()
+                        .HasFilter("kind = 'SupportReply'");
+
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_support_survey")
+                        .IsUnique()
+                        .HasFilter("kind = 'SupportSurvey'");
+
                     b.ToTable("message_templates", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order')");
+                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey')");
                         });
                 });
 
@@ -1065,6 +1077,14 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Engine")
+                        .HasColumnName("kind");
+
                     b.Property<DateTimeOffset>("NextAttemptAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("next_attempt_at");
@@ -1094,7 +1114,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "NextAttemptAt" }, "IX_automation_inbox_pending")
                         .HasFilter("processed_at IS NULL");
 
-                    b.ToTable("automation_inbox", "messaging");
+                    b.ToTable("automation_inbox", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.CampaignRecipientRecord", b =>
@@ -1121,7 +1144,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("customer_created_at");
 
-                    b.Property<Guid>("CustomerId")
+                    b.Property<Guid?>("CustomerId")
                         .HasColumnType("uuid")
                         .HasColumnName("customer_id");
 
@@ -1199,6 +1222,44 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.ToTable("campaign_recipients", "messaging", t =>
                         {
                             t.HasCheckConstraint("CK_campaign_recipients_status", "status IN ('Pending','Sending','Sent','Failed','Skipped')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.ConnectionBotRecord", b =>
+                {
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<Guid>("BotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bot_id");
+
+                    b.Property<short>("BotKind")
+                        .HasColumnType("smallint")
+                        .HasColumnName("bot_kind");
+
+                    b.Property<string>("BotName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("bot_name");
+
+                    b.Property<DateTimeOffset>("ReservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reserved_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("ConnectionId");
+
+                    b.HasIndex(new[] { "TenantId", "BotKind", "BotId" }, "IX_connection_bots_tenant_bot");
+
+                    b.ToTable("connection_bots", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_connection_bots_kind", "bot_kind IN (1,2)");
                         });
                 });
 

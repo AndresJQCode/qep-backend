@@ -20,8 +20,9 @@ public sealed class QuotationPartyTests
             new QuotationParties(billing, shipping),
             billingAccount: null,
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
 

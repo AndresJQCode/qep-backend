@@ -18,10 +18,11 @@ public sealed record OrderDraftInput(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
-    OrderPaymentStatus PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofInput> Proofs,
     bool AllowIncompleteCustomer,
-    ShippingRequest? Shipping = null);
+    ShippingRequest? Shipping = null,
+    // Preview only (spec 2026-11-16 withholdings by company): the company chosen before its bank account.
+    Guid? BillingCompanyId = null);
 
 /// <summary>
 /// Arma un <see cref="Order"/> manual preciado como lo haría el cotizador: cliente elegible, cuenta de cobro
@@ -38,7 +39,9 @@ public sealed class OrderDraftBuilder(
     ITenantPriceRounding priceRounding,
     ShippingResolver shippingResolver,
     ITenantDefaultCurrency tenantDefaultCurrency,
-    ITenantDirectory tenantDirectory)
+    ITenantDirectory tenantDirectory,
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantClock tenantClock)
 {
     // El preview no tiene número: el handler lo borra antes de responder.
     private const string PreviewOrderNumber = "PREVIEW";
@@ -51,7 +54,9 @@ public sealed class OrderDraftBuilder(
         var account = resolved
             ?? throw new QuotationsDomainException(
                 "order.billing.account_required", "An order needs a billing account.");
-        var (header, parties, lines) = await PriceAsync(input, customer, account.Currency, cancellationToken);
+        var orderDate = await LocalDateAsync(input.TenantId, now, cancellationToken);
+        var (header, parties, lines) = await PriceAsync(
+            input, customer, account, account.Currency, orderDate, cancellationToken);
         // Sólo al guardar: el cálculo previo corre mientras la persona escribe (spec 2026-10-26).
         var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(input.TenantId), cancellationToken);
         BillingPartyFiscalRules.EnsureConsistent(parties.Billing, regional?.Country);
@@ -59,11 +64,13 @@ public sealed class OrderDraftBuilder(
         var order = Order.CreateManual(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,
             shipping, lines,
-            input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
+            input.Notes, input.AdvisorId, input.Proofs, now, orderDate);
         await BillingPersonTypeRequirement.EnsureForOrderAsync(
             tenantDirectory, input.TenantId, order, cancellationToken);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
+        // Los descuentos de grupo movieron el neto: el pago se compara contra el definitivo.
+        order.RecalculateDraftPaymentStatus();
         return order;
     }
 
@@ -71,23 +78,30 @@ public sealed class OrderDraftBuilder(
     /// tenant. El resultado no se guarda.</summary>
     public async Task<Order> PreviewAsync(OrderDraftInput input, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var (customer, account) = await ResolveCustomerAndAccountAsync(input, cancellationToken);
-
         // Sin cuenta de cobro, el cálculo previo usa la moneda por defecto del tenant, el mismo precedente que
         // la cotización (CreateQuotation.cs): la pantalla de «Nuevo pedido» pinta el precio de la línea antes
-        // de que se elija la empresa que factura. Con cuenta, manda la suya, como siempre.
-        var currency = account?.Currency
-            ?? Currencies.Normalize(await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
-        var (header, parties, lines) = await PriceAsync(input, customer, currency, cancellationToken);
+        // de que se elija la empresa que factura. Con cuenta, manda la suya, como siempre. Se lee antes de la cuenta
+        // porque la empresa sola (spec 2026-11-16) arma una cuenta pendiente en esa moneda.
+        var defaultCurrency = Currencies.Normalize(await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
+        var (customer, account) = await ResolveCustomerAndAccountAsync(input, cancellationToken, defaultCurrency);
+        var currency = account is { IsPending: false } ? account.Currency : defaultCurrency;
+        var orderDate = await LocalDateAsync(input.TenantId, now, cancellationToken);
+        var (header, parties, lines) = await PriceAsync(input, customer, account, currency, orderDate, cancellationToken);
         var shipping = await ResolveShippingAsync(input, parties, currency, cancellationToken);
         var order = Order.Preview(
             OrderId.New(), input.TenantId, PreviewOrderNumber, header, parties, account,
             shipping, lines,
-            input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
+            input.Notes, input.AdvisorId, input.Proofs, now, orderDate);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
+        order.RecalculateDraftPaymentStatus();
         return order;
     }
+
+    // Spec 2026-11-16 §3: el día local de la creación es a la vez la «Fecha del pedido» y el día con que se resuelven las
+    // retenciones del cliente, así que se lee el calendario una sola vez.
+    private async Task<DateOnly> LocalDateAsync(Guid tenantId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        DocumentDates.LocalDate(await tenantClock.GetAsync(tenantId, cancellationToken), now);
 
     // El pedido todavía no existe: la recogida y la moneda salen del borrador, las mismas con las que el
     // agregado va a validar el envío. Sin cuerpo (o con recogida) el resolver devuelve null: sin envío.
@@ -100,23 +114,42 @@ public sealed class OrderDraftBuilder(
 
     // El cliente se valida antes que la cuenta, el mismo orden de errores que antes de separar guardar y
     // previsualizar.
+    // previewCurrency is the preview's no-account currency: only the preview accepts a company without its account.
     private async Task<(QuotationCustomerRef Customer, QuotationBillingAccount? Account)> ResolveCustomerAndAccountAsync(
-        OrderDraftInput input, CancellationToken cancellationToken)
+        OrderDraftInput input, CancellationToken cancellationToken, string? previewCurrency = null)
     {
         ArgumentNullException.ThrowIfNull(input);
 
         var customer = await customerLookup.FindAsync(input.TenantId, input.ClientId, cancellationToken);
         OrderCustomerEligibility.Ensure(customer, input.TenantId, input.ClientId, input.AllowIncompleteCustomer);
 
-        var account = await QuotationBillingAccountResolver.ResolveAsync(
-            companyLookup, input.TenantId, input.BillingAccount, cancellationToken);
+        var account = previewCurrency is null
+            ? await QuotationBillingAccountResolver.ResolveAsync(
+                companyLookup, input.TenantId, input.BillingAccount, cancellationToken)
+            : await QuotationBillingAccountResolver.ResolveAsync(
+                companyLookup, input.TenantId, input.BillingAccount, input.BillingCompanyId, previewCurrency,
+                cancellationToken);
         return (customer, account);
     }
 
+    // Las tasas, con las del cliente del país de la empresa (spec impuestos por tipo §7.5). Sin cuenta, el cálculo previo no
+    // tiene país y no retiene, igual que el pedido que se guardaría sin empresa.
     private async Task<(OrderHeader Header, QuotationParties Parties, List<OrderLineInput> Lines)> PriceAsync(
-        OrderDraftInput input, QuotationCustomerRef customer, string currency, CancellationToken cancellationToken)
+        OrderDraftInput input,
+        QuotationCustomerRef customer,
+        QuotationBillingAccount? account,
+        string currency,
+        DateOnly orderDate,
+        CancellationToken cancellationToken)
     {
         var lines = await PriceLinesAsync(input.TenantId, input.Items, currency, input.IsRetail, cancellationToken);
+        var withholdings = await OrderCustomerWithholdings.ResolveAsync(
+            withholdingLookup,
+            input.TenantId,
+            input.ClientId,
+            account,
+            orderDate,
+            cancellationToken);
         var header = new OrderHeader(
             input.ClientId,
             input.AdvisorId,
@@ -124,8 +157,8 @@ public sealed class OrderDraftBuilder(
             input.PaymentMethod,
             input.IsRetail,
             input.GlobalScaleFloor,
-            customer.WithRetention,
-            customer.VatSurplus);
+            customer.VatSurplus,
+            withholdings);
         return (header, input.Parties.ToDomain(), lines);
     }
 

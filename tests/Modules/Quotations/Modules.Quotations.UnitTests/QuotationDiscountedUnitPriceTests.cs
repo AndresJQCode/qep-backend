@@ -65,7 +65,10 @@ public sealed class QuotationDiscountedUnitPriceTests
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new UnknownProductLookup(),
             new UnresolvedCompanyLookup(),
-            new FixedQuotationSettingsStore());
+            new FixedQuotationSettingsStore(),
+            new StubQuotationWithholdingLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            new FixedTenantClock(DateTimeOffset.UtcNow));
 
         var response = await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
@@ -97,8 +100,9 @@ public sealed class QuotationDiscountedUnitPriceTests
                 Currency = "COP"
             },
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

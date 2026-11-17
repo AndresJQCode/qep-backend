@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -281,7 +281,7 @@ public sealed class LegacyProductPriceColumnsMigrationTests
 
     private static async Task<MigrationFixture> MigratedToBeforeTheContractAsync()
     {
-        var database = await StartDatabaseAsync();
+        var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         var context = NewCatalogContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -295,7 +295,7 @@ public sealed class LegacyProductPriceColumnsMigrationTests
     }
 
     private sealed record MigrationFixture(
-        PostgreSqlContainer Database,
+        TestDatabase Database,
         CatalogDbContext Context,
         IMigrator Migrator,
         string ConnectionString,
@@ -312,7 +312,7 @@ public sealed class LegacyProductPriceColumnsMigrationTests
         }
     }
 
-    // NewCatalogContext, ExecuteAsync, ScalarAsync, StartDatabaseAsync: copied from
+    // NewCatalogContext, ExecuteAsync, ScalarAsync: copied from
     // ProductPricesMigrationTests (migrations are frozen history; the tests stay independent).
     private static CatalogDbContext NewCatalogContext(string connectionString) =>
         new(new DbContextOptionsBuilder<CatalogDbContext>()
@@ -335,16 +335,5 @@ public sealed class LegacyProductPriceColumnsMigrationTests
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
         return (T)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 }

@@ -93,6 +93,93 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(1503848.57m, document.NetTotal);
     }
 
+    // Spec impuestos por tipo §9.3 (F-1): una fila por retención que aplicó, rotulada con el nombre de la tasa; el
+    // JSON que recibe Typst trae `withholdings: [{ name, amount, percentageLabel }]` (spec ReteICA por empresa §7.9).
+    [Fact]
+    public void PdfHasOneRowPerAppliedWithholdingWithTheRateName()
+    {
+        var response = Response() with
+        {
+            RetentionAmount = 10_398m,
+            Withholdings =
+            [
+                WithholdingRow("Retefuente 2,5 %", "Retefuente", 7_500m),
+                WithholdingRow("ReteICA Bogotá", "ReteICA", 2_898m, 0.966m),
+            ],
+        };
+
+        var document = Map(response);
+
+        Assert.Equal(
+            new[]
+            {
+                new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m, "2,5 %"),
+                new QuotationPdfWithholding("ReteICA Bogotá", 2_898m, "0,966 %"),
+            },
+            document.Withholdings);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(document, PayloadFormat).GetProperty("withholdings");
+        Assert.Equal("Retefuente 2,5 %", json[0].GetProperty("name").GetString());
+        Assert.Equal(7_500m, json[0].GetProperty("amount").GetDecimal());
+        Assert.Equal("2,5 %", json[0].GetProperty("percentageLabel").GetString());
+        Assert.Equal("ReteICA Bogotá", json[1].GetProperty("name").GetString());
+        Assert.Equal(3, json[0].EnumerateObject().Count());
+    }
+
+    // Spec ReteICA por empresa §7.9 (R13): el porcentaje efectivo de cada retención, con el separador del tenant, hasta tres
+    // decimales y sin ceros de sobra.
+    [Theory]
+    [InlineData(null, "0,966 %")]
+    [InlineData(Modules.Tenancy.Domain.TenantNumberFormats.CommaDecimal, "0,966 %")]
+    [InlineData(Modules.Tenancy.Domain.TenantNumberFormats.DotDecimal, "0.966 %")]
+    public void PercentageLabelUsesTheTenantSeparator(string? numberFormat, string expected)
+    {
+        var response = Response() with { Withholdings = [WithholdingRow("ReteICA Bogotá", "ReteICA", 966m, 0.966m)] };
+
+        var document = QuotationPdfDocumentMapper.From(response, Calendar, logo: null, numberFormat);
+
+        Assert.Equal(expected, Assert.Single(document.Withholdings).PercentageLabel);
+    }
+
+    [Fact]
+    public void PercentageLabelHasNoTrailingZeros()
+    {
+        var response = Response() with
+        {
+            Withholdings = [WithholdingRow("Retefuente 2,5 %", "Retefuente", 2_500m, 2.5m), WithholdingRow("Retefuente 4 %", "Retefuente", 4_000m, 4m)],
+        };
+
+        Assert.Equal<string>(["2,5 %", "4 %"], Map(response).Withholdings.Select(row => row.PercentageLabel).ToArray());
+    }
+
+    // El cliente comprueba el monto con el porcentaje efectivo: el del catálogo de una tasa editada no se imprime.
+    [Fact]
+    public void EditedPercentageWinsOverCatalog()
+    {
+        var response = Response() with
+        {
+            Withholdings = [WithholdingRow("ReteICA Bogotá", "ReteICA", 800m, 0.8m, catalog: 0.966m)],
+        };
+
+        Assert.Equal("0,8 %", Assert.Single(Map(response).Withholdings).PercentageLabel);
+    }
+
+    [Fact]
+    public void PdfWithoutWithholdingsHasNoRetentionRow()
+    {
+        var document = Map(Response());
+
+        Assert.Empty(document.Withholdings);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(document, PayloadFormat).GetProperty("withholdings");
+        Assert.Equal(System.Text.Json.JsonValueKind.Array, json.ValueKind);
+        Assert.Equal(0, json.GetArrayLength());
+    }
+
+    internal static WithholdingResponse WithholdingRow(
+        string name, string type, decimal amount, decimal percentage = 2.5m, decimal? catalog = null) =>
+        new(
+            Guid.CreateVersion7(), name, type, "CO", percentage, null, null, null, 300_000m, amount,
+            catalog ?? percentage, catalog is not null && catalog != percentage, null);
+
     // Sin esta bandera el documento tiene un IVA en cero que no explica por que: el lector no
     // puede distinguir "productos exentos" de "error de calculo".
     [Fact]
@@ -439,7 +526,7 @@ public sealed class QuotationPdfDocumentMapperTests
     {
         var account = new QuotationBillingAccountDto(Guid.CreateVersion7(), "Bancolombia", "123", "COP");
         var company = new QuotationCompanyRef(
-            account.CompanyId, "Empresa", "B12345678", "NIF", true, null, null, []);
+            account.CompanyId, "Empresa", "B12345678", "NIF", "ES", true, null, null, []);
 
         Assert.Equal("NIF", QuotationResponseComposer.ToBillingResponse(account, company)!.CompanyDocumentType);
         Assert.Null(QuotationResponseComposer.ToBillingResponse(account, null)!.CompanyDocumentType);
@@ -539,5 +626,16 @@ public sealed class QuotationPdfDocumentMapperTests
         // Sin envío registrado: el PDF del envío lo cubre su propia tarea.
         new ShippingResponse(false, null, null, 0m, 0, 0m, 0m, false),
         0m,
-        0m);
+        0m,
+        // Sin retenciones: la fila por retención del PDF es la Tarea 16.
+        [],
+        [],
+        [],
+        // El PDF no imprime los contactos: son del diálogo de envío.
+        [],
+        // Ni la explicación municipal ni el desglose de retenciones: son de la pantalla (spec retenciones por UVT §3).
+        null,
+        null,
+        [],
+        []);
 }

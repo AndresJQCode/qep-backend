@@ -79,7 +79,9 @@ public sealed partial class RunProcessor(
             // vuelva, que puede ser media hora. Se traspasa para que una persona vea la falla y pueda iniciar de nuevo (queda Paused
             // Handoff, sin corrida viva ni fila pendiente, y el spec D-3 deja que el botón se ofrezca): ese nuevo intento sabiendo que
             // un mensaje pudo haber salido antes de la excepción. La fila se cierra.
-            if (await inbox.ReadAsync(item.TenantId, item.MessageId, CancellationToken.None) is not null)
+            // Spec 2026-11-03 D-4: la señal de liberación tampoco tiene mensaje, pero no es un arranque manual: no hay nada que traspasar.
+            // Cerrar la corrida es idempotente, así que la excepción sube y el lease la reintenta.
+            if (item.ReleaseRun || await inbox.ReadAsync(item.TenantId, item.MessageId, CancellationToken.None) is not null)
             {
                 throw;
             }
@@ -164,6 +166,11 @@ public sealed partial class RunProcessor(
         }
 
         var conversation = await conversations.GetAsync(item.TenantId, item.ConversationId, cancellationToken);
+        if (item.ReleaseRun)
+        {
+            return await ReleaseAsync(item, conversation, run, cancellationToken);
+        }
+
         // Después del lock y de leer la conversación: si una persona la devolvió al asistente mientras la unidad esperaba el lock, la
         // corrida nueva no puede quedar con un StartedAt anterior a ese regreso (P2-R25), o el siguiente entrante la interrumpiría.
         // Piso: el POST que devolvió la conversación y este worker pueden ser pods distintos, con relojes distintos; si el del worker va
@@ -190,6 +197,31 @@ public sealed partial class RunProcessor(
         // Guardar confirma la transacción y suelta los locks (IAutomationsUnitOfWork): una sola vez por unidad.
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return outcome ?? (interrupted ? RunOutcomes.Interrupted : RunOutcomes.Skipped);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-03 D-4 y D-5: la señal de que una persona tomó la conversación. Cierra la corrida viva <c>Interrupted</c> (igual que el
+    /// camino perezoso de D-M15, pero sin esperar al siguiente entrante) y nunca arranca ni avanza nada. No confía en la señal: relee la
+    /// conversación bajo el candado, porque la persona pudo deshacer su acción (devolver al asistente) antes de que el worker llegara. Sólo
+    /// cierra una corrida que arrancó estrictamente antes que la señal: una que arrancó en su mismo instante o después es del bot que
+    /// atiende a una conversación ya devuelta, no de la que la persona tomó. Corre aunque el módulo esté apagado y sin tocar la conversación
+    /// (<c>EndAsync</c>): sólo cierra la corrida. Se cierra con el reloj del worker, sin el piso de <c>AutomationResumedAt</c>, que existe
+    /// para que una corrida nueva no nazca antes de un regreso al asistente.
+    /// </summary>
+    private async Task<string> ReleaseAsync(
+        InboundQueueItem item, AutomationConversationState? conversation, ConversationRun? run, CancellationToken cancellationToken)
+    {
+        if (run is null || run.StartedAt >= item.CreatedAt || (conversation is not null && !BotAttendance.HumanTookOver(conversation, run)))
+        {
+            return RunOutcomes.Skipped;
+        }
+
+        var now = clock.UtcNow;
+        run.Finish(RunStatus.Interrupted, null, now);
+        run.MarkInbound(item.MessageId);
+        recorder?.WriteClosed(run, item.MessageId, RunCloseReasons.HumanTookOver, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return RunOutcomes.Interrupted;
     }
 
     /// <summary>

@@ -9,15 +9,28 @@ namespace Modules.Reporting.Application;
 /// <see cref="Start"/> es el 00:00 local del "desde" y <see cref="EndExclusive"/> el 00:00 local del
 /// día siguiente al "hasta", los dos como instantes. <see cref="TimeZone"/> viaja para la serie
 /// mensual (punto 5). Cierra la decisión de producto que el antiguo corte de días en UTC dejaba
-/// abierta: los orígenes comparan instantes y no deciden husos.
+/// abierta: los orígenes comparan instantes y no deciden husos. <see cref="From"/> y <see cref="To"/> son los mismos días
+/// sin convertir (inclusivos): los usa el reporte de pedidos, que corta por la fecha del pedido, que ya es un día del
+/// tenant (spec 2026-11-16 §5).
+///
+/// Ojo: pedidos filtran por <see cref="From"/>/<see cref="To"/> (días) y el POS por <see cref="Start"/>/<see cref="EndExclusive"/>
+/// (instantes). Un período armado sin <see cref="Of"/> (sólo con los instantes) dejaría los pedidos sin filtrar: armarlo
+/// siempre con <see cref="Of"/>.
 /// </summary>
-public sealed record ReportPeriod(DateTimeOffset? Start, DateTimeOffset? EndExclusive, TimeZoneInfo TimeZone)
+public sealed record ReportPeriod(
+    DateTimeOffset? Start,
+    DateTimeOffset? EndExclusive,
+    TimeZoneInfo TimeZone,
+    DateOnly? From = null,
+    DateOnly? To = null)
 {
     public static ReportPeriod Of(TenantCalendar calendar, DateOnly? from, DateOnly? to) =>
         new(
             from is { } start ? calendar.StartOfDayUtc(start) : (DateTimeOffset?)null,
             to is { } end ? calendar.EndOfDayExclusiveUtc(end) : (DateTimeOffset?)null,
-            calendar.TimeZone);
+            calendar.TimeZone,
+            from,
+            to);
 }
 
 /// <summary>
@@ -126,6 +139,15 @@ public sealed record CustomerReportCriteria(
     Guid? DepartmentId);
 
 /// <summary>
+/// Los filtros del reporte de margen (spec 2026-11-10 §6.3). <c>Source</c> es texto por la misma razón
+/// que en <see cref="OrdersReportFilter"/>. Sin asesor ni cliente en esta versión.
+/// </summary>
+public sealed record MarginReportFilter(Guid TenantId, DateOnly? From, DateOnly? To, string? Source);
+
+/// <summary>Ver <see cref="OrdersReportCriteria"/>.</summary>
+public sealed record MarginReportCriteria(Guid TenantId, ReportPeriod Period, OrderSourceFilter? Source);
+
+/// <summary>
 /// Traduce filtro de entrada a criterio.
 ///
 /// El parseo es la única traducción: los enums ya los valida
@@ -162,6 +184,12 @@ public static class ReportFilterMapping
             string.IsNullOrWhiteSpace(filter.Currency) ? null : Currencies.Normalize(filter.Currency),
             filter.VariantId);
 
+    public static MarginReportCriteria ToCriteria(this MarginReportFilter filter, TenantCalendar calendar) =>
+        new(
+            filter.TenantId,
+            ReportPeriod.Of(calendar, filter.From, filter.To),
+            ReportFilterParser.ParseSource(filter.Source));
+
     public static CustomerReportCriteria ToCriteria(this CustomerReportFilter filter, TenantCalendar calendar) =>
         new(
             filter.TenantId,
@@ -190,7 +218,7 @@ public sealed class OrdersReportFilterValidator : AbstractValidator<OrdersReport
         RuleFor(filter => filter.Source)
             .Must(value => ReportFilterParser.TryParseSource(value, out _))
             .When(filter => !string.IsNullOrWhiteSpace(filter.Source))
-            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos.");
+            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos, Store.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)
@@ -245,6 +273,23 @@ public sealed class CustomerReportFilterValidator : AbstractValidator<CustomerRe
 {
     public CustomerReportFilterValidator()
     {
+        RuleFor(filter => filter.To)
+            .GreaterThanOrEqualTo(filter => filter.From!.Value)
+            .When(filter => filter.From is not null && filter.To is not null)
+            .WithMessage("to must be on or after from.");
+    }
+}
+
+/// <summary>Ver <see cref="OrdersReportFilterValidator"/>: las mismas reglas de <c>source</c> y del
+/// rango.</summary>
+public sealed class MarginReportFilterValidator : AbstractValidator<MarginReportFilter>
+{
+    public MarginReportFilterValidator()
+    {
+        RuleFor(filter => filter.Source)
+            .Must(value => ReportFilterParser.TryParseSource(value, out _))
+            .When(filter => !string.IsNullOrWhiteSpace(filter.Source))
+            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos, Store.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)

@@ -13,7 +13,8 @@ public sealed class ClosedXmlCustomerExportBuilderTests
 
     private readonly ClosedXmlCustomerExportBuilder builder = new();
 
-    private static CustomerDto Customer(string? personType) => new(
+    private static CustomerDto Customer(
+        string? personType, IReadOnlyList<CustomerWithholdingTaxRateDto>? withholdingTaxRates = null) => new(
         Guid.NewGuid(),
         "CLI08000142",
         "Verde Esencial",
@@ -37,12 +38,17 @@ public sealed class ClosedXmlCustomerExportBuilderTests
         true,
         [],
         new MarketingConsentDto(false, null, null),
-        PersonType: personType);
+        PersonType: personType,
+        WithholdingTaxRates: withholdingTaxRates);
 
     private XLWorkbook BuildWorkbook(params CustomerDto[] customers) =>
+        BuildWorkbook(new Dictionary<Guid, string>(), customers);
+
+    private XLWorkbook BuildWorkbook(IReadOnlyDictionary<Guid, string> companyNumbers, params CustomerDto[] customers) =>
         new(new MemoryStream(
             builder.Build(
                 customers,
+                companyNumbers,
                 new TenantCalendar(Now, Bogota),
                 "yyyy-MM-dd HH:mm",
                 CancellationToken.None).Content));
@@ -86,5 +92,58 @@ public sealed class ClosedXmlCustomerExportBuilderTests
 
         Assert.Equal(CustomerImportColumns.Ordered, headers.Take(CustomerImportColumns.Ordered.Count));
         Assert.DoesNotContain("Tipo de persona", headers.Take(CustomerImportColumns.Ordered.Count));
+    }
+
+    private static CustomerWithholdingTaxRateDto Rate(string name, string type, bool isActive = true) =>
+        new(Guid.NewGuid(), name, type, "CO", 2.5m, isActive);
+
+    private static string CellOf(XLWorkbook workbook, int excelRow, string header)
+    {
+        var column = Array.IndexOf(Headers(workbook), header) + 1;
+        Assert.True(column > 0, $"Missing column '{header}'.");
+        return workbook.Worksheet("Clientes").Cell(excelRow, column).GetString();
+    }
+
+    [Fact]
+    public void ExportWritesRateNamesPerType()
+    {
+        using var workbook = BuildWorkbook(
+            Customer(null, [Rate("Retefuente 2,5 %", "Retefuente")]),
+            Customer(null));
+
+        Assert.Equal("Retefuente 2,5 %", CellOf(workbook, 2, CustomerImportColumns.Retefuente));
+        Assert.Equal(string.Empty, CellOf(workbook, 3, CustomerImportColumns.Retefuente));
+        Assert.DoesNotContain("Con Retencion", Headers(workbook));
+    }
+
+    // Spec ReteICA por empresa §7.4 (A3): la ReteICA ya no es del cliente, así que su columna sale de la exportación.
+    [Fact]
+    public void ExportHasNoReteIcaColumn()
+    {
+        using var workbook = BuildWorkbook(Customer(null));
+
+        var headers = Headers(workbook);
+
+        Assert.Contains("Retefuente", headers);
+        Assert.DoesNotContain("ReteICA", headers);
+    }
+
+    [Fact]
+    public void TheExportCarriesTheCompanyDocumentNumber()
+    {
+        var contact = Customer("Natural");
+        var alone = Customer(null);
+        using var workbook = BuildWorkbook(new Dictionary<Guid, string> { [contact.Id] = "900111222" }, contact, alone);
+
+        var headers = Headers(workbook);
+        var sheet = workbook.Worksheet("Clientes");
+        var column = Array.IndexOf(headers, CustomerImportColumns.Company) + 1;
+
+        // La cabecera es la misma que el importador lee, así que el archivo exportado se puede corregir y volver a subir.
+        Assert.True(column > 0);
+        Assert.Equal("900111222", sheet.Cell(2, column).GetString());
+        Assert.Equal(string.Empty, sheet.Cell(3, column).GetString());
+        // Justo después de las de importación y antes de las propias del export.
+        Assert.Equal(CustomerImportColumns.Ordered.Count + 1, column);
     }
 }

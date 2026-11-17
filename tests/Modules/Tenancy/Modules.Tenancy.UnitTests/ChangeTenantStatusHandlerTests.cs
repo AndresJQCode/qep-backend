@@ -25,7 +25,8 @@ public sealed class ChangeTenantStatusHandlerTests
 
         public ChangeTenantStatusHandler Handler(IExecutionContext? context = null) =>
             new(new StepsTenantRepository(Steps, Target), Changes, new StepsUnitOfWork(Steps), Audit, context ?? Context,
-                new FixedOperatorTenant(Operator.Value), Reader, new FixedClock(Now), new ChangeTenantStatusValidator());
+                new FixedOperatorTenant(Operator.Value), Reader, new FixedClock(Now), new ChangeTenantStatusValidator(),
+                new RecordingTenantAccessVersion(Steps));
 
         public Task<OperatorTenantDetailDto> SendAsync(
             string? status, string? reason, long version = 1, TenantId? target = null, string? note = "Factura de septiembre") =>
@@ -48,6 +49,20 @@ public sealed class ChangeTenantStatusHandlerTests
         Assert.Equal((fixture.Target.Id.Value, "tenancy.tenant.status_changed", "tenant"), (audit.TenantId, audit.Action, audit.ResourceType));
         Assert.Equal(["status:Active->Suspended", "reason:nonpayment"], audit.ChangedFields);
         Assert.Contains("save", fixture.Steps);
+    }
+
+    // Spec 2026-11-13, D-5: un tenant que deja de estar Active niega todo; la caché de permisos se invalida alrededor del guardado.
+    [Fact]
+    public async Task ChangeTenantStatusBumpsTheTarget()
+    {
+        var fixture = new Fixture();
+
+        await fixture.SendAsync("inactive", "nonpayment");
+
+        var target = fixture.Target.Id.Value;
+        Assert.Equal(
+            [$"bump:{target}", "save", $"bump:{target}"],
+            fixture.Steps.Where(step => step == "save" || step.StartsWith("bump:", StringComparison.Ordinal)));
     }
 
     [Fact]

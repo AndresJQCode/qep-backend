@@ -136,7 +136,7 @@ public sealed class ListQuotationsHandlerTests
         var convertedRow = Assert.Single(
             page.Items, item => item.QuotationNumber == "QUO-2026-0001");
         Assert.Equal(order.Id.Value, convertedRow.OrderId);
-        Assert.Equal("Pending", convertedRow.OrderStatus);
+        Assert.Equal("Open", convertedRow.OrderStatus);
 
         // Sin pedido, la fila no trae nada que aprobar: OrderId y OrderStatus en null. El estado
         // Converted dice que ya se convirtio, pero no a que pedido ir ni si ya se aprobo.
@@ -223,8 +223,9 @@ public sealed class ListQuotationsHandlerTests
             QuotationParties.Empty,
             billingAccount: complete ? BillingAccount : null,
             defaultCurrency: "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 
@@ -251,11 +252,11 @@ public sealed class ListQuotationsHandlerTests
             TenantId,
             "PED-2026-0001",
             quotation,
-            OrderPaymentStatus.PaymentPending,
             notes: null,
             AdvisorId,
             [],
-            Now);
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static ListQuotationsHandler NewHandler(
         StubQuotationCustomerLookup customers, params Quotation[] quotations) =>

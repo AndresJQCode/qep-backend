@@ -158,7 +158,8 @@ internal static class ShopifyApiHarness
                         && (descriptor.ImplementationType == typeof(ShopifyWebhookDeliveryWorker)
                             || descriptor.ImplementationType == typeof(ShopifyReconcileWorker)
                             || descriptor.ImplementationType == typeof(CitySynonymEventsWorker)
-                            || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)))
+                            || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)
+                            || descriptor.ImplementationType == typeof(ShopifyOrderPushWorker)))
                     .ToArray())
                 {
                     services.Remove(worker);
@@ -171,6 +172,8 @@ internal static class ShopifyApiHarness
 
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -317,28 +320,37 @@ internal static class ShopifyApiHarness
 
     /// <summary>
     /// La conexión y la ruta de una tienda, creadas por los servicios de Integrations (repositorio, rutas, cifrado y unidad de
-    /// trabajo) como las deja <c>LinkShopifyStore</c>, sin pasar por el OAuth: el token es un sentinela.
+    /// trabajo) como las deja <c>LinkShopifyStore</c>, sin pasar por el OAuth: el token es un sentinela. Lleva refresh token y
+    /// un vencimiento a un día (spec 2026-11-12): sin ellos, <c>ShopifyTokenRefreshWorker</c> del host marcaría la tienda
+    /// <c>token_expired</c>.
     /// </summary>
     public static async Task<Guid> LinkStoreAsync(
-        WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token")
+        WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token", string shopId = "954889", string name = "Mi tienda")
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;
         var protector = services.GetRequiredService<ISecretProtector>();
+        var now = services.GetRequiredService<IClock>().UtcNow;
         var connection = IntegrationConnection.Create(
             IntegrationProviders.Shopify,
             tenantId,
-            "Mi tienda",
+            name,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [ShopifyFieldKeys.ShopDomain] = shop,
-                [ShopifyFieldKeys.ShopId] = "954889",
+                [ShopifyFieldKeys.ShopId] = shopId,
                 [ShopifyFieldKeys.Scopes] = "read_orders,read_customers",
+                [ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
+                [ShopifyFieldKeys.RefreshTokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
             },
-            new Dictionary<string, string>(StringComparer.Ordinal) { [ShopifyFieldKeys.AccessToken] = accessToken },
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [ShopifyFieldKeys.AccessToken] = accessToken,
+                [ShopifyFieldKeys.RefreshToken] = "shprt_sentinel_refresh",
+            },
             protector.Protect,
             createdBy,
-            services.GetRequiredService<IClock>().UtcNow);
+            now);
         services.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
         services.GetRequiredService<IConnectionRouteRepository>().Add(
             IntegrationConnectionRoute.Create(IntegrationProviders.Shopify.Key, shop, accountId: null, tenantId, connection.Id));
@@ -460,7 +472,7 @@ internal static class ShopifyApiHarness
         return await ReadIdAsync(response);
     }
 
-    private static async Task<Guid> AnyCityIdAsync(HttpClient client)
+    public static async Task<Guid> AnyCityIdAsync(HttpClient client)
     {
         var departments = await client.GetFromJsonAsync<List<IdDto>>("/api/v1/departments", TestContext.Current.CancellationToken);
         Assert.NotNull(departments);
@@ -558,7 +570,7 @@ internal sealed record ShopifyWorld(
 
     /// <summary>§6.1: la tienda configurada (asesor, cuenta de cobro COP, clasificación y las claves por defecto), como la deja el
     /// <c>PUT</c> de la tienda.</summary>
-    public async Task ConfigureStoreAsync(ShopifyApiHarness.QepApiFactory factory)
+    public async Task ConfigureStoreAsync(ShopifyApiHarness.QepApiFactory factory, int? historyDays = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var store = Modules.Shopify.Domain.ShopifyStore.Create(ConnectionId, TenantId, DateTimeOffset.UtcNow);
@@ -569,6 +581,9 @@ internal sealed record ShopifyWorld(
             Modules.Shopify.Domain.ShopifyStore.DefaultDocumentAttributeKey,
             Modules.Shopify.Domain.ShopifyStore.DefaultDocumentTypeAttributeKey,
             Modules.Shopify.Domain.ShopifyStore.DefaultIdentificationTypeCode,
+            historyDays,
+            Modules.Shopify.Domain.ShopifyEditSync.Manual,
+            Modules.Shopify.Domain.ShopifyPaymentStatuses.All,
             AdvisorMembershipId,
             DateTimeOffset.UtcNow);
         scope.ServiceProvider.GetRequiredService<Modules.Shopify.Application.IShopifyStoreRepository>().Add(store);

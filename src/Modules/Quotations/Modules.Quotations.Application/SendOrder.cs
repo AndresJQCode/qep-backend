@@ -14,7 +14,12 @@ namespace Modules.Quotations.Application;
 /// disponibles para pedidos; la elección es la misma que la de la cotización (D7).
 /// </summary>
 public sealed record SendOrderCommand(
-    Guid TenantId, Guid OrderId, string? Recipient = null, Guid? ConnectionId = null) : ICommand<OrderDetailDto>;
+    Guid TenantId,
+    Guid OrderId,
+    string? Recipient = null,
+    Guid? ConnectionId = null,
+    Guid? ContactId = null,
+    Guid? ThreadConnectionId = null) : ICommand<OrderDetailDto>;
 
 /// <summary>
 /// Responde el detalle entero (<see cref="OrderDetailDto"/>) y no sólo el pedido: la pantalla repinta el
@@ -71,6 +76,13 @@ public sealed class SendOrderHandler(
         var sentBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
+        // El contacto, también fuera y antes que el canal: uno que no es de este cliente es un envío que nunca empezó.
+        var isContact = ContactRecipient.IsRequested(command.Recipient);
+        var contact = isContact
+            ? await ContactRecipient.RequireAsync(
+                customerLookup, command.TenantId, order.ClientId, command.ContactId, WhatsAppDocument.Order, cancellationToken)
+            : null;
+
         // Por dónde sale (spec 2026-11-09 D6 y D7: los canales disponibles para pedidos y la misma elección que la
         // cotización), también fuera y después de saber quién envía: sin canal, con varios sin elegir o con una
         // elección que no corresponde, el envío nunca empezó, y saberlo no cuesta un PDF.
@@ -78,7 +90,8 @@ public sealed class SendOrderHandler(
             await whatsAppChannels.ListAvailableAsync(command.TenantId, WhatsAppDocument.Order, cancellationToken),
             await channelChoices.FindAsync(command.TenantId, cancellationToken),
             command.ConnectionId,
-            WhatsAppDocument.Order);
+            WhatsAppDocument.Order,
+            ContactRecipient.ThreadFor(isContact, command.ThreadConnectionId));
         var channel = resolved.Channel;
 
         // El paso en curso, para que la falla diga dónde se cayó: el teléfono del cliente, `qcode-pdf`,
@@ -100,7 +113,8 @@ public sealed class SendOrderHandler(
                     $"Client '{order.ClientId}' was not found in this tenant.");
             }
 
-            var (recipient, toPhone, fullName) = ResolveRecipient(command.Recipient, order, customer);
+            var (recipient, toPhone, fullName, recipientCustomerId, contactName) =
+                ResolveRecipient(command.Recipient, order, customer, contact);
 
             // Desde la misma respuesta que dibuja la pantalla del pedido, por el mismo motivo que la
             // cotización: el documento y la pantalla no pueden decir cosas distintas.
@@ -139,7 +153,7 @@ public sealed class SendOrderHandler(
                     NumberFormat: regional?.NumberFormat,
                     DocumentStorageKey: storageKey,
                     SentByMemberId: sentBy.Value,
-                    CustomerId: recipient == QuotationRecipient.Customer ? order.ClientId : null,
+                    CustomerId: recipientCustomerId,
                     TenantId: command.TenantId),
                 cancellationToken);
 
@@ -150,7 +164,7 @@ public sealed class SendOrderHandler(
                 order.Id,
                 OrderHistoryEventType.Sent,
                 sentBy,
-                OrderChangeSummary.Sent(recipient),
+                OrderChangeSummary.Sent(recipient, contactName),
                 now));
             auditPublisher.Publish(
                 command.TenantId,
@@ -206,14 +220,15 @@ public sealed class SendOrderHandler(
     /// datos de facturación propios del pedido, y si no los tiene o no tienen teléfono se rechaza en vez
     /// de caer al cliente en silencio.
     /// </summary>
-    private static (QuotationRecipient Recipient, string? ToPhone, string FullName) ResolveRecipient(
+    private static (QuotationRecipient Recipient, string? ToPhone, string FullName, Guid? CustomerId, string? ContactName) ResolveRecipient(
         string? recipient,
         Order order,
-        QuotationCustomerRef customer)
+        QuotationCustomerRef customer,
+        QuotationClientContact? contact)
     {
         if (string.IsNullOrWhiteSpace(recipient))
         {
-            return (QuotationRecipient.Customer, customer.Phone, customer.Name);
+            return (QuotationRecipient.Customer, customer.Phone, customer.Name, order.ClientId, null);
         }
 
         // Por nombre y no con Enum.TryParse, que también acepta "1" y lo leería como Billing.
@@ -228,7 +243,15 @@ public sealed class SendOrderHandler(
 
         if (parsed == QuotationRecipient.Customer)
         {
-            return (QuotationRecipient.Customer, customer.Phone, customer.Name);
+            return (QuotationRecipient.Customer, customer.Phone, customer.Name, order.ClientId, null);
+        }
+
+        if (parsed == QuotationRecipient.Contact)
+        {
+            // Ya se resolvió contra el puerto antes del try (ContactRecipient.RequireAsync); acá sólo se lee.
+            var resolved = contact ?? throw new QuotationsDomainException(
+                "order.order.contact_not_of_client", "The contact does not belong to the client of this document.");
+            return (QuotationRecipient.Contact, resolved.Phone, resolved.Name, resolved.Id, resolved.Name);
         }
 
         var billing = order.Billing;
@@ -242,6 +265,8 @@ public sealed class SendOrderHandler(
         return (
             QuotationRecipient.Billing,
             billing.Phone,
-            string.IsNullOrWhiteSpace(billing.Name) ? customer.Name : billing.Name);
+            string.IsNullOrWhiteSpace(billing.Name) ? customer.Name : billing.Name,
+            null,
+            null);
     }
 }

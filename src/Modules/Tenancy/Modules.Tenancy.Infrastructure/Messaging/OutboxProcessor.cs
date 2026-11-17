@@ -18,7 +18,7 @@ internal sealed class OutboxProcessor(
     IIntegrationEventDispatcher dispatcher,
     IClock clock) : IOutboxProcessor
 {
-    private const int BatchSize = 20;
+    internal const int BatchSize = 20;
 
     private static readonly string ClaimSql =
         "SELECT * FROM platform.outbox_messages " +

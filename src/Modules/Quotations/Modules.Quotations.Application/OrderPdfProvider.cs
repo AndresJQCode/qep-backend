@@ -1,3 +1,4 @@
+using BuildingBlocks.Application.RichText;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -16,18 +17,20 @@ public interface IOrderPdfProvider
 }
 
 /// <summary>
-/// A diferencia de <see cref="QuotationPdfProvider"/>, **no cachea**: genera en cada envío. El caché de
-/// la cotización es una tabla (<c>quotations.quotation_pdfs</c>) invalidada por <c>Quotation.Version</c>;
-/// el del pedido pediría una migración y la misma invalidación por <c>Order.Version</c>, y enviar un
-/// pedido es raro —no hay "Descargar PDF" del pedido—, así que la llamada a <c>qcode-pdf</c> que se
-/// ahorraría no paga esa maquinaria. Si el pedido llega a exportarse, ahí sí conviene.
+/// A diferencia de <see cref="QuotationPdfProvider"/>, **no cachea**: genera en cada envío y en cada
+/// «Descargar PDF» (<see cref="ExportOrderPdfHandler"/>, spec 2026-11-16). El caché de la cotización es
+/// una tabla (<c>quotations.quotation_pdfs</c>) invalidada por <c>Quotation.Version</c>; el del pedido
+/// pediría una migración y la misma invalidación por <c>Order.Version</c>. Mientras una descarga por
+/// clic no se note en latencia ni en costo de <c>qcode-pdf</c>, esa maquinaria no se paga.
 /// </summary>
 public sealed class OrderPdfProvider(
     IQuotationPdfRenderer renderer,
     IQuotationPdfStorage storage,
     ITenantClock tenantClock,
     IQuotationLogoLookup logoLookup,
-    ITenantDirectory tenantDirectory)
+    ITenantDirectory tenantDirectory,
+    IPdfContentStore pdfContentStore,
+    IRichTextReader richTextReader)
     : IOrderPdfProvider
 {
     public async Task<string> RenderAndSaveAsync(
@@ -44,8 +47,11 @@ public sealed class OrderPdfProvider(
             ? null
             : new QuotationPdfLogo("logo" + logo.Extension, logoContent);
 
+        // Sin caché no hay huella que guardar: las secciones se leen en cada envío (spec 2026-11-16 §5.4).
+        var pdfContent = await pdfContentStore.GetAsync(tenantId, cancellationToken);
+        var mapped = QuotationPdfDocumentMapper.FromOrder(detail, calendar, pdfLogo, regional?.NumberFormat);
         var content = await renderer.RenderAsync(
-            QuotationPdfDocumentMapper.FromOrder(detail, calendar, pdfLogo, regional?.NumberFormat), cancellationToken);
+            mapped with { Sections = QuotationPdfSectionsBuilder.Build(pdfContent, mapped, richTextReader) }, cancellationToken);
         return await storage.SaveOrderAsync(tenantId, orderId, content, cancellationToken);
     }
 }

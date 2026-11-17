@@ -122,6 +122,15 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-11-09 D1: una fila <c>Order</c> por conexión.</summary>
     public const string MessageTemplateOrderIndex = "UX_message_templates_order";
 
+    /// <summary>Soporte fase 2: una fila <c>SupportReply</c> por conexión.</summary>
+    public const string MessageTemplateSupportReplyIndex = "UX_message_templates_support_reply";
+
+    /// <summary>Soporte fase 4b: una fila <c>SupportFormalReply</c> por conexión.</summary>
+    public const string MessageTemplateSupportFormalReplyIndex = "UX_message_templates_support_formal_reply";
+
+    /// <summary>Soporte fase 4b: una fila <c>SupportSurvey</c> por conexión.</summary>
+    public const string MessageTemplateSupportSurveyIndex = "UX_message_templates_support_survey";
+
     /// <summary>El PK de <c>template_mirror_syncs</c> (el nombre por defecto de EF, el de la migración <c>AddMessageTemplates</c>): dos
     /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
     public const string TemplateMirrorSyncPrimaryKey = "PK_template_mirror_syncs";
@@ -175,6 +184,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-21 §4.2: la cola del motor de chatbots.</summary>
     internal DbSet<AutomationInboxRecord> AutomationInbox => Set<AutomationInboxRecord>();
 
+    /// <summary>Spec 2026-10-29 §4.3: quién atiende cada conexión, chatbot o agente.</summary>
+    internal DbSet<ConnectionBotRecord> ConnectionBots => Set<ConnectionBotRecord>();
+
     /// <summary>Spec 2026-10-29: la importación del historial por coexistencia, una por conexión.</summary>
     public DbSet<HistorySync> HistorySyncs => Set<HistorySync>();
 
@@ -199,6 +211,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureResolutionReason(modelBuilder);
         ConfigureBusinessHours(modelBuilder);
         ConfigureAutomationInbox(modelBuilder);
+        ConfigureConnectionBots(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
         ConfigureHistorySync(modelBuilder);
@@ -608,7 +621,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     private static void ConfigureAutomationInbox(ModelBuilder modelBuilder)
     {
         var inbox = modelBuilder.Entity<AutomationInboxRecord>();
-        inbox.ToTable("automation_inbox", Schema);
+        inbox.ToTable("automation_inbox", Schema, table => table.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')"));
         inbox.HasKey(value => value.MessageId);
         inbox.Property(value => value.MessageId).HasColumnName("message_id").ValueGeneratedNever();
         inbox.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -620,8 +633,25 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         inbox.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
         inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
         inbox.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
+        inbox.Property(value => value.Kind).HasColumnName("kind").HasMaxLength(16).HasDefaultValue(Modules.Messaging.Application.AutomationInboxKinds.Engine);
         inbox.HasIndex(value => value.NextAttemptAt, "IX_automation_inbox_pending").HasFilter("processed_at IS NULL");
         inbox.HasIndex(value => new { value.ConversationId, value.CreatedAt }, "IX_automation_inbox_conversation").HasFilter("processed_at IS NULL");
+    }
+
+    /// <summary>Spec 2026-10-29 §4.3: la clave primaria es la conexión, así que una conexión tiene un solo bot.</summary>
+    private static void ConfigureConnectionBots(ModelBuilder modelBuilder)
+    {
+        var slot = modelBuilder.Entity<ConnectionBotRecord>();
+        slot.ToTable("connection_bots", Schema, table =>
+            table.HasCheckConstraint("CK_connection_bots_kind", "bot_kind IN (1,2)"));
+        slot.HasKey(value => value.ConnectionId);
+        slot.Property(value => value.ConnectionId).HasColumnName("connection_id").ValueGeneratedNever();
+        slot.Property(value => value.TenantId).HasColumnName("tenant_id");
+        slot.Property(value => value.BotKind).HasColumnName("bot_kind");
+        slot.Property(value => value.BotId).HasColumnName("bot_id");
+        slot.Property(value => value.BotName).HasColumnName("bot_name").HasMaxLength(80);
+        slot.Property(value => value.ReservedAt).HasColumnName("reserved_at");
+        slot.HasIndex(value => new { value.TenantId, value.BotKind, value.BotId }, "IX_connection_bots_tenant_bot");
     }
 
     /// <summary>Spec 2026-10-21 §5.1. Los dos únicos (nombre sin distinguir mayúsculas y un predeterminado por tenant) van en la migración
@@ -685,7 +715,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     {
         var template = modelBuilder.Entity<MessageTemplate>();
         template.ToTable("message_templates", Schema, table =>
-            table.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order')"));
+            table.HasCheckConstraint(
+                "CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply',"
+                + "'SupportFormalReply','SupportSurvey')"));
         template.HasKey(value => value.Id);
         template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         template.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -708,6 +740,14 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
         // Spec 2026-11-09 D1: la del pedido, con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateOrderIndex).IsUnique().HasFilter("kind = 'Order'");
+        // Soporte fase 2: la de «Aviso de respuesta», con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateSupportReplyIndex).IsUnique()
+            .HasFilter("kind = 'SupportReply'");
+        // Soporte fase 4b: la «Respuesta formal» y la encuesta, con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateSupportFormalReplyIndex).IsUnique()
+            .HasFilter("kind = 'SupportFormalReply'");
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateSupportSurveyIndex).IsUnique()
+            .HasFilter("kind = 'SupportSurvey'");
         // Cobros recurrentes §5: una fila por tipo de aviso en cada conexión, como la de cotización (dos aprovisionamientos a la vez).
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Kind }, MessageTemplateBillingIndex).IsUnique()
             .HasFilter("kind IN ('BillingReminder','BillingOverdue')");

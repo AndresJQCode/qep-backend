@@ -137,7 +137,9 @@ public sealed class AddCustomerAddressHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     IExecutionContext executionContext,
     IClock clock,
@@ -174,7 +176,7 @@ public sealed class AddCustomerAddressHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }
 
@@ -182,7 +184,9 @@ public sealed class UpdateCustomerAddressHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     IExecutionContext executionContext,
     IClock clock,
@@ -220,7 +224,7 @@ public sealed class UpdateCustomerAddressHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }
 
@@ -228,7 +232,9 @@ public sealed class RemoveCustomerAddressHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     IExecutionContext executionContext,
     IClock clock)
@@ -245,7 +251,7 @@ public sealed class RemoveCustomerAddressHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }
 
@@ -253,7 +259,9 @@ public sealed class MakeCustomerAddressPrincipalHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     IExecutionContext executionContext,
     IClock clock)
@@ -270,7 +278,7 @@ public sealed class MakeCustomerAddressPrincipalHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }
 

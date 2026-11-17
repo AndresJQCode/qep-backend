@@ -30,7 +30,7 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal("Ferretería El Tornillo", row.ClientName);
         Assert.Equal("Asesora Uno", row.AdvisorName);
         // Nace pendiente de revisión: quien convierte y quien aprueba son roles distintos.
-        Assert.Equal("Pending", row.Status);
+        Assert.Equal("Open", row.Status);
         Assert.Equal("COP", row.Currency);
     }
 
@@ -164,38 +164,23 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal("order.order.payment_status_invalid", error.Code);
     }
 
-    // Un pedido creado a la 01:00 del 15 en Madrid (23:00 UTC del 14) es del 15 para quien filtra
-    // desde Madrid: el día se corta en la zona que manda el navegador, no en la del tenant.
-    [Fact]
-    public async Task ListCutsTheDayInTheTimeZoneOfWhoeverFilters()
+    // Spec 2026-11-16 §4: convertedFrom/convertedTo cortan por la fecha del pedido, que ya es un día del tenant. Los días
+    // llegan tal cual al repositorio, con o sin la zona de quien filtra.
+    [Theory]
+    [InlineData("Europe/Madrid")]
+    [InlineData(null)]
+    public async Task ListPassesTheDaysStraightToTheOrderDateFilter(string? timeZone)
     {
         var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
         var handler = NewHandler(NewCustomerLookup(), repository);
-        var day = new DateOnly(2026, 10, 15);
+        var from = new DateOnly(2026, 10, 1);
+        var to = new DateOnly(2026, 10, 31);
 
         await handler.HandleAsync(
-            NewQuery() with { ConvertedFrom = day, ConvertedTo = day, TimeZone = "Europe/Madrid" },
+            NewQuery() with { ConvertedFrom = from, ConvertedTo = to, TimeZone = timeZone },
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(
-            (new DateTimeOffset(2026, 10, 14, 22, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 15, 22, 0, 0, TimeSpan.Zero)),
-            repository.LastSearchRange);
-    }
-
-    [Fact]
-    public async Task ListWithoutATimeZoneStillCutsTheDayOfTheTenant()
-    {
-        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
-        var handler = NewHandler(NewCustomerLookup(), repository);
-        var day = new DateOnly(2026, 10, 15);
-
-        await handler.HandleAsync(
-            NewQuery() with { ConvertedFrom = day, ConvertedTo = day },
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(
-            (new DateTimeOffset(2026, 10, 15, 5, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 16, 5, 0, 0, TimeSpan.Zero)),
-            repository.LastSearchRange);
+        Assert.Equal(((DateOnly?)from, (DateOnly?)to), repository.LastSearchRange);
     }
 
     [Theory]
@@ -211,6 +196,20 @@ public sealed class ListOrdersHandlerTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("order.time_zone_invalid", error.Code);
+    }
+
+    // Como antes del spec 2026-11-16: sin rango de fechas la zona no se mira, así que una lista sin filtro de fecha no
+    // responde 422 por una zona que el navegador no supo nombrar.
+    [Fact]
+    public async Task ListWithoutADateRangeIgnoresAnUnknownTimeZone()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(
+            NewQuery() with { TimeZone = "Marte/Olympus" },
+            TestContext.Current.CancellationToken);
+
+        Assert.Single(page.Items);
     }
 
     // Spec 2026-10-15 §6.1: cliente, asesor y totales salen del pedido; un pedido manual no tiene
@@ -249,6 +248,65 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal(OrderSource.Manual, repository.LastSource);
     }
 
+    // Spec 2026-11-10 §5: el envío y la marca de facturado filtran como el pago, sin distinguir mayúsculas.
+    [Fact]
+    public async Task ListPassesTheParsedFulfillmentAndInvoicedToTheRepository()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), repository);
+
+        await handler.HandleAsync(
+            NewQuery() with { FulfillmentStatus = "prepared", Invoiced = "TRUE" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal((OrderFulfillmentStatus.Prepared, true), (repository.LastFulfillmentStatus, repository.LastInvoiced));
+    }
+
+    [Fact]
+    public async Task ListWithoutTheNewFiltersPassesNull()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), repository);
+
+        await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(((OrderFulfillmentStatus?)null, (bool?)null), (repository.LastFulfillmentStatus, repository.LastInvoiced));
+    }
+
+    [Fact]
+    public async Task ListRejectsAnUnknownFulfillmentStatus()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewQuery() with { FulfillmentStatus = "Shipped" }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.order.fulfillment_status_invalid", error.Code);
+    }
+
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("1")]
+    public async Task ListRejectsAnInvoicedThatIsNotTrueOrFalse(string invoiced)
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewQuery() with { Invoiced = invoiced }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.order.invoiced_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task TheRowCarriesFulfillmentAndInvoiced()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page.Items);
+        Assert.Equal(("NotPrepared", false), (row.FulfillmentStatus, row.Invoiced));
+    }
+
     private static ListOrdersQuery NewQuery() =>
         new(TenantId, null, null, null, null, null, null, null, null, Source: null, Page: 1, PageSize: 10);
 
@@ -276,8 +334,7 @@ public sealed class ListOrdersHandlerTests
             new StubQuotationRepository(AnyQuotation()),
             customers,
             advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
-            new StubExecutionContext(SubjectId, TenantId),
-            new FixedTenantClock(Now));
+            new StubExecutionContext(SubjectId, TenantId));
 
     // Una cotización cualquiera: el doble de IQuotationRepository exige una, y los pedidos de estas
     // pruebas son manuales, así que nunca se consulta su número.
@@ -285,7 +342,7 @@ public sealed class ListOrdersHandlerTests
         Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod: null, notes: null, QuotationParties.Empty, billingAccount: null, defaultCurrency: "COP",
-            customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
+            customerVatSurplus: false, customerWithholdings: [], MunicipalContext.None, AdvisorId, Now);
 
     // Un pedido manual con una línea cuyo precio con IVA da el total pedido: 2 unidades a total/2.
     private static Order NewRow(string orderNumber, Guid clientId, decimal total = 23_800m) =>
@@ -293,7 +350,7 @@ public sealed class ListOrdersHandlerTests
             OrderId.New(),
             TenantId,
             orderNumber,
-            new OrderHeader(clientId, AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(clientId, AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
@@ -304,9 +361,9 @@ public sealed class ListOrdersHandlerTests
             },
             ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, total / 2m, 0m, 19)],
-            OrderPaymentStatus.PaymentPending,
             notes: null,
             AdvisorId,
             [],
-            Now);
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 }

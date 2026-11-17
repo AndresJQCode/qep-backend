@@ -53,4 +53,43 @@ public static class ShopifyErrorCodes
     /// <summary>§5.1: firma <c>X-Shopify-Hmac-Sha256</c> ausente o inválida (401, sin encolar). No está en la tabla de §7.1: es el
     /// análogo de <c>messaging.webhook.signature_invalid</c>, a ratificar.</summary>
     public const string WebhookSignatureInvalid = "shopify.webhook.signature_invalid";
+
+    /// <summary>Spec 2026-11-13: la tienda ya asoció ese nombre de línea personalizada a una variante. 409, por el índice único
+    /// <c>IX_custom_line_mappings_connection_title</c>.</summary>
+    public const string CustomLineAlreadyMapped = "shopify.custom_line.already_mapped";
+
+    /// <summary>Spec 2026-11-13: la variante no existe en el tenant. 422.</summary>
+    public const string CustomLineVariantNotFound = "shopify.custom_line.variant_not_found";
+
+    /// <summary>Spec 2026-11-13: la variante existe pero está inactiva. 422.</summary>
+    public const string CustomLineVariantInactive = "shopify.custom_line.variant_inactive";
+
+    /// <summary>Spec 2026-11-14 §6: el cambio de Shopify no existe en el tenant. 404.</summary>
+    public const string EditNotFound = "shopify.edit.not_found";
+
+    /// <summary>Spec 2026-11-14 §4: el cambio ya no está pendiente ni bloqueado (se aplicó, se rechazó, se revisó o lo reemplazó
+    /// otro). 409.</summary>
+    public const string EditNotOpen = "shopify.edit.not_open";
+
+    /// <summary>Plan 2026-11-14 D9: «revisado» es sólo para un cambio bloqueado. 422.</summary>
+    public const string EditNotBlocked = "shopify.edit.not_blocked";
+
+    /// <summary>Spec 2026-11-14 §4: aceptar con el pedido sin poder editarse (preparado, facturado, anulado). 422.</summary>
+    public const string EditOrderNotEditable = "shopify.edit.order_not_editable";
+
+    /// <summary>Spec 2026-11-14 §4: aceptar con el pago del pedido fuera de los estados que la tienda admite. 422.</summary>
+    public const string EditPaymentStatusNotAllowed = "shopify.edit.payment_status_not_allowed";
+
+    /// <summary>Spec 2026-11-14 §4: aceptar con una línea que no empareja con una variante. 422.</summary>
+    public const string EditProductUnmatched = "shopify.edit.product_unmatched";
+
+    /// <summary>Spec 2026-11-14 §5: corregir un pedido cuya fila del espejo no está importada. 422.</summary>
+    public const string OrderNotImported = "shopify.order.not_imported";
+
+    /// <summary>Plan 2026-11-14 D21: la parte de envío sólo se corrige en Colombia. 422.</summary>
+    public const string OrderAddressNotSupported = "shopify.order.address_not_supported";
+
+    /// <summary>Owner 2026-11-14: «Sincronizar con Shopify» de un pedido que no tiene un envío retenido (nunca lo tuvo, ya salió o
+    /// ya se soltó). 409: el estado cambió, la pantalla recarga el panel.</summary>
+    public const string PushNothingHeld = "shopify.push.nothing_held";
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -247,6 +248,17 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
         if (recipient is { MessageId: { } existingMessage, ConversationId: { } existingConversation })
         {
             await using var reuse = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            // Borrar clientes (A-12 y P4): como el camino que abre la conversación, el candado compartido del cliente va antes de cualquier
+            // fila y después se vuelve a buscar el cliente. Si el borrado ganó, la conversación y el mensaje ya no existen: el destinatario
+            // queda inalcanzable, sin volver a apuntarlos y sin llamar a Meta.
+            if (recipient.CustomerId is not { } reusedCustomer
+                || !await MessagingCustomerReferenceLock.HoldAsync(dbContext, recipient.TenantId, reusedCustomer, cancellationToken))
+            {
+                await reuse.RollbackAsync(cancellationToken);
+                await SkipAsync(recipient, CampaignFailureCodes.Unreachable, cancellationToken);
+                return null;
+            }
+
             var stillOwned = await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 UPDATE messaging.campaign_recipients SET message_id = {existingMessage}, conversation_id = {existingConversation}
@@ -276,10 +288,24 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
             return new PreparedSend(existingMessage, existingConversation);
         }
 
+        // El despachador salta a los destinatarios sin cliente antes de preparar; el abridor nunca recibe un nulo.
+        var customerId = recipient.CustomerId ?? throw new InvalidOperationException("Un destinatario sin cliente no abre conversación.");
         var contact = new MessagingCustomerContact(
-            recipient.CustomerId, recipient.CustomerName, recipient.WaId is null ? null : "+" + recipient.WaId, recipient.UserId, IsActive: true, MarketingOptOut: false);
+            customerId, recipient.CustomerName, recipient.WaId is null ? null : "+" + recipient.WaId, recipient.UserId, IsActive: true, MarketingOptOut: false);
         // §6.3 paso 3.1: sin asignar. Una respuesta entra por la ingesta normal y cae en «Sin asignar», donde un asesor la toma.
-        var opened = await opener.OpenAsync(recipient.TenantId, recipient.ConnectionId, contact, assignedMemberId: null, actorUserId: null, now, cancellationToken);
+        OpenedConversation opened;
+        try
+        {
+            opened = await opener.OpenAsync(recipient.TenantId, recipient.ConnectionId, contact, assignedMemberId: null, actorUserId: null, now, cancellationToken);
+        }
+        catch (ResourceNotFoundException exception) when (exception.Code == MessagingErrorCodes.CustomerNotFound)
+        {
+            // Borrar clientes (A-12 y P4): el cliente se borró mientras el abridor esperaba su candado. Es el mismo destinatario que uno
+            // sin cliente: inalcanzable, sin conversación y sin pasar por el reintento del lease.
+            await SkipAsync(recipient, CampaignFailureCodes.Unreachable, cancellationToken);
+            return null;
+        }
+
         var messageId = recipient.MessageId ?? Guid.CreateVersion7();
 
         // Paso 3.2: mensaje y message_id del destinatario, en la misma transacción. client_id = el destinatario: la clave única
@@ -521,7 +547,7 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
 
         public Guid TenantId { get; set; }
 
-        public Guid CustomerId { get; set; }
+        public Guid? CustomerId { get; set; }
 
         public string CustomerName { get; set; } = string.Empty;
 

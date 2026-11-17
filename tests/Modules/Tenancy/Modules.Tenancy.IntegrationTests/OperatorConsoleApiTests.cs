@@ -4,8 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
-using Testcontainers.PostgreSql;
 using static Modules.Tenancy.IntegrationTests.TenantModulesApiTests;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -174,17 +174,6 @@ public sealed class OperatorConsoleApiTests
         Assert.Equal(code, problem?.Code);
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private sealed record CatalogPayload(string CatalogVersion, List<CatalogRole> Roles, List<CatalogPermission> Permissions);
     private sealed record CatalogRole(string Role, string[] Permissions);
     private sealed record CatalogPermission(string Permission);
@@ -203,7 +192,7 @@ public sealed class OperatorConsoleApiTests
         var all = await GetOkAsync<TenantPagePayload>(client, Url("tenants"));
         Assert.Equal(2, all.Total);
         Assert.Equal(new SummaryPayload(2, 0, 0), all.Summary);
-        Assert.All(all.Items, item => Assert.Equal((7, 16, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
+        Assert.All(all.Items, item => Assert.Equal((7, 18, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
 
         var slug = (await GetOkAsync<DetailPayload>(client, Url($"tenants/{first}"))).Slug;
         var searched = await GetOkAsync<TenantPagePayload>(client, Url($"tenants?search={slug}"));
@@ -344,7 +333,7 @@ public sealed class OperatorConsoleApiTests
                 TestContext.Current.CancellationToken),
             HttpStatusCode.UnprocessableEntity, "tenancy.modules.inconsistent_dependencies");
         var detail = await GetOkAsync<DetailPayload>(client, Url($"tenants/{tenantId}"));
-        Assert.All(detail.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer" or "loans" or "store")), module => Assert.Equal("active", module.Status));
+        Assert.All(detail.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer" or "loans" or "store" or "ai" or "support")), module => Assert.Equal("active", module.Status));
     }
 
     [Fact]

@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Modules.Authorization.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -30,7 +30,7 @@ public sealed class AuthorizationPermissionsMigrationTests
     [Fact]
     public async Task ACustomRoleWithTheOldCodesEndsWithTheOrderCodes()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -49,7 +49,7 @@ public sealed class AuthorizationPermissionsMigrationTests
     [Fact]
     public async Task RevertingPutsTheOldCodesBack()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -90,16 +90,5 @@ public sealed class AuthorizationPermissionsMigrationTests
         await using var command = new NpgsqlCommand(
             $"""SELECT permissions FROM "authorization".roles WHERE id = '{RoleId}'""", connection);
         return (string[])(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 }

@@ -19,7 +19,7 @@ public sealed class OrderStoreFactoryTests
     };
 
     private static OrderHeader Header() =>
-        new(Guid.CreateVersion7(), Advisor, "COP", null, IsRetail: true, null, false, false);
+        new(Guid.CreateVersion7(), Advisor, "COP", null, IsRetail: true, null, false, []);
 
     private static OrderLineInput Line() =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));
@@ -41,12 +41,13 @@ public sealed class OrderStoreFactoryTests
         Billing() with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
 
     private static QuotationParties Parties(
-        QuotationPartyDetails? shipping = null, bool? withRetention = false, bool? vatSurplus = false) =>
-        new(Billing(), shipping ?? Shipping(), BillingWithRetention: withRetention, BillingVatSurplus: vatSurplus);
+        QuotationPartyDetails? shipping = null, bool? vatSurplus = false) =>
+        new(Billing(), shipping ?? Shipping(), BillingVatSurplus: vatSurplus);
 
     private static Order NewStoreOrder(QuotationParties parties) =>
         Order.CreateFromStore(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), parties, Account, [Line()], null, Advisor, Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime),
             "store-checkout:abc");
 
     [Fact]
@@ -55,6 +56,7 @@ public sealed class OrderStoreFactoryTests
         var buyer = Guid.CreateVersion7();
         var order = Order.CreateFromStore(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()], null, Advisor, Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime),
             "store-checkout:abc", buyerAccountId: buyer);
         Assert.Equal(buyer, order.BuyerAccountId);
     }
@@ -109,8 +111,9 @@ public sealed class OrderStoreFactoryTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Order.CreateExternal(
                 OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()],
-                OrderPaymentStatus.PaymentPending, null, Advisor, [], Now, OrderSource.Store, "T-0001",
-                ShippingDetails.None, null, null));
+                OrderPaymentStatus.PaymentPending, null, Advisor, [], Now,
+                orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Store, "T-0001",
+                ShippingDetails.None, null, null, OrderLineCosts.None));
 
         Assert.Equal(ExternalOrderErrors.SourceInvalid, error.Code);
     }
@@ -118,7 +121,8 @@ public sealed class OrderStoreFactoryTests
     [Fact]
     public void QuoteForStoreHasNoClientAndIsNeverAManualOrder()
     {
-        var quote = Order.QuoteForStore(TenantId, "COP", isRetail: true, [Line()], Now);
+        var quote = Order.QuoteForStore(TenantId, "COP", isRetail: true, [Line()], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal((Guid.Empty, OrderSource.Store), (quote.ClientId, quote.Source));
         Assert.Null(quote.BillingAccount);
@@ -149,7 +153,7 @@ public sealed class OrderStoreFactoryTests
     public void AStoreOrderStillRequiresTheBillingTaxProfile()
     {
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            NewStoreOrder(Parties(withRetention: null)));
+            NewStoreOrder(Parties(vatSurplus: null)));
 
         Assert.Equal("order.billing.tax_profile_required", error.Code);
     }

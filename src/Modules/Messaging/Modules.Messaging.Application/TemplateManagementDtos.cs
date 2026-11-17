@@ -37,6 +37,18 @@ public sealed record QuotationTemplateStatusDto(Guid TemplateId, string Status, 
 /// no aprovisionada. Un frontend viejo lo ignora.</summary>
 public sealed record OrderTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
 
+/// <summary>Soporte fase 2: el estado de la plantilla «Aviso de respuesta» de la conexión, con la misma forma que la de pedido. <c>null</c> =
+/// no aprovisionada, botón de crear. Un frontend viejo lo ignora.</summary>
+public sealed record SupportReplyTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Soporte fase 4b: el estado de la plantilla «Respuesta formal» (con el PDF de encabezado), aparte de la de «Aviso de respuesta»
+/// porque son dos aprovisionamientos distintos. <c>null</c> = no aprovisionada. Un frontend viejo lo ignora.</summary>
+public sealed record SupportFormalReplyTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
+/// <summary>Soporte fase 4b: el estado de la plantilla de la encuesta de satisfacción. <c>null</c> = no aprovisionada. Un frontend viejo lo
+/// ignora.</summary>
+public sealed record SupportSurveyTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
 /// <summary>
 /// §4.3: la pantalla de plantillas de una conexión en una llamada: la conexión (nombre y número), el estado de la plantilla de
 /// cotización, cuándo se sincronizó el espejo por última vez (<c>null</c> = nunca) y todas las plantillas, sin paginar, por nombre e
@@ -47,4 +59,7 @@ public sealed record TemplateManagementDto(
     QuotationTemplateStatusDto? QuotationTemplate,
     OrderTemplateStatusDto? OrderTemplate,
     DateTimeOffset? LastSyncedAt,
-    IReadOnlyList<ManagedTemplateDto> Templates);
+    IReadOnlyList<ManagedTemplateDto> Templates,
+    SupportReplyTemplateStatusDto? SupportReplyTemplate,
+    SupportFormalReplyTemplateStatusDto? SupportFormalReplyTemplate = null,
+    SupportSurveyTemplateStatusDto? SupportSurveyTemplate = null);

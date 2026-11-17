@@ -172,6 +172,19 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`Api.exe` corriendo bloquea todo.** `dotnet build`, `dotnet test` y los comandos `ef`
   fallan por archivo bloqueado. Detener el proceso primero. El nombre es `Api.exe` porque
   `src/Api/Api.csproj` no declara `AssemblyName`.
+- **Toda migración es expand/contract: durante el rollout, pods viejos atienden contra el esquema nuevo** (spec
+  2026-10-29, D-5). Agregar va en una versión; quitar, renombrar o volver `NOT NULL` lo que el código viejo escribe, en
+  otra. Una migración que rompe al código viejo se despliega con corte (`Recreate` o el backend a cero réplicas), y el
+  handoff del spec dice si es aditiva; si no lo dice, no lo es. Las reglas completas:
+  [README § Migraciones con pods viejos y nuevos](README.md#migraciones-con-pods-viejos-y-nuevos-expandcontract).
+- **Un hosted service o un singleton con estado nuevo se clasifica en `MultiReplicaInventory`, en el mismo commit**
+  (`tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs`, spec 2026-10-29, D-6). `MultiReplicaInventoryTests`
+  lo detecta en el contenedor real y se pone en rojo si falta, o si queda una entrada que ya no está registrada. La
+  clasificación lleva su evidencia (archivo, línea y mecanismo: `SKIP LOCKED`, lease, advisory lock, `DELETE` por corte…).
+  `Unsafe` se puede listar, pero `MoreThanOneReplicaRequiresNoUnsafeEntry` bloquea `replicas > 1` mientras quede uno.
+- **Una inicialización nueva al arrancar va dentro del lambda de `RunUnderStartupLockAsync` en `Program.cs`, nunca
+  después.** Fuera del candado de arranque (`pg_advisory_xact_lock(20261113, 1)`, `StartupLock.cs`), dos pods la corren a
+  la vez. Lo que dicen los logs 4108, 4109 y 4110 está en el mismo § del README.
 - **Las migraciones se generan con el factory de diseño, no con `--startup-project`.**
   `Api.csproj` no referencia `Microsoft.EntityFrameworkCore.Design`:
 
@@ -187,7 +200,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   allowlist en `.claude/settings.json` llevan comodín a propósito, para que no sean un cuarto
   lugar que se olvida.
 - **Cambiar `Directory.Packages.props` sin regenerar los lock files no rompe tu máquina: rompe
-  el `docker build`.** Los 74 `packages.lock.json` —uno por `.csproj`, activados por
+  el `docker build`.** Los 152 `packages.lock.json` —uno por `.csproj`, activados por
   `RestorePackagesWithLockFile` en `Directory.Build.props`— se regeneran con
   `dotnet restore --force-evaluate` y se commitean **junto** con el props. En local un `restore`
   normal los actualiza solo y no protesta; el `Dockerfile` corre `--locked-mode`, donde NuGet
@@ -263,6 +276,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
+- **Un rol que no concede ningún permiso ofrecido en el tenant no se agrega ni se invita** (spec 2026-11-15): `422
+  tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false`. Cajero sin `pos` es el caso típico,
+  pero vale también para un rol custom de sólo permisos de un módulo apagado. Quien ya tiene el rol lo conserva: el `PUT`
+  sólo rechaza los roles **agregados**, porque la pantalla reenvía todos al guardar. La regla vive en `RoleAssignability`
+  y la comparten `/authorization/catalog` y `RoleReferenceValidator`; no la copies en un handler. Una prueba que invite o
+  asigne un rol de módulo prende el módulo antes (`PosApiHarness.InviteCashierAsync` ya lo hace).
 - **La cotización por Meta no usa `OutboundGuards` ni `ConversationOpener.OpenAsync`** (spec 2026-10-21). `QuotationTemplateOutbound`
   busca la conversación por teléfono (`OpenByPhoneAsync`) y no por `customer_id`, para no caer en el hilo de otro número (D16b);
   pasa `seen: 0` para no tocar los no leídos (D16a); y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la
@@ -283,8 +302,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   una sentencia más antes de la de Shopify, que sigue siendo la última. Renombrar esa columna compila y rompe la fusión en
   ejecución; la amarran `CustomerMergeReferencesTests` y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los veintidós módulos construidos son ApiAccess, Audit, Authorization, Buyers, Catalog, Companies, Customers, Geography,
-  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Store, Suppliers y Tenancy — cada
+  Los veintitrés módulos construidos son ApiAccess, Audit, Authorization, Buyers, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Store, Suppliers, Support y Tenancy — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
@@ -357,6 +376,35 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   como `IIdentityAuditRecorder`). Y un consumidor de una conexión nunca referencia
   `Modules.Integrations.Application`: declara su puerto y el adaptador va en Bootstrapper
   (`IntegrationsLayerTests`).
+- **El token de Shopify de una conexión lo refresca sólo `ShopifyTokenRefreshWorker`; el canje y el enlace adquieren y guardan
+  uno nuevo, y los tres van bajo el candado `ShopifyTokenLock.Namespace`** (spec 2026-11-12). El canje
+  (`CompleteShopifyInstall`) guarda el token en la instalación y, si la tienda ya tiene conexión, canjea con el candado de esa
+  conexión; el enlace (`LinkShopifyStore`) refresca el de la instalación con el candado de la instalación y lo pasa a la
+  conexión con el de la conexión. El refresh token rota: dos refrescos de la misma tienda, o un refresco y un canje o un
+  reenlace a la vez, dejan guardado un par que Shopify ya retiró, y la tienda se cae una hora después sin error. El candado es
+  un advisory lock de transacción de dos claves `(20261112, hashtext(id))` sobre el id de la conexión o de la instalación
+  (`IIntegrationsUnitOfWork`): el worker usa la variante que no espera y salta la conexión; el canje y el reenlace, la que
+  espera, **antes** de llamar a Shopify o de cargar la conexión. Ningún request tiene dos candados a la vez, y así no hay
+  ciclo. El `Version` optimista no alcanza: el perdedor ya gastó el refresh token. Un camino nuevo que pida o refresque un
+  token de Shopify —o que reemplace los secretos de una conexión que ya existe— toma el mismo candado; los consumidores sólo
+  leen el guardado.
+- **Rotar el client secret de la app de Shopify en el Partner Dashboard sin actualizar `Backend-prod` deja todas las tiendas en
+  `token_expired` en el siguiente refresco** (spec 2026-11-12). El refresco se firma con ese secreto, Shopify responde un 4xx y
+  el worker lo toma como definitivo; la única salida es que cada comercio vuelva a abrir la app. El secreto se rota en los dos
+  lados en el mismo despliegue.
+- **Una conexión puede publicar `integrations.connection-needs-attention.v1` dos veces seguidas, y el payload trae
+  `failureCode`** (owner, 2026-11-12: el evento identifica el error). `ReportTokenExpiredAsync` publica también desde
+  `NeedsAttention` con otro código (por ejemplo `webhooks_not_registered` → `token_expired`); desde `Paused` no publica, y ya en
+  `token_expired` no hace nada. Hoy nadie consume ese evento: el primero que lo haga (un correo, un aviso) decide por
+  `failureCode`, o le llegan dos avisos por la misma conexión.
+- **Con el token de Shopify vencido, `ShopifyConnectionRef` sale `IsOperational = true` y `AccessToken = null`** (spec
+  2026-11-12 §6.4, D7). No lo «arregles» a no operativa: `RedactShopAsync` daría la tienda por desinstalada y borraría su espejo,
+  y la ingesta dejaría de importar, todo porque el worker iba tarde. Quien llame a la Admin API mira `AccessToken`, no
+  `IsOperational` (`ReconcileStore` salta con 503 `sync_unavailable`; `ListOperationalAsync` la deja fuera). Lo amarran
+  `ShopRedactWithAnExpiredTokenDeletesNothingOfTheCurrentConnection` y `OrdersTopicWithAnExpiredTokenStillImports`.
+- **`token_expired` sale sólo de un 4xx salvo 429 en el refresco.** El gateway clasifica todo no-2xx que no sea 429 ni 5xx como
+  `Rejected` (un 3xx incluido), y eso sirve al canje y al probador; el worker filtra por status (`IsDefinitiveRejection`) porque
+  `token_expired` sólo se sale reautorizando. Un consumidor nuevo del refresco hace lo mismo.
 - **Instagram es un canal de la misma bandeja de Messaging, no un módulo** (spec 2026-10-14). La conversación lleva
   `channel` (`WhatsApp` | `Instagram`) y en Instagram `user_id` es el IGSID numérico y `wa_id` es siempre `null`: todo
   código nuevo que empareje por teléfono tiene que tratar ese `null`. Las plantillas, las campañas y `POST /conversations`
@@ -383,7 +431,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Un pedido tiene datos propios y puede no tener cotización** (spec 2026-10-15). `Order` lleva cliente,
   asesor, cuenta de cobro, partes, líneas y totales; `QuotationId` es opcional y `Source` dice de dónde nació
   (`Quotation`, `Manual`, `Shopify`). Convertir **copia**: la cotización `Converted` queda congelada y editar un
-  pedido pendiente edita `order_items`, nunca `quotation_items`. Un pedido sin sesión se crea sólo por
+  pedido editable edita `order_items`, nunca `quotation_items`. Un pedido sin sesión se crea sólo por
   `IExternalOrderWriter` (acepta cliente incompleto); el manual exige cliente completo con CUC. Los eventos
   `quotations.order.created.v1` y `order.cancelled.v1` llevan `source` y `quotationId` nullable: Pipeline los lee
   por nombre y guarda la foto en `pipeline.deal_orders` (un `order.created` **con** cotización no hace nada: ya
@@ -420,6 +468,19 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **En esta máquina las pruebas de integración necesitan `$env:Seed__Enabled = "false"`.** Los user-secrets traen
   `Seed:*` y el host de pruebas falla en el arranque con `Seed:OwnerEmail is required when Seed:Enabled is true`. No es
   del código: es la configuración local del developer (2026-10-21).
+- **No pongas `ConnectionStrings:QepDatabaseListener` en tus user-secrets sin fijarla en el harness** (spec 2026-10-29,
+  D-2). Sólo `SeedStartupTests` la fija vacía; las demás factorías de integración corren en `Development` y cargan los
+  user-secrets, y el candado de arranque (`StartupLockConnectionString`) y el listener de Messaging la usan en **cada** host
+  de prueba. Con un valor inalcanzable, todo host falla al arrancar; con uno alcanzable, todos los hosts de prueba se
+  serializan en un solo advisory lock global (`pg_advisory_xact_lock(20261113, 1)`) de esa base, aunque cada uno tenga su
+  propio contenedor. Si la necesitas en local, fíjala en el harness (vacía o al contenedor de la prueba).
+- **Las pruebas de integración comparten host por clase (`Shared<Modulo>Host`), y no todas pueden** (2026-11-14; Quotations
+  bajó de 63 a 16 min). Una prueba nueva usa `sharedHost.StartTestAsync()` sólo si corre con la configuración por defecto y no
+  toca nada global: dobles que anotan llamadas, colas o workers que reclaman filas de toda la base, `IClock` o
+  `WithWebHostBuilder`, conteos o SQL sin tenant, semillas o migraciones. Si toca algo de eso, levanta su propio host
+  (`StartDatabaseAsync` + `new QepApiFactory`); las de migración usan `StartEmptyDatabaseAsync`. Una prueba compartida que rompe
+  la regla falla según el orden de las demás de su clase, y el síntoma no se parece a la causa. `OutboxMessagesAsync` ya
+  descarta los eventos de las pruebas anteriores (`OutboxBaseline`).
 - **Un `FromSql` crudo debe listar todas las columnas mapeadas de la entidad.** El `SELECT … FOR UPDATE` de
   `QuotationSettingsStore` no se puede componer (EF lo envolvería en una subconsulta), así que EF no completa
   las columnas que falten: al agregar `freight_tax_rate_id` a `tenant_quotation_settings`, guardar el mínimo de
@@ -447,10 +508,52 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `INSERT` a mano en `quotations.orders` con `source = 'Shopify'` necesita una clave que no exista. Precedente (Review
   Focus 1 de `docs/superpowers/plans/2026-10-18-shopify-backend.md`): borrar la fila del espejo y recibir el pedido otra vez deja un pedido, y si llega cancelado lo anula —hasta
   `8b58fe9f` (2026-10-18) la fila nueva cancelada quedaba `Ignored` con el pedido vivo (`ReimportAfterMirrorRowDeleted*`).
-- **Todo cambio de una fila del espejo de Shopify pasa por `ShopifyOrderIngestion.ApplyAsync`.** El webhook, la
+- **Todo snapshot nuevo de una fila del espejo de Shopify pasa por `ShopifyOrderIngestion.ApplyAsync`.** El webhook, la
   conciliación, «Sincronizar ahora» y el reintento manual llaman al mismo método, que captura el estado anterior antes de
   `ApplySnapshot` y corre la reacción de pago y cancelación (§6.3) antes del guardado (2026-10-18, `82c4b2d9..f9b98fd1`, `WorkerFailedReactionIsSeenAgainOnRetry`). Llamar al importador o
   a `ApplySnapshot` directo compila y pasa las pruebas del importador, y pierde en silencio el pago o la cancelación.
+  Desde el spec 2026-11-14 también detecta las ediciones: `IShopifyOrderEditDetector.DetectAsync` corre ahí, después del espejo
+  y antes de la reacción, y sólo crea el cambio (no escribe en Quotations); `ApplyPendingAsync` aplica el pendiente de una tienda
+  `Automatic` **después** del guardado y atrapa el `concurrency.conflict` de Quotations (el cambio queda `Pending`). Un cambio
+  con algún grupo en conflicto no se aplica solo ni en `Automatic`: queda `Pending` para «Cambios por revisar» (spec §3). Un
+  camino nuevo que dispare ediciones fuera de la ingesta rompe la regla del único camino y deja cambios sin espejo que los
+  explique. Hay otros que escriben la fila **sin** traer un snapshot, y no son un bug: las decisiones sobre un cambio
+  (`RecordApplied` al aceptar, `AdoptPayload` al rechazar o revisar), el trabajo de corrección de ciudad (`RecordProjection`) y
+  la corrección del asesor (`SetQepAttributes`). Ninguno llama a `ApplySnapshot`.
+- **La corrección del asesor no mueve `applied_projection`; la corrección de ciudad del sistema sí** (plan D3, spec
+  2026-11-14 §5). La proyección es lo que QEP escribió desde Shopify: si la corrección del asesor la moviera, la siguiente edición
+  de Shopify sobre ese grupo dejaría de ser conflicto y pisaría lo del asesor, también después del eco. Lo amarran
+  `ACorrectionDoesNotMoveTheProjection`, `AfterAnEchoALaterShopifyEditOfThatGroupIsStillAConflict` y
+  `TheEchoOfAPushedCorrectionCreatesNoChange`; el trabajo de sinónimos la mueve (`AnAppliedOrderCorrectionMovesTheProjectionAndEnqueuesAPush`).
+  Una fila sin `applied_projection` (importada antes) toma la del pedido actual (D6, `AnOrderImportedBeforeTheSyncTakesAShopifyNoteEditWithoutConflict`).
+  Y un eco que el cambio no aplicaba nunca mueve la proyección: sólo `SettleAsync`/`ApplyAsync` la mueven para los grupos que el
+  propio cambio aplicaba.
+- **`orderUpdate` reemplaza la dirección entera, y un envío sólo manda los grupos que se encolaron** (spec 2026-11-14, plan D12).
+  `company` (donde muchas tiendas guardan el documento) y `countryCode` salen del **último** snapshot; sin ellos, corregir la
+  ciudad borra la «Empresa» en Shopify. Mandar un grupo no encolado pisa la nota de Shopify con el `BuyerNotes` vacío de un pedido
+  importado antes (sin backfill). Lo amarran `PushKeepsCompanyAndCountryFromTheLatestSnapshot` y
+  `APushOnlySendsTheGroupsItWasEnqueuedFor`. Del `userError` de Shopify sólo se loguean los campos: el mensaje puede traer datos
+  del comprador (`ThePushNeverLogsTheTokenOrTheUserErrorMessage`).
+- **`current_quantity` ausente es `quantity`, y el descuento va sobre la cantidad original** (plan D2). Leer sólo la vigente deja
+  en 0 toda línea de un payload que no la trae (las fixtures no la traen); calcular el porcentaje sobre la vigente cambia el precio
+  neto de una línea a la que le quitaron unidades (`discount_allocations` reparte el descuento de la original).
+- **El `PUT …/shopify/orders/{id}/corrections` enrola el `QuotationsDbContext` del request en la transacción de Shopify**
+  (`ShopifyOrderCorrectionWriter`, como `CatalogProductDeletionCleanup`): el pedido, `qep_attributes` y el envío encolado
+  quedan juntos o no quedan (`AShopifyFailureAfterTheOrderWriteRollsBackBoth`). Después del commit ese contexto apunta a una
+  transacción terminada: nada en el scope vuelve a usarlo (el handler arma la respuesta con el estado que devolvió
+  `CorrectAsync`, sin releer el pedido). Un camino nuevo que corrija un pedido de Shopify y encole su envío pasa por ahí, nunca por `IShopifyOrderWriter`.
+- **Un envío a Shopify `Held` nunca lo reclama el worker; sólo lo mueven los dos endpoints de sincronización** (owner,
+  2026-11-14). Una corrección no se pierde por la conexión: guardada con la conexión no operativa (`connection_inactive`), con la
+  conexión caída al mandar (`connection_missing`) o con `access_denied`, el envío queda retenido con el motivo en `failure_code`.
+  `ListPendingAsync` y `TryClaimAsync` filtran `status = 'Pending'`, así que reactivar la conexión no lo manda: lo sueltan
+  `POST …/orders/{id}/push` y `POST …/stores/{connectionId}/pushes/release`. `IX_order_pushes_mirror_pending` cubre `Pending` y
+  `Held` (un solo envío abierto por pedido) y se fusiona igual en los dos; si cambias el filtro, cambia también `FindOpenAsync`. Un
+  motivo nuevo de la conexión va a `HoldAsync` del procesador, no a `FailAsync`: un `Failed` no se puede volver a mandar.
+- **Límite conocido de la detección de ediciones** (spec 2026-11-14): dos snapshots del mismo pedido que tocan el mismo grupo,
+  intercalados por milisegundos (B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A
+  falla), pueden dejar la proyección vieja y un `qep_changed` falso en la edición siguiente. No se cerró; la alternativa es un
+  candado advisory por fila del espejo alrededor de la detección y la aplicación. No lo «arregles» moviendo la proyección con
+  la corrección del asesor.
 - **`ShopifyLayerTests` prohíbe que el módulo Shopify referencie módulos de negocio:** Application sólo ve Tenancy y Audit.
   La conexión (Integrations), el pedido (Quotations), el cliente (Customers), el producto (Catalog) y la ciudad
   (Geography) entran por los puertos de `ShopifyPorts.cs`, con adaptador en `src/Bootstrapper/Shopify*.cs`. El costo son
@@ -459,6 +562,16 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   worker atiende), amarradas por `ShopifyWebhookTopicsParityTests` (2026-10-18, `7b83a958`), y
   `ShopifyCashOnDeliveryGateways.Normalize` copia `CarrierName.Normalize`, amarrada por `ShopifyNormalizationParityTests`
   (2026-10-18, `e157d9c2`).
+- **`shopify.custom_line_mappings` es contrato con `lulo-crm-migrator`, que la siembra por SQL** (`INSERT … ON CONFLICT
+  (connection_id, title) DO NOTHING`, spec 2026-11-13). Renombrar una columna (`id`, `tenant_id`, `connection_id`, `title`,
+  `variant_id`, `created_at`, `created_by`) o el índice `IX_custom_line_mappings_connection_title` compila, pasa las pruebas de
+  este repo y rompe la siembra de la migración de Lulo v1; se cambia junto con el spec del migrador. `title` va recortado y
+  `created_by` es id de **membresía** activa, no de usuario (como `stores.updated_by`): el migrador siembra la del dueño. Y
+  `IsCustom` exige las llaves de ids presentes en `null` **y que la línea no tenga SKU**: un fixture sin `product_id`/`variant_id`
+  no es una línea personalizada, y con «ausente = nulo» todo pedido de los fixtures quedaría en espera. Una variante borrada en
+  Shopify deja `variant` y `product` en `null` pero conserva el SKU: esa línea es de producto y nunca casa por nombre (los dos
+  parsers y `ShopifyOrderImporter.CustomTitleOf` aplican la misma regla). El 409 sale sólo del índice
+  (`ShopifyUnitOfWork` lo traduce por nombre): no lo muevas a una consulta previa en el handler.
 - **`develop` no va a `main` sin el frontend de Shopify** (2026-10-18). `shopify` está en `DefaultForNewTenants`
   (`TenantModuleKey.cs`, decisión del owner del 2026-10-15) y en `Production` la app está configurada a la fuerza —sin ella
   el pod no arranca—, así que el catálogo de Integraciones de todo tenant nuevo trae la tarjeta Shopify con
@@ -504,10 +617,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   mano: no siguen solas a la migración) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
   (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que resuelven el checker real del contenedor y lo
   corren contra el esquema de las migraciones.
-- **`CustomerMergeReferences` escribe en cinco esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
-  quotations, pos, pipeline, messaging y shopify: es SQL crudo en Bootstrapper sobre `quotations.quotations`/`orders.client_id`,
-  `pos.sales.customer_id`, `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`,
-  `messaging.conversations.customer_id`, `messaging.campaigns.audience_customer_ids` y `shopify.orders.qep_customer_id`, sobre la
+- **`CustomerMergeReferences` escribe en ocho esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
+  quotations, pos, pipeline, messaging, billing, loans, support y shopify: es SQL crudo en Bootstrapper sobre
+  `quotations.quotations`/`orders.client_id`, `pos.sales.customer_id`,
+  `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`, `messaging.conversations.customer_id`,
+  `messaging.campaigns.audience_customer_ids`, `billing.services`/`charges`/`customer_profiles.customer_id`,
+  `loans.loans.customer_id`, `support.tickets.customer_id` (sin subir `version`, como el préstamo) y `shopify.orders.qep_customer_id`, sobre la
   conexión del `CustomersDbContext` para quedar dentro de su transacción. Renombrar una de esas columnas compila y la fusión
   responde 500 (`42703`); como todo es una transacción, no fusiona nada. Lo amarran `CustomerMergeReferencesTests` (réplicas
   hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
@@ -526,6 +641,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `Touch` y sube la versión del fusionado, así que dos fusiones simultáneas del mismo cliente hacia distintos que quedan
   chocan por concurrencia optimista, y `merged_into_id` lo saca de toda fusión posterior (`customers.merge.already_merged`).
   No quites el `Touch` ni marques fusionados con un `ExecuteUpdate` que se salte el agregado.
+- **`MarginReportSource` lee `quotations.order_items`/`orders` (`unit_cost`, `paid_at`), `pos.sale_lines`/`sales` y `catalog.products`/`product_variants` por nombre.** Renombrar una columna compila y deja `/reports/margin` en 500; lo amarra `MarginReportApiTests`. Una vía nueva a `FullPaymentReceived` pasa `OrderLineCosts` al dominio: si no, el pedido cuenta en el reporte con líneas «sin costo».
 - **`OrdersReportSource` lee `quotations.orders` y `pos.sales` por nombre** (spec 2026-10-23). Es SQL crudo en
   Bootstrapper, un `UNION ALL` de las dos tablas (`ReportRowsSql`), porque son de `DbContext` distintos y EF no los une.
   Renombrar una columna de cualquiera de las dos compila y deja `/reports/orders` y `/summary` respondiendo 500: lo amarran
@@ -557,11 +673,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   migración normaliza esas filas a 'None'.
 - **El motor sólo responde una conversación `Open`, sin asesor y con el asistente `Active`; `IBotOutbound` lo vuelve a verificar al
   enviar** (`RunProcessor.DecideAsync`): entre el claim del inbox y el envío un asesor puede haber tomado la conversación.
-- **Una fila de `automation_inbox` sin mensaje es un arranque manual** (spec 2026-10-31). `POST …/automation/start` encola una fila
-  cuyo `message_id` **no siempre existe en `messages`**: no hay entrante, lo inició una persona. Por eso `run_units.inbound_message_id` y
-  `conversation_runs.last_inbound_message_id` pueden apuntar a esa fila y no a un mensaje, y el camino del motor es `ResumeAsync`, no
-  el de un entrante. Un `INNER JOIN` del inbox a `messages` pierde la fila en silencio: el arranque se encola, se marca procesado y
-  el bot no contesta, sin error. Todo lector nuevo del inbox o de esas dos columnas usa `LEFT JOIN` y trata el mensaje `null`.
+- **Una fila de `automation_inbox` tiene tipo** (spec 2026-11-03). `ReleaseRun` es la señal de que una persona resolvió, tomó, transfirió o
+  devolvió la conversación: `RunProcessor` sólo cierra la corrida viva (`Interrupted`, `human_took_over`) si arrancó antes de la fila y
+  `HumanTookOver` sigue siendo verdadero, y nunca arranca ni avanza nada. Dentro de `Engine`, una fila sin mensaje sigue siendo un arranque
+  manual: todo lector nuevo usa `LEFT JOIN` y filtra por `kind`. Una acción humana nueva sobre una conversación con asistente decide si
+  encola la señal, en el handler y no en el agregado (el bot también resuelve). Una fila del inbox puede existir sin mensaje —un arranque
+  manual (spec 2026-10-31) o una señal—, y por eso `run_units.inbound_message_id` y `conversation_runs.last_inbound_message_id` pueden
+  apuntar a una fila y no a un mensaje; el camino manual del motor es `ResumeAsync`, no el de un entrante. Un `INNER JOIN` del inbox a
+  `messages` pierde esas filas en silencio: el arranque se encola, se marca procesado y el bot no contesta, sin error. La regla del
+  `LEFT JOIN` cubre también a quien lea esas dos columnas: tiene que tratar el mensaje `null`.
 - **`Conversation.ContinueAutomation` no escribe `AutomationResumedAt`, y esa ausencia es todo el mecanismo** (spec 2026-11-01). Sellarlo
   hace que `BotAttendance.HumanTookOver` dé verdadero, la corrida termine `Interrupted` y el flujo reinicie: justo lo que `automation/continue`
   evita. No hay columna ni bandera de «continuada». Por la misma razón `AutomationPauseReason = Manual` **no** prueba que ningún asesor
@@ -575,6 +695,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   el mismo mensaje otra vez sin que el cliente escribiera. Por eso se compara su `occurred_at` contra el `last_inbound_at`
   **de antes** (el CTE `old`; el `SET` ya lo pisó con `GREATEST`). No lo muevas al motor: ahí sólo cubriría uno de los tres
   caminos. Una prueba que postee webhooks con timestamps decrecientes ya no ejerce el bot desde el segundo.
+- **El toque de un botón de la encuesta de Soporte no se encola para el bot, y el comentario que sigue sí** (owner, 2026-11-16).
+  `InboundIngestion.IsSupportSurveyTapAsync` corre después de `ShouldEnqueue` (cuya regla de orden no cambia): un `Interactive` que cita
+  un saliente cuyo `details.template` (nombre e idioma) casa con la fila `SupportSurvey` de `message_templates` de la misma conexión se
+  ingresa y se cita como siempre, pero no entra a `automation_inbox`. El mensaje no guarda el tipo de plantilla: si cambias la forma del
+  `details` de un envío de plantilla (`TemplateDetailsJson`), el filtro deja de casar sin error y el bot vuelve a contestar los toques. El
+  comentario libre no se filtra, a propósito. Lo amarra `AutomationInboxTests.ATapOnTheSurveyTemplateIsNotEnqueuedButATapOnAnotherTemplateIs`.
 - **El `clientId` de un mensaje del bot no depende del `attempts` de la fila.** Es `DeterministicClientId.For(runId,
   baseStepNumber, effectIndex)` y el id de una corrida nueva sale del id del mensaje del inbox (`RunIdFor`), así un reintento de la
   fila —o un `Start` que se deshizo— reusa corrida y `clientId`s y Mensajería, idempotente por `clientId`, no duplica (P2-R5). El
@@ -647,7 +773,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   intentos sin salida conectada manda `Chatbot.ExhaustedAction` (`Restart` por defecto), no el flujo. El traspaso a un miembro pasa por
   `IMessagingAssignees.CanReplyAsync` en el adaptador: si no puede, cae sin asignar sin fallar.
 - **`customers.data_consents` es prueba legal: sólo se inserta** (spec 2026-10-26 D-5). Nada la edita ni la borra salvo la fusión,
-  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`); el estado vigente es la última fila por `(occurred_at, sequence)`.
+  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`), y el borrado de clientes, que **no la borra**: la tabla ya no tiene
+  FK a `customers` y cada fila guarda `customer_name` y `customer_phone_e164`, una foto tomada al borrar (spec 2026-11-10); el estado vigente es la última fila por `(occurred_at, sequence)`.
   Una respuesta es una fila: el reintento de una unidad del motor lo frena `IX_data_consents_reply_message`, que `CustomersUnitOfWork`
   traduce por nombre; no lo cambies por la consulta previa. Los CHECK de la tabla exigen identidad de canal en lo que escribe el bot y
   en `Revoked` + `ThisConversation`, y la prohíben en `Revoked` + `Other`: un `INSERT` a mano tiene que cumplirlos. El texto que se
@@ -747,9 +874,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `NOT imported`) desde el corte, y el canal sale de `conversations.channel`, no de la conexión. Renombrar una de esas columnas compila y deja
   `GET …/operator/usage` en 500 (`42703`); lo amarra `PlatformUsageApiTests`, que corre contra el esquema migrado. Si agregas un tipo de mensaje
   que no deba contar como actividad del cliente, tiene que quedar fuera de `direction = 1` o llevar `imported`, o infla el reporte sin error.
-- **La presencia de la bandeja es por proceso, y es condición para subir `replicas`.** `IMessagingPresence` (singleton, alimentado por
-  `MessagingHub`) vive en memoria: con más de una réplica cada una vería sólo a sus conectados y el reporte de uso mostraría a medias, sin error.
-  Antes de subir `replicas` hay que moverla a algo compartido (Redis o una tabla con latido), o retirar «Conectados» de la pantalla.
+- **La presencia de la bandeja es compartida sólo con `Valkey:Areas:Presence`, y es condición para subir `replicas`** (spec 2026-11-13, D-2).
+  `MessagingHub` escribe en `IMessagingPresence` y el reporte de uso lee por `IMessagingPresenceReader`; los registra `AddQepValkey`. Prendida,
+  cada pod escribe a sus conectados en `qep:presence:{tenantId}` (sorted set, latido de 30 s en `PresenceHeartbeatWorker`, ventana de lectura de
+  90 s, `EXPIRE 120`). Apagada, o con Valkey caído, vuelve a ser por pod: el registro local `MessagingPresence`, y con más de una réplica cada una
+  ve sólo a sus conectados, a medias y sin error (con Valkey caído queda un `Warning` por lectura y `qep_valkey_fallbacks_total{area="presence"}`).
+  Desconectar quita al miembro sólo si el pod no le tiene otra pestaña (`MessagingPresence.HasConnection`); si sigue conectado en otro pod, el
+  latido de ese pod lo vuelve a poner en ≤ 30 s. Un camino nuevo que lea la presencia pasa por el lector, no por `Snapshot()`, que es sólo local.
 - **Las reglas del perfil y de la contraseña del comprador duplican las de Store e Identity, y las amarra `BuyerParityTests`** (`tests/Bootstrapper/Bootstrapper.UnitTests`).
   Buyers no ve a Store ni a Identity, así que `BuyerPasswordRules` y `BuyerProfileValidator` son copias de `PublicOrderRequestBodyValidator`, `StoreRequestBilling`/`StoreRequestShipping`
   y de los límites de contraseña de Identity. Cambiar una sin la otra pone la prueba en rojo; el error es de paridad, no del código que acabas de tocar.
@@ -774,10 +905,326 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El header de sesión del comprador está declarado dos veces.** `PublicBuyerEndpoints.BuyerSessionHeader` (Buyers) y `StorefrontClient.BuyerSessionHeader` (Store, que no
   ve a Buyers); `BuyerParityTests.TheBuyerSessionHeaderMatches` los ata. El BFF sólo borra la cookie con el código `store.buyer.session_invalid`: no devuelvas un 401 con
   sesión válida (por eso la contraseña actual mala es `422 store.buyer.password_incorrect`).
-- **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Pending && PaymentStatus == PaymentPending && PaymentProofs.Count == 0` (D5; un asesor puede registrar un comprobante dejando el pago en `PaymentPending`, y ese pedido ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
+- **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Open && PaymentStatus == PaymentPending && PaymentProofs.Count == 0 && !IsPrepared && !IsInvoiced` (D5 y spec 2026-11-10, `Order.CanBeCancelledByBuyer`: un pedido con cualquier comprobante, preparado o facturado ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
 - **`Order.LinkBuyerAccount` no sube `Version`, pero `Version` es token de concurrencia.** El enlace del alta diferida es invisible para el `If-Match` de la consola, y aun así su `UPDATE` lleva `WHERE version = …`: si otra escritura ganó, `BuyerOrderGateway.LinkAsync` relee y reintenta una vez (sólo si sigue vacío). El checkout resuelve la sesión del comprador siempre que llega el header, no sólo con `updateProfile`; `ScalarTextAsync` de las pruebas de Store devuelve `""` para un `NULL`.
+- **El enlace del pedido de la tienda con la cuenta del comprador lo deciden el correo de facturación y la marca `buyer_account_set_by_member`** (spec 2026-11-15). El checkout y el inicio de sesión enlazan por correo verificado, sólo en pedidos de origen `Store`. Cuando un asesor cambia o quita la cuenta (`PUT`/`DELETE …/orders/{id}/buyer-account`, `Order.SetBuyerAccountByMember`) la marca queda en `true`, también al quitar sobre un pedido sin cuenta, y con la marca en `true` ningún camino automático (`LinkBuyerAccount`, `LinkStoreOrdersByBillingEmailAsync`) toca la cuenta. Un camino automático nuevo respeta la marca, o deshace la decisión del asesor en el siguiente inicio de sesión del comprador. El correo del detalle lo resuelve `IQuotationBuyerAccountLookup` (adaptador en Bootstrapper): una cuenta borrada deja el id en el pedido y el detalle responde `buyerAccount: null`. La auditoría (`quotation.order.buyer_account_changed`) lleva sólo los dos ids en `changedFields`, nunca correos; el historial del pedido (`BuyerAccountChanged`, sólo la decisión del asesor) sí nombra los correos, a propósito (owner, 2026-11-15). No «unifiques» las dos reglas.
+- **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9; Shopify desde el spec 2026-11-14). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`, y en un pedido de Shopify lleva «Shopify #N» y la dirección cruda, nunca la nota del comprador, y no viaja a Shopify. `BuyerNotes` la escriben `CreateFromStore`, la importación de Shopify (`CreateExternal`) y la sincronización de Shopify, y el asesor **sólo** en pedidos de Shopify (`UpdateExternalBuyerNotes`, que responde `order.order.source_invalid` en cualquier otro origen; `EditExternalShippingParty` no la toca). En un pedido de la tienda pública sigue intocable: un método nuevo que la edite ahí le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill), y los de Shopify importados antes del spec 2026-11-14 también: su nota sigue dentro de `Notes`.
+- **`support.ticket.view` es una política, no un permiso: exige `support.ticket.read` o `support.ticket.manage`** (plan de soporte
+  fase 1, D5; el owner fijó que quien tenga cualquiera de los dos ve todos los tickets del tenant). Vive en `SupportPolicies.TicketView`,
+  fuera de `SupportPermissions`, para que no se cuente ni se asigne como permiso, y se registra con `AddAnyPermissionRequirement`
+  (`QepServiceCollectionExtensions`); `SupportPolicies.SettingsView` (`support.settings.view`) hace lo mismo con `read`, `manage` o
+  `support.settings.manage`. Una ruta de lectura de Soporte con `RequireAuthorization(SupportPermissions.Read)` deja afuera a un rol con
+  sólo `manage`, y el handler tiene que revalidar con la misma regla (`SupportAuthorization.EnsureCanViewAsync` /
+  `EnsureCanViewSettingsAsync`), no con `EnsureAsync(Read)`. Es el primer módulo con este patrón.
+- **Una columna con id de membresía en el esquema `support` entra en `SupportUserReferenceProbe`** (`src/Bootstrapper/`). Hoy revisa
+  `tickets.assignee_member_id`, `ticket_events.actor_member_id`, `ticket_replies.author_member_id`,
+  `unclassified_messages.resolved_by_member_id`, `form_versions.created_by`, `legal_text_versions.created_by`,
+  `legal_document_versions.created_by` y `ticket_notes.author_member_id`; una columna nueva que no se sume ahí deja borrar al usuario que
+  referencia, sin error. Los ids de membresía dentro de `ticket_events.details` (responsable anterior y nuevo de un
+  `AssigneeChanged`) **no** se revisan, a propósito: si el usuario se borra, la traza los muestra como miembro removido («Sin
+  nombre»). No los «arregles» sumando un escaneo del JSON: retendría a todo usuario que alguna vez fue responsable de un ticket.
+- **El calendario de Soporte no es el de la bandeja** (owner, 2026-11-15, spec §13.4, revierte la decisión del 2026-11-14). Es lunes a
+  viernes, menos los festivos de Colombia si el país del tenant es `CO` (`SupportBusinessCalendar`, en Bootstrapper por
+  `ColombianHolidays`); no lee el horario de atención ni sus excepciones. No lo «unifiques» con `BusinessHoursSchedule`: un horario
+  que abre los sábados correría los términos legales. Lo amarra
+  `SupportBusinessCalendarTests.TheCalendarIsMondayToFridayLessColombianHolidaysOnEveryDayOfAYear`.
+- **Un ticket `Resolved` o `Closed` no cambia de responsable, tipo ni cliente: `422 support.ticket.not_editable`** (R9, owner
+  2026-11-15). La guarda está en el agregado (`SupportTicket.EnsureEditable`), no en los handlers, para que la cumpla todo camino
+  nuevo; rechaza aunque el valor sea el mismo. La fusión de clientes (`CustomerMergeReferences`, SQL crudo) sigue moviendo tickets en
+  cualquier estado, a propósito: es el sistema, no un asesor. **Extendida (owner, 2026-11-15):** fijar o soltar un mensaje y «Seguir el
+  hilo» se permiten `Resolved` y dan el mismo `422 support.ticket.not_editable` en `Closed`, también apagar un hilo ya apagado
+  (`SupportTicket.EnsureNotClosed`, desde `RecordMessageEvent` para `MessagePinned`/`MessageReleased` y desde `SetFollowThread`).
+  Reemplazó a `support.ticket.follow_closed`, que ya no existe. Responder se permite en cualquier estado. Los caminos del sistema no pasan
+  por esa guarda: el worker del hilo vincula entrantes (`SupportThreadFollower`), la fusión y el borrado de clientes son SQL crudo, y
+  clasificar desde «sin clasificar» o «De ninguno» (`MessageClassified`, `MessageDismissed`) tampoco la toman.
+- **Un tipo de ticket sin tickets sí se borra, pero la regla la cierra la FK, no la consulta previa** (fase 4a, plan G5).
+  `FK_tickets_ticket_types_ticket_type_id` es `ON DELETE RESTRICT` y `SupportUnitOfWork` la traduce **por nombre** y SQLSTATE: `23001`
+  (borrar un tipo usado) → `422 support.ticket_type.in_use`, `23503` (radicar o cambiar a un tipo recién borrado) →
+  `support.ticket_type.unavailable`. La pregunta de `DeleteTicketTypeHandler` (`AnyOfTypeAsync`) es sólo la respuesta amable: sola, un
+  `DELETE` y un alta a la vez dejan un ticket con `ticket_type_id` huérfano. No la cambies por la consulta. Lo amarran
+  `TheForeignKeyTurnsADeleteOfAUsedTypeInto422InUse` y `TheForeignKeyTurnsATicketOnADeletedTypeInto422Unavailable`.
+- **La prórroga se guarda en días hábiles y entra en `SupportTicket.DueOnFor`, el único cálculo del vencimiento** (fase 4a, plan G9).
+  `DueOn` = radicación + término + `ExtensionBusinessDays` + `PausedBusinessDays`; así una pausa posterior y un cambio de tipo la siguen
+  contando (G12: cambiar de tipo conserva los días). Un camino nuevo que recalcule el vencimiento pasa por `DueOnFor` o pierde la
+  prórroga sin error. Las guardas de `Extend` van en un orden fijo (`not_editable`, `extension_already_used`, `extension_no_term`,
+  `extension_clock_stopped`, `extension_overdue`, `extension_too_long`) y `MaxExtensionBusinessDays` usa las mismas cinco primeras: el
+  DTO no las repite. La auditoría `support.ticket.extended` lleva nombres de campo, **nunca el motivo**. `Extended` es el último valor
+  de `SupportTicketEventKind` y un pod viejo no lo lee (EF hace `Enum.Parse`): el detalle de un ticket prorrogado da 500 ahí durante el
+  rollout, y al reanudar o cambiar el tipo el código viejo reescribe `due_on` sin la prórroga. Nadie prorroga hasta que no quede un
+  pod viejo, y un rollback después de la primera prórroga no se hace (README, «Gestión y plazos de Soporte»). El doble del término se
+  mide contra el término vigente al prorrogar: un cambio de tipo a uno más corto conserva la prórroga (P-5), no la recortes.
+- **`IssuedPin` y `ConsultUrl` sólo viajan en el `201` del alta manual anónima y en el `200` de `POST …/tickets/{id}/pin`** (fase 4a,
+  plan G3; spec 2026-11-16, P-6). `CreateTicketHandler` y `ReissueTicketPinHandler` los ponen con `with` sobre el detalle compuesto; el
+  composer siempre los deja en `null`, así que el `GET`, las demás acciones y la auditoría nunca los llevan. Un camino nuevo que componga
+  el detalle no los copia: es la única vez que el asesor puede dictarle el PIN al solicitante. Lo amarran
+  `AnAnonymousManualTicketReturnsItsPinOnlyOnCreation` y `SupportPinReissueApiTests`. El PIN nuevo de la consola **desbloquea**
+  (`SupportTicketAccess.ReissueByAgent`); `Reissue`, el del reenvío público, no: no los fundas.
+- **El teléfono del cliente vinculado va al fijo de la foto del solicitante, nunca al celular** (owner, 2026-11-15, P3;
+  `TicketRequesterNormalizer.WithCustomerContact`). `customers.phone_e164` puede ser fijo, y una plantilla de WhatsApp a un fijo la
+  rechaza Meta: la respuesta queda `Failed` sin que el alta lo advierta. El celular de la foto sale sólo del solicitante o del `wa_id`
+  de la conversación; sin él, `reply-options` dice `no_mobile`. No lo «arregles» copiando el teléfono al celular para habilitar la
+  plantilla.
+- **Las pruebas de plazos de Soporte comparten un host por clase con el reloj movible: `ClockedSupportHost`** (`SupportTicketsApiTests`,
+  `SupportTicketActionsApiTests`, `SupportInboxApiTests`). Rompe a propósito la regla de «una prueba que toca el reloj levanta su host»:
+  el `ITenantClock` del host es un `MutableTenantClock` y lo comparten sólo las pruebas de esa clase. Hoy es seguro porque xUnit corre
+  las pruebas de una clase una tras otra, `StartTestAsync()` devuelve el reloj a `ClockedSupportHost.Reception` (viernes
+  2026-11-13 10:00 en Bogotá) antes de cada una, y cada prueba siembra su propio tenant y sólo afirma sobre él. Se rompe, con fallas
+  que dependen del orden, si una prueba nueva usa el host sin llamar a `StartTestAsync()` (hereda el reloj que dejó la anterior) o si se
+  activa el paralelismo dentro de la clase (dos pruebas moverían el mismo reloj). Una prueba que necesite otra configuración del host
+  levanta el suyo.
+- **`SupportThreadFeed` lee `messaging.messages` por nombre** (Soporte fase 2, plan 2026-11-15). Es SQL
+  crudo en Bootstrapper sobre la conexión de `SupportDbContext`, igual que los demás lectores cruzados: renombrar `occurred_at`,
+  `direction`, `imported` o `conversation_id` compila y deja el seguimiento del hilo sin vincular nada (el worker sólo loguea). Lo
+  amarra `SupportBootstrapperAdaptersTests`, que corre el adaptador real contra el esquema migrado. Un entrante es `direction = 1` y
+  `NOT imported`: un camino nuevo que escriba entrantes del cliente con otra marca los saca o los mete en Soporte sin error.
+- **`ConversationEventType` y `MessageTemplateKind` ganaron valores al final** (`TicketOpened`, `TicketClosed`; `SupportReply`), y los
+  dos se guardan por nombre (`details->>'type'`, `message_templates.kind`). No los reordenes ni los insertes en el medio. Escribir en el
+  hilo desde Soporte pasa por `IConversationEventAppender`, enrolado en la transacción de Soporte por `SupportConversationEvents`: nunca
+  un `INSERT` de Soporte en `messaging.*`.
+- **Responder desde Soporte no toma la conversación** (plan E12): `ISupportReplyOutbound` no pasa por `OutboundGuards`, no la asigna, no
+  cambia su estado y liquida con `seen: 0`. Lo autoriza Soporte con `support.ticket.manage`. La liquidación sí es la de siempre
+  (`OutboundSettlement`), que es la que apaga `history_managed`: un camino nuevo de envío desde Soporte que se salte `IOutboundMessages`
+  deja que la siguiente parte del historial pise la conversación. Lo amarra `SupportReplyOutboundTests.ASupportReplyTurnsOffHistoryManaged`.
+- **Un vínculo `Linked` del worker no sube la versión del ticket ni escribe evento** (plan E7). Si lo hiciera, cada mensaje del cliente
+  le daría un 412 al asesor que tiene el ticket abierto. Sólo sube cuando cambia el estado (`WaitingOnCustomer` → `Open`); pasar sola
+  una fila de «sin clasificar» (`SupportThreadFollower.ReassignAsync`) tampoco escribe evento. El único `MessageClassified` lo escribe
+  el asesor al asignar. La idempotencia del worker es por índices (`IX_ticket_messages_ticket_message`, `PK_unclassified_messages`,
+  traducidos por nombre), no por candados: no la cambies por una consulta previa.
+- **El retomado de una respuesta `Pending` sale por su fila, nunca por el reintento** (`SendTicketReply`, revisión del bloque C y
+  revisión final). Una `Pending` de más de 60 s se retoma con el canal, la entrega, la conexión, el `target_wa_id`, el adjunto y el texto
+  guardados, sin mirar `If-Match`. La plantilla al celular retomada no vuelve a revisar el celular de la foto, la conexión ni la
+  aprobación de la plantilla: Mensajería, idempotente por `clientId`, devuelve primero lo que ya salió, y esas revisiones la marcarían
+  `Failed` aunque el mensaje sí haya salido. Si el canal la rechaza o ya no tiene ruta, queda `Failed` con el motivo y nunca se borra
+  (sólo una respuesta nueva rechazada antes de enviar se borra). El correo no tiene `clientId` del otro lado: retomar una `Pending` de
+  correo lo manda otra vez, y eso está aceptado (README).
+- **El adjunto de una respuesta de Soporte se guarda en `ticket_replies` (`upload_id`, `file_name`) y viaja hasta
+  `ISupportReplyOutbound`**, que arma la clave del staging con la membresía de quien responde: la sesión de subida tiene que abrirla el
+  mismo asesor, para esa conversación. Un retomado manda el adjunto guardado, nunca el del reintento. Las reglas que Soporte copia de
+  Mensajería (nombre 256, pie 1024, permiso de la sesión) viven en `SupportReplyAttachmentRules` y las amarra `SupportReplyParityTests`.
+- **El feed del seguimiento mira sólo las últimas `Support:Workers:FeedLookbackHours` (24) por `created_at`** (`SupportThreadFeed`,
+  revisión final). Sin el límite recorría cada conversación seguida desde `follow_since` en cada tick, para siempre. Un worker caído más
+  que el lookback deja sin vincular lo que llegó mientras tanto: no lo «arregles» quitando el límite, sube la configuración.
+- **`CustomerDeletionReferences` desvincula la conversación de los tickets que la usaban** (plan E18): `conversation_id` en `NULL`,
+  seguimiento apagado, `ticket_messages` y `unclassified_messages` de esa conversación borrados y `ticket_replies.message_id` en `NULL`,
+  subiendo `version`. El ticket sobrevive (lo bloquea su propio cliente, no la conversación). Una tabla nueva de Soporte con un id de
+  conversación o de mensaje entra ahí y en `CustomerDeletionAcrossModulesTests`.
+- **Las pruebas de integración corren con `SupportThreadFollowWorker` prendido salvo que lo saquen** (`Support:Workers:Enabled`,
+  verdadero si falta). Cada 5 s lee toda la base sin tenant: una prueba que siembra entrantes y espera verlos sin clasificar o sin
+  vincular pierde la carrera contra el worker. `SupportApiHarness.OpenOwnHostAsync` lo apaga y además lo saca del contenedor por
+  `ImplementationType` (si la bandera dejara de leerse, la prueba sigue sin worker); `SupportHostWithoutWorkers` hace lo mismo por clase.
+- **El cuerpo de la plantilla `SupportReply` no termina ni empieza con una variable** (Meta rechaza esos cuerpos). El texto base cierra
+  con «Si tienes dudas, responde este mensaje.» y `TheBaseBodyNeitherStartsNorEndsWithAVariable` lo amarra. Un texto propio de un tenant
+  (cuerpo de `POST …/template-management/support-reply`) tiene la misma restricción en Meta; la aprobación es por conexión.
+- **`ValkeyFixedWindowRateLimiter.AttemptAcquireCore` tiene que seguir negando** (spec 2026-11-13, D-3).
+  - `RateLimitingMiddleware` llama primero `AttemptAcquire` y sólo con un rechazo pasa a `AcquireAsync`. Si el camino
+    síncrono concede, por ejemplo desde el respaldo de memoria, todas las políticas salen de Valkey en silencio y vuelven
+    a contar por pod. Lo amarran `TheSynchronousAttemptDefersToTheAsyncPath` y los `*SharedAcrossTwoHosts` de
+    `ExternalApiSurfaceTests`.
+  - Bajo la ACL de producción (`-@scripting`) no hay Lua. El contador es `MULTI` + `INCR` + `EXPIRE … NX` + `EXEC`.
+  - Una política nueva de ventana fija pasa por `SharedRateLimitPartitions.FixedWindow`, no por
+    `RateLimitPartition.GetFixedWindowLimiter`. Si no, queda por pod y sin error.
+  - Una partición que lleve el patrón de ruta va con `hashPartition: true`.
+- **Todo camino nuevo que revoque o borre sesiones llama `RemoveAsync` de la caché antes y después del guardado** (spec 2026-11-13,
+  D-4). Vale para Identity (`ISessionCache`) y para el comprador (`IBuyerSessionCache`): el `DEL` de antes cubre el request que lee
+  durante la transacción, el de después al que leyó Postgres antes del commit. Si falta, con `Valkey:Areas:Sessions` prendido la sesión
+  revocada se sigue sirviendo hasta 15 min, sin error. Un fallo se loguea en `Error` con el id de la sesión, nunca con el hash. Lo
+  amarran `CachedSessionTests` (Identity) y `CachedBuyerSessionTests` (Buyers); los caminos de hoy son `SessionService`,
+  `SessionRevocationWorker`, `OrphanUserCleanupWorker`, `BuyerSessions` y `DeleteBuyerAccount`.
+- **Una `BuyerSession` que devuelve `BuyerSessions.TryResolveAsync` no se guarda.** Con la caché prendida es una entidad reconstruida
+  (`BuyerSession.Restore`) que EF no sigue: un `Revoke` o un `Touch` sobre ella y un `SaveChanges` no mandan ningún `UPDATE`, y el
+  logout queda «hecho» con la fila viva. Revocar pasa por `BuyerSessions.RevokeCurrentAsync`, que lee la fila. Lo amarra
+  `CachedBuyerSessionTests.LogoutWithACachedSessionRevokesTheRow`.
+- **Todo cambio que altere los permisos efectivos de un tenant llama `ITenantAccessVersion.BumpAsync` antes y después del guardado**
+  (spec 2026-11-13, D-5). Roles, membresías (suspender, reactivar, quitar, activar, aceptar invitación), módulos y estado del tenant ya
+  lo hacen. Si un camino nuevo no lo llama, con `Valkey:Areas:Permissions` prendido la caché sirve los permisos de antes hasta 60 s: un
+  miembro suspendido sigue entrando, sin error. Lo amarra `CachedAuthorizationTests` (Tenancy).
+- **Una tabla de cola nueva entra al mapa de `QueueDoorbellInterceptor`** (`BuildingBlocks.Infrastructure`, `Tables`), con su cola en
+  `DoorbellQueues`, y su worker espera con `doorbell.Listen(...)`. Sin eso el worker sólo se entera en la red de seguridad, no al
+  insertar, y nada falla. El `DbContext` que mapee una de esas tablas lleva el interceptor: lo amarra
+  `CompositionRootTests.EveryDbContextThatMapsADoorbellTableHasTheInterceptor`. Lo que no es un `INSERT` (iniciar o reanudar una
+  campaña es un `UPDATE`) timbra a mano después del commit (`Campaigns.cs`).
+- **Un consumidor nuevo de `platform.outbox_messages` escucha `DoorbellQueues.Outbox`**, con `DoorbellQueues.SafetyNet(DoorbellQueues.Outbox)`,
+  como `OutboxPublisherWorker` o `NotificationsDeliveryWorker`. Un timbre de `outbox` despierta a todos los oyentes del proceso; un
+  consumidor que siga con su `Task.Delay` de antes funciona, pero no se entera del timbre.
+- **Un comando nuevo contra Valkey tiene que pasar la ACL de producción** (`~qep:* &qep:* +@all -@dangerous -@scripting`, DP-V4):
+  sin Lua (`EVAL`, `SCRIPT`), sin `KEYS`, `FLUSH*`, `INFO` ni `CONFIG`, y toda clave o canal con prefijo `qep:`. El gateway traga
+  un `NOPERM` como respaldo del área, así que en producción no se ve como error: se ve como
+  `qep_valkey_fallbacks_total{area=…}` subiendo. Las primitivas de presencia y limitadores las cubre `ValkeyAclTests`; sesiones,
+  permisos, timbres, líder del muestreador y compuerta del toque, `ValkeyAclCompatibilityTests` (las dos en `Bootstrapper.UnitTests`),
+  que exige el efecto en Valkey **y** cero respaldos con los adaptadores reales. Un área nueva suma la suya. Si falla, es un hallazgo: la ACL no se relaja.
+- **El presupuesto de envío de campañas se queda en Postgres** (`messaging.connection_send_budgets`, decisión del owner 2026-11-13).
+  D-6 del spec de Valkey no se construyó: no hay adaptador de Valkey para el cubo.
+- **Un código de falla nuevo de Soporte va a `SupportChannelReasons` y, si sale de Mensajería, también a su copia en
+  `SupportReplyOutbound`; `SupportFailureCodeParityTests` los amarra. El frontend traduce por esta lista** (Tarea 8a, owner 2026-11-15).
+  Es el único vocabulario del `failureCode` de una respuesta, del `ConsultAccess.FailureCode`, del `reason` de `reply-options` y del
+  `cannotCreateReason` de la pestaña de Soporte de una conversación (`no_permission`, `messaging_disabled`): un
+  literal suelto en `Modules.Support.*` es un código que la pantalla no conoce.
+- **El formulario público de Soporte (`/api/v1/public/support/{tenantSlug}`) no se prueba con el stub de auth** (fase 3). En modo stub
+  `RequireCsrfHeaderMiddleware` ni se registra y la cookie no se valida: una prueba con stub pasa aunque la exención por prefijo
+  (`SupportPublicPaths`, duplicado de `PublicSupportEndpoints.GroupPattern` y atado por `SupportPublicPathsTests`) esté rota o un handler
+  lea la sesión. Lo que toca CSRF, cookie o CORS va en `SupportPublicRealAuthHost` (precedente `ShopifyApiHarness.WithRealAuthentication`;
+  lo amarra `ThePublicGroupIgnoresTheSessionCookieWithRealAuth`). Ningún handler del grupo lee `IExecutionContext` ni la cookie: el
+  tenant sale del slug (`SupportPublicResolver`), nunca de la sesión de quien navega.
+- **`support.legal_document_versions` y `support.legal_acceptances` son prueba legal: sólo se insertan** (spec 2026-11-15 §5). Ningún
+  método de dominio las edita ni las borra, `legal_acceptances` no tiene FK (ni al ticket ni a la versión: guarda su foto del HTML
+  servido, que es lo que prueba) y el `Down` de `AddSupportLegalDocuments` no las borra. **Ese `Down` no se corre en producción**: el
+  rollback es revertir el código. Una purga futura de tickets tiene que dejar las aceptaciones fuera, y una migración nueva de Support que
+  las toque tampoco puede borrarlas en su `Down`. Lo mismo vale para `support.consents` y `support.legal_text_versions` de la fase 3, que
+  conservan sus filas.
+- **Todo HTML de un documento legal pasa por `ISupportHtmlSanitizer`**: al publicar, al servir `GET /form` y en la foto. Un camino nuevo
+  que escriba `content_html` sin el puerto abre XSS en el portal público. `legal_text_versions` y `consents` siguen mapeadas sin
+  escritor: quitarlas del modelo hace que EF las borre en la siguiente migración.
+- **El PIN de consulta nunca sale a logs, auditoría, eventos ni trazas: sólo se guarda su hash** (`ticket_access.pin_hash`, PBKDF2).
+  Viaja dos veces y nada más: en la respuesta del radicado y en el envío al destino registrado del ticket. Un log nuevo en el formulario
+  público lleva el id del ticket y el tipo de la excepción, nunca el PIN, el radicado ni el destinatario; lo amarra
+  `ThePinNeverReachesLogsAuditOrEvents`, que corre el host en `Trace`. **El contador de fallos vive en `ticket_access`, no en el ticket**:
+  si un intento fallido tocara el ticket, le subiría la versión y le daría un 412 al asesor que lo tiene abierto. Cinco fallos bloquean
+  ese radicado 15 minutos, y mirar el bloqueo y anotar el intento van con la fila tomada (`LockByNumberAsync`, `SELECT … FOR UPDATE`):
+  sin el candado, intentos a la vez leen el mismo contador, se pisan y el quinto fallo no bloquea (`ConcurrentWrongPinsStillLockTheTicket`). Un camino
+  nuevo que lea o escriba la clave (otra forma de consulta, un reenvío por otro canal) toma la misma fila y nunca desbloquea.
+- **El reintento del radicado público se reconoce por `clientRequestId` antes de Turnstile y bajo el candado del contador** (spec
+  2026-11-15 §9.2). No muevas la búsqueda después de Turnstile: el token ya se gastó en el primer intento y el reintento fallaría con
+  `captcha_invalid`. Un reintento no reenvía el correo; si el PIN no salió por ningún canal, emite uno nuevo y el viejo deja de servir.
+  Con el correo de apertura todavía en vuelo (destino `Email` y nada anotado en `ticket_access`) no rota: invalidaría el PIN que va en el
+  correo. Ese «en vuelo» vence a los 10 minutos de `pin_issued_at` (`OpeningDeliveryGrace`, plan L33): después rota, porque el proceso
+  murió entre confirmar y anotar. La clave es UUID v4 (D-10): otra versión es `422`. La búsqueda va siempre filtrada por tenant
+  (`FindByClientRequestAsync`), y la clave no se audita ni va a `ticket_events`.
+- **`support.form_versions.organization_company_id` tiene FK real a `companies.companies`** (`ON DELETE RESTRICT`, a mano en la
+  migración `AddSupportFormOrganization`, como `pos.cash_sessions`): una empresa que alguna versión del formulario público eligió no se
+  borra, sólo se desactiva (`422 companies.company.in_use`). Soporte la lee por `ISupportOrganizationDirectory` (Bootstrapper), nunca
+  referenciando Companies (`SupportDoesNotReferenceCompanies`). Es obligatoria para publicar (D-8): una siembra de prueba que publica un
+  formulario por la consola tiene que elegir una empresa activa del tenant (`SupportPublicHarness.SeedCompanyAsync`).
+- **`uploadKey` es el único vínculo entre la subida anónima de un adjunto y quien la abrió** (plan F32). Es un `Guid.NewGuid()` (v4) que
+  Soporte genera, devuelve una vez y Storage guarda como `OwnerId` del archivo `SupportTicket`; completar y radicar exigen el par
+  `(fileId, uploadKey)`. No lo cambies por un v7 (`Guid.CreateVersion7`, el de los ids de Storage): se adivina por la hora y cualquiera
+  reclamaría la subida de otro. Tampoco lo pongas en una URL ni en un log. La subida sin miembro (`IStorageSystemUploads`) no pasa por
+  `StorageAuthorization` y no tiene endpoint en Storage: la usa sólo `SupportAttachmentStorage` (Bootstrapper). El
+  `CompleteUploadHandler` de la consola sigue exigiendo `storage.file.upload` y comparte con ella sólo el núcleo (`UploadCompletion`);
+  un cambio en el núcleo vale para los dos caminos, y la autorización se queda en el handler
+  (`TheMemberCompletionStillRequiresThePermission`).
+- **Los archivos `SupportTicket` no se ven desde la consola de Storage** (fix round 1 del Bloque D). `storage.file.*` no es permiso
+  de Soporte: sin la pared, quien tiene `storage.file.read` vería las PQRSF y su `uploadKey` (el `OwnerId`), con `publish` las sacaría al
+  bucket público y con `delete` borraría un adjunto reclamado. La regla vive en un solo lugar, `SystemOwnedFiles` (al lado de
+  `FileOwnerType`): `ListFilesHandler` los excluye, cada handler que carga por id llama `SystemOwnedFileGuard.EnsureVisibleToMembers`
+  (404 `storage.file.not_found`, el mismo de otro tenant), `CreateUploadSessionHandler` responde `422 storage.file.owner_type_invalid`, y
+  los adaptadores que leen el repositorio de archivos para otro módulo (`ProductImageLookup`, `QuotationFileLookup`) los tratan como
+  inexistentes. **Un handler nuevo de Storage que cargue un archivo por id, o un adaptador nuevo sobre `IFileResourceRepository`, aplica
+  la misma regla**; un dueño de sistema nuevo se suma al conjunto y no a cada handler. Lo amarran
+  `ASystemOwnedFileIsNotFoundWithoutAnyEffect` y `SystemOwnedFilesApiTests`.
+- **El `PUT` de un adjunto del formulario público sale del navegador al bucket privado de R2**, así que ese bucket necesita CORS para
+  el origen de la página (`https://soporte.lulocrm.com`, y `http://localhost:3002` para probar en local) con `PUT` y los headers
+  `Content-Type` e `If-None-Match`. Sin eso el navegador corta el `PUT`, completar responde `428 support.public.attachment_not_uploaded`
+  y en el backend no hay ningún error: `Support:PublicForm:AllowedOrigins` es el CORS de la API, no el del bucket.
+- **Un adjunto del formulario reclamado sigue `Available` para siempre y nada en Storage lo marca**: lo retiene la sonda
+  `SupportAttachmentReferenceProbe` (Support.Infrastructure). Por eso el barrido de staging sólo pregunta por los adjuntos `SupportTicket`
+  de la última semana pasada la retención (`StagingCleanupProcessor.SupportAttachmentLookback`): sin el tope, cada tick le preguntaría a
+  las sondas por todos los adjuntos de la historia. Un camino nuevo que vincule un archivo `SupportTicket` a algo que no sea
+  `support.ticket_attachments` necesita su propia sonda, o el barrido lo borra a las 24 h. **Esa purga guarda la fila antes de borrar
+  los objetos**, al revés que la de comprobantes: un guardado fallido no deja una fila `Available` sin objeto que un radicado podría
+  reclamar; un borrado fallido deja un objeto huérfano y un log (`AFailedObjectDeleteLeavesTheRowPurgedNotAvailable`). No lo «alinees»
+  con el orden de los comprobantes.
+- **El tope de 200 subidas anónimas por tenant es blando a propósito** (`OpenPublicAttachmentHandler`, fix round 1 del Bloque F): cuenta
+  y después abre, así que entran unas pocas de más bajo ráfaga simultánea. No le pongas un candado por tenant: en un endpoint anónimo,
+  quien espera el candado retiene una conexión del pool y quien lo tiene necesita otra para Storage, así que unas pocas IPs vaciarían el
+  pool de toda la API. `lock_timeout` tampoco sirve (sigue reteniendo conexiones) y un try-lock rechazaría las 3 subidas en paralelo de una
+  sola persona.
+- **Un ticket anónimo no tiene cliente ni ninguna columna `requester_*`, y la base lo exige** (`CK_tickets_anonymous`). Una columna nueva
+  de la foto del solicitante entra en `SupportDbContext.RequesterColumns` y en una migración que rehaga el CHECK, o el anónimo puede
+  llevarla sin error.
+- **El formulario público no acepta Word ni Excel mientras `Storage:ClamAv:Enabled` esté apagado en producción** (owner 2026-11-15): un
+  adjunto anónimo con macros lo abre un asesor. Sumar un tipo de Office exige prender ClamAV primero. La lista vive en
+  `SupportPublicAttachmentRules` (PDF, JPEG, PNG, WebP; `image/jpg` se toma como `image/jpeg`) y viaja a la página en
+  `GET /form` → `attachments`; `SupportAttachmentParityTests` sólo exige que sea un subconjunto de la de Storage.
+- **`allow_attachments` tiene default `true` en la base y en el modelo, con `HasSentinel(true)`** (owner 2026-11-15). Sin el sentinel, EF
+  omite un `false` del `INSERT` (es el valor CLR por defecto) y la base lo guarda en `true`: el tenant apaga los adjuntos y siguen
+  prendidos. Precedente: `stores.show_prices`. Lo amarra el guardado `true` → `false` de `SupportFormSettingsApiTests`.
+- **El hub global `/api/v1/hubs/app` vive en Bootstrapper y no es de ningún módulo** (`src/Bootstrapper/Realtime/`, spec 2026-11-15).
+  Un módulo se suma registrando su `IRealtimeTopicAuthorizer` (contrato en `BuildingBlocks.Application.Realtime`) para su prefijo de
+  tópico, como `SupportRealtimeAuthorizer`; el hub no conoce a nadie. Mensajería sigue en su `MessagingHub`. El tópico de un ticket se
+  acepta sólo en la forma exacta que escribe `SupportRealtimeTopics.Ticket` (Guid `D` en minúsculas): otra forma del mismo id sería otro
+  grupo y otra sala de presencia.
+- **Los avisos de Soporte por el hub se llaman a mano, después del commit** (plan N13): cada handler de escritura y
+  `SupportThreadFollower` llaman `ISupportRealtime.TicketChangedAsync` con `CancellationToken.None`, no el unit of work, porque varias
+  escrituras confirman con `ISupportTransaction`. Una escritura nueva que no lo llame deja la pantalla sin avisar, sin error. La fusión y
+  el borrado de clientes (SQL crudo en Bootstrapper) **no** avisan, a propósito (owner O5).
+- **La presencia «está respondiendo» es por conexión, no por miembro** (`{memberId}:{connectionId}`): cerrar una pestaña no borra la
+  otra. Una entrada que nadie renueva (pod caído) la quita `RealtimePresenceSweeper` a los ≤ 50 s. `presenceChanged` lleva el estado
+  completo, por eso `RealtimeEventsListener` entrega los avisos en orden con un solo consumidor: dos en desorden dejan un fantasma.
+- **Una nota interna no pasa por el agregado del ticket** (spec 2026-11-15 §5.4): no sube `version`, no escribe `ticket_events` y nada
+  de ella sale por `public/support`. Sus tablas son insert-only. Su `id` es el `clientId` de la pantalla (`PK_ticket_notes`).
+- **Un archivo de nota ya está reclamado**: `ticket_note_files` entra en `SupportAttachmentReferenceProbe` (o el barrido de staging lo
+  borra). Su dueño en Storage es `SupportNoteUploads.OwnerKey(ticket, miembro)`, determinista: cambiar la derivación deja huérfanas
+  las subidas abiertas que todavía no están en una nota. **La clave es un UUID v8** y la del formulario público
+  (`SupportPublicUploads.NewKey()`) un v4: `SupportAttachmentStorage.CountPendingAsync` cuenta sólo
+  `(get_byte(uuid_send(owner_id), 6) >> 4) = 4`, así que ninguna subida de nota, reclamada o abandonada, cuenta en el tope
+  `attachments_busy` del formulario (revisión del Bloque B). No uses `uuid_extract_version`: exige Postgres 17+ y la versión de
+  producción no está probada en el repo. Completar o radicar con un `uploadKey` que no es v4 es `support.public.attachment_invalid`
+  (`SupportPublicUploads.IsKey`). Si la clave pierde el v8, un miembro que abre subidas sin adjuntarlas deja al formulario sin adjuntos.
+- **La respuesta formal se genera una sola vez** (fase 4b, H7). El PDF se guarda antes de la fila `Pending` y una respuesta retomada
+  manda el **guardado** (`ticket_reply_documents` y su `DocumentClientId`), nunca vuelve a llamar al generador. `ticket_reply_documents`
+  es prueba legal: sólo se inserta (su único borrado es la cascada de una respuesta que nunca salió) y el `Down` de
+  `AddSupportReplyDocuments` no se corre. Nada bajo `support/` en R2 lleva regla de ciclo de vida. Un error después del commit no borra
+  el PDF: `SendTicketReply` relee la fila por `clientId` antes de descartarlo.
+- **`Support:Pdf:ApiKey` es una clave propia de `qcode-pdf`, nunca `Quotations:Pdf:ApiKey`**, y es obligatoria en `Production` (sin
+  ella el pod no arranca). `qcode-pdf` identifica al cliente por el hash de la clave.
+- **Firma la respuesta formal el responsable del ticket, no quien envía** (owner 2026-11-16, Q-7). Sin responsable, `422
+  support.reply.formal_signer_required`. `ticket_reply_documents.signer_member_id` está en `SupportUserReferenceProbe`: un usuario que
+  firmó una respuesta formal no se borra.
+- **Toda transición a Resuelto pide la encuesta en el dominio** (`SupportTicket.ChangeStatus`, H15): un camino nuevo a Resuelto la
+  recibe gratis; uno que se salte `ChangeStatus` (SQL crudo) deja esa resolución sin encuesta. Un cambio de la encuesta **nunca sube la
+  versión del ticket** (un 412 al asesor que lo tiene abierto), pero sí avisa por el hub.
+- **El reclamo de una encuesta cubre un envío, no el lote** (revisión del bloque C). `SupportSurveySender.ProcessAsync` renueva
+  `locked_until` justo antes de mandar y sólo si sigue siendo el valor que puso su lote (`RenewClaimAsync`, comparado a microsegundos);
+  si otro worker la volvió a reclamar, la deja. Una excepción inesperada pasa la encuesta a su reintento (`send_failed`, 1/5/15 minutos y
+  `Failed`); sin eso volvería a lanzar cada vez que vence el reclamo. No subas el lote (`SurveyBatchSize`, 5) para «ir más rápido».
+- **No hay encuesta por Instagram** (owner 2026-11-16, Q-2): un ticket de Instagram recibe el enlace por correo si tiene correo, si no
+  sólo la página de consulta. Un camino nuevo que mande la encuesta por el hilo de Instagram contradice la decisión.
+- **`SupportSurveyFeed` y `SupportAutoCloseFeed` leen `messaging.messages` por nombre** (`reply_to_message_id`, `kind`, `text`,
+  `direction`, `imported`, `occurred_at`), y el segundo también `support.ticket_messages.state`. Renombrar una columna compila y deja la
+  encuesta sin respuestas o el cierre automático cerrando antes de tiempo, sin error. Los amarra `SupportBootstrapperAdaptersTests`.
+  `CustomerDeletionReferences` suelta los cuatro ids de mensaje de `ticket_surveys` (`message_id`, `rating_message_id`,
+  `comment_message_id`, `prompt_message_id`): una columna nueva con un id de mensaje en `support.*` entra ahí.
+- **Los botones de la encuesta son fijos (`Buena`, `Regular`, `Mala`) y viven en dos copias** (`SupportSurveyRatings` y
+  `SupportSurveyTemplateDefinition.ButtonLabels`), amarradas por `SupportSurveyParityTests`. Un toque cuenta sólo para la encuesta que
+  cita (`reply_to_message_id` = su `message_id`) y sólo mientras el ticket sigue en esa resolución.
+- **El mensaje que pide el comentario sale una sola vez por encuesta** (owner 2026-11-16, Q-11), con un `ClientId` fijo
+  (`SupportSurveyPrompt.ClientIdFor`) por el envío de respuestas de Soporte: no es una respuesta del asesor, no toma ni reabre la
+  conversación, y un tick repetido recibe de Mensajería el mismo mensaje. Sin reintento ni recordatorio: un fallo queda en
+  `prompt_failure_code`. No lo «arregles» reintentando.
+- **El token del enlace de calificación viaja en el cuerpo, nunca en una ruta**, y sólo se guarda su SHA-256 (`UX_ticket_surveys_token`).
+  Lo amarra `TheSurveyTokenNeverReachesLogsAuditOrEvents` (host en `Trace`).
+- **El cierre automático cuenta sólo las respuestas del cliente cuyo vínculo es `Linked` o `Pinned` ahora** (owner 2026-11-16, Q-4).
+  Soltar una devuelve la fecha; el toque y el comentario de **cualquier** encuesta del tenant nunca cuentan, no sólo los de la del ticket:
+  el seguimiento del hilo vincula cada entrante a todos los tickets abiertos de la conversación. `clock.autoCloseOn` se recalcula en cada lectura y
+  el worker (`Noisy`) relee el ticket y cierra con su versión: la réplica que pierde salta el ticket.
+
+- **`quotation.typ` nunca hace `eval` de datos del tenant** (spec 2026-11-16, contenido del PDF). Las secciones configurables llegan
+  como árbol de bloques (`RichTextHtmlReader`) y la plantilla inserta cada texto como cadena; armar markup de Typst con texto del
+  tenant, o pasarle el HTML, abre inyección en el PDF. Lo amarran `TheTemplateNeverEvaluatesData` y
+  `TheTemplateCompilesWithTypstSyntaxInSectionText`. Y un dato nuevo que el PDF imprima desde la configuración del tenant entra
+  en el fingerprint de `QuotationPdfSectionsBuilder.Fingerprint`, o el PDF cacheado de la cotización no se regenera al cambiarlo.
+- **El saneador de HTML vive en `BuildingBlocks.Infrastructure/RichText` y lo comparten Soporte y Quotations.** La lista de
+  etiquetas y esquemas existe una sola vez: ensancharla cambia lo que aceptan los documentos legales del portal **y** el PDF de
+  cotizaciones, y el lector de bloques tiene que saber pintar toda etiqueta nueva o la plantilla la pierde en silencio.
 
 ## Verificación
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
 [README § Verificación](README.md#verificación).
+
+- **Borrar clientes escribe en muchos esquemas por nombre** (spec 2026-11-10; `src/Bootstrapper/CustomerDeletionReferences.cs`, igual que
+  `CustomerMergeReferences`). Toca `messaging` (conversaciones y todo lo que cuelga: mensajes, adjuntos, mensajes programados,
+  `automation_inbox`, destinatarios de campañas con `customer_id` en `NULL`, `audience_customer_ids`), `automations`
+  (`conversation_runs`, `run_units`, `http_calls`), `pipeline` (`deals`, `deal_stage_history`, `deal_quotations`, `deal_orders`,
+  `triage_decisions`; `origin_conversation_id` de otros negocios a `NULL`), `pos.sales`, `shopify.orders`, `billing.customer_profiles`
+  y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
+  `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado
+  cotizaciones, pedidos, préstamos, contratos de servicio (y sus cobros), tickets de soporte (`support.tickets.customer_id`, motivo
+  `supportTickets`, en cualquier estado: también uno cerrado) y una conversación bloqueada.
+- **`CustomerReferenceLock` serializa el borrado contra quien referencia al cliente** (advisory lock por cliente, `Exclusive` para el
+  borrado, `Shared` para escritores). Lo toman las unidades de trabajo de Quotations, Loans, ServiceContracts y Support; en Messaging, el ingreso
+  (entrante y coexistencia), el opener, el cambio de cliente y el despacho de campañas, con **un solo candado compartido antes de
+  cualquier candado de fila de conversación**. El borrado además toma el candado por conversación del runner de Automations
+  (`AutomationsConversationLock.Namespace`) antes del `FOR UPDATE` de `conversations`: sin ese orden hay un ciclo de espera que la base
+  no detecta. Todo esto exige `READ COMMITTED`; en `REPEATABLE READ` el chequeo de bloqueadores vería una foto vieja. El POS y los
+  escritores del pipeline **no** lo toman: una venta creada en plena corrida puede conservar el id borrado (su foto sigue mostrándose).

@@ -93,6 +93,11 @@ internal sealed class RecordingExportAuditPublisher : IQuotationAuditPublisher
         string outcome, DateTimeOffset occurredAt) =>
         Entries.Add(new RecordedAuditEntry(tenantId, actorId, action, resourceId, outcome));
 
+    public void PublishWithDetails(
+        Guid tenantId, Guid actorId, string action, string resourceId,
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details) =>
+        Entries.Add(new RecordedAuditEntry(tenantId, actorId, action, resourceId, outcome));
+
     public void PublishByIntegration(
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
         Entries.Add(new RecordedAuditEntry(tenantId, Guid.Empty, action, resourceId, outcome));

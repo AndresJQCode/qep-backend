@@ -292,6 +292,81 @@ public sealed class AutomationInboxTests
         Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
     }
 
+    /// <summary>Spec 2026-11-03: el reclamo devuelve el tipo de cada fila, para que el motor distinga el entrante, el arranque manual y la señal de soltar.</summary>
+    [Fact]
+    public async Task ClaimCarriesTheKind()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        var connectionId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT connection_id FROM messaging.conversations");
+        var start = DateTimeOffset.UtcNow.AddMinutes(1);
+        await EnqueueManualStartAsync(f, connectionId, Guid.CreateVersion7(), start);
+        await EnqueueReleaseRunAsync(f, connectionId, Guid.CreateVersion7(), start.AddSeconds(1));
+
+        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(start.AddMinutes(5), 10, Ct));
+
+        Assert.Equal(["Engine", "Engine", "ReleaseRun"], claimed.OrderBy(item => item.CreatedAt).Select(item => item.Kind));
+    }
+
+    [Fact]
+    public async Task PendingManualStartIgnoresReleaseRows()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var conversationId = Guid.CreateVersion7();
+        await EnqueueReleaseRunAsync(f, Guid.CreateVersion7(), conversationId, DateTimeOffset.UtcNow);
+
+        Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
+    }
+
+    [Fact]
+    public async Task AReleaseRowHoldsBackALaterInboundOfItsConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var conversationId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow.AddMinutes(1);
+        await EnqueueReleaseRunAsync(f, connectionId, conversationId, now);
+        // Un entrante posterior de la misma conversación: una fila Engine más nueva.
+        await EnqueueManualStartAsync(f, connectionId, conversationId, now.AddSeconds(1));
+
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, Ct)));
+        Assert.Equal(AutomationInboxKinds.ReleaseRun, first.Kind);
+        Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "skipped", Ct)));
+
+        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, Ct)));
+        Assert.Equal(AutomationInboxKinds.Engine, second.Kind);
+    }
+
+    [Fact]
+    public async Task OldRowsAreEngineAndTheCheckRejectsAnUnknownKind()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = Guid.CreateVersion7();
+        await EnqueueManualStartAsync(f, connectionId, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        var manualId = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT message_id FROM messaging.automation_inbox WHERE message_id NOT IN (SELECT id FROM messaging.messages)");
+
+        Assert.Equal("Engine", await ScalarAsync<string>(f.ConnectionString, "SELECT kind FROM messaging.automation_inbox WHERE message_id = @id", ("id", manualId)));
+        var error = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.automation_inbox SET kind = 'Other' WHERE message_id = @id", ("id", manualId)));
+        Assert.Equal("23514", error.SqlState);
+    }
+
+    private static async Task EnqueueReleaseRunAsync(Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now)
+    {
+        using var scope = f.Host.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<IAutomationInbox>().EnqueueReleaseRun(f.Tenant.TenantId, connectionId, conversationId, now);
+        await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
     private static async Task EnqueueManualStartAsync(Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now)
     {
         using var scope = f.Host.Services.CreateScope();
@@ -544,6 +619,47 @@ public sealed class AutomationInboxTests
 
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
         Assert.Equal(0L, await InboxCountAsync(f));
+    }
+
+    // Owner, 2026-11-16: el toque de un botón de la encuesta de Soporte no despierta al bot. Entra y cita a la plantilla como siempre
+    // (Soporte lo lee del hilo); sólo no se encola. El toque de cualquier otra plantilla sí se encola. La plantilla se reconoce por el
+    // tipo de su fila (SupportSurvey), unida por el nombre y el idioma que guarda el details del mensaje saliente.
+    [Fact]
+    public async Task ATapOnTheSurveyTemplateIsNotEnqueuedButATapOnAnotherTemplateIs()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO messaging.message_templates (id, tenant_id, connection_id, meta_template_id, name, language, category, parameter_format, status, components, kind, created_at, updated_at)
+            SELECT gen_random_uuid(), c.tenant_id, c.connection_id, v.meta, v.name, 'es', 'UTILITY', 'NAMED', 'APPROVED', '[]'::jsonb, v.kind, now(), now()
+              FROM messaging.conversations AS c,
+                   (VALUES ('91', 'qep_soporte_encuesta', 'SupportSurvey'), ('92', 'qep_cotizacion', 'Quotation')) AS v(meta, name, kind);
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, details, wamid, created_at)
+            SELECT gen_random_uuid(), c.id, c.tenant_id, c.connection_id, now() - interval '595 seconds', 2, 11, 2, 'x',
+                   jsonb_build_object('template', jsonb_build_object('name', v.name, 'language', 'es', 'category', 'UTILITY', 'parameters', '{}'::jsonb)),
+                   v.wamid, now()
+              FROM messaging.conversations AS c,
+                   (VALUES ('out.survey', 'qep_soporte_encuesta'), ('out.quote', 'qep_cotizacion')) AS v(wamid, name);
+            """);
+        var start = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600;
+
+        await PostAsync(f, MetaPayloads.InboundTemplateButtonTap("111", "573001234567", "w2", start + 10, "out.survey", "Buena"));
+        await PostAsync(f, MetaPayloads.InboundTemplateButtonTap("111", "573001234567", "w3", start + 20, "out.quote", "Ver"));
+
+        Assert.Equal("w2:out.survey,w3:out.quote", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(message.wamid || ':' || quoted.wamid, ',' ORDER BY message.wamid)
+              FROM messaging.messages AS message JOIN messaging.messages AS quoted ON quoted.id = message.reply_to_message_id
+             WHERE message.direction = 1
+            """));
+        Assert.Equal("w1,w3", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT string_agg(message.wamid, ',' ORDER BY message.wamid)
+              FROM messaging.automation_inbox AS inbox JOIN messaging.messages AS message ON message.id = inbox.message_id
+            """));
     }
 
     [Fact]

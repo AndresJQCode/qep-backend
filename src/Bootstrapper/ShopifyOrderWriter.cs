@@ -69,8 +69,9 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
         }
         catch (QuotationsDomainException error)
         {
-            // order.order.not_pending y order.order.payment_has_proofs (H5): después de aprobar, o con comprobantes propios, el
-            // pago lo lleva QEP. Va a last_error del espejo y no se reintenta.
+            // order.order.not_editable y order.order.payment_has_proofs (H5): con el pedido anulado o facturado, o con comprobantes
+            // propios, el pago lo lleva QEP. Va a last_error del espejo y no se reintenta. Uno preparado o archivado sí lo recibe
+            // (spec 2026-11-10 §3.2).
             return ShopifyOrderOutcome.Ignored(error.Code);
         }
         catch (ResourceNotFoundException error)
@@ -117,6 +118,86 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
             : ShopifyOrderWriteResult.Written(result.OrderId, result.OrderNumber, result.Total, alreadyExisted: true, result.ClientId);
     }
 
+    public async Task<ShopifyOrderState?> ReadStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+        var state = await writer.FindEditStateAsync(tenantId, orderId, cancellationToken);
+        return state is null ? null : ToShopify(state);
+    }
+
+    /// <summary>Spec 2026-11-14 §4: las reglas del pedido vuelven como código; <c>concurrency.conflict</c> se propaga para que el
+    /// llamador deje el cambio pendiente.</summary>
+    public async Task<ShopifyOrderEditOutcome> ApplyEditAsync(ShopifyOrderEditDraft draft, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        var edit = new ExternalOrderEditDraft(
+            draft.TenantId,
+            draft.OrderId,
+            draft.ExpectedVersion,
+            OrderSource.Shopify,
+            draft.Lines?
+                .Select(line => new ExternalOrderLine(
+                    line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage))
+                .ToArray(),
+            draft.Shipping is not { } shipping
+                ? null
+                : shipping.IsStorePickup
+                    ? ShippingDetails.None
+                    : new ShippingDetails(
+                        shipping.CarrierId, shipping.CarrierName, ToChargeMode(shipping.ChargeMode), shipping.FreightAmount,
+                        shipping.FreightTaxPercentage, shipping.CashOnDelivery),
+            draft.ShippingParty is not { } party
+                ? null
+                : new ExternalShippingParty(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId),
+            draft.ReplaceBuyerNotes,
+            draft.BuyerNotes,
+            ShopifyOrderImporter.RawAddressLabel,
+            draft.OccurredAt);
+        await using var scope = scopes.CreateAsyncScope();
+        var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+        try
+        {
+            return new ShopifyOrderEditOutcome(ToShopify(await writer.ApplyEditAsync(edit, cancellationToken)), null);
+        }
+        catch (QuotationsDomainException error)
+        {
+            return new ShopifyOrderEditOutcome(null, error.Code);
+        }
+        catch (ResourceNotFoundException error)
+        {
+            return new ShopifyOrderEditOutcome(null, error.Code);
+        }
+    }
+
+    internal static ShopifyOrderState ToShopify(ExternalOrderEditState state) =>
+        new(
+            state.OrderId,
+            state.Version,
+            state.Status.ToString(),
+            state.IsEditable,
+            state.IsPrepared,
+            state.IsInvoiced,
+            state.PaymentStatus.ToString(),
+            state.ClientId,
+            state.Currency,
+            state.IsStorePickup,
+            state.Lines
+                .Select(line => new ShopifyOrderLineState(
+                    line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage))
+                .ToArray(),
+            new ShopifyShippingDraft(
+                state.IsStorePickup,
+                state.Shipping.CarrierId,
+                state.Shipping.CarrierName,
+                state.Shipping.ChargeMode?.ToString(),
+                state.Shipping.FreightAmount,
+                state.Shipping.FreightTaxPercentage,
+                state.Shipping.CashOnDelivery),
+            Fingerprint(state.ShippingParty),
+            state.ShippingCountry,
+            state.BuyerNotes);
+
     private static ExternalOrderDraft ToExternal(ShopifyOrderDraft draft)
     {
         var shipping = draft.Shipping;
@@ -155,7 +236,8 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
                     shipping.CarrierId, shipping.CarrierName, ToChargeMode(shipping.ChargeMode), shipping.FreightAmount,
                     shipping.FreightTaxPercentage, shipping.CashOnDelivery),
             draft.ExternalKey,
-            draft.ExternalShippingTitle);
+            draft.ExternalShippingTitle,
+            draft.BuyerNotes);
     }
 
     // Spec 2026-10-26 D-C4: la parte de envío como la guardó Quotations. Una guardada está completa (OrderParty.IsComplete), así

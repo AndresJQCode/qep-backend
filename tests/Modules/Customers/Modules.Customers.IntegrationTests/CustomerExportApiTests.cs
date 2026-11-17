@@ -102,8 +102,9 @@ public sealed class CustomerExportApiTests
         Assert.NotNull(storage.Content);
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
-        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 15).GetString());
+        // Creado y Actualizado: 13 de la importacion (sin «ReteICA») + Empresa + Activo, y después estas dos.
         Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 16).GetString());
+        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 17).GetString());
     }
 
     // D-R7 (spec 2026-10-23): las fechas de texto siguen el formato de fecha del tenant, más la hora;
@@ -133,8 +134,9 @@ public sealed class CustomerExportApiTests
         Assert.NotNull(storage.Content);
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
-        Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 15).GetString());
+        // Creado y Actualizado: 13 de la importacion (sin «ReteICA») + Empresa + Activo, y después estas dos.
         Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 16).GetString());
+        Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 17).GetString());
     }
 
     // Spec 2026-10-10 §5.2: el export incluye los incompletos, con celdas vacías, y suma la columna
@@ -216,14 +218,15 @@ public sealed class CustomerExportApiTests
         Assert.Equal(customer.Department!.Name, Value(CustomerImportColumns.Department));
         Assert.Equal(city.CityName, Value(CustomerImportColumns.City));
         Assert.Equal(classification.Name, Value(CustomerImportColumns.Classification));
-        Assert.Equal("No", Value(CustomerImportColumns.WithRetention));
+        Assert.Equal(string.Empty, Value(CustomerImportColumns.Retefuente));
+        Assert.DoesNotContain("ReteICA", headers);
         Assert.Equal("No", Value(CustomerImportColumns.VatSurplus));
         Assert.Equal("Si", Value("Activo"));
         Assert.Equal("Completa", Value("Estado de la ficha"));
     }
 
-    // 13 de la importacion + Activo, Creado, Actualizado + «Estado de la ficha» (y después «Tipo de persona»).
-    private const int StatusColumnIndex = 17;
+    // 13 de la importacion (sin «ReteICA» desde el spec ReteICA por empresa) + Empresa + Activo, Creado, Actualizado + «Estado de la ficha» (y después «Tipo de persona»).
+    private const int StatusColumnIndex = 18;
 
     // Por nombre, como lo hace el importador. Con cabeceras repetidas gana la primera; la prueba de
     // alineacion comprueba aparte que no las haya.
@@ -262,6 +265,85 @@ public sealed class CustomerExportApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // La exportacion comparte los filtros del listado: un `search` con el telefono exporta al
+    // mismo cliente que la grilla muestra, no a todo el padron.
+    [Fact]
+    public async Task ExportFiltersBySearchingThePhone()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = Factory(database, storage);
+        using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        foreach (var (name, identification, phone) in new[]
+                 {
+                     ("Verde Esencial S.A.S.", "900.123.456-1", "3001234567"),
+                     ("Azul Profundo Ltda.", "901.222.333-4", "3109352187"),
+                 })
+        {
+            var created = await client.PostAsJsonAsync(
+                CustomersUrl(),
+                NewCustomerBody(city.CityId, classification.Id, name: name, identificationNumber: identification, phone: phone),
+                TestContext.Current.CancellationToken);
+            created.EnsureSuccessStatusCode();
+        }
+
+        var response = await client.PostAsync(
+            $"{ExportUrl()}?search={Uri.EscapeDataString("+57 300 123 4567")}",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ExportResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        Assert.Equal(1, body.CustomerCount);
+        Assert.NotNull(storage.Content);
+        using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+        Assert.Equal("Verde Esencial S.A.S.", workbook.Worksheets.First().Cell(2, 2).GetString());
+    }
+
+    // La caja `phone` del listado tambien acota la exportacion: se exporta lo que la grilla muestra.
+    [Fact]
+    public async Task ExportFiltersByThePhoneFilter()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = Factory(database, storage);
+        using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        foreach (var (name, identification, phone) in new[]
+                 {
+                     ("Verde Esencial S.A.S.", "900.123.456-1", "3001234567"),
+                     ("Azul Profundo Ltda.", "901.222.333-4", "3109352187"),
+                 })
+        {
+            var created = await client.PostAsJsonAsync(
+                CustomersUrl(),
+                NewCustomerBody(city.CityId, classification.Id, name: name, identificationNumber: identification, phone: phone),
+                TestContext.Current.CancellationToken);
+            created.EnsureSuccessStatusCode();
+        }
+
+        var response = await client.PostAsync(
+            $"{ExportUrl()}?phone={Uri.EscapeDataString("(300) 123-4567")}",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ExportResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        Assert.Equal(1, body.CustomerCount);
+        Assert.NotNull(storage.Content);
+        using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+        Assert.Equal("Verde Esencial S.A.S.", workbook.Worksheets.First().Cell(2, 2).GetString());
+    }
+
     // Un tenant sin clientes no produce un Excel de una sola fila de cabeceras ni un correo con un
     // archivo vacio: falla legible, mismo criterio que el export de filas fallidas.
     [Fact]
@@ -279,14 +361,54 @@ public sealed class CustomerExportApiTests
         Assert.Null(storage.Content);
     }
 
+    // Spec 2026-11-10 §5: la exportación sigue la misma regla de contactos que el listado, y la razón social entra en la búsqueda.
+    [Fact]
+    public async Task TheExportFollowsTheSameContactsRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = Factory(database, storage);
+        using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var company = await CreateCustomerAsync(client, city.CityId, classification.Id, "Contacto Acme", "900.123.456-1");
+        var contact = await CreateCustomerAsync(client, city.CityId, classification.Id, "Laura Pérez", "901.222.333-4");
+        (await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{contact.Id}/company", new { companyId = company.Id }, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+
+        async Task<int> ExportedAsync(string query)
+        {
+            var response = await client.PostAsync(
+                ExportUrl() + query, content: null, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<ExportResponse>(TestContext.Current.CancellationToken);
+            return body!.CustomerCount;
+        }
+
+        Assert.Equal(1, await ExportedAsync(string.Empty));
+        Assert.Equal(2, await ExportedAsync("?contacts=include"));
+        Assert.Equal(1, await ExportedAsync("?search=Laura"));
+        Assert.Equal(1, await ExportedAsync("?name=Laura"));
+
+        var excluded = await client.PostAsync(
+            ExportUrl() + "?search=Laura&contacts=exclude", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, excluded.StatusCode);
+
+        var unknown = await client.PostAsync(
+            ExportUrl() + "?contacts=all", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, unknown.StatusCode);
+    }
+
     private static QepApiFactory Factory(
-        Testcontainers.PostgreSql.PostgreSqlContainer database, CapturingExportStorage storage) =>
+        TestDatabase database, CapturingExportStorage storage) =>
         new(
             database.GetConnectionString(),
             services => services.AddScoped<ICustomerExportStorage>(_ => storage));
 
     private static QepApiFactory FactoryAt(
-        Testcontainers.PostgreSql.PostgreSqlContainer database,
+        TestDatabase database,
         CapturingExportStorage storage,
         DateTimeOffset utcNow) =>
         new(

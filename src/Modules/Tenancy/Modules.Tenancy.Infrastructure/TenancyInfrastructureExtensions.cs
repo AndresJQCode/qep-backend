@@ -46,6 +46,7 @@ public static class TenancyInfrastructureExtensions
         services.AddScoped<IMembershipActivation, MembershipActivationService>();
         services.AddScoped<IInvitationService, InvitationService>();
         services.AddScoped<ITenantSlugAvailability, TenantSlugAvailability>();
+        services.AddScoped<ITenantSlugDirectory, TenantSlugDirectory>();
         services.AddScoped<ITenantRegistration, TenantRegistrationService>();
         // Spec 2026-10-07: ValidateOnStart, como Notifications, para que un valor que no es
         // booleano tumbe el arranque en vez del primer signup.

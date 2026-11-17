@@ -28,7 +28,7 @@ internal sealed class ShopifyClaimedOutboxConsumer(
 
     public IReadOnlyList<TimeSpan> Leases => leases;
 
-    public async Task ProcessBatchAsync(
+    public async Task<bool> ProcessBatchAsync(
         Func<ShopifyClaimedMessage, CancellationToken, Task> process,
         Action<Exception, ShopifyOutboxRecord, int?> onFailure,
         CancellationToken cancellationToken)
@@ -80,6 +80,8 @@ internal sealed class ShopifyClaimedOutboxConsumer(
                 onFailure(exception, record, attempts);
             }
         }
+
+        return pending.Count == BatchSize;
     }
 
     /// <summary>Marca como terminada la fila que dejó el reclamo, sin guardar: quien llama la guarda en el mismo SaveChanges que su

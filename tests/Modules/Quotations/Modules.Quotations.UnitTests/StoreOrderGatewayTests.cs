@@ -44,7 +44,9 @@ public sealed class StoreOrderGatewayTests
             rounding,
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settingsStore),
             new FixedTenantDefaultCurrency(),
-            new StubTenantDirectory());
+            new StubTenantDirectory(),
+            ThrowingProxy.Create<IQuotationWithholdingLookup>(),
+            new FixedTenantClock(Now));
         // Todo lo que escribe o numera es un doble que explota: la cotización no puede tocarlo.
         return new StoreOrderGateway(
             drafts,
@@ -61,7 +63,8 @@ public sealed class StoreOrderGatewayTests
             ThrowingProxy.Create<IOrderNumberGenerator>(),
             new DefaultNumberingFormats(),
             new StubTenantDirectory(),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            ThrowingProxy.Create<IQuotationWithholdingLookup>());
     }
 
     private static StoreQuoteRequest Request(

@@ -63,6 +63,22 @@ public sealed class QuotationFileLookupTests
         Assert.False(found.IsPaymentProof);
     }
 
+    // Fix round 1 del Bloque D: un adjunto del formulario público de Soporte no se adjunta a un pedido ni se descarga por Quotations.
+    [Fact]
+    public async Task ASupportAttachmentDoesNotExistForQuotations()
+    {
+        var attachment = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, Guid.NewGuid(), FileOwnerType.SupportTicket, "acta.pdf",
+            "application/pdf", 1024, $"staging/{Guid.CreateVersion7():N}", Now);
+        attachment.CompleteUpload("checksum", 1024, Now);
+        attachment.Promote($"files/tenants/{TenantId:N}/{Guid.CreateVersion7():N}", Now);
+        var lookup = LookupWith(attachment);
+
+        Assert.Null(await lookup.FindAsync(TenantId, attachment.Id.Value, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<BuildingBlocks.Application.ResourceNotFoundException>(() => lookup.CreateDownloadUrlAsync(
+            TenantId, attachment.Id.Value, "acta.pdf", TestContext.Current.CancellationToken));
+    }
+
     private static FileResource AvailablePaymentProof()
     {
         var proof = FileResource.CreatePendingUpload(

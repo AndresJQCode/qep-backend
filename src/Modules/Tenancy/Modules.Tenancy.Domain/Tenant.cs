@@ -18,6 +18,7 @@ public sealed class Tenant
     {
     }
 
+    /// <param name="slug">Ya validado y normalizado por <see cref="Create"/>, su único llamador.</param>
     private Tenant(
         TenantId id,
         string slug,
@@ -30,7 +31,7 @@ public sealed class Tenant
     {
         Id = id;
         OwnerMembershipId = ownerMembershipId;
-        Slug = ValidateSlug(slug);
+        Slug = slug;
         DisplayName = ValidateDisplayName(displayName);
         DefaultCulture = ValidateCulture(defaultCulture);
         TimeZone = ValidateTimeZone(timeZone);
@@ -133,9 +134,15 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt) =>
-        new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
+        DateTimeOffset createdAt)
+    {
+        // La reserva va aquí y no en el constructor: EnsureNotReserved sólo protege lo nuevo. El constructor recibe el slug ya
+        // validado y normalizado, así que no lo vuelve a validar.
+        var normalizedSlug = ValidateSlug(slug);
+        EnsureNotReserved(normalizedSlug);
+        return new(id, normalizedSlug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
             createdAt);
+    }
 
     /// <summary>
     /// Aplica las mismas reglas y los mismos códigos que <see cref="Create"/> a los datos de un
@@ -149,6 +156,7 @@ public sealed class Tenant
         string dateFormat)
     {
         var normalizedSlug = ValidateSlug(slug);
+        EnsureNotReserved(normalizedSlug);
         ValidateDisplayName(displayName);
         ValidateCulture(defaultCulture);
         ValidateTimeZone(timeZone);
@@ -374,6 +382,21 @@ public sealed class Tenant
         }
 
         return normalized;
+    }
+
+    /// <summary>
+    /// Un slug que es ruta fija del host de Soporte (<see cref="TenantSlugReservations"/>). Sólo
+    /// lo llaman <see cref="Create"/> y <see cref="EnsureValidRegistration"/>: un tenant que ya
+    /// existía con uno de estos slugs sigue cargando.
+    /// </summary>
+    private static void EnsureNotReserved(string normalizedSlug)
+    {
+        if (TenantSlugReservations.IsReserved(normalizedSlug))
+        {
+            throw new TenantDomainException(
+                TenantSlugReservations.ReservedCode,
+                "Tenant slug is reserved.");
+        }
     }
 
     private static string ValidateDisplayName(string value)

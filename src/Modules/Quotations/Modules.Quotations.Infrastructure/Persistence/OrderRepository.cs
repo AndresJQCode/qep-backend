@@ -105,8 +105,10 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         int page,
@@ -114,10 +116,12 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
         var total = await orders.CountAsync(cancellationToken);
+        // Spec 2026-11-16 §5: primero la fecha del pedido; dentro del mismo día, el instante en que se creó.
         var items = await orders
-            .OrderByDescending(order => order.ConvertedAt)
+            .OrderByDescending(order => order.OrderDate)
+            .ThenByDescending(order => order.ConvertedAt)
             .ThenByDescending(order => order.OrderNumber)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -143,6 +147,34 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         return (items, total);
     }
 
+    // El origen y el rol se guardan como texto (HasConversion<string>), y un correo NULL nunca coincide.
+    // lower(trim(...)) replica BuyerEmail.TryNormalize (Trim + ToLowerInvariant), que es como llega normalizedEmail. El trim
+    // de SQL sólo quita espacios: un correo guardado con tabulador o salto de línea no coincide, que es el lado seguro (no
+    // enlaza de más).
+    public Task<int> LinkStoreOrdersByBillingEmailAsync(
+        Guid tenantId, Guid buyerAccountId, string normalizedEmail, CancellationToken cancellationToken)
+    {
+        var source = nameof(OrderSource.Store);
+        var billingRole = nameof(QuotationPartyRole.Billing);
+        return dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE quotations.orders o
+            SET buyer_account_id = {buyerAccountId}
+            FROM quotations.order_parties p
+            WHERE o.tenant_id = {tenantId}
+              AND o.source = {source}
+              AND o.buyer_account_id IS NULL
+              AND NOT o.buyer_account_set_by_member
+              AND p.order_id = o.id
+              AND p.role = {billingRole}
+              AND lower(trim(p.email)) = {normalizedEmail};
+            """,
+            cancellationToken);
+    }
+
+    public void ForceBuyerAccountWrite(Order order) =>
+        dbContext.Entry(order).Property(value => value.BuyerAccountId).IsModified = true;
+
     public Task<Order?> FindByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken) =>
         WithAggregate(dbContext.Orders)
@@ -159,12 +191,14 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         CancellationToken cancellationToken) =>
-        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source)
+        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source)
             .AnyAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Order>> ListForExportAsync(
@@ -174,8 +208,10 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
         OrderExportCursor? after,
@@ -183,18 +219,21 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
         if (after is not null)
         {
+            // El cursor es el orden del listado entero (spec 2026-11-16 §5): fecha del pedido, instante y número.
+            var orderDate = after.OrderDate;
             var convertedAt = after.ConvertedAt;
             var number = after.OrderNumber;
             orders = orders.Where(order => EF.Functions.LessThan(
-                ValueTuple.Create(order.ConvertedAt, order.OrderNumber),
-                ValueTuple.Create(convertedAt, number)));
+                ValueTuple.Create(order.OrderDate, order.ConvertedAt, order.OrderNumber),
+                ValueTuple.Create(orderDate, convertedAt, number)));
         }
 
         return await orders
-            .OrderByDescending(order => order.ConvertedAt)
+            .OrderByDescending(order => order.OrderDate)
+            .ThenByDescending(order => order.ConvertedAt)
             .ThenByDescending(order => order.OrderNumber)
             .Take(limit)
             .ToListAsync(cancellationToken);
@@ -209,17 +248,31 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
-        DateTimeOffset? convertedFrom,
-        DateTimeOffset? convertedBefore,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source)
     {
         var orders = dbContext.Orders
             .AsNoTracking()
             .Where(order => order.TenantId == tenantId);
-        if (status is { } orderStatus)
+        // Sin filtro de estado, los archivados no salen (spec 2026-11-10 §5): el listado es lo pendiente de trabajar.
+        orders = status is { } orderStatus
+            ? orders.Where(order => order.Status == orderStatus)
+            : orders.Where(order => order.Status != OrderStatus.Archived);
+
+        if (fulfillmentStatus is { } orderFulfillmentStatus)
         {
-            orders = orders.Where(order => order.Status == orderStatus);
+            orders = orders.Where(order => order.FulfillmentStatus == orderFulfillmentStatus);
+        }
+
+        if (invoiced is { } isInvoiced)
+        {
+            orders = isInvoiced
+                ? orders.Where(order => order.InvoicedAt != null)
+                : orders.Where(order => order.InvoicedAt == null);
         }
 
         if (paymentStatus is { } orderPaymentStatus)
@@ -239,14 +292,15 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 EF.Functions.ILike(order.OrderNumber, orderNumberPattern, LikeEscapeCharacter));
         }
 
-        if (convertedFrom is { } from)
+        // Spec 2026-11-16 §4: el filtro de fechas corta por la fecha del pedido, inclusive en las dos puntas y sin huso.
+        if (orderDateFrom is { } from)
         {
-            orders = orders.Where(order => order.ConvertedAt >= from);
+            orders = orders.Where(order => order.OrderDate >= from);
         }
 
-        if (convertedBefore is { } before)
+        if (orderDateTo is { } to)
         {
-            orders = orders.Where(order => order.ConvertedAt < before);
+            orders = orders.Where(order => order.OrderDate <= to);
         }
 
         if (clientId is { } client)

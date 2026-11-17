@@ -50,7 +50,6 @@ public sealed class BatchUpdateQuotationItemsHandler(
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
     IQuotationProductLookup productLookup,
-    IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
@@ -69,16 +68,6 @@ public sealed class BatchUpdateQuotationItemsHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
-
-        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
-        // — ver Quotation.RefreshCustomerTaxProfile. Una sola vez para toda la tanda, no por
-        // línea: es el mismo cliente para todas.
-        var customer = await customerLookup.FindAsync(
-            command.TenantId, quotation.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
-        }
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);

@@ -350,7 +350,7 @@ public sealed class CampaignDispatcherTests
         await bed.Dispatcher.SendAsync(recipient, Ct);
 
         Assert.Equal("131050", Assert.Single(bed.Store.Failed).Code);
-        Assert.Equal([recipient.CustomerId], bed.Bed.Customers.OptedOut);
+        Assert.Equal([recipient.CustomerId!.Value], bed.Bed.Customers.OptedOut);
         Assert.Empty(bed.Store.Stops);
     }
 

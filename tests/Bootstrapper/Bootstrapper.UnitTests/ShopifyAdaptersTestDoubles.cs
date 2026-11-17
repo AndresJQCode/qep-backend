@@ -51,6 +51,12 @@ internal sealed class FakeQuotationSettingsStore(Guid? freightTaxRateId) : IQuot
 
     public Task SetFreightChargeModesAsync(Guid tenantId, FreightChargeModeSettings settings, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<OrderSettings> GetOrderSettingsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task SetOrderSettingsAsync(Guid tenantId, OrderSettings settings, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRepository
@@ -58,8 +64,13 @@ internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRe
     public Task<TaxRate?> FindAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>
         Task.FromResult(rates.FirstOrDefault(rate => rate.TenantId == tenantId && rate.Id == taxRateId));
 
-    public Task<IReadOnlyList<TaxRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public int ListCalls { get; private set; }
+
+    public Task<IReadOnlyList<TaxRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        ListCalls++;
+        return Task.FromResult<IReadOnlyList<TaxRate>>([.. rates.Where(rate => rate.TenantId == tenantId)]);
+    }
 
     public Task<TaxRate?> FindByNameAsync(Guid tenantId, string name, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -159,6 +170,40 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
             ?? new ExternalShippingOutcome(
                 ExternalShippingOutcomeKind.Applied, expected with { DepartmentId = departmentId, CityId = cityId }, null));
     }
+
+    /// <summary>Lo que lee el detector de ediciones de Shopify, por pedido; el que no está no existe (<c>null</c>).</summary>
+    public Dictionary<(Guid TenantId, Guid OrderId), ExternalOrderEditState> EditStates { get; } = [];
+
+    public Func<ExternalOrderEditDraft, ExternalOrderEditState>? OnApplyEdit { get; init; }
+
+    public List<ExternalOrderEditDraft> Edits { get; } = [];
+
+    public Task<ExternalOrderEditState?> FindEditStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(EditStates.TryGetValue((tenantId, orderId), out var state) ? state : null);
+    }
+
+    public Task<ExternalOrderEditState> ApplyEditAsync(ExternalOrderEditDraft draft, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Edits.Add(draft);
+        return Task.FromResult(
+            OnApplyEdit?.Invoke(draft)
+            ?? EditStates.GetValueOrDefault((draft.TenantId, draft.OrderId))
+            ?? throw new InvalidOperationException("No edit state seeded for the order."));
+    }
+
+    public List<ExternalOrderCorrection> Corrections { get; } = [];
+
+    public Task<ExternalOrderEditState> CorrectByMemberAsync(ExternalOrderCorrection correction, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Corrections.Add(correction);
+        return Task.FromResult(
+            EditStates.GetValueOrDefault((correction.TenantId, correction.OrderId))
+            ?? throw new InvalidOperationException("No edit state seeded for the order."));
+    }
 }
 
 internal sealed class PassThroughPhones : IPhoneNumberNormalizer
@@ -236,22 +281,28 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
     }
 
     public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, IReadOnlyCollection<Guid>? cityIds,
-        bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds,
+        bool? isComplete, int page, int pageSize, bool includeContacts, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> SearchSelectableAsync(
         Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> ListForExportAsync(
-        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, int skip, int take,
+        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take, bool includeContacts,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<bool> AnyWithClassificationAsync(
         Guid tenantId, ClientClassificationId classificationId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+    public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
         Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+        Guid tenantId, IReadOnlyCollection<string> numbers, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -283,6 +334,12 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
     public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
     public void Add(Customer customer) => throw new NotSupportedException();
 }
 
@@ -302,6 +359,14 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, Guid survivorId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<int> CountContactsMovedAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<Guid>> RepointContactsAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<CustomerMergeOwnedCounts> CountOwnedAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -309,8 +374,11 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Por id del fusionado; el que no está no se fusionó.</summary>
+    public Dictionary<Guid, Guid> SurvivorsById { get; } = [];
+
     public Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult(SurvivorsById.TryGetValue(customerId, out var survivor) ? survivor : (Guid?)null);
 }
 
 internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
@@ -438,25 +506,34 @@ internal sealed class FakeCitySynonymRepository(params CitySynonym[] synonyms) :
 
 /// <summary>Una tienda Shopify enlazada en el estado que pide la prueba, con su ruta y el módulo prendido o no. El
 /// <see cref="IIntegrationConnections"/> falso resuelve toda conexión Active sin mirar el módulo: así, que el módulo
-/// apagado no deje operar lo tiene que decidir el adaptador.</summary>
+/// apagado no deje operar lo tiene que decidir el adaptador. El reloj del directorio está fijo en <see cref="Now"/>, y
+/// <c>tokenExpiresAt</c> se guarda en los campos sólo si la prueba lo da.</summary>
 internal sealed class ConnectionWorld
 {
     public const string Domain = "mi-tienda.myshopify.com";
     public const string Token = "shpat_TEST_token";
 
-    public ConnectionWorld(ConnectionStatus status, bool shopifyEnabled)
+    public static readonly DateTimeOffset Now = new(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+
+    public ConnectionWorld(ConnectionStatus status, bool shopifyEnabled, string? tokenExpiresAt = null)
     {
-        var now = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+        var now = Now;
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [ShopifyFieldKeys.ShopDomain] = Domain,
+            [ShopifyFieldKeys.ShopName] = "Mi tienda",
+            [ShopifyFieldKeys.ShopId] = "987654321",
+        };
+        if (tokenExpiresAt is not null)
+        {
+            fields[ShopifyFieldKeys.TokenExpiresAt] = tokenExpiresAt;
+        }
+
         Connection = IntegrationConnection.Create(
             IntegrationProviders.Shopify,
             Guid.CreateVersion7(),
             "Mi tienda",
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                [ShopifyFieldKeys.ShopDomain] = Domain,
-                [ShopifyFieldKeys.ShopName] = "Mi tienda",
-                [ShopifyFieldKeys.ShopId] = "987654321",
-            },
+            fields,
             new Dictionary<string, string>(StringComparer.Ordinal) { [ShopifyFieldKeys.AccessToken] = Token },
             (connectionId, fieldKey, plaintext) => new ProtectedSecret("k1", Encoding.UTF8.GetBytes(plaintext)),
             Guid.CreateVersion7(),
@@ -477,7 +554,8 @@ internal sealed class ConnectionWorld
             new FakeIntegrationConnections(Connection),
             new FakeTenantModules(Connection.TenantId, TenantModuleSet.FromStored(shopifyEnabled
                 ? TenantModuleKeys.DefaultForNewTenants
-                : TenantModuleKeys.DefaultForNewTenants.Where(key => key != TenantModuleKeys.Shopify))));
+                : TenantModuleKeys.DefaultForNewTenants.Where(key => key != TenantModuleKeys.Shopify))),
+            new FixedClock(now));
     }
 
     public IntegrationConnection Connection { get; }
@@ -551,6 +629,14 @@ internal sealed class RecordingHealthReporter : IConnectionHealthReporter
         Reports.Add((tenantId, connectionId, failureCode));
         return Task.CompletedTask;
     }
+
+    public List<(Guid TenantId, Guid ConnectionId)> TokenExpired { get; } = [];
+
+    public Task ReportTokenExpiredAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        TokenExpired.Add((tenantId, connectionId));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class NamedDepartments(params Department[] departments) : IDepartmentRepository
@@ -560,7 +646,8 @@ internal sealed class NamedDepartments(params Department[] departments) : IDepar
 
     public Task<IReadOnlyList<Department>> ListAllAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
 
-    public Task<Department?> FindAsync(DepartmentId departmentId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<Department?> FindAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
+        Task.FromResult(departments.FirstOrDefault(department => department.Id == departmentId));
 
     public Task<IReadOnlyList<Department>> ListByIdsAsync(
         IReadOnlyCollection<DepartmentId> departmentIds, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -584,7 +671,8 @@ internal sealed class NamedCities(params City[] cities) : ICityRepository
     public Task<IReadOnlyList<City>> ListByDepartmentAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task<City?> FindAsync(CityId cityId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<City?> FindAsync(CityId cityId, CancellationToken cancellationToken) =>
+        Task.FromResult(cities.FirstOrDefault(city => city.Id == cityId));
 
     public Task<IReadOnlyList<City>> ListByIdsAsync(IReadOnlyCollection<CityId> cityIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -615,6 +703,12 @@ internal sealed class FakeCompanyRepository(params Company[] companies) : ICompa
 
     public Task<IReadOnlyList<Company>> SearchAsync(
         Guid tenantId, string? search, string? name, string? taxId, CompanyStatusFilter? status, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public void Add(Company company) => throw new NotSupportedException();

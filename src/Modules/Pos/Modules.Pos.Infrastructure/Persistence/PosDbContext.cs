@@ -188,6 +188,13 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         line.Property(value => value.DiscountAmount).HasColumnName("discount_amount").HasPrecision(14, 2);
         line.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         line.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
+        // Costo congelado al vender (spec 2026-11-10 §4.2): los tres nulos para las ventas anteriores.
+        line.Property(value => value.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
+        line.Property(value => value.CostSource)
+            .HasColumnName("cost_source")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        line.Property(value => value.CostCapturedAt).HasColumnName("cost_captured_at");
         line.Ignore(value => value.LineTotal);
         line.HasIndex(value => new { value.SaleId, value.Position }).IsUnique();
         // La consulta de uso de Catalog (Bootstrapper.CatalogVariantUsageChecker) filtra

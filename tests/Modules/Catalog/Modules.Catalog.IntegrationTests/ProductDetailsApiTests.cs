@@ -9,7 +9,7 @@ using Modules.Catalog.Domain;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -18,11 +18,11 @@ namespace Modules.Catalog.IntegrationTests;
 /// `Price` vivió acá hasta CAT-09, que lo retiró del todo junto con sus pruebas — el precio del
 /// producto es ahora sólo el de CAT-09, en USD/COP.
 /// </summary>
-public sealed class ProductDetailsApiTests
+public sealed class ProductDetailsApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] All =
@@ -50,7 +50,7 @@ public sealed class ProductDetailsApiTests
     private static async Task<Guid> UploadImageAsync(
         HttpClient client,
         string tenantId,
-        PostgreSqlContainer database)
+        TestDatabase database)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/files",
@@ -86,8 +86,8 @@ public sealed class ProductDetailsApiTests
     [Fact]
     public async Task CreateWithAllTheDetailsPersistsThemAndGetReturnsThem()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
@@ -119,8 +119,7 @@ public sealed class ProductDetailsApiTests
     [Fact]
     public async Task CreateWithoutAnyDetailReturnsCreatedWithThemNull()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var response = await CreateProductAsync(
@@ -140,8 +139,8 @@ public sealed class ProductDetailsApiTests
     [Fact]
     public async Task UpdateWithNullDetailsClearsThem()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
@@ -292,8 +291,7 @@ public sealed class ProductDetailsApiTests
     [Fact]
     public async Task ATaxRateFromAnotherTenantIsRejectedAndNothingIsPersisted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, All);
         using var other = CreateClient(factory, OtherSubjectId, OtherTenantId, All);
 
@@ -319,8 +317,7 @@ public sealed class ProductDetailsApiTests
     [Fact]
     public async Task AnUnknownTaxRateIsUnprocessableAndNotAServerError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
@@ -341,8 +338,7 @@ public sealed class ProductDetailsApiTests
     [Fact]
     public async Task AnInactiveTaxRateFromTheSameTenantIsAccepted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA viejo", 16);
@@ -360,6 +356,62 @@ public sealed class ProductDetailsApiTests
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Equal(taxRateId, (await ReadProductAsync(response)).TaxRateId);
+    }
+
+    // Un producto sólo lleva tasas que suman (IVA): una que retiene se rechaza al crear y al editar.
+    [Fact]
+    public async Task ProductWithRetefuenteRateIs422()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var retefuenteId = await CreateTaxRateAsync(client, TenantId, "Retefuente 2.5", 2.5m, "Retefuente");
+        var pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } };
+
+        var create = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja", "VS-001", pricing: pricing, taxRateId: retefuenteId));
+        await AssertNotVatAsync(create);
+        Assert.Empty(await ListAsync(client, TenantId));
+
+        var created = await ReadProductAsync(await CreateProductAsync(
+            client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", pricing: pricing)));
+        var update = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(created, "Vela de soja", "VS-001", pricing: pricing, taxRateId: retefuenteId),
+            TestContext.Current.CancellationToken);
+        await AssertNotVatAsync(update);
+    }
+
+    // Regresión de ProductTaxRateResolver: inactivar un IVA no impide seguir usándolo en un producto.
+    [Fact]
+    public async Task ProductWithInactiveIvaStillAccepted()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var ivaId = await CreateTaxRateAsync(client, TenantId, "IVA viejo", 16);
+        var deactivate = await client.PostAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{ivaId}/deactivate",
+            content: null,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
+
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            taxRateId: ivaId));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private static async Task AssertNotVatAsync(HttpResponseMessage response)
+    {
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(
+            response.StatusCode == HttpStatusCode.UnprocessableEntity,
+            $"Expected 422, got {response.StatusCode}: {text}");
+        Assert.Contains("catalog.product.tax_rate_not_vat", text, StringComparison.Ordinal);
     }
 
     // CA-CAT-04-10
@@ -519,11 +571,12 @@ public sealed class ProductDetailsApiTests
         HttpClient client,
         string tenantId,
         string name,
-        int percentage)
+        decimal percentage,
+        string? type = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/tax-rates",
-            new { name, percentage },
+            new { name, percentage, type },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
@@ -598,17 +651,6 @@ public sealed class ProductDetailsApiTests
         return payloads;
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private static HttpClient CreateClient(
         QepApiFactory factory,
         string subjectId,
@@ -633,6 +675,8 @@ public sealed class ProductDetailsApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

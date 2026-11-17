@@ -93,7 +93,8 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
                 state.IsStorePickup,
                 state.Shipping is not null,
                 (state.Notes ?? string.Empty).Split('\n').Any(
-                    line => line.StartsWith(ShopifyOrderImporter.RawAddressLabel, StringComparison.Ordinal)));
+                    line => line.StartsWith(ShopifyOrderImporter.RawAddressLabel, StringComparison.Ordinal)),
+                state.IsEditable);
     }
 
     // La huella sólo viaja con un éxito: es la parte como quedó guardada (en un reintento, quizá en la ciudad que el sinónimo tenía

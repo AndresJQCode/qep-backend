@@ -10,7 +10,10 @@ namespace Modules.Tenancy.Infrastructure.Persistence;
 public static class TenantChangeLock
 {
     /// <summary>Primera clave de la forma de dos: la fecha del spec. Cualquier constante sirve mientras
-    /// ningún otro candado de dos claves la use (hoy no hay otro).</summary>
+    /// ningún otro candado de dos claves la use. Los demás espacios de dos claves son
+    /// <c>AutomationsConversationLock.Namespace</c> = 20261022, <c>ShopifyTokenLock.Namespace</c> = 20261112,
+    /// <c>StartupLock.Namespace</c> = 20261113 (Bootstrapper) e
+    /// <c>InstagramTokenLock.Namespace</c> = 20261114.</summary>
     public const int Namespace = 20261008;
 
     public static string KeyFor(Guid tenantId) => $"tenancy.tenant-changes:{tenantId:D}";

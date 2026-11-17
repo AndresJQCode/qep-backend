@@ -59,7 +59,6 @@ public sealed record StoreOrderDraft(
     StoreBillingAccount BillingAccount,
     StoreOrderPartyInput Billing,
     StoreOrderPartyInput Shipping,
-    bool BillingWithRetention,
     bool BillingVatSurplus,
     IReadOnlyList<StoreOrderLineInput> Lines,
     string? Notes,

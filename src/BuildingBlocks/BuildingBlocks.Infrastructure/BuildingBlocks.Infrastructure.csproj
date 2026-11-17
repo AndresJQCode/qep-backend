@@ -1,6 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- CustomerReferenceWrites: el protocolo del candado de referencias a un cliente sobre DatabaseFacade/ChangeTracker. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <!-- RichTextHtmlSanitizer y RichTextHtmlReader: el texto enriquecido que comparten los documentos legales de Soporte y el
+         contenido del PDF de cotizaciones (spec 2026-11-16 §5.2 y §5.3). FluentValidation, por el ValidationException del rechazo. -->
+    <PackageReference Include="HtmlSanitizer" />
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
     <ProjectReference Include="..\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
   </ItemGroup>

@@ -57,6 +57,10 @@ public sealed record QuotationPdfDocument(
     /// sin IVA). Cero cuando el cliente no la practica. No resta del <see cref="Total"/>, que
     /// sigue siendo lo facturado — resta del <see cref="NetTotal"/>.</summary>
     decimal RetentionAmount,
+    /// <summary>Una fila por retención que aplicó, en su orden, rotulada con el nombre de la tasa (spec impuestos por
+    /// tipo §9.3, F-1). Vacía cuando no hay retención: la plantilla no imprime fila ni «Neto a pagar». Su suma es
+    /// <see cref="RetentionAmount"/>.</summary>
+    IReadOnlyList<QuotationPdfWithholding> Withholdings,
     /// <summary>Lo que efectivamente se paga en efectivo: <see cref="Total"/> menos la
     /// retención. Igual al total cuando no hay retención.</summary>
     decimal NetTotal,
@@ -89,7 +93,11 @@ public sealed record QuotationPdfDocument(
     /// moneda siguen saliendo de <c>Currencies</c> (spec 2026-10-23, D-R4): esto sólo decide los separadores.</summary>
     string ThousandsSeparator = ".",
     /// <summary>El separador decimal del formato numérico del tenant; ver <see cref="ThousandsSeparator"/>.</summary>
-    string DecimalSeparator = ",");
+    string DecimalSeparator = ",",
+    /// <summary>Las secciones configurables del tenant ya resueltas para este documento (spec 2026-11-16 §5.3), o null sin
+    /// secciones. No las arma el mapper sino el proveedor, que es quien lee el contenido del tenant
+    /// (<see cref="QuotationPdfSectionsBuilder.Build"/>).</summary>
+    QuotationPdfSections? Sections = null);
 
 /// <summary>
 /// Viaja como texto (<c>"Quotation"</c> / <c>"Order"</c>) en <c>data.kind</c>: la plantilla compara
@@ -101,6 +109,13 @@ public enum QuotationPdfKind
     Quotation,
     Order
 }
+
+/// <summary>Una retención que aplicó, tal como el documento la imprime: el nombre de la tasa, lo que resta y su porcentaje
+/// efectivo ya escrito (spec ReteICA por empresa §7.9, R13).</summary>
+/// <param name="PercentageLabel">El porcentaje efectivo con el separador decimal del tenant, hasta tres decimales sin ceros
+/// de sobra, más « %» («0,966 %», «4 %»). Lo arma el mapper y no Typst porque la plantilla no sabe del tenant; el del
+/// catálogo de una tasa editada no se imprime: el cliente comprueba el monto con el efectivo.</param>
+public sealed record QuotationPdfWithholding(string Name, decimal Amount, string PercentageLabel);
 
 /// <summary>Una parte del documento: a quién se le factura, o a quién se le entrega.</summary>
 /// <param name="SameAsCustomer">

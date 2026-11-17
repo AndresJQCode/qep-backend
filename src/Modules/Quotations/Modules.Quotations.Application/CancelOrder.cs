@@ -8,7 +8,7 @@ public sealed record CancelOrderCommand(Guid TenantId, Guid OrderId, string? Rea
     : ICommand<OrderDto>;
 
 /// <summary>
-/// Anula un pedido (spec 2026-09-16), calcado de <see cref="ApproveOrderHandler"/>: mismo orden
+/// Anula un pedido (spec 2026-09-16), calcado de <see cref="InvoiceOrderHandler"/>: mismo orden
 /// —permiso, pedido, membresía de quien actúa, dominio, auditoría— y la misma unidad de trabajo.
 ///
 /// Permiso propio (<see cref="OrdersPermissions.OrderCancel"/>) y no el de gestión: anular deshace
@@ -43,7 +43,7 @@ public sealed class CancelOrderHandler(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
 
-        // CancelledBy es un id de membresía, como ApprovedBy: el módulo nunca guarda el usuario.
+        // CancelledBy es un id de membresía, como InvoicedBy: el módulo nunca guarda el usuario.
         var cancelledBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 

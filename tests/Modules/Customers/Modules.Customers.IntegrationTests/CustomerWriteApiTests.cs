@@ -5,7 +5,7 @@ using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
 
-public sealed class CustomerWriteApiTests
+public sealed class CustomerWriteApiTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     [Fact]
     public async Task CreateReturnsCreatedWithTheLocationOfTheNewCustomer()
@@ -38,7 +38,8 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(customer);
         Assert.True(customer.IsActive);
-        Assert.True(customer.WithRetention);
+        // El campo del cuerpo se ignora (spec impuestos por tipo §9.2): la retención se deriva de las tasas asignadas.
+        Assert.False(customer.WithRetention);
         Assert.Equal(classification.Id, customer.Classification?.Id);
         // `City`/`Department` son nulos para un cliente de afuera (ver los tests de pais al final
         // de este archivo). Este es colombiano, asi que tenerlos resueltos es parte de lo que se
@@ -219,8 +220,7 @@ public sealed class CustomerWriteApiTests
     [Fact]
     public async Task CreateWithAnUnknownClassificationIsRejectedWithItsDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
         var city = await EnsureCityAsync(client);
 
@@ -357,8 +357,7 @@ public sealed class CustomerWriteApiTests
     [Fact]
     public async Task CreateWithInvalidFieldsReturnsThePerFieldErrorMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var response = await client.PostAsJsonAsync(
@@ -511,8 +510,7 @@ public sealed class CustomerWriteApiTests
     [Fact]
     public async Task CreateForAnotherTenantIsForbiddenBeforeTheBodyIsValidated()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateClient(
             factory, OtherSubjectId, OtherTenantId, CustomersPermissions.CustomerManage);
 

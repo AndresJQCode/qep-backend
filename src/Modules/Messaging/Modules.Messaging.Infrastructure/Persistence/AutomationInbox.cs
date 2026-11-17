@@ -42,7 +42,7 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
              WHERE inbox.message_id = pending.message_id
             RETURNING inbox.message_id AS "MessageId", inbox.tenant_id AS "TenantId", inbox.connection_id AS "ConnectionId",
                       inbox.conversation_id AS "ConversationId", inbox.opened AS "Opened", inbox.created_at AS "CreatedAt",
-                      inbox.attempts::int AS "Attempts"
+                      inbox.attempts::int AS "Attempts", inbox.kind AS "Kind"
             """).ToListAsync(cancellationToken);
     }
 
@@ -128,15 +128,34 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             Opened = false,
             CreatedAt = now,
             NextAttemptAt = now,
+            Kind = AutomationInboxKinds.Engine,
         });
 
-    // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Lo que distingue a la manual es que su id no está en messages.
+    public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now) =>
+        dbContext.AutomationInbox.Add(NewReleaseRun(tenantId, connectionId, conversationId, now));
+
+    /// <summary>La fila de la señal de soltar, armada en un solo lugar para quien la agregue sin pasar por el puerto (el repositorio de
+    /// conversaciones). Id propio: no respalda a ningún mensaje.</summary>
+    internal static AutomationInboxRecord NewReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now) => new()
+    {
+        MessageId = Guid.CreateVersion7(),
+        TenantId = tenantId,
+        ConnectionId = connectionId,
+        ConversationId = conversationId,
+        Opened = false,
+        CreatedAt = now,
+        NextAttemptAt = now,
+        Kind = AutomationInboxKinds.ReleaseRun,
+    };
+
+    // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Lo que distingue a la manual es que es Engine y su id no está en messages.
     public async Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {
         var rows = await dbContext.Database.SqlQuery<bool>(
             $"""
             SELECT EXISTS (SELECT 1 FROM messaging.automation_inbox AS inbox
                             WHERE inbox.conversation_id = {conversationId} AND inbox.tenant_id = {tenantId} AND inbox.processed_at IS NULL
+                              AND inbox.kind = 'Engine'
                               AND NOT EXISTS (SELECT 1 FROM messaging.messages AS message WHERE message.id = inbox.message_id)) AS "Value"
             """).ToListAsync(cancellationToken);
         return rows[0];

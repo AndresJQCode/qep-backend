@@ -21,6 +21,8 @@ public sealed class LinkShopifyStoreHandlerTests
 
     private const string AccessToken = "shpat_link-token-SENTINEL-9f8e";
 
+    private const string RefreshToken = "shprt_link-refresh-SENTINEL-9f8e";
+
     private const string RedirectUri = "https://qep.qcode.co/shopify/callback";
 
     private static readonly Uri Callback = new("https://qep-api.qcode.co/api/webhooks/shopify");
@@ -61,7 +63,8 @@ public sealed class LinkShopifyStoreHandlerTests
                 new LinkShopifyStoreValidator());
 
         /// <summary>Una instalación ya canjeada: A con <paramref name="initiatedTenantId"/>, B sin él.</summary>
-        public ShopifyInstall SeedExchanged(Guid? initiatedTenantId = null, string token = AccessToken, DateTimeOffset? at = null)
+        public ShopifyInstall SeedExchanged(
+            Guid? initiatedTenantId = null, string token = AccessToken, DateTimeOffset? at = null, TimeSpan? tokenLifetime = null)
         {
             var now = at ?? IntegrationsTestBed.Now;
             var install = ShopifyInstall.Start(
@@ -70,7 +73,11 @@ public sealed class LinkShopifyStoreHandlerTests
             install.Claim(ShopifyInstall.ClaimedStatePrefix + "Y2xhaW1lZC1zdGF0ZS0wMTIzNDU2Nzg5YWJjZGVm", now);
             install.MarkExchanged(
                 "12345678", "Mi Tienda", "read_orders,read_customers",
-                Integrations.Protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, token), now);
+                Integrations.Protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, token),
+                Integrations.Protector.Protect(install.Id, ShopifyFieldKeys.RefreshToken, RefreshToken),
+                now + (tokenLifetime ?? TimeSpan.FromHours(1)),
+                now.AddDays(90),
+                now);
             Installs.Add(install);
             return install;
         }
@@ -103,9 +110,9 @@ public sealed class LinkShopifyStoreHandlerTests
         public LinkShopifyStoreCommand Command(Guid installId, string? name = null, Guid? tenantId = null) =>
             new(tenantId ?? Integrations.TenantId, installId, name);
 
-        public string StoredToken(IntegrationConnection connection)
+        public string StoredToken(IntegrationConnection connection, string fieldKey = ShopifyFieldKeys.AccessToken)
         {
-            var secret = Assert.Single(connection.Secrets);
+            var secret = Assert.Single(connection.Secrets, stored => stored.FieldKey == fieldKey);
             Assert.True(Integrations.Protector.TryUnprotect(connection.Id, secret.FieldKey, secret.Protected, out var plaintext));
             return plaintext;
         }
@@ -499,6 +506,168 @@ public sealed class LinkShopifyStoreHandlerTests
         var connection = Assert.Single(bed.Integrations.Repository.Connections);
         Assert.Equal(ConnectionStatus.Active, connection.Status);
         Assert.False(connection.Fields.ContainsKey(ShopifyFieldKeys.WebhookSubscriptionIds));
+    }
+
+    // Spec 2026-11-12 §6.1: la conexión guarda el refresh token de la instalación y los dos vencimientos.
+    [Fact]
+    public async Task LinkStoresTheRefreshTokenAndBothExpiries()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged();
+
+        await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        var connection = Assert.Single(bed.Integrations.Repository.Connections);
+        Assert.Equal(AccessToken, bed.StoredToken(connection));
+        Assert.Equal(RefreshToken, bed.StoredToken(connection, ShopifyFieldKeys.RefreshToken));
+        Assert.Equal(ShopifyTokenRefresh.Format(IntegrationsTestBed.Now.AddHours(1)), connection.Fields[ShopifyFieldKeys.TokenExpiresAt]);
+        Assert.Equal(ShopifyTokenRefresh.Format(IntegrationsTestBed.Now.AddDays(90)), connection.Fields[ShopifyFieldKeys.RefreshTokenExpiresAt]);
+        Assert.DoesNotContain("refresh", bed.Gateway.Calls);
+    }
+
+    // La instalación vive 7 días y su token, 1 hora: enlazar una vieja refresca el token antes de registrar webhooks.
+    [Fact]
+    public async Task LinkAnInstallOlderThanItsTokenRefreshesBeforeTheWebhooks()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged(tokenLifetime: TimeSpan.FromMinutes(10));
+        var refreshed = bed.Gateway.RefreshedGrant;
+
+        await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        Assert.Equal("refresh", bed.Gateway.Calls[0]);
+        Assert.Equal([RefreshToken], bed.Gateway.RefreshTokens);
+        Assert.NotEmpty(bed.Gateway.Tokens);
+        Assert.All(bed.Gateway.Tokens, token => Assert.Equal(refreshed.AccessToken, token));
+        Assert.Equal([install.Id], bed.Integrations.UnitOfWork.Locks);
+        Assert.Equal([install.Id], bed.Installs.StoredRefreshes);
+        var connection = Assert.Single(bed.Integrations.Repository.Connections);
+        Assert.Equal(refreshed.AccessToken, bed.StoredToken(connection));
+        Assert.Equal(refreshed.RefreshToken, bed.StoredToken(connection, ShopifyFieldKeys.RefreshToken));
+        Assert.Equal(ShopifyTokenRefresh.Format(IntegrationsTestBed.Now.AddHours(1)), connection.Fields[ShopifyFieldKeys.TokenExpiresAt]);
+    }
+
+    // Otro enlace la refrescó mientras éste esperaba el candado: se usa el par releído y no se vuelve a refrescar.
+    [Fact]
+    public async Task LinkAnInstallRefreshedByAnotherLinkMeanwhileUsesTheStoredPair()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged(tokenLifetime: TimeSpan.FromMinutes(10));
+        bed.Installs.OnFind = found =>
+        {
+            // La segunda lectura (la de después del candado) ya ve el par que guardó el otro enlace.
+            if (bed.Integrations.UnitOfWork.Locks.Count > 0 && found.NeedsTokenRefresh(IntegrationsTestBed.Now))
+            {
+                found.ApplyRefreshedToken(
+                    bed.Integrations.Protector.Protect(found.Id, ShopifyFieldKeys.AccessToken, "shpat_other-link-SENTINEL"),
+                    bed.Integrations.Protector.Protect(found.Id, ShopifyFieldKeys.RefreshToken, "shprt_other-link-SENTINEL"),
+                    IntegrationsTestBed.Now.AddHours(1),
+                    IntegrationsTestBed.Now.AddDays(90));
+            }
+        };
+
+        await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        Assert.DoesNotContain("refresh", bed.Gateway.Calls);
+        var connection = Assert.Single(bed.Integrations.Repository.Connections);
+        Assert.Equal("shpat_other-link-SENTINEL", bed.StoredToken(connection));
+        Assert.Equal("shprt_other-link-SENTINEL", bed.StoredToken(connection, ShopifyFieldKeys.RefreshToken));
+    }
+
+    [Fact]
+    public async Task LinkWhenTheInstallRefreshIsRejectedFailsWithoutAConnection()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged(tokenLifetime: TimeSpan.FromMinutes(10));
+        bed.Gateway.FailAt = "refresh";
+
+        var error = await Assert.ThrowsAsync<IntegrationsDomainException>(() => bed.Handler().HandleAsync(bed.Command(install.Id), Ct));
+
+        Assert.Equal(IntegrationsErrorCodes.ShopifyInstallExpired, error.Code);
+        Assert.Empty(bed.Integrations.Repository.Connections);
+        Assert.Empty(bed.Integrations.Routes.Added);
+        Assert.Empty(bed.Installs.Removed);
+        Assert.Equal(["refresh"], bed.Gateway.Calls);
+        Assert.DoesNotContain(RefreshToken, error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ShopifyGatewayFailure.Unreachable)]
+    [InlineData(ShopifyGatewayFailure.Invalid)]
+    public async Task LinkWhenTheInstallRefreshIsUnreachableIs503(ShopifyGatewayFailure failure)
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged(tokenLifetime: TimeSpan.FromMinutes(10));
+        bed.Gateway.FailAt = "refresh";
+        bed.Gateway.Failure = failure;
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => bed.Handler().HandleAsync(bed.Command(install.Id), Ct));
+
+        Assert.Equal(IntegrationsErrorCodes.ProviderUnreachable, error.Code);
+        Assert.Empty(bed.Integrations.Repository.Connections);
+        Assert.Empty(bed.Installs.Removed);
+    }
+
+    // Una fila canjeada antes de este cambio no tiene refresh token: crearía una conexión que se cae en una hora. El
+    // dominio ya no deja armarla, así que se quita por reflexión, como quedaría leída de la base.
+    [Fact]
+    public async Task LinkAnInstallWithoutARefreshTokenIsInstallExpired()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged();
+        typeof(ShopifyInstall).GetProperty(nameof(ShopifyInstall.ProtectedRefreshToken))!.SetValue(install, null);
+        typeof(ShopifyInstall).GetProperty(nameof(ShopifyInstall.AccessTokenExpiresAt))!.SetValue(install, null);
+
+        var error = await Assert.ThrowsAsync<IntegrationsDomainException>(() => bed.Handler().HandleAsync(bed.Command(install.Id), Ct));
+
+        Assert.Equal(IntegrationsErrorCodes.ShopifyInstallExpired, error.Code);
+        Assert.Empty(bed.Gateway.Calls);
+        Assert.Empty(bed.Integrations.Repository.Connections);
+    }
+
+    [Fact]
+    public async Task LinkWithAnUnreadableRefreshTokenThrowsInstallExpired()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged();
+        bed.Integrations.Protector.Unreadable.Add((install.Id, ShopifyFieldKeys.RefreshToken));
+
+        var error = await Assert.ThrowsAsync<IntegrationsDomainException>(() => bed.Handler().HandleAsync(bed.Command(install.Id), Ct));
+
+        Assert.Equal(IntegrationsErrorCodes.ShopifyInstallExpired, error.Code);
+        Assert.Empty(bed.Gateway.Calls);
+    }
+
+    // D3: el reenlace toma el candado de la conexión antes de cargarla, en su propia transacción.
+    [Fact]
+    public async Task LinkRelinkLocksTheConnectionBeforeLoadingIt()
+    {
+        var bed = new Bed();
+        var existing = bed.SeedLinked();
+        var install = bed.SeedExchanged();
+        var lockedBeforeLoad = false;
+        bed.Integrations.Repository.OnFind = () => lockedBeforeLoad = bed.Integrations.UnitOfWork.Locks.Contains(existing.Id);
+
+        await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        Assert.True(lockedBeforeLoad);
+        Assert.Equal([existing.Id], bed.Integrations.UnitOfWork.Locks);
+        Assert.Equal(1, bed.Integrations.UnitOfWork.Transactions);
+        Assert.Equal(RefreshToken, bed.StoredToken(existing, ShopifyFieldKeys.RefreshToken));
+        Assert.Equal(ShopifyTokenRefresh.Format(IntegrationsTestBed.Now.AddHours(1)), existing.Fields[ShopifyFieldKeys.TokenExpiresAt]);
+    }
+
+    // D3: una conexión nueva no abre transacción, para que la carrera por la ruta se siga traduciendo.
+    [Fact]
+    public async Task LinkNewConnectionOpensNoTransaction()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged();
+
+        await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        Assert.Equal(0, bed.Integrations.UnitOfWork.Transactions);
+        Assert.Empty(bed.Integrations.UnitOfWork.Locks);
     }
 
     [Fact]

@@ -125,6 +125,43 @@ public sealed class ProductVariantReferencesTests
             failure.PropertyName == "Variants[1].GalleryFileId" && failure.ErrorCode == "catalog.variant.image_not_in_gallery");
     }
 
+    // numeric(18,2) redondea 0.001 a 0.00 y el CHECK amount > 0 lo rechazaría como un 500: se frena
+    // antes, en el mismo campo que «mayor que cero».
+    [Theory]
+    [InlineData("0.001")]
+    [InlineData("10.005")]
+    public void TheValidatorRejectsACostWithMoreThanTwoDecimals(string amount)
+    {
+        var result = new CreateProductValidator().Validate(new CreateProductCommand(
+            TenantId,
+            "Camiseta",
+            null,
+            null,
+            null,
+            null,
+            [Request("CAM-001") with { Costs = new Dictionary<string, decimal> { ["COP"] = decimal.Parse(amount, System.Globalization.CultureInfo.InvariantCulture) } }],
+            null));
+
+        Assert.Contains(result.Errors, failure =>
+            failure.PropertyName == "Variants[0].Costs.COP" && failure.ErrorCode == "catalog.product_cost.amount_not_positive");
+    }
+
+    [Fact]
+    public void TheValidatorAcceptsACostWithTwoDecimals()
+    {
+        var result = new CreateProductValidator().Validate(new CreateProductCommand(
+            TenantId,
+            "Camiseta",
+            null,
+            null,
+            null,
+            null,
+            [Request("CAM-001") with { Costs = new Dictionary<string, decimal> { ["COP"] = 0.01m } }],
+            null));
+
+        Assert.DoesNotContain(result.Errors, failure => failure.PropertyName.Contains("Costs"));
+    }
+
     private Dictionary<Guid, OptionDefinition> Library() => new()
     {
         [_talla.Id.Value] = _talla,

@@ -151,6 +151,25 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal(
             ["TenantId", "ConvertedAt", "OrderNumber"],
             orders.Properties.Select(property => property.Name));
+
+        // Spec 2026-11-16 §5 y §6: la lista y el cursor de la exportación pasan a ordenar por la fecha del pedido; el índice
+        // de arriba se queda para la ventana de sincronización.
+        var byOrderDate = model.FindEntityType(typeof(Order))!.GetIndexes()
+            .Single(index => index.GetDatabaseName() == "IX_orders_tenant_order_date_converted_at_number");
+        Assert.Equal(
+            ["TenantId", "OrderDate", "ConvertedAt", "OrderNumber"],
+            byOrderDate.Properties.Select(property => property.Name));
+    }
+
+    // Spec 2026-11-16 §6: «Fecha del pedido» es un día sin hora y obligatorio.
+    [Fact]
+    public void TheOrderDateIsARequiredDateColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        var column = model.FindEntityType(typeof(Order))!.FindProperty(nameof(Order.OrderDate))!;
+        Assert.Equal(("order_date", "date", false), (column.GetColumnName(), column.GetColumnType(), column.IsNullable));
     }
 
     /// <summary>
@@ -174,7 +193,7 @@ public sealed class QuotationsDbContextMappingTests
             ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_advisor", "IX_orders_tenant_buyer_created",
              "IX_orders_tenant_client",
              "IX_orders_tenant_converted_at_number", "IX_orders_tenant_external_key", "IX_orders_tenant_number",
-             "IX_orders_tenant_source"],
+             "IX_orders_tenant_order_date_converted_at_number", "IX_orders_tenant_paid_at", "IX_orders_tenant_source"],
             order.GetIndexes().Select(index => index.GetDatabaseName()!).Order(StringComparer.Ordinal));
         Assert.Equal(
             "FK_orders_quotations_quotation_id",
@@ -223,6 +242,29 @@ public sealed class QuotationsDbContextMappingTests
         var billing = order.FindNavigation(nameof(Order.BillingAccount))!;
         Assert.True(billing.ForeignKey.IsOwnership);
         Assert.True(billing.ForeignKey.IsRequiredDependent);
+    }
+
+    /// <summary>Spec costo de producto §4.2 y §4.4: el costo congelado de la línea y el instante en que el pedido quedó
+    /// pagado, todos nulos para lo anterior. (18,2) como el costo del catálogo, no (14,2) como el precio.</summary>
+    [Fact]
+    public void OrderLineCostAndPaidAtMapToNullableColumns()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var order = model.FindEntityType(typeof(Order))!;
+        var item = model.FindEntityType(typeof(OrderItem))!;
+
+        var paidAt = order.FindProperty(nameof(Order.PaidAt))!;
+        Assert.Equal(("paid_at", true), (paidAt.GetColumnName(), paidAt.IsNullable));
+        var unitCost = item.FindProperty(nameof(OrderItem.UnitCost))!;
+        Assert.Equal(("unit_cost", true, 18, 2), (unitCost.GetColumnName(), unitCost.IsNullable, unitCost.GetPrecision(), unitCost.GetScale()));
+        var source = item.FindProperty(nameof(OrderItem.CostSource))!;
+        Assert.Equal(("cost_source", true, 20), (source.GetColumnName(), source.IsNullable, source.GetMaxLength()));
+        Assert.Equal(typeof(string), source.GetProviderClrType());
+        var capturedAt = item.FindProperty(nameof(OrderItem.CostCapturedAt))!;
+        Assert.Equal(("cost_captured_at", true), (capturedAt.GetColumnName(), capturedAt.IsNullable));
+        var index = order.GetIndexes().Single(index => index.GetDatabaseName() == "IX_orders_tenant_paid_at");
+        Assert.Equal(["TenantId", "PaidAt"], index.Properties.Select(property => property.Name));
     }
 
     /// <summary>
@@ -594,6 +636,16 @@ public sealed class QuotationsDbContextMappingTests
             entity.GetCheckConstraints(),
             check => check.Name == "CK_tenant_quotation_settings_default_freight_charge_mode"
                 && check.Sql.Contains("'Charged'") && check.Sql.Contains("disabled_freight_charge_modes"));
+    }
+
+    [Fact]
+    public void TheOrderBuyerNotesMapsToANullableTextColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var property = context.Model.FindEntityType(typeof(Order))!.FindProperty(nameof(Order.BuyerNotes))!;
+        Assert.Equal("buyer_notes", property.GetColumnName());
+        Assert.Equal("text", property.GetColumnType());
+        Assert.True(property.IsNullable);
     }
 
     [Fact]

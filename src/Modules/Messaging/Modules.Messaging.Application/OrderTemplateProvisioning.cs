@@ -86,7 +86,7 @@ public static class OrderTemplateDefinition
 
     public static byte[] ExamplePdf() => MinimalPdf.Build("Pedido de ejemplo - QEP");
 
-    private static bool IsDocumentHeader(string componentsJson)
+    internal static bool IsDocumentHeader(string componentsJson)
     {
         try
         {

@@ -14,6 +14,7 @@ public sealed class DeactivateCompanyHandler(
     ICompaniesUnitOfWork unitOfWork,
     ICompaniesAuditPublisher auditPublisher,
     ICompanyGeographyLookup geographyLookup,
+    ICompanyTaxRateLookup taxRateLookup,
     IExecutionContext executionContext,
     IClock clock)
     : ICommandHandler<DeactivateCompanyCommand, CompanyDto>
@@ -42,6 +43,6 @@ public sealed class DeactivateCompanyHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await company.ToDtoAsync(geographyLookup, cancellationToken);
+        return await company.ToDtoAsync(geographyLookup, taxRateLookup, cancellationToken);
     }
 }

@@ -80,6 +80,68 @@ public sealed class QuotationPdfExportApiTests
         Assert.Equal(second.GeneratedAt, third.GeneratedAt);
     }
 
+    // Spec impuestos por tipo §9.3 (F-1): el documento que recibe el renderizador trae una fila por retención que
+    // aplicó, con el nombre de la tasa; la que no alcanza su base mínima no sale.
+    [Fact]
+    public async Task TheDocumentCarriesOneRowPerAppliedWithholdingWithTheRateName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        // Una UVT redonda: las dos tasas (4 UVT = 200.000) aplican sobre una base de 300.000. La Retefuente es del
+        // cliente; la ReteICA, de la empresa en su municipio, donde el cliente es agente (spec ReteICA por empresa §7.5).
+        await InsertTaxUnitValueAsync(factory, "CO", TodayInBogota().Year, 50_000m);
+        var cityId = await EnsureCityIdAsync(client);
+        var company = await CreateCompanyWithBankAccountAsync(client, tenantId, cityId: cityId);
+        var vat = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 119_000m, taxRateId: vat);
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m, minimumBase: 4m);
+        var reteIca = await InsertWithholdingRateAsync(
+            factory, tenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m, cityId: cityId);
+        await AssignCompanyWithholdingRateAsync(factory, tenantId, company.CompanyId, reteIca);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId, withholdingTaxRateIds: [retefuente]);
+        await SetWithholdingAgentAsync(factory, tenantId, customerId, cityId);
+        var quotation = await CreateQuotationAsync(
+            client, tenantId, customerId,
+            billingAccount: new QuotationBillingAccountRequest(
+                company.CompanyId, company.BankName, company.AccountNumber, company.Currency));
+        var withItems = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+            new AddQuotationItemRequest(productId, 3m),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, withItems.StatusCode);
+
+        await ExportAsync(client, tenantId, quotation.Id);
+
+        var document = factory.PdfRenderer.LastDocument;
+        Assert.NotNull(document);
+        // Cada fila con su porcentaje efectivo, con el separador del tenant (spec ReteICA por empresa §7.9).
+        Assert.Equal(
+            new[]
+            {
+                new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m, "2,5 %"),
+                new QuotationPdfWithholding("ReteICA Bogotá", 2_898m, "0,966 %"),
+            },
+            document.Withholdings);
+        Assert.Equal(10_398m, document.RetentionAmount);
+    }
+
+    [Fact]
+    public async Task TheDocumentOfAQuotationWithoutWithholdingsHasNoRetentionRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(client, tenantId, customerId);
+
+        await ExportAsync(client, tenantId, quotation.Id);
+
+        Assert.Empty(factory.PdfRenderer.LastDocument!.Withholdings);
+    }
+
     private static async Task<ExportDto> ExportAsync(HttpClient client, Guid tenantId, Guid quotationId)
     {
         var response = await client.PostAsync(

@@ -33,7 +33,8 @@ public sealed class LinkShopifyStoreValidator : AbstractValidator<LinkShopifySto
 /// <item>tenant y <c>integrations.connection.manage</c> (doble capa) → módulo <c>shopify</c> activo → app configurada;</item>
 /// <item>validador → llave de cifrado → membresía;</item>
 /// <item>la instalación: desconocida o sin canjear = <c>install_not_found</c>; iniciada desde otro tenant (A) =
-/// <c>install_tenant_mismatch</c> (403); vencida, o con un token que ya no descifra = <c>install_expired</c>;</item>
+/// <c>install_tenant_mismatch</c> (403); vencida, sin refresh token o con un token que ya no descifra =
+/// <c>install_expired</c>; con el token de acceso por vencer, se refresca antes de seguir (spec 2026-11-12 §6.1);</item>
 /// <item>la ruta <c>("shopify", shopDomain)</c>: de otro tenant = <c>shop_already_linked</c> con su nombre; del mismo,
 /// reenlace de esa conexión (sin tope, token nuevo, <c>Active</c> aunque estuviera pausada: §4.1 «la
 /// reactiva»);</item>
@@ -111,14 +112,14 @@ public sealed class LinkShopifyStoreHandler(
             throw ShopifyInstallErrors.ShopInvalid();
         }
 
-        // Llave retirada o bytes dañados: no hay con qué enlazar y la salida para la persona es volver a instalar.
-        if (!protector.TryUnprotect(
-                install.Id, ShopifyFieldKeys.AccessToken, new ProtectedSecret(install.KeyId!, install.ProtectedToken!), out var accessToken))
-        {
-            throw ShopifyInstallErrors.InstallExpired();
-        }
+        // Llave retirada o bytes dañados: no hay con qué enlazar y la salida para la persona es volver a instalar. Una fila
+        // canjeada antes de los tokens que expiran (spec 2026-11-12) no tiene refresh token: tampoco sirve.
+        var (accessToken, refreshToken) = ReadTokens(install);
+        (install, accessToken, refreshToken) = await EnsureFreshInstallTokenAsync(install, accessToken, refreshToken, now, cancellationToken);
 
-        var existing = await FindRelinkAsync(command.TenantId, shopDomain, cancellationToken);
+        // D3: el reenlace abre la transacción del candado de la conexión; se suelta al guardar o al salir.
+        await using var relink = new RelinkTransaction();
+        var existing = await FindRelinkAsync(command.TenantId, shopDomain, relink, cancellationToken);
         var name = NameFor(command.Name, existing, install);
         await EnsureNameFreeAsync(command.TenantId, provider, name, existing, cancellationToken);
         if (existing is null && await repository.CountAsync(command.TenantId, provider.Key, cancellationToken) >= provider.MaxConnections)
@@ -137,6 +138,8 @@ public sealed class LinkShopifyStoreHandler(
             [ShopifyFieldKeys.ShopDomain] = shopDomain,
             [ShopifyFieldKeys.ShopId] = install.ShopId!,
             [ShopifyFieldKeys.Scopes] = install.Scopes!,
+            [ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(install.AccessTokenExpiresAt!.Value),
+            [ShopifyFieldKeys.RefreshTokenExpiresAt] = ShopifyTokenRefresh.Format(install.RefreshTokenExpiresAt!.Value),
         };
         if (!string.IsNullOrWhiteSpace(install.ShopName))
         {
@@ -152,7 +155,11 @@ public sealed class LinkShopifyStoreHandler(
             fields[ShopifyFieldKeys.WebhookSubscriptionIds] = kept;
         }
 
-        var secrets = new Dictionary<string, string>(StringComparer.Ordinal) { [ShopifyFieldKeys.AccessToken] = accessToken };
+        var secrets = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [ShopifyFieldKeys.AccessToken] = accessToken,
+            [ShopifyFieldKeys.RefreshToken] = refreshToken,
+        };
         string[] onboarding = [OnboardingAuditField, $"{OnboardingAuditField}:{(install.InitiatedTenantId is null ? "B" : "A")}"];
 
         IntegrationConnection connection;
@@ -203,8 +210,14 @@ public sealed class LinkShopifyStoreHandler(
     }
 
     /// <summary>La conexión del mismo tenant para esa tienda, o <c>null</c> si no hay ruta. La ruta es cross-tenant a
-    /// propósito: si es de otro, la tienda está tomada y el error dice por quién (el nombre, nada más).</summary>
-    private async Task<IntegrationConnection?> FindRelinkAsync(Guid tenantId, string shopDomain, CancellationToken cancellationToken)
+    /// propósito: si es de otro, la tienda está tomada y el error dice por quién (el nombre, nada más).
+    /// <para>Spec 2026-11-12 §6.2 (D3): el reenlace reemplaza los secretos de una conexión que el worker puede estar
+    /// refrescando, así que abre una transacción y toma el candado del token de esa conexión <b>antes</b> de cargarla: si
+    /// el worker guardó mientras tanto, se carga lo suyo y no hay 412. Una conexión nueva no abre transacción: dentro de
+    /// una, el choque de <c>IX_connection_routes_provider_external</c> la abortaría y no se podría consultar quién
+    /// ganó.</para></summary>
+    private async Task<IntegrationConnection?> FindRelinkAsync(
+        Guid tenantId, string shopDomain, RelinkTransaction relink, CancellationToken cancellationToken)
     {
         var route = await routes.FindAsync(IntegrationProviders.Shopify.Key, shopDomain, cancellationToken);
         if (route is null)
@@ -218,9 +231,96 @@ public sealed class LinkShopifyStoreHandler(
             throw ShopAlreadyLinked(tenantName);
         }
 
+        relink.Inner = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await unitOfWork.LockShopifyTokenAsync(route.ConnectionId, cancellationToken);
+
         // La ruta se borra en cascada con su conexión: una ruta del tenant sin conexión no debería existir.
         return await repository.FindAsync(tenantId, route.ConnectionId, cancellationToken)
             ?? throw new InvalidOperationException("A shopify route of this tenant points to no connection.");
+    }
+
+    /// <summary>Los dos tokens de la instalación en claro. Sin refresh token (fila canjeada antes del spec 2026-11-12) o con
+    /// uno que no descifra, no hay con qué enlazar: <c>install_expired</c>, que pide volver a instalar desde la tienda.</summary>
+    private (string AccessToken, string RefreshToken) ReadTokens(ShopifyInstall install)
+    {
+        if (install.ProtectedRefreshToken is null
+            || install.AccessTokenExpiresAt is null
+            || install.RefreshTokenExpiresAt is null
+            || !protector.TryUnprotect(
+                install.Id, ShopifyFieldKeys.AccessToken, new ProtectedSecret(install.KeyId!, install.ProtectedToken!), out var accessToken)
+            || !protector.TryUnprotect(
+                install.Id, ShopifyFieldKeys.RefreshToken, new ProtectedSecret(install.KeyId!, install.ProtectedRefreshToken), out var refreshToken))
+        {
+            throw ShopifyInstallErrors.InstallExpired();
+        }
+
+        return (accessToken, refreshToken);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-12 §6.1: la instalación vive 7 días y su token, 1 hora. Si al token le queda el margen o menos, se
+    /// refresca antes de usarlo, con el candado de la instalación (el mismo de §6.2, por su id) en una transacción propia:
+    /// se relee la fila, y si otro enlace ya la refrescó se usa ese par. Un rechazo de Shopify es <c>install_expired</c> (el
+    /// refresh token ya no sirve; no se crea una conexión muerta); una falla transitoria, 503 <c>provider_unreachable</c>.
+    /// El par nuevo queda guardado en la instalación antes de seguir: si el enlace falla después, no se pierde.
+    /// </summary>
+    private async Task<(ShopifyInstall Install, string AccessToken, string RefreshToken)> EnsureFreshInstallTokenAsync(
+        ShopifyInstall install, string accessToken, string refreshToken, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (!install.NeedsTokenRefresh(now))
+        {
+            return (install, accessToken, refreshToken);
+        }
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await unitOfWork.LockShopifyTokenAsync(install.Id, cancellationToken);
+        var current = await installs.FindAsync(install.Id, cancellationToken);
+        if (current is null || !current.IsExchanged)
+        {
+            throw ShopifyInstallErrors.InstallNotFound();
+        }
+
+        var (currentAccess, currentRefresh) = ReadTokens(current);
+        if (!current.NeedsTokenRefresh(now))
+        {
+            return (current, currentAccess, currentRefresh);
+        }
+
+        ShopifyTokenGrant grant;
+        try
+        {
+            grant = await gateway.RefreshTokenAsync(current.ShopDomain, currentRefresh, cancellationToken);
+        }
+        catch (ShopifyGatewayException exception) when (exception.Kind == ShopifyGatewayFailure.Rejected)
+        {
+            throw ShopifyInstallErrors.InstallExpired();
+        }
+        catch (ShopifyGatewayException exception)
+        {
+            throw new ServiceUnavailableException(
+                IntegrationsErrorCodes.ProviderUnreachable, $"Shopify could not refresh the install token ({exception.Kind}); try again.");
+        }
+
+        current.ApplyRefreshedToken(
+            protector.Protect(current.Id, ShopifyFieldKeys.AccessToken, grant.AccessToken),
+            protector.Protect(current.Id, ShopifyFieldKeys.RefreshToken, grant.RefreshToken),
+            now + grant.ExpiresIn,
+            now + grant.RefreshTokenExpiresIn);
+        if (!await installs.TryStoreRefreshedTokenAsync(current, cancellationToken))
+        {
+            throw ShopifyInstallErrors.InstallNotFound();
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return (current, grant.AccessToken, grant.RefreshToken);
+    }
+
+    /// <summary>La transacción del reenlace, si se abrió (D3): se dispone al salir del handler, después de guardar.</summary>
+    private sealed class RelinkTransaction : IAsyncDisposable
+    {
+        public IAsyncDisposable? Inner { get; set; }
+
+        public ValueTask DisposeAsync() => Inner?.DisposeAsync() ?? ValueTask.CompletedTask;
     }
 
     public static IntegrationsDomainException ShopAlreadyLinked(string? tenantName) =>

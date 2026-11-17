@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "support"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -100,11 +100,27 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-11-03 §4.2: la tienda pública; una solicitud se convierte en pedido, así que depende de orders.
     [Fact]
-    public void StoreIsLastDependsOnOrdersAndIsOffForNewTenants()
+    public void StoreDependsOnOrdersAndIsOffForNewTenants()
     {
-        Assert.Equal("store", TenantModuleKeys.All[^1].Value);
         Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Store));
         Assert.DoesNotContain(TenantModuleKeys.Store, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-10-29 D-1b (agentes IA): un agente responde por la bandeja, igual que un chatbot; se prende por tenant.
+    [Fact]
+    public void AiDependsOnMessagingAndIsOffForNewTenants()
+    {
+        Assert.Equal([TenantModuleKeys.Messaging], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Ai));
+        Assert.DoesNotContain(TenantModuleKeys.Ai, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-14 (soporte, C9): tickets y PQRSF; no depende de ningún módulo y se prende por tenant.
+    [Fact]
+    public void SupportIsLastHasNoDependenciesAndIsOffForNewTenants()
+    {
+        Assert.Equal("support", TenantModuleKeys.All[^1].Value);
+        Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Support));
+        Assert.DoesNotContain(TenantModuleKeys.Support, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]

@@ -48,6 +48,11 @@ data:
   # *.qcode.co: bajo ese dominio corren otras apps, y cualquiera que entre a la lista puede mutar con
   # la sesión del usuario. Sin la clave no hay CORS y la SPA en ese dominio no puede llamar a la API.
   Cors__AllowedOrigins__0: "https://qep.qcode.co"
+  # Origen exacto de la página pública de Soporte (plan Soporte fase 3, F4), que llama al grupo anónimo
+  # /api/v1/public/support/… desde el navegador. Es otra política CORS, sin credenciales, que sólo pide ese grupo: este
+  # origen no recibe CORS en las rutas de la consola. En Production es obligatoria: sin ella el pod no arranca
+  # (SupportPublicFormOptionsValidator), porque la página quedaría sin API sin ningún error.
+  Support__PublicForm__AllowedOrigins__0: "https://soporte.lulocrm.com"
   # Variables OTLP estándar que el exportador del SDK lee directamente, no a través de
   # IConfiguration — ver src/BuildingBlocks/BuildingBlocks.Observability/QepObservability.cs.
   # No definir OpenTelemetry__Endpoint acá: tendría precedencia sobre estas.
@@ -93,6 +98,10 @@ data:
   # —precios, cliente, totales— viaja en el cuerpo del POST. La API key es una credencial y vive
   # en prod-secret.yaml.
   Quotations__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
+  # Soporte fase 4b (H12): el mismo qcode-pdf, con sección propia para que la respuesta formal de Soporte no dependa de la
+  # configuración de cotizaciones. SupportPdfOptionsValidator exige HTTPS en todo ambiente: la carta, con los datos del solicitante,
+  # viaja en el cuerpo del POST. La API key es otra (la de Soporte) y vive en prod-secret.yaml.
+  Support__Pdf__BaseUrl: "#{SUPPORT_PDF_BASE_URL}#"
   # Spec 2026-10-08 (Integraciones): id (no secreto) de la llave con la que se cifran las credenciales
   # de las conexiones de cada tenant. Rotar = dos despliegues: declarar Keys__k2 con ésta todavía en
   # k1, y después cambiar ésta a k2 (README § Integraciones). La llave vive en prod-secret.yaml.
@@ -125,7 +134,7 @@ data:
   # topics en la URL nueva (ShopifyWebhookRegistration compara topic y URL) y las suscripciones de la vieja siguen ahí.
   Shopify__App__ClientId: "#{SHOPIFY_APP_CLIENT_ID}#"
   Shopify__App__ApiVersion: "2026-10"
-  Shopify__App__Scopes: "read_orders,read_customers"
+  Shopify__App__Scopes: "read_orders,write_orders,read_customers"
   Shopify__App__WebhookCallbackUrl: "https://qep-api.qcode.co/api/webhooks/shopify"
   Shopify__App__AllowedRedirectOrigins__0: "https://qep.qcode.co"
   # Cada cuánto la conciliación trae de Shopify lo que el webhook no entregó y reintenta lo que espera (spec §5.3). Repite el

@@ -155,7 +155,6 @@ public sealed class CustomerProvisioningTests
         Assert.Equal(new ProvisionedCustomer(customer.Id.Value, true, true, true, 1), result);
         Assert.Equal("CLI08000007", customer.Cuc);
         Assert.Equal(Tenant, customer.TenantId);
-        Assert.False(customer.WithRetention);
         Assert.False(customer.VatSurplus);
         Assert.Equal("+573109352187", customer.PhoneE164);
         // La libreta nace con la dirección del alta, como en el POST.

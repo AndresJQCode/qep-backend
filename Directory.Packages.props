@@ -15,6 +15,10 @@
     <PackageVersion Include="DocumentFormat.OpenXml" Version="3.1.1" />
     <PackageVersion Include="FluentValidation" Version="12.1.1" />
     <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+    <!-- Spec 2026-11-15 §6.3 (D-3) y spec 2026-11-16 §5.2: el saneador por allowlist del texto enriquecido, sobre AngleSharp.
+         Sólo BuildingBlocks.Infrastructure lo referencia (RichTextHtmlSanitizer, que Soporte envuelve); SupportLayerTests lo
+         mantiene fuera de Domain y Application de Soporte. -->
+    <PackageVersion Include="HtmlSanitizer" Version="11.0.26" />
     <!-- Spec 2026-10-09 §6.5: phone_e164 de clientes con el país del cliente, sin suponer
          «10 dígitos = Colombia». Sólo Customers.Infrastructure lo referencia. -->
     <PackageVersion Include="libphonenumber-csharp" Version="9.0.41" />
@@ -46,6 +50,8 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.16.0" />
+    <!-- Cliente de Valkey (spec 2026-11-13, D-1). Sólo Bootstrapper lo referencia: EphemeralStoreLayerTests lo amarra. -->
+    <PackageVersion Include="StackExchange.Redis" Version="2.13.23" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />

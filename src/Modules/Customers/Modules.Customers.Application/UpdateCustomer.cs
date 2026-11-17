@@ -19,9 +19,12 @@ public sealed record UpdateCustomerCommand(
     Guid? CityId,
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
-    string? PersonType = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    string? PersonType = null,
+    // Spec impuestos por tipo §9.2: null no toca las tasas guardadas; una lista vacía las quita.
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    // Spec ReteICA por empresa §9.3: null no toca los municipios guardados; una lista vacía los quita.
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CustomerWriteRules.
 public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCommand>
@@ -33,7 +36,9 @@ public sealed class UpdateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     ICucGenerator cucGenerator,
@@ -52,6 +57,16 @@ public sealed class UpdateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        if (command.WithholdingTaxRateIds is { } taxRateIds)
+        {
+            await CustomerWithholdingRules.ValidateAsync(
+                taxRateLookup, command.TenantId, taxRateIds, cancellationToken);
+        }
+
+        var agentCities = command.WithholdingAgentCities is { } requested
+            ? await CustomerWithholdingAgentRules.ValidateAsync(geographyLookup, requested, cancellationToken)
+            : null;
+
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
 
@@ -123,9 +138,10 @@ public sealed class UpdateCustomerHandler(
                     CityName = command.CityName
                 },
                 CustomerMapping.ToCommercialInfo(
-                    command.ClassificationId, command.WithRetention, command.VatSurplus),
+                    command.ClassificationId, command.VatSurplus),
                 now,
                 phoneNormalizer);
+            ApplyWithholdingTaxRates(customer, command, agentCities, now);
             // D-A9: completar se audita aparte de una edicion.
             auditPublisher.Publish(
                 command.TenantId,
@@ -137,7 +153,7 @@ public sealed class UpdateCustomerHandler(
             await SaveAsync(customer, command.TenantId, cancellationToken);
 
             return await customer.ToDtoAsync(
-                geographyLookup, classificationRepository, tagRepository, cancellationToken);
+                geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
         }
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -167,10 +183,11 @@ public sealed class UpdateCustomerHandler(
                 CityName = command.CityName
             },
             CustomerMapping.ToCommercialInfo(
-                command.ClassificationId, command.WithRetention, command.VatSurplus),
+                command.ClassificationId, command.VatSurplus),
             classification?.Prefix,
             now,
             phoneNormalizer);
+        ApplyWithholdingTaxRates(customer, command, agentCities, now);
 
         auditPublisher.Publish(
             command.TenantId,
@@ -182,7 +199,27 @@ public sealed class UpdateCustomerHandler(
         await SaveAsync(customer, command.TenantId, cancellationToken);
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
+    }
+
+    // Sin el campo (frontend viejo) las tasas se quedan como están: el PUT reemplaza el recurso entero, pero este campo no
+    // existía y borrarlo en silencio le quitaría la retención a un cliente que el formulario viejo ni muestra.
+    // Los municipios de agente siguen la misma regla (spec ReteICA por empresa §9.3).
+    private static void ApplyWithholdingTaxRates(
+        Customer customer,
+        UpdateCustomerCommand command,
+        IReadOnlyList<WithholdingAgentCityEntry>? agentCities,
+        DateTimeOffset now)
+    {
+        if (command.WithholdingTaxRateIds is { } taxRateIds)
+        {
+            customer.SetWithholdingTaxRates(taxRateIds, now);
+        }
+
+        if (agentCities is not null)
+        {
+            customer.SetWithholdingAgentCities(agentCities, now);
+        }
     }
 
     // Completar y editar guardan por separado y los dos pueden chocar con el indice de la identificacion: en ambos el

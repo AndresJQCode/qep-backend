@@ -8,7 +8,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
 using Modules.Tenancy.Infrastructure.Persistence;
+using Npgsql;
 using Testcontainers.PostgreSql;
+
+// Las clases comparten un servidor de Postgres (ver StartServerAsync): este tope es el que dimensiona su
+// max_connections. Mismo valor que QuotationsApiHarness.
+[assembly: CollectionBehavior(MaxParallelThreads = 16)]
 
 namespace Modules.Customers.IntegrationTests;
 
@@ -32,15 +37,112 @@ internal static class CustomersApiHarness
     public static string ClassificationsUrl(string tenantId = TenantId) =>
         $"{CustomersUrl(tenantId)}/classifications";
 
-    public static async Task<PostgreSqlContainer> StartDatabaseAsync()
+    private const string TemplateDatabase = "qep_template_customers";
+
+    // Un solo contenedor por ensamblado, con una plantilla ya migrada: cada prueba clona la plantilla
+    // (CREATE DATABASE … TEMPLATE) y su host sólo comprueba que no hay migraciones pendientes. Copia de
+    // QuotationsApiHarness: no hay un proyecto de pruebas compartido donde ponerlo.
+    private static readonly Lazy<Task<PostgreSqlContainer>> SharedServer = new(StartServerAsync);
+
+    // Postgres rechaza dos CREATE DATABASE simultáneos desde la misma plantilla: los clones van de a uno.
+    private static readonly SemaphoreSlim CloneGate = new(1, 1);
+
+    /// <summary>Una base limpia y migrada para esta prueba, clonada de la plantilla. Se borra en
+    /// <c>DisposeAsync</c>.</summary>
+    public static async Task<TestDatabase> StartDatabaseAsync()
     {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
+        var server = await SharedServer.Value;
+        var name = $"t_{Guid.CreateVersion7():N}";
+        await CloneGate.WaitAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            await ExecuteAdminAsync(server, $"CREATE DATABASE \"{name}\" TEMPLATE \"{TemplateDatabase}\"");
+        }
+        finally
+        {
+            CloneGate.Release();
+        }
+
+        return new TestDatabase(server, name);
+    }
+
+    /// <summary>Una base vacía, sin migrar, en el mismo servidor. Para las pruebas de migración, que suben
+    /// desde cero hasta una migración puntual (y bajan): un clon de la plantilla ya trae todo.</summary>
+    public static async Task<TestDatabase> StartEmptyDatabaseAsync()
+    {
+        var server = await SharedServer.Value;
+        var name = $"e_{Guid.CreateVersion7():N}";
+        await ExecuteAdminAsync(server, $"CREATE DATABASE \"{name}\"");
+        return new TestDatabase(server, name);
+    }
+
+    /// <summary>Un contenedor propio, sin migrar (lo migra el host al arrancar). Sólo para la prueba que cambia la
+    /// configuración del servidor (<c>ALTER SYSTEM</c>): en el servidor compartido les cambiaría a todas las demás.</summary>
+    public static async Task<PostgreSqlContainer> StartOwnServerAsync()
+    {
+        var server = new PostgreSqlBuilder("postgres:18-alpine")
             .WithDatabase("qep")
             .WithUsername("qep")
             .WithPassword("qep-integration")
             .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
+        await server.StartAsync(TestContext.Current.CancellationToken);
+        return server;
+    }
+
+    private static async Task<PostgreSqlContainer> StartServerAsync()
+    {
+        // Sin el token de una prueba: el servidor es de todas, y cancelar la primera no puede dejar a las
+        // demás sin base.
+        var server = new PostgreSqlBuilder("postgres:18-alpine")
+            .WithDatabase("qep")
+            .WithUsername("qep")
+            .WithPassword("qep-integration")
+            // Las clases corren en paralelo (MaxParallelThreads, arriba), cada prueba con su host y sus pools
+            // de Npgsql por módulo, más los workers: el límite por defecto (100) se agota con 53300. Mismo
+            // margen que QuotationsApiHarness. fsync, synchronous_commit y full_page_writes apagados: la base
+            // es desechable y lo que se mide es la lógica, no la durabilidad.
+            .WithCommand(
+                "-c", "max_connections=800",
+                "-c", "fsync=off",
+                "-c", "synchronous_commit=off",
+                "-c", "full_page_writes=off")
+            .Build();
+        await server.StartAsync(CancellationToken.None);
+        await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
+
+        // El host migra al arrancar: arrancarlo una vez contra la plantilla la deja con todo.
+        using (var factory = new QepApiFactory(ConnectionStringFor(server, TemplateDatabase)))
+        using (factory.CreateClient())
+        {
+        }
+
+        // Una conexión viva a la plantilla haría fallar todos los clones.
+        NpgsqlConnection.ClearAllPools();
+        await ExecuteAdminAsync(server, $"ALTER DATABASE \"{TemplateDatabase}\" WITH ALLOW_CONNECTIONS false");
+        return server;
+    }
+
+    private static string ConnectionStringFor(PostgreSqlContainer server, string database) =>
+        new NpgsqlConnectionStringBuilder(server.GetConnectionString()) { Database = database }.ConnectionString;
+
+    private static async Task ExecuteAdminAsync(PostgreSqlContainer server, string sql)
+    {
+        await using var connection = new NpgsqlConnection(server.GetConnectionString());
+        await connection.OpenAsync(CancellationToken.None);
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    /// <summary>La base de una prueba en el servidor compartido.</summary>
+    public sealed class TestDatabase(PostgreSqlContainer server, string name) : IAsyncDisposable
+    {
+        public string GetConnectionString() => ConnectionStringFor(server, name);
+
+        public async ValueTask DisposeAsync()
+        {
+            NpgsqlConnection.ClearPool(new NpgsqlConnection(GetConnectionString()));
+            await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
+        }
     }
 
     // Este harness usa un tenant que no pasa por el registro. ExportCustomersHandler nombra el
@@ -268,8 +370,11 @@ internal static class CustomersApiHarness
         string? Department = null,
         string? City = null,
         string? Classification = null,
-        string? WithRetention = null,
-        string? VatSurplus = null);
+        string? Retefuente = null,
+        string? ReteIca = null,
+        string? VatSurplus = null,
+        string? LegacyWithRetention = null,
+        string? Company = null);
 
     /// <summary>
     /// Arma un <c>.xlsx</c> real en memoria con ClosedXML — las pruebas de import ya no suben
@@ -309,8 +414,14 @@ internal static class CustomersApiHarness
                 [CustomerImportColumns.Department] = row.Department,
                 [CustomerImportColumns.City] = row.City,
                 [CustomerImportColumns.Classification] = row.Classification,
-                [CustomerImportColumns.WithRetention] = row.WithRetention,
-                [CustomerImportColumns.VatSurplus] = row.VatSurplus
+                [CustomerImportColumns.Retefuente] = row.Retefuente,
+                // Spec ReteICA por empresa (A3): la columna salió de la plantilla, pero un archivo de un develop local
+                // todavía puede traerla y se lee ignorándola.
+                ["ReteICA"] = row.ReteIca,
+                [CustomerImportColumns.VatSurplus] = row.VatSurplus,
+                // La columna que ya no existe: un archivo viejo todavia la trae y se lee ignorandola.
+                ["Con Retencion"] = row.LegacyWithRetention,
+                [CustomerImportColumns.Company] = row.Company
             };
             for (var column = 0; column < columns.Count; column++)
             {
@@ -330,6 +441,39 @@ internal static class CustomersApiHarness
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         content.Add(file, "file", fileName);
         return content;
+    }
+
+    /// <summary>
+    /// Inserta una tasa en <c>catalog.tax_rates</c> por SQL (Customers nunca referencia Catalog) y devuelve su id.
+    /// </summary>
+    public static async Task<Guid> InsertTaxRateAsync(
+        string connectionString,
+        string name,
+        string type,
+        decimal percentage,
+        bool isActive = true,
+        string country = "CO",
+        string tenantId = TenantId)
+    {
+        var id = Guid.CreateVersion7();
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand(
+            """
+            INSERT INTO catalog.tax_rates
+                (id, tenant_id, name, percentage, type, country, minimum_base, is_active, version, created_at, updated_at)
+            VALUES (@id, @tenantId, @name, @percentage, @type, @country, NULL, @isActive, 1, now(), now())
+            """,
+            connection);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("tenantId", Guid.Parse(tenantId));
+        command.Parameters.AddWithValue("name", name);
+        command.Parameters.AddWithValue("percentage", percentage);
+        command.Parameters.AddWithValue("type", type);
+        command.Parameters.AddWithValue("country", country);
+        command.Parameters.AddWithValue("isActive", isActive);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        return id;
     }
 
     /// <summary>Da de alta una clasificacion de cliente y devuelve su id y su prefijo.</summary>
@@ -573,6 +717,8 @@ internal static class CustomersApiHarness
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

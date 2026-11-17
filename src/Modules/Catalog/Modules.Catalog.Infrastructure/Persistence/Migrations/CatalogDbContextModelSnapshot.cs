@@ -446,6 +446,17 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<Guid?>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character(2)")
+                        .HasColumnName("country")
+                        .IsFixedLength();
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -454,19 +465,31 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
 
+                    b.Property<decimal?>("MinimumBase")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("minimum_base");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)")
                         .HasColumnName("name");
 
-                    b.Property<int>("Percentage")
-                        .HasColumnType("integer")
+                    b.Property<decimal>("Percentage")
+                        .HasPrecision(6, 3)
+                        .HasColumnType("numeric(6,3)")
                         .HasColumnName("percentage");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("type");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -482,11 +505,46 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_tax_rates_tenant");
 
-                    b.HasIndex("TenantId", "Name")
+                    b.HasIndex("TenantId", "Type", "CityId")
+                        .HasDatabaseName("IX_tax_rates_tenant_type_city");
+
+                    b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase")
                         .IsUnique()
-                        .HasDatabaseName("IX_tax_rates_tenant_name");
+                        .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase"), false);
 
                     b.ToTable("tax_rates", "catalog");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.TaxUnitValue", b =>
+                {
+                    b.Property<string>("Country")
+                        .HasMaxLength(2)
+                        .HasColumnType("character(2)")
+                        .HasColumnName("country")
+                        .IsFixedLength();
+
+                    b.Property<int>("Year")
+                        .HasColumnType("integer")
+                        .HasColumnName("year");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<decimal>("Value")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("value");
+
+                    b.HasKey("Country", "Year");
+
+                    b.ToTable("tax_unit_values", "catalog");
                 });
 
             modelBuilder.Entity("Modules.Catalog.Infrastructure.Persistence.CatalogOutboxMessage", b =>
@@ -673,6 +731,33 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                                 .HasForeignKey("VariantId");
                         });
 
+                    b.OwnsMany("Modules.Catalog.Domain.ProductVariantCost", "Costs", b1 =>
+                        {
+                            b1.Property<Guid>("VariantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("variant_id");
+
+                            b1.Property<string>("Currency")
+                                .HasMaxLength(3)
+                                .HasColumnType("character(3)")
+                                .HasColumnName("currency");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("amount");
+
+                            b1.HasKey("VariantId", "Currency");
+
+                            b1.ToTable("product_variant_costs", "catalog", t =>
+                                {
+                                    t.HasCheckConstraint("CK_product_variant_costs_amount_positive", "amount > 0");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("VariantId");
+                        });
+
                     b.OwnsMany("Modules.Catalog.Domain.ProductVariantOptionValue", "_optionValues", b1 =>
                         {
                             b1.Property<Guid>("VariantId")
@@ -703,6 +788,8 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                             b1.WithOwner()
                                 .HasForeignKey("VariantId");
                         });
+
+                    b.Navigation("Costs");
 
                     b.Navigation("Prices");
 

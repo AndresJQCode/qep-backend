@@ -9,7 +9,7 @@ public sealed class CreateOrderValidatorTests
     private static CreateOrderCommand Valid() => new(
         Guid.CreateVersion7(), Guid.CreateVersion7(), "Transferencia", null, false, null, null,
         new QuotationBillingAccountRequest(Guid.CreateVersion7(), "Bancolombia", "7542", "COP"),
-        [new OrderItemAddition(Guid.CreateVersion7(), 1m)], "PaymentPending", []);
+        [new OrderItemAddition(Guid.CreateVersion7(), 1m)], []);
 
     [Fact]
     public void AcceptsAMinimalManualOrder() => Assert.True(new CreateOrderValidator().Validate(Valid()).IsValid);
@@ -45,17 +45,9 @@ public sealed class CreateOrderValidatorTests
         var command = Valid();
         var previewed = new PreviewOrderValidator().Validate(new PreviewOrderQuery(
             command.TenantId, command.ClientId, command.PaymentMethod, command.Notes, command.IsRetail,
-            command.GlobalScaleFloor, command.Parties, BillingAccount: null, command.Items, command.PaymentStatus,
-            command.PaymentProofs));
+            command.GlobalScaleFloor, command.Parties, BillingAccount: null, command.Items, command.PaymentProofs));
 
         Assert.True(previewed.IsValid);
-    }
-
-    [Fact]
-    public void RejectsAnUnknownPaymentStatus()
-    {
-        var result = new CreateOrderValidator().Validate(Valid() with { PaymentStatus = "Paid" });
-        Assert.Contains(result.Errors, error => error.PropertyName == "PaymentStatus");
     }
 
     // Una parte de facturación con nombre propio lleva documento al guardar; el preview no lo exige.
@@ -72,8 +64,7 @@ public sealed class CreateOrderValidatorTests
         var saved = new CreateOrderValidator().Validate(command);
         var previewed = new PreviewOrderValidator().Validate(new PreviewOrderQuery(
             command.TenantId, command.ClientId, command.PaymentMethod, command.Notes, command.IsRetail,
-            command.GlobalScaleFloor, command.Parties, command.BillingAccount, command.Items, command.PaymentStatus,
-            command.PaymentProofs));
+            command.GlobalScaleFloor, command.Parties, command.BillingAccount, command.Items, command.PaymentProofs));
 
         Assert.Contains(saved.Errors, error => error.PropertyName == "Parties.Billing.IdentificationNumber");
         Assert.True(previewed.IsValid);
@@ -90,8 +81,8 @@ public sealed class CreateOrderValidatorTests
         var saved = new CreateOrderValidator().Validate(command);
         var previewed = new PreviewOrderValidator().Validate(new PreviewOrderQuery(
             command.TenantId, command.ClientId, command.PaymentMethod, command.Notes, command.IsRetail,
-            command.GlobalScaleFloor, command.Parties, command.BillingAccount, command.Items, command.PaymentStatus,
-            command.PaymentProofs, shipping));
+            command.GlobalScaleFloor, command.Parties, command.BillingAccount, command.Items, command.PaymentProofs,
+            shipping));
 
         foreach (var result in new[] { saved, previewed })
         {

@@ -33,7 +33,8 @@ public sealed class ReactivateMemberHandler(
     IExecutionContext executionContext,
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
-    IClock clock)
+    IClock clock,
+    ITenantAccessVersion tenantAccessVersion)
     : ICommandHandler<ReactivateMemberCommand, MembershipListItemDto>
 {
     public async Task<MembershipListItemDto> HandleAsync(
@@ -65,7 +66,10 @@ public sealed class ReactivateMemberHandler(
             outboxWriter.Add(domainEvent, command.CorrelationId);
         }
 
+        // Spec 2026-11-13, D-5: la caché de permisos del tenant, antes del guardado y otra vez después.
+        await tenantAccessVersion.BumpAsync(command.TenantId.Value, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await tenantAccessVersion.BumpAsync(command.TenantId.Value, cancellationToken);
         var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
         return membership.ToListItemDto(email, tenant);
     }

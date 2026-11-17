@@ -105,7 +105,7 @@ public sealed class ShopifyPreconditionsTests
         var outcome = await world.ImportAsync(row, snapshot);
 
         // C-3 existe pero está inactivo: también es product_unmatched (§6.2.2), y se evaluaron todas las líneas.
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["A-1","B-2","C-3"]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["A-1","B-2","C-3"],"customTitles":[]}""");
         Assert.Equal(["A-1", "CAM-001", "B-2", "C-3"], Assert.Single(world.Products.Requests));
         Assert.Empty(world.Writer.Creates);
         // El cliente se crea sólo cuando ninguna precondición frena: un pedido que espera un producto no deja una ficha suelta.
@@ -148,7 +148,7 @@ public sealed class ShopifyPreconditionsTests
 
         var outcome = await world.ImportAsync(row, snapshot);
 
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["cam-m","CAM-XL"]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":["cam-m","CAM-XL"],"customTitles":[]}""");
         Assert.Empty(world.Writer.Creates);
     }
 
@@ -161,7 +161,7 @@ public sealed class ShopifyPreconditionsTests
 
         var outcome = await world.ImportAsync(row, snapshot);
 
-        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":[null]}""");
+        AssertWaiting(row, outcome, ShopifyWaitReasons.ProductUnmatched, """{"skus":[null],"customTitles":[]}""");
     }
 
     [Fact]
@@ -402,19 +402,21 @@ public sealed class ShopifyPreconditionsTests
         Assert.Null(Assert.Single(world.Writer.Creates).Draft.PaymentMethod);
     }
 
-    // §6.2.3 paso 2: «Shopify #1001» y, en otra línea, la nota del comprador.
+    // §6.2.3 paso 2 (spec 2026-11-14): las notas llevan «Shopify #1001»; la nota del comprador va aparte, recortada, en
+    // BuyerNotes.
     [Theory]
-    [InlineData("  Dejar en portería  ", "Shopify #1001\nDejar en portería")]
-    [InlineData(null, "Shopify #1001")]
-    [InlineData("   ", "Shopify #1001")]
-    public async Task NotesCarryTheOrderNameAndTheBuyerNote(string? note, string expected)
+    [InlineData("  Dejar en portería  ", "Dejar en portería")]
+    [InlineData(null, null)]
+    [InlineData("   ", null)]
+    public async Task NotesCarryTheOrderNameAndBuyerNotesTheBuyerNote(string? note, string? expected)
     {
         var world = new ImporterWorld();
         var snapshot = Order(note: note);
 
         await world.ImportAsync(world.RowFor(snapshot), snapshot);
 
-        Assert.Equal(expected, Assert.Single(world.Writer.Creates).Draft.Notes);
+        var draft = Assert.Single(world.Writer.Creates).Draft;
+        Assert.Equal(("Shopify #1001", expected), (draft.Notes, draft.BuyerNotes));
     }
 
     [Fact]

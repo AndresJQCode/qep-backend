@@ -215,6 +215,19 @@ public sealed partial class RunProcessorTests
         return row;
     }
 
+    /// <summary>Regresión de D-4: una fila manual (<c>ReleaseRun: false</c>) sigue arrancando el flujo.</summary>
+    [Fact]
+    public async Task AManualRowStillStartsTheFlow()
+    {
+        var bed = new Bed(null, ActiveState());
+        var row = ManualRow(bed.Inbox);
+
+        var outcome = await bed.Processor().ProcessAsync(row, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Ended, outcome);
+        Assert.Single(bed.Messenger.Sent);
+    }
+
     /// <summary>Review Focus 5: una excepción no prevista no reintenta la fila manual; el lease llegaría a unos 30 minutos con el bot
     /// activo y mudo. Traspasa y cierra.</summary>
     [Fact]

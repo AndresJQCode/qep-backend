@@ -197,7 +197,7 @@ internal static class ConnectionMapping
                 StringComparer.Ordinal),
             provider.SecretFields.ToDictionary(
                 field => field.Key,
-                field => SecretState(connection, field.Key, protector),
+                field => SecretState(connection, field, protector),
                 StringComparer.Ordinal),
             connection.LastVerifiedAt,
             connection.LastFailureAt,
@@ -208,16 +208,20 @@ internal static class ConnectionMapping
             connection.Version,
             providerEnabled);
 
-    private static SecretStateResponse SecretState(IntegrationConnection connection, string fieldKey, ISecretProtector protector)
+    private static SecretStateResponse SecretState(IntegrationConnection connection, FieldDefinition field, ISecretProtector protector)
     {
-        var stored = connection.Secrets.FirstOrDefault(secret => string.Equals(secret.FieldKey, fieldKey, StringComparison.Ordinal));
+        var stored = connection.Secrets.FirstOrDefault(secret => string.Equals(secret.FieldKey, field.Key, StringComparison.Ordinal));
         if (stored is null)
         {
             return new SecretStateResponse(Configured: false, UpdatedAt: null, Readable: false);
         }
 
-        // Spec, «readable»: descifra de verdad y descarta el valor.
-        var readable = protector.TryUnprotect(connection.Id, fieldKey, stored.Protected, out _);
-        return new SecretStateResponse(Configured: true, stored.UpdatedAt, readable);
+        // Spec, «readable»: descifra de verdad y descarta el valor; sólo queda el final si el campo lo declara (D-A23).
+        var readable = protector.TryUnprotect(connection.Id, field.Key, stored.Protected, out var plaintext);
+        return new SecretStateResponse(Configured: true, stored.UpdatedAt, readable, readable ? HintOf(field, plaintext!) : null);
     }
+
+    // Con menos del doble de caracteres, el final sería casi toda la clave: no se muestra nada.
+    private static string? HintOf(FieldDefinition field, string plaintext) =>
+        field.RevealSuffix > 0 && plaintext.Length >= field.RevealSuffix * 2 ? plaintext[^field.RevealSuffix..] : null;
 }

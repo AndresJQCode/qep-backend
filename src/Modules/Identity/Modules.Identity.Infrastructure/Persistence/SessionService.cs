@@ -11,7 +11,8 @@ internal sealed class SessionService(
     IIdentityUnitOfWork unitOfWork,
     IIdentityAuditRecorder auditRecorder,
     IClock clock,
-    IOptions<QepSessionOptions> options)
+    IOptions<QepSessionOptions> options,
+    ISessionCache cache)
     : ISessionService
 {
     // El seguimiento de inactividad sólo es realmente preciso a unos minutos; tocarlo en cada
@@ -52,12 +53,22 @@ internal sealed class SessionService(
         string rawToken,
         CancellationToken cancellationToken)
     {
-        var session = await sessionRepository.FindByTokenHashAsync(
-            Hash(rawToken),
-            cancellationToken);
+        var tokenHash = Hash(rawToken);
         var now = clock.UtcNow;
-        if (session is null || !session.IsValid(now, TimeSpan.FromDays(options.Value.IdleTimeoutDays)))
+
+        // Spec 2026-11-13, D-4: un acierto no toca la base. Una entrada con LastSeenAt de más de TouchThreshold es un fallo de
+        // caché, para que el seguimiento de inactividad siga escribiendo como antes; sin respuesta de la caché, Postgres.
+        var cached = await cache.GetAsync(tokenHash, cancellationToken);
+        if (cached is not null && now < cached.ValidUntil && now - cached.LastSeenAt <= TouchThreshold)
         {
+            return new SessionPrincipal(cached.UserId);
+        }
+
+        var session = await sessionRepository.FindByTokenHashAsync(tokenHash, cancellationToken);
+        var idleTimeout = TimeSpan.FromDays(options.Value.IdleTimeoutDays);
+        if (session is null || !session.IsValid(now, idleTimeout))
+        {
+            // Una sesión inválida no se cachea: la entrada sólo existe para una que valía.
             return null;
         }
 
@@ -67,6 +78,13 @@ internal sealed class SessionService(
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
+        // La foto después del posible Touch: el LastSeenAt guardado es el que decide el próximo acierto.
+        var lastSeenAt = session.LastSeenAt;
+        var validUntil = session.ExpiresAt < lastSeenAt + idleTimeout ? session.ExpiresAt : lastSeenAt + idleTimeout;
+        await cache.SetAsync(
+            tokenHash,
+            new CachedSession(session.Id.Value, session.UserId.Value, lastSeenAt, validUntil),
+            cancellationToken);
         return new SessionPrincipal(session.UserId.Value);
     }
 
@@ -92,7 +110,13 @@ internal sealed class SessionService(
             session.Id.ToString(),
             "success",
             now);
+
+        // Antes del guardado y otra vez después (spec 2026-11-13, D-4): la marca de revocación cubre al request que leyó
+        // Postgres en el medio.
+        RevokedSession[] revoked = [new(session.Id.Value, session.TokenHash)];
+        await cache.RemoveAsync(revoked, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await cache.RemoveAsync(revoked, cancellationToken);
     }
 
     public async Task<int> RevokeAllForUserAsync(
@@ -117,7 +141,10 @@ internal sealed class SessionService(
 
         if (sessions.Count > 0)
         {
+            var revoked = sessions.Select(session => new RevokedSession(session.Id.Value, session.TokenHash)).ToArray();
+            await cache.RemoveAsync(revoked, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            await cache.RemoveAsync(revoked, cancellationToken);
         }
 
         return sessions.Count;

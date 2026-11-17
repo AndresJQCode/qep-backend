@@ -40,10 +40,11 @@ internal static class OrderDetails
         Order order,
         CancellationToken cancellationToken)
     {
-        var quotationNumber = order.QuotationId is { } quotationId
-            ? (await quotations.FindUntrackedAsync(tenantId, quotationId, cancellationToken))?.QuotationNumber
+        var quotation = order.QuotationId is { } quotationId
+            ? await quotations.FindUntrackedAsync(tenantId, quotationId, cancellationToken)
             : null;
         var history = await orders.ListHistoryAsync(tenantId, order.Id, cancellationToken);
-        return new OrderDetailDto(order.ToDto(), quotationNumber, history.Select(OrderMapping.ToDto).ToArray());
+        return new OrderDetailDto(
+            order.ToDto(), quotation?.QuotationNumber, history.Select(OrderMapping.ToDto).ToArray(), quotation?.CreatedAt);
     }
 }

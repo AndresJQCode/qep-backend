@@ -1,4 +1,9 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -208,6 +213,78 @@ public sealed class MessagingHubTests
         await WaitUntilAsync(() => moduleOff.State == HubConnectionState.Disconnected);
         Assert.Empty(presence.Snapshot());
     }
+
+    /// <summary>
+    /// Spec 2026-10-29 (réplicas múltiples), D-1: el cliente salta el <c>negotiate</c> y abre el WebSocket directo, así el
+    /// handshake no puede caer en un pod distinto del que negoció. Es un amarre del contrato, no una RED: si esta prueba
+    /// falla, D-1 no sirve y el camino es el plan B del spec (afinidad en el ingress), no tocar el servidor. Con auth real y
+    /// cookie de sesión, como el navegador: sin <c>X-Subject-Id</c>, sin <c>X-Tenant-Id</c> y sin <c>X-Qep-Client</c>.
+    /// </summary>
+    [Fact]
+    public async Task TheHubAcceptsAWebSocketWithoutNegotiate()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var signingKey = RandomNumberGenerator.GetBytes(32);
+        using var baseFactory = new QepApiFactory(connectionString);
+        using var factory = baseFactory.WithRealAuthentication().WithWebHostBuilder(builder =>
+            builder.UseSetting("Authentication:TestSigningKey", Convert.ToBase64String(signingKey)));
+        var (tenantId, sessionCookie) = await RegisterWithSessionAsync(factory, signingKey);
+        await EnableMessagingAsync(connectionString, tenantId);
+
+        var webSockets = factory.Server.CreateWebSocketClient();
+        webSockets.ConfigureRequest = request => request.Headers.Cookie = sessionCookie;
+        await using var connection = new HubConnectionBuilder()
+            .WithUrl(new Uri(factory.Server.BaseAddress, $"api/v1/hubs/messaging?tenantId={tenantId:D}"), options =>
+            {
+                options.SkipNegotiation = true;
+                options.Transports = HttpTransportType.WebSockets;
+                options.WebSocketFactory = async (context, cancellationToken) => await webSockets.ConnectAsync(context.Uri, cancellationToken);
+            })
+            .Build();
+        var received = Listen(connection);
+
+        await connection.StartAsync(Ct);
+
+        Assert.Equal(HubConnectionState.Connected, connection.State);
+        // El evento del tenant llega por ese WebSocket: el servidor lo unió a su grupo con la sesión de la cookie.
+        await WaitUntilJoinedAsync(factory, tenantId, received);
+    }
+
+    /// <summary>
+    /// Registra dueño y tenant con un Bearer de Google, como <c>RealAuthenticationApiTests.RegisterOwnerAndTenantAsync</c>, y
+    /// devuelve la cookie de sesión que pone esa respuesta, lista para el header <c>Cookie</c>.
+    /// </summary>
+    private static async Task<(Guid TenantId, string SessionCookie)> RegisterWithSessionAsync(
+        WebApplicationFactory<Program> factory, byte[] signingKey)
+    {
+        var token = IssueGoogleIdToken(
+            signingKey, RealAuthenticationAudience, Guid.NewGuid().ToString(), $"hub-{Guid.NewGuid():N}@example.com");
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/register-tenant")
+        {
+            Content = JsonContent.Create(new
+            {
+                displayName = "Messaging Hub Org",
+                slug = $"hub-{Guid.NewGuid():N}"[..12],
+                defaultCulture = "es-CO",
+                timeZone = "America/Bogota",
+                dateFormat = "yyyy-MM-dd",
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Add("X-Qep-Client", "web");
+
+        var response = await client.SendAsync(request, Ct);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var registered = await response.Content.ReadFromJsonAsync<RegisteredTenantPayload>(Ct);
+        Assert.NotNull(registered);
+        Assert.True(response.Headers.TryGetValues("Set-Cookie", out var cookies), "register-tenant no puso la cookie de sesión.");
+        var sessionCookie = string.Join("; ", cookies.Select(cookie => cookie.Split(';', 2)[0]));
+        return (registered.TenantId, sessionCookie);
+    }
+
+    private sealed record RegisteredTenantPayload(Guid TenantId);
 
     /// <summary>Sondea una condición del servidor hasta 10 s; el registro se escribe después de que el cliente ve el handshake.</summary>
     private static async Task WaitUntilAsync(Func<bool> condition)

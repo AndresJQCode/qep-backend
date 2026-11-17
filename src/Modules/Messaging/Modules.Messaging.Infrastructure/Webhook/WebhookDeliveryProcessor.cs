@@ -55,6 +55,10 @@ internal sealed partial class WebhookDeliveryProcessor(
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: {Count} inbound message(s) discarded for phone number id {PhoneNumberId} ({Reason}).")]
     private static partial void LogDiscarded(ILogger logger, long deliveryId, int count, string phoneNumberId, string reason);
 
+    // A-12: sin el teléfono ni el id del cliente, como el resto de los logs de la ingesta.
+    [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: a customer was deleted while a message was being attached to it; the delivery is retried.")]
+    private static partial void LogCustomerVanished(ILogger logger, long deliveryId);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Webhook delivery {DeliveryId}: field '{Field}' is not handled and was ignored.")]
     private static partial void LogIgnoredField(ILogger logger, long deliveryId, string field);
 
@@ -108,10 +112,18 @@ internal sealed partial class WebhookDeliveryProcessor(
                     await ProcessUserIdUpdateAsync(deliveryId, update, cancellationToken);
                     break;
                 case HistoryChange history:
-                    await ProcessHistoryAsync(deliveryId, history, cancellationToken);
+                    if (await ProcessHistoryAsync(deliveryId, history, cancellationToken) == DeliveryOutcome.RetryLater)
+                    {
+                        outcome = DeliveryOutcome.RetryLater;
+                    }
+
                     break;
                 case SmbEchoesChange echoes:
-                    await ProcessEchoesAsync(deliveryId, echoes, cancellationToken);
+                    if (await ProcessEchoesAsync(deliveryId, echoes, cancellationToken) == DeliveryOutcome.RetryLater)
+                    {
+                        outcome = DeliveryOutcome.RetryLater;
+                    }
+
                     break;
                 case ContactsSyncChange contacts:
                     await ProcessContactsAsync(deliveryId, contacts, cancellationToken);
@@ -126,6 +138,7 @@ internal sealed partial class WebhookDeliveryProcessor(
 
     private async Task<DeliveryOutcome> ProcessMessagesAsync(long deliveryId, MessagesChange change, int attempts, CancellationToken cancellationToken)
     {
+        var retryLater = false;
         if (change.SkippedWithoutUserId > 0)
         {
             LogSkippedWithoutUserId(logger, deliveryId, change.SkippedWithoutUserId, change.PhoneNumberId);
@@ -168,7 +181,20 @@ internal sealed partial class WebhookDeliveryProcessor(
             foreach (var message in change.Messages)
             {
                 var context = await PrepareAsync(route.TenantId, route.ConnectionId, message, cancellationToken);
-                var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, automationOptions.Value.Enqueue, cancellationToken, position: position++);
+                IngestedInbound? ingested;
+                try
+                {
+                    ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, automationOptions.Value.Enqueue, cancellationToken, position: position++);
+                }
+                catch (CustomerVanishedException)
+                {
+                    // A-12 y P4: el cliente se borró mientras la ingesta esperaba el candado, y su transacción se deshizo entera. El resto
+                    // del change sigue; la entrega se reintenta, y como la ingesta es idempotente por wamid sólo entra lo que faltó.
+                    LogCustomerVanished(logger, deliveryId);
+                    retryLater = true;
+                    continue;
+                }
+
                 if (ingested is not null)
                 {
                     // Sólo el entrante nuevo mide: un reenvío de Meta (null) no. Antes de NotifyAsync, que puede fallar; el reloj se toma aquí
@@ -184,7 +210,8 @@ internal sealed partial class WebhookDeliveryProcessor(
         }
 
         // Los statuses se aplican siempre, también con Paused o módulo apagado (decisión 7, D-M18). Task 13b.
-        return await ProcessStatusesAsync(deliveryId, route, change, attempts, cancellationToken);
+        var statuses = await ProcessStatusesAsync(deliveryId, route, change, attempts, cancellationToken);
+        return retryLater ? DeliveryOutcome.RetryLater : statuses;
     }
 
     /// <summary>
@@ -193,14 +220,14 @@ internal sealed partial class WebhookDeliveryProcessor(
     /// Messaging, como la ingesta en vivo, y después el hilo en su propia transacción; al final de cada parte, su progreso. Todo es
     /// idempotente, así que reprocesar una entrega a medias no duplica nada.
     /// </summary>
-    private async Task ProcessHistoryAsync(long deliveryId, HistoryChange change, CancellationToken cancellationToken)
+    private async Task<DeliveryOutcome> ProcessHistoryAsync(long deliveryId, HistoryChange change, CancellationToken cancellationToken)
     {
         var route = await routing.FindRouteAsync(change.PhoneNumberId, cancellationToken);
         if (route is null)
         {
             var count = change.Chunks.Sum(chunk => chunk.Threads.Sum(thread => thread.Messages.Count));
             LogDiscarded(logger, deliveryId, count, change.PhoneNumberId, "unknown-route");
-            return;
+            return DeliveryOutcome.Processed;
         }
 
         var now = clock.UtcNow;
@@ -212,12 +239,13 @@ internal sealed partial class WebhookDeliveryProcessor(
 
         if (change.Chunks.Count == 0)
         {
-            return;
+            return DeliveryOutcome.Processed;
         }
 
         var connectedAt = (await dbContext.Database.SqlQuery<DateTimeOffset>(
             $"""SELECT connected_at AS "Value" FROM messaging.history_syncs WHERE connection_id = {route.ConnectionId}""")
             .ToListAsync(cancellationToken)) is [var at] ? at : (DateTimeOffset?)null;
+        var outcome = DeliveryOutcome.Processed;
         foreach (var chunk in change.Chunks)
         {
             if (chunk.SkippedMessages > 0)
@@ -228,9 +256,12 @@ internal sealed partial class WebhookDeliveryProcessor(
             foreach (var thread in chunk.Threads.Where(thread => thread.Messages.Count > 0))
             {
                 var customer = await customers.EnsureByPhoneAsync(route.TenantId, thread.WaId, null, cancellationToken);
-                await CoexistenceIngestion.IngestThreadAsync(
-                    dbContext, route.TenantId, route.ConnectionId, thread.WaId, thread.Messages, customer.CustomerId, CoexistenceSource.History,
-                    connectedAt, now, cancellationToken);
+                // A-12 y P4: si el cliente se borró a mitad, ese hilo se deshizo entero y la entrega se reintenta; los demás siguen.
+                if (!await IngestCoexistenceThreadAsync(
+                        deliveryId, route, thread.WaId, thread.Messages, customer.CustomerId, CoexistenceSource.History, connectedAt, now, cancellationToken))
+                {
+                    outcome = DeliveryOutcome.RetryLater;
+                }
             }
 
             if (await CoexistenceIngestion.RecordChunkAsync(dbContext, route.ConnectionId, chunk, now, cancellationToken) == 0)
@@ -238,6 +269,8 @@ internal sealed partial class WebhookDeliveryProcessor(
                 LogHistoryWithoutSync(logger, deliveryId, route.ConnectionId);
             }
         }
+
+        return outcome;
     }
 
     /// <summary>
@@ -245,16 +278,17 @@ internal sealed partial class WebhookDeliveryProcessor(
     /// procesa (D-5): ya ocurrió y no envía nada. Los ecos seguidos del mismo teléfono van en una sola llamada. No suma no leídos, no
     /// toca la ventana ni el bot y no avisa en tiempo real.
     /// </summary>
-    private async Task ProcessEchoesAsync(long deliveryId, SmbEchoesChange change, CancellationToken cancellationToken)
+    private async Task<DeliveryOutcome> ProcessEchoesAsync(long deliveryId, SmbEchoesChange change, CancellationToken cancellationToken)
     {
         var route = await routing.FindRouteAsync(change.PhoneNumberId, cancellationToken);
         if (route is null)
         {
             LogDiscarded(logger, deliveryId, change.Echoes.Count, change.PhoneNumberId, "unknown-route");
-            return;
+            return DeliveryOutcome.Processed;
         }
 
         var now = clock.UtcNow;
+        var outcome = DeliveryOutcome.Processed;
         var index = 0;
         while (index < change.Echoes.Count)
         {
@@ -266,8 +300,32 @@ internal sealed partial class WebhookDeliveryProcessor(
             }
 
             var customer = await customers.EnsureByPhoneAsync(route.TenantId, waId, null, cancellationToken);
+            // A-12 y P4: como en el historial, un cliente borrado a mitad deja ese grupo para el reintento.
+            if (!await IngestCoexistenceThreadAsync(deliveryId, route, waId, group, customer.CustomerId, CoexistenceSource.Echo, null, now, cancellationToken))
+            {
+                outcome = DeliveryOutcome.RetryLater;
+            }
+        }
+
+        return outcome;
+    }
+
+    /// <summary>Un hilo de coexistencia; <c>false</c> si el cliente se borró mientras la ingesta esperaba el candado (A-12 y P4): su
+    /// transacción ya se deshizo, y el reintento de la entrega crea el cliente y la conversación nuevos (D-4).</summary>
+    private async Task<bool> IngestCoexistenceThreadAsync(
+        long deliveryId, MessagingRoute route, string waId, IReadOnlyList<CoexistenceMessage> messages, Guid customerId, CoexistenceSource source,
+        DateTimeOffset? connectedAt, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        try
+        {
             await CoexistenceIngestion.IngestThreadAsync(
-                dbContext, route.TenantId, route.ConnectionId, waId, group, customer.CustomerId, CoexistenceSource.Echo, null, now, cancellationToken);
+                dbContext, route.TenantId, route.ConnectionId, waId, messages, customerId, source, connectedAt, now, cancellationToken);
+            return true;
+        }
+        catch (CustomerVanishedException)
+        {
+            LogCustomerVanished(logger, deliveryId);
+            return false;
         }
     }
 

@@ -24,6 +24,7 @@ public sealed class QuotationPdf
         long quotationVersion,
         Guid? logoFileId,
         string? numberFormat,
+        string? contentFingerprint,
         DateTimeOffset generatedAt)
     {
         QuotationId = quotationId;
@@ -32,6 +33,7 @@ public sealed class QuotationPdf
         QuotationVersion = quotationVersion;
         LogoFileId = logoFileId;
         NumberFormat = numberFormat;
+        ContentFingerprint = contentFingerprint;
         GeneratedAt = generatedAt;
     }
 
@@ -57,6 +59,11 @@ public sealed class QuotationPdf
     /// tenant vence el PDF igual que el logo (spec 2026-10-23, D-R3).</summary>
     public string? NumberFormat { get; private set; }
 
+    /// <summary>La huella de las secciones configurables que salieron en el documento (spec 2026-11-16 §5.4), o null en las filas
+    /// anteriores a la columna, que se imprimieron con los textos fijos de la plantilla. Se compara por <c>!=</c>, como el logo, y un
+    /// null queda vencido: así ningún PDF guardado sigue mostrando un aviso que el tenant no configuró.</summary>
+    public string? ContentFingerprint { get; private set; }
+
     public DateTimeOffset GeneratedAt { get; private set; }
 
     // Es `TenantNumberFormats.CommaDecimal` de Tenancy, que este dominio no referencia: lo que se
@@ -71,27 +78,35 @@ public sealed class QuotationPdf
         long quotationVersion,
         Guid? logoFileId,
         string? numberFormat,
+        string contentFingerprint,
         DateTimeOffset generatedAt) =>
-        new(quotationId, tenantId, storageKey, quotationVersion, logoFileId, numberFormat, generatedAt);
+        new(quotationId, tenantId, storageKey, quotationVersion, logoFileId, numberFormat, contentFingerprint, generatedAt);
 
     /// <summary>
     /// La versión se compara con <c>&lt;</c> y no con <c>!=</c>: un PDF que quedara **adelante**
     /// de la cotización —una restauración de base, una escritura fuera de orden— no se arregla
     /// regenerándolo, y tratarlo como obsoleto lo haría regenerar en cada pedido, para siempre. El
-    /// logo se compara por <c>!=</c> porque no tiene ese mismo orden.
+    /// logo y la huella del contenido se comparan por <c>!=</c> porque no tienen ese mismo orden.
     /// </summary>
-    public bool IsStaleFor(long quotationVersion, Guid? logoFileId, string numberFormat) =>
+    public bool IsStaleFor(long quotationVersion, Guid? logoFileId, string numberFormat, string contentFingerprint) =>
         QuotationVersion < quotationVersion
         || LogoFileId != logoFileId
-        || (NumberFormat ?? LegacyNumberFormat) != numberFormat;
+        || (NumberFormat ?? LegacyNumberFormat) != numberFormat
+        || ContentFingerprint != contentFingerprint;
 
     public void Regenerate(
-        string storageKey, long quotationVersion, Guid? logoFileId, string numberFormat, DateTimeOffset generatedAt)
+        string storageKey,
+        long quotationVersion,
+        Guid? logoFileId,
+        string numberFormat,
+        string contentFingerprint,
+        DateTimeOffset generatedAt)
     {
         StorageKey = storageKey;
         QuotationVersion = quotationVersion;
         LogoFileId = logoFileId;
         NumberFormat = numberFormat;
+        ContentFingerprint = contentFingerprint;
         GeneratedAt = generatedAt;
     }
 }

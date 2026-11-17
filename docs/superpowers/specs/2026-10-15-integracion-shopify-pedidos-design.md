@@ -363,7 +363,8 @@ que no tenga asesor y cuenta de cobro, todo pedido espera con `store_not_configu
 | `advisor_membership_id` | membresía **activa** del asesor de la tienda (`shopify.store.advisor_not_member` al guardar si no lo es) |
 | `billing_company_id`, `billing_bank_name`, `billing_account_number`, `billing_currency` | la cuenta de cobro, copiada como `QuotationBillingAccount`; al guardar se valida contra Companies (`billing_account_not_found`) |
 | `default_classification_id` (null) | clasificación con la que nace un cliente **completo**; sin ella, el comprador siempre nace incompleto aunque traiga documento (§6.2.1) |
-| `document_attribute_key`, `document_type_attribute_key` | claves en `customAttributes` del pedido; por defecto `Documento` y `Tipo de documento` |
+| `document_attribute_key` | de dónde sale el documento, como ruta exacta (`ShopifyDocumentSources`): `shipping_address.company` (el campo «Empresa» de la dirección de envío) o el nombre de un atributo del checkout (REST `note_attributes`, GraphQL `customAttributes`); por defecto `Documento`. Las opciones del select las da `GET /stores/{connectionId}/document-sources` (§7) |
+| `document_type_attribute_key` | nombre del atributo del checkout con el tipo de documento; por defecto `Tipo de documento` |
 | `default_identification_type` | `CC` por defecto; se usa cuando el pedido no trae tipo |
 | `last_reconciled_at`, `reconcile_lease_until` | §5.3 |
 | `version`, `updated_at`, `updated_by` | concurrencia optimista con `If-Match` |
@@ -419,8 +420,9 @@ ni una contraentrega con una transportadora que no recauda: entran con aviso (§
 
 #### 6.2.1 Cliente
 
-1. **Documento.** `customAttributes[document_attribute_key]`; el tipo, de
-   `customAttributes[document_type_attribute_key]` comparado sin mayúsculas con `NIT`, `CC`, `CE` y
+1. **Documento.** Lo que hay en la ruta `document_attribute_key` (`ShopifyDocumentSources.Read`):
+   `shipping_address.company` lee la dirección de envío y cualquier otro valor es el nombre de un atributo del
+   checkout, sin caída de una fuente a la otra; el tipo, del atributo `document_type_attribute_key` comparado sin mayúsculas con `NIT`, `CC`, `CE` y
    `PASAPORTE`, o el `default_identification_type` de la tienda si no viene o no es uno de esos (D-S22:
    `IdentificationTypeParser.Parse` lanza con un valor desconocido, H7, y Shopify no referencia Customers).
    Número recortado, tope 32.
@@ -643,6 +645,7 @@ gestión de pedidos. Las rutas de `/shopify/*` y las de `/integrations/shopify/*
 | `POST /api/v1/tenants/{tenantId}/integrations/shopify/link` | `integrations.connection.manage` | `{ installId, name? }` → 201 `ConnectionResponse` |
 | `GET /api/v1/tenants/{tenantId}/shopify/stores` | `integrations.connection.read` | Tiendas: `connectionId`, `name`, `shopDomain`, `status`, `isConfigured`, `waitingCount`, `lastReconciledAt` |
 | `GET /api/v1/tenants/{tenantId}/shopify/stores/{connectionId}` | `integrations.connection.read` | Configuración (§6.1) con `advisorName`, `billingCompanyName`, `classificationName`, `version` (ETag) |
+| `GET /api/v1/tenants/{tenantId}/shopify/stores/{connectionId}/document-sources` | `integrations.connection.read` | Opciones del select «Atributo del documento» → `{ sources: [...] }`: `shipping_address.company` primero y después los nombres de atributo distintos de los 500 pedidos más recientes de la tienda en el espejo, recortados, sin repetir (sin distinguir mayúsculas) y ordenados. No crea la tienda; 403 como el `GET` de la tienda |
 | `PUT /api/v1/tenants/{tenantId}/shopify/stores/{connectionId}` | `integrations.connection.manage`, `If-Match` | Guarda la configuración; 428/412 como el resto del repo |
 | `POST /api/v1/tenants/{tenantId}/shopify/stores/{connectionId}/sync` | `quotations.order.manage` | Sincronización manual (§5.3) → `{ fetched, imported, waiting, cancelled, ignored, durationMs }`; 409 si ya corre |
 | `GET /api/v1/tenants/{tenantId}/shopify/orders?state=&connectionId=&withWarnings=&page=&pageSize=` | `quotations.order.read` | Espejo paginado (tope 50): `id`, `orderName`, `storeName`, `shopifyCreatedAt`, `financialStatus`, `totalPrice`, `currency`, `importState`, `waitReason`, `waitDetail`, `warnings`, `attempts`, `lastAttemptAt`, `qepCustomerId`, `qepOrderId`, `qepOrderNumber`, `totalDifference`, `customerName`, `customerEmail`. `state` por defecto `Waiting`; acepta varios |

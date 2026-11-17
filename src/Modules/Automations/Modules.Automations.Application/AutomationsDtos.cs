@@ -29,7 +29,12 @@ public sealed record ChatbotPublishedDto(int Number, DateTimeOffset At);
 
 public sealed record FlowIssueDto(string Severity, string Code, string? NodeId, string Message);
 
-public sealed record ServedByDto(Guid ChatbotId, string Name);
+/// <summary>Quién atiende la conexión (spec 2026-10-29 §4.3): un chatbot o un agente IA, leído de la tabla neutral de Mensajería.</summary>
+/// <param name="ChatbotId">El id del bot que la ocupa, sea chatbot o agente. Se llama así por compatibilidad: el formulario anterior lo lee
+/// para saber si la conexión es del chatbot abierto, y con un agente sigue funcionando (ningún chatbot tiene ese id). Lo nuevo lee
+/// <see cref="Kind"/> e <see cref="Id"/>.</param>
+/// <param name="Kind"><c>chatbot</c> o <c>agent</c>.</param>
+public sealed record ServedByDto(Guid ChatbotId, string Name, string Kind, Guid Id);
 
 public sealed record SelectableConnectionDto(
     Guid Id, string Name, string Channel, string Handle, string Status, ServedByDto? ServedBy, string? BusinessHoursName);

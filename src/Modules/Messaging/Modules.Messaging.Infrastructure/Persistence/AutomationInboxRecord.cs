@@ -17,4 +17,7 @@ internal sealed class AutomationInboxRecord
     public DateTimeOffset NextAttemptAt { get; set; }
     public DateTimeOffset? ProcessedAt { get; set; }
     public string? Outcome { get; set; }
+
+    /// <summary>Spec 2026-11-03: <see cref="Modules.Messaging.Application.AutomationInboxKinds"/>; las filas anteriores son <c>Engine</c>.</summary>
+    public string Kind { get; set; } = Modules.Messaging.Application.AutomationInboxKinds.Engine;
 }

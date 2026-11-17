@@ -378,27 +378,28 @@ public static class ExportLoadSeeder
     // Convertida un día después del envío, dentro de la vigencia. PED-{año UTC de la conversión}-{n}.
     // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage. Desde el spec
     // 2026-10-15 el pedido lleva sus propios cliente, asesor, cuenta de cobro e importes: se copian de su
-    // cotización, como lo hace la migración AddOrderOwnData con los pedidos que ya existían.
+    // cotización, como lo hace la migración AddOrderOwnData con los pedidos que ya existían. La fecha del pedido es el
+    // día de la conversión en Bogotá, como el backfill de AddOrderDate (spec 2026-11-16 §6): es sólo carga de prueba.
     private const string OrdersSql = """
         INSERT INTO quotations.orders (
             id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
-            approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version,
+            ritual_collection_sync_id, created_at, updated_at, version,
             source, external_reference, client_id, advisor_id, currency,
             billing_company_id, billing_bank_name, billing_account_number, billing_account_currency,
             payment_method, is_retail, global_scale_floor, billing_uses_business_name, is_store_pickup,
             bills_to_final_consumer, party_with_retention, party_vat_surplus, customer_with_retention,
             customer_vat_surplus, subtotal, tax_percentage, tax_amount, discount_amount, total,
-            retention_amount, net_total)
+            retention_amount, net_total, order_date)
         SELECT gen_random_uuid(), @tenant,
                'PED-' || numbered.year || '-' || lpad(numbered.sequence::text, greatest(4, length(numbered.sequence::text)), '0'),
-               numbered.quotation_id, 'Pending', 'PaymentPending', NULL, numbered.converted_at, @advisor,
-               NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1,
+               numbered.quotation_id, 'Open', 'PaymentPending', NULL, numbered.converted_at, @advisor,
+               NULL, numbered.converted_at, numbered.converted_at, 1,
                'Quotation', NULL, q.client_id, q.advisor_id, q.currency,
                q.billing_company_id, q.billing_bank_name, q.billing_account_number, q.billing_account_currency,
                q.payment_method, q.is_retail, q.global_scale_floor, q.billing_uses_business_name, q.is_store_pickup,
                q.bills_to_final_consumer, q.party_with_retention, q.party_vat_surplus, q.customer_with_retention,
                q.customer_vat_surplus, q.subtotal, q.tax_percentage, q.tax_amount, q.discount_amount, q.total,
-               q.retention_amount, q.net_total
+               q.retention_amount, q.net_total, (numbered.converted_at AT TIME ZONE 'America/Bogota')::date
         FROM (
             SELECT converted.quotation_id,
                    converted.converted_at,

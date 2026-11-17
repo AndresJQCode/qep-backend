@@ -2,7 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -128,12 +128,11 @@ public sealed class ForwardedHeadersApiTests
         string realIp,
         Func<int, string> forwardedFor)
     {
-        for (var i = 0; i < PublicPermitLimit; i++)
-        {
-            Assert.Equal(
-                StatusCodes.Status200OK,
-                await GetOpenApiAsync(factory, peer, realIp, forwardedFor(i)));
-        }
+        // At once, not one by one: the window is one minute from the partition's first request, and 120 sequential OpenAPI
+        // documents took over a minute on a loaded machine, so the window rolled over and the next request got 200, not 429.
+        var statuses = await Task.WhenAll(
+            Enumerable.Range(0, PublicPermitLimit).Select(i => GetOpenApiAsync(factory, peer, realIp, forwardedFor(i))));
+        Assert.All(statuses, status => Assert.Equal(StatusCodes.Status200OK, status));
     }
 
     private static async Task<int> GetOpenApiAsync(
@@ -153,17 +152,6 @@ public sealed class ForwardedHeadersApiTests
         return context.Response.StatusCode;
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private sealed class ForwardedHeadersApiFactory(string connectionString, params string[] knownNetworks)
         : WebApplicationFactory<Program>
     {
@@ -173,6 +161,8 @@ public sealed class ForwardedHeadersApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

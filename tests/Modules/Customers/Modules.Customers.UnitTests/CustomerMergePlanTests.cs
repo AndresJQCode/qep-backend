@@ -447,4 +447,72 @@ public sealed class CustomerMergePlanTests
 
         Assert.Equal([second.Id, first.Id], plan.Merged.Select(customer => customer.Id));
     }
+
+    // ---- Spec 2026-11-10 §4.7: la fusión y el vínculo persona → empresa ----
+
+    [Fact]
+    public void TheSurvivorLosesItsCompanyWhenThatCompanyIsMerged()
+    {
+        var company = Complete();
+        var survivor = Complete(number: "1020");
+        survivor.LinkToCompany(company, hasContacts: false, Created);
+        var plan = CustomerMergePlan.Create(survivor, [company]);
+
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Null(survivor.CompanyId);
+        Assert.False(plan.SurvivorKeepsCompany);
+    }
+
+    [Fact]
+    public void TheSurvivorKeepsACompanyThatIsNotMerged()
+    {
+        var company = Complete();
+        var survivor = Complete(number: "1020");
+        survivor.LinkToCompany(company, hasContacts: false, Created);
+        var plan = CustomerMergePlan.Create(survivor, [Complete(number: "1030")]);
+
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Equal(company.Id, survivor.CompanyId);
+        Assert.True(plan.SurvivorKeepsCompany);
+    }
+
+    [Fact]
+    public void AMergedContactOfTheSurvivorBecomesATombstoneWithoutCompany()
+    {
+        var survivor = Complete();
+        var contact = Complete(number: "1020");
+        contact.LinkToCompany(survivor, hasContacts: false, Created);
+        var plan = CustomerMergePlan.Create(survivor, [contact]);
+
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Null(contact.CompanyId);
+        Assert.Equal(survivor.Id, contact.MergedIntoId);
+        Assert.Null(survivor.CompanyId);
+        Assert.False(plan.SurvivorKeepsCompany);
+    }
+
+    [Theory]
+    [InlineData(true, 0, 0, false)]
+    [InlineData(true, 0, 2, true)]
+    [InlineData(true, 1, 0, true)]
+    [InlineData(false, 3, 2, false)]
+    public void TheConflictIsKeepingACompanyWhileHavingContacts(bool keeps, int own, int moved, bool expected)
+    {
+        var survivor = Complete();
+        if (keeps)
+        {
+            survivor.LinkToCompany(Complete(number: "1020"), hasContacts: false, Created);
+        }
+
+        var plan = CustomerMergePlan.Create(survivor, [Complete(number: "1030")]);
+
+        Assert.Equal(keeps, plan.SurvivorKeepsCompany);
+        Assert.Equal(expected, plan.HasCompanyConflict(own, moved));
+    }
 }

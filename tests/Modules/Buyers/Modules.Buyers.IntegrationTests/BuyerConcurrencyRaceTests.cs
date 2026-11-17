@@ -200,6 +200,8 @@ public sealed class BuyerConcurrencyRaceTests
         public void Add(BuyerAccount account) => inner.Add(account);
 
         public void Remove(BuyerAccount account) => inner.Remove(account);
+
+        public Task LockAsync(Guid id, CancellationToken cancellationToken) => inner.LockAsync(id, cancellationToken);
     }
 
     private sealed class HookedSessions(IBuyerSessionRepository inner, RaceHooks hooks) : IBuyerSessionRepository
@@ -218,11 +220,11 @@ public sealed class BuyerConcurrencyRaceTests
         }
 
         // La revocación masiva corre dentro de la transacción del guardado: la sesión rival confirma justo antes de la sentencia.
-        public async Task RevokeActiveAsync(
+        public async Task<IReadOnlyList<RevokedBuyerSession>> RevokeActiveAsync(
             Guid accountId, Guid? keepSessionId, DateTimeOffset now, string reason, CancellationToken cancellationToken)
         {
             await hooks.OnRevokingAsync();
-            await inner.RevokeActiveAsync(accountId, keepSessionId, now, reason, cancellationToken);
+            return await inner.RevokeActiveAsync(accountId, keepSessionId, now, reason, cancellationToken);
         }
     }
 

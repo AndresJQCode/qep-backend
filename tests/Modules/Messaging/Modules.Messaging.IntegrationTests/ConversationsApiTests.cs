@@ -72,6 +72,47 @@ public sealed class ConversationsApiTests
         Assert.True(first.GetProperty("version").GetInt64() >= 1);
     }
 
+    // Spec 2026-11-10 §4: la empresa del cliente de la conversación viaja en la lista y en el detalle.
+    [Fact]
+    public async Task TheConversationOfAContactCarriesItsCompany()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var ids = await CreateCustomersAsync(f.Factory, f.Tenant, ("Acme SAS", "300 111 0000"), ("Ana Pérez", "300 123 4567"));
+        using var customers = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, "customers.customer.read", "customers.customer.manage");
+        var link = await customers.PutAsJsonAsync($"/api/v1/tenants/{f.Tenant.TenantId}/customers/{ids[1]}/company", new { companyId = ids[0] }, Ct);
+        link.EnsureSuccessStatusCode();
+        await IngestAsync(f, "573001234567", "w1", 1760000100, "hola");
+
+        var page = await f.Client.GetFromJsonAsync<JsonElement>(ConversationsUrl(f.Tenant.TenantId), Ct);
+        var item = page.GetProperty("items")[0];
+        var detail = await f.Client.GetFromJsonAsync<JsonElement>(ConversationUrl(f.Tenant.TenantId, item.GetProperty("id").GetGuid()), Ct);
+
+        foreach (var customer in new[] { item.GetProperty("customer"), detail.GetProperty("customer") })
+        {
+            Assert.Equal(ids[1], customer.GetProperty("id").GetGuid());
+            var company = customer.GetProperty("company");
+            Assert.Equal(ids[0], company.GetProperty("id").GetGuid());
+            Assert.Equal("Acme SAS", company.GetProperty("name").GetString());
+            Assert.True(company.GetProperty("isActive").GetBoolean());
+        }
+    }
+
+    [Fact]
+    public async Task TheConversationOfAPersonWithoutCompanyCarriesCompanyNull()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await CreateCustomerAsync(f.Factory, f.Tenant, name: "Ana Pérez", phone: "300 123 4567");
+        await IngestAsync(f, "573001234567", "w1", 1760000100, "hola");
+
+        var page = await f.Client.GetFromJsonAsync<JsonElement>(ConversationsUrl(f.Tenant.TenantId), Ct);
+
+        Assert.Equal(JsonValueKind.Null, page.GetProperty("items")[0].GetProperty("customer").GetProperty("company").ValueKind);
+    }
+
     [Theory]
     [InlineData("lau", "573001234567")]
     [InlineData("9999", "573009999999")]

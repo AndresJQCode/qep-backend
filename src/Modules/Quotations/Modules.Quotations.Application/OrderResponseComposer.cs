@@ -1,3 +1,5 @@
+using Modules.Tenancy.Application;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>
@@ -8,13 +10,27 @@ namespace Modules.Quotations.Application;
 public interface IOrderResponseComposer
 {
     Task<OrderDetailResponse> ComposeAsync(Guid tenantId, OrderDetailDto detail, CancellationToken cancellationToken);
+
+    /// <summary>Sólo el pedido, para las rutas que no responden el detalle (/approve, /cancel…). Pasa por acá y no por
+    /// <see cref="OrderResponses.ToResponse"/> directo porque el desglose de retenciones necesita el calendario del tenant
+    /// (spec retenciones por UVT §5.2).</summary>
+    Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken);
+
+    /// <summary>La vista previa de la conversión (spec alerta UVT §5.3). Su desglose pasa por el mismo contexto de UVT que
+    /// el del pedido, con la fecha con que se armó, para que diga lo mismo que dirá el pedido ya creado.</summary>
+    Task<QuotationConversionPreviewResponse> ComposeConversionPreviewAsync(
+        Guid tenantId, QuotationConversionPreviewDto preview, CancellationToken cancellationToken);
 }
 
 public sealed class OrderResponseComposer(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IQuotationProductLookup productLookup,
-    IQuotationCompanyLookup companyLookup)
+    IQuotationCompanyLookup companyLookup,
+    IQuotationWithholdingLookup withholdingLookup,
+    IQuotationGeographyLookup geographyLookup,
+    IQuotationBuyerAccountLookup buyerAccountLookup,
+    ITenantClock tenantClock)
     : IOrderResponseComposer
 {
     public async Task<OrderDetailResponse> ComposeAsync(
@@ -31,15 +47,36 @@ public sealed class OrderResponseComposer(
             .ToArray();
         var members = await advisorLookup.FindAsync(tenantId, memberIds, cancellationToken);
         var advisor = members.GetValueOrDefault(order.AdvisorId);
-        // Sin cuenta sólo llega el cálculo previo, que precia antes de que se elija la empresa que factura.
-        var company = order.BillingAccount is { } billing
+        // Sin cuenta sólo llega el cálculo previo, que precia antes de que se elija la empresa que factura. A pending
+        // account (previews only) is never answered, and the company feeds nothing else here (the municipal explanation
+        // reads the account's own city), so it is not looked up.
+        var company = order.BillingAccount is { IsPending: false } billing
             ? await companyLookup.FindAsync(tenantId, billing.CompanyId, cancellationToken)
             : null;
         var products = await productLookup.FindManyAsync(
             tenantId, order.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
+        var clientContacts = await QuotationResponseComposer.ClientContactsAsync(
+            customerLookup, tenantId, customer, cancellationToken);
+        // El pedido tiene una sola fuente (sus tasas, en BillingWithholdingTaxRates) y aplica la regla del cliente: el
+        // agente se consulta siempre, también con parte propia (spec ReteICA por empresa §9.4, R11).
+        var municipal = await MunicipalWithholdingExplanation.ExplainAsync(
+            withholdingLookup,
+            geographyLookup,
+            tenantId,
+            order.ClientId,
+            order.BillingAccount,
+            order.OperationCityId,
+            ownBilling: false,
+            order.BillingWithholdingTaxRates,
+            MunicipalWithholdingExplanation.DateOf(order.CreatedAt),
+            cancellationToken);
+        // Spec 2026-11-15 §4: una cuenta borrada deja el id en el pedido; el detalle la muestra como «sin cuenta».
+        var buyerAccount = order.BuyerAccountId is { } buyerAccountId
+            ? await buyerAccountLookup.FindAsync(buyerAccountId, cancellationToken)
+            : null;
 
         return new OrderDetailResponse(
-            OrderResponses.ToResponse(order),
+            await ComposeOrderAsync(tenantId, order, cancellationToken),
             QuotationResponseComposer.ToClientResponse(customer),
             advisor?.DisplayName,
             advisor?.Email,
@@ -47,8 +84,12 @@ public sealed class OrderResponseComposer(
             order.Items
                 .Select(item => QuotationResponseComposer.ToItemResponse(item, products, order.GlobalScaleFloor))
                 .ToArray(),
-            order.QuotationId is { } quotationId && detail.QuotationNumber is { } number
-                ? new SourceQuotationResponse(quotationId, number)
+            // Sin el instante no se arma (spec 2026-11-16 F-8): CreatedAt no es opcional en el contrato, y un número sin
+            // cotización detrás no tiene cuándo mostrar.
+            order.QuotationId is { } quotationId
+            && detail.QuotationNumber is { } number
+            && detail.QuotationCreatedAt is { } quotationCreatedAt
+                ? new SourceQuotationResponse(quotationId, number, quotationCreatedAt)
                 : null,
             detail.History
                 .Select(entry => new OrderHistoryEntryResponse(
@@ -59,7 +100,33 @@ public sealed class OrderResponseComposer(
                     entry.MemberId is { } member ? members.GetValueOrDefault(member)?.Label : null,
                     entry.Details))
                 .ToArray(),
-            QuotationResponseComposer.AvailableFloors(order.Items, products));
+            QuotationResponseComposer.AvailableFloors(order.Items, products),
+            clientContacts,
+            municipal.OperationCity,
+            municipal.BillingCompanyCity,
+            municipal.Entries,
+            buyerAccount is null ? null : new BuyerAccountResponse(buyerAccount.Id, buyerAccount.Email));
+    }
+
+    public async Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        var taxUnits = await QuotationResponseComposer.TaxUnitContextAsync(
+            tenantClock, withholdingLookup, tenantId, order.CreatedAt, order.WithholdingBreakdown, cancellationToken);
+        return OrderResponses.ToResponse(order, taxUnits);
+    }
+
+    public async Task<QuotationConversionPreviewResponse> ComposeConversionPreviewAsync(
+        Guid tenantId, QuotationConversionPreviewDto preview, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        var taxUnits = await QuotationResponseComposer.TaxUnitContextAsync(
+            tenantClock, withholdingLookup, tenantId, preview.CreatedAt, preview.WithholdingBreakdown, cancellationToken);
+        return new QuotationConversionPreviewResponse(
+            preview.RetentionAmount,
+            preview.NetTotal,
+            QuotationResponseComposer.ToBreakdownResponse(preview.WithholdingBreakdown, taxUnits),
+            preview.TaxUnitChange);
     }
 }
 
@@ -67,7 +134,10 @@ public sealed class OrderResponseComposer(
 /// compositor del detalle.</summary>
 public static class OrderResponses
 {
-    public static OrderResponse ToResponse(OrderDto order)
+    /// <param name="context">El año local del pedido y el último año de UVT cargado por país, para decir si la UVT del
+    /// desglose está desactualizada y cuál tomaría (spec alerta UVT §5.4). Lo resuelve
+    /// <see cref="IOrderResponseComposer.ComposeOrderAsync"/> con el calendario del tenant y Catalog.</param>
+    internal static OrderResponse ToResponse(OrderDto order, TaxUnitContext context)
     {
         ArgumentNullException.ThrowIfNull(order);
         return new OrderResponse(
@@ -80,6 +150,8 @@ public static class OrderResponses
             order.AdvisorId,
             order.Status,
             order.PaymentStatus,
+            order.FulfillmentStatus,
+            order.Invoiced,
             order.PaymentMethod,
             order.Currency,
             order.IsRetail,
@@ -98,7 +170,8 @@ public static class OrderResponses
             order.RetentionAmount,
             order.NetTotal,
             order.Notes,
-            order.BillingAccount,
+            // A pending account (company without account, previews only — spec 2026-11-16) is never answered.
+            order.BillingAccount is { IsPending: true } ? null : order.BillingAccount,
             order.Parties
                 .Select(party => new QuotationPartyResponse(
                     party.Id, party.Role, party.Name, party.IdentificationNumber, party.Phone, party.Email,
@@ -107,8 +180,8 @@ public static class OrderResponses
                 .ToArray(),
             order.ConvertedAt,
             order.ConvertedBy,
-            order.ApprovedAt,
-            order.ApprovedBy,
+            order.PaidMarkedAt,
+            order.PaidMarkedBy,
             order.CancelledAt,
             order.CancelledBy,
             order.CancellationReason,
@@ -124,6 +197,17 @@ public static class OrderResponses
                 .ToArray(),
             OrderShippingResponse.From(order.Shipping, order.ExternalShippingTitle),
             order.FreightSubtotal,
-            order.FreightTaxAmount);
+            order.FreightTaxAmount,
+            [.. order.Withholdings.Select(QuotationResponseComposer.ToWithholdingResponse)],
+            [.. order.CustomerWithholdingTaxRates.Select(QuotationResponseComposer.ToWithholdingTaxRateResponse)],
+            [.. order.BillingWithholdingTaxRates.Select(QuotationResponseComposer.ToWithholdingTaxRateResponse)],
+            order.PreparedAt,
+            order.PreparedBy,
+            order.ArchivedAt,
+            order.ArchivedBy,
+            order.Balance,
+            order.BuyerNotes,
+            QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, context),
+            order.OrderDate);
     }
 }

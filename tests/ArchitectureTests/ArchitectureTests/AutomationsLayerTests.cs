@@ -35,7 +35,8 @@ public sealed class AutomationsLayerTests
         Assert.DoesNotContain(ReferenceNamesOf(Application), name =>
             name is not null &&
             (name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal) ||
-             name.StartsWith("Npgsql", StringComparison.Ordinal)));
+             name.StartsWith("Npgsql", StringComparison.Ordinal) ||
+             name.StartsWith("StackExchange.Redis", StringComparison.Ordinal)));
 
     // §4.1: Tenancy (ITenantModules, TenantModuleGuard, IExecutionContext, IMembershipDirectory) y nada más.
     [Fact]

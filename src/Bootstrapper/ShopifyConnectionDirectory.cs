@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Shopify.Application;
@@ -14,12 +15,16 @@ namespace Bootstrapper;
 /// <see cref="ShopifyConnectionRef.IsOperational"/> en <c>false</c>, para que un <c>app/uninstalled</c> o un pedido de una
 /// tienda pausada actualicen el espejo en vez de perderse como <c>unknown_shop</c>. Los campos (el id de la tienda) se leen del
 /// repositorio, que no mira el estado; el token, sólo de una conexión operativa.</para>
+/// <para>Spec 2026-11-12 §6.4 (D7): con <c>tokenExpiresAt</c> vencido —el worker de Integrations va tarde— la conexión sigue
+/// operativa y sale sin token. No se la vuelve no operativa porque el redact la daría por desinstalada y la ingesta dejaría de
+/// importar; sólo la conciliación, que llama a la Admin API, salta la corrida. <see cref="ListOperationalAsync"/> no la lista.</para>
 /// </summary>
 internal sealed class ShopifyConnectionDirectory(
     IConnectionRoutes routes,
     IIntegrationConnectionRepository repository,
     IIntegrationConnections connections,
-    ITenantModules tenantModules) : IShopifyConnectionDirectory
+    ITenantModules tenantModules,
+    IClock clock) : IShopifyConnectionDirectory
 {
     private static string Provider => IntegrationProviders.Shopify.Key;
 
@@ -43,7 +48,7 @@ internal sealed class ShopifyConnectionDirectory(
         foreach (var route in await routes.ListByProviderAsync(Provider, cancellationToken))
         {
             if (route.Status == ConnectionStatus.Active
-                && await ToRefAsync(route, shopDomain: null, cancellationToken) is { IsOperational: true } connection)
+                && await ToRefAsync(route, shopDomain: null, cancellationToken) is { IsOperational: true, AccessToken: not null } connection)
             {
                 result.Add(connection);
             }
@@ -86,8 +91,9 @@ internal sealed class ShopifyConnectionDirectory(
             ?? string.Empty;
         var shopId = connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopId) ?? string.Empty;
         var token = await OperationalTokenAsync(route, cancellationToken);
+        var expired = ShopifyTokenRefresh.IsExpired(connection.Fields.GetValueOrDefault(ShopifyFieldKeys.TokenExpiresAt), clock.UtcNow);
         // D-S4: el enlace crea la conexión (LinkShopifyStore), así que su CreatedAt es el instante del enlace.
-        return new ShopifyConnectionRef(route.TenantId, route.ConnectionId, shopId, domain, token is not null, token)
+        return new ShopifyConnectionRef(route.TenantId, route.ConnectionId, shopId, domain, token is not null, expired ? null : token)
         {
             LinkedAt = connection.CreatedAt,
         };

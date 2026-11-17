@@ -4,7 +4,6 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Tenancy.Application;
-using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -16,24 +15,24 @@ namespace Modules.Tenancy.IntegrationTests;
 /// pueden: que el endpoint esté mapeado, que su policy exista —se registra a mano y por
 /// separado— y que el código de dominio llegue como el status correcto y no como un 500.
 /// </remarks>
-public sealed class RoleApiTests
+public sealed class RoleApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
     private const string SubjectId = "01900000-0000-7000-8000-00000000a001";
-    private const string TenantId = "01900000-0000-7000-8000-00000000a002";
+    // Uno por prueba (xUnit crea una instancia por prueba): las pruebas de la clase comparten el host.
+    private readonly string TenantId = Guid.CreateVersion7().ToString();
 
     // Estaticos y no literales en linea: CA1861 se queja de una matriz constante que se pasa
     // repetidas veces a un metodo que no la muta.
     private static readonly string[] ReadProducts = ["catalog.product.read"];
     private static readonly string[] ManageProducts = ["catalog.product.manage"];
 
-    private static string RolesUrl() =>
+    private string RolesUrl() =>
         $"/api/v1/tenants/{TenantId}/authorization/roles";
 
     [Fact]
     public async Task ListReturnsTheSystemRolesMarkedAsSuch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Reader(factory);
 
         var response = await client.GetAsync(RolesUrl(), TestContext.Current.CancellationToken);
@@ -53,8 +52,7 @@ public sealed class RoleApiTests
     {
         // Leer no exige el permiso de escritura: quien asigna roles a una persona necesita ver
         // qué concede cada uno, y esa capacidad es `advisorship.manage`.
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory, SubjectId, TenantId, TenancyPermissions.AdvisorshipRead);
 
@@ -66,8 +64,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task CreateStoresTheRoleAndTheListShowsIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
 
         var created = await CreateAsync(client, "ventas-junior", "Ventas junior");
@@ -81,7 +78,9 @@ public sealed class RoleApiTests
         var list = await client.GetAsync(RolesUrl(), TestContext.Current.CancellationToken);
         var roles = await list.Content.ReadFromJsonAsync<RolePayload[]>(
             TestContext.Current.CancellationToken);
-        Assert.Contains(roles!, item => item.Role == "ventas-junior" && !item.IsSystem);
+        // Con su id: sin él el front no tiene a dónde mandar el PUT ni el DELETE del rol.
+        Assert.Contains(
+            roles!, item => item.Role == "ventas-junior" && !item.IsSystem && item.Id == role.Id);
     }
 
     /// <summary>
@@ -99,8 +98,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task ManagingMembersIsNotEnoughToDefineRoles()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory,
             SubjectId,
@@ -116,8 +114,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task CreateWithAPermissionOutsideTheCatalogIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
 
         var response = await CreateAsync(
@@ -132,8 +129,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task CreateWithASystemRoleKeyIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
 
         var response = await CreateAsync(client, "admin", "Mi admin");
@@ -147,8 +143,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task CreateWithTheCashierKeyIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
 
         var response = await CreateAsync(client, "cashier", "Mi cajero");
@@ -162,8 +157,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task CreateWithADuplicateKeyIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
         await CreateAsync(client, "ventas-junior", "Ventas junior");
 
@@ -178,8 +172,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task UpdateWithoutIfMatchIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
         var role = await CreatedRoleAsync(client, "ventas-junior");
 
@@ -203,8 +196,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task UpdateWithAStaleVersionConflicts()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
         var role = await CreatedRoleAsync(client, "ventas-junior");
 
@@ -216,8 +208,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task UpdateReplacesPermissionsAndReturnsTheNewVersion()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
         var role = await CreatedRoleAsync(client, "ventas-junior");
 
@@ -237,8 +228,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task DeleteRemovesARoleNobodyHas()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
         var role = await CreatedRoleAsync(client, "ventas-junior");
 
@@ -255,8 +245,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task AnUnknownRoleIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var client = Manager(factory);
 
         var response = await client.DeleteAsync(
@@ -268,8 +257,7 @@ public sealed class RoleApiTests
     [Fact]
     public async Task ARoleOfAnotherTenantIsNotReachable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         using var owner = Manager(factory);
         var role = await CreatedRoleAsync(owner, "ventas-junior");
 
@@ -291,10 +279,10 @@ public sealed class RoleApiTests
 
     // ---- helpers ----
 
-    private static HttpClient Reader(QepApiFactory factory) =>
+    private HttpClient Reader(QepApiFactory factory) =>
         CreateClient(factory, SubjectId, TenantId, TenancyPermissions.AdvisorshipRead);
 
-    private static HttpClient Manager(QepApiFactory factory) =>
+    private HttpClient Manager(QepApiFactory factory) =>
         CreateClient(
             factory,
             SubjectId,
@@ -302,7 +290,7 @@ public sealed class RoleApiTests
             TenancyPermissions.AdvisorshipRead,
             TenancyPermissions.AdvisorshipRolesManage);
 
-    private static Task<HttpResponseMessage> CreateAsync(
+    private Task<HttpResponseMessage> CreateAsync(
         HttpClient client,
         string key,
         string displayName,
@@ -318,7 +306,7 @@ public sealed class RoleApiTests
             },
             TestContext.Current.CancellationToken);
 
-    private static async Task<RolePayload> CreatedRoleAsync(HttpClient client, string key)
+    private async Task<RolePayload> CreatedRoleAsync(HttpClient client, string key)
     {
         var response = await CreateAsync(client, key, key);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -326,7 +314,7 @@ public sealed class RoleApiTests
             TestContext.Current.CancellationToken))!;
     }
 
-    private static async Task<HttpResponseMessage> UpdateAsync(
+    private async Task<HttpResponseMessage> UpdateAsync(
         HttpClient client,
         Guid roleId,
         string displayName,
@@ -345,17 +333,6 @@ public sealed class RoleApiTests
         };
         request.Headers.IfMatch.Add(new EntityTagHeaderValue($"\"{version}\""));
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(
@@ -393,6 +370,8 @@ public sealed class RoleApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Customers.Application;
+using Modules.Customers.Infrastructure.Phones;
 using Modules.Messaging.Application;
 
 namespace Bootstrapper.UnitTests;
@@ -17,6 +18,18 @@ public sealed class MessagingCustomerDirectoryAudienceTests
         public Task<IReadOnlyDictionary<string, CustomerPhoneMatch>> MatchAsync(
             Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Dictionary<string, CustomerPhoneMatch> Active { get; } = [];
+
+        public List<IReadOnlyCollection<string>> ActiveCalls { get; } = [];
+
+        public Task<IReadOnlyDictionary<string, CustomerPhoneMatch>> MatchActiveAsync(
+            Guid tenantId, IReadOnlyCollection<string> e164, CancellationToken cancellationToken)
+        {
+            ActiveCalls.Add(e164);
+            return Task.FromResult<IReadOnlyDictionary<string, CustomerPhoneMatch>>(
+                Active.Where(pair => e164.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
+        }
 
         public Task<IReadOnlyList<string>> FindPhonesByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -114,7 +127,7 @@ public sealed class MessagingCustomerDirectoryAudienceTests
     }
 
     private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null, FakePhones? phones = null) =>
-        new(phones ?? new FakePhones(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), new FakeCustomerMergeStore(),
+        new(phones ?? new FakePhones(), new LibPhoneNumberNormalizer(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), new FakeCustomerMergeStore(), null!,
             NullLogger<MessagingCustomerDirectory>.Instance);
 
     [Fact]
@@ -215,5 +228,36 @@ public sealed class MessagingCustomerDirectoryAudienceTests
 
         Assert.Equal(("+573001112233", 11), phones.LastListByPhone);
         Assert.Equal([new CustomerRefDto(first.Id, "Laura", true), new CustomerRefDto(second.Id, "Pedro", false)], refs);
+    }
+
+    [Fact]
+    public async Task ResolveSharedPhonesAsksCustomersOnceWithThePlusAndSplitsEveryNumber()
+    {
+        var laura = new CustomerPhoneMatch(Guid.NewGuid(), "Laura Gómez", false);
+        var phones = new FakePhones { Active = { ["+573001234567"] = laura } };
+
+        var resolved = await AdapterOver(new FakeWhatsApp(), phones: phones)
+            .ResolveSharedPhonesAsync(Tenant, ["573001234567", "14155552671", "573001234567"], TestContext.Current.CancellationToken);
+
+        Assert.Equal(["+573001234567", "+14155552671"], Assert.Single(phones.ActiveCalls));
+        Assert.Equal(new MessagingSharedPhone(new CustomerRefDto(laura.Id, "Laura Gómez", false), "CO", "3001234567"), resolved["573001234567"]);
+        Assert.Equal(new MessagingSharedPhone(null, "US", "4155552671"), resolved["14155552671"]);
+    }
+
+    [Fact]
+    public async Task AnInvalidWaIdIsStillAnsweredWithoutParts()
+    {
+        var resolved = await AdapterOver(new FakeWhatsApp(), phones: new FakePhones())
+            .ResolveSharedPhonesAsync(Tenant, ["3001234567"], TestContext.Current.CancellationToken);
+
+        Assert.Equal(new MessagingSharedPhone(null, null, null), resolved["3001234567"]);
+    }
+
+    [Fact]
+    public async Task NoWaIdsAskNothing()
+    {
+        var phones = new FakePhones();
+        Assert.Empty(await AdapterOver(new FakeWhatsApp(), phones: phones).ResolveSharedPhonesAsync(Tenant, [], TestContext.Current.CancellationToken));
+        Assert.Empty(phones.ActiveCalls);
     }
 }

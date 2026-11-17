@@ -109,6 +109,17 @@ internal sealed class FakeProductLookup : IShopifyProductLookup
 
     public List<IReadOnlyCollection<string>> Requests { get; } = [];
 
+    public Dictionary<Guid, ShopifyProductRef> ByVariant { get; } = [];
+
+    public List<IReadOnlyCollection<Guid>> VariantRequests { get; } = [];
+
+    /// <summary>Una variante por id (línea personalizada asociada); el SKU es el id, que no se mira.</summary>
+    public FakeProductLookup WithVariant(Guid variantId, int taxPercentage = 19, bool active = true)
+    {
+        ByVariant[variantId] = new ShopifyProductRef(variantId, Guid.CreateVersion7(), variantId.ToString(), active, taxPercentage);
+        return this;
+    }
+
     public FakeProductLookup With(string sku, int taxPercentage = 19, bool active = true)
     {
         // Dos ids distintos a propósito: un intercambio de VariantId y ProductId en el importador tiene que verse.
@@ -122,6 +133,14 @@ internal sealed class FakeProductLookup : IShopifyProductLookup
         Requests.Add([.. skus]);
         return Task.FromResult<IReadOnlyDictionary<string, ShopifyProductRef>>(
             skus.Where(Products.ContainsKey).Distinct(StringComparer.Ordinal).ToDictionary(sku => sku, sku => Products[sku], StringComparer.Ordinal));
+    }
+
+    public Task<IReadOnlyDictionary<Guid, ShopifyProductRef>> FindByVariantIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        VariantRequests.Add([.. variantIds]);
+        return Task.FromResult<IReadOnlyDictionary<Guid, ShopifyProductRef>>(
+            variantIds.Where(ByVariant.ContainsKey).Distinct().ToDictionary(id => id, id => ByVariant[id]));
     }
 }
 
@@ -143,6 +162,23 @@ internal sealed class FakeGeographyLookup : IShopifyGeographyLookup
         Guid? department = city?.DepartmentId
             ?? (Departments.TryGetValue(departmentName, out var id) ? id : null);
         return Task.FromResult(new ShopifyCityLookup(department, city));
+    }
+
+    /// <summary>Los nombres de QEP de cada ciudad (spec 2026-11-14 §5: viajan a Shopify en <c>orderUpdate</c>).</summary>
+    public Dictionary<(Guid DepartmentId, Guid CityId), ShopifyCityName> Names { get; } = [];
+
+    public Task<ShopifyCityName?> DescribeCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken) =>
+        Task.FromResult(Names.GetValueOrDefault((departmentId, cityId)));
+
+    /// <summary>Por ids, contra lo sembrado en <see cref="Cities"/> y <see cref="Departments"/>.</summary>
+    public Task<ShopifyCityCheck> CheckCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+    {
+        var departmentExists = Departments.ContainsValue(departmentId) || Cities.Values.Any(city => city.DepartmentId == departmentId);
+        var city = Cities.Values.FirstOrDefault(candidate => candidate.CityId == cityId);
+        return Task.FromResult(
+            !departmentExists ? ShopifyCityCheck.DepartmentNotFound
+            : city is null || city.DepartmentId != departmentId ? ShopifyCityCheck.CityNotInDepartment
+            : ShopifyCityCheck.Matches);
     }
 }
 
@@ -217,6 +253,42 @@ internal sealed class FakeCityCorrectionJobRepository(FakeShopifyDatabase databa
     }
 }
 
+/// <summary>Las asociaciones de líneas personalizadas por <c>(conexión, título)</c>; anota qué se le preguntó. La regla de recorte
+/// y el aislamiento por tienda del repositorio real se prueban contra Postgres (<c>ShopifyPersistenceTests</c>); acá el doble sólo
+/// casa por conexión y título exactos. Las escrituras no las usa el importador.</summary>
+internal sealed class FakeCustomLineMappings : IShopifyCustomLineMappingRepository
+{
+    private readonly Dictionary<(Guid ConnectionId, string Title), Guid> rows = [];
+
+    public List<(Guid ConnectionId, string[] Titles)> Requests { get; } = [];
+
+    public FakeCustomLineMappings Map(Guid connectionId, string title, Guid variantId)
+    {
+        rows[(connectionId, title)] = variantId;
+        return this;
+    }
+
+    public Task<IReadOnlyDictionary<string, Guid>> FindVariantIdsByTitlesAsync(
+        Guid tenantId, Guid connectionId, IReadOnlyCollection<string> titles, CancellationToken cancellationToken)
+    {
+        Requests.Add((connectionId, [.. titles]));
+        return Task.FromResult<IReadOnlyDictionary<string, Guid>>(titles
+            .Where(title => rows.ContainsKey((connectionId, title)))
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(title => title, title => rows[(connectionId, title)], StringComparer.Ordinal));
+    }
+
+    public Task<IReadOnlyList<ShopifyCustomLineMapping>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ShopifyCustomLineMapping?> FindAsync(Guid tenantId, Guid connectionId, Guid id, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public void Add(ShopifyCustomLineMapping mapping) => throw new NotSupportedException();
+
+    public void Remove(ShopifyCustomLineMapping mapping) => throw new NotSupportedException();
+}
+
 /// <summary>Transportadoras por título exacto y la tasa del envío del tenant; anota qué se le preguntó. La normalización del
 /// título es del adaptador (<c>ShopifyAdaptersTests</c>).</summary>
 internal sealed class FakeShippingLookup : IShopifyShippingLookup
@@ -269,8 +341,87 @@ internal sealed class FakeOrderWriter(FakeUnitOfWork unitOfWork) : IShopifyOrder
             throw fail();
         }
 
-        return Task.FromResult(Result(draft));
+        var result = Result(draft);
+        if (!result.IsRejected && !States.ContainsKey(result.OrderId))
+        {
+            // Lo que Quotations guardó: la importación lee el pedido después de escribir (spec 2026-11-14).
+            var pickup = draft.Shipping?.IsStorePickup == true;
+            States[result.OrderId] = new ShopifyOrderState(
+                result.OrderId, 1, "Open", true, false, false, "PaymentPending", result.ClientId, draft.BillingAccount.Currency, pickup,
+                [.. draft.Lines.Select(Line)],
+                pickup ? new ShopifyShippingDraft(true, null, null, null, 0m, 0, false) : draft.Shipping ?? new ShopifyShippingDraft(false, null, null, null, 0m, 0, false),
+                pickup ? null : Fingerprint(draft.ShippingParty),
+                null,
+                Blank(draft.BuyerNotes));
+        }
+
+        return Task.FromResult(result);
     }
+
+    /// <summary>El pedido de QEP de cada id, como lo leería el adaptador. <see cref="ApplyEditAsync"/> lo cambia como Quotations:
+    /// versión distinta → <c>concurrency.conflict</c>; no editable → <c>order.order.not_editable</c>.</summary>
+    public Dictionary<Guid, ShopifyOrderState> States { get; } = [];
+
+    public List<ShopifyOrderEditDraft> Edits { get; } = [];
+
+    /// <summary>Fuerza la respuesta del aplicar (o lanza); <c>null</c> sigue con la conducta en memoria.</summary>
+    public Func<ShopifyOrderEditDraft, ShopifyOrderEditOutcome?>? OnApplyEdit { get; set; }
+
+    public Task<ShopifyOrderState?> ReadStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+        Task.FromResult(States.GetValueOrDefault(orderId));
+
+    public Task<ShopifyOrderEditOutcome> ApplyEditAsync(ShopifyOrderEditDraft draft, CancellationToken cancellationToken)
+    {
+        Edits.Add(draft);
+        Log.Add("edit");
+        if (OnApplyEdit?.Invoke(draft) is { } forced)
+        {
+            return Task.FromResult(forced);
+        }
+
+        if (!States.TryGetValue(draft.OrderId, out var state))
+        {
+            return Task.FromResult(new ShopifyOrderEditOutcome(null, "order.order.not_found"));
+        }
+
+        if (state.Version != draft.ExpectedVersion)
+        {
+            throw new BuildingBlocks.Application.RequestConcurrencyException("concurrency.conflict", "The order changed.");
+        }
+
+        if (!state.IsEditable)
+        {
+            return Task.FromResult(new ShopifyOrderEditOutcome(null, "order.order.not_editable"));
+        }
+
+        var buyerNotes = draft.ReplaceBuyerNotes ? Blank(draft.BuyerNotes) : state.BuyerNotes;
+        var updated = state with
+        {
+            Lines = draft.Lines is null ? state.Lines : [.. draft.Lines.Select(Line)],
+            Shipping = draft.Shipping ?? state.Shipping,
+            ShippingParty = draft.ShippingParty is null ? state.ShippingParty : Fingerprint(draft.ShippingParty),
+            BuyerNotes = buyerNotes,
+        };
+        var changed = !updated.Lines.SequenceEqual(state.Lines) || updated.Shipping != state.Shipping
+            || updated.ShippingParty != state.ShippingParty || updated.BuyerNotes != state.BuyerNotes;
+        if (changed)
+        {
+            updated = updated with { Version = state.Version + 1 };
+        }
+
+        States[draft.OrderId] = updated;
+        return Task.FromResult(new ShopifyOrderEditOutcome(updated, null));
+    }
+
+    private static ShopifyOrderLineState Line(ShopifyOrderLineDraft line) =>
+        new(line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage, line.TaxPercentage);
+
+    private static ShopifyShippingFingerprint? Fingerprint(ShopifyPartyDraft? party) =>
+        party is { DepartmentId: { } department, CityId: { } city }
+            ? new ShopifyShippingFingerprint(party.Name, party.Phone, party.Email, party.Address, department, city)
+            : null;
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     public Task<ShopifyOrderOutcome> SyncPaymentStatusAsync(
         Guid tenantId, Guid orderId, string financialStatus, CancellationToken cancellationToken)
@@ -357,6 +508,9 @@ internal sealed class ImporterWorld
             ShopifyStore.DefaultDocumentAttributeKey,
             ShopifyStore.DefaultDocumentTypeAttributeKey,
             ShopifyStore.DefaultIdentificationTypeCode,
+            null,
+            ShopifyEditSync.Manual,
+            ShopifyPaymentStatuses.All,
             AdvisorId,
             Now.AddDays(-1));
     }
@@ -374,6 +528,8 @@ internal sealed class ImporterWorld
     public FakeCustomerDirectory Customers { get; } = new();
 
     public FakeProductLookup Products { get; } = new();
+
+    public FakeCustomLineMappings CustomLines { get; } = new();
 
     public FakeGeographyLookup Geography { get; } = new();
 
@@ -399,7 +555,7 @@ internal sealed class ImporterWorld
 
     public ShopifyOrderImporter Importer =>
         new(
-            Members, Billing, Resolver, Products, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
+            Members, Billing, Resolver, Products, CustomLines, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
             CityCorrections, CityCorrectionJobs, UnresolvedCities, Synonyms, UnitOfWork, new FakeClock(Now));
 
     /// <summary>La tienda con clasificación por defecto: con documento y dirección, el comprador puede nacer completo.</summary>
@@ -412,6 +568,9 @@ internal sealed class ImporterWorld
             ShopifyStore.DefaultDocumentAttributeKey,
             ShopifyStore.DefaultDocumentTypeAttributeKey,
             ShopifyStore.DefaultIdentificationTypeCode,
+            null,
+            ShopifyEditSync.Manual,
+            ShopifyPaymentStatuses.All,
             AdvisorId,
             Now.AddDays(-1));
         return this;

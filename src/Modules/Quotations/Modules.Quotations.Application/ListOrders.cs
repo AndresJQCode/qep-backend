@@ -5,7 +5,9 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>Spec 2026-10-15 §6.1: cliente, CUC y asesor filtran columnas del pedido; <c>Source</c>
-/// es el filtro nuevo por origen (sin valor, todos).</summary>
+/// es el filtro nuevo por origen (sin valor, todos). Spec 2026-11-10 §5: sin <c>Status</c> no salen los
+/// archivados; <c>FulfillmentStatus</c> (<c>NotPrepared</c>/<c>Prepared</c>) e <c>Invoiced</c> (<c>true</c>/<c>false</c>)
+/// van al final para no correr los posicionales de quien ya construye la consulta.</summary>
 public sealed record ListOrdersQuery(
     Guid TenantId,
     Guid? ClientId,
@@ -19,12 +21,16 @@ public sealed record ListOrdersQuery(
     string? Source,
     int Page,
     int PageSize,
-    /// <summary>La zona IANA de quien filtra (<see cref="OrderListing.CalendarFor"/>). Sin ella, los
-    /// días son los del tenant.</summary>
-    string? TimeZone = null) : IQuery<OrderPage>;
+    /// <summary>La zona IANA de quien filtra. Se acepta por contrato pero ya no mueve el filtro: las fechas cortan por la
+    /// fecha del pedido, que es un día del tenant (spec 2026-11-16 §4).</summary>
+    string? TimeZone = null,
+    string? FulfillmentStatus = null,
+    string? Invoiced = null) : IQuery<OrderPage>;
 
 /// <summary>Fila de la lista. <c>QuotationId</c> y <c>QuotationNumber</c> son nulos en un pedido manual
-/// o externo; <c>Source</c> y <c>ExternalReference</c> dicen de dónde vino.</summary>
+/// o externo; <c>Source</c> y <c>ExternalReference</c> dicen de dónde vino. <c>FulfillmentStatus</c> e
+/// <c>Invoiced</c> están para que la tabla pinte las columnas de envío y facturado sin pedir el detalle
+/// (spec 2026-11-10 §5).</summary>
 public sealed record OrderListItemDto(
     Guid Id,
     string OrderNumber,
@@ -36,6 +42,8 @@ public sealed record OrderListItemDto(
     string? AdvisorName,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     string? PaymentMethod,
     DateTimeOffset ConvertedAt,
     string Currency,
@@ -43,7 +51,9 @@ public sealed record OrderListItemDto(
     string Source,
     string? ExternalReference,
     /// <summary>La entrega por envío, misma forma que en el detalle (ver <see cref="ShippingDto"/>).</summary>
-    ShippingDto Shipping);
+    ShippingDto Shipping,
+    /// <summary>La fecha del pedido (spec 2026-11-16 §4).</summary>
+    DateOnly OrderDate);
 
 public sealed record OrderPage(
     IReadOnlyList<OrderListItemDto> Items,
@@ -56,8 +66,7 @@ public sealed class ListOrdersHandler(
     IQuotationRepository quotationRepository,
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
-    IExecutionContext executionContext,
-    ITenantClock tenantClock)
+    IExecutionContext executionContext)
     : IQueryHandler<ListOrdersQuery, OrderPage>
 {
     public async Task<OrderPage> HandleAsync(
@@ -73,19 +82,20 @@ public sealed class ListOrdersHandler(
         var pageSize = QuotationPaging.NormalizePageSize(query.PageSize);
         var status = OrderListing.ParseStatus(query.Status);
         var paymentStatus = OrderListing.ParsePaymentStatus(query.PaymentStatus);
+        var fulfillmentStatus = OrderListing.ParseFulfillmentStatus(query.FulfillmentStatus);
+        var invoiced = OrderListing.ParseInvoiced(query.Invoiced);
         var source = OrderListing.ParseSource(query.Source);
         var advisorId = query.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, query.TenantId, query.ClientCuc, cancellationToken);
 
-        // El rango se corta en el día de quien filtra, o en el del tenant si no manda su zona (spec
-        // 2026-09-17, punto 3). Sin fechas no se consulta el huso.
-        var converted = query.ConvertedFrom is null && query.ConvertedTo is null
-            ? new TenantInstantRange(null, null)
-            : TenantDayRange.Of(
-                OrderListing.CalendarFor(await tenantClock.GetAsync(query.TenantId, cancellationToken), query.TimeZone),
-                query.ConvertedFrom,
-                query.ConvertedTo);
+        // Spec 2026-11-16 §4: convertedFrom/convertedTo conservan su nombre pero cortan por la fecha del pedido, que ya es
+        // un día del tenant: no hay huso que aplicar, así que TimeZone se sigue aceptando y no se usa. Se valida sólo con un
+        // rango, como antes (spec 2026-09-17): sin fechas la zona nunca se miró y una lista simple no responde 422 por ella.
+        if (query.ConvertedFrom is not null || query.ConvertedTo is not null)
+        {
+            OrderListing.EnsureValidTimeZone(query.TimeZone);
+        }
 
         var (rows, total) = await repository.SearchAsync(
             query.TenantId,
@@ -94,8 +104,10 @@ public sealed class ListOrdersHandler(
             advisorId,
             status,
             paymentStatus,
-            converted.From,
-            converted.Before,
+            fulfillmentStatus,
+            invoiced,
+            query.ConvertedFrom,
+            query.ConvertedTo,
             query.OrderNumber,
             source,
             page,

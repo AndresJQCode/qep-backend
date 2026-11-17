@@ -9,12 +9,15 @@ namespace Modules.Customers.Application;
 /// </summary>
 public interface ICustomerExportBuilder
 {
-    /// <summary>El <paramref name="calendar"/> es el del tenant: el nombre del archivo y las fechas
+    /// <summary><paramref name="companyIdentificationNumbers"/> es el documento de la empresa de cada contacto, por id de
+    /// cliente; el que no tiene empresa (o cuya empresa no tiene documento) no aparece y su celda queda vacía.
+    /// El <paramref name="calendar"/> es el del tenant: el nombre del archivo y las fechas
     /// van en su hora (spec 2026-09-17, punto 8a), y <c>calendar.UtcNow</c> es el instante en que se
     /// generó. El <paramref name="dateTimePattern"/> es el formato de fecha del tenant más la hora
     /// (<c>RegionalDateFormat.WithTime</c>, D-R7): las fechas de texto se escriben con él.</summary>
     CustomerExportFile Build(
         IReadOnlyList<CustomerDto> customers,
+        IReadOnlyDictionary<Guid, string> companyIdentificationNumbers,
         TenantCalendar calendar,
         string dateTimePattern,
         CancellationToken cancellationToken);

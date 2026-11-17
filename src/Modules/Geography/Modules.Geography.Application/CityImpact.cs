@@ -37,8 +37,6 @@ internal static class ImpactGroups
 /// </summary>
 public static class ResolveImpactCalculator
 {
-    private const string PendingOrderStatus = "Pending";
-
     public static ResolveImpactDto Compute(
         CityRefDto city,
         IReadOnlyList<UnresolvedCityOccurrence> occurrences,
@@ -62,7 +60,8 @@ public static class ResolveImpactCalculator
                 continue;
             }
 
-            if (!string.Equals(order.Status, PendingOrderStatus, StringComparison.Ordinal))
+            // «Editable» es la regla de Quotations (spec 2026-11-10 §3.6), no el texto del estado: uno Open pero preparado no se toca.
+            if (!order.IsEditable)
             {
                 notPending.Add(new ImpactOrderDto(
                     order.TenantId, UnresolvedCityViews.TenantName(tenantNames, order.TenantId), order.OrderId, order.OrderNumber,
@@ -125,16 +124,15 @@ public static class ResolveImpactCalculator
 
 /// <summary>
 /// Puro: el impacto de corregir un sinónimo a otra ciudad (spec 2026-10-26 §4.6), desde las huellas que dejó —de los dos orígenes,
-/// O8— y las ocurrencias de la fila que lo confirmó. Sólo un pedido <c>Pending</c> se recorrige: uno que sigue como se escribió
-/// cambia (<c>ordersToChange</c>) y uno que alguien editó se respeta (<c>ordersEdited</c>); uno que ya no está <c>Pending</c> se
-/// lista con su estado, completo, para avisar al tenant. Un pedido que ya no existe no cuenta en ningún grupo. Un cliente sigue
+/// O8— y las ocurrencias de la fila que lo confirmó. Sólo un pedido editable (abierto, sin preparar y sin facturar; spec 2026-11-10
+/// §3.6) se recorrige: uno que sigue como se escribió cambia (<c>ordersToChange</c>) y uno que alguien editó se respeta
+/// (<c>ordersEdited</c>); uno que ya no es editable se lista con su estado, completo, para avisar al tenant. Un pedido que ya no existe no cuenta en ningún grupo. Un cliente sigue
 /// como se escribió mientras su versión sea la de la huella; uno que ya no existe cuenta como editado (la lectura no distingue
 /// «editado» de «ya no está», y en los dos casos no se toca). Una huella que ya está en la ciudad nueva no cuenta como cambio ni como
 /// editada (el consumidor la salta), pero sigue contando como corregida para <c>occurrencesUncorrected</c>.
 /// </summary>
 public static class CorrectImpactCalculator
 {
-    private const string PendingOrderStatus = "Pending";
     private const string OrderTarget = "Order";
     private const string CustomerTarget = "Customer";
 
@@ -161,7 +159,7 @@ public static class CorrectImpactCalculator
                     continue;
                 }
 
-                if (!string.Equals(status, PendingOrderStatus, StringComparison.Ordinal))
+                if (correction.OrderEditable != true)
                 {
                     notPending.Add(new ImpactOrderDto(
                         correction.TenantId,

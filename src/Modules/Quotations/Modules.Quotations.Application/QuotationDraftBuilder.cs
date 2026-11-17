@@ -39,7 +39,9 @@ public sealed class QuotationDraftBuilder(
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
     ShippingResolver shippingResolver,
-    ITenantDefaultCurrency tenantDefaultCurrency)
+    ITenantDefaultCurrency tenantDefaultCurrency,
+    IQuotationWithholdingLookup withholdingLookup,
+    IQuotationGeographyLookup geographyLookup)
 {
     /// <summary>El número del cálculo previo. El handler lo borra antes de responder.</summary>
     public const string PreviewQuotationNumber = "PREVIEW";
@@ -56,17 +58,39 @@ public sealed class QuotationDraftBuilder(
         var customer = await customerLookup.FindAsync(input.TenantId, input.ClientId, cancellationToken);
         QuotationCustomerEligibility.Ensure(customer, input.TenantId, input.ClientId);
 
-        var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
-            companyLookup, input.TenantId, edits.BillingAccount, cancellationToken);
-
         // Sin cuenta de cobro, la cotización nace en la moneda por defecto del tenant. Se lee siempre, haya
-        // cuenta o no: el agregado decide cuál gana, no el handler.
+        // cuenta o no: el agregado decide cuál gana, no el handler. Antes de resolver la cuenta porque la empresa sola
+        // del cálculo previo (spec 2026-11-16) arma una cuenta pendiente en esa moneda.
         var defaultCurrency = Currencies.Normalize(
             await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
+
+        var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
+            companyLookup, input.TenantId, edits.BillingAccount, edits.BillingCompanyId, defaultCurrency, cancellationToken);
 
         // Se resuelve acá y queda guardada: calcularla al leer haría que la misma cotización mostrara una fecha
         // distinta cada día. Y antes de ApplyAsync, porque UpdateDetails con null la borra.
         var validUntil = edits.ValidUntil ?? input.Today.AddDays(DefaultValidityDays);
+
+        // Las tasas del cliente, de todos sus países (D16, D17), con la UVT del hoy del tenant: es la fecha del
+        // documento que nace. Quedan congeladas; sólo ChangeClient las vuelve a copiar.
+        var customerWithholdings = await withholdingLookup.ForCustomerAsync(
+            input.TenantId, input.ClientId, country: null, input.Today, cancellationToken);
+
+        // Spec ReteICA por empresa §7.6, «En la creación» (owner 2026-11-14, plan P13): la empresa y el municipio salen del
+        // mismo cuerpo, y el contexto se resuelve una sola vez y se pasa igual a Create y a ApplyAsync. Así el UpdateDetails
+        // de adentro ve la misma empresa y el mismo municipio, no dispara la re-resolución, y un id municipal de otro
+        // municipio es 422 en vez de ignorarse como en A11.
+        var municipal = await MunicipalContexts.ResolveAsync(
+            withholdingLookup,
+            geographyLookup,
+            input.TenantId,
+            input.ClientId,
+            billingAccount,
+            Quotation.OperationCityAtCreation(billingAccount, edits.OperationCity),
+            explicitCity: edits.OperationCity.Kind == OperationCityChoiceKind.Explicit,
+            input.Today,
+            "quotation",
+            cancellationToken);
 
         // Ruling L1: el contrato de antes, { clientId }, deja exactamente lo de antes —versión 1 incluida—, así
         // que no pasa por UpdateDetails, que sube la versión.
@@ -75,7 +99,7 @@ public sealed class QuotationDraftBuilder(
             var empty = Quotation.Create(
                 QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
                 validUntil, null, null, QuotationParties.Empty, null, defaultCurrency,
-                customer.WithRetention, customer.VatSurplus, input.AdvisorId, input.Now);
+                customer.VatSurplus, customerWithholdings, MunicipalContext.None, input.AdvisorId, input.Now);
             return new QuotationDraft(empty, customer.Name);
         }
 
@@ -85,26 +109,35 @@ public sealed class QuotationDraftBuilder(
         var quotation = Quotation.Create(
             QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
             validUntil, edits.PaymentMethod, edits.Notes, QuotationParties.Empty, billingAccount, defaultCurrency,
-            customer.WithRetention, customer.VatSurplus, input.AdvisorId, input.Now);
+            customer.VatSurplus, customerWithholdings, municipal, input.AdvisorId, input.Now);
 
         var outcome = await QuotationEditsApplication.ApplyAsync(
-            quotation, new ResolvedEdits(edits, validUntil), input.TenantId, customerLookup, companyLookup,
-            pricingLookup, settingsStore, priceRounding, shippingResolver, input.AdvisorId, input.Now, cancellationToken);
+            quotation, new ResolvedEdits(edits, validUntil), input.TenantId, companyLookup,
+            pricingLookup, settingsStore, priceRounding, shippingResolver,
+            new QuotationWithholdingContext(withholdingLookup, geographyLookup, _ => Task.FromResult(input.Today)),
+            input.AdvisorId, input.Now, cancellationToken, municipal);
 
-        // El resumen del encabezado se ignora a propósito: el encabezado es parte de la creación (§7.4).
+        // El resumen del encabezado se ignora a propósito: el encabezado es parte de la creación (§7.4). Lo mismo los
+        // porcentajes, las tarifas descartadas y la aplicación a mano (P13): lo elegido es parte de la creación, y la fila
+        // guarda el porcentaje efectivo y el del catálogo.
         return new QuotationDraft(quotation, customer.Name) { ItemEdits = outcome.ItemEdits };
     }
 
+    // Un cuerpo con municipio, porcentajes o «Sin retención» nunca se salta la validación de ApplyAsync.
     private static bool IsOnlyTheClient(IQuotationEdits edits) =>
         edits.ValidUntil is null
         && edits.PaymentMethod is null
         && edits.Notes is null
         && edits.Parties is null
         && edits.BillingAccount is null
+        && edits.BillingCompanyId is null
         && edits.Shipping is null
         && edits.Items.Count == 0
         && edits.GlobalScaleFloor is null
-        && !edits.IsRetail;
+        && !edits.IsRetail
+        && edits.OperationCity.Kind == OperationCityChoiceKind.Keep
+        && edits.WithholdingPercentages is null
+        && edits.ClearedWithholdingTypes is null;
 
     // El cuerpo con la vigencia ya resuelta: lo demás pasa tal cual.
     private sealed record ResolvedEdits(IQuotationEdits Body, DateOnly ResolvedValidUntil) : IQuotationEdits
@@ -119,6 +152,8 @@ public sealed class QuotationDraftBuilder(
 
         public QuotationBillingAccountRequest? BillingAccount => Body.BillingAccount;
 
+        public Guid? BillingCompanyId => Body.BillingCompanyId;
+
         public IReadOnlyList<QuotationItemAddition> Items => Body.Items;
 
         public int? GlobalScaleFloor => Body.GlobalScaleFloor;
@@ -126,5 +161,11 @@ public sealed class QuotationDraftBuilder(
         public bool IsRetail => Body.IsRetail;
 
         public ShippingRequest? Shipping => Body.Shipping;
+
+        public OperationCityChoice OperationCity => Body.OperationCity;
+
+        public IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages => Body.WithholdingPercentages;
+
+        public IReadOnlyList<string>? ClearedWithholdingTypes => Body.ClearedWithholdingTypes;
     }
 }

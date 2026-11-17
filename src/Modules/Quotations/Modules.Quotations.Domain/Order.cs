@@ -6,9 +6,12 @@ namespace Modules.Quotations.Domain;
 /// Un pedido con datos propios (spec 2026-10-15): cliente, asesor, cuenta de cobro, partes, líneas y
 /// totales. Nace de una cotización (<see cref="FromQuotation"/>, copia independiente), a mano
 /// (<see cref="CreateManual"/>) o desde una integración (<see cref="CreateExternal"/>). Sólo mientras
-/// sigue <see cref="OrderStatus.Pending"/> se editan sus líneas, partes y comprobantes. Agregado raíz
-/// que incluye sus comprobantes de pago (<see cref="OrderPaymentProof"/>): nacen con él, pero mientras
-/// sigue pendiente se le pueden sumar más y corregir el monto de los que ya tiene.
+/// es <see cref="IsEditable"/> (abierto, sin preparar y sin facturar; spec 2026-11-10 §3.6) se editan sus líneas,
+/// partes y comprobantes. Agregado raíz que incluye sus comprobantes de pago (<see cref="OrderPaymentProof"/>):
+/// nacen con él, pero mientras se edita se le pueden sumar más y corregir el monto de los que ya tiene.
+///
+/// Tiene cuatro ejes independientes (spec 2026-11-10): <see cref="Status"/>, <see cref="PaymentStatus"/>,
+/// <see cref="FulfillmentStatus"/> y la marca de facturado (<see cref="IsInvoiced"/>). Todas las transiciones viven acá.
 ///
 /// <see cref="Preview"/> arma el cálculo previo del pedido manual, que no se guarda y es el único que puede
 /// no tener cuenta de cobro.
@@ -40,6 +43,7 @@ public sealed class Order
     private readonly List<OrderPaymentProof> _paymentProofs = [];
     private readonly List<OrderItem> _items = [];
     private readonly List<OrderParty> _parties = [];
+    private readonly List<DocumentWithholding> _withholdings = [];
 
     // La regla con que se preció el documento (spec 2026-10-27 §4). Nulas en un documento anterior a la
     // regla: se leen con la de siempre de su moneda (D4). EF las materializa por el campo.
@@ -62,10 +66,11 @@ public sealed class Order
         OrderHeader header,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
-        OrderPaymentStatus paymentStatus,
+        OrderPaymentStatus? paymentStatus,
         string? notes,
         MemberId createdBy,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
         bool allowNoClient = false)
     {
         Id = id;
@@ -83,24 +88,28 @@ public sealed class Order
         IsRetail = header.IsRetail;
         EnsureGlobalScaleFloorAllowed(header.GlobalScaleFloor, header.IsRetail);
         GlobalScaleFloor = header.GlobalScaleFloor;
-        CustomerWithRetention = header.CustomerWithRetention;
         CustomerVatSurplus = header.CustomerVatSurplus;
+        ArgumentNullException.ThrowIfNull(header.Withholdings);
+        ReplaceWithholdings(header.Withholdings);
         EnsureBillingIsConsistent(parties.BillsToFinalConsumer, parties.Billing is not null, parties.BillingUsesBusinessName);
         AssignParties(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
-        PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
         // La misma regla que Quotation: la cuenta fija la moneda y, sin ella, manda la del encabezado, que
-        // Application llena con la moneda por defecto del tenant. Sólo el cálculo previo llega acá sin cuenta.
-        Currency = BillingAccount?.Currency ?? header.Currency;
-        Status = OrderStatus.Pending;
-        PaymentStatus = paymentStatus;
+        // Application llena con la moneda por defecto del tenant. Sólo el cálculo previo llega acá sin cuenta, o con una
+        // cuenta pendiente (sólo la empresa, spec 2026-11-16), que tampoco fija la moneda.
+        Currency = BillingAccount is { IsPending: false } account ? account.Currency : header.Currency;
+        Status = OrderStatus.Open;
+        FulfillmentStatus = OrderFulfillmentStatus.NotPrepared;
+        // Null = lo calculan los comprobantes, que se agregan después (ver CalculatedPaymentStatus).
+        PaymentStatus = paymentStatus ?? OrderPaymentStatus.PaymentPending;
         Notes = NormalizeNotes(notes);
         ConvertedAt = occurredAt;
         ConvertedBy = createdBy;
+        OrderDate = orderDate;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
         Version = 1;
@@ -132,12 +141,20 @@ public sealed class Order
     /// <summary>La cuenta de comprador de la tienda que hizo el pedido; null en los pedidos que no vienen de una cuenta.</summary>
     public Guid? BuyerAccountId { get; private set; }
 
-    /// <summary>El comprador sólo anula lo que nadie ha tocado: pendiente, con el pago en PaymentPending y sin
-    /// ningún comprobante registrado (un asesor puede dejar un comprobante con el pago aún en PaymentPending).</summary>
+    /// <summary>Spec 2026-11-15 §3.3: <c>true</c> cuando un asesor quitó o cambió la cuenta del pedido. Desde ahí ningún
+    /// enlace automático (checkout, inicio de sesión ni alta diferida) vuelve a tocarla: si no, quitar la cuenta de un
+    /// pedido con el correo mal escrito no serviría, porque el dueño de ese correo lo recuperaría al iniciar sesión.</summary>
+    public bool BuyerAccountSetByMember { get; private set; }
+
+    /// <summary>El comprador sólo anula lo que nadie ha tocado (spec 2026-11-10 §3.7): abierto, con el pago en
+    /// PaymentPending, sin ningún comprobante registrado (un asesor puede dejar un comprobante con el pago aún en
+    /// PaymentPending), sin preparar y sin facturar.</summary>
     public bool CanBeCancelledByBuyer =>
-        Status == OrderStatus.Pending
+        Status == OrderStatus.Open
         && PaymentStatus == OrderPaymentStatus.PaymentPending
-        && PaymentProofs.Count == 0;
+        && PaymentProofs.Count == 0
+        && !IsPrepared
+        && !IsInvoiced;
 
     /// <summary>Cómo llamó la tienda al envío (<c>Envío estándar</c>). Sólo se muestra: no decide nada.</summary>
     public string? ExternalShippingTitle { get; private set; }
@@ -187,6 +204,12 @@ public sealed class Order
     /// <see cref="FromQuotation"/>, <see cref="CreateManual"/> y <see cref="CreateExternal"/> la exigen.</summary>
     public QuotationBillingAccount? BillingAccount { get; private set; }
 
+    /// <summary>
+    /// El municipio de la operación (spec ReteICA por empresa §7.5), el mismo concepto que en la cotización: decide qué
+    /// tasa municipal aplica. Null en un país sin tipos municipales y en un pedido anterior a este trabajo (A8).
+    /// </summary>
+    public Guid? OperationCityId { get; private set; }
+
     public string? PaymentMethod { get; private set; }
 
     public bool IsRetail { get; private set; }
@@ -199,13 +222,30 @@ public sealed class Order
 
     public bool BillsToFinalConsumer { get; private set; }
 
-    public bool? PartyWithRetention { get; private set; }
-
     public bool? PartyVatSurplus { get; private set; }
 
-    public bool CustomerWithRetention { get; private set; }
-
+    /// <summary>El excedente de IVA del cliente, congelado al crear (spec impuestos por tipo D24): editar la ficha
+    /// del cliente después no lo mueve.</summary>
     public bool CustomerVatSurplus { get; private set; }
+
+    /// <summary>
+    /// La foto de las tasas de retención del pedido (spec impuestos por tipo §7.5). Una sola fuente,
+    /// <see cref="WithholdingSource.Document"/>: al convertir hereda la fuente vigente de la cotización, al crear a mano
+    /// o desde una integración trae las del cliente, y mientras es <see cref="IsEditable"/> la reemplazan los
+    /// selectores (<see cref="SetWithholdings"/>, D21). Se guardan también las que no aplican.
+    /// </summary>
+    public IReadOnlyCollection<DocumentWithholding> Withholdings => _withholdings;
+
+    /// <summary>Las que aplicaron en el último recálculo, en su orden; su suma es <see cref="RetentionAmount"/>.</summary>
+    public IEnumerable<DocumentWithholding> AppliedWithholdings =>
+        _withholdings.Where(withholding => withholding.Applied).OrderBy(withholding => withholding.Position);
+
+    /// <summary>Por qué cada tasa del pedido aplica o no, en su orden (spec retenciones por UVT §5.1); las de otro país
+    /// no salen.</summary>
+    public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
+        DocumentWithholding.Explain(
+            [.. _withholdings.OrderBy(withholding => withholding.Position)], BillsToFinalConsumer, BillingAccount, Currency,
+            OperationCityId, Subtotal);
 
     public decimal Subtotal { get; private set; }
 
@@ -253,20 +293,70 @@ public sealed class Order
 
     public OrderPaymentStatus PaymentStatus { get; private set; }
 
+    public OrderFulfillmentStatus FulfillmentStatus { get; private set; }
+
+    public bool IsInvoiced => InvoicedAt is not null;
+
+    public bool IsPrepared => FulfillmentStatus == OrderFulfillmentStatus.Prepared;
+
+    /// <summary>La única guarda de edición (spec 2026-11-10 §3.6): abierto, sin preparar y sin facturar. Pagado no
+    /// congela, como en Shopify.</summary>
+    public bool IsEditable => Status == OrderStatus.Open && !IsPrepared && !IsInvoiced;
+
     /// <summary>Sin tope (plan 2026-10-15, P2): hereda las notas de la cotización, que no lo tienen.</summary>
     public string? Notes { get; private set; }
 
+    /// <summary>
+    /// La nota que el comprador escribió en el checkout (spec 2026-11-10, D9; Shopify desde el spec 2026-11-14).
+    /// <see cref="Notes"/> la sobrescriben <c>UpdateNotes</c>, <c>AddPaymentProofs</c> y <c>AttachExternalShipping</c>;
+    /// ésta la escriben sólo <see cref="CreateFromStore"/>, <see cref="CreateExternal"/> (la importación de Shopify) y
+    /// <see cref="UpdateExternalBuyerNotes"/> (la sincronización de Shopify y la corrección del asesor, sólo en pedidos de
+    /// Shopify). En un pedido de la tienda pública no cambia, para que el comprador siga viendo lo que escribió. Los
+    /// pedidos de Shopify importados antes del spec 2026-11-14 la tienen en <c>null</c>: su nota sigue dentro de
+    /// <see cref="Notes"/> (sin backfill).
+    /// </summary>
+    public string? BuyerNotes { get; private set; }
+
     public DateTimeOffset ConvertedAt { get; private set; }
+
+    /// <summary>
+    /// «Fecha del pedido» (spec 2026-11-16, F-1 y F-2): el día del negocio en el calendario del tenant. Nace con el día
+    /// local de la creación, que Application resuelve porque el dominio no conoce el huso, y se corrige con
+    /// <see cref="ChangeOrderDate"/>. Va aparte de <see cref="ConvertedAt"/>, que es el registro técnico de cuándo nació y
+    /// no cambia nunca.
+    /// </summary>
+    public DateOnly OrderDate { get; private set; }
 
     public MemberId ConvertedBy { get; private set; }
 
-    /// <summary>Cuándo se aprobó, y quién. Null mientras el pedido sigue pendiente de revisión.</summary>
-    public DateTimeOffset? ApprovedAt { get; private set; }
+    /// <summary>Cuándo se marcó como pagado, y quién (spec 2026-11-10 §3.2). Null si nadie lo marcó: un pago de la
+    /// plataforma no lo llena.</summary>
+    public DateTimeOffset? PaidMarkedAt { get; private set; }
 
-    public MemberId? ApprovedBy { get; private set; }
+    public MemberId? PaidMarkedBy { get; private set; }
 
-    /// <summary>Cuándo se anuló, quién y por qué (spec 2026-09-16). Van aparte de la aprobación, que
-    /// se conserva: un pedido aprobado por error y después anulado sigue diciendo quién lo aprobó.</summary>
+    /// <summary>El momento en que el pedido quedó pagado la última vez, por cualquier vía (spec costo de producto
+    /// 2026-11-10 §4.4): «Marcar como pagado», la plataforma o nacer pagado. Se limpia al salir de pagado. Es la
+    /// fecha del reporte de margen; <see cref="PaidMarkedAt"/> no sirve porque la plataforma no la llena.</summary>
+    public DateTimeOffset? PaidAt { get; private set; }
+
+    /// <summary>Las variantes de las líneas que todavía no congelaron su costo, sin repetir: lo que Application
+    /// tiene que buscar antes de llevar el pedido a pagado.</summary>
+    public IReadOnlyList<Guid> UncostedVariantIds =>
+        _items.Where(item => item.CostCapturedAt is null).Select(item => item.VariantId).Distinct().ToArray();
+
+    /// <summary>Cuándo se marcó como preparado, y quién (spec 2026-11-10 §3.3).</summary>
+    public DateTimeOffset? PreparedAt { get; private set; }
+
+    public MemberId? PreparedBy { get; private set; }
+
+    /// <summary>Cuándo se archivó, y quién. Null en quién cuando lo archivó el sistema sin una persona detrás.</summary>
+    public DateTimeOffset? ArchivedAt { get; private set; }
+
+    public MemberId? ArchivedBy { get; private set; }
+
+    /// <summary>Cuándo se anuló, quién y por qué (spec 2026-09-16). Van aparte de las otras marcas, que
+    /// se conservan: un pedido pagado y después anulado sigue diciendo quién lo marcó pagado.</summary>
     public DateTimeOffset? CancelledAt { get; private set; }
 
     public MemberId? CancelledBy { get; private set; }
@@ -299,12 +389,6 @@ public sealed class Order
 
     public OrderParty? Shipping => _parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping);
 
-    /// <summary>Misma regla que <see cref="Quotation.AppliesRetention"/>.</summary>
-    public bool AppliesRetention =>
-        (Billing is not null ? PartyWithRetention ?? false : CustomerWithRetention)
-        && !BillsToFinalConsumer
-        && QuotationItem.ItemizesTaxIn(Currency);
-
     /// <summary>Misma regla que <see cref="Quotation.AppliesVatSurplus"/>.</summary>
     public bool AppliesVatSurplus =>
         (Billing is not null ? PartyVatSurplus ?? false : CustomerVatSurplus) && !BillsToFinalConsumer;
@@ -313,17 +397,18 @@ public sealed class Order
     /// <c>EnsureConvertibleToOrder</c> y <c>ConvertToOrder</c>; acá no se vuelve a validar su estado.
     /// Las notas del pedido son un solo campo, nunca una concatenación: <paramref name="notes"/> nulo hereda
     /// las de la cotización; con texto, lo reemplaza; vacío o en blanco deja el pedido sin notas (el usuario
-    /// borró el texto precargado).</summary>
+    /// borró el texto precargado). El pago nace calculado de los comprobantes (spec 2026-11-10 §3.2): nunca pagado.</summary>
     public static Order FromQuotation(
         OrderId id,
         Guid tenantId,
         string orderNumber,
         Quotation quotation,
-        OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId convertedBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        DateOnly orderDate,
+        IReadOnlyDictionary<string, TaxUnitPhoto>? taxUnits = null)
     {
         ArgumentNullException.ThrowIfNull(quotation);
         if (quotation.BillingAccount is null)
@@ -340,19 +425,22 @@ public sealed class Order
             quotation.PaymentMethod,
             quotation.IsRetail,
             quotation.GlobalScaleFloor,
-            quotation.CustomerWithRetention,
-            quotation.CustomerVatSurplus);
+            quotation.CustomerVatSurplus,
+            // Hereda la fuente vigente de la cotización tal cual (spec §7.5); la otra no viaja: el pedido tiene una sola.
+            [.. quotation.ActiveWithholdings.Select(withholding => withholding.Rate)]);
         var parties = new QuotationParties(
             quotation.Billing?.ToDetails(),
             quotation.Shipping?.ToDetails(),
             quotation.BillingUsesBusinessName,
             quotation.IsStorePickup,
             quotation.BillsToFinalConsumer,
-            quotation.PartyWithRetention,
-            quotation.PartyVatSurplus);
+            BillingVatSurplus: quotation.PartyVatSurplus);
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
-            quotation.BillingAccount, paymentStatus, notes ?? quotation.Notes, convertedBy, occurredAt);
+            quotation.BillingAccount, paymentStatus: null, notes ?? quotation.Notes, convertedBy, occurredAt, orderDate);
+        // Spec ReteICA por empresa §7.5: hereda el municipio de la operación junto con la foto, y las filas con su
+        // porcentaje efectivo y el del catálogo (los lleva Rate).
+        order.OperationCityId = quotation.OperationCityId;
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
@@ -374,9 +462,18 @@ public sealed class Order
             order._items.Add(copy);
         }
 
+        // Spec alerta UVT §5.2: el pedido nace con la UVT de su año, no con la foto congelada de la cotización. Va
+        // antes de los totales y del estado de pago, que se comparan contra el neto ya refrescado. No pasa por
+        // RefreshTaxUnits del pedido: exige IsEditable y recalcularía otra vez. Null deja la foto como viene.
+        if (taxUnits is not null)
+        {
+            DocumentWithholding.RefreshTaxUnits(order._withholdings, taxUnits);
+        }
+
         order.EnsureCreatable();
         order.RecalculateTotals();
         order.AddProofs(proofs, convertedBy, occurredAt);
+        order.PaymentStatus = order.CalculatedPaymentStatus();
         return order;
     }
 
@@ -389,16 +486,16 @@ public sealed class Order
         QuotationBillingAccount billingAccount,
         ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
-        OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        DateOnly orderDate)
     {
         ArgumentNullException.ThrowIfNull(billingAccount);
         return Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
-            paymentStatus, notes, createdBy, proofs, occurredAt);
+            paymentStatus: null, notes, createdBy, proofs, occurredAt, orderDate, OrderLineCosts.None);
     }
 
     /// <summary>
@@ -418,17 +515,20 @@ public sealed class Order
         QuotationBillingAccount? billingAccount,
         ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
-        OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
-        DateTimeOffset occurredAt) =>
+        DateTimeOffset occurredAt,
+        DateOnly orderDate) =>
         Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
-            paymentStatus, notes, createdBy, proofs, occurredAt);
+            paymentStatus: null, notes, createdBy, proofs, occurredAt, orderDate, OrderLineCosts.None);
 
     /// <summary>Un pedido que trae una integración (Shopify y las que vengan). La elegibilidad del cliente
-    /// —completo o incompleto— vive en Application: el dominio sólo exige que haya un id.</summary>
+    /// —completo o incompleto— vive en Application: el dominio sólo exige que haya un id. Si nace
+    /// <see cref="OrderPaymentStatus.FullPaymentReceived"/>, congela el costo de sus líneas con
+    /// <paramref name="costs"/> al crearse (spec costo de producto §4.3). <paramref name="buyerNotes"/> es la nota del
+    /// comprador en la plataforma, que va a <see cref="BuyerNotes"/> y no a <see cref="Notes"/> (spec 2026-11-14).</summary>
     public static Order CreateExternal(
         OrderId id,
         Guid tenantId,
@@ -442,11 +542,14 @@ public sealed class Order
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
         OrderSource source,
         string externalReference,
         ShippingDetails shipping,
         string? externalKey,
-        string? externalShippingTitle)
+        string? externalShippingTitle,
+        OrderLineCosts costs,
+        string? buyerNotes = null)
     {
         if (source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store)
         {
@@ -468,9 +571,10 @@ public sealed class Order
         // no se valida contra la transportadora ni contra los modos que el tenant tenga habilitados (D-F18).
         var order = Build(
             id, tenantId, orderNumber, source, externalReference, header, parties, billingAccount,
-            shipping, lines, paymentStatus, notes, createdBy, proofs, occurredAt);
+            shipping, lines, paymentStatus, notes, createdBy, proofs, occurredAt, orderDate, costs);
         order.ExternalKey = key;
         order.ExternalShippingTitle = NormalizeExternalShippingTitle(externalShippingTitle);
+        order.BuyerNotes = NormalizeNotes(buyerNotes);
         return order;
     }
 
@@ -493,6 +597,7 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
         string externalKey,
         Guid? buyerAccountId = null)
     {
@@ -500,9 +605,11 @@ public sealed class Order
         var key = NormalizeExternalKey(externalKey);
         var order = Build(
             id, tenantId, orderNumber, OrderSource.Store, externalReference: null, header, parties, billingAccount,
-            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt);
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt, orderDate,
+            OrderLineCosts.None);
         order.ExternalKey = key;
         order.BuyerAccountId = buyerAccountId;
+        order.BuyerNotes = NormalizeNotes(notes);
         return order;
     }
 
@@ -518,14 +625,15 @@ public sealed class Order
         string currency,
         bool isRetail,
         IReadOnlyCollection<OrderLineInput> lines,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        DateOnly orderDate)
     {
         var nobody = new MemberId(Guid.Empty);
-        var header = new OrderHeader(Guid.Empty, nobody, currency, null, isRetail, null, false, false);
+        var header = new OrderHeader(Guid.Empty, nobody, currency, null, isRetail, null, false, []);
         return Build(
             OrderId.New(), tenantId, "STORE-QUOTE", OrderSource.Store, null, header, QuotationParties.Empty, null,
-            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, null, nobody, [], occurredAt,
-            allowNoClient: true);
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, null, nobody, [], occurredAt, orderDate,
+            OrderLineCosts.None, allowNoClient: true);
     }
 
     private static Order Build(
@@ -539,18 +647,21 @@ public sealed class Order
         QuotationBillingAccount? billingAccount,
         ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
-        OrderPaymentStatus paymentStatus,
+        OrderPaymentStatus? paymentStatus,
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt,
+        DateOnly orderDate,
+        OrderLineCosts costs,
         bool allowNoClient = false)
     {
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(shipping);
+        ArgumentNullException.ThrowIfNull(costs);
         var order = new Order(
             id, tenantId, orderNumber, source, null, externalReference, header, parties, billingAccount,
-            paymentStatus, notes, createdBy, occurredAt, allowNoClient);
+            paymentStatus, notes, createdBy, occurredAt, orderDate, allowNoClient);
         order.AssignShipping(shipping.Validated(order.IsStorePickup, order.Currency, "order.order"));
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var line in lines)
@@ -561,8 +672,22 @@ public sealed class Order
         }
 
         order.EnsureCreatable();
+        // Spec ReteICA por empresa §7.5 (R5, A10): un pedido que nace sin cotización arranca en el municipio de la
+        // empresa. Las filas municipales del encabezado ya vienen resueltas para ese municipio.
+        order.OperationCityId = OperationCityChoice.Company.ForNewCompany(order.BillingAccount);
         order.RecalculateTotals();
         order.AddProofs(proofs, createdBy, occurredAt);
+        if (paymentStatus is null)
+        {
+            order.PaymentStatus = order.CalculatedPaymentStatus();
+        }
+        else if (paymentStatus == OrderPaymentStatus.FullPaymentReceived)
+        {
+            // Nace vendido: la regla única (§4.3) congela al crearse, no en un pago que nunca va a llegar.
+            order.FreezeLineCosts(costs, occurredAt);
+            order.PaidAt = occurredAt;
+        }
+
         return order;
     }
 
@@ -576,7 +701,7 @@ public sealed class Order
                 "An order needs at least one product.");
         }
 
-        EnsureBillingRules(Billing, PartyWithRetention, PartyVatSurplus);
+        EnsureBillingRules(Billing, PartyVatSurplus);
 
         if (Shipping is { } shipping && !shipping.IsComplete)
         {
@@ -588,7 +713,7 @@ public sealed class Order
 
     // Las reglas de facturación del alta, compartidas con SetBilling para que editar no pueda dejar un
     // pedido que crear habría rechazado (spec 2026-10-26).
-    private static void EnsureBillingRules(OrderParty? billing, bool? partyWithRetention, bool? partyVatSurplus)
+    private static void EnsureBillingRules(OrderParty? billing, bool? partyVatSurplus)
     {
         if (billing is null)
         {
@@ -610,42 +735,43 @@ public sealed class Order
                 "A billing party with its own name requires an identification number.");
         }
 
-        if (partyWithRetention is null || partyVatSurplus is null)
+        // Sólo el excedente de IVA se pregunta (spec impuestos por tipo §7.8): las retenciones son selectores, y
+        // ninguno elegido es una respuesta válida.
+        if (partyVatSurplus is null)
         {
             throw new QuotationsDomainException(
                 "order.billing.tax_profile_required",
-                "The billing party must state whether it applies withholding tax and VAT surplus.");
+                "The billing party must state whether it has VAT surplus.");
         }
     }
 
     /// <summary>
     /// Cambia a quién se le factura en un pedido pendiente (spec 2026-10-26): la fila de facturación, el
-    /// consumidor final, la razón social y el perfil fiscal de la fila. La fila existente se <b>modifica</b>
+    /// consumidor final, la razón social y el excedente de IVA de la fila. La fila existente se <b>modifica</b>
     /// y no se reemplaza: borrar y re-crear en el mismo guardado choca con <c>IX_order_parties_order_role</c>.
     /// Devuelve <c>false</c>, sin tocar la versión, si nada cambió. Con <paramref name="enforceCompleteness"/> en
     /// <c>false</c> (el cálculo previo, que se hace mientras la persona teclea) se omiten las exigencias de fila
-    /// completa, identificación y perfil fiscal; la consistencia con el consumidor final sigue.
+    /// completa, identificación y excedente de IVA; la consistencia con el consumidor final sigue. Las retenciones
+    /// no cambian acá: el pedido tiene una sola fuente y la cambia <see cref="SetWithholdings"/>.
     /// </summary>
     public bool SetBilling(
         QuotationPartyDetails? billing,
         bool billsToFinalConsumer,
         bool billingUsesBusinessName,
-        bool? partyWithRetention,
         bool? partyVatSurplus,
         MemberId updatedBy,
         DateTimeOffset occurredAt,
         bool enforceCompleteness = true)
     {
-        EnsurePending("The billing can only change while the order is pending.");
+        EnsureEditable("The billing can only change while the order is editable.");
         EnsureBillingIsConsistent(billsToFinalConsumer, billing is not null, billingUsesBusinessName);
 
         // La fila candidata se arma aparte para validar lo normalizado antes de mutar nada.
         var candidate = billing is null ? null : OrderParty.Create(Id, QuotationPartyRole.Billing, billing);
-        var withRetention = billing is null ? null : partyWithRetention;
         var vatSurplus = billing is null ? null : partyVatSurplus;
         if (enforceCompleteness)
         {
-            EnsureBillingRules(candidate, withRetention, vatSurplus);
+            EnsureBillingRules(candidate, vatSurplus);
         }
 
         var current = Billing;
@@ -653,7 +779,6 @@ public sealed class Order
             && (current is null) == (candidate is null)
             && BillsToFinalConsumer == billsToFinalConsumer
             && BillingUsesBusinessName == billingUsesBusinessName
-            && PartyWithRetention == withRetention
             && PartyVatSurplus == vatSurplus)
         {
             return false;
@@ -677,10 +802,179 @@ public sealed class Order
 
         BillsToFinalConsumer = billsToFinalConsumer;
         BillingUsesBusinessName = billingUsesBusinessName;
-        PartyWithRetention = withRetention;
         PartyVatSurplus = vatSurplus;
         Touch(updatedBy, occurredAt);
         return true;
+    }
+
+    /// <summary>
+    /// Reemplaza las tasas de retención de un pedido <see cref="IsEditable"/> por las de los selectores
+    /// (spec impuestos por tipo D21): una por tipo, ya resueltas contra el catálogo por la aplicación. Cambia sólo
+    /// este pedido, nunca la ficha del cliente. El agregado vuelve a exigir lo que guarda: empresa facturadora, cada
+    /// tasa de su país y una por tipo. Una lista vacía siempre se acepta y deja el pedido sin retenciones.
+    ///
+    /// Devuelve si cambió algo; si no, no toca la versión.
+    /// </summary>
+    public bool SetWithholdings(
+        IReadOnlyList<WithholdingRate> rates,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(rates);
+        EnsureEditable("The withholdings can only change while the order is editable.");
+        if (rates.Count > 0)
+        {
+            EnsureSelectableWithholdings(rates);
+        }
+
+        if (_withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate)
+            .SequenceEqual(rates))
+        {
+            return false;
+        }
+
+        ReplaceWithholdings(rates);
+        Touch(updatedBy, occurredAt);
+        return true;
+    }
+
+    // Sin empresa no hay país contra el cual validarlos (D22: fijar la empresa habilita los selectores).
+    private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates) =>
+        WithholdingSelectorRules.Ensure(rates, BillingAccount?.Country, OperationCityId, "order.billing");
+
+    /// <summary>
+    /// El municipio de la operación que quedaría con esa cuenta y esa elección: la misma regla que
+    /// <see cref="Quotation.OperationCityFor"/>. Sin cuenta en el cuerpo se conserva la del pedido.
+    /// </summary>
+    public Guid? OperationCityFor(QuotationBillingAccount? billingAccount, OperationCityChoice choice) =>
+        choice.For(billingAccount ?? BillingAccount, BillingAccount?.CompanyId, OperationCityId);
+
+    /// <summary>
+    /// Fija o cambia la empresa y la cuenta con la que se cobra un pedido <see cref="IsEditable"/> (spec impuestos por
+    /// tipo D22) y el municipio de la operación (spec ReteICA por empresa §7.5). Con la empresa llega el país, y con el
+    /// país las retenciones que aplican; una tasa de otro país deja de aplicar (D23). La aplicación ya validó la cuenta
+    /// contra la empresa y armó <paramref name="municipal"/> con <see cref="OperationCityFor"/> (plan P4).
+    /// <paramref name="billingAccount"/> null conserva la cuenta.
+    ///
+    /// No cambia la moneda (plan P10, aprobado por el owner): cambiarla sin repreciar dejaría los importes rotulados
+    /// en otra moneda, y repreciar un pedido externo cambiaría lo que la plataforma cobró. Una cuenta en otra moneda
+    /// es <c>order.billing.currency_change_not_allowed</c>.
+    ///
+    /// Otra empresa u otro municipio re-resuelven las filas municipales con la regla del cliente (§7.6): una tasa
+    /// municipal donde el cliente no es agente se quita y vuelve en <see cref="MunicipalReResolution.RemovedNotAgent"/>.
+    /// Reenviar la misma cuenta con el municipio de la empresa que antes no tenía lo completa sin contar como cambio.
+    /// Si nada cambió, no toca la versión.
+    /// </summary>
+    public OrderBillingContextChange ApplyBillingContext(
+        QuotationBillingAccount? billingAccount,
+        MunicipalContext municipal,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(municipal);
+        EnsureEditable("The billing account and the operation city can only change while the order is editable.");
+        var previousCompanyId = BillingAccount?.CompanyId;
+        var accountChanged = false;
+        if (billingAccount is not null)
+        {
+            var normalized = billingAccount.Normalized();
+            // El municipio de la empresa no cuenta: una cuenta anterior a este trabajo lo completa en silencio.
+            accountChanged = normalized with { CityId = BillingAccount?.CityId } != BillingAccount;
+            if (accountChanged
+                && !string.Equals(normalized.Currency, Currency, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new QuotationsDomainException(
+                    "order.billing.currency_change_not_allowed",
+                    "The billing account must use the order's currency.");
+            }
+
+            BillingAccount = normalized;
+        }
+
+        var cityAfter = MunicipalReResolver.HasMunicipalTypes(BillingAccount?.Country) ? municipal.OperationCityId : null;
+        if (BillingAccount?.CompanyId == previousCompanyId && cityAfter == OperationCityId)
+        {
+            if (accountChanged)
+            {
+                Touch(updatedBy, occurredAt);
+            }
+
+            return new OrderBillingContextChange(accountChanged, MunicipalReResolution.None);
+        }
+
+        var cityBefore = OperationCityId;
+        OperationCityId = cityAfter;
+        var resolved = MunicipalReResolver.ReResolve(
+            [.. _withholdings.OrderBy(row => row.Position).Select(row => row.Rate)],
+            municipal,
+            cityAfter,
+            customerRule: true);
+        ReplaceWithholdings(resolved.Rates);
+        Touch(updatedBy, occurredAt);
+        return new OrderBillingContextChange(
+            accountChanged,
+            new MunicipalReResolution(true, cityBefore, cityAfter, resolved.Discarded, resolved.RemovedNotAgent));
+    }
+
+    /// <summary>
+    /// Cambia el porcentaje efectivo de la retención municipal de <paramref name="type"/> (spec ReteICA por empresa §7.7)
+    /// mientras el pedido es <see cref="IsEditable"/>; <c>null</c> vuelve al del catálogo. Devuelve el cambio para el
+    /// historial, o null si ya era ese.
+    /// </summary>
+    public WithholdingPercentageChange? SetWithholdingPercentage(
+        string type,
+        decimal? percentage,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        EnsureEditable("The withholding percentage can only change while the order is editable.");
+        var row = _withholdings.FirstOrDefault(candidate => string.Equals(candidate.Type, type, StringComparison.Ordinal));
+        var target = MunicipalReResolver.EnsureEditablePercentage(row, percentage, "order.billing");
+        if (target == row!.Percentage)
+        {
+            return null;
+        }
+
+        var change = new WithholdingPercentageChange(row.Name, row.Percentage, target, target == row.CatalogPercentage);
+        row.SetPercentage(target);
+        Touch(updatedBy, occurredAt);
+        return change;
+    }
+
+    /// <summary>
+    /// Pone en cada tasa con base mínima en unidades la UVT vigente de su país y recalcula, mientras el pedido es
+    /// <see cref="IsEditable"/> (spec retenciones por UVT §5.4, owner P1). La clave es el país canónico. No es una
+    /// edición del asesor: no sube la versión ni cambia el autor; el handler que guarda o previsualiza ya lo hace.
+    /// </summary>
+    public void RefreshTaxUnits(IReadOnlyDictionary<string, TaxUnitPhoto> byCountry)
+    {
+        EnsureEditable("The tax unit can only be refreshed while the order is editable.");
+        DocumentWithholding.RefreshTaxUnits(_withholdings, byCountry);
+        RecalculateTotals();
+    }
+
+    /// <summary>
+    /// «Sin retención» (owner 2026-11-13, plan P12): quita la fila de cada tipo marcado mientras el pedido es
+    /// <see cref="IsEditable"/>. Sin fila no hace nada. Que los tipos sean municipales lo valida la aplicación. Devuelve las
+    /// filas quitadas que tenían porcentaje editado, para el historial.
+    /// </summary>
+    public IReadOnlyList<WithholdingRate> ClearMunicipalWithholdings(
+        IReadOnlyCollection<string> types,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(types);
+        EnsureEditable("The withholdings can only change while the order is editable.");
+        var current = _withholdings.OrderBy(row => row.Position).Select(row => row.Rate).ToList();
+        var removed = current.Where(rate => types.Contains(rate.Type, StringComparer.Ordinal)).ToList();
+        if (removed.Count == 0)
+        {
+            return [];
+        }
+
+        ReplaceWithholdings([.. current.Except(removed)]);
+        Touch(updatedBy, occurredAt);
+        return [.. removed.Where(rate => rate.Overridden)];
     }
 
     public void AddItem(
@@ -691,17 +985,43 @@ public sealed class Order
         decimal unitPrice,
         decimal discountPercentage,
         int taxPercentage,
+        OrderLineCosts costs,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
-        EnsurePending("Products can only be added while the order is pending.");
-        AddItemCore(
+        ArgumentNullException.ThrowIfNull(costs);
+        EnsureEditable("Products can only be added while the order is editable.");
+        // Un pedido pagado sigue editable: la línea nueva ya cuenta como vendida y congela al entrar (§4.3). El
+        // costo se pide antes de agregarla para que un costo sin buscar no deje la línea a medias.
+        var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
+        var unitCost = sold ? costs.For(variantId) : null;
+        var item = AddItemCore(
             itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             QuotationDiscountOrigin.Own, null, occurredAt);
+        if (sold)
+        {
+            item.FreezeCost(unitCost, occurredAt);
+        }
+
         Touch(updatedBy, occurredAt);
     }
 
-    private void AddItemCore(
+    // Congela las líneas que todavía no lo hicieron; las ya congeladas conservan su costo (§4.3). Resuelve todos
+    // los costos antes de tocar una línea, para que un costo sin buscar no deje el pedido congelado a medias.
+    private void FreezeLineCosts(OrderLineCosts costs, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(costs);
+        var pending = _items
+            .Where(item => item.CostCapturedAt is null)
+            .Select(item => (Item: item, Cost: costs.For(item.VariantId)))
+            .ToArray();
+        foreach (var (item, cost) in pending)
+        {
+            item.FreezeCost(cost, at);
+        }
+    }
+
+    private OrderItem AddItemCore(
         OrderItemId itemId,
         Guid variantId,
         Guid productId,
@@ -736,6 +1056,7 @@ public sealed class Order
         }
 
         _items.Add(item);
+        return item;
     }
 
     public void UpdateItemQuantity(
@@ -746,14 +1067,14 @@ public sealed class Order
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
-        EnsurePending("Products can only be edited while the order is pending.");
+        EnsureEditable("Products can only be edited while the order is editable.");
         FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
     public void RemoveItem(OrderItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
     {
-        EnsurePending("Products can only be removed while the order is pending.");
+        EnsureEditable("Products can only be removed while the order is editable.");
         if (_items.Count == 1)
         {
             throw new QuotationsDomainException(
@@ -767,7 +1088,7 @@ public sealed class Order
 
     public void SetIsRetail(bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt)
     {
-        EnsurePending("The pricing can only change while the order is pending.");
+        EnsureEditable("The pricing can only change while the order is editable.");
         IsRetail = isRetail;
         if (isRetail)
         {
@@ -779,7 +1100,7 @@ public sealed class Order
 
     public void SetGlobalScaleFloor(int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
     {
-        EnsurePending("The pricing can only change while the order is pending.");
+        EnsureEditable("The pricing can only change while the order is editable.");
         EnsureGlobalScaleFloorAllowed(floor, IsRetail);
         GlobalScaleFloor = floor;
         Touch(updatedBy, occurredAt);
@@ -794,7 +1115,7 @@ public sealed class Order
     public void SetShipping(ShippingDetails shipping, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(shipping);
-        EnsurePending("The shipping can only change while the order is pending.");
+        EnsureEditable("The shipping can only change while the order is editable.");
         var validated = shipping.Validated(IsStorePickup, Currency, "order.order");
         if (validated.CashOnDelivery && !CashOnDelivery
             && (_paymentProofs.Count > 0 || PaymentStatus != OrderPaymentStatus.PaymentPending))
@@ -846,23 +1167,6 @@ public sealed class Order
         RecalculateTotals();
     }
 
-    public void RefreshCustomerTaxProfile(bool customerWithRetention, bool customerVatSurplus)
-    {
-        if (Status != OrderStatus.Pending)
-        {
-            return;
-        }
-
-        if (CustomerWithRetention == customerWithRetention && CustomerVatSurplus == customerVatSurplus)
-        {
-            return;
-        }
-
-        CustomerWithRetention = customerWithRetention;
-        CustomerVatSurplus = customerVatSurplus;
-        RecalculateTotals();
-    }
-
     public void CaptureProductSnapshots(IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
     {
         foreach (var item in _items)
@@ -885,8 +1189,8 @@ public sealed class Order
     /// estado «enviado»—, así que esto no protege una transición: existe para que el caso de uso lo
     /// compruebe **antes** de generar el PDF y de entregarle el mensaje a WhatsApp, que no se deshacen.
     ///
-    /// Sólo frena al anulado: un pedido anulado que le llega al cliente se lee como vigente. Pendiente,
-    /// aprobado y facturado sí se mandan: el cliente puede necesitar el documento en cualquiera de los tres.
+    /// Sólo frena al anulado: un pedido anulado que le llega al cliente se lee como vigente. Abierto,
+    /// archivado, pagado o facturado sí se mandan: el cliente puede necesitar el documento en cualquiera.
     /// </summary>
     public void EnsureSendable()
     {
@@ -899,61 +1203,207 @@ public sealed class Order
         }
     }
 
-    public void Approve(MemberId approvedBy, DateTimeOffset occurredAt)
+    /// <summary>Lo que <see cref="MarkPaid"/> exige, para que el caso de uso lo compruebe antes de las validaciones
+    /// de datos de facturación. Orden: abierto, no pagado y, si el tenant lo pide, con comprobante.</summary>
+    public void EnsureCanMarkPaid(bool requirePaymentProof)
     {
-        if (Status != OrderStatus.Pending)
+        EnsureOpen("Only an open order can be marked as paid.");
+        if (PaymentStatus == OrderPaymentStatus.FullPaymentReceived)
         {
-            throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "Only a pending order can be approved.");
+            throw new QuotationsDomainException(OrderStateErrors.AlreadyPaid, "The order is already paid.");
         }
 
-        Status = OrderStatus.Approved;
-        ApprovedBy = approvedBy;
-        ApprovedAt = occurredAt;
+        if (requirePaymentProof && _paymentProofs.Count == 0)
+        {
+            throw new QuotationsDomainException(
+                OrderStateErrors.PaymentProofRequired,
+                "The tenant requires a payment proof to mark an order as paid.");
+        }
+    }
+
+    /// <summary>«Marcar como pagado» (spec 2026-11-10 §3.2): la única forma, fuera de la plataforma, de llegar a
+    /// <see cref="OrderPaymentStatus.FullPaymentReceived"/>. Congela el costo de las líneas que todavía no lo tienen
+    /// con <paramref name="costs"/>, que debe traer <see cref="UncostedVariantIds"/> (spec costo de producto §4.3).</summary>
+    public void MarkPaid(MemberId markedBy, bool requirePaymentProof, OrderLineCosts costs, DateTimeOffset occurredAt)
+    {
+        EnsureCanMarkPaid(requirePaymentProof);
+        FreezeLineCosts(costs, occurredAt);
+        PaymentStatus = OrderPaymentStatus.FullPaymentReceived;
+        PaidMarkedBy = markedBy;
+        PaidMarkedAt = occurredAt;
+        PaidAt = occurredAt;
         UpdatedAt = occurredAt;
         Version++;
     }
 
+    /// <summary>Deshace el pagado: el pago vuelve al valor calculado con los comprobantes. Sólo si el pedido no
+    /// está preparado ni facturado.</summary>
+    public void UnmarkPaid(DateTimeOffset occurredAt)
+    {
+        EnsureOpen("Only an open order can have its payment unmarked.");
+        if (PaymentStatus != OrderPaymentStatus.FullPaymentReceived)
+        {
+            throw new QuotationsDomainException(OrderStateErrors.NotPaid, "The order is not paid.");
+        }
+
+        EnsureNotPrepared("A prepared order cannot have its payment unmarked.");
+        EnsureNotInvoiced("An invoiced order cannot have its payment unmarked.");
+        PaymentStatus = CalculatedPaymentStatus();
+        PaidMarkedBy = null;
+        PaidMarkedAt = null;
+        // Sale del reporte, pero las líneas conservan su costo: si se vuelve a marcar, reaparece con esos (§4.3).
+        PaidAt = null;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>«Marcar como preparado» (spec 2026-11-10 §3.3): pagado o no, porque un contraentrega se despacha
+    /// antes del cobro. Congela el pedido.</summary>
+    public void Prepare(MemberId preparedBy, DateTimeOffset occurredAt)
+    {
+        EnsureOpen("Only an open order can be prepared.");
+        EnsureNotPrepared("The order is already prepared.");
+        FulfillmentStatus = OrderFulfillmentStatus.Prepared;
+        PreparedBy = preparedBy;
+        PreparedAt = occurredAt;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    public void UndoPreparation(DateTimeOffset occurredAt)
+    {
+        EnsureOpen("Only an open order can have its preparation undone.");
+        if (!IsPrepared)
+        {
+            throw new QuotationsDomainException(OrderStateErrors.NotPrepared, "The order is not prepared.");
+        }
+
+        EnsureNotInvoiced("An invoiced order cannot have its preparation undone.");
+        FulfillmentStatus = OrderFulfillmentStatus.NotPrepared;
+        PreparedBy = null;
+        PreparedAt = null;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>Archiva a mano o por el archivado automático (<paramref name="archivedBy"/> null cuando no hay
+    /// persona). No quita ni pone ninguna otra marca (spec 2026-11-10 §3.5).</summary>
+    public void Archive(MemberId? archivedBy, DateTimeOffset occurredAt)
+    {
+        EnsureNotCancelled("A cancelled order cannot be archived.");
+        if (Status == OrderStatus.Archived)
+        {
+            throw new QuotationsDomainException(OrderStateErrors.AlreadyArchived, "The order is already archived.");
+        }
+
+        Status = OrderStatus.Archived;
+        ArchivedBy = archivedBy;
+        ArchivedAt = occurredAt;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    public void Unarchive(DateTimeOffset occurredAt)
+    {
+        if (Status != OrderStatus.Archived)
+        {
+            throw new QuotationsDomainException(OrderStateErrors.NotArchived, "Only an archived order can be unarchived.");
+        }
+
+        Status = OrderStatus.Open;
+        ArchivedBy = null;
+        ArchivedAt = null;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>El archivado automático: archiva y devuelve <c>true</c> sólo si el pedido está abierto, pagado y
+    /// preparado; si no, devuelve <c>false</c> sin tocar nada.</summary>
+    public bool ArchiveIfSettled(MemberId? archivedBy, DateTimeOffset occurredAt)
+    {
+        if (Status != OrderStatus.Open || PaymentStatus != OrderPaymentStatus.FullPaymentReceived || !IsPrepared)
+        {
+            return false;
+        }
+
+        Archive(archivedBy, occurredAt);
+        return true;
+    }
+
+    /// <summary>La anulación de la consola. Orden: facturado, anulado, archivado, preparado y, al final, el motivo.</summary>
     public void Cancel(MemberId cancelledBy, string? reason, DateTimeOffset occurredAt)
     {
         // Spec 2026-10-05, decisión 2: la factura ya existe fuera de QEP y anular el pedido no la
         // anula. Va antes que already_cancelled y que el motivo: un facturado nunca se anula, así que
         // pedir el motivo primero mandaría a corregir algo que no destraba nada.
-        if (Status == OrderStatus.Invoiced)
+        EnsureNotInvoiced("An invoiced order cannot be cancelled; revert the invoicing first.");
+        EnsureNotCancelled("The order is already cancelled.");
+        if (Status == OrderStatus.Archived)
         {
             throw new QuotationsDomainException(
-                "order.order.already_invoiced",
-                "An invoiced order cannot be cancelled; revert the invoicing first.");
+                OrderStateErrors.AlreadyArchived, "An archived order cannot be cancelled; unarchive it first.");
         }
 
-        if (Status == OrderStatus.Cancelled)
-        {
-            throw new QuotationsDomainException(
-                "order.order.already_cancelled",
-                "The order is already cancelled.");
-        }
+        EnsureNotPrepared("A prepared order cannot be cancelled; undo the preparation first.");
+        ApplyCancellation(cancelledBy, NormalizeCancellationReason(reason), occurredAt);
+    }
 
-        var normalizedReason = NormalizeCancellationReason(reason);
+    /// <summary>
+    /// La anulación que llega de la plataforma (spec 2026-11-10 §3.1, owner): gana sobre preparado y archivado y
+    /// conserva sus marcas, para que se vea que hay un paquete despachado que recuperar. Facturado sigue frenando.
+    /// </summary>
+    public void CancelFromPlatform(MemberId cancelledBy, string? reason, DateTimeOffset occurredAt)
+    {
+        EnsureNotInvoiced("An invoiced order cannot be cancelled; revert the invoicing first.");
+        EnsureNotCancelled("The order is already cancelled.");
+        ApplyCancellation(cancelledBy, NormalizeCancellationReason(reason), occurredAt);
+    }
+
+    private void ApplyCancellation(MemberId cancelledBy, string reason, DateTimeOffset occurredAt)
+    {
         Status = OrderStatus.Cancelled;
         CancelledBy = cancelledBy;
         CancelledAt = occurredAt;
-        CancellationReason = normalizedReason;
+        CancellationReason = reason;
         UpdatedAt = occurredAt;
         Version++;
     }
 
     /// <summary>Enlaza el pedido a una cuenta de comprador sólo si todavía no tiene una. Devuelve <c>false</c> sin
     /// cambiar nada cuando ya estaba enlazado. No toca el estado ni la versión: el enlace no es una edición del
-    /// pedido.</summary>
+    /// pedido. Tampoco enlaza si un asesor ya decidió la cuenta (<see cref="BuyerAccountSetByMember"/>).</summary>
     public bool LinkBuyerAccount(Guid buyerAccountId)
     {
-        if (BuyerAccountId is not null)
+        if (BuyerAccountId is not null || BuyerAccountSetByMember)
         {
             return false;
         }
 
         BuyerAccountId = buyerAccountId;
+        return true;
+    }
+
+    /// <summary>Spec 2026-11-15 §4: el asesor cambia o quita (<c>null</c>) la cuenta de comprador de un pedido de la
+    /// tienda, y su decisión queda marcada para que ningún enlace automático la deshaga. Es una edición del pedido: sube
+    /// la versión. Devuelve <c>false</c> sin cambiar nada sólo si ya tenía esa misma cuenta por decisión de un asesor;
+    /// quitar sobre un pedido sin cuenta sí marca, porque significa «no lo enlaces solo».</summary>
+    public bool SetBuyerAccountByMember(Guid? buyerAccountId, DateTimeOffset occurredAt)
+    {
+        if (Source != OrderSource.Store)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only a store order has a buyer account.");
+        }
+
+        if (BuyerAccountSetByMember && BuyerAccountId == buyerAccountId)
+        {
+            return false;
+        }
+
+        BuyerAccountId = buyerAccountId;
+        BuyerAccountSetByMember = true;
+        UpdatedAt = occurredAt;
+        Version++;
         return true;
     }
 
@@ -974,16 +1424,23 @@ public sealed class Order
         Version++;
     }
 
-    public void Invoice(MemberId invoicedBy, DateTimeOffset occurredAt)
+    /// <summary>Lo que <see cref="Invoice"/> exige, para que el caso de uso lo compruebe antes de las validaciones de
+    /// datos de facturación. No exige preparado (spec 2026-11-10 §3.4).</summary>
+    public void EnsureCanInvoice(bool requireFullPayment)
     {
-        if (Status != OrderStatus.Approved)
+        EnsureNotCancelled("A cancelled order cannot be invoiced.");
+        EnsureNotInvoiced("The order is already invoiced.");
+        if (requireFullPayment && PaymentStatus != OrderPaymentStatus.FullPaymentReceived)
         {
             throw new QuotationsDomainException(
-                "order.order.not_approved",
-                "Only an approved order can be invoiced.");
+                OrderStateErrors.NotPaid, "The tenant requires the order to be paid before it is invoiced.");
         }
+    }
 
-        Status = OrderStatus.Invoiced;
+    /// <summary>Marca el pedido como facturado. Es una marca, no un estado: <see cref="Status"/> no cambia.</summary>
+    public void Invoice(MemberId invoicedBy, bool requireFullPayment, DateTimeOffset occurredAt)
+    {
+        EnsureCanInvoice(requireFullPayment);
         InvoicedBy = invoicedBy;
         InvoicedAt = occurredAt;
         UpdatedAt = occurredAt;
@@ -992,35 +1449,31 @@ public sealed class Order
 
     public void RevertInvoicing(MemberId revertedBy, DateTimeOffset occurredAt)
     {
-        if (Status != OrderStatus.Invoiced)
+        if (!IsInvoiced)
         {
             throw new QuotationsDomainException(
-                "order.order.not_invoiced",
+                OrderStateErrors.NotInvoiced,
                 "Only an invoiced order can have its invoicing reverted.");
         }
 
-        Status = OrderStatus.Approved;
         InvoicedBy = null;
         InvoicedAt = null;
         UpdatedAt = occurredAt;
         Version++;
     }
 
-    public void AddPaymentProofs(
+    /// <summary>Suma comprobantes y corrige los que ya estaban (spec 2026-11-10 §3.2). El pago lo calcula el sistema: un
+    /// pedido pagado sigue pagado, y uno sin pagar queda con lo que digan los comprobantes, nunca pagado. Devuelve el
+    /// cambio del pago, o <c>null</c> si no cambió.</summary>
+    public OrderPaymentStatusChange? AddPaymentProofs(
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
-        OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId uploadedBy,
         DateTimeOffset occurredAt,
         IReadOnlyCollection<OrderPaymentProofAmountUpdate>? updatedProofs = null)
     {
         updatedProofs ??= [];
-        if (Status != OrderStatus.Pending)
-        {
-            throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "Payment proofs can only be added to a pending order.");
-        }
+        EnsureEditable("Payment proofs can only be added to an editable order.");
 
         if (proofs.Count == 0 && updatedProofs.Count == 0)
         {
@@ -1050,40 +1503,93 @@ public sealed class Order
                 occurredAt, proof.PaidOn));
         }
 
-        PaymentStatus = paymentStatus;
+        var from = PaymentStatus;
+        if (from != OrderPaymentStatus.FullPaymentReceived)
+        {
+            PaymentStatus = CalculatedPaymentStatus();
+        }
+
         Notes = NormalizeNotes(notes);
         UpdatedAt = occurredAt;
         Version++;
+        return from == PaymentStatus ? null : new OrderPaymentStatusChange(from, PaymentStatus, NetTotal, NetTotal);
     }
 
-    /// <summary>Compara lo consignado contra el neto a cobrar del propio pedido (spec 2026-10-15 §4.1):
-    /// ya no recibe el monto, lo tiene.
-    ///
-    /// El neto se compara redondeado a lo que la moneda muestra: pesos enteros en COP, centavos en
-    /// las demás (hotfix 2026-10-19). La retención se redondea a centavos y le deja al neto una
-    /// fracción de peso que la pantalla no muestra —un neto de 116.529,37 se ve como $116.529—, así
-    /// que quien cargaba lo que veía quedaba en pago parcial por 37 centavos. Mismo redondeo que
-    /// <c>roundToCurrencyPrecision</c> del frontend.</summary>
-    public void RecalculatePaymentStatus(DateTimeOffset occurredAt)
+    /// <summary>
+    /// El pago de un pedido manual que todavía no se guardó, otra vez desde sus comprobantes. El alta y su cálculo
+    /// previo lo llaman después de <c>OrderPricingRecalculation</c>, cuyos descuentos de grupo y redondeo mueven el
+    /// neto que <see cref="CreateManual"/> ya había comparado. No es una edición: no toca <see cref="Version"/>.
+    /// Pagado no se toca: el sistema nunca sube ni baja una marca de una persona acá.
+    /// </summary>
+    public void RecalculateDraftPaymentStatus()
     {
-        EnsurePending("The payment status can only be recalculated on a pending order.");
-        var proofsTotal = _paymentProofs.Sum(proof => proof.Amount);
-        var displayedNetTotal = Math.Round(
-            NetTotal, Currency == "COP" ? 0 : 2, MidpointRounding.AwayFromZero);
-        PaymentStatus = proofsTotal <= 0
-            ? OrderPaymentStatus.PaymentPending
-            : proofsTotal >= displayedNetTotal
-                ? OrderPaymentStatus.FullPaymentReceived
-                : OrderPaymentStatus.PartialPaymentReceived;
+        if (Source != OrderSource.Manual || PaymentStatus == OrderPaymentStatus.FullPaymentReceived)
+        {
+            return;
+        }
+
+        PaymentStatus = CalculatedPaymentStatus();
+    }
+
+    /// <summary>Vuelve a mirar el pago después de una edición que pudo mover el neto (spec 2026-11-10 §3.2).
+    /// <paramref name="previousNetTotal"/> es el neto de antes de la edición.
+    ///
+    /// Sin pagar, el pago es el que digan los comprobantes, nunca pagado. Pagado, queda pagado salvo un caso: hay
+    /// comprobantes, la edición subió el neto (comparado como lo muestra la moneda) y lo consignado ya no lo cubre;
+    /// ahí baja a <see cref="OrderPaymentStatus.PartialPaymentReceived"/> y se limpia la marca de pagado. Un pedido
+    /// pagado sin comprobantes se dio por pagado a mano y ninguna edición lo baja.
+    ///
+    /// Devuelve el cambio, o <c>null</c> si el pago no cambió.</summary>
+    public OrderPaymentStatusChange? RecalculatePaymentStatus(decimal previousNetTotal, DateTimeOffset occurredAt)
+    {
+        EnsureEditable("The payment status can only be recalculated on an editable order.");
+        var from = PaymentStatus;
+        if (from != OrderPaymentStatus.FullPaymentReceived)
+        {
+            PaymentStatus = CalculatedPaymentStatus();
+        }
+        else if (_paymentProofs.Count > 0
+            && DisplayedNetTotal > RoundAsDisplayed(previousNetTotal)
+            && ProofsTotal < DisplayedNetTotal)
+        {
+            PaymentStatus = OrderPaymentStatus.PartialPaymentReceived;
+            PaidMarkedBy = null;
+            PaidMarkedAt = null;
+            PaidAt = null;
+        }
+
         UpdatedAt = occurredAt;
         Version++;
+        return from == PaymentStatus
+            ? null
+            : new OrderPaymentStatusChange(from, PaymentStatus, previousNetTotal, NetTotal);
     }
 
-    /// <summary>Spec de Shopify §6.3 (vía spec 2026-10-15 §5.4): el estado de pago que avisa la plataforma,
-    /// sólo si el pedido no tiene comprobantes propios; con comprobantes, el estado lo gobiernan ellos.</summary>
-    public void SyncExternalPaymentStatus(OrderPaymentStatus status, DateTimeOffset occurredAt)
+    /// <summary>
+    /// El estado de pago que avisa la plataforma (spec de Shopify §6.3), sólo si el pedido no tiene comprobantes
+    /// propios; con comprobantes, el estado lo gobiernan ellos. La plataforma manda sobre sus pedidos: un pedido
+    /// preparado o archivado también lo recibe (un contraentrega se prepara y se cobra después). Sólo lo rechazan
+    /// uno anulado o facturado. Al llevarlo a pagado no pone la marca de pagado (no lo marcó una persona); al sacarlo de
+    /// pagado limpia la que hubiera.
+    ///
+    /// Con <paramref name="autoArchive"/> (el ajuste del tenant), un pedido que queda pagado y ya estaba preparado se
+    /// archiva sin persona detrás. Devuelve <c>true</c> si lo archivó.
+    ///
+    /// Hacia pagado congela el costo de las líneas que todavía no lo tienen con <paramref name="costs"/> (debe traer
+    /// <see cref="UncostedVariantIds"/>) y fija <see cref="PaidAt"/>; hacia otro estado lo limpia y los costos se
+    /// quedan (spec costo de producto §4.3–§4.4).
+    /// </summary>
+    public bool SyncExternalPaymentStatus(
+        OrderPaymentStatus status, bool autoArchive, OrderLineCosts costs, DateTimeOffset occurredAt)
     {
-        EnsurePending("The payment status can only be synced on a pending order.");
+        ArgumentNullException.ThrowIfNull(costs);
+        if (Status == OrderStatus.Cancelled || IsInvoiced)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.NotEditable,
+                "The payment status cannot be synced on a cancelled or invoiced order.");
+        }
+
         if (_paymentProofs.Count > 0)
         {
             throw new QuotationsDomainException(
@@ -1093,22 +1599,31 @@ public sealed class Order
 
         if (PaymentStatus == status)
         {
-            return;
+            return false;
+        }
+
+        if (status == OrderPaymentStatus.FullPaymentReceived)
+        {
+            FreezeLineCosts(costs, occurredAt);
+            PaidAt = occurredAt;
+        }
+        else
+        {
+            // Una marca de pagado describe un pagado: si el pago sale de ahí, la marca se va con él.
+            PaidMarkedBy = null;
+            PaidMarkedAt = null;
+            PaidAt = null;
         }
 
         PaymentStatus = status;
         UpdatedAt = occurredAt;
         Version++;
+        return autoArchive && ArchiveIfSettled(archivedBy: null, occurredAt);
     }
 
     public void RemovePaymentProof(OrderPaymentProofId proofId, DateTimeOffset occurredAt)
     {
-        if (Status != OrderStatus.Pending)
-        {
-            throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "Payment proofs can only be removed from a pending order.");
-        }
+        EnsureEditable("Payment proofs can only be removed from an editable order.");
 
         var proof = _paymentProofs.FirstOrDefault(candidate => candidate.Id == proofId)
             ?? throw new QuotationsDomainException(
@@ -1122,7 +1637,7 @@ public sealed class Order
     public void AttachPaymentProofs(
         IReadOnlyCollection<OrderPaymentProofInput> proofs, MemberId uploadedBy, DateTimeOffset occurredAt)
     {
-        EnsurePending("Payment proofs can only be added to a pending order.");
+        EnsureEditable("Payment proofs can only be added to an editable order.");
         if (proofs.Count == 0)
         {
             return;
@@ -1142,7 +1657,7 @@ public sealed class Order
     public void CorrectPaymentProofs(
         IReadOnlyCollection<OrderPaymentProofAmountUpdate> updates, DateTimeOffset occurredAt)
     {
-        EnsurePending("Payment proofs can only be corrected on a pending order.");
+        EnsureEditable("Payment proofs can only be corrected on an editable order.");
         if (updates.Count == 0)
         {
             return;
@@ -1172,7 +1687,7 @@ public sealed class Order
 
     public bool UpdateNotes(string? notes, DateTimeOffset occurredAt)
     {
-        EnsurePending("The notes can only be edited on a pending order.");
+        EnsureEditable("The notes can only be edited on an editable order.");
         var normalized = NormalizeNotes(notes);
         if (string.Equals(normalized, Notes, StringComparison.Ordinal))
         {
@@ -1180,6 +1695,61 @@ public sealed class Order
         }
 
         Notes = normalized;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-16 §3 (F-4, F-5): corrige la «Fecha del pedido» con el patrón de <see cref="UpdateNotes"/>. Sólo en un
+    /// pedido <see cref="IsEditable"/>, y nunca después de <paramref name="today"/>, que es hoy en el calendario del tenant
+    /// (lo resuelve Application); hacia atrás no hay tope. <c>false</c> si es la misma fecha: el guardado responde «sin
+    /// cambios» sin subir la versión ni escribir historial. No toca <see cref="ConvertedAt"/> ni recalcula impuestos (§8, P-1).
+    /// </summary>
+    public bool ChangeOrderDate(DateOnly date, DateOnly today, DateTimeOffset occurredAt)
+    {
+        EnsureEditable("The order date can only be edited on an editable order.");
+        // Antes que el tope: reenviar la fecha ya guardada nunca es un cambio, aunque haya quedado después de «hoy».
+        if (date == OrderDate)
+        {
+            return false;
+        }
+
+        if (date > today)
+        {
+            throw new QuotationsDomainException(
+                "order.order_date.in_future",
+                "The order date cannot be later than today in the tenant calendar.");
+        }
+
+        OrderDate = date;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-14: cambia la nota del comprador de un pedido de Shopify (la sincronización desde Shopify y la
+    /// corrección del asesor). Sólo pedidos externos (<see cref="OrderSource.Shopify"/>): la nota de un pedido de la tienda
+    /// pública es lo que el comprador escribió y no se toca. <c>true</c> si cambió; vacío o sólo espacios es <c>null</c>
+    /// (D22), así que mandar <c>""</c> sobre una nota nula no cambia nada. No toca <see cref="Notes"/>.
+    /// </summary>
+    public bool UpdateExternalBuyerNotes(string? buyerNotes, DateTimeOffset occurredAt)
+    {
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only an external order takes its buyer notes from the platform.");
+        }
+
+        EnsureEditable("The buyer notes can only change while the order is editable.");
+        var normalized = NormalizeNotes(buyerNotes);
+        if (string.Equals(normalized, BuyerNotes, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        BuyerNotes = normalized;
         UpdatedAt = occurredAt;
         Version++;
         return true;
@@ -1198,7 +1768,7 @@ public sealed class Order
     {
         ArgumentNullException.ThrowIfNull(shipping);
         ArgumentException.ThrowIfNullOrEmpty(notesLinePrefix);
-        EnsurePending("The shipping party can only be attached while the order is pending.");
+        EnsureEditable("The shipping party can only be attached while the order is editable.");
         if (!IsExternal)
         {
             throw new QuotationsDomainException(
@@ -1236,6 +1806,59 @@ public sealed class Order
     }
 
     /// <summary>
+    /// Spec 2026-11-14 §5: el asesor corrige la parte de envío de un pedido de Shopify (nombre, teléfono, correo, dirección,
+    /// departamento y ciudad). Si el pedido no la tenía, la crea y quita de las notas toda línea que empiece por
+    /// <paramref name="notesLinePrefix"/> (la dirección cruda de la importación); si la tenía, la reemplaza en su fila.
+    /// <c>true</c> si cambió; la misma parte no toca nada. Sólo pedidos externos editables, sin recogida en tienda, y la parte
+    /// debe quedar completa. Es el único camino por el que un pedido edita su parte de envío (desvío S1 sigue para los demás).
+    /// </summary>
+    public bool EditExternalShippingParty(QuotationPartyDetails party, string notesLinePrefix, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(party);
+        ArgumentException.ThrowIfNullOrEmpty(notesLinePrefix);
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only an external order has its shipping party corrected for the platform.");
+        }
+
+        EnsureEditable("The shipping party can only be corrected while the order is editable.");
+        if (IsStorePickup)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.StorePickup, "An order picked up at the store has no shipping party.");
+        }
+
+        var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, party);
+        if (!candidate.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+        }
+
+        if (Shipping is { } current)
+        {
+            if (current.ToDetails() == candidate.ToDetails())
+            {
+                return false;
+            }
+
+            current.Apply(candidate.ToDetails());
+        }
+        else
+        {
+            _parties.Add(candidate);
+            Notes = NormalizeNotes(string.Join(
+                '\n',
+                (Notes ?? string.Empty).Split('\n').Where(line => !line.StartsWith(notesLinePrefix, StringComparison.Ordinal))));
+        }
+
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
     /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
     /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, lanza
     /// <c>order.order.shipping_party_changed</c>. <c>true</c> si cambió; <c>false</c> si la parte ya no está en la ciudad de
@@ -1246,7 +1869,7 @@ public sealed class Order
         QuotationPartyDetails expected, Guid departmentId, Guid cityId, DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(expected);
-        EnsurePending("The shipping city can only be corrected while the order is pending.");
+        EnsureEditable("The shipping city can only be corrected while the order is editable.");
         if (Shipping is not { } party || !SameExceptCity(party.ToDetails(), expected))
         {
             throw new QuotationsDomainException(
@@ -1264,19 +1887,179 @@ public sealed class Order
         return true;
     }
 
-    // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
-    // 'Payment pending'". Sólo para los pedidos que se cobran desde QEP: uno de origen externo entra
-    // con el estado de pago que avisa la plataforma y el pago vive allá (spec de Shopify §6.3).
+    /// <summary>
+    /// Spec 2026-11-14 §4: aplica una edición que hizo la plataforma (Shopify) sobre un pedido externo editable. Sólo cambia los
+    /// grupos que llegan y que de verdad son distintos de lo que el pedido tiene; sin diferencias no toca nada (ni la versión).
+    /// <list type="bullet">
+    /// <item>Las líneas llegan preciadas: se reemplazan todas, sin repreciar ni aplicar descuentos de catálogo. La que sigue
+    /// (misma variante) conserva su id y su costo congelado; con el pedido pagado, la nueva congela su costo con
+    /// <paramref name="costs"/> (§4.3).</item>
+    /// <item>El envío pasa por las reglas de coherencia del pedido (<see cref="ShippingDetails"/>).</item>
+    /// <item>La parte de envío se modifica en su fila; si el pedido no la tenía, se crea y se quitan de las notas las líneas que
+    /// empiezan por <see cref="ExternalOrderEdit.NotesLinePrefix"/>. Un pedido de recogida no la admite.</item>
+    /// <item>La nota del comprador va a <see cref="BuyerNotes"/>; <see cref="Notes"/> no se toca (salvo la línea cruda de la
+    /// dirección).</item>
+    /// </list>
+    /// Todo se valida antes de cambiar nada, y la versión sube una sola vez. No recalcula el estado de pago: el pago de un pedido
+    /// externo lo lleva la plataforma (plan 2026-11-14, D18).
+    /// </summary>
+    public ExternalOrderEditResult ApplyExternalEdit(ExternalOrderEdit edit, OrderLineCosts costs, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+        ArgumentNullException.ThrowIfNull(costs);
+        EnsureEditable("An external edit can only be applied while the order is editable.");
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only an external order takes its edits from the platform.");
+        }
+
+        OrderParty? party = null;
+        if (edit.ShippingParty is { } details)
+        {
+            if (IsStorePickup)
+            {
+                throw new QuotationsDomainException(
+                    ExternalOrderErrors.StorePickup, "An order picked up at the store has no shipping party.");
+            }
+
+            party = OrderParty.Create(Id, QuotationPartyRole.Shipping, details);
+            if (!party.IsComplete)
+            {
+                throw new QuotationsDomainException(
+                    ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+            }
+        }
+
+        var shipping = edit.Shipping?.Validated(IsStorePickup, Currency, "order.order");
+        if (shipping is { CashOnDelivery: true } && !CashOnDelivery
+            && (_paymentProofs.Count > 0 || PaymentStatus != OrderPaymentStatus.PaymentPending))
+        {
+            throw CashOnDeliveryPendingOnly();
+        }
+
+        var lines = edit.Lines is null ? null : CandidateLines(edit.Lines, occurredAt);
+        var buyerNotes = NormalizeNotes(edit.BuyerNotes);
+        var result = new ExternalOrderEditResult(
+            lines is not null && !SameItems(lines),
+            shipping is not null && shipping != ShippingDetails,
+            party is not null && Shipping?.ToDetails() != party.ToDetails(),
+            edit.ReplaceBuyerNotes && !string.Equals(buyerNotes, BuyerNotes, StringComparison.Ordinal));
+        if (!result.Any)
+        {
+            return result;
+        }
+
+        if (result.LinesChanged)
+        {
+            ReplaceExternalLines(lines!, edit.Lines!, costs, occurredAt);
+        }
+
+        if (result.ShippingChanged)
+        {
+            AssignShipping(shipping!);
+        }
+
+        if (result.PartyChanged)
+        {
+            if (Shipping is { } current)
+            {
+                current.Apply(party!.ToDetails());
+            }
+            else
+            {
+                _parties.Add(party!);
+                Notes = NormalizeNotes(string.Join(
+                    '\n',
+                    (Notes ?? string.Empty).Split('\n')
+                        .Where(line => !line.StartsWith(edit.NotesLinePrefix, StringComparison.Ordinal))));
+            }
+        }
+
+        if (result.BuyerNotesChanged)
+        {
+            BuyerNotes = buyerNotes;
+        }
+
+        RecalculateTotals();
+        UpdatedAt = occurredAt;
+        Version++;
+        return result;
+    }
+
+    // Las líneas como se guardarían (precio redondeado, IVA según la moneda), sin agregarlas: valida cantidad, precio, descuento
+    // y tasa antes de tocar el pedido, y deja comparar contra lo guardado.
+    private OrderItem[] CandidateLines(IReadOnlyCollection<OrderLineInput> lines, DateTimeOffset occurredAt)
+    {
+        if (lines.Count == 0)
+        {
+            throw new QuotationsDomainException("order.order.items_required", "An order needs at least one product.");
+        }
+
+        if (lines.Select(line => line.VariantId).Distinct().Count() != lines.Count)
+        {
+            throw new QuotationsDomainException("order.item.duplicate_product", "La variante ya está en el pedido.");
+        }
+
+        return lines
+            .Select((line, index) => OrderItem.Create(
+                OrderItemId.New(), Id, line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
+                line.TaxPercentage, index + 1, Currency, PriceRounding, occurredAt))
+            .ToArray();
+    }
+
+    private bool SameItems(OrderItem[] candidates) =>
+        candidates.Length == _items.Count
+        && candidates.All(candidate => _items.Any(item => item.SameAs(candidate)));
+
+    private void ReplaceExternalLines(
+        OrderItem[] candidates, IReadOnlyCollection<OrderLineInput> lines, OrderLineCosts costs, DateTimeOffset occurredAt)
+    {
+        // El costo se busca antes de tocar una línea, para que un costo sin buscar no deje el pedido a medias (§4.3).
+        var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
+        var newCosts = sold
+            ? candidates
+                .Where(candidate => _items.All(item => item.VariantId != candidate.VariantId))
+                .ToDictionary(candidate => candidate.VariantId, candidate => costs.For(candidate.VariantId))
+            : [];
+        var inputs = lines.ToArray();
+        _items.RemoveAll(item => candidates.All(candidate => candidate.VariantId != item.VariantId));
+        for (var index = 0; index < candidates.Length; index++)
+        {
+            var candidate = candidates[index];
+            var input = inputs[index];
+            if (_items.FirstOrDefault(item => item.VariantId == candidate.VariantId) is { } kept)
+            {
+                kept.ApplyExternal(
+                    input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, index + 1, Currency,
+                    PriceRounding, occurredAt);
+                if (input.Product is { } snapshot)
+                {
+                    kept.CaptureProduct(snapshot);
+                }
+
+                continue;
+            }
+
+            if (input.Product is { } product)
+            {
+                candidate.CaptureProduct(product);
+            }
+
+            if (sold)
+            {
+                candidate.FreezeCost(newCosts[candidate.VariantId], occurredAt);
+            }
+
+            _items.Add(candidate);
+        }
+    }
+
+    // Spec 2026-11-10 §3.2: la regla de US-14 («al menos un comprobante salvo pago pendiente») ya no existe: el pago
+    // de un pedido interno sale de los comprobantes, así que sin ellos simplemente queda pendiente.
     private void AddProofs(
         IReadOnlyCollection<OrderPaymentProofInput> proofs, MemberId uploadedBy, DateTimeOffset occurredAt)
     {
-        if (proofs.Count == 0 && PaymentStatus != OrderPaymentStatus.PaymentPending && !IsExternal)
-        {
-            throw new QuotationsDomainException(
-                "order.order.payment_proof_required",
-                "At least one payment proof is required unless the payment status is pending.");
-        }
-
         foreach (var proof in proofs)
         {
             _paymentProofs.Add(OrderPaymentProof.Create(
@@ -1294,12 +2077,71 @@ public sealed class Order
     private static bool SameExceptCity(QuotationPartyDetails party, QuotationPartyDetails other) =>
         party with { DepartmentId = other.DepartmentId, CityId = other.CityId } == other;
 
-    private void EnsurePending(string message)
+    private void EnsureEditable(string message)
     {
-        if (Status != OrderStatus.Pending)
+        if (!IsEditable)
         {
-            throw new QuotationsDomainException(ExternalOrderErrors.NotPending, message);
+            throw new QuotationsDomainException(ExternalOrderErrors.NotEditable, message);
         }
+    }
+
+    private void EnsureOpen(string message)
+    {
+        if (Status != OrderStatus.Open)
+        {
+            throw new QuotationsDomainException(OrderStateErrors.NotOpen, message);
+        }
+    }
+
+    private void EnsureNotPrepared(string message)
+    {
+        if (IsPrepared)
+        {
+            throw new QuotationsDomainException(OrderStateErrors.AlreadyPrepared, message);
+        }
+    }
+
+    private void EnsureNotInvoiced(string message)
+    {
+        if (IsInvoiced)
+        {
+            throw new QuotationsDomainException(OrderStateErrors.AlreadyInvoiced, message);
+        }
+    }
+
+    private void EnsureNotCancelled(string message)
+    {
+        if (Status == OrderStatus.Cancelled)
+        {
+            throw new QuotationsDomainException(OrderStateErrors.AlreadyCancelled, message);
+        }
+    }
+
+    /// <summary>Lo que falta por cobrar contra el neto como lo muestra la moneda: positivo si falta, negativo si
+    /// sobra (spec 2026-11-10 §3.2).</summary>
+    public decimal Balance => DisplayedNetTotal - ProofsTotal;
+
+    private decimal ProofsTotal => _paymentProofs.Sum(proof => proof.Amount);
+
+    // El neto redondeado a lo que la moneda muestra: pesos enteros en COP, centavos en las demás (hotfix
+    // 2026-10-19). La retención se redondea a centavos y le deja al neto una fracción de peso que la pantalla no
+    // muestra —un neto de 116.529,37 se ve como $116.529—, así que quien cargaba lo que veía quedaba en pago
+    // parcial por 37 centavos. Mismo redondeo que roundToCurrencyPrecision del frontend.
+    private decimal DisplayedNetTotal => RoundAsDisplayed(NetTotal);
+
+    private decimal RoundAsDisplayed(decimal amount) =>
+        Math.Round(amount, Currency == "COP" ? 0 : 2, MidpointRounding.AwayFromZero);
+
+    // Spec 2026-11-10 §3.2: lo que dicen los comprobantes, comparado contra el neto que la moneda muestra. Nunca
+    // llega a FullPaymentReceived: eso sólo lo da «Marcar como pagado» o la plataforma.
+    private OrderPaymentStatus CalculatedPaymentStatus()
+    {
+        var proofsTotal = ProofsTotal;
+        return proofsTotal <= 0
+            ? OrderPaymentStatus.PaymentPending
+            : proofsTotal < DisplayedNetTotal
+                ? OrderPaymentStatus.PartialPaymentReceived
+                : OrderPaymentStatus.PendingVerification;
     }
 
     // Quién editó no se guarda por línea (el historial del pedido lo registra); el parámetro queda
@@ -1312,13 +2154,21 @@ public sealed class Order
         Version++;
     }
 
+    // Misma aritmética y misma regla de candidatas que la cotización (DocumentTotals, WithholdingCandidates): cada
+    // fila de la foto se liquida otra vez, también las que no aplican.
     private void RecalculateTotals()
     {
         var totals = DocumentTotals.Compute(
             _items.Select(item => item.Amounts),
             FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
-            AppliesRetention);
+            WithholdingCandidates.For(
+                _withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate),
+                BillsToFinalConsumer,
+                BillingAccount,
+                Currency,
+                OperationCityId));
+        DocumentWithholding.SettleAll(_withholdings, WithholdingSource.Document, totals.Withholdings);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;
         TaxAmount = totals.TaxAmount;
@@ -1329,6 +2179,9 @@ public sealed class Order
         FreightSubtotal = totals.FreightSubtotal;
         FreightTaxAmount = totals.FreightTaxAmount;
     }
+
+    private void ReplaceWithholdings(IReadOnlyList<WithholdingRate> rates) =>
+        DocumentWithholding.ReplaceSource(_withholdings, WithholdingSource.Document, rates);
 
     private void AssignParties(QuotationParties parties)
     {

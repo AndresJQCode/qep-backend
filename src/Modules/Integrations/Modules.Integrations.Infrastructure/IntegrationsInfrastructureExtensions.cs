@@ -1,9 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Integrations.Application;
 using Modules.Integrations.Application.Shopify;
+using Modules.Integrations.Infrastructure.Anthropic;
 using Modules.Integrations.Infrastructure.ExternalApi;
 using Modules.Integrations.Infrastructure.Meta;
 using Modules.Integrations.Infrastructure.Persistence;
@@ -89,6 +91,12 @@ public static class IntegrationsInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => ExternalApiUrlPolicy.CreateHandler())
             .RemoveAllLoggers();
         services.AddSingleton<IProviderConnectionTester, ExternalApiConnectionTester>();
+        // Plan 2026-11-12, C-2: el probador de la clave de Anthropic, con el patrón de Zenvia (sin redirecciones, 10 s, sin los loggers
+        // que pueden registrar el header x-api-key).
+        services.AddHttpClient(AnthropicConnectionTester.HttpClientName, AnthropicConnectionTester.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => AnthropicConnectionTester.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<IProviderConnectionTester, AnthropicConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production
@@ -124,9 +132,13 @@ public static class IntegrationsInfrastructureExtensions
             .RemoveAllLoggers();
         // Singleton: sus dependencias lo son, y el probador (singleton, como el registro de probadores) lo usa.
         services.AddSingleton<IShopifyAdminGateway, ShopifyAdminGateway>();
+        // El probador es singleton y no ve IClock (scoped): lee la hora del TimeProvider, el del sistema si nadie registró otro.
+        services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<IProviderConnectionTester, ShopifyConnectionTester>();
         // §9: las instalaciones vencidas se barren cada hora, con margen para el canje en vuelo.
         services.AddHostedService<ShopifyInstallSweeper>();
+        // Spec 2026-11-12 §6.2: el único escritor del token offline de cada tienda, cada 5 minutos.
+        services.AddHostedService<ShopifyTokenRefreshWorker>();
 
         return services;
     }

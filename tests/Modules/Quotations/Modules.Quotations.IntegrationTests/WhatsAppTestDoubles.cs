@@ -57,6 +57,22 @@ public sealed class RecordingWhatsAppSender : IWhatsAppSender
         }
     }
 
+    private readonly List<RecordedMessage> messages = [];
+
+    /// <summary>A quién salió cada mensaje (teléfono, nombre y ficha), en orden: lo que <see cref="Sent"/> no dice.</summary>
+    public IReadOnlyList<RecordedMessage> Messages
+    {
+        get
+        {
+            lock (gate)
+            {
+                return [.. messages];
+            }
+        }
+    }
+
+    public sealed record RecordedMessage(string DocumentNumber, string? ToPhone, string FullName, Guid? CustomerId);
+
     public IReadOnlyList<(WhatsAppChannel Channel, string DocumentNumber)> Sent
     {
         get
@@ -75,16 +91,25 @@ public sealed class RecordingWhatsAppSender : IWhatsAppSender
         WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
         Failure is { } failure
             ? Task.FromException(failure)
-            : Record(channel, message.OrderNumber, message.NumberFormat);
+            : Record(channel, message.OrderNumber, message.NumberFormat, message.ToPhone, message.FullName, message.CustomerId, "quotation");
 
     public Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
-        Record(channel, message.OrderNumber, message.NumberFormat);
+        Record(channel, message.OrderNumber, message.NumberFormat, message.ToPhone, message.FullName, message.CustomerId, "order");
 
-    private Task Record(WhatsAppChannel channel, string documentNumber, string? numberFormat)
+    // Como WhatsAppSenderRouter (el que corre de verdad): sin teléfono el envío nunca empezó, con el código del documento.
+    private Task Record(
+        WhatsAppChannel channel, string documentNumber, string? numberFormat, string? toPhone, string fullName, Guid? customerId, string prefix)
     {
+        if (WhatsAppPhone.Normalize(toPhone) is null)
+        {
+            return Task.FromException(new Modules.Quotations.Domain.QuotationsDomainException(
+                $"{prefix}.whatsapp.recipient_missing", "The recipient has no phone number."));
+        }
+
         lock (gate)
         {
+            messages.Add(new RecordedMessage(documentNumber, toPhone, fullName, customerId));
             sent.Add((channel, documentNumber));
             lastNumberFormat = numberFormat;
         }
