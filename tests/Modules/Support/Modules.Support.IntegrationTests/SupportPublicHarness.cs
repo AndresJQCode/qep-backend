@@ -142,7 +142,8 @@ internal static class SupportPublicHarness
             CompanyId.New(),
             Guid.Parse(tenantId),
             name,
-            [new CompanyBankAccount { BankName = "Bancolombia", AccountNumber = $"CTA-{Guid.CreateVersion7():N}", Currency = "COP" }],
+            // Cut to CompanyBankAccount's 32-character limit: "CTA-" plus a whole GUID is 36.
+            [new CompanyBankAccount { BankName = "Bancolombia", AccountNumber = $"CTA-{Guid.CreateVersion7():N}"[..32], Currency = "COP" }],
             taxId,
             Company.ColombiaCountryCode,
             CompanyDocumentType.Nit,
