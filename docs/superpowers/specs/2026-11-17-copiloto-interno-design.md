@@ -319,3 +319,5 @@ Backend antes que frontend. El frontend no muestra nada mientras `GET /status` r
 | OC-3 | Retención por defecto (propuesta 90 días, configurable 7..365). | Política de datos; Notion usa 30 días por defecto. |
 | OC-4 | ¿`copilot` es un módulo que se vende aparte, entra en algún plan o en `DefaultForNewTenants`? | Precio y empaquetado. |
 | OC-5 | Tratamiento de datos: ventas, clientes y préstamos del tenant viajan a la cuenta del proveedor que el tenant elige (BYOK). ¿Alcanza con los términos que cubran P-7 del spec de agentes o hace falta un aviso al habilitar? | Legal, no técnico (mismo tema que P-7). |
+
+> **Decisión del owner (2026-11-17):** el copiloto queda construido pero **apagado** (módulo `copilot` fuera de los nuevos tenants) y **sin fase 3**. No se invierte más hasta probarlo con uno o dos tenants reales. Motivo: las preguntas fijas («¿cuánto vendo este mes?») las resuelve mejor un reporte; el valor diferencial sería la guía de uso, que queda como idea, no como plan.
