@@ -58,7 +58,9 @@ internal sealed class AiProviderCredentials(IIntegrationConnections connections,
             }
 
             var listing = await FirstAsync(tenantId, provider, cancellationToken);
-            states.Add(new AiProviderConnectionState(provider, Connectable: true, listing?.Id, listing?.Status.ToString()));
+            // Plan 2026-11-17 A1: MarkVerified saca de NeedsAttention sin limpiar last_failure_code; fuera de ese estado sería un fallo viejo.
+            var failureCode = listing?.Status == ConnectionStatus.NeedsAttention ? listing.LastFailureCode : null;
+            states.Add(new AiProviderConnectionState(provider, Connectable: true, listing?.Id, listing?.Status.ToString(), failureCode));
         }
 
         return states;

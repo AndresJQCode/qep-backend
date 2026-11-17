@@ -26,10 +26,28 @@ public sealed class GetAiSettingsHandlerTests
 
         Assert.Equal(
             [
-                new AiProviderSettingsDto("anthropic", Connectable: true, connection, "Active"),
-                new AiProviderSettingsDto("openai", Connectable: false, null, null),
+                new AiProviderSettingsDto("anthropic", Connectable: true, connection, "Active", FailureCode: null),
+                new AiProviderSettingsDto("openai", Connectable: false, null, null, FailureCode: null),
             ],
             settings.Providers);
+    }
+
+    // Plan 2026-11-17 A1 (F-3): la pantalla distingue «sin saldo» de «clave rechazada» sin cruzar con Integraciones.
+    [Fact]
+    public async Task TheSettingsCarryTheFailureCodeOfEachProvider()
+    {
+        var anthropic = Guid.CreateVersion7();
+        var openAi = Guid.CreateVersion7();
+        var credentials = new FakeCredentials(
+        [
+            new AiProviderConnectionState(AiProviders.Anthropic, Connectable: true, anthropic, "NeedsAttention", FailureCode: "quota_exhausted"),
+            new AiProviderConnectionState(AiProviders.OpenAi, Connectable: true, openAi, "NeedsAttention", FailureCode: "credentials_rejected"),
+        ]);
+
+        var settings = await new GetAiSettingsHandler(new FakeExecutionContext(Tenant, AiPermissions.AgentRead), AllModules(), credentials)
+            .HandleAsync(new GetAiSettingsQuery(Tenant), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["quota_exhausted", "credentials_rejected"], settings.Providers.Select(provider => provider.FailureCode));
     }
 
     [Fact]

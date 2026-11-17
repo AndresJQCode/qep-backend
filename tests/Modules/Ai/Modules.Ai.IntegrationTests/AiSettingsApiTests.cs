@@ -27,7 +27,7 @@ public sealed class AiSettingsApiTests
 
         Assert.NotNull(settings);
         Assert.Equal(
-            [new AiProviderSettingsDto("anthropic", true, null, null), new AiProviderSettingsDto("openai", true, null, null)],
+            [new AiProviderSettingsDto("anthropic", true, null, null, null), new AiProviderSettingsDto("openai", true, null, null, null)],
             settings.Providers);
     }
 
@@ -61,7 +61,7 @@ public sealed class AiSettingsApiTests
         var body = await BodyAsync(response);
         var settings = JsonSerializer.Deserialize<AiSettingsDto>(body, JsonSerializerOptions.Web);
         Assert.NotNull(settings);
-        Assert.Equal(new AiProviderSettingsDto("openai", true, connection.GetProperty("id").GetGuid(), "Active"), settings.Providers[1]);
+        Assert.Equal(new AiProviderSettingsDto("openai", true, connection.GetProperty("id").GetGuid(), "Active", null), settings.Providers[1]);
         Assert.DoesNotContain("SENTINEL", body, StringComparison.Ordinal);
         Assert.DoesNotContain("SENTINEL", connection.GetRawText(), StringComparison.Ordinal);
     }
@@ -96,10 +96,51 @@ public sealed class AiSettingsApiTests
         var settings = JsonSerializer.Deserialize<AiSettingsDto>(body, JsonSerializerOptions.Web);
         Assert.NotNull(settings);
         Assert.Equal(
-            new AiProviderSettingsDto("anthropic", true, connection.GetProperty("id").GetGuid(), "Active"),
+            new AiProviderSettingsDto("anthropic", true, connection.GetProperty("id").GetGuid(), "Active", null),
             settings.Providers[0]);
         Assert.DoesNotContain("SENTINEL", body, StringComparison.Ordinal);
         Assert.DoesNotContain("SENTINEL", connection.GetRawText(), StringComparison.Ordinal);
+    }
+
+    // Plan 2026-11-17 A1 (F-3): la conexión que el proveedor rechazó muestra su motivo; una prueba exitosa la devuelve a Active y el motivo
+    // deja de viajar, aunque Integrations no limpie last_failure_code al verificar.
+    [Fact]
+    public async Task ARejectedKeyShowsItsFailureCodeAndAVerifiedOneDoesNot()
+    {
+        var anthropic = new FakeAnthropicHandler(ApiKey);
+        var database = await StartDatabaseAsync();
+        await using var _ = database;
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(),
+            services => services.AddHttpClient(AnthropicTesterClient).ConfigurePrimaryHttpMessageHandler(() => anthropic));
+        await SeedTenantAsync(factory);
+        using var manager = CreateClient(factory, permissions: [.. ConnectionManage, AiPermissions.AgentRead]);
+        manager.DefaultRequestHeaders.Add("X-Qep-Client", "web");
+        var ct = TestContext.Current.CancellationToken;
+
+        var created = await manager.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/integrations/connections",
+            new { providerKey = "anthropic", name = "Cuenta de Anthropic", fields = new { }, secrets = new { apiKey = ApiKey } },
+            ct);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var connectionId = (await created.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("id").GetGuid();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IAiProviderCredentials>()
+                .MarkNeedsAttentionAsync(Guid.Parse(TenantId), connectionId, AiCredentialFailures.QuotaExhausted, ct);
+        }
+
+        var rejected = await manager.GetFromJsonAsync<AiSettingsDto>($"{AiUrl()}/settings", ct);
+        Assert.Equal(
+            new AiProviderSettingsDto("anthropic", true, connectionId, "NeedsAttention", AiCredentialFailures.QuotaExhausted),
+            rejected!.Providers[0]);
+
+        var tested = await manager.PostAsync($"/api/v1/tenants/{TenantId}/integrations/connections/{connectionId}/test", null, ct);
+        Assert.Equal(HttpStatusCode.OK, tested.StatusCode);
+
+        var verified = await manager.GetFromJsonAsync<AiSettingsDto>($"{AiUrl()}/settings", ct);
+        Assert.Equal(new AiProviderSettingsDto("anthropic", true, connectionId, "Active", null), verified!.Providers[0]);
     }
 
     // C-2: una clave que Anthropic rechaza no se guarda.

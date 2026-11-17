@@ -117,6 +117,26 @@ public sealed class AiProviderCredentialsTests
             states);
     }
 
+    // Plan 2026-11-17 A1: Integrations no limpia last_failure_code al verificar (IntegrationConnection.MarkVerified), así que el código
+    // sólo viaja mientras la conexión está en NeedsAttention; en una conexión sana sería un fallo viejo.
+    [Theory]
+    [InlineData(ConnectionStatus.NeedsAttention, "quota_exhausted")]
+    [InlineData(ConnectionStatus.Active, null)]
+    [InlineData(ConnectionStatus.Paused, null)]
+    public async Task DescribeCarriesTheFailureCodeOnlyWhileTheConnectionNeedsAttention(ConnectionStatus status, string? expected)
+    {
+        var id = Guid.CreateVersion7();
+        var connections = new StubConnections
+        {
+            Listings = { ["anthropic"] = [new ConnectionListing(id, "Anthropic", status, LastFailureCode: "quota_exhausted")] },
+        };
+
+        var states = await new AiProviderCredentials(connections, new StubReporter()).DescribeAsync(TenantId, Ct);
+
+        Assert.Equal(new AiProviderConnectionState(AiProviders.Anthropic, Connectable: true, id, status.ToString(), FailureCode: expected), states[0]);
+        Assert.Null(states[1].FailureCode);
+    }
+
     // Tarea 6: OpenAI es un proveedor de Integrations con la misma forma; su clave se resuelve igual, de su propia conexión.
     [Fact]
     public async Task ResolveReturnsTheKeyOfTheActiveOpenAiConnection()
