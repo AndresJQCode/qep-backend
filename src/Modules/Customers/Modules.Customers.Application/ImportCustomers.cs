@@ -204,6 +204,7 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
 public sealed class ImportCustomersHandler(
     ICustomerRepository customerRepository,
     ICustomerCompanyDirectory companyDirectory,
+    ICustomerTagRepository tags,
     IClientClassificationRepository classificationRepository,
     ICustomerGeographyLookup geographyLookup,
     ICustomerTaxRateLookup taxRateLookup,
@@ -297,13 +298,17 @@ public sealed class ImportCustomersHandler(
             // fila sólo se escribe si todo lo suyo —incluida su empresa— ya está decidido, así ninguna queda a medias.
             var (eligible, loaded) = await LoadUpdateTargetsAsync(
                 command.TenantId, candidates, errors, cancellationToken);
+            // Las etiquetas se deciden antes que los vínculos de empresa: una fila que cae por etiquetas no puede ser la empresa
+            // de otra fila del archivo, y el plan de empresas ya trabaja sólo con filas que se van a escribir.
+            var (taggable, tagPlan) = await PlanTagsAsync(command.TenantId, eligible, errors, cancellationToken);
             var (writable, links) = await PlanCompanyLinksAsync(
-                command.TenantId, eligible, loaded, ownersByNumber, errors, cancellationToken);
+                command.TenantId, taggable, loaded, ownersByNumber, errors, cancellationToken);
             var written = await CreateOrUpdateCustomersAsync(
                 command.TenantId, writable, loaded, parsed.WithholdingColumns ?? CustomerImportColumns.WithholdingTypes, now,
                 cancellationToken);
             imported = written.Imported;
             var companyChanged = ApplyCompanyLinks(links, written.CustomersByRow, now);
+            var tagsCreated = ApplyTags(command.TenantId, tagPlan, written.CustomersByRow, now);
 
             // Un solo evento por el import completo, no uno por cliente: mil clientes importados de
             // una vez no deben dejar mil filas en el outbox. Los conteos van en el resourceId porque
@@ -315,7 +320,7 @@ public sealed class ImportCustomersHandler(
                 command.TenantId,
                 executionContext.SubjectId,
                 "customers.customer.imported",
-                $"{fileName} (imported={imported.Count}, errors={errors.Count}, companyChanged={companyChanged})",
+                $"{fileName} (imported={imported.Count}, errors={errors.Count}, companyChanged={companyChanged}, tagsCreated={tagsCreated})",
                 "success",
                 now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -1141,6 +1146,134 @@ public sealed class ImportCustomersHandler(
     /// sube, no se confirma la transacción y no queda nada escrito.
     /// </summary>
     /// <returns>Cuántos vínculos cambiaron, para el evento de la importación.</returns>
+    // El nombre del campo como lo serializa la fila (CustomerImportRowData.Tags en camelCase), igual que CompanyField: es la
+    // celda que el frontend resalta en la fila a corregir.
+    private const string TagsField = "tags";
+
+    /// <summary>
+    /// Qué etiquetas suma cada fila (spec 2026-11-17), decidido para todo el archivo antes de escribir nada: las que ya existen
+    /// en el tenant (sin distinguir mayúsculas) se asignan; las que no, se crean una sola vez aunque varias filas las traigan. Una
+    /// fila que dejaría al cliente con más de <see cref="CustomerTagAssignment.MaxPerCustomer"/> etiquetas, o que necesite crear
+    /// una por encima de <see cref="Tag.MaxPerTenant"/>, falla con su código y no se escribe. Nunca quita una etiqueta.
+    /// </summary>
+    private async Task<(List<CandidateRow> Writable, List<TagPlanRow> Plan)> PlanTagsAsync(
+        Guid tenantId,
+        List<CandidateRow> eligible,
+        List<ImportRowError> errors,
+        CancellationToken cancellationToken)
+    {
+        var withCell = eligible.Where(candidate => candidate.TagNames.Count > 0).ToArray();
+        if (withCell.Length == 0)
+        {
+            return (eligible, []);
+        }
+
+        var existingByName = (await tags.ListAsync(tenantId, cancellationToken))
+            .Select(item => item.Tag)
+            .ToDictionary(tag => tag.Name, StringComparer.OrdinalIgnoreCase);
+
+        var targets = withCell
+            .Where(candidate => candidate.TargetId.HasValue)
+            .Select(candidate => candidate.TargetId!.Value)
+            .Distinct()
+            .ToArray();
+        var currentByCustomer = (await tags.ListForCustomersAsync(tenantId, targets, cancellationToken))
+            .GroupBy(row => row.Customer)
+            .ToDictionary(group => group.Key, group => group.Select(row => row.Tag.Id).ToHashSet());
+
+        var rejected = new HashSet<int>();
+        void Reject(CandidateRow row, string suffix, string message)
+        {
+            rejected.Add(row.RowNumber);
+            errors.Add(new ImportRowError(row.RowNumber, "customers.import.row." + suffix, message, TagsField, ToRowData(row.SourceRow)));
+        }
+
+        var tentative = new List<TagPlanRow>(withCell.Length);
+        foreach (var row in withCell)
+        {
+            var current = row.TargetId is { } id && currentByCustomer.TryGetValue(id, out var set) ? set : [];
+            var toAssign = new List<TagId>();
+            var toCreate = new List<string>();
+            foreach (var name in row.TagNames)
+            {
+                if (existingByName.TryGetValue(name, out var tag))
+                {
+                    if (!current.Contains(tag.Id))
+                    {
+                        toAssign.Add(tag.Id);
+                    }
+                }
+                else
+                {
+                    toCreate.Add(name);
+                }
+            }
+
+            if (current.Count + toAssign.Count + toCreate.Count > CustomerTagAssignment.MaxPerCustomer)
+            {
+                Reject(row, "tag_limit_per_customer", $"A customer cannot have more than {CustomerTagAssignment.MaxPerCustomer} tags.");
+                continue;
+            }
+
+            tentative.Add(new TagPlanRow(row.RowNumber, toAssign, toCreate));
+        }
+
+        // El tope del tenant cuenta las que el propio archivo va creando. Las filas entran en orden hasta donde alcanza; las que
+        // necesitan una etiqueta nueva que ya no cabe fallan, y la que sólo usa existentes o ya aceptadas sigue entrando.
+        var tenantCount = await tags.CountAsync(tenantId, cancellationToken);
+        var allowedNew = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var plan = new List<TagPlanRow>(tentative.Count);
+        var byRow = eligible.ToDictionary(candidate => candidate.RowNumber);
+        foreach (var entry in tentative)
+        {
+            var pending = entry.ToCreate.Where(name => !allowedNew.Contains(name)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (tenantCount + allowedNew.Count + pending.Length > Tag.MaxPerTenant)
+            {
+                Reject(byRow[entry.RowNumber], "tag_limit_reached", $"A tenant cannot have more than {Tag.MaxPerTenant} tags.");
+                continue;
+            }
+
+            allowedNew.UnionWith(pending);
+            plan.Add(entry);
+        }
+
+        return (eligible.Where(candidate => !rejected.Contains(candidate.RowNumber)).ToList(), plan);
+    }
+
+    /// <summary>Crea las etiquetas nuevas (una por nombre, en tipo oración) y agrega las asignaciones del plan. Devuelve cuántas creó.</summary>
+    private int ApplyTags(Guid tenantId, List<TagPlanRow> plan, Dictionary<int, Customer> customersByRow, DateTimeOffset now)
+    {
+        var createdByName = new Dictionary<string, TagId>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in plan)
+        {
+            var customer = customersByRow[entry.RowNumber];
+            foreach (var tagId in entry.ToAssign)
+            {
+                tags.AddAssignment(CustomerTagAssignment.Create(customer.Id, tagId, tenantId, executionContext.SubjectId, now));
+            }
+
+            foreach (var name in entry.ToCreate)
+            {
+                if (!createdByName.TryGetValue(name, out var tagId))
+                {
+                    var tag = Tag.Create(TagId.New(), tenantId, TagNameFormat.SentenceCase(name), TagColor.Gray, now);
+                    tags.Add(tag);
+                    auditPublisher.Publish(
+                        tenantId, executionContext.SubjectId, CustomerAuditActions.TagCreated, tag.Id.ToString(), "success", now);
+                    tagId = tag.Id;
+                    createdByName[name] = tagId;
+                }
+
+                tags.AddAssignment(CustomerTagAssignment.Create(customer.Id, tagId, tenantId, executionContext.SubjectId, now));
+            }
+        }
+
+        return createdByName.Count;
+    }
+
+    /// <summary>Lo que una fila suma: etiquetas existentes que el cliente aún no tiene y nombres de etiquetas por crear.</summary>
+    private sealed record TagPlanRow(int RowNumber, IReadOnlyList<TagId> ToAssign, IReadOnlyList<string> ToCreate);
+
     private static int ApplyCompanyLinks(
         List<CompanyLink> links, Dictionary<int, Customer> customersByRow, DateTimeOffset now)
     {
@@ -1262,6 +1395,9 @@ public sealed class ImportCustomersHandler(
         /// <summary>El número de la columna «Empresa», recortado; null si la celda venía vacía o el archivo no trae la columna.</summary>
         public string? CompanyNumber =>
             string.IsNullOrWhiteSpace(SourceRow.CompanyIdentificationNumber) ? null : SourceRow.CompanyIdentificationNumber.Trim();
+
+        /// <summary>Los nombres de la celda «Etiquetas», con la misma lectura que el validador de la fila.</summary>
+        public IReadOnlyList<string> TagNames => ExcelTagCell.Parse(SourceRow.Tags);
     }
 }
 
