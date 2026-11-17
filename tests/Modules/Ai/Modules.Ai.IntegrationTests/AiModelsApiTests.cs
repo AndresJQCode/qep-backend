@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Ai.Application;
 using Modules.Tenancy.Domain;
 using static Modules.Ai.IntegrationTests.AiApiHarness;
@@ -31,6 +32,36 @@ public sealed class AiModelsApiTests
         Assert.Equal(["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"], openAi.Models.Select(model => model.Id));
         Assert.Equal("gpt-6-luna", Assert.Single(openAi.Models, model => model.IsDefault).Id);
         Assert.All(openAi.Models, model => Assert.True(model.Available));
+    }
+
+    // Plan 2026-11-17 A2 (C-3): con la clave de Anthropic activa y sin la de OpenAI, el selector sabe cuál se puede usar y por qué no la otra.
+    [Fact]
+    public async Task TheModelsSayWhichProviderIsConfiguredAndTheIssueOfTheOther()
+    {
+        const string apiKey = "sk-ant-api03-SENTINEL-p2Rw";
+        var anthropic = new FakeAnthropicHandler(apiKey);
+        var database = await StartDatabaseAsync();
+        await using var _ = database;
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(),
+            services => services.AddHttpClient(AnthropicTesterClient).ConfigurePrimaryHttpMessageHandler(() => anthropic));
+        await SeedTenantAsync(factory);
+        using var manager = CreateClient(
+            factory, permissions: ["integrations.connection.read", "integrations.connection.manage", AiPermissions.AgentRead]);
+        manager.DefaultRequestHeaders.Add("X-Qep-Client", "web");
+        var ct = TestContext.Current.CancellationToken;
+
+        var created = await manager.PostAsJsonAsync(
+            $"/api/v1/tenants/{AiApiHarness.TenantId}/integrations/connections",
+            new { providerKey = "anthropic", name = "Cuenta de Anthropic", fields = new { }, secrets = new { apiKey } },
+            ct);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+
+        var catalog = await manager.GetFromJsonAsync<AiModelCatalogDto>($"{AiUrl()}/models", ct);
+
+        Assert.Equal(
+            [("anthropic", true, (string?)null), ("openai", false, "not_configured")],
+            catalog!.Providers.Select(provider => (provider.Provider, provider.Configured, provider.Issue)));
     }
 
     // El esfuerzo es de la llamada al proveedor, no de la pantalla.

@@ -5,7 +5,12 @@ namespace Modules.Ai.Application;
 /// <summary>Arma la lista y el editor de agentes, y la validación del borrador con lo que saben otros módulos (conexiones, miembros,
 /// lista de modelos). Un solo lugar para que el <c>GET</c>, el guardado y la publicación digan lo mismo.</summary>
 public sealed class AgentEditorBuilder(
-    IAiConnections connections, IAgentConnectionSlots slots, IAiMembers members, IAiModelCatalog catalog, IAiQuotationAdvisors advisors)
+    IAiConnections connections,
+    IAgentConnectionSlots slots,
+    IAiMembers members,
+    IAiModelCatalog catalog,
+    IAiQuotationAdvisors advisors,
+    IAiProviderCredentials credentials)
 {
     private const string WhatsApp = "WhatsApp";
 
@@ -86,7 +91,7 @@ public sealed class AgentEditorBuilder(
             LiveConnectionIds(agent, liveIds),
             selectable,
             [.. assignable.Select(member => new AiMemberDto(member.Id, member.Name))],
-            ModelCatalog.ToDto(catalog),
+            ModelCatalog.ToDto(catalog, await credentials.DescribeAsync(agent.TenantId, cancellationToken)),
             [.. quoting.Select(member => new AiMemberDto(member.Id, member.Name))]);
     }
 

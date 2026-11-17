@@ -27,6 +27,34 @@ public sealed class ListAiModelsHandlerTests
         Assert.False(Assert.Single(result.Providers[1].Models).Available);
     }
 
+    // Plan 2026-11-17 A2 (C-3, F-3): cada proveedor dice si se puede usar y, si no, por qué; una fila por estado de la conexión.
+    [Theory]
+    [InlineData(true, "Active", null, true, null)]
+    [InlineData(true, null, null, false, "not_configured")]
+    [InlineData(false, null, null, false, "not_configured")]
+    [InlineData(true, "Paused", null, false, "paused")]
+    [InlineData(true, "NeedsAttention", "quota_exhausted", false, "quota_exhausted")]
+    [InlineData(true, "NeedsAttention", "credentials_rejected", false, "credentials_rejected")]
+    [InlineData(true, "NeedsAttention", null, false, "needs_attention")]
+    [InlineData(true, "NeedsAttention", "", false, "needs_attention")]
+    public async Task EachProviderSaysWhetherItIsConfiguredAndWhy(
+        bool connectable, string? status, string? failureCode, bool configured, string? issue)
+    {
+        var credentials = new FakeAiProviderCredentials(
+        [
+            new AiProviderConnectionState(
+                AiProviders.Anthropic, connectable, status is null ? null : Guid.CreateVersion7(), status, failureCode),
+            new AiProviderConnectionState(AiProviders.OpenAi, Connectable: true, null, null),
+        ]);
+
+        var result = await Handler(new FakeExecutionContext(Tenant, AiPermissions.AgentRead), credentials: credentials)
+            .HandleAsync(new ListAiModelsQuery(Tenant), TestContext.Current.CancellationToken);
+
+        Assert.Equal((configured, issue), (result.Providers[0].Configured, result.Providers[0].Issue));
+        Assert.Equal((false, "not_configured"), (result.Providers[1].Configured, result.Providers[1].Issue));
+        Assert.Equal(1, credentials.DescribeCalls);
+    }
+
     [Fact]
     public async Task AnotherTenantIsDenied()
     {
@@ -55,8 +83,13 @@ public sealed class ListAiModelsHandlerTests
         Assert.Equal(TenantModuleGuard.ModuleNotEnabledCode, error.Code);
     }
 
-    private static ListAiModelsHandler Handler(IExecutionContext context, ITenantModules? modules = null) =>
-        new(context, modules ?? new FakeTenantModules(TenantModuleSet.FromStored(TenantModuleKeys.All)), new FakeCatalog());
+    private static ListAiModelsHandler Handler(
+        IExecutionContext context, ITenantModules? modules = null, IAiProviderCredentials? credentials = null) =>
+        new(
+            context,
+            modules ?? new FakeTenantModules(TenantModuleSet.FromStored(TenantModuleKeys.All)),
+            new FakeCatalog(),
+            credentials ?? new FakeAiProviderCredentials([]));
 
     private sealed class FakeCatalog : IAiModelCatalog
     {
@@ -81,6 +114,24 @@ internal sealed class FakeExecutionContext(Guid tenantId, params string[] permis
     public Modules.Tenancy.Domain.TenantId TenantId { get; } = new(tenantId);
 
     public bool HasPermission(string permission) => permissions.Contains(permission);
+}
+
+/// <summary>Los estados de conexión de cada proveedor, sin claves: lo que <c>GET /ai/models</c> y el editor leen una vez por request.</summary>
+internal sealed class FakeAiProviderCredentials(IReadOnlyList<AiProviderConnectionState> states) : IAiProviderCredentials
+{
+    public int DescribeCalls { get; private set; }
+
+    public Task<IReadOnlyList<AiProviderConnectionState>> DescribeAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        DescribeCalls++;
+        return Task.FromResult(states);
+    }
+
+    public Task<AiCredentialResolution> ResolveAsync(Guid tenantId, AiProvider provider, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task MarkNeedsAttentionAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class FakeTenantModules(TenantModuleSet? set) : ITenantModules

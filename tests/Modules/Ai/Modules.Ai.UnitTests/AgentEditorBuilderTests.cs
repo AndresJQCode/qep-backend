@@ -80,11 +80,36 @@ public sealed class AgentEditorBuilderTests
         Assert.Equal([advisor], advisors.Asked);
     }
 
+    // Plan 2026-11-17 A2: el selector de modelo del editor dice lo mismo que GET /ai/models, con la misma lectura de las conexiones.
+    [Fact]
+    public async Task TheEditorModelsCarryTheProviderIssue()
+    {
+        var credentials = new FakeAiProviderCredentials(
+        [
+            new AiProviderConnectionState(AiProviders.Anthropic, Connectable: true, Guid.CreateVersion7(), "Active"),
+            new AiProviderConnectionState(AiProviders.OpenAi, Connectable: true, Guid.CreateVersion7(), "NeedsAttention", "permission_denied"),
+        ]);
+
+        var editor = await Builder(new FakeConnections(), credentials: credentials).BuildAsync(NewAgent(), Ct);
+
+        Assert.Equal(
+            [("anthropic", true, (string?)null), ("openai", false, "permission_denied")],
+            editor.Models.Providers.Select(provider => (provider.Provider, provider.Configured, provider.Issue)));
+        Assert.Equal(1, credentials.DescribeCalls);
+    }
+
     private static Agent NewAgent() =>
         Agent.Create(Tenant, "Asesor virtual", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now);
 
-    private static AgentEditorBuilder Builder(IAiConnections connections, FakeAdvisors? advisors = null) =>
-        new(connections, new FakeSlots(), new FakeMembers(), new FakeModelCatalog(), advisors ?? new FakeAdvisors(canQuote: true));
+    private static AgentEditorBuilder Builder(
+        IAiConnections connections, FakeAdvisors? advisors = null, FakeAiProviderCredentials? credentials = null) =>
+        new(
+            connections,
+            new FakeSlots(),
+            new FakeMembers(),
+            new FakeModelCatalog(),
+            advisors ?? new FakeAdvisors(canQuote: true),
+            credentials ?? new FakeAiProviderCredentials([]));
 
     private sealed class FakeAdvisors(bool canQuote, params AiMemberRef[] members) : IAiQuotationAdvisors
     {
