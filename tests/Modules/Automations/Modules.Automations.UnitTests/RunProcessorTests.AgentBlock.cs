@@ -187,6 +187,24 @@ public sealed partial class RunProcessorTests
         Assert.Equal(["No pudimos (module_disabled)"], bed.Messenger.Texts);
     }
 
+    // §6.5: mientras el agente conversa la corrida no se mueve; la inactividad la decide el bloque (D-B11), no el barrido de 24 h.
+    [Fact]
+    public async Task ADelegatedRunIsNeverAbandoned()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var run = DelegatedRun(now.AddHours(-30));
+        var bed = new Bed(null, ActiveState(), flow: AgentFlow);
+        bed.Runs.Added.Add(run);
+
+        var abandoned = await bed.Processor().AbandonAsync(
+            new AbandonedRun(TenantId, ConversationId, run.Id), now, TestContext.Current.CancellationToken);
+
+        Assert.False(abandoned);
+        Assert.True(run.ToState().IsDelegated);
+        Assert.Equal(0, bed.Conversations.Ended);
+        Assert.Empty(bed.Audit.Actions);
+    }
+
     // D-B14: la señal de la toma humana (bot_kind = 1) cierra la corrida delegada sin salir por ninguna salida.
     [Fact]
     public async Task TakingOverDuringTheDelegationInterruptsTheRunWithoutAnyOutput()

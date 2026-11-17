@@ -283,7 +283,10 @@ public sealed partial class RunProcessor(
         }
 
         var run = await runs.FindLiveForUpdateAsync(candidate.TenantId, candidate.ConversationId, cancellationToken);
-        if (run is null || run.Id != candidate.RunId || run.Status != RunStatus.Waiting || run.UpdatedAt >= now - AbandonAfter)
+        // Spec 2026-11-17 §6.5: una corrida delegada no se mueve mientras el agente conversa; su inactividad la decide el bloque (D-B11).
+        // ClaimAbandonedAsync ya la excluye; esta es la misma pregunta bajo el lock.
+        if (run is null || run.Id != candidate.RunId || run.Status != RunStatus.Waiting || run.UpdatedAt >= now - AbandonAfter
+            || run.ToState().IsDelegated)
         {
             return false;
         }

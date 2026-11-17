@@ -139,4 +139,46 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal(2L, await ReleaseRowsAsync(f));
         Assert.Empty(f.Meta.Sends());
     }
+
+    // §6.5: mientras el agente conversa la corrida no se mueve; a las 24 h el barrido la daría por abandonada con la conversación en manos
+    // del agente.
+    [Fact]
+    public async Task TheAbandonSweepSkipsADelegatedRunOlderThan24Hours()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (f, _) = await ArrangeAgentBlockAsync(database);
+        using var fixture = f;
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        await ExecuteAsync(f.ConnectionString, "UPDATE automations.conversation_runs SET updated_at = now() - interval '30 hours'");
+
+        await SweepAutomationsAsync(f.Host, DateTimeOffset.UtcNow);
+
+        Assert.Equal("Waiting|delegated", await RunAsync(f, "status || '|' || (trace->-1->>'outcome')"));
+        Assert.Equal("Active|2", await ConversationAsync(f, "automation_status || '|' || automation_bot_kind"));
+        Assert.Equal(0L, await AuditAsync(f, "automations.run.abandoned"));
+    }
+
+    // D-B16: con automations apagado la sesión del agente termina igual; el retorno encuentra el motor apagado y la conversación vuelve a None.
+    [Fact]
+    public async Task WithAutomationsOffTheReturnStandsTheConversationDown()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (f, _) = await ArrangeAgentBlockAsync(database);
+        using var fixture = f;
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        await DisableModuleAsync(f.ConnectionString, f.Tenant.TenantId, "automations");
+        f.Host.Services.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>()
+            .Remove(Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus.CacheKey(f.Tenant.TenantId));
+
+        await ReturnFromAgentAsync(f, """{"output":"done","reason":"objective_completed","summary":"Listo"}""");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Empty(f.Meta.Sends());
+        Assert.Equal("Interrupted", await RunAsync(f, "status"));
+        Assert.Equal("Open|None", await ConversationAsync(f, "status || '|' || automation_status"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.automation_inbox WHERE kind = 'AgentReturned' AND outcome = 'skipped'"));
+    }
 }
