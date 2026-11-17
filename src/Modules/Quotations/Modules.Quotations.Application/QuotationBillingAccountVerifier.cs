@@ -3,10 +3,20 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>La cuenta tal como la tiene la empresa hoy (no como la escribió quien llamó), con el país y el municipio de la
-/// empresa, que el documento congela con ella.</summary>
+/// <summary>La cuenta tal como la tiene la empresa hoy (no como la escribió quien llamó), con el país, el municipio y el
+/// IVA de la empresa, que el documento congela con ella. Banco y número nulos los dos es «empresa sin cuenta» (spec
+/// 2026-11-17, R3).</summary>
 public sealed record VerifiedBillingAccount(
-    Guid CompanyId, string BankName, string AccountNumber, string Currency, string Country, Guid? CityId = null);
+    Guid CompanyId,
+    string? BankName,
+    string? AccountNumber,
+    string Currency,
+    string Country,
+    Guid? CityId = null,
+    bool ChargesVat = true)
+{
+    public bool HasBankAccount => BankName is not null;
+}
 
 /// <summary>
 /// La ÚNICA comprobación de que una cuenta de cobro es de la empresa y del tenant: moneda del catálogo primero, empresa del
@@ -14,6 +24,9 @@ public sealed record VerifiedBillingAccount(
 /// cotizaciones y los pedidos y el adaptador de la tienda pública, así que una cuenta que la tienda acepta es, por construcción,
 /// una que el pedido acepta al «Tomar». Lanza <see cref="QuotationsDomainException"/> con
 /// <see cref="CompanyNotFoundCode"/> o <see cref="AccountNotFoundCode"/>.
+///
+/// Sin banco ni número (los dos en blanco) no busca cuenta: es una empresa sin cuenta (spec 2026-11-17 §4.2), y la moneda
+/// que devuelve es la que pasó quien llama, porque ya no sale de una cuenta.
 /// </summary>
 public static class QuotationBillingAccountVerifier
 {
@@ -44,6 +57,12 @@ public static class QuotationBillingAccountVerifier
             throw new QuotationsDomainException(CompanyNotFoundCode, $"Company '{companyId}' was not found in this tenant.");
         }
 
+        if (string.IsNullOrWhiteSpace(bankName) && string.IsNullOrWhiteSpace(accountNumber))
+        {
+            return new VerifiedBillingAccount(
+                company.Id, null, null, normalizedCurrency, company.Country, company.CityId, company.ChargesVat);
+        }
+
         var account = company.BankAccounts.FirstOrDefault(candidate =>
             string.Equals(candidate.BankName, bankName?.Trim(), StringComparison.OrdinalIgnoreCase)
             && candidate.AccountNumber == accountNumber?.Trim()
@@ -54,6 +73,12 @@ public static class QuotationBillingAccountVerifier
         }
 
         return new VerifiedBillingAccount(
-            company.Id, account.BankName, account.AccountNumber, normalizedCurrency, company.Country, company.CityId);
+            company.Id,
+            account.BankName,
+            account.AccountNumber,
+            normalizedCurrency,
+            company.Country,
+            company.CityId,
+            company.ChargesVat);
     }
 }

@@ -98,10 +98,10 @@ public sealed class Order
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
-        // La misma regla que Quotation: la cuenta fija la moneda y, sin ella, manda la del encabezado, que
-        // Application llena con la moneda por defecto del tenant. Sólo el cálculo previo llega acá sin cuenta, o con una
-        // cuenta pendiente (sólo la empresa, spec 2026-11-16), que tampoco fija la moneda.
-        Currency = BillingAccount is { IsPending: false } account ? account.Currency : header.Currency;
+        // La misma regla que Quotation: la cuenta fija la moneda y, sin ella, manda la del encabezado. Sin cuenta
+        // bancaria (empresa sola, spec 2026-11-17 R3) la moneda la decide quien llama: la por defecto del tenant en un
+        // pedido manual, la de la cotización al convertir, la de la tienda o la del pedido de origen.
+        Currency = BillingAccount is { HasBankAccount: true } account ? account.Currency : header.Currency;
         Status = OrderStatus.Open;
         FulfillmentStatus = OrderFulfillmentStatus.NotPrepared;
         // Null = lo calculan los comprobantes, que se agregan después (ver CalculatedPaymentStatus).
@@ -201,8 +201,15 @@ public sealed class Order
 
     /// <summary>Null sólo en un cálculo previo (<see cref="Preview"/>): la pantalla de «Nuevo pedido» precia
     /// la línea antes de que se elija la empresa que factura. Un pedido guardado siempre la tiene:
-    /// <see cref="FromQuotation"/>, <see cref="CreateManual"/> y <see cref="CreateExternal"/> la exigen.</summary>
+    /// <see cref="FromQuotation"/>, <see cref="CreateManual"/> y <see cref="CreateExternal"/> la exigen. Desde el spec
+    /// 2026-11-17 (R3) puede ser sólo la empresa, con banco y número nulos.</summary>
     public QuotationBillingAccount? BillingAccount { get; private set; }
+
+    /// <summary>
+    /// Si lo que emite este pedido lleva IVA (spec 2026-11-17 §5.2): el de la empresa congelado con la cuenta. No se
+    /// relee de la empresa: un pedido emitido no cambia de IVA porque la empresa cambie después.
+    /// </summary>
+    public bool ChargesVat => BillingAccount?.ChargesVat ?? true;
 
     /// <summary>
     /// El municipio de la operación (spec ReteICA por empresa §7.5), el mismo concepto que en la cotización: decide qué
@@ -415,7 +422,7 @@ public sealed class Order
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
-                "A quotation must have a billing account before it can be converted to an order.");
+                "A quotation must have a billing company before it can be converted to an order.");
         }
 
         var header = new OrderHeader(

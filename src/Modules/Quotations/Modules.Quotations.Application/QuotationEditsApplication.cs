@@ -55,8 +55,8 @@ internal static class QuotationEditsApplication
         CancellationToken cancellationToken,
         MunicipalContext? municipal = null)
     {
-        // A company without account (previews only, spec 2026-11-16) resolves to a pending account in the quotation's own
-        // currency: it paints the company's withholdings and never reprices the lines.
+        // Una empresa sin cuenta (spec 2026-11-17, R3) sale en la moneda de la propia cotización: elegir sólo la empresa
+        // nunca reprecia las líneas.
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
             companyLookup, tenantId, edits.BillingAccount, edits.BillingCompanyId, quotation.Currency, cancellationToken);
 

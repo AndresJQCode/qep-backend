@@ -162,8 +162,9 @@ public sealed class OrdersExportProcessor(
             ? new Dictionary<Guid, QuotationVariantRef>()
             : await productLookup.FindManyAsync(tenantId, variantIds, cancellationToken);
 
-        // Un pedido guardado siempre tiene cuenta de cobro: sólo el cálculo previo nace sin ella, y no se
-        // guarda (Order.Preview). De ahí el `!` acá y en RowsFor.
+        // Un pedido guardado siempre tiene empresa emisora: sólo el cálculo previo nace sin ella, y no se
+        // guarda (Order.Preview). De ahí el `!` acá y en RowsFor. La cuenta bancaria sí puede faltar (spec
+        // 2026-11-17, R3): ver RowsFor.
         var companyIds = batch.Select(order => order.BillingAccount!.CompanyId).Distinct().ToArray();
         var companies = new Dictionary<Guid, QuotationCompanyRef>();
         foreach (var companyId in companyIds)
@@ -291,8 +292,10 @@ public sealed class OrdersExportProcessor(
             _ => string.Empty,
         });
         var cashOnDelivery = ExportCell.OfText(order.CashOnDelivery ? "Sí" : "No");
-        var bank = order.BillingAccount.BankName;
-        var account = order.BillingAccount.AccountNumber;
+        // Una empresa sin cuenta (spec 2026-11-17 §4.2) deja vacías las celdas del banco, del número y de
+        // payment_method_N: el ERP no recibe una cuenta que no existe.
+        var bank = order.BillingAccount.BankName ?? string.Empty;
+        var account = order.BillingAccount.AccountNumber ?? string.Empty;
         var bankAndAccount = BankAndAccount(bank, account);
         var proofCells = Enumerable.Range(0, PaymentDateColumns)
             .SelectMany(index => ProofCells(proofs, index, publisher))

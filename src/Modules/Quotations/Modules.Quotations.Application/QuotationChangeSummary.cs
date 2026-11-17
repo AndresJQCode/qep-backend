@@ -323,9 +323,13 @@ public static class QuotationChangeSummary
     /// número completo repetido en cada fila.
     /// </summary>
     private static string MaskAccount(QuotationBillingAccountSummary account) =>
-        account.AccountNumber.Length <= 4
-            ? $"{account.BankName} {account.Currency}"
-            : $"{account.BankName} ···{account.AccountNumber[^4..]} {account.Currency}";
+        account.AccountNumber switch
+        {
+            // Empresa sin cuenta (spec 2026-11-17, R3).
+            null => $"sin cuenta {account.Currency}",
+            { Length: <= 4 } => $"{account.BankName} {account.Currency}",
+            var number => $"{account.BankName} ···{number[^4..]} {account.Currency}",
+        };
 
     /// <summary>Varias frases en una sola fila del historial, recortada al ancho de la columna.</summary>
     public static string Combine(IEnumerable<string> parts) => Trim(string.Join(" ", parts));
@@ -406,6 +410,6 @@ public sealed record QuotationHeaderSnapshot(
 /// comparación entre antes y después sea por valor, y para que el enmascarado tenga sus partes
 /// separadas en vez de un texto ya armado.</summary>
 public sealed record QuotationBillingAccountSummary(
-    string BankName,
-    string AccountNumber,
+    string? BankName,
+    string? AccountNumber,
     string Currency);

@@ -236,8 +236,8 @@ public static class QuotationPdfDocumentMapper
                 CompanyDocumentLabels.For(account.CompanyDocumentType),
                 account.CompanyAddress ?? string.Empty,
                 account.CompanyPhone ?? string.Empty,
-                account.BankName,
-                account.AccountNumber,
+                account.BankName ?? string.Empty,
+                account.AccountNumber ?? string.Empty,
                 account.Currency)
             : null;
 

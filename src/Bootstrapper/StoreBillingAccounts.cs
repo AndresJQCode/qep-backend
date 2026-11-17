@@ -49,7 +49,9 @@ internal sealed class StoreBillingAccounts(IQuotationCompanyLookup lookup, IComp
             throw new ResourceNotFoundException(exception.Code, exception.Message);
         }
 
-        // Se guarda la cuenta como la tiene la empresa, no como la escribió el cliente HTTP.
-        return new StoreBillingAccount(account.CompanyId, account.BankName, account.AccountNumber, account.Currency.ToUpperInvariant());
+        // Se guarda la cuenta como la tiene la empresa, no como la escribió el cliente HTTP. El validador de la tienda
+        // todavía exige banco y número, así que el verificador siempre devuelve una cuenta acá.
+        return new StoreBillingAccount(
+            account.CompanyId, account.BankName!, account.AccountNumber!, account.Currency.ToUpperInvariant());
     }
 }

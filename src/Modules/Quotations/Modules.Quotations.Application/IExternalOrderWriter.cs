@@ -243,10 +243,13 @@ public sealed class ExternalOrderService(
 
         var customer = await customerLookup.FindAsync(draft.TenantId, draft.ClientId, cancellationToken);
         OrderCustomerEligibility.Ensure(customer, draft.TenantId, draft.ClientId, allowIncomplete: true);
+        // Sin cuenta bancaria (spec 2026-11-17, R3/R7) la moneda es la del pedido de origen: la integración la manda en
+        // la cuenta del borrador.
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
-                companyLookup, draft.TenantId, draft.BillingAccount, cancellationToken)
+                companyLookup, draft.TenantId, draft.BillingAccount, draft.BillingAccount.Currency ?? string.Empty,
+                cancellationToken)
             ?? throw new QuotationsDomainException(
-                "order.billing.account_required", "An order needs a billing account.");
+                "order.billing.account_required", "An order needs a billing company.");
 
         // La foto de la variante se toma del catálogo; el precio no: es el que cobró la plataforma.
         var products = await productLookup.FindManyAsync(

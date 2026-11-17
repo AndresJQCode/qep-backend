@@ -184,8 +184,8 @@ internal static class OrderWithholdingEdits
         CancellationToken cancellationToken)
     {
         // Con cuerpo, el resolver siempre devuelve la cuenta validada contra la empresa (o lanza).
-        // A company without account (preview only) resolves to a pending account in the order's own currency: an order
-        // never changes currency (plan P10), and the pending account must not trip that rule.
+        // Una empresa sin cuenta (spec 2026-11-17, R3) sale en la moneda del propio pedido: un pedido nunca cambia de
+        // moneda (plan P10), y la cuenta sin banco no puede tropezar con esa regla.
         var account = await QuotationBillingAccountResolver.ResolveAsync(
             context.CompanyLookup, context.TenantId, edits.BillingAccount, edits.BillingCompanyId, order.Currency,
             cancellationToken);

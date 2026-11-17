@@ -301,31 +301,32 @@ public sealed record QuotationPartyDto(
 /// guardada, no lo que la empresa tenga hoy.</summary>
 public sealed record QuotationBillingAccountDto(
     Guid CompanyId,
-    string BankName,
-    string AccountNumber,
+    /// <summary>Null, junto con <c>AccountNumber</c>, en una empresa sin cuenta (spec 2026-11-17 §4.2): la pantalla
+    /// pinta «Pago: por definir».</summary>
+    string? BankName,
+    string? AccountNumber,
     string Currency,
     /// <summary>El país de la empresa congelado con la cuenta: decide qué tipos municipales se explican (spec ReteICA por
     /// empresa §9.4) sin volver a Companies.</summary>
     string? Country = null,
     /// <summary>El municipio de la empresa congelado con la cuenta (<c>billing_company_city_id</c>, A12); null en un
     /// documento anterior que todavía no reenvió la cuenta.</summary>
-    Guid? CityId = null,
-    /// <summary>The company of a preview without its bank account yet (spec 2026-11-16 withholdings by company): it feeds
-    /// the withholding explanation and the composers answer no billing account for it. Never serialised: the HTTP
-    /// contract only ever sees a real account or null.</summary>
-    [property: JsonIgnore] bool IsPending = false);
+    Guid? CityId = null);
 
 /// <summary>
 /// La cuenta elegida, tal como viaja en el request. Llegan los cuatro campos y no sólo el id de
 /// la empresa porque una <c>CompanyBankAccount</c> no tiene identidad propia: la terna
 /// banco/número/moneda es lo único que la distingue dentro de su empresa. El handler la verifica
 /// contra las cuentas de esa empresa antes de copiarla — el cuerpo lo escribe el cliente.
+///
+/// Banco y número nulos los dos es «empresa sin cuenta» (spec 2026-11-17, R3); ahí la moneda la decide el documento y
+/// <c>Currency</c> se ignora.
 /// </summary>
 public sealed record QuotationBillingAccountRequest(
     Guid CompanyId,
-    string BankName,
-    string AccountNumber,
-    string Currency);
+    string? BankName,
+    string? AccountNumber,
+    string? Currency);
 
 /// <summary>Los datos de una parte tal como viajan en el request (US-6). Cada campo null es
 /// "para éste, el del cliente".
@@ -928,8 +929,9 @@ public sealed record QuotationBillingResponse(
     /// <summary>Membrete del PDF, no congelado: ver <see cref="QuotationCompanyRef"/>.</summary>
     string? CompanyAddress,
     string? CompanyPhone,
-    string BankName,
-    string AccountNumber,
+    /// <summary>Null, junto con <c>AccountNumber</c>, en una empresa sin cuenta (spec 2026-11-17 §4.2).</summary>
+    string? BankName,
+    string? AccountNumber,
     string Currency);
 
 public sealed record QuotationPartyResponse(
