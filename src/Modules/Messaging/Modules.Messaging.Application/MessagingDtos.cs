@@ -226,8 +226,13 @@ public sealed record MessageDto(
 public sealed record AgentRefDto(Guid Id, string Name);
 
 /// <summary>Spec 2026-10-29 §4.4 (BFF): el bot que atiende o atendió la conversación, para que el chip distinga «Agente IA» de «Chatbot» sin
-/// cruzar con otra pantalla. <c>Kind</c> es <c>chatbot</c> o <c>agent</c>.</summary>
-public sealed record AutomationBotDto(string Kind, Guid Id, string Name);
+/// cruzar con otra pantalla. <c>Kind</c> es <c>chatbot</c> o <c>agent</c>. Spec 2026-11-17 §7: <c>DelegatedBy</c> es el chatbot que le
+/// pasó la conversación al agente por un bloque del flujo, para que el chip diga «Agente IA · desde el chatbot X»; <c>null</c> si el agente
+/// atiende la conexión por su cuenta o el bot es un chatbot.</summary>
+public sealed record AutomationBotDto(string Kind, Guid Id, string Name, AutomationDelegatedByDto? DelegatedBy = null);
+
+/// <summary>Spec 2026-11-17 §7: el chatbot que delegó, con «Chatbot» si ya no existe.</summary>
+public sealed record AutomationDelegatedByDto(Guid ChatbotId, string Name);
 
 /// <summary>Un contacto que el cliente compartió desde su agenda (<c>messages[].contacts</c> de Meta). BFF: la burbuja del asesor
 /// necesita los números y correos para llamar o escribir; antes de esto sólo se veía el nombre, que viaja en <c>text</c>.

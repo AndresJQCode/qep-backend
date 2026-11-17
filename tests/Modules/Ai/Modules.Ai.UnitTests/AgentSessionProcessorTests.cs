@@ -835,6 +835,12 @@ public sealed class AgentSessionProcessorTests
 
     internal sealed class FakeConversations : IAiConversations
     {
+        public Task<AiDelegation?> ReadDelegationAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task ReturnToChatbotAsync(Guid tenantId, Guid conversationId, Guid delegationId, string resultJson, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public AiConversationState? State { get; set; }
 
         public Guid? StartedAgent { get; private set; }

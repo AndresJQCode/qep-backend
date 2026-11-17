@@ -118,6 +118,12 @@ public sealed class ChatbotLiveRunsTests
 
     private sealed class Conversations : IAutomationConversations
     {
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         private readonly Dictionary<Guid, AutomationConversationState> byId = [];
 
         public int Reads { get; private set; }

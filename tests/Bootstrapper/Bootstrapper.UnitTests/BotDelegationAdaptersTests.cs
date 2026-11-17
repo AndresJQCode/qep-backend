@@ -1,0 +1,279 @@
+using System.Reflection;
+using BuildingBlocks.Application;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Modules.Automations.Application;
+using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
+
+namespace Bootstrapper.UnitTests;
+
+/// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3, §6.1 y §6.3: los adaptadores de la delegación escriben la delegación, la
+/// conversación y la fila de la cola en <b>un</b> guardado de Mensajería, con las reglas del agregado. Lo de la base (índice, CHECK) se prueba
+/// en <c>BotDelegationPersistenceTests</c>.</summary>
+public sealed class BotDelegationAdaptersTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 11, 17, 12, 0, 0, TimeSpan.Zero);
+    private static readonly Guid ChatbotId = Guid.CreateVersion7();
+    private static readonly Guid AgentId = Guid.CreateVersion7();
+    private const string Brief = """{"objective":"Resuelve dudas","context":"","firstTurn":"lastMessage","idleMinutes":60}""";
+    private const string Result = """{"output":"done","reason":"objective_completed","summary":"Listo"}""";
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private static Conversation ChatbotConversation()
+    {
+        var conversation = Conversation.Start(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "573001234567", "Laura", Now);
+        conversation.StartAutomation(ChatbotId, Now);
+        return conversation;
+    }
+
+    [Fact]
+    public async Task DelegatingWritesTheDelegationTheConversationAndTheDelegatedRowInOneSave()
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var inbound = Guid.CreateVersion7();
+        var runId = Guid.CreateVersion7();
+
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(runId, ChatbotId, "ai-agent-1", AgentId, inbound, Brief), Ct);
+
+        Assert.Equal(delegationId, conversation.AutomationDelegationId);
+        Assert.Equal(BotKind.Agent, conversation.AutomationBotKind);
+        var delegation = Assert.Single(world.Delegations);
+        Assert.Equal(
+            (delegationId, conversation.Id, conversation.ConnectionId, ChatbotId, runId, "ai-agent-1", AgentId, (Guid?)inbound, Brief, BotDelegationStatus.Live),
+            (delegation.Id, delegation.ConversationId, delegation.ConnectionId, delegation.ChatbotId, delegation.RunId, delegation.NodeId,
+                delegation.AgentId, delegation.LastInboundMessageId, delegation.Brief, delegation.Status));
+        Assert.Equal([$"{AutomationInboxKinds.Delegated} {delegationId}"], world.Queued);
+        Assert.Equal(
+            new ConversationEvent(ConversationEventType.AutomationDelegated, ChatbotId: ChatbotId, ChatbotName: "Ventas", AgentId: AgentId, AgentName: "Asesor IA"),
+            Assert.Single(world.Events));
+        Assert.Equal([MessagingAuditActions.AutomationDelegated], world.Audits);
+        Assert.Equal(1, world.Saves);
+    }
+
+    [Fact]
+    public async Task DelegatingAConversationAPersonTookThrowsTheDomainError()
+    {
+        var conversation = ChatbotConversation();
+        conversation.Take(Guid.CreateVersion7(), Now);
+        var world = new World(conversation);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct));
+
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, error.Code);
+        Assert.Empty(world.Delegations);
+        Assert.Empty(world.Queued);
+        Assert.Equal(0, world.Saves);
+    }
+
+    [Fact]
+    public async Task ReturningWritesTheResultReturnsTheChatbotAndQueuesAgentReturnedTogether()
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct);
+        world.Reset();
+
+        await world.Ai().ReturnToChatbotAsync(conversation.TenantId, conversation.Id, delegationId, Result, Ct);
+
+        var delegation = Assert.Single(world.Delegations);
+        Assert.Equal(BotDelegationStatus.Returned, delegation.Status);
+        Assert.Equal(Result, delegation.Result);
+        Assert.Equal(BotKind.Chatbot, conversation.AutomationBotKind);
+        Assert.Equal(ChatbotId, conversation.AutomationChatbotId);
+        Assert.Null(conversation.AutomationDelegationId);
+        Assert.Equal([$"{AutomationInboxKinds.AgentReturned} {delegationId}"], world.Queued);
+        Assert.Equal(
+            new ConversationEvent(
+                ConversationEventType.AutomationReturned, ChatbotId: ChatbotId, ChatbotName: "Ventas", AgentId: AgentId, AgentName: "Asesor IA",
+                Output: "done"),
+            Assert.Single(world.Events));
+        Assert.Equal([MessagingAuditActions.AutomationReturned], world.Audits);
+        Assert.Equal(1, world.Saves);
+    }
+
+    [Fact]
+    public async Task ReturningADelegationAPersonInterruptedThrowsAndWritesNothing()
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct);
+        conversation.Take(Guid.CreateVersion7(), Now.AddMinutes(1));
+        world.Delegations[0].Interrupt(Now.AddMinutes(1));
+        world.Reset();
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(
+            () => world.Ai().ReturnToChatbotAsync(conversation.TenantId, conversation.Id, delegationId, Result, Ct));
+
+        Assert.Equal(MessagingErrorCodes.DelegationNotLive, error.Code);
+        Assert.Empty(world.Queued);
+        Assert.Equal(0, world.Saves);
+        Assert.Equal(BotDelegationStatus.Interrupted, world.Delegations[0].Status);
+    }
+
+    [Fact]
+    public async Task ReturningTheDelegationOfAnotherConversationThrows()
+    {
+        var conversation = ChatbotConversation();
+        var other = Conversation.Start(Guid.CreateVersion7(), conversation.TenantId, conversation.ConnectionId, "573009999999", "Ana", Now);
+        var world = new World(conversation, other);
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct);
+        world.Reset();
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(
+            () => world.Ai().ReturnToChatbotAsync(conversation.TenantId, other.Id, delegationId, Result, Ct));
+
+        Assert.Equal(MessagingErrorCodes.DelegationNotLive, error.Code);
+
+        Assert.Equal(BotDelegationStatus.Live, world.Delegations[0].Status);
+        Assert.Equal(0, world.Saves);
+    }
+
+    [Fact]
+    public async Task BothSidesReadTheDelegationAsItIs()
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var inbound = Guid.CreateVersion7();
+        var runId = Guid.CreateVersion7();
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(runId, ChatbotId, "ai-agent-1", AgentId, inbound, Brief), Ct);
+
+        var forAi = await world.Ai().ReadDelegationAsync(conversation.TenantId, delegationId, Ct);
+        Assert.NotNull(forAi);
+        Assert.Equal((conversation.Id, conversation.ConnectionId, ChatbotId, runId, AgentId, (Guid?)inbound, Brief, "Live"),
+            (forAi.ConversationId, forAi.ConnectionId, forAi.ChatbotId, forAi.RunId, forAi.AgentId, forAi.LastInboundMessageId, forAi.BriefJson, forAi.Status));
+        Assert.True(forAi.IsLive);
+
+        await world.Ai().ReturnToChatbotAsync(conversation.TenantId, conversation.Id, delegationId, Result, Ct);
+        var forAutomations = await world.Automations().ReadDelegationResultAsync(conversation.TenantId, delegationId, Ct);
+
+        Assert.NotNull(forAutomations);
+        Assert.Equal((delegationId, conversation.Id, ChatbotId, runId, "ai-agent-1", "Returned", (string?)Result),
+            (forAutomations.DelegationId, forAutomations.ConversationId, forAutomations.ChatbotId, forAutomations.RunId, forAutomations.NodeId,
+                forAutomations.Status, forAutomations.ResultJson));
+        Assert.Null(await world.Automations().ReadDelegationResultAsync(Guid.CreateVersion7(), delegationId, Ct));
+        Assert.Null(await world.Ai().ReadDelegationAsync(conversation.TenantId, Guid.CreateVersion7(), Ct));
+    }
+
+    /// <summary>Mensajería en memoria: una conversación, las delegaciones y lo que cada adaptador agregó antes de guardar.</summary>
+    private sealed class World
+    {
+        private readonly Conversation conversation;
+        private readonly ServiceProvider provider;
+
+        public World(Conversation conversation, params Conversation[] others)
+        {
+            this.conversation = conversation;
+            Conversation[] all = [conversation, .. others];
+            var services = new ServiceCollection();
+            services.AddScoped(_ => Stub<IConversationRepository>((method, args) => method.Name == nameof(IConversationRepository.FindAsync)
+                ? Task.FromResult(all.SingleOrDefault(value => value.TenantId == (Guid)args![0]! && value.Id == (Guid)args[1]!))
+                : throw new NotSupportedException(method.Name)));
+            services.AddScoped(_ => Stub<IAutomationsChatbotNames>((_, args) =>
+                Task.FromResult<IReadOnlyDictionary<Guid, string>>(((IReadOnlyCollection<Guid>)args![1]!)
+                    .Where(id => id == ChatbotId || id == AgentId)
+                    .Distinct()
+                    .ToDictionary(id => id, id => id == ChatbotId ? "Ventas" : "Asesor IA"))));
+            services.AddScoped<IBotDelegationRepository>(_ => new MemoryDelegations(Delegations));
+            services.AddScoped(_ => Stub<IAutomationInbox>((method, args) =>
+            {
+                if (method.Name is nameof(IAutomationInbox.EnqueueDelegated) or nameof(IAutomationInbox.EnqueueAgentReturned))
+                {
+                    Queued.Add($"{(method.Name == nameof(IAutomationInbox.EnqueueDelegated) ? AutomationInboxKinds.Delegated : AutomationInboxKinds.AgentReturned)} {args![3]}");
+                    return null;
+                }
+
+                throw new NotSupportedException(method.Name);
+            }));
+            services.AddScoped(_ => Stub<IConversationEvents>((_, args) =>
+            {
+                Events.Add((ConversationEvent)args![3]!);
+                return null;
+            }));
+            services.AddScoped(_ => Stub<IMessagingAuditRecorder>((method, args) =>
+            {
+                Audits.Add(method.Name == nameof(IMessagingAuditRecorder.RecordBySystem) ? (string)args![1]! : throw new NotSupportedException(method.Name));
+                return null;
+            }));
+            services.AddScoped(_ => Stub<IMessagingUnitOfWork>((method, _) =>
+            {
+                Saves++;
+                return method.Name == nameof(IMessagingUnitOfWork.SaveChangesAsync) ? Task.FromResult(1) : throw new NotSupportedException(method.Name);
+            }));
+            services.AddScoped(_ => Stub<IMessagingNotifier>((_, _) => Task.CompletedTask));
+            services.AddSingleton<IClock>(new FixedClock(Now));
+            provider = services.BuildServiceProvider();
+        }
+
+        public List<BotDelegation> Delegations { get; } = [];
+
+        public List<string> Queued { get; } = [];
+
+        public List<ConversationEvent> Events { get; } = [];
+
+        public List<string> Audits { get; } = [];
+
+        public int Saves { get; private set; }
+
+        public void Reset()
+        {
+            Queued.Clear();
+            Events.Clear();
+            Audits.Clear();
+            Saves = 0;
+        }
+
+        public AutomationConversations Automations() => new AutomationConversations(
+            provider.GetRequiredService<IServiceScopeFactory>(), Unused<IConversationQueries>(), Unused<IConversationRepository>(),
+            Unused<IMessagingNotifier>(), NullLogger<AutomationConversations>.Instance);
+
+        public AiConversations Ai() => new AiConversations(
+            provider.GetRequiredService<IServiceScopeFactory>(), Unused<IConversationQueries>(), null!, new FixedClock(Now),
+            NullLogger<AiConversations>.Instance);
+
+        public override string ToString() => conversation.Id.ToString();
+    }
+
+    private sealed class MemoryDelegations(List<BotDelegation> delegations) : IBotDelegationRepository
+    {
+        public Task<BotDelegation?> FindAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            Task.FromResult(delegations.SingleOrDefault(value => value.TenantId == tenantId && value.Id == delegationId));
+
+        public void Add(BotDelegation delegation) => delegations.Add(delegation);
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : IClock
+    {
+        public DateTimeOffset UtcNow => now;
+    }
+
+    private static T Stub<T>(Func<MethodInfo, object?[]?, object?> handler)
+        where T : class
+    {
+        var proxy = DispatchProxy.Create<T, StubProxy>();
+        ((StubProxy)(object)proxy).Handler = handler;
+        return proxy;
+    }
+
+    private static T Unused<T>()
+        where T : class => Stub<T>((method, _) => throw new NotSupportedException($"{typeof(T).Name}.{method.Name}"));
+
+    public class StubProxy : DispatchProxy
+    {
+        internal Func<MethodInfo, object?[]?, object?> Handler { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            ArgumentNullException.ThrowIfNull(targetMethod);
+            return Handler(targetMethod, args);
+        }
+    }
+}

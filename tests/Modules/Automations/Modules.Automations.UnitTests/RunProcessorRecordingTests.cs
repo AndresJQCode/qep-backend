@@ -406,6 +406,12 @@ public sealed class RunProcessorRecordingTests
 
     private sealed class Conversations(AutomationConversationState? state) : IAutomationConversations
     {
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));

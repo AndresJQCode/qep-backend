@@ -252,6 +252,35 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                 ("id", surveyId)));
     }
 
+    // Spec 2026-11-17 (agente IA en chatbots) §8: la delegación guarda el contexto interpolado del flujo (puede traer el nombre del cliente)
+    // y se va con la conversación. La de otra conversación del tenant se queda.
+    [Fact]
+    public async Task DeletingACustomerTakesItsBotDelegations()
+    {
+        var tenant = Guid.CreateVersion7();
+        var customer = await InsertCustomerAsync(tenant, Name, Phone);
+        var bystander = await InsertCustomerAsync(tenant, "Sofía", "+573009998877");
+        var conversation = await InsertConversationAsync(tenant, customer, blocked: false);
+        var otherConversation = await InsertConversationAsync(tenant, bystander, blocked: false);
+        const string Insert =
+            """
+            INSERT INTO messaging.bot_delegations (id, tenant_id, conversation_id, connection_id, chatbot_id, run_id, node_id, agent_id, brief,
+                status, result, started_at, ended_at)
+            VALUES (gen_random_uuid(), @tenant, @conversation, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'ai-agent-1',
+                gen_random_uuid(), '{"objective":"x","context":"Se llama Ana"}', 'Returned', '{"output":"done"}', now(), now())
+            """;
+        await ExecuteAsync(Insert, ("tenant", tenant), ("conversation", conversation));
+        await ExecuteAsync(Insert, ("tenant", tenant), ("conversation", otherConversation));
+
+        var deletion = await DeleteAsync(tenant, [customer]);
+
+        Assert.Empty(deletion.Blockers);
+        Assert.Equal(0L, await ScalarAsync(
+            "SELECT count(*) FROM messaging.bot_delegations WHERE conversation_id = @id", ("id", conversation)));
+        Assert.Equal(1L, await ScalarAsync(
+            "SELECT count(*) FROM messaging.bot_delegations WHERE conversation_id = @id", ("id", otherConversation)));
+    }
+
     // P11: la audiencia nunca queda vacía (CK_campaigns_audience). Si el cliente era lo único, el id se queda.
     [Fact]
     public async Task ADraftCampaignWhoseOnlyAudienceIsTheCustomerKeepsTheId()

@@ -31,7 +31,7 @@ namespace Bootstrapper;
 /// (<c>ticket_id</c>, <c>message_id</c>, <c>rating_message_id</c>, <c>comment_message_id</c>, <c>prompt_message_id</c>,
 /// <c>updated_at</c>); en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
 /// <c>blocked_at</c>), <c>messages</c> (<c>conversation_id</c>, <c>direction</c>), <c>message_media.storage_key</c>,
-/// <c>scheduled_messages.media_storage_key</c>, <c>automation_inbox.conversation_id</c>, <c>campaign_recipients</c>
+/// <c>scheduled_messages.media_storage_key</c>, <c>automation_inbox.conversation_id</c>, <c>bot_delegations.conversation_id</c>, <c>campaign_recipients</c>
 /// (<c>customer_id</c>, <c>conversation_id</c>, <c>message_id</c>, <c>status</c>, <c>failure_code</c>, <c>failure_reason</c>) y
 /// <c>campaigns</c> (<c>audience_customer_ids</c>, <c>audience_tag_ids</c>, <c>status</c>, <c>version</c>); en
 /// <c>automations</c>: <c>conversation_runs</c>, <c>run_units.run_id</c> y <c>http_calls.run_id</c>; en <c>ai</c>:
@@ -227,6 +227,11 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
             """, cancellationToken);
         await database.ExecuteSqlAsync($"""
             DELETE FROM messaging.automation_inbox WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
+            """, cancellationToken);
+        // Spec 2026-11-17 §8: la delegación guarda el contexto interpolado del flujo (puede traer el nombre del cliente) y se va con la
+        // conversación. Sin FK a conversations: va a mano.
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM messaging.bot_delegations WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
             """, cancellationToken);
 
         // Los agentes de IA de estas conversaciones (sesiones, turnos, trabajos y llamadas a herramientas, que guardan los pedidos y las

@@ -113,8 +113,10 @@ public sealed class ConversationSummaryBuilder(
         var reasons = reasonIds.Length == 0 ? null : await reasonNames.FindAsync(tenantId, reasonIds, cancellationToken);
         // Spec 2026-10-21 D-M14: los nombres de los chatbots, una consulta por respuesta para todas las conversaciones con asistente.
         // Spec 2026-10-29 §4.4: el mismo diccionario trae el nombre del agente de IA que atiende.
+        // Spec 2026-11-17 §7: y el del chatbot que delegó en ese agente.
         var chatbotIds = rows.Where(row => row.AutomationStatus != ConversationAutomationStatus.None)
-            .Select(row => row.AutomationChatbotId ?? row.AutomationAgentId).OfType<Guid>().Distinct().ToArray();
+            .SelectMany(row => new[] { row.AutomationChatbotId ?? row.AutomationAgentId, row.DelegatedByChatbotId })
+            .OfType<Guid>().Distinct().ToArray();
         var chatbots = chatbotIds.Length == 0 ? null : await chatbotNames.ResolveAsync(tenantId, chatbotIds, cancellationToken);
         return rows.Select(row => ToSummary(row, names, tagged, taggedByPhone, resolvedNames, me, reasons, chatbots)).ToArray();
     }
@@ -179,7 +181,11 @@ public sealed class ConversationSummaryBuilder(
 
         if (row.AutomationBotKind == BotKind.Agent && row.AutomationAgentId is { } agentId)
         {
-            return new AutomationBotDto("agent", agentId, botNames?.GetValueOrDefault(agentId) ?? MessageMapping.DeletedAgentName);
+            return new AutomationBotDto(
+                "agent", agentId, botNames?.GetValueOrDefault(agentId) ?? MessageMapping.DeletedAgentName,
+                row.DelegatedByChatbotId is { } chatbot
+                    ? new AutomationDelegatedByDto(chatbot, botNames?.GetValueOrDefault(chatbot) ?? MessageMapping.DeletedChatbotName)
+                    : null);
         }
 
         return row.AutomationChatbotId is { } chatbotId

@@ -233,10 +233,12 @@ public interface IAutomationBusinessHours
 /// <summary>Spec 2026-10-21 §5.1: una fila reclamada de <c>messaging.automation_inbox</c>. <see cref="Opened"/> (D-M16) dice que el
 /// entrante abrió o reabrió la conversación; <see cref="Attempts"/> ya cuenta el reclamo que la devolvió y es el testigo con que se cierra.
 /// Spec 2026-11-03 D-4: <see cref="ReleaseRun"/> marca la señal «una persona tomó la conversación», que sólo cierra la corrida viva del bot
-/// (nunca arranca ni avanza nada); <see cref="CreatedAt"/> es entonces el instante de la señal y <see cref="MessageId"/> no es un mensaje.</summary>
+/// (nunca arranca ni avanza nada); <see cref="CreatedAt"/> es entonces el instante de la señal y <see cref="MessageId"/> no es un mensaje.
+/// Spec 2026-11-17 §6.3: <see cref="DelegationId"/> sólo lo trae la fila <c>AgentReturned</c> (el agente devolvió la conversación): no es un
+/// entrante ni un arranque manual, aunque tampoco tenga mensaje.</summary>
 public sealed record InboundQueueItem(
     Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts,
-    bool ReleaseRun = false);
+    bool ReleaseRun = false, Guid? DelegationId = null);
 
 /// <summary><see cref="Stored"/>: la copia a R2 ya terminó; mientras sea <c>false</c> el adjunto no se puede servir ni reenviar.</summary>
 public sealed record InboundAttachment(string MimeType, string? FileName, bool Stored);
@@ -334,6 +336,33 @@ public interface IAutomationConversations
     /// <summary>D-M14: <c>Active → None</c>, sin evento. Si el asistente ya no está activo (terminó, lo pausó una persona o la
     /// conversación se resolvió) no hace nada.</summary>
     Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3 y §6.1: el chatbot le pasa la conversación al agente del bloque. En un solo
+    /// guardado de Mensajería: la delegación <c>Live</c>, la conversación <c>Active</c> con el agente (sin pasar por <c>None</c> y sin tocar el
+    /// arranque) y la fila <c>Delegated</c> de la cola de agentes. Devuelve el id de la delegación. Si la conversación ya no es del chatbot
+    /// (una persona la tomó entre el claim y el efecto) sale la excepción de dominio de Mensajería, como cualquier otro efecto.</summary>
+    Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 §6.3: la delegación como está, para retomar con la fila <c>AgentReturned</c>; <c>null</c> si no existe o es
+    /// de otro tenant. Sin seguimiento.</summary>
+    Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: lo que el motor manda al delegar. <see cref="NodeId"/> es el id del bloque
+/// <c>aiAgent</c> (hasta 64). <see cref="LastInboundMessageId"/> (D-B7) es el entrante que llevó la corrida hasta el bloque, <c>null</c> sin
+/// entrante. <see cref="BriefJson"/> es <c>{objective, context, firstTurn, idleMinutes}</c> con el contexto ya interpolado: lo arma
+/// Automations y lo lee Ai; Mensajería no lo interpreta.</summary>
+public sealed record DelegationRequest(Guid RunId, Guid ChatbotId, string NodeId, Guid AgentId, Guid? LastInboundMessageId, string BriefJson);
+
+/// <summary>Spec 2026-11-17 §6.3: la delegación leída por el motor. <see cref="Status"/> es <c>Live</c>, <c>Returned</c> o
+/// <c>Interrupted</c> (los nombres del enum de Mensajería). <see cref="ResultJson"/>, sólo con <c>Returned</c>, es
+/// <c>{output, reason, summary?, quotationNumber?, advisorMemberId?}</c>, escrito por Ai.</summary>
+public sealed record DelegationResult(
+    Guid DelegationId, Guid ConversationId, Guid ChatbotId, Guid RunId, string NodeId, Guid AgentId, string Status, string? ResultJson)
+{
+    public const string Live = "Live";
+    public const string Returned = "Returned";
+    public const string Interrupted = "Interrupted";
 }
 
 /// <summary>Cómo terminó un envío del bot (D-I4). <see cref="NotAutomated"/>: la conversación ya no es del bot (resuelta, con asesor o

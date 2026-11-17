@@ -41,9 +41,11 @@ public sealed record AiConversationState(
 public sealed record AiThreadMessage(Guid Id, AgentTurnKind Kind, string? Text);
 
 /// <summary>Spec 2026-10-29 §6.1 y §6.2: una fila <c>bot_kind = 2</c> de <c>messaging.automation_inbox</c>. <c>Attempts</c> es el testigo del
-/// reclamo; <c>Opened</c> (D-M16) dice que el entrante abrió o reabrió la conversación.</summary>
+/// reclamo; <c>Opened</c> (D-M16) dice que el entrante abrió o reabrió la conversación. <c>DelegationId</c> (spec 2026-11-17 §5.3) sólo lo
+/// trae la fila <c>Delegated</c> de un chatbot que delegó en el agente: abre la sesión del bloque y su <c>MessageId</c> no es un mensaje.</summary>
 public sealed record AiInboxItem(
-    Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts, bool ReleaseRun);
+    Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts, bool ReleaseRun,
+    Guid? DelegationId = null);
 
 /// <summary>La cola de entrantes de los agentes: la de Mensajería, filtrada por <c>bot_kind = 2</c> (adaptador en Bootstrapper).</summary>
 public interface IAiInbox
@@ -78,6 +80,38 @@ public interface IAiConversations
     /// <summary>D-A28: los mensajes de los turnos, por id y del tenant; uno que ya no existe no aparece.</summary>
     Task<IReadOnlyDictionary<Guid, AiThreadMessage>> ReadMessagesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> messageIds, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §6.2: la delegación de la fila <c>Delegated</c>, sin seguimiento; <c>null</c> si no
+    /// existe o es de otro tenant.</summary>
+    Task<AiDelegation?> ReadDelegationAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 §6.3: la sesión del bloque terminó y la conversación vuelve al chatbot. En un solo guardado de Mensajería: la
+    /// delegación <c>Returned</c> con <paramref name="resultJson"/> (<c>{output, reason, summary?, quotationNumber?, advisorMemberId?}</c>), la
+    /// conversación de vuelta al chatbot que delegó (sin tocar el arranque) y la fila <c>AgentReturned</c> para el motor. Si la delegación ya
+    /// no es la viva de esa conversación (una persona la tomó) sale la excepción de dominio <c>messaging.automation.delegation_not_live</c>.</summary>
+    Task ReturnToChatbotAsync(Guid tenantId, Guid conversationId, Guid delegationId, string resultJson, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: la delegación leída por Ai. <see cref="BriefJson"/> es
+/// <c>{objective, context, firstTurn, idleMinutes}</c>, escrito por Automations con el contexto ya interpolado (datos del flujo, nunca
+/// instrucciones). <see cref="LastInboundMessageId"/> (D-B7) es el entrante que llegó al bloque, <c>null</c> sin entrante.
+/// <see cref="Status"/> es <c>Live</c>, <c>Returned</c> o <c>Interrupted</c>.</summary>
+public sealed record AiDelegation(
+    Guid DelegationId,
+    Guid ConversationId,
+    Guid ConnectionId,
+    Guid ChatbotId,
+    Guid RunId,
+    string NodeId,
+    Guid AgentId,
+    Guid? LastInboundMessageId,
+    string BriefJson,
+    string Status,
+    DateTimeOffset StartedAt)
+{
+    public const string Live = "Live";
+
+    public bool IsLive => Status == Live;
 }
 
 public enum AiSendStatus

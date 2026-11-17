@@ -2,7 +2,8 @@ using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Application;
 
-/// <summary>Una fila de <c>messaging.conversations</c> para leer, sin cargar el agregado.</summary>
+/// <summary>Una fila de <c>messaging.conversations</c> para leer, sin cargar el agregado. <c>DelegatedByChatbotId</c> (spec 2026-11-17
+/// §7) es el chatbot de la delegación viva cuando un agente atiende por un bloque del flujo; <c>null</c> en las demás.</summary>
 public sealed record ConversationRow(
     Guid Id,
     Guid TenantId,
@@ -40,7 +41,8 @@ public sealed record ConversationRow(
     bool Imported = false,
     string? LastInboundWamid = null,
     BotKind? AutomationBotKind = null,
-    Guid? AutomationAgentId = null);
+    Guid? AutomationAgentId = null,
+    Guid? DelegatedByChatbotId = null);
 
 /// <summary>Spec 2026-10-10 §5.1: <c>assigned=all|me|none</c>.</summary>
 public enum AssignedFilter

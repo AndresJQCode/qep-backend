@@ -1358,6 +1358,12 @@ public sealed partial class RunProcessorTests
     private sealed class Conversations(Exception? startFailure, AutomationConversationState? state, Exception? endFailure, bool resolvedAfterRun = false)
         : IAutomationConversations
     {
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         /// <summary>Spec 2026-10-26 D-12b: las veces que el procesador preguntó por una resolución y desde cuándo.</summary>
         public List<DateTimeOffset> ResolvedChecks { get; } = [];
 

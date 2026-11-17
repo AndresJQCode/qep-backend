@@ -141,6 +141,57 @@ internal sealed partial class AiConversations(
         return rows.ToDictionary(row => row.Id, row => new AiThreadMessage(row.Id, KindOf((MessageKind)row.Kind), row.Text));
     }
 
+    public async Task<AiDelegation?> ReadDelegationAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken)
+    {
+        // Scope propio: la lectura no deja la delegación en el tracker del procesador.
+        await using var scope = scopes.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IBotDelegationRepository>().FindAsync(tenantId, delegationId, cancellationToken)
+            is { } delegation
+            ? new AiDelegation(
+                delegation.Id, delegation.ConversationId, delegation.ConnectionId, delegation.ChatbotId, delegation.RunId, delegation.NodeId,
+                delegation.AgentId, delegation.LastInboundMessageId, delegation.Brief, delegation.Status.ToString(), delegation.StartedAt)
+            : null;
+    }
+
+    public async Task ReturnToChatbotAsync(
+        Guid tenantId, Guid conversationId, Guid delegationId, string resultJson, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(resultJson);
+        var output = OutputOf(resultJson);
+        await using var scope = scopes.CreateAsyncScope();
+        var services = new Services(scope.ServiceProvider);
+        var conversation = await services.LoadAsync(tenantId, conversationId, cancellationToken);
+        var delegation = await services.Delegations.FindAsync(tenantId, delegationId, cancellationToken);
+        if (delegation is null || delegation.ConversationId != conversationId)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.DelegationNotLive, "That delegation is not one of the conversation.");
+        }
+
+        var now = services.Clock.UtcNow;
+        var names = await services.Names.ResolveAsync(tenantId, [delegation.ChatbotId, delegation.AgentId], cancellationToken);
+        // Las dos reglas antes de agregar nada: la delegación sigue viva y sigue siendo la de la conversación (una toma la interrumpe).
+        delegation.Return(resultJson, now);
+        var change = conversation.ReturnFromAgent(
+            delegationId, delegation.ChatbotId, output, now, names.GetValueOrDefault(delegation.ChatbotId), names.GetValueOrDefault(delegation.AgentId));
+        services.Inbox.EnqueueAgentReturned(tenantId, conversation.ConnectionId, conversationId, delegationId, now);
+        services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
+        services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationReturned, conversation.Id, now);
+        // Spec 2026-11-17 §6.3: resultado, conversación, fila AgentReturned, evento y auditoría en un solo guardado.
+        await services.UnitOfWork.SaveChangesAsync(cancellationToken);
+        await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
+    }
+
+    /// <summary>La salida del resultado para el evento del hilo; Mensajería no interpreta el resto del JSON. Sin <c>output</c> (o
+    /// <c>null</c>) es un retorno sin salida (§6.4).</summary>
+    private static string? OutputOf(string resultJson)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(resultJson);
+        return document.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+            && document.RootElement.TryGetProperty("output", out var output) && output.ValueKind == System.Text.Json.JsonValueKind.String
+                ? output.GetString()
+                : null;
+    }
+
     /// <summary>C-15: lo que no es texto viaja al modelo como un marcador fijo; visión queda fuera.</summary>
     private static AgentTurnKind KindOf(MessageKind kind) => kind switch
     {
@@ -183,6 +234,10 @@ internal sealed partial class AiConversations(
 
         public IClock Clock { get; } = provider.GetRequiredService<IClock>();
 
+        public IBotDelegationRepository Delegations => provider.GetRequiredService<IBotDelegationRepository>();
+
+        public IAutomationsChatbotNames Names => provider.GetRequiredService<IAutomationsChatbotNames>();
+
         public async Task<Conversation> LoadAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             await provider.GetRequiredService<IConversationRepository>().FindAsync(tenantId, conversationId, cancellationToken)
             ?? throw new ResourceNotFoundException(MessagingErrorCodes.ConversationNotFound, $"Conversation '{conversationId}' was not found.");
@@ -197,7 +252,8 @@ internal sealed class AiInbox(IAutomationInbox inbox) : IAiInbox
     [
         .. (await inbox.ClaimAsync(now, batch, BotKind.Agent, cancellationToken)).Select(item => new AiInboxItem(
             item.MessageId, item.TenantId, item.ConnectionId, item.ConversationId, item.Opened, item.CreatedAt, item.Attempts,
-            ReleaseRun: item.Kind == AutomationInboxKinds.ReleaseRun)),
+            ReleaseRun: item.Kind == AutomationInboxKinds.ReleaseRun,
+            DelegationId: item.Kind == AutomationInboxKinds.Delegated ? item.DelegationId : null)),
     ];
 
     public Task<bool> CompleteAsync(Guid tenantId, Guid messageId, int attempts, string outcome, CancellationToken cancellationToken) =>

@@ -392,6 +392,30 @@ public sealed class ConversationAutomationApiTests
             "SELECT status FROM messaging.bot_delegations WHERE id = @d", ("d", delegationId)));
     }
 
+    // Spec 2026-11-17 §7: el chip dice «Agente IA · desde el chatbot X». Un chatbot que ya no existe sale con el nombre de borrado.
+    [Fact]
+    public async Task ADelegatedConversationShowsTheChatbotThatDelegated()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var chatbotId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT automation_chatbot_id FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId));
+        await DelegateToAnAgentAsync(f);
+
+        var response = await SendAsync(f.Client, HttpMethod.Get, ConversationUrl(f.Tenant.TenantId, f.ConversationId));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var bot = (await ReadAsync(response)).GetProperty("automationBot");
+        Assert.Equal("agent", bot.GetProperty("kind").GetString());
+        Assert.Equal(chatbotId, bot.GetProperty("delegatedBy").GetProperty("chatbotId").GetGuid());
+        Assert.Equal("Chatbot", bot.GetProperty("delegatedBy").GetProperty("name").GetString());
+
+        // Sin delegación (un agente que atiende la conexión por su cuenta) no hay «desde».
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET automation_delegation_id = NULL WHERE id = @id", ("id", f.ConversationId));
+        var plain = await SendAsync(f.Client, HttpMethod.Get, ConversationUrl(f.Tenant.TenantId, f.ConversationId));
+        Assert.Equal(JsonValueKind.Null, (await ReadAsync(plain)).GetProperty("automationBot").GetProperty("delegatedBy").ValueKind);
+    }
+
     [Fact]
     public async Task TakingQueuesTheSignalAndTakingAgainDoesNot()
     {
