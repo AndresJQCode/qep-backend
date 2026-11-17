@@ -42,7 +42,9 @@ internal sealed partial class WebhookDeliveryProcessor
             if (route is null)
             {
                 LogInstagramDiscarded(logger, deliveryId, entry.Events.Count, entry.AccountId, "unknown-route");
-                metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.UnknownRoute, entry.Events.Count);
+                // Sin los ignorados, que ya contaron arriba: la alerta lee unknown_route y no debe sumarlos dos veces. El log sí
+                // los incluye.
+                metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.UnknownRoute, entry.Events.Count - ignored.Length);
                 continue;
             }
 

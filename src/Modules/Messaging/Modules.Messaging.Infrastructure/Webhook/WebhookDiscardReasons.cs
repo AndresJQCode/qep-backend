@@ -30,8 +30,14 @@ internal static class WebhookDiscardReasons
     /// <summary>Un evento de Instagram que el parser ignora (<c>InstagramIgnoredEvent</c>).</summary>
     public const string Ignored = "ignored";
 
+    /// <summary>Un mensaje del historial de coexistencia sin id o sin fecha.</summary>
+    public const string HistoryInvalid = "history_invalid";
+
     public static IReadOnlyList<string> All { get; } =
-        [UnknownRoute, WithoutUserId, Paused, ModuleOff, ForeignStatus, UnhandledField, ForeignEvent, Ignored];
+        [UnknownRoute, WithoutUserId, Paused, ModuleOff, ForeignStatus, UnhandledField, ForeignEvent, Ignored, HistoryInvalid];
+
+    /// <summary>Los que lee la alerta; <see cref="MessagingMetrics"/> siembra sus series en cero.</summary>
+    public static IReadOnlyList<string> Alerting { get; } = [UnknownRoute, WithoutUserId];
 }
 
 /// <summary>Valores de la etiqueta <c>provider</c> de <c>qep.webhook.discarded</c>; contrato con las alertas.</summary>

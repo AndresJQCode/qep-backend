@@ -23,6 +23,16 @@ internal sealed class MessagingMetrics
             "qep.webhook.discarded",
             unit: "{event}",
             description: "Webhook events from Meta that were received and deliberately not ingested.");
+
+        // Las series que lee QepWebhookDiscarding nacen en cero: increase() toma la primera muestra como base, y sin esto el primer
+        // lote de descartes después de cada reinicio —la ventana de un despliegue— no contaría para la alerta.
+        foreach (var provider in (string[])[WebhookDiscardProviders.WhatsApp, WebhookDiscardProviders.Instagram])
+        {
+            foreach (var reason in WebhookDiscardReasons.Alerting)
+            {
+                _discarded.Add(0, new KeyValuePair<string, object?>("provider", provider), new KeyValuePair<string, object?>("reason", reason));
+            }
+        }
     }
 
     public Meter Meter { get; }

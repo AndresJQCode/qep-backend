@@ -30,6 +30,12 @@ public sealed class WebhookDiscardMetricTests
             };
             _listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
             {
+                // Los ceros son la semilla de las series de la alerta (MessagingMetricsTests), no descartes.
+                if (value == 0)
+                {
+                    return;
+                }
+
                 string? provider = null;
                 string? reason = null;
                 foreach (var tag in tags)
@@ -138,6 +144,35 @@ public sealed class WebhookDiscardMetricTests
         await PostAndDrainAsync(f, MetaPayloads.Inbound("111", "CO.1349120865530274", "573001234567", "wamid.1", NowSeconds, "hola"));
 
         Assert.Empty(f.Recorder.Measurements);
+    }
+
+    /// <summary>Un mensaje del historial sin id se salta: sin contador, ese descarte era silencioso.</summary>
+    [Fact]
+    public async Task AHistoryMessageWithoutIdCountsAsHistoryInvalid()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeWhatsAppAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Recorder;
+
+        await PostAndDrainAsync(f, MetaPayloads.History("111", 0, 1, 100, ("573001110001", [("", "hola", NowSeconds - 60, false)])));
+
+        Assert.Equal((1L, "whatsapp", "history_invalid"), Assert.Single(f.Recorder.Measurements));
+    }
+
+    /// <summary>Un evento que el parser ignora cuenta como <c>ignored</c>, no además como <c>unknown_route</c>: la alerta lee el segundo.</summary>
+    [Fact]
+    public async Task AnIgnoredInstagramEventForAnUnknownAccountCountsOnlyAsIgnored()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = Watch(new QepApiFactory(database.GetConnectionString()));
+        using var _ = f.Factory;
+        using var __ = f.Recorder;
+
+        Assert.Equal(HttpStatusCode.OK, (await PostInstagramWebhookAsync(f.Anonymous, InstagramPayloads.Reaction("m1", NowSeconds, "❤", action: "unreact"))).StatusCode);
+        await DrainDeliveriesAsync(f.Factory);
+
+        Assert.Equal((1L, "instagram", "ignored"), Assert.Single(f.Recorder.Measurements));
     }
 
     [Fact]

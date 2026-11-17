@@ -2736,11 +2736,15 @@ historial y los abandonados. `campaign` no tiene columna de edad, así que sólo
 `qep.messaging.inbound.lag` la etiqueta `channel` es `whatsapp` o `instagram`; un timestamp a futuro (reloj desfasado) cuenta cero.
 
 `qep.webhook.discarded` (spec 2026-11-16) suma en el mismo punto donde `WebhookDeliveryProcessor` loguea un descarte, con
-el mismo conteo. `provider` es `whatsapp` o `instagram`; `reason`, uno de `WebhookDiscardReasons`: `unknown_route` (número o
-cuenta sin conexión), `without_user_id`, `paused`, `module_off`, `foreign_status` (estado de un mensaje que QEP no mandó:
-coexistencia), `unhandled_field`, `foreign_event` (visto o borrado de Instagram sin mensaje) e `ignored`. La alerta
-`QepWebhookDiscarding` de `migracion-k8s` mira sólo `unknown_route` y `without_user_id`, comparados con la misma hora de la
-semana anterior; los demás son tráfico normal y sólo van al panel. Un reintento de la entrega vuelve a contar, como el log.
+el mismo conteo, salvo una excepción: en Instagram, `unknown_route` no vuelve a contar los eventos que ya contaron como
+`ignored` (el log sí los incluye). `provider` es `whatsapp` o `instagram`; `reason`, uno de `WebhookDiscardReasons`:
+`unknown_route` (número o cuenta sin conexión), `without_user_id`, `paused`, `module_off`, `foreign_status` (estado de un
+mensaje que QEP no mandó: coexistencia), `unhandled_field`, `foreign_event` (visto o borrado de Instagram sin mensaje),
+`ignored` e `history_invalid` (mensaje del historial de coexistencia sin id o sin fecha). La alerta `QepWebhookDiscarding`
+de `migracion-k8s` mira sólo `unknown_route` y `without_user_id` (`WebhookDiscardReasons.Alerting`), comparados con la misma
+hora de la semana anterior; los demás son tráfico normal y sólo van al panel. Esas cuatro series (dos proveedores por dos
+motivos) nacen en cero al crear `MessagingMetrics`: `increase()` toma la primera muestra como base, y sin la semilla el primer
+lote después de cada reinicio no contaría. Un reintento de la entrega vuelve a contar, como el log.
 
 `qep.webhook.last_received` la lee `QueueSamplerWorker` en la misma vuelta que las colas (sólo el pod líder) y caduca igual a los
 60 s. Sale de la base, no del tráfico HTTP: sobrevive a un reinicio y sólo cuenta lo que pasó la firma, así que después de un

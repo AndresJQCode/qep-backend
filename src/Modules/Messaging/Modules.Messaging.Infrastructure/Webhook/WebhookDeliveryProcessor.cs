@@ -257,6 +257,7 @@ internal sealed partial class WebhookDeliveryProcessor(
             if (chunk.SkippedMessages > 0)
             {
                 LogHistorySkipped(logger, deliveryId, chunk.SkippedMessages, route.ConnectionId);
+                metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.HistoryInvalid, chunk.SkippedMessages);
             }
 
             foreach (var thread in chunk.Threads.Where(thread => thread.Messages.Count > 0))
