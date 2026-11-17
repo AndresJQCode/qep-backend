@@ -864,5 +864,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         delivery.Property(value => value.Provider).HasColumnName("provider").HasMaxLength(16).HasDefaultValue("whatsapp");
         delivery.HasIndex(value => value.BodySha256).IsUnique().HasDatabaseName("IX_webhook_deliveries_body_sha256");
         delivery.HasIndex(value => value.Id).HasDatabaseName("IX_webhook_deliveries_pending").HasFilter("processed_at IS NULL");
+        // Spec 2026-11-16: la hora del último webhook por proveedor (WebhookArrivalSource, cada 15 s). Sin él, un proveedor sin
+        // filas recorre la tabla entera.
+        delivery.HasIndex(value => new { value.Provider, value.Id }).HasDatabaseName("IX_webhook_deliveries_provider_id");
     }
 }

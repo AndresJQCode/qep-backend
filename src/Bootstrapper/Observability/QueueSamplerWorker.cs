@@ -18,10 +18,14 @@ namespace Bootstrapper.Observability;
 internal sealed partial class QueueSamplerWorker(
     IServiceScopeFactory scopeFactory,
     QueueGauges gauges,
+    WebhookArrivalGauge arrivalGauge,
     QueueSamplerLeadership leadership,
     ILogger<QueueSamplerWorker> logger) : BackgroundService
 {
     internal static readonly TimeSpan Interval = TimeSpan.FromSeconds(15);
+
+    /// <summary>El nombre con que se loguea una falla al leer la hora del último webhook (no es una cola).</summary>
+    internal const string WebhookArrivalReading = "webhook_arrival";
 
     // Sólo el nombre de la cola y el tipo de la excepción: el mensaje de Npgsql puede traer SQL o el host.
     [LoggerMessage(Level = LogLevel.Warning, Message = "Queue sampling failed for {Queue}: {ExceptionType}.")]
@@ -72,6 +76,22 @@ internal sealed partial class QueueSamplerWorker(
             {
                 LogReadFailed(logger, queue, exception.GetType().Name);
             }
+        }
+
+        // Spec 2026-11-16: la hora del último webhook de Meta va en la misma vuelta (y con el mismo líder); su falla no tumba las colas.
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var arrivals = scope.ServiceProvider.GetRequiredService<IWebhookArrivalSource>();
+            arrivalGauge.Record(await arrivals.ReadLastReceivedAsync(cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogReadFailed(logger, WebhookArrivalReading, exception.GetType().Name);
         }
     }
 

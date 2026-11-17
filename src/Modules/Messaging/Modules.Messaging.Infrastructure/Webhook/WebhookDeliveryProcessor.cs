@@ -107,6 +107,7 @@ internal sealed partial class WebhookDeliveryProcessor(
                     break;
                 case UnknownChange unknown:
                     LogIgnoredField(logger, deliveryId, unknown.Field);
+                    metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.UnhandledField, 1);
                     break;
                 case UserIdUpdateChange update:
                     await ProcessUserIdUpdateAsync(deliveryId, update, cancellationToken);
@@ -142,12 +143,14 @@ internal sealed partial class WebhookDeliveryProcessor(
         if (change.SkippedWithoutUserId > 0)
         {
             LogSkippedWithoutUserId(logger, deliveryId, change.SkippedWithoutUserId, change.PhoneNumberId);
+            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.WithoutUserId, change.SkippedWithoutUserId);
         }
 
         var route = await routing.FindRouteAsync(change.PhoneNumberId, cancellationToken);
         if (route is null)
         {
             LogDiscarded(logger, deliveryId, change.Messages.Count, change.PhoneNumberId, "unknown-route");
+            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.UnknownRoute, change.Messages.Count);
             return DeliveryOutcome.Processed;
         }
 
@@ -156,6 +159,8 @@ internal sealed partial class WebhookDeliveryProcessor(
         if (!accepting && change.Messages.Count > 0)
         {
             LogDiscarded(logger, deliveryId, change.Messages.Count, change.PhoneNumberId, route.IsPaused ? "paused" : "module-off");
+            metrics.RecordDiscarded(
+                WebhookDiscardProviders.WhatsApp, route.IsPaused ? WebhookDiscardReasons.Paused : WebhookDiscardReasons.ModuleOff, change.Messages.Count);
         }
 
         // Spec 2026-10-10 §8.3, P7: el cambio de número se aplica siempre, también con Paused o el módulo apagado, y
@@ -227,6 +232,7 @@ internal sealed partial class WebhookDeliveryProcessor(
         {
             var count = change.Chunks.Sum(chunk => chunk.Threads.Sum(thread => thread.Messages.Count));
             LogDiscarded(logger, deliveryId, count, change.PhoneNumberId, "unknown-route");
+            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.UnknownRoute, count);
             return DeliveryOutcome.Processed;
         }
 
@@ -284,6 +290,7 @@ internal sealed partial class WebhookDeliveryProcessor(
         if (route is null)
         {
             LogDiscarded(logger, deliveryId, change.Echoes.Count, change.PhoneNumberId, "unknown-route");
+            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.UnknownRoute, change.Echoes.Count);
             return DeliveryOutcome.Processed;
         }
 
@@ -337,6 +344,7 @@ internal sealed partial class WebhookDeliveryProcessor(
         if (route is null)
         {
             LogDiscarded(logger, deliveryId, change.Contacts.Count, change.PhoneNumberId, "unknown-route");
+            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.UnknownRoute, change.Contacts.Count);
             return;
         }
 
@@ -382,6 +390,7 @@ internal sealed partial class WebhookDeliveryProcessor(
         if (routes.Count == 0)
         {
             LogIgnoredField(logger, deliveryId, "user_id_update");
+            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.UnhandledField, 1);
             return;
         }
 
@@ -472,6 +481,7 @@ internal sealed partial class WebhookDeliveryProcessor(
             else if (result == StatusOutcome.NotFound)
             {
                 LogForeignStatus(logger, deliveryId);
+                metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.ForeignStatus, 1);
             }
             else if (optedOut is { } customerId)
             {

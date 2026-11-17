@@ -35,12 +35,14 @@ internal sealed partial class WebhookDeliveryProcessor
             {
                 var reasons = string.Join(",", ignored.Select(e => e.Reason).Distinct());
                 LogInstagramIgnored(logger, deliveryId, ignored.Length, reasons);
+                metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.Ignored, ignored.Length);
             }
 
             var route = await routing.FindInstagramRouteAsync(entry.AccountId, cancellationToken);
             if (route is null)
             {
                 LogInstagramDiscarded(logger, deliveryId, entry.Events.Count, entry.AccountId, "unknown-route");
+                metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.UnknownRoute, entry.Events.Count);
                 continue;
             }
 
@@ -51,6 +53,8 @@ internal sealed partial class WebhookDeliveryProcessor
             if (!accepting && messages.Length > 0)
             {
                 LogInstagramDiscarded(logger, deliveryId, messages.Length, entry.AccountId, route.IsPaused ? "paused" : "module-off");
+                metrics.RecordDiscarded(
+                    WebhookDiscardProviders.Instagram, route.IsPaused ? WebhookDiscardReasons.Paused : WebhookDiscardReasons.ModuleOff, messages.Length);
             }
 
             InstagramSender? sender = null;
@@ -85,6 +89,7 @@ internal sealed partial class WebhookDeliveryProcessor
                         if (applied.Outcome == StatusOutcome.NotFound)
                         {
                             LogInstagramForeign(logger, deliveryId);
+                            metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.ForeignEvent, 1);
                         }
 
                         foreach (var conversationId in applied.ConversationIds)
@@ -101,6 +106,7 @@ internal sealed partial class WebhookDeliveryProcessor
                         else
                         {
                             LogInstagramForeign(logger, deliveryId);
+                            metrics.RecordDiscarded(WebhookDiscardProviders.Instagram, WebhookDiscardReasons.ForeignEvent, 1);
                         }
 
                         break;
