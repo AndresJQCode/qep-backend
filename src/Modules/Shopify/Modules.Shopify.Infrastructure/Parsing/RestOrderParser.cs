@@ -77,7 +77,9 @@ public static class RestOrderParser
                     // Una custom nunca tiene SKU: con SKU es una línea de producto cuya variante ya no existe.
                     IsExplicitNull(line, "product_id") && IsExplicitNull(line, "variant_id") && string.IsNullOrWhiteSpace(sku),
                     OptionalId(line, "id", $"{field}.id", "LineItem"),
-                    original);
+                    original,
+                    // Spec 2026-11-17 §4: con él el resolver busca el vínculo antes que el SKU.
+                    OptionalId(line, "variant_id", $"{field}.variant_id", "ProductVariant"));
             })
             .ToArray();
 

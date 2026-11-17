@@ -16,8 +16,14 @@ namespace Modules.Shopify.Application;
 /// pedido; no entra ni hace esperar. La usan la importación y el planificador de cambios, con la misma regla.</para>
 /// <para>Spec 2026-11-17 R7: <c>chargesVat</c> es el IVA de la empresa (en la importación) o el congelado del pedido (en el
 /// planificador); en <c>false</c> el precio de Shopify no suma IVA.</para>
+/// <para>Spec 2026-11-17 §4: una línea que no es personalizada y trae <see cref="ShopifyLine.VariantId"/> busca primero el vínculo
+/// de la tienda (<c>shopify.product_links</c>). Con vínculo decide la variante de QEP vinculada: si está inactiva la línea queda
+/// <c>product_unmatched</c> con su SKU, <b>sin</b> caer al SKU (otra variante con ese código no es la que Shopify vendió). Un vínculo
+/// cuya variante ya no existe en Catalog (producto borrado a mano) cuenta como ausente y la línea va por SKU. Una consulta de
+/// vínculos por pedido.</para>
 /// </summary>
-public sealed class ShopifyLineResolver(IShopifyProductLookup products, IShopifyCustomLineMappingRepository customLines)
+public sealed class ShopifyLineResolver(
+    IShopifyProductLookup products, IShopifyCustomLineMappingRepository customLines, IShopifyProductLinkRepository links)
 {
     public async Task<(IReadOnlyList<ShopifyOrderLineDraft> Lines, IReadOnlyList<string?> UnmatchedSkus, IReadOnlyList<string> UnmatchedTitles)> ResolveAsync(
         Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, bool chargesVat, CancellationToken cancellationToken)
@@ -28,8 +34,31 @@ public sealed class ShopifyLineResolver(IShopifyProductLookup products, IShopify
         static string? CustomTitleOf(ShopifyLine line) => line.IsCustom && string.IsNullOrWhiteSpace(line.Sku) ? ShopifyCustomLineMapping.NormalizeTitle(line.Title) : null;
 
         var current = snapshot.Lines.Where(line => !line.IsRemoved).ToArray();
+
+        // Primero los vínculos por id de variante de Shopify, en una sola consulta.
+        var shopifyVariantIds = current
+            .Where(line => CustomTitleOf(line) is null && line.VariantId is not null)
+            .Select(line => line.VariantId!.Value)
+            .Distinct()
+            .ToArray();
+        var linked = shopifyVariantIds.Length == 0
+            ? new Dictionary<long, ShopifyProductLink>()
+            : await links.FindByShopifyVariantsAsync(tenantId, connectionId, shopifyVariantIds, cancellationToken);
+        var linkedVariants = linked.Count == 0
+            ? new Dictionary<Guid, ShopifyProductRef>()
+            : await products.FindByVariantIdsAsync(tenantId, linked.Values.Select(link => link.VariantId).Distinct().ToArray(), cancellationToken);
+
+        // La variante de QEP vinculada a la línea, si el vínculo existe y su variante también.
+        ShopifyProductRef? LinkedOf(ShopifyLine line) =>
+            CustomTitleOf(line) is null
+            && line.VariantId is { } variantId
+            && linked.TryGetValue(variantId, out var link)
+            && linkedVariants.TryGetValue(link.VariantId, out var product)
+                ? product
+                : null;
+
         var skus = current
-            .Where(line => CustomTitleOf(line) is null)
+            .Where(line => CustomTitleOf(line) is null && LinkedOf(line) is null)
             .Select(line => line.Sku?.Trim())
             .Where(sku => !string.IsNullOrEmpty(sku))
             .Cast<string>()
@@ -68,6 +97,20 @@ public sealed class ShopifyLineResolver(IShopifyProductLookup products, IShopify
                     if (!unmatchedTitles.Contains(title, StringComparer.Ordinal))
                     {
                         unmatchedTitles.Add(title);
+                    }
+
+                    continue;
+                }
+            }
+            else if (LinkedOf(line) is { } linkedProduct)
+            {
+                product = linkedProduct;
+                if (!product.IsActive)
+                {
+                    var listed = line.Sku?.Trim() is { Length: > 0 } sku ? sku : null;
+                    if (!unmatchedSkus.Contains(listed))
+                    {
+                        unmatchedSkus.Add(listed);
                     }
 
                     continue;

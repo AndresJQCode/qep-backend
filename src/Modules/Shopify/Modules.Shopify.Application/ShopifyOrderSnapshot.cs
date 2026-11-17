@@ -64,7 +64,10 @@ public sealed record ShopifyOrderSnapshot(
 /// <c>currentQuantity</c>), la que queda después de las ediciones de Shopify; si la llave falta, es <c>quantity</c>.
 /// <see cref="OriginalQuantity"/> es siempre <c>quantity</c>, la de cuando se creó la línea: sobre ella reparte Shopify el
 /// descuento (<see cref="DiscountAmount"/>), así que el porcentaje se calcula con ella. <see cref="Id"/> es el id de la línea en
-/// Shopify (el número del GID en GraphQL). Los dos son nulos en un payload guardado antes de este cambio.</para></summary>
+/// Shopify (el número del GID en GraphQL). Los dos son nulos en un payload guardado antes de este cambio.</para>
+/// <para>Spec 2026-11-17 §4: <see cref="VariantId"/> es el id de la variante de Shopify (REST <c>variant_id</c>, GraphQL el número
+/// del GID de <c>variant.id</c>); con él el resolver busca primero el vínculo de la tienda. Nulo en una personalizada y en un payload
+/// guardado antes de este cambio.</para></summary>
 public sealed record ShopifyLine(
     string? Sku,
     decimal Quantity,
@@ -73,7 +76,8 @@ public sealed record ShopifyLine(
     string? Title = null,
     bool IsCustom = false,
     long? Id = null,
-    decimal? OriginalQuantity = null)
+    decimal? OriginalQuantity = null,
+    long? VariantId = null)
 {
     /// <summary>Quitada en una edición de Shopify: vigente 0 con original &gt; 0. Un payload viejo (<see cref="OriginalQuantity"/>
     /// nulo) nunca lo es. Derivado: no se guarda en el payload.</summary>

@@ -97,6 +97,68 @@ public sealed class OrderParsersTests
         Assert.Null(snapshot.ToHeader().FinancialStatus);
     }
 
+    // Spec 2026-11-17 §4: la línea trae el id de la variante de Shopify; el resolver busca primero su vínculo.
+    [Fact]
+    public void RestLinesCarryTheVariantId()
+    {
+        var snapshot = Parse(
+            "rest",
+            """
+            {"id": 1, "name": "#1", "created_at": "2026-10-01T10:00:00Z", "updated_at": "2026-10-01T10:00:00Z", "currency": "COP",
+             "total_price": "0", "line_items": [{"id": 9000, "sku": "CAM-001", "quantity": 1, "price": "10.00",
+             "product_id": 7001, "variant_id": 4455}]}
+            """);
+
+        Assert.Equal(4455L, snapshot.Lines.Single().VariantId);
+    }
+
+    [Fact]
+    public void GraphQlLinesCarryTheVariantIdFromTheGid()
+    {
+        var snapshot = Parse(
+            "graphql",
+            """
+            {"id": "gid://shopify/Order/1", "name": "#1", "createdAt": "2026-10-01T10:00:00Z", "updatedAt": "2026-10-01T10:00:00Z",
+             "currencyCode": "COP", "totalPriceSet": {"shopMoney": {"amount": "0"}},
+             "lineItems": {"nodes": [{"id": "gid://shopify/LineItem/9000", "sku": "CAM-001", "quantity": 1,
+               "variant": {"id": "gid://shopify/ProductVariant/42"}, "product": {"id": "gid://shopify/Product/7"},
+               "originalUnitPriceSet": {"shopMoney": {"amount": "10.0"}}}]}}
+            """);
+
+        Assert.Equal(42L, snapshot.Lines.Single().VariantId);
+    }
+
+    [Fact]
+    public void ACustomLineHasNoVariantId()
+    {
+        var snapshot = Parse(
+            "rest",
+            """
+            {"id": 1, "name": "#1", "created_at": "2026-10-01T10:00:00Z", "updated_at": "2026-10-01T10:00:00Z", "currency": "COP",
+             "total_price": "0", "line_items": [{"title": "Garantía", "sku": null, "quantity": 1, "price": "10.00",
+             "product_id": null, "variant_id": null}]}
+            """);
+
+        Assert.Equal((true, (long?)null), (snapshot.Lines.Single().IsCustom, snapshot.Lines.Single().VariantId));
+    }
+
+    // Un payload guardado antes de este cambio no trae la llave: la línea sigue deserializando, sin variante.
+    [Fact]
+    public void AnOldPayloadWithoutVariantIdStillDeserializes()
+    {
+        var stored = ShopifyOrderIngestion.WritePayload(RestOrderParser.Parse(Fixture("rest", "taxes-included")));
+        var node = System.Text.Json.Nodes.JsonNode.Parse(stored)!;
+        foreach (var line in node["lines"]!.AsArray())
+        {
+            line!.AsObject().Remove("variantId");
+        }
+
+        var snapshot = ShopifyOrderIngestion.ReadPayload(node.ToJsonString());
+
+        Assert.Null(snapshot.Lines.Single().VariantId);
+        Assert.Equal("CAM-001", snapshot.Lines.Single().Sku);
+    }
+
     [Theory]
     [InlineData("rest", """{"id": 1, "name": "#1", "created_at": "2026-10-01T10:00:00Z", "updated_at": "2026-10-01T10:00:00Z", "currency": "COP", "total_price": "0", "line_items": []}""")]
     [InlineData("graphql", """{"id": "gid://shopify/Order/1", "name": "#1", "createdAt": "2026-10-01T10:00:00Z", "updatedAt": "2026-10-01T10:00:00Z", "currencyCode": "COP", "totalPriceSet": {"shopMoney": {"amount": "0"}}, "lineItems": {"nodes": []}}""")]

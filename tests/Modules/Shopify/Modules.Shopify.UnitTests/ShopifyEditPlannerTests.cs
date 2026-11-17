@@ -111,6 +111,22 @@ public sealed class ShopifyEditPlannerTests
         Assert.Contains(plan.Draft!.Lines!, line => line.VariantId == variant && line.Quantity == 1m);
     }
 
+    // Spec 2026-11-17 §4: el planificador usa el mismo resolver, así que una línea sin SKU pero vinculada no bloquea.
+    [Fact]
+    public async Task TheEditPlannerUsesTheLinkToo()
+    {
+        var world = new ShopifyEditTestWorld();
+        var variant = Guid.CreateVersion7();
+        world.World.Products.WithVariant(variant, taxPercentage: 19);
+        world.World.ProductLinks.Link(
+            ImporterWorld.TenantId, ImporterWorld.ConnectionId, 700L, 4455L, world.World.Products.ByVariant[variant].ProductId, variant);
+
+        var plan = await world.PlanAsync(Snapshot(lines: [Line(), new ShopifyLine(null, 1m, 1_000m, 0m, "Gorra", false, 9004, 1m, VariantId: 4455L)]));
+
+        Assert.Null(plan.BlockReason);
+        Assert.Contains(plan.Draft!.Lines!, line => line.VariantId == variant && line.Quantity == 1m);
+    }
+
     [Fact]
     public async Task AnUnmatchedLineBlocksTheWholeChange()
     {

@@ -33,6 +33,7 @@ public sealed class ShopifyOrderImporter(
     ShopifyCustomerResolver customers,
     IShopifyProductLookup products,
     IShopifyCustomLineMappingRepository customLines,
+    IShopifyProductLinkRepository productLinks,
     IShopifyShippingLookup shipping,
     IShopifyOrderWriter orders,
     IShopifyOrderChangeReaction changes,
@@ -268,7 +269,7 @@ public sealed class ShopifyOrderImporter(
     /// <c>wait_detail</c> es <c>{"skus":[…],"customTitles":[…]}</c>.</summary>
     private Task<(IReadOnlyList<ShopifyOrderLineDraft> Lines, IReadOnlyList<string?> UnmatchedSkus, IReadOnlyList<string> UnmatchedTitles)> ResolveLinesAsync(
         Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, bool chargesVat, CancellationToken cancellationToken) =>
-        new ShopifyLineResolver(products, customLines).ResolveAsync(tenantId, connectionId, snapshot, currency, chargesVat, cancellationToken);
+        new ShopifyLineResolver(products, customLines, productLinks).ResolveAsync(tenantId, connectionId, snapshot, currency, chargesVat, cancellationToken);
 
     /// <summary>D-S23: la clave externa del pedido, <c>"{shopId}:{shopifyOrderId}"</c>. Con el shopId y no con la conexión, para
     /// que borrar y volver a enlazar la tienda no duplique pedidos. La usa también §6.3 (<see cref="ShopifyOrderChanges"/>).</summary>

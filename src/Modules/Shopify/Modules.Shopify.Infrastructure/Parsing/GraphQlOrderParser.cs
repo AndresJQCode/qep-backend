@@ -84,7 +84,9 @@ public static class GraphQlOrderParser
                     // Una variante borrada deja variant y product en null, pero la línea conserva su SKU: una custom nunca lo tiene.
                     IsExplicitNull(line, "variant") && IsExplicitNull(line, "product") && string.IsNullOrWhiteSpace(sku),
                     OptionalId(line, "id", $"{field}.id", "LineItem"),
-                    original);
+                    original,
+                    // Spec 2026-11-17 §4: el número del GID de la variante; con él el resolver busca el vínculo antes que el SKU.
+                    Find(line, "variant") is { } variant ? OptionalId(variant, "id", $"{field}.variant.id", "ProductVariant") : null);
             })
             .ToArray();
 
