@@ -285,7 +285,7 @@ internal sealed class CopilotBed
 
     public FakeCopilotCredentials Credentials { get; } = new();
 
-    public CountingUnitOfWork UnitOfWork { get; } = new();
+    public CountingUnitOfWork UnitOfWork => field ??= new() { Log = Repository.AskingLog };
 
     public CopilotSettingsCatalog Catalog { get; } = new();
 
@@ -362,9 +362,13 @@ internal sealed class CountingUnitOfWork : IAiUnitOfWork
 {
     public int Saves { get; private set; }
 
+    /// <summary>Hallazgo 4: donde anotar cada guardado, junto a lo que hace el candado del miembro.</summary>
+    public List<string>? Log { get; init; }
+
     public Task SaveChangesAsync(CancellationToken cancellationToken)
     {
         Saves++;
+        Log?.Add("save");
         return Task.CompletedTask;
     }
 }
@@ -457,9 +461,51 @@ internal sealed class FakeCopilotRepository : ICopilotRepository
                 .Take(take),
         ]);
 
+    /// <summary>Hallazgo 4: el candado del miembro, el conteo y el registro de preguntas, en orden.</summary>
+    public List<string> AskingLog { get; } = [];
+
     public Task<IReadOnlyList<DateTimeOffset>> ListQuestionTimesAsync(
-        Guid tenantId, Guid userId, DateTimeOffset since, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<DateTimeOffset>>([.. QuestionTimes.Where(time => time >= since)]);
+        Guid tenantId, Guid userId, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        AskingLog.Add("count");
+        return Task.FromResult<IReadOnlyList<DateTimeOffset>>([.. QuestionTimes.Where(time => time >= since)]);
+    }
+
+    public Task<ICopilotAskingLock> LockAskingAsync(Guid tenantId, Guid userId, CancellationToken cancellationToken)
+    {
+        AskingLog.Add($"lock {tenantId} {userId}");
+        return Task.FromResult<ICopilotAskingLock>(new FakeAskingLock(AskingLog));
+    }
+
+    /// <summary>El registro de preguntas es aparte de los hilos: borrar un hilo no lo toca.</summary>
+    public void AddQuestion(Guid tenantId, Guid userId, DateTimeOffset askedAt)
+    {
+        AskingLog.Add("question");
+        QuestionTimes.Add(askedAt);
+    }
+
+    public DateTimeOffset? QuestionsBefore { get; private set; }
+
+    public Task<int> DeleteQuestionsBeforeAsync(DateTimeOffset before, CancellationToken cancellationToken)
+    {
+        QuestionsBefore = before;
+        return Task.FromResult(QuestionTimes.RemoveAll(time => time < before));
+    }
+
+    private sealed class FakeAskingLock(List<string> log) : ICopilotAskingLock
+    {
+        public Task CommitAsync(CancellationToken cancellationToken)
+        {
+            log.Add("commit");
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            log.Add("release");
+            return ValueTask.CompletedTask;
+        }
+    }
 
     public Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken)
     {

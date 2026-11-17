@@ -132,6 +132,49 @@ public sealed class CopilotThreadsHandlersTests
         Assert.Empty(bed.Repository.Threads);
     }
 
+    // Revisión de la rama, hallazgo 4: el tope por miembro contaba los mensajes de los hilos que existen, así que borrar un hilo devolvía su
+    // cupo, y dos POST paralelos pasaban los dos el conteo. La pregunta queda en un registro propio del miembro, que borrar el hilo no toca, y
+    // contar e insertar van bajo el candado del miembro hasta el commit.
+    [Fact]
+    public async Task AQuestionIsLoggedUnderTheMembersAskingLockAndOutlivesItsThread()
+    {
+        var bed = Enabled();
+
+        var thread = await bed.Create().HandleAsync(new CreateCopilotThreadCommand(Tenant, "¿Cuánto vendimos?"), Ct);
+        await bed.Delete().HandleAsync(new DeleteCopilotThreadCommand(Tenant, thread.Id), Ct);
+
+        Assert.Equal([$"lock {Tenant} {Member}", "count", "question", "save", "commit", "release"], bed.Repository.AskingLog);
+        Assert.Equal([Now], bed.Repository.QuestionTimes);
+    }
+
+    [Fact]
+    public async Task SendingLogsTheQuestionAndRetryingDoesNot()
+    {
+        var bed = Enabled();
+        var created = await bed.Create().HandleAsync(new CreateCopilotThreadCommand(Tenant, "¿Cuánto vendimos?"), Ct);
+        bed.Repository.Threads[0].CompleteAssistant(bed.Jobs.Added[0].Id, "Doce.", [], Now);
+        await bed.Send().HandleAsync(new SendCopilotMessageCommand(Tenant, created.Id, "¿Y el mes pasado?"), Ct);
+        bed.Repository.Threads[0].FailAssistant(bed.Jobs.Added[^1].Id, "job_timed_out", Now);
+        bed.Repository.AskingLog.Clear();
+
+        await bed.Retry().HandleAsync(new RetryCopilotMessageCommand(Tenant, created.Id, bed.Repository.Threads[0].Messages[^1].Id), Ct);
+
+        Assert.Equal(2, bed.Repository.QuestionTimes.Count);
+        Assert.DoesNotContain("question", bed.Repository.AskingLog);
+    }
+
+    [Fact]
+    public async Task ARejectedQuestionIsNotLoggedAndReleasesTheLock()
+    {
+        var bed = Enabled();
+        bed.Repository.QuestionTimes.AddRange(Enumerable.Range(0, 30).Select(index => Now.AddMinutes(-50).AddSeconds(index)));
+
+        await Assert.ThrowsAsync<CopilotRateLimitedException>(() => bed.Create().HandleAsync(new CreateCopilotThreadCommand(Tenant, "Una más"), Ct));
+
+        Assert.Equal([$"lock {Tenant} {Member}", "count", "release"], bed.Repository.AskingLog);
+        Assert.Equal(30, bed.Repository.QuestionTimes.Count);
+    }
+
     [Fact]
     public async Task TheDailyLimitIs429UntilTheOldestQuestionLeavesTheDay()
     {

@@ -47,6 +47,19 @@ public sealed class CopilotRetentionSweeperTests
         Assert.Empty(bed.Audit.Entries);
     }
 
+    // Revisión de la rama, hallazgo 4: el registro de preguntas del tope por miembro se guarda dos días, el doble del tope más largo.
+    [Fact]
+    public async Task TheQuestionLogKeepsTwoDays()
+    {
+        var bed = new CopilotBed();
+        bed.Repository.QuestionTimes.AddRange([Now.AddDays(-3), Now.AddHours(-30)]);
+
+        await Sweeper(bed).SweepAsync(Ct);
+
+        Assert.Equal(Now.AddDays(-2), bed.Repository.QuestionsBefore);
+        Assert.Equal([Now.AddHours(-30)], bed.Repository.QuestionTimes);
+    }
+
     [Fact]
     public async Task ASweepWalksEveryBatch()
     {

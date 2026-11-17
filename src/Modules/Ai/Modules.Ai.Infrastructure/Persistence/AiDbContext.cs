@@ -46,6 +46,8 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
 
     public DbSet<CopilotMessage> CopilotMessages => Set<CopilotMessage>();
 
+    internal DbSet<CopilotQuestionRow> CopilotQuestions => Set<CopilotQuestionRow>();
+
     internal DbSet<ToolCallRow> ToolCalls => Set<ToolCallRow>();
 
     internal DbSet<UsageRecordRow> UsageRecords => Set<UsageRecordRow>();

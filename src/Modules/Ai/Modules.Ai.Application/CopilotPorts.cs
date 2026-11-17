@@ -25,9 +25,23 @@ public interface ICopilotRepository
     Task<IReadOnlyList<CopilotThread>> ListThreadsAsync(
         Guid tenantId, Guid userId, CopilotThreadCursor? after, int take, CancellationToken cancellationToken);
 
-    /// <summary>D-C11: los instantes de las preguntas (mensajes <c>User</c>) del miembro desde <paramref name="since"/>, en todos sus hilos.
-    /// Un hilo borrado deja de contar: el tope es de abuso, no de facturación (eso lo cuida el tope mensual).</summary>
+    /// <summary>D-C11 y revisión de la rama, hallazgo 4: los instantes de las preguntas del miembro desde <paramref name="since"/>, del
+    /// registro <c>ai.copilot_questions</c> y no de los mensajes: borrar un hilo no devuelve el cupo (antes sí, y el tope se esquivaba
+    /// borrando).</summary>
     Task<IReadOnlyList<DateTimeOffset>> ListQuestionTimesAsync(Guid tenantId, Guid userId, DateTimeOffset since, CancellationToken cancellationToken);
+
+    /// <summary>Hallazgo 4: abre la transacción (si no hay una) y toma el candado del miembro (<c>pg_advisory_xact_lock</c> de dos claves,
+    /// espacio propio) antes de contar sus preguntas. Dos preguntas paralelas del mismo miembro hacen fila: la segunda cuenta la primera.
+    /// Se suelta con <see cref="ICopilotAskingLock.CommitAsync"/> o, sin commit, al disponerse (rollback).</summary>
+    Task<ICopilotAskingLock> LockAskingAsync(Guid tenantId, Guid userId, CancellationToken cancellationToken);
+
+    /// <summary>Hallazgo 4: anota la pregunta en el registro del miembro; sólo agrega al contexto y viaja en el guardado de la pregunta. Sin
+    /// texto (D-C13): tenant, miembro e instante.</summary>
+    void AddQuestion(Guid tenantId, Guid userId, DateTimeOffset askedAt);
+
+    /// <summary>Hallazgo 4: el registro sólo sirve para el tope del día; el barrido borra lo anterior a <paramref name="before"/> y devuelve
+    /// cuántas filas borró.</summary>
+    Task<int> DeleteQuestionsBeforeAsync(DateTimeOffset before, CancellationToken cancellationToken);
 
     /// <summary>D-C8: borra en una transacción los <c>tool_calls</c> de los trabajos del hilo y el hilo con sus mensajes. Los trabajos y el
     /// consumo se quedan: la cola los cierra y el consumo es lo pagado. D-C13: en esa misma transacción guarda lo que haya pendiente en la
@@ -57,6 +71,12 @@ public interface ICopilotRepository
     /// <summary>D-C7: la herramienta en curso en la respuesta pendiente del trabajo, con un UPDATE corto propio, sin el change tracker ni
     /// candados de otras tablas. Si la respuesta ya no está pendiente no toca nada.</summary>
     Task SetProgressAsync(Guid tenantId, Guid threadId, Guid jobId, string progress, CancellationToken cancellationToken);
+}
+
+/// <summary>Hallazgo 4: el candado de preguntas de un miembro, vivo hasta el commit de la transacción que lo tomó.</summary>
+public interface ICopilotAskingLock : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken);
 }
 
 public sealed record CopilotTokenUsage(long InputTokens, long OutputTokens)

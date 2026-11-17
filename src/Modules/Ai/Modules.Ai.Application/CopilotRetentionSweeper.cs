@@ -26,6 +26,9 @@ public sealed class CopilotRetentionSweeper(ICopilotRepository repository, IAiAu
     /// <summary>Tope de vueltas por barrido: con un atraso enorme, el resto queda para el día siguiente en vez de ocupar el worker.</summary>
     public const int MaxBatches = 50;
 
+    /// <summary>Hallazgo 4: el tope más largo mira un día (<see cref="CopilotLimits.Day"/>); el registro se guarda el doble.</summary>
+    public static readonly TimeSpan QuestionLogRetention = CopilotLimits.Day * 2;
+
     public async Task<CopilotRetentionSweep> SweepAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -48,6 +51,8 @@ public sealed class CopilotRetentionSweeper(ICopilotRepository repository, IAiAu
         }
 
         var toolCalls = await repository.DeleteToolCallsBeforeAsync(now - retention.ToolCalls, cancellationToken);
+        // Hallazgo 4 de la revisión: el registro de preguntas sólo sirve para el tope del día; dos días de margen.
+        await repository.DeleteQuestionsBeforeAsync(now - QuestionLogRetention, cancellationToken);
         return new CopilotRetentionSweep(threads, toolCalls);
     }
 }

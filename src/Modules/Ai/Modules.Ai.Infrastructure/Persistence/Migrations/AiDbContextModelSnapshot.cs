@@ -699,6 +699,33 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Ai.Infrastructure.Persistence.CopilotQuestionRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AskedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("asked_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "AskedAt" }, "IX_copilot_questions_asked_at");
+
+                    b.HasIndex(new[] { "TenantId", "UserId", "AskedAt" }, "IX_copilot_questions_member");
+
+                    b.ToTable("copilot_questions", "ai");
+                });
+
             modelBuilder.Entity("Modules.Ai.Infrastructure.Persistence.ToolCallRow", b =>
                 {
                     b.Property<long>("Id")

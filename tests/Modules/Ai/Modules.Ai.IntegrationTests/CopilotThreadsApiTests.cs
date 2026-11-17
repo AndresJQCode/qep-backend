@@ -122,6 +122,34 @@ public sealed class CopilotThreadsApiTests
         Assert.True(limited.Headers.RetryAfter?.Delta > TimeSpan.Zero);
     }
 
+    /// <summary>Revisión de la rama, hallazgo 4: borrar el hilo no devuelve el cupo, y dos preguntas paralelas del mismo miembro hacen fila
+    /// en el candado: con tope 1 por hora, de dos POST simultáneos entra uno.</summary>
+    [Fact]
+    public async Task DeletingAThreadDoesNotGiveBackTheQuotaAndParallelQuestionsQueue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = await EnabledAsync(
+            database.GetConnectionString(), new Dictionary<string, string> { ["Ai:Copilot:MessagesPerHour"] = "1", ["Ai:Copilot:MessagesPerDay"] = "5" });
+        using var owner = CreateClient(factory, AiApiHarness.TenantId, AiPermissions.CopilotUse);
+        var threadId = (await JsonAsync(await owner.PostAsJsonAsync(ThreadsUrl(), new { text = "Una" }, Ct))).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"{ThreadsUrl()}/{threadId}", Ct)).StatusCode);
+
+        var afterDelete = await owner.PostAsJsonAsync(ThreadsUrl(), new { text = "Otra" }, Ct);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, afterDelete.StatusCode);
+
+        // Otro miembro, cupo nuevo: de dos preguntas paralelas sólo una cabe.
+        using var other = factory.CreateClient();
+        other.DefaultRequestHeaders.Add("X-Subject-Id", Guid.CreateVersion7().ToString());
+        other.DefaultRequestHeaders.Add("X-Tenant-Id", AiApiHarness.TenantId);
+        other.DefaultRequestHeaders.Add("X-Permissions", AiPermissions.CopilotUse);
+        var both = await Task.WhenAll(
+            other.PostAsJsonAsync(ThreadsUrl(), new { text = "A" }, Ct), other.PostAsJsonAsync(ThreadsUrl(), new { text = "B" }, Ct));
+        Assert.Equal(
+            [HttpStatusCode.Created, HttpStatusCode.TooManyRequests],
+            both.Select(response => response.StatusCode).OrderBy(code => (int)code));
+    }
+
     /// <summary>El tenant con el módulo, la cuenta de Anthropic y el copiloto prendido. Los workers apagados: nadie reclama el trabajo.</summary>
     private static async Task<QepApiFactory> EnabledAsync(string connectionString, IReadOnlyDictionary<string, string>? settings = null)
     {

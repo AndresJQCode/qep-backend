@@ -5,6 +5,18 @@ namespace Modules.Ai.Infrastructure.Persistence;
 
 /// <summary>Spec 2026-11-17 (copiloto) §5.1: configuración, hilos y mensajes del copiloto. Sin FKs a otros esquemas: el dueño del hilo es una
 /// referencia blanda al usuario.</summary>
+/// <summary>Revisión de la rama, hallazgo 4: una pregunta de un miembro, para el tope por hora y por día.</summary>
+internal sealed class CopilotQuestionRow
+{
+    public Guid Id { get; init; }
+
+    public Guid TenantId { get; init; }
+
+    public Guid UserId { get; init; }
+
+    public DateTimeOffset AskedAt { get; init; }
+}
+
 internal static class CopilotModel
 {
     public const string SettingsEnabledCheck = "NOT enabled OR (provider IS NOT NULL AND model IS NOT NULL)";
@@ -27,6 +39,23 @@ internal static class CopilotModel
         ConfigureSettings(modelBuilder);
         ConfigureThread(modelBuilder);
         ConfigureMessage(modelBuilder);
+        ConfigureQuestion(modelBuilder);
+    }
+
+    /// <summary>Revisión de la rama, hallazgo 4: el registro de preguntas del tope por miembro (D-C11). Sin FK al hilo a propósito: borrar
+    /// el hilo no devuelve el cupo. Sin texto (D-C13).</summary>
+    private static void ConfigureQuestion(ModelBuilder modelBuilder)
+    {
+        var question = modelBuilder.Entity<CopilotQuestionRow>();
+        question.ToTable("copilot_questions", AiDbContext.Schema);
+        question.HasKey(value => value.Id);
+        question.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        question.Property(value => value.TenantId).HasColumnName("tenant_id");
+        question.Property(value => value.UserId).HasColumnName("user_id");
+        question.Property(value => value.AskedAt).HasColumnName("asked_at");
+        question.HasIndex(value => new { value.TenantId, value.UserId, value.AskedAt }, "IX_copilot_questions_member");
+        // El barrido borra por fecha, de todos los tenants.
+        question.HasIndex(value => value.AskedAt, "IX_copilot_questions_asked_at");
     }
 
     private static void ConfigureSettings(ModelBuilder modelBuilder)

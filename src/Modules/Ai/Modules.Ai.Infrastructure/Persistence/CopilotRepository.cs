@@ -48,15 +48,44 @@ internal sealed class CopilotRepository(AiDbContext dbContext) : ICopilotReposit
             .ToListAsync(cancellationToken);
     }
 
+    // Revisión de la rama, hallazgo 4: del registro propio y no de los mensajes, que se van con el hilo. Por IX_copilot_questions_member.
     public async Task<IReadOnlyList<DateTimeOffset>> ListQuestionTimesAsync(
         Guid tenantId, Guid userId, DateTimeOffset since, CancellationToken cancellationToken) =>
-        await (
-                from message in dbContext.CopilotMessages.AsNoTracking()
-                join thread in dbContext.CopilotThreads.AsNoTracking() on message.ThreadId equals thread.Id
-                where thread.TenantId == tenantId && thread.UserId == userId
-                    && message.Role == CopilotMessageRole.User && message.CreatedAt >= since
-                select message.CreatedAt)
+        await dbContext.CopilotQuestions.AsNoTracking()
+            .Where(question => question.TenantId == tenantId && question.UserId == userId && question.AskedAt >= since)
+            .Select(question => question.AskedAt)
             .ToListAsync(cancellationToken);
+
+    public async Task<ICopilotAskingLock> LockAskingAsync(Guid tenantId, Guid userId, CancellationToken cancellationToken)
+    {
+        var owned = dbContext.Database.CurrentTransaction is null ? await dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+        try
+        {
+            await dbContext.Database.ExecuteSqlAsync(
+                $"SELECT pg_advisory_xact_lock({CopilotAskLock.Namespace}, hashtext({CopilotAskLock.KeyFor(tenantId, userId)}))",
+                cancellationToken);
+            return new AskingLock(owned);
+        }
+        catch
+        {
+            if (owned is not null)
+            {
+                await owned.DisposeAsync();
+            }
+
+            throw;
+        }
+    }
+
+    public void AddQuestion(Guid tenantId, Guid userId, DateTimeOffset askedAt) =>
+        dbContext.CopilotQuestions.Add(new CopilotQuestionRow { Id = Guid.CreateVersion7(), TenantId = tenantId, UserId = userId, AskedAt = askedAt });
+
+    public Task<int> DeleteQuestionsBeforeAsync(DateTimeOffset before, CancellationToken cancellationToken)
+    {
+        // Npgsql sólo escribe un timestamptz desde un DateTimeOffset en UTC.
+        var cutoff = before.ToUniversalTime();
+        return dbContext.Database.ExecuteSqlAsync($"DELETE FROM ai.copilot_questions WHERE asked_at < {cutoff}", cancellationToken);
+    }
 
     public Task<CopilotThread?> ReadThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken) =>
         dbContext.CopilotThreads.AsNoTracking()
@@ -138,6 +167,14 @@ internal sealed class CopilotRepository(AiDbContext dbContext) : ICopilotReposit
                AND tc.created_at < {before}
             """,
             cancellationToken);
+
+    /// <summary>La transacción que abrió el candado, si la abrió él: sólo confirma esa (una del llamador la confirma el llamador).</summary>
+    private sealed class AskingLock(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? owned) : ICopilotAskingLock
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => owned?.CommitAsync(cancellationToken) ?? Task.CompletedTask;
+
+        public ValueTask DisposeAsync() => owned?.DisposeAsync() ?? ValueTask.CompletedTask;
+    }
 
     private sealed class ExpiredThreadRow
     {

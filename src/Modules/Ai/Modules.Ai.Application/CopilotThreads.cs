@@ -214,14 +214,18 @@ public sealed class CreateCopilotThreadHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         await CopilotAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.CopilotUse, cancellationToken);
         var now = clock.UtcNow;
+        // Revisión de la rama, hallazgo 4: contar y anotar la pregunta bajo el candado del miembro, hasta el commit.
+        await using var locked = await repository.LockAskingAsync(command.TenantId, executionContext.SubjectId, cancellationToken);
         await asking.EnsureCanAskAsync(command.TenantId, executionContext.SubjectId, countsAsQuestion: true, now, cancellationToken);
 
         // §7 paso 1: la pregunta, la respuesta pendiente y el trabajo en un solo guardado (una transacción).
         var jobId = Guid.CreateVersion7();
         var thread = CopilotThread.Create(Guid.CreateVersion7(), command.TenantId, executionContext.SubjectId, command.Text, jobId, now);
         repository.AddThread(thread);
+        repository.AddQuestion(command.TenantId, executionContext.SubjectId, now);
         jobs.Add(ModelJob.ForCopilot(jobId, command.TenantId, thread.Id, thread.Messages[^2].Seq, now));
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await locked.CommitAsync(cancellationToken);
         return CopilotThreadSupport.ToDto(thread);
     }
 }
@@ -258,11 +262,15 @@ public sealed class SendCopilotMessageHandler(
         }
 
         var now = clock.UtcNow;
+        // Hallazgo 4: como al crear el hilo.
+        await using var locked = await repository.LockAskingAsync(command.TenantId, executionContext.SubjectId, cancellationToken);
         await asking.EnsureCanAskAsync(command.TenantId, executionContext.SubjectId, countsAsQuestion: true, now, cancellationToken);
         var jobId = Guid.CreateVersion7();
         thread.AppendUserMessage(command.Text, jobId, now);
+        repository.AddQuestion(command.TenantId, executionContext.SubjectId, now);
         jobs.Add(ModelJob.ForCopilot(jobId, command.TenantId, thread.Id, thread.Messages[^2].Seq, now));
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await locked.CommitAsync(cancellationToken);
         return CopilotThreadSupport.ToDto(thread);
     }
 }
