@@ -377,6 +377,8 @@ app.MapShopifyWebhook(RateLimiterPolicies.Webhook);
 app.MapShopifyEndpoints();
 // Spec 2026-11-13: las asociaciones de líneas personalizadas de cada tienda (nombre exacto → variante de Catalog).
 app.MapShopifyCustomLineMappingEndpoints();
+// Spec 2026-11-17 §7: productos desde Shopify (importar, la importación, la cobertura y desvincular).
+app.MapShopifyProductEndpoints();
 // Spec 2026-11-14 §6: los cambios de Shopify sobre pedidos importados («Cambios por revisar», aceptar, rechazar y revisar).
 app.MapShopifyOrderEditEndpoints();
 app.MapMessagingEndpoints();

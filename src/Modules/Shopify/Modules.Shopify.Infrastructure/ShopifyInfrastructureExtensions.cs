@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -154,6 +155,12 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyProductImportQueue, ShopifyProductImportQueue>();
         services.AddScoped<ShopifyProductImportProcessor>();
         services.AddHostedService<ShopifyProductImportWorker>();
+        // §7: importar, ver la importación, la cobertura y desvincular. El validador entra con AddValidatorsFromAssemblyContaining
+        // (mismo ensamblado que UpdateShopifyStoreValidator).
+        services.AddScoped<ICommandHandler<StartShopifyProductImportCommand, ShopifyProductImportStarted>, StartShopifyProductImportHandler>();
+        services.AddScoped<IQueryHandler<GetShopifyProductImportQuery, ShopifyProductImportDto?>, GetShopifyProductImportHandler>();
+        services.AddScoped<IQueryHandler<GetShopifyProductCoverageQuery, ShopifyProductCoverageDto>, GetShopifyProductCoverageHandler>();
+        services.AddScoped<ICommandHandler<UnlinkShopifyProductCommand, bool>, UnlinkShopifyProductHandler>();
         return services;
     }
 
