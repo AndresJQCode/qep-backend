@@ -226,6 +226,10 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
         public Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+            Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }

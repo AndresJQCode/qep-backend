@@ -41,6 +41,25 @@ public sealed class IntegrationConnectionsTests
         Assert.Empty(await connections.ListResolvedActiveAsync(TenantId, IntegrationProviders.WhatsAppCloud.Key, Ct));
     }
 
+    [Fact]
+    public async Task ListByProvidersReadsOnceForTwoProviders()
+    {
+        var repository = new InMemoryConnectionRepository(
+            Connection(provider: IntegrationProviders.WhatsAppCloud.Key),
+            Connection(provider: IntegrationProviders.Instagram.Key),
+            Connection(provider: IntegrationProviders.Zenvia.Key));
+        var connections = NewIntegrationConnections(repository);
+
+        var listed = await connections.ListByProvidersAsync(
+            TenantId, [IntegrationProviders.WhatsAppCloud.Key, IntegrationProviders.Instagram.Key], Ct);
+
+        Assert.Equal(2, listed.Count);
+        Assert.Equal(1, repository.ListCalls);
+        Assert.Equal(
+            [IntegrationProviders.Instagram.Key, IntegrationProviders.WhatsAppCloud.Key],
+            listed.Select(listing => listing.ProviderKey).Order(StringComparer.Ordinal));
+    }
+
     private IntegrationConnection Connection(
         ConnectionStatus status = ConnectionStatus.Active, bool secretUnreadable = false, string? provider = null)
     {

@@ -63,7 +63,10 @@ public sealed record ConnectionSummary(Guid Id, string ProviderKey, string Name)
 /// bandeja muestra <c>connectionName</c> también en conversaciones de una conexión pausada.</summary>
 /// <param name="LastFailureCode">El último motivo de <c>NeedsAttention</c>, tal cual está guardado. Ojo: <c>MarkVerified</c> no lo
 /// limpia, así que en una conexión <c>Active</c> puede quedar un fallo viejo; quien lo muestre filtra por estado.</param>
-public sealed record ConnectionListing(Guid Id, string Name, ConnectionStatus Status, string? LastFailureCode = null);
+/// <param name="ProviderKey">De qué proveedor es: <see cref="IIntegrationConnections.ListByProvidersAsync"/> mezcla varios en una lista.
+/// Vacío por defecto para quien construye la fila a mano.</param>
+public sealed record ConnectionListing(
+    Guid Id, string Name, ConnectionStatus Status, string? LastFailureCode = null, string ProviderKey = "");
 
 /// <summary>
 /// Spec 2026-10-08, «Puertos para los consumidores». Cada consumidor declara su propio puerto en su
@@ -89,6 +92,11 @@ public interface IIntegrationConnections
 
     /// <summary>Todas las del proveedor en el tenant, por nombre; no filtra por estado, visibilidad ni habilitación.</summary>
     Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
+
+    /// <summary>Como <see cref="ListByProviderAsync"/>, pero de cualquiera de los proveedores y en una sola lectura: todas, por nombre
+    /// e id, sin agrupar por proveedor; cada fila dice el suyo en <see cref="ConnectionListing.ProviderKey"/>.</summary>
+    Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+        Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken);
 }
 
 public sealed class IntegrationConnections(
@@ -181,12 +189,21 @@ public sealed class IntegrationConnections(
             stored.Plain);
     }
 
-    public async Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(
+    public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(
         Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
-        (await repository.ListAsync(tenantId, cancellationToken))
-            .Where(connection => string.Equals(connection.ProviderKey, providerKey, StringComparison.Ordinal))
+        ListByProvidersAsync(tenantId, [providerKey], cancellationToken);
+
+    public async Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+        Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(providerKeys);
+        var keys = providerKeys.ToHashSet(StringComparer.Ordinal);
+        return (await repository.ListAsync(tenantId, cancellationToken))
+            .Where(connection => keys.Contains(connection.ProviderKey))
             .OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(connection => connection.Id)
-            .Select(connection => new ConnectionListing(connection.Id, connection.Name, connection.Status, connection.LastFailureCode))
+            .Select(connection => new ConnectionListing(
+                connection.Id, connection.Name, connection.Status, connection.LastFailureCode, connection.ProviderKey))
             .ToArray();
+    }
 }

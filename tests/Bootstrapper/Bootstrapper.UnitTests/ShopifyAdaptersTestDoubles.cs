@@ -624,6 +624,10 @@ internal sealed class FakeIntegrationConnections(params IntegrationConnection[] 
     public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+        Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     private static ResolvedConnection Resolved(IntegrationConnection connection) =>
         new(
             connection.Id, connection.ProviderKey, connection.Name,

@@ -112,18 +112,24 @@ internal sealed class MessagingConnectionDirectory(
     }
 
     public async Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        (await connections.ListByProviderAsync(tenantId, Provider, cancellationToken))
-            .Concat(await connections.ListByProviderAsync(tenantId, InstagramProvider, cancellationToken))
+        (await connections.ListByProvidersAsync(tenantId, [Provider, InstagramProvider], cancellationToken))
             .ToDictionary(listing => listing.Id, listing => listing.Name);
 
     public async Task<IReadOnlyList<MessagingConnectionRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        var whatsApp = (await connections.ListByProviderAsync(tenantId, Provider, cancellationToken))
-            .Select(listing => new MessagingConnectionRef(listing.Id, listing.Name, ConversationChannel.WhatsApp, listing.Status.ToString()));
-        var instagram = (await connections.ListByProviderAsync(tenantId, InstagramProvider, cancellationToken))
-            .Select(listing => new MessagingConnectionRef(listing.Id, listing.Name, ConversationChannel.Instagram, listing.Status.ToString()));
-        return whatsApp.OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
-            .Concat(instagram.OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
+        // Las de los dos canales en una sola lectura; el canal sale del proveedor de cada fila. WhatsApp primero y después
+        // Instagram, cada grupo por nombre.
+        var listings = await connections.ListByProvidersAsync(tenantId, [Provider, InstagramProvider], cancellationToken);
+        return listings
+            .Select(listing => new MessagingConnectionRef(
+                listing.Id,
+                listing.Name,
+                string.Equals(listing.ProviderKey, InstagramProvider, StringComparison.Ordinal)
+                    ? ConversationChannel.Instagram
+                    : ConversationChannel.WhatsApp,
+                listing.Status.ToString()))
+            .OrderBy(connection => connection.Channel == ConversationChannel.Instagram)
+            .ThenBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
