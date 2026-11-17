@@ -41,6 +41,27 @@ public sealed class FileOwnerModulesTests
         }
     }
 
+    // Spec 2026-11-17 (imagen de encabezado de plantilla): la imagen es de Mensajería.
+    [Fact]
+    public void AMessageTemplateFileBelongsToMessaging()
+    {
+        Assert.Equal(TenantModuleKeys.Messaging, FileOwnerModules.ModuleOf(FileOwnerType.MessageTemplate));
+    }
+
+    // Sólo llega por la sesión de Mensajería: la consola de Storage no la ve ni la crea.
+    [Fact]
+    public void AMessageTemplateFileIsSystemOwned()
+    {
+        Assert.True(SystemOwnedFiles.Includes(FileOwnerType.MessageTemplate));
+    }
+
+    // owner_type es character varying(20) y se persiste por nombre: un nombre más largo no cabe.
+    [Fact]
+    public void TheOwnerTypeNameFitsItsColumn()
+    {
+        Assert.All(Enum.GetNames<FileOwnerType>(), name => Assert.True(name.Length <= 20, name));
+    }
+
     [Fact]
     public void OwnerTypesDisabledInListsTheOnesWhoseModuleIsOff()
     {
@@ -51,7 +72,8 @@ public sealed class FileOwnerModulesTests
                 TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))).Order());
         // support no tiene dependencias: sólo sale con su propio módulo apagado.
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.SupportTicket],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.SupportTicket,
+                FileOwnerType.MessageTemplate],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.Empty).Order());
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }

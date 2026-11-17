@@ -44,7 +44,12 @@ public enum FileOwnerType
     // Soporte fase 3 (plan F30): un adjunto del formulario público de Soporte. Lo sube un visitante anónimo por IStorageSystemUploads
     // —nunca por POST /files— y OwnerId es un secreto aleatorio (el uploadKey) que sólo conoce quien abrió la sesión; el vínculo con el
     // ticket vive en support.ticket_attachments. Se persiste por nombre, así que no hay migración.
-    SupportTicket = 8
+    SupportTicket = 8,
+
+    // Spec 2026-11-17: la imagen fija del encabezado de una plantilla de WhatsApp. OwnerId es el tenantId. Sube sólo por la sesión de
+    // Mensajería (IMessagingTemplateImageStore, con messaging.template.manage), nunca por POST /files: por eso es dueño de sistema.
+    // Se persiste por nombre en character varying(20), así que no hay migración.
+    MessageTemplate = 9
 }
 
 /// <summary>
@@ -57,7 +62,7 @@ public enum FileOwnerType
 public static class SystemOwnedFiles
 {
     public static IReadOnlySet<FileOwnerType> OwnerTypes { get; } =
-        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { FileOwnerType.SupportTicket });
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate });
 
     public static bool Includes(FileOwnerType ownerType) => OwnerTypes.Contains(ownerType);
 }
