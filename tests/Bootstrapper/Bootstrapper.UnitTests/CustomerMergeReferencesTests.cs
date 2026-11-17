@@ -298,6 +298,7 @@ public sealed class CustomerMergeReferencesTests
         ("billing.charges", "customer_id"),
         ("loans.loans", "customer_id"),
         ("support.tickets", "customer_id"),
+        ("ai.tests", "customer_id"),
     ];
 
     private static CustomersDbContext CustomersFor(PostgreSqlContainer database, CommandCounter? commands = null)
@@ -322,6 +323,8 @@ public sealed class CustomerMergeReferencesTests
             CREATE SCHEMA loans;
             CREATE SCHEMA support;
             CREATE TABLE support.tickets (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid);
+            CREATE SCHEMA ai;
+            CREATE TABLE ai.tests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid);
             CREATE TABLE loans.loans (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL);
             CREATE TABLE billing.services (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL,
                 version integer NOT NULL DEFAULT 1);

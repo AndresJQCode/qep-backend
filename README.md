@@ -4616,6 +4616,171 @@ Al terminar, borra de la sesión de PowerShell las dos variables que guardan una
 Remove-Item Env:QEP_SESSION, Env:CLASIC_BOT_API_KEY
 ```
 
+### Agentes IA
+
+Agentes que atienden las conversaciones de Mensajería (WhatsApp e Instagram) con un modelo de lenguaje y herramientas de
+QEP, sin canvas (spec `2026-10-29-agentes-ia-design.md` y plan `2026-11-12-agentes-ia-claude-backend.md`, que reemplaza
+partes del spec). Módulo `ai` (depende de `messaging`, **fuera** de `DefaultForNewTenants`: se prende tenant por tenant),
+permisos `ai.agent.read|manage`, esquema `ai`. Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/ai`: `models`,
+`settings`, `connections`, `sessions`, `conversations/{id}/agent-activity`, el CRUD de `agents` con `draft`, `publish`,
+`pause` y `resume`, y el playground en `agents/{id}/tests` y `tests/{id}`.
+
+**Proveedor por agente.** Cada agente elige proveedor y modelo (`config.model = { provider, id }`): `anthropic` (Claude) u
+`openai`. La versión publicada guarda los dos y una sesión termina con la versión con que empezó, así que una conversación
+nunca cambia de proveedor a mitad (C-17). Es **BYOK**: cada tenant conecta la clave de su propia cuenta como una conexión de
+Integraciones (proveedores `anthropic` y `openai`, categoría `Ai`, una conexión por proveedor, clave cifrada como cualquier
+secreto de conexión). Publicar exige la conexión `Active` **del proveedor del agente**: `422 ai.provider.not_configured`
+con `provider` en el detalle; la del otro proveedor no habilita (C-18).
+
+**Ejecución en dos etapas** (D-A13). El webhook encola el entrante en `messaging.automation_inbox` con `bot_kind = 2` si la
+conexión la ocupa un agente (`messaging.connection_bots`). Etapa 1, `AiInboxWorker`: en una unidad corta abre o retoma la
+sesión y deja un trabajo en `ai.model_jobs` (con `Ai:Workers:DebounceSeconds` para juntar una ráfaga del cliente). Etapa 2,
+`AiModelWorker`: reclama el trabajo y llama al modelo **sin transacción abierta ni lock de la conversación**; el bucle de
+herramientas es común a los dos proveedores (`AgentTurnRunner`) y cada llamada deja su fila en `ai.usage_records` y cada
+herramienta en `ai.tool_calls`. El resultado se cierra en otra unidad corta: enviar por `IBotOutbound`, traspasar a una
+persona o reintentar (hasta `ModelJob.MaxAttempts`, sólo proveedor caído o límite de tasa). Todo error del proveedor que no
+se reintenta, o agotado, termina en traspaso: el cliente nunca se queda sin respuesta y sin humano. La cola tiene métrica
+`ai_model` en el muestreador de colas y el meter `Qep.Ai` (`qep.ai.model.calls`, `qep.ai.model.errors`, etiquetados por
+`provider`).
+
+**Configuración.** Todo en `appsettings.json`, nada secreto:
+
+- `Ai:DefaultProvider` y `Ai:Providers:{provider}:Models[]` (`Id`, `Label`, `Description`, `IsDefault`, `Available`,
+  `Effort`): la lista curada por proveedor que muestra `GET /ai/models`. `AiOptionsValidator` corre al arrancar: un
+  `IsDefault` por proveedor, ids no vacíos ni repetidos, `Effort` válido para el proveedor (en OpenAI es opcional) y el
+  proveedor por defecto presente. Rota, el pod no arranca. Retirar un modelo es `Available: false`; el agente que lo usa
+  lo conserva y no se puede volver a publicar con él.
+- `Ai:Model`: los topes de un trabajo (`MaxOutputTokens` 16.000, `CallTimeoutSeconds` 45, `JobTimeoutSeconds` 120,
+  `MaxModelCalls` 6, `MaxToolCalls` 8, `MaxHistoryTurns` 30, `MaxContextTokens` sin valor). Son la propuesta del spec
+  (P-2) hasta que el eval diga otra cosa.
+- `Ai:Workers`: `PollSeconds`, `BatchSize`, `LeaseMinutes`, `DebounceSeconds`, `IdleHours`, `IdleSweepMinutes`,
+  `ModuleSweepSeconds`, `CopilotRetentionSweepHours` (24: la retención del copiloto) y `Enabled` (apaga los dos workers; las
+  pruebas que siembran filas a mano lo usan).
+- `Ai:Copilot`: los topes del copiloto (D-C11): `MessagesPerHour` 30 y `MessagesPerDay` 200 por miembro, `MaxOutputTokens`
+  16.000, `MaxModelCalls` 8, `MaxToolCalls` 12, `JobTimeoutSeconds` 120, `MaxHistoryMessages` 20, `MaxContextTokens` sin
+  valor, y `ToolCallRetentionDays` 30 (cuánto viven los `tool_calls` de sus trabajos). Se validan al arrancar; un cero frena
+  el pod.
+
+#### Bloque «Agente IA» en chatbots
+
+Spec `2026-11-17-agente-ia-en-chatbots-design.md` (plan `2026-11-17-agentes-ia-fase-2-backend.md`, Parte B). Un nodo `aiAgent`
+del canvas **delega** la conversación en un agente publicado y la recupera por una de cinco salidas: `done`
+(`finish_objective`), `human`, `noAnswer`, `idle` y `error`. La delegación es de Mensajería y neutral
+(`messaging.bot_delegations`, `conversations.automation_delegation_id`): la conversación sigue `Active`, cambia de bot a
+`bot_kind = 2` sin pasar por `None` y vuelve al chatbot con una fila `AgentReturned` en `messaging.automation_inbox`. El agente
+corre en una sesión de origen `ChatbotBlock` (sin saludo, con el objetivo y el contexto del paso en el contexto volátil) y
+**nunca traspasa por su cuenta**: toda terminación devuelve al flujo, salvo la toma humana, la ventana cerrada y el bloqueo. Un
+agente puede publicarse sin conexiones (sólo para bloques) y no se borra mientras un chatbot publicado lo use (409
+`ai.agent.in_use_by_chatbots`). El simulador de chatbots se detiene en el bloque y el probador elige la salida: nunca llama al
+modelo.
+
+#### Copiloto interno
+
+Spec `2026-11-17-copiloto-interno-design.md` (Parte C del mismo plan). Un chat privado por miembro que contesta con los datos de
+su organización, **con sus permisos y sólo leyendo**. Módulo propio `copilot` (sin dependencias, fuera de
+`DefaultForNewTenants`), permisos `ai.copilot.use` (chatear) y `ai.copilot.manage` (configurar), los dos sólo en `admin` de
+fábrica. Rutas bajo `/api/v1/tenants/{tenantId}/ai/copilot`: `settings` (`GET|PUT`, con `If-Match`), `status` y `threads`
+(listar, crear con la primera pregunta, leer, renombrar, borrar, preguntar y reintentar).
+
+- **Corre como el miembro.** Cada herramienta resuelve los permisos del miembro en el momento de llamarse, exige el permiso y el
+  módulo del endpoint que replica y despacha **la misma consulta** con un contexto de ejecución delegado
+  (`Bootstrapper/Copilot/CopilotToolExecutor.cs`). Hereda así toda regla de alcance del handler (el asesor ve lo suyo, el costo
+  sólo con su permiso). La garantía es la de un request: con la caché de permisos de Valkey, lo que el miembro pierde vale en la
+  llamada siguiente o en ≤ 60 s.
+- **Herramientas** (lista cerrada en `Bootstrapper/Copilot`): reportes (`get_orders_summary`, `list_orders_report`,
+  `get_quotations_summary`, `list_quotations_report`, `get_customers_summary`, `get_margin_summary`,
+  `get_price_changes_summary`), pedidos y cotizaciones (`search_orders`, `get_order`, `search_quotations`, `get_quotation`),
+  clientes, catálogo y Mensajería (`search_customers`, `get_customer`, `search_products`, `get_product`,
+  `get_messaging_summary`), préstamos y contratos de servicio (`search_loans`, `get_loan`, `list_installments`,
+  `search_services`, `get_service`, `list_charges`). Los totales salen sólo de los resúmenes; las listas devuelven a lo sumo 20
+  filas con `total` y `truncated`. Los detalles son proyecciones: sin comprobantes, archivos, PDF, cuentas bancarias, notas de
+  clientes ni texto de conversaciones.
+- **Citas.** Cada fila trae `ref { kind, id, label }` (`order`, `quotation`, `customer`, `product`, `loan`, `service`,
+  `charge`); la respuesta sólo guarda las citas que salieron de un `ref` de **ese** trabajo, y el enlace lo arma el frontend
+  con `kind` + `id`.
+- **Asíncrono.** Preguntar responde 202 con la respuesta pendiente; `AiModelWorker` corre el trabajo y el frontend sondea el
+  hilo (`progress` dice qué herramienta está en curso).
+- **Retención y auditoría.** Un barrido diario borra los hilos sin actividad en la retención del tenant (`retentionDays`,
+  7..365, 90 por defecto) y los `tool_calls` del copiloto con más de `Ai:Copilot:ToolCallRetentionDays`. Guardar la
+  configuración y borrar un hilo (por el miembro o por la retención, actor sistema) quedan en la auditoría como
+  `ai.copilot.settings_updated` y `ai.copilot.thread_deleted`, sin texto de preguntas ni respuestas. `GET /settings` trae el
+  consumo del mes por miembro (`usageThisMonth.byMember`).
+
+**Agregar un proveedor** es tocar, juntos: `AiProviders` (Domain), el proveedor en Integrations con su migración del
+`CHECK` de `provider_key` y su probador de clave, un adaptador de `IAiModelClient` en
+`Modules.Ai.Infrastructure/Model/<Proveedor>/` registrado por clave (`AddKeyedScoped`, `AiInfrastructureExtensions`), su
+sección en `Ai:Providers` y su caso en `HandoffCauseKindParityTests.EveryProviderSurvivesTheThreadCleaning`. Un proveedor
+sin adaptador no deja arrancar el pod (`AiModelClientRegistrationValidator`). Todo lo que dependa del proveedor (forma del
+historial, caché, herramientas, errores) vive en su adaptador: nada en Domain ni Application pregunta por un proveedor
+concreto, y `AiLayerTests` prohíbe los SDK de proveedor fuera de Infrastructure.
+
+**Probar sin gastar.** Ninguna prueba llama a un proveedor real. Las unitarias de los adaptadores usan
+`FakeAnthropicServer` y `FakeOpenAiServer` (capturan el cuerpo y responden lo que pida la prueba); las de integración
+cambian el handler del cliente nombrado (`ClaudeModelClient.HttpClientName`, `OpenAiModelClient.HttpClientName`) por
+`FakeAnthropicMessagesHandler` o `FakeOpenAiResponsesHandler` (`AgentPlaygroundApiTests.UseFakeAnthropic` /
+`UseFakeOpenAi`), con claves falsas. `AnthropicNoLeakTests` y `OpenAiNoLeakTests` corren el host en `Trace` y verifican
+que la clave y el texto del cliente no aparecen en logs, auditoría, tablas `ai.*` ni spans.
+
+#### Eval
+
+`tests/Modules/Ai/Modules.Ai.Eval` mide calidad, latencia p90 y costo por conversación resuelta de cada modelo, con el
+**mismo** `AgentTurnRunner` de producción, sobre 43 conversaciones sintéticas en español (`eval-set.json`, contra una
+ferretería ficticia en memoria). Califica por reglas (resultado final, motivo del traspaso, herramientas llamadas y
+prohibidas, fuentes citadas, nunca revela instrucciones) y, en los casos con rúbrica que pasaron las reglas, con un modelo
+juez si le pasas `--judge`. Con Anthropic reporta además la verificación de C-12 (`CacheReadInputTokens > 0` desde la
+segunda llamada de un trabajo).
+
+**Gasta dinero real: no se corre sin el presupuesto aprobado por el owner.** Es una consola y no un proyecto de pruebas,
+así que `dotnet test` la salta y ningún pipeline la corre. Para llamar a un proveedor exige `--confirm-spend`, un tope duro
+de llamadas (`--max-model-calls`, cuenta agente y juez) y la clave en el entorno: `QEP_EVAL_ANTHROPIC_API_KEY` y/o
+`QEP_EVAL_OPENAI_API_KEY`, de una cuenta de evaluación, nunca de un tenant. Las claves no se aceptan como argumento (quedarían
+en el historial de la consola) y el eval sólo dice si faltan, nunca su valor.
+
+```powershell
+# Gratis: valida el conjunto y muestra cuántos turnos correría, sin red.
+dotnet run --project tests/Modules/Ai/Modules.Ai.Eval -- --dry-run
+
+# La clave, sin que se vea en pantalla ni en el historial.
+$secure = Read-Host -AsSecureString "Clave de Anthropic de la cuenta de evaluación"
+$env:QEP_EVAL_ANTHROPIC_API_KEY = [System.Net.NetworkCredential]::new("", $secure).Password
+
+# Una corrida: Opus 5.5 en tres esfuerzos, juez Haiku 5.5, precios del día y el techo de tres variantes con juez (3 × 283).
+dotnet run --project tests/Modules/Ai/Modules.Ai.Eval -- --confirm-spend --max-model-calls 849 --variant anthropic:claude-opus-5-5:low --variant anthropic:claude-opus-5-5:medium --variant anthropic:claude-opus-5-5:high --judge anthropic:claude-haiku-5-5:low --prices C:\ruta\precios.json
+
+Remove-Item Env:QEP_EVAL_ANTHROPIC_API_KEY
+```
+
+- `--variant proveedor:modelo[:esfuerzo]` se repite; sin esfuerzo, el proveedor usa el default del modelo (producción
+  siempre manda el de la lista curada, así que pásalo). `--repeat n` corre cada caso n veces; `--cases` filtra por id o
+  categoría.
+- **Precios:** QEP no guarda tabla de precios (P-15), así que se copian de la página de cada proveedor el día de la corrida
+  en una copia de `prices.example.json` (USD por millón de tokens, por `proveedor:modelo`). Sin precio de un componente que
+  tuvo tokens, el costo sale `unknown`: no se supone.
+- **Salida:** un resumen por variante en consola y el reporte completo en JSON (respuestas, herramientas, consumo por
+  llamada, fallas) en `%TEMP%\qep-ai-eval\` o donde diga `--out`. Al llegar al tope corta y escribe lo que alcanzó (código de
+  salida 3). Si el proveedor rechaza la cuenta (clave, permiso o saldo), esa variante para ahí.
+- Para dimensionar el presupuesto: cada turno hace de 1 a `MaxModelCalls` llamadas (6 por defecto) y el juez una por cada
+  caso con rúbrica que pasó las reglas (hay 25 con rúbrica). El techo de una variante con juez es 43 × 6 + 25 = 283
+  llamadas; un turno sin herramientas hace una sola, así que lo normal queda muy por debajo. `--dry-run` imprime la cuenta
+  de turnos de la corrida que pidas.
+- **Copiloto:** `eval-set.json` trae además `copilotCases`, preguntas de agregado («¿cuánto vendimos este mes?») que deben
+  usar el resumen y nunca sumar filas de una lista. `--dry-run` las valida (herramientas que existen, pregunta de 1 a 2000
+  caracteres); todavía no se corren: falta el corredor del copiloto con herramientas de mentira.
+
+#### Despliegue
+
+1. **Red:** el pod tiene que salir por HTTPS a `api.anthropic.com` y a `api.openai.com`. En este repo no hay
+   `NetworkPolicy`; si el clúster restringe la salida (repo de plataforma), hay que abrir esos dos hosts.
+2. **Ninguna clave de proveedor va en el ConfigMap ni en el Secret** del despliegue: con BYOK cada tenant pone la suya en
+   Integraciones y vive cifrada en `integrations`. No hay variable de pipeline nueva.
+3. Backend con sus migraciones: `AddAi`, `AddAiModelRuns` y `AddAiSessions` (Ai), `AddAnthropicProvider` y
+   `AddOpenAiProvider` (Integrations), `AddConnectionBots` y `AddAgentAutomation` (Messaging), `AddQuotationExternalKey`
+   (Quotations) y `AddAiModuleKey` (Tenancy). El módulo nace apagado para todos: se prende por tenant cuando el frontend
+   esté listo. La fase 2 suma `AddBotDelegations` (Messaging), `AddChatbotBlockSessions` y `AddCopilot` (Ai) y
+   `AddCopilotModuleKey` (Tenancy); el módulo `copilot` también nace apagado. Sus `Down` no se corren en producción (ver
+   `CLAUDE.md`).
+4. Dashboard y alertas de la cola `ai_model` y de `qep.ai.model.*` van en el repo de plataforma, no en éste.
+
 ### Integración con Shopify
 
 Los pedidos de la tienda Shopify del tenant entran solos como pedidos de QEP (spec

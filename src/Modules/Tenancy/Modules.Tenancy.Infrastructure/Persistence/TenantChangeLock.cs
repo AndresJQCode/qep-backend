@@ -13,7 +13,7 @@ public static class TenantChangeLock
     /// ningún otro candado de dos claves la use. Los demás espacios de dos claves son
     /// <c>AutomationsConversationLock.Namespace</c> = 20261022, <c>ShopifyTokenLock.Namespace</c> = 20261112,
     /// <c>StartupLock.Namespace</c> = 20261113 (Bootstrapper) e
-    /// <c>InstagramTokenLock.Namespace</c> = 20261114.</summary>
+    /// <c>InstagramTokenLock.Namespace</c> = 20261114 y <c>ConnectionSlotsLock.Namespace</c> = 20261115 (Bootstrapper).</summary>
     public const int Namespace = 20261008;
 
     public static string KeyFor(Guid tenantId) => $"tenancy.tenant-changes:{tenantId:D}";

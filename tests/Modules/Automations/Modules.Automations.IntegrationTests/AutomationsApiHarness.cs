@@ -338,6 +338,35 @@ internal static class AutomationsApiHarness
         await EnableModuleAsync(connectionString, tenantId, "automations");
     }
 
+    /// <summary>Spec 2026-11-17 D-B16: el bloque «Agente IA» exige también el módulo <c>ai</c>.</summary>
+    public static Task<int> EnableAiAsync(string connectionString, Guid tenantId) => EnableModuleAsync(connectionString, tenantId, "ai");
+
+    /// <summary>Spec 2026-11-17 §5.2: un agente de IA del tenant, escrito por el repositorio de Ai (sin pasar por la cuenta del proveedor):
+    /// publicado si <paramref name="publish"/>, y pausado después si <paramref name="pause"/>.</summary>
+    public static async Task<Guid> SeedAgentAsync(
+        WebApplicationFactory<Program> host, RegisteredTenant tenant, string name = "Ventas", bool publish = true, bool pause = false)
+    {
+        using var scope = host.Services.CreateScope();
+        var now = DateTimeOffset.UtcNow;
+        var agent = Modules.Ai.Domain.Agent.Create(
+            tenant.TenantId, name,
+            Modules.Ai.Domain.AgentConfig.Default(new Modules.Ai.Domain.AgentModelRef("anthropic", "claude-sonnet-5-5")) with { Instructions = "Atiende." },
+            tenant.OwnerUserId, now);
+        if (publish)
+        {
+            agent.Publish([], tenant.OwnerUserId, now);
+        }
+
+        if (pause)
+        {
+            agent.Pause(now);
+        }
+
+        scope.ServiceProvider.GetRequiredService<Modules.Ai.Application.IAgentRepository>().Add(agent);
+        await scope.ServiceProvider.GetRequiredService<Modules.Ai.Application.IAiUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
+        return agent.Id;
+    }
+
     public static Task<int> DisableModuleAsync(string connectionString, Guid tenantId, string moduleKey) =>
         ExecuteAsync(connectionString,
             "UPDATE tenancy.tenant_modules SET status = 'inactive', status_changed_at = now() WHERE tenant_id = @tenantId AND module_key = @key",

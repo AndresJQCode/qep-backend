@@ -4,6 +4,10 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Plan 2026-11-12 (agentes IA), C-6: SDK oficial de Anthropic para la Messages API. Sólo
+         Modules.Ai.Infrastructure lo referencia (AiLayerTests lo prohíbe en Domain y Application).
+         13.3.0 es la última estable con dos semanas de publicada al 2026-11-13. -->
+    <PackageVersion Include="Anthropic" Version="13.3.0" />
     <PackageVersion Include="AWSSDK.S3" Version="4.0.100.2" />
     <PackageVersion Include="ClosedXML" Version="0.105.1" />
     <PackageVersion Include="Concentus" Version="2.2.2" />

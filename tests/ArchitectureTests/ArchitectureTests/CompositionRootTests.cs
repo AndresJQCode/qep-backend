@@ -323,7 +323,7 @@ public sealed class CompositionRootTests
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
     /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheEightyFiveConstants()
+    public void PermissionDiscoveryFindsTheEightySevenConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -342,8 +342,9 @@ public sealed class CompositionRootTests
         // + los dos de la unidad tributaria del operador (operator.tax_units.*, spec 2026-11-10)
         // + los tres de costo y margen (spec 2026-11-10 §5)
         // + los dos de agentes IA (ai.agent.read|manage, spec 2026-10-29)
-        // + los tres de soporte (support.*, spec 2026-11-14).
-        Assert.Equal(85, PermissionConstants().Length);
+        // + los tres de soporte (support.*, spec 2026-11-14)
+        // + los dos del copiloto (ai.copilot.use|manage, spec 2026-11-17).
+        Assert.Equal(87, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -714,6 +715,48 @@ public sealed class CompositionRootTests
         var policies = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
 
         foreach (var permission in new[] { AiPermissions.AgentRead, AiPermissions.AgentManage })
+        {
+            Assert.NotNull(await policies.GetPolicyAsync(permission));
+        }
+    }
+
+    /// <summary>Spec 2026-11-17 (copiloto), D-C14 y OC-1: de núcleo como los de agentes (cada handler revisa la capacidad
+    /// <c>copilot</c>), de fábrica sólo en <c>admin</c> (cada pregunta gasta saldo de la cuenta del tenant) y con su forma en la matriz
+    /// de <c>/roles</c>.</summary>
+    [Fact]
+    public void TheCopilotPermissionsAreCoreAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] copilotPermissions = [AiPermissions.CopilotUse, AiPermissions.CopilotManage];
+
+        Assert.Equal(["ai.copilot.use", "ai.copilot.manage"], copilotPermissions);
+        Assert.All(copilotPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.All(copilotPermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+        }
+
+        var definitions = catalog.ListPermissions()
+            .Where(definition => copilotPermissions.Contains(definition.Permission))
+            .ToArray();
+        Assert.Equal(2, definitions.Length);
+        Assert.All(definitions, definition =>
+        {
+            Assert.Equal("Ai", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+            Assert.Equal("ai.copilot", definition.Shape!.Entity);
+        });
+    }
+
+    /// <summary>La otra mitad de los permisos del copiloto: sin su política la ruta responde 500, no 403.</summary>
+    [Fact]
+    public async Task TheCopilotPermissionsHaveTheirPolicies()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[] { AiPermissions.CopilotUse, AiPermissions.CopilotManage })
         {
             Assert.NotNull(await policies.GetPolicyAsync(permission));
         }
@@ -1181,6 +1224,146 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Plan 2026-11-12, 5.2 y C-14: el contenedor arma un adaptador del modelo para cada proveedor, y el cliente HTTP de Claude no tiene
+    /// los loggers de <see cref="HttpClient"/> (escribirían el header con la clave del tenant) ni sigue redirecciones.
+    /// </summary>
+    [Fact]
+    public void EveryAiProviderHasAModelClientAndTheClaudeHttpClientHasNoLoggers()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolver = scope.ServiceProvider.GetRequiredService<IAiModelClientResolver>();
+        foreach (var aiProvider in Modules.Ai.Domain.AiProviders.All)
+        {
+            Assert.NotNull(resolver.For(aiProvider));
+        }
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(Modules.Ai.Infrastructure.Model.Anthropic.ClaudeModelClient.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    /// <summary>Spec 2026-10-29 §9.1, O-2: el cliente HTTP de OpenAI tampoco tiene loggers (la clave va en <c>Authorization</c>) ni sigue
+    /// redirecciones.</summary>
+    [Fact]
+    public void TheOpenAiHttpClientHasNoLoggersAndNoRedirects()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(Modules.Ai.Infrastructure.Model.OpenAi.OpenAiModelClient.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    /// <summary>
+    /// Plan fase 2, C2.4 (spec 2026-11-17 copiloto §6): un contexto de ejecución que no sale de los claims de un request sólo lo crea el
+    /// ejecutor de herramientas del copiloto, y sólo él lo instala en un scope. Cualquier otro lugar que lo hiciera podría correr consultas
+    /// con los permisos de alguien que no las pidió. Se lee del IL: un <c>new</c> o un <c>Enter</c> en otro tipo pone esto en rojo.
+    /// </summary>
+    [Fact]
+    public void OnlyTheCopilotExecutorCreatesADelegatedContext()
+    {
+        var bootstrapper = typeof(QepServiceCollectionExtensions).Assembly;
+        var delegated = bootstrapper.GetType("Bootstrapper.Copilot.DelegatedExecutionContext", throwOnError: true)!;
+        var scope = bootstrapper.GetType("Bootstrapper.Copilot.DelegatedExecutionScope", throwOnError: true)!;
+        var executor = bootstrapper.GetType("Bootstrapper.Copilot.CopilotToolExecutor", throwOnError: true)!;
+
+        var creators = IlScanner.CallersOf(bootstrapper, method => method is ConstructorInfo && method.DeclaringType == delegated);
+        var enterers = IlScanner.CallersOf(bootstrapper, method => method.DeclaringType == scope && method.Name == "Enter");
+
+        Assert.NotEmpty(creators);
+        Assert.NotEmpty(enterers);
+        Assert.All(creators.Concat(enterers), caller => Assert.True(
+            IlScanner.IsWithin(caller, executor), $"{caller.DeclaringType?.FullName}.{caller.Name} creates or installs a delegated context."));
+    }
+
+    /// <summary>Plan fase 2, C2.4: fuera de un scope del ejecutor del copiloto, <c>IExecutionContext</c> sigue siendo el de los claims del
+    /// request, y por scope (un singleton serviría el contexto de otro).</summary>
+    [Fact]
+    public void OutsideADelegatedScopeTheExecutionContextIsTheHttpOne()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.Equal(ServiceLifetime.Scoped, services.Single(descriptor => descriptor.ServiceType == typeof(IExecutionContext)).Lifetime);
+        Assert.Equal("HttpExecutionContext", scope.ServiceProvider.GetRequiredService<IExecutionContext>().GetType().Name);
+    }
+
+    /// <summary>Plan fase 2, C2.3: el trabajo del copiloto se arma con su ejecutor de herramientas, que vive en Bootstrapper.</summary>
+    [Fact]
+    public void TheContainerBuildsTheCopilotJobProcessor()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<CopilotJobProcessor>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICopilotToolExecutor>());
+    }
+
+    /// <summary>Plan fase 2, C2.5: cada adaptador del copiloto registrado una vez, con nombre único (el ejecutor los indexa por nombre). Los
+    /// de reportes, siete.</summary>
+    [Fact]
+    public void EveryCopilotToolIsRegisteredOnceWithAUniqueName()
+    {
+        var services = BuildPlatformServices();
+        using var provider = services.BuildServiceProvider();
+        var contract = typeof(QepServiceCollectionExtensions).Assembly.GetType("Bootstrapper.Copilot.ICopilotTool", throwOnError: true)!;
+
+        var names = provider.GetServices(contract)
+            .Select(tool => ((CopilotToolContract)contract.GetProperty("Contract")!.GetValue(tool)!).Name)
+            .ToList();
+
+        Assert.Equal(names.Count, names.Distinct(StringComparer.Ordinal).Count());
+        Assert.Superset(
+            new HashSet<string>(
+                ["get_orders_summary", "list_orders_report", "get_quotations_summary", "list_quotations_report", "get_customers_summary",
+                 "get_margin_summary", "get_price_changes_summary"],
+                StringComparer.Ordinal),
+            names.ToHashSet(StringComparer.Ordinal));
+    }
+
+    /// <summary>Spec 2026-10-29 §12: el worker de modelo y el procesador de las pruebas se arman con todos sus puertos (las fuentes de las
+    /// herramientas son adaptadores de Bootstrapper: sin su registro, el primer trabajo daría 500 en vez de una respuesta).</summary>
+    [Fact]
+    public void TheContainerBuildsTheAiModelWorkerAndTheTestJobProcessor()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<AgentTestJobProcessor>());
+        var worker = typeof(Modules.Ai.Infrastructure.AiInfrastructureExtensions).Assembly.GetType("Modules.Ai.Infrastructure.AiModelWorker", throwOnError: true)!;
+        Assert.IsAssignableFrom<IHostedService>(provider.GetRequiredService(worker));
+    }
+
+    /// <summary>
     /// Spec 2026-10-25 D-E5: <c>RunUnitWriter</c> es un parámetro opcional de <c>RunProcessor</c>, así que sin su registro el contenedor
     /// arma el procesador igual, sin registro de unidades, y ninguna corrida deja su fila en <c>run_units</c> sin error en ningún lado.
     /// </summary>
@@ -1307,6 +1490,16 @@ public sealed class CompositionRootTests
                 ["Storage:R2:SecretAccessKey"] = "secret",
                 ["Storage:R2:Bucket"] = "bucket",
                 ["Notifications:EmailProvider"] = "log",
+                // La lista curada de Ai (C-3): sin ella, armar algo que lea el catálogo de modelos lanza al validar las opciones.
+                ["Ai:DefaultProvider"] = "anthropic",
+                ["Ai:Providers:anthropic:Models:0:Id"] = "claude-opus-5-5",
+                ["Ai:Providers:anthropic:Models:0:Label"] = "Claude Opus 5.5",
+                ["Ai:Providers:anthropic:Models:0:IsDefault"] = "true",
+                ["Ai:Providers:anthropic:Models:0:Effort"] = "medium",
+                ["Ai:Providers:openai:Models:0:Id"] = "gpt-6-luna",
+                ["Ai:Providers:openai:Models:0:Label"] = "GPT-6 Luna",
+                ["Ai:Providers:openai:Models:0:IsDefault"] = "true",
+                ["Ai:Providers:openai:Models:0:Available"] = "false",
             })
             .Build();
 

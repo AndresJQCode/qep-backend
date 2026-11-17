@@ -59,6 +59,9 @@ internal sealed partial class WebhookDeliveryProcessor
 
             InstagramSender? sender = null;
             var senderResolved = false;
+            // Spec 2026-10-21 D-M1, como WhatsApp: la posición del mensaje en su entrada corre el created_at de la cola un microsegundo,
+            // así dos mensajes de la misma entrega salen en orden y no empatan.
+            var position = 0;
             foreach (var @event in entry.Events)
             {
                 switch (@event)
@@ -72,7 +75,7 @@ internal sealed partial class WebhookDeliveryProcessor
 
                         try
                         {
-                            await IngestInstagramAsync(deliveryId, route, sender, message, cancellationToken);
+                            await IngestInstagramAsync(deliveryId, route, sender, message, position++, cancellationToken);
                         }
                         catch (CustomerVanishedException)
                         {
@@ -121,7 +124,8 @@ internal sealed partial class WebhookDeliveryProcessor
 
     /// <summary>Spec 2026-10-14 §8.2: con conversación y cliente no se llama a nadie. Si la conversación es nueva se pide el perfil
     /// (nombre y usuario) con el token de la cuenta, best effort, y se asegura el cliente por <c>instagram_user_id</c> (decisión 10).</summary>
-    private async Task IngestInstagramAsync(long deliveryId, MessagingRoute route, InstagramSender? sender, InstagramMessageEvent @event, CancellationToken cancellationToken)
+    private async Task IngestInstagramAsync(
+        long deliveryId, MessagingRoute route, InstagramSender? sender, InstagramMessageEvent @event, int position, CancellationToken cancellationToken)
     {
         var message = @event.Message;
         var existing = await dbContext.Database.SqlQuery<ExistingConversation>(
@@ -171,7 +175,8 @@ internal sealed partial class WebhookDeliveryProcessor
 
         // Spec 2026-10-14 (tiempo real): ya commiteado; un reenvío de Meta (null) no avisa nada. Un DM suena como uno de WhatsApp;
         // un echo movió la foto de la lista pero no es un entrante, así que sólo avisa que la conversación cambió.
-        // Spec 2026-10-21 D-M6: los chatbots no existen en Instagram; su ingesta nunca encola.
+        // Spec 2026-10-21 D-M6: los chatbots no existen en Instagram. Spec 2026-10-29 §6.1: la ingesta encola sólo lo que le toca a un agente
+        // de IA (bot_kind = 2); una conversación sin agente queda como antes, sin fila.
         var now = clock.UtcNow;
         if (@event.IsEcho)
         {
@@ -183,7 +188,8 @@ internal sealed partial class WebhookDeliveryProcessor
         }
         else
         {
-            var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, enqueueAutomation: false, cancellationToken, ConversationChannel.Instagram);
+            var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, automationOptions.Value.Enqueue, cancellationToken, ConversationChannel.Instagram,
+                position: position, onlyBotKind: BotKind.Agent);
             if (ingested is not null)
             {
                 // Sólo el entrante nuevo mide: un reenvío de Meta (null) no. Antes de NotifyAsync, que puede fallar.

@@ -193,10 +193,14 @@ internal sealed class ConversationRunRepository(AutomationsDbContext dbContext) 
         RequireTransaction();
 
         var waiting = nameof(RunStatus.Waiting);
+        var delegated = TraceOutcomes.Delegated;
         var cutoff = waitingBefore.ToUniversalTime();
+        // Spec 2026-11-17 §6.5: una corrida que espera delegada en un bloque «Agente IA» (último trace delegated) no se abandona: el agente
+        // todavía tiene la conversación y la inactividad la decide el bloque (D-B11). RunProcessor.AbandonAsync repite la pregunta bajo el lock.
         return await dbContext.Runs.FromSql($"""
             SELECT * FROM automations.conversation_runs
             WHERE status = {waiting} AND updated_at < {cutoff}
+              AND (trace->-1->>'outcome') IS DISTINCT FROM {delegated}
             ORDER BY updated_at
             LIMIT {limit}
             FOR UPDATE SKIP LOCKED

@@ -1,4 +1,5 @@
 using Bootstrapper.Authentication;
+using Bootstrapper.Copilot;
 using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
 using Bootstrapper.Realtime;
@@ -88,7 +89,8 @@ public static class QepServiceCollectionExtensions
         services.AddHttpContextAccessor();
         services.AddScoped<IClaimsTransformation, ExternalClaimsTransformation>();
         services.AddScoped<IClock, BuildingBlocks.Infrastructure.SystemClock>();
-        services.AddScoped<IExecutionContext, HttpExecutionContext>();
+        // Plan fase 2, C2.4: el de los claims del request, salvo en un scope del ejecutor del copiloto, que trae el del miembro.
+        services.AddQepExecutionContext();
         // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
         services.AddScoped<IApiCaller, HttpApiCaller>();
         services.AddScoped<IExternalCallNotes, HttpExternalCallNotes>();
@@ -984,6 +986,9 @@ public static class QepServiceCollectionExtensions
         // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
         // consume; ningún consumidor referencia Modules.Quotations.Application.
         services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
+        // Spec 2026-10-29 §8.3: el borrador de cotización sin sesión que pide un agente IA (create_quotation_draft); Ai lo
+        // consume por un adaptador (AiQuotationDrafts).
+        services.AddScoped<IExternalQuotationWriter, ExternalQuotationService>();
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
@@ -1151,6 +1156,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>, ListTemplatesHandler>();
         services.AddScoped<ICommandHandler<SendTemplateMessageCommand, MessageDto>, SendTemplateMessageHandler>();
         services.AddScoped<ICommandHandler<StartConversationCommand, StartConversationResult>, StartConversationHandler>();
+        // Spec 2026-11-17: abrir la conversación del cliente sin enviar. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<OpenCustomerConversationCommand, OpenCustomerConversationResult>, OpenCustomerConversationHandler>();
         // Messaging (spec 2026-10-11 §6.2): campañas. Cada handler a mano: sin registro, 500.
         services.AddScoped<IQueryHandler<ListCampaignsQuery, CampaignPageDto<CampaignSummaryDto>>, ListCampaignsHandler>();
         services.AddScoped<IQueryHandler<GetCampaignQuery, CampaignDetailDto>, GetCampaignHandler>();
@@ -1379,19 +1386,66 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-29 §5: los agentes. Los validadores entran con AddValidatorsFromAssemblyContaining.
         services.AddScoped<IQueryHandler<ListAgentsQuery, AgentListResponse>, ListAgentsHandler>();
         services.AddScoped<IQueryHandler<GetAgentQuery, AgentEditorDto>, GetAgentHandler>();
+        services.AddScoped<IQueryHandler<ExportAgentQuery, AgentExportDto>, ExportAgentHandler>();
         services.AddScoped<IQueryHandler<ListAiConnectionsQuery, IReadOnlyList<AiConnectionDto>>, ListAiConnectionsHandler>();
         services.AddScoped<ICommandHandler<CreateAgentCommand, AgentEditorDto>, CreateAgentHandler>();
+        services.AddScoped<ICommandHandler<ImportAgentCommand, AgentEditorDto>, ImportAgentHandler>();
         services.AddScoped<ICommandHandler<UpdateAgentCommand, AgentEditorDto>, UpdateAgentHandler>();
         services.AddScoped<ICommandHandler<SaveAgentDraftCommand, AgentDraftSavedDto>, SaveAgentDraftHandler>();
         services.AddScoped<ICommandHandler<PublishAgentCommand, AgentEditorDto>, PublishAgentHandler>();
         services.AddScoped<ICommandHandler<PauseAgentCommand, AgentEditorDto>, PauseAgentHandler>();
         services.AddScoped<ICommandHandler<ResumeAgentCommand, AgentEditorDto>, ResumeAgentHandler>();
         services.AddScoped<ICommandHandler<DeleteAgentCommand, bool>, DeleteAgentHandler>();
+        // Plan 2026-11-12 Tarea 9: el historial de sesiones y la actividad del agente en una conversación.
+        services.AddScoped<IQueryHandler<ListAgentSessionsQuery, AgentSessionListResponse>, ListAgentSessionsHandler>();
+        services.AddScoped<IQueryHandler<GetConversationAgentActivityQuery, AgentActivityDto>, GetConversationAgentActivityHandler>();
+        // Spec 2026-10-29 §7: el playground.
+        services.AddScoped<ICommandHandler<CreateAgentTestCommand, AgentTestDto>, CreateAgentTestHandler>();
+        services.AddScoped<ICommandHandler<SendAgentTestMessageCommand, AgentTestDto>, SendAgentTestMessageHandler>();
+        services.AddScoped<IQueryHandler<GetAgentTestQuery, AgentTestDto>, GetAgentTestHandler>();
+        services.AddScoped<ICommandHandler<DeleteAgentTestCommand, bool>, DeleteAgentTestHandler>();
+        // Spec 2026-11-17 (copiloto) §8: configuración y estado.
+        services.AddScoped<IQueryHandler<GetCopilotSettingsQuery, CopilotSettingsDto>, GetCopilotSettingsHandler>();
+        services.AddScoped<ICommandHandler<UpdateCopilotSettingsCommand, CopilotSettingsDto>, UpdateCopilotSettingsHandler>();
+        services.AddScoped<IQueryHandler<GetCopilotStatusQuery, CopilotStatusDto>, GetCopilotStatusHandler>();
+        // Spec 2026-11-17 (copiloto) §8: los hilos privados del miembro.
+        services.AddScoped<IQueryHandler<ListCopilotThreadsQuery, CopilotThreadPage>, ListCopilotThreadsHandler>();
+        services.AddScoped<IQueryHandler<GetCopilotThreadQuery, CopilotThreadDto>, GetCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<CreateCopilotThreadCommand, CopilotThreadDto>, CreateCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<SendCopilotMessageCommand, CopilotThreadDto>, SendCopilotMessageHandler>();
+        services.AddScoped<ICommandHandler<RetryCopilotMessageCommand, CopilotThreadDto>, RetryCopilotMessageHandler>();
+        services.AddScoped<ICommandHandler<RenameCopilotThreadCommand, CopilotThreadDto>, RenameCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<DeleteCopilotThreadCommand, bool>, DeleteCopilotThreadHandler>();
         services.AddValidatorsFromAssemblyContaining<CreateAgentValidator>();
+        // Spec 2026-10-29 §8.3: las fuentes de las herramientas de lectura y las respuestas rápidas, por adaptadores sobre Catalog,
+        // Quotations y Mensajería (Ai no ve ninguno de los tres).
+        services.AddScoped<IAiCatalogSearch, AiCatalogSearch>();
+        // Spec 2026-11-17 (copiloto) D-C3: las herramientas del copiloto corren como el miembro, sobre las consultas de otros módulos.
+        services.AddCopilotTools();
+        services.AddScoped<IAiOrderStatusReader, AiOrderStatusReader>();
+        services.AddScoped<IAiQuickReplies, AiQuickReplies>();
+        // Spec 2026-10-29 §8.3 y P-4: create_quotation_draft escribe en Quotations y valida la asesora del agente, por adaptadores.
+        services.AddScoped<IAiQuotationDrafts, AiQuotationDrafts>();
+        services.AddScoped<IAiQuotationAdvisors, AiQuotationAdvisors>();
+        // Plan 2026-11-17 A3: las cuentas de cobro del editor del agente, con la regla de la tienda (ActiveBillingAccountOptions).
+        services.AddScoped<IAiQuotationBillingAccounts, AiQuotationBillingAccounts>();
         // Spec 2026-10-29 D-A3 y §4.3: conexiones, miembros y la ocupación neutral, por adaptadores (Ai no ve Mensajería).
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();
+        // Spec 2026-11-17 (copiloto) D-C12, plan C3.4: nombres por id de usuario para el consumo por miembro y el contexto volátil.
+        services.AddScoped<ICopilotMemberNames, CopilotMemberNames>();
         services.AddScoped<IAgentConnectionSlots, AgentConnectionSlots>();
+        // Spec 2026-11-17 D-B18: qué chatbots publicados usan cada agente (SQL sobre automations; Ai no ve Automations).
+        services.AddScoped<IAiChatbotUsage, AiChatbotUsage>();
+        services.AddScoped<IAiChatbotNames, AiChatbotNames>();
+        // Spec 2026-11-17 §6.5: el barrido de delegaciones huérfanas de Mensajería, que corre el worker de Ai.
+        services.AddScoped<IAiDelegationSweep, AiDelegationSweep>();
+        // Spec 2026-10-29 §6.1–§6.6 (plan 2026-11-12, Tarea 7): la cola, la conversación, el envío y el horario de los agentes en canales
+        // reales, por adaptadores sobre Mensajería.
+        services.AddScoped<IAiInbox, AiInbox>();
+        services.AddScoped<IAiConversations, AiConversations>();
+        services.AddScoped<IAiBotOutbound, AiBotOutbound>();
+        services.AddScoped<IAiBusinessHours, AiBusinessHours>();
         // Plan 2026-11-12 (correcciones de la revisión): no se borra una conexión que atiende un bot. Integrations no ve Mensajería.
         services.AddScoped<IConnectionBotOccupancy, IntegrationsConnectionBotOccupancy>();
 
@@ -1547,6 +1601,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
         // Spec 2026-10-25 D-5: los miembros que pueden responder, los mismos que ofrece «Transferir».
         services.AddScoped<IAutomationMembers, AutomationMembers>();
+        // Spec 2026-11-17 §5.2: los agentes de IA del tenant para el bloque «Agente IA», leídos de Ai.
+        services.AddScoped<IAutomationsAgentDirectory, AutomationsAgentDirectory>();
         // Spec 2026-10-26 D-5, D-7 y D-10: la autorización de datos del cliente de la conversación, en Customers.
         services.AddScoped<IAutomationDataConsents, AutomationDataConsents>();
         services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
@@ -2141,6 +2197,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-29 §1: un agente IA habla con los clientes en nombre de la empresa; de fábrica sólo en admin. De núcleo.
                 AiPermissions.AgentRead,
                 AiPermissions.AgentManage,
+                // Spec 2026-11-17 (copiloto), D-C14 y OC-1: cada pregunta gasta saldo del tenant; de fábrica sólo en admin. De núcleo.
+                AiPermissions.CopilotUse,
+                AiPermissions.CopilotManage,
                 // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
@@ -3059,6 +3118,27 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("ai.agent", "Agentes IA", "manage"),
         });
+        // Spec 2026-11-17 (copiloto), D-C14: de núcleo como los de agentes; cada handler revisa la capacidad copilot.
+        services.AddSingleton(new PermissionDefinition(
+            AiPermissions.CopilotUse,
+            "Usar el copiloto",
+            "Permite preguntarle al copiloto por los datos de la empresa. Sólo ve lo que el miembro ya puede ver.",
+            "Ai",
+            "medium",
+            RequiredModules: [])
+        {
+            Shape = new("ai.copilot", "Copiloto", "use"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            AiPermissions.CopilotManage,
+            "Configurar el copiloto",
+            "Permite elegir el proveedor y el modelo del copiloto, su contexto del negocio, el tope mensual de tokens y la retención.",
+            "Ai",
+            "high",
+            RequiredModules: [])
+        {
+            Shape = new("ai.copilot", "Copiloto", "manage"),
+        });
         // Spec 2026-10-23 D-14: proveedores exige el módulo suppliers.
         services.AddSingleton(new PermissionDefinition(
             SuppliersPermissions.Read,
@@ -3579,6 +3659,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 AiPermissions.AgentManage,
                 policy => AddPermissionRequirement(policy, AiPermissions.AgentManage))
+            // Spec 2026-11-17 (copiloto): la otra mitad de sus permisos; sin ella el síntoma es 500, no 403.
+            .AddPolicy(
+                AiPermissions.CopilotUse,
+                policy => AddPermissionRequirement(policy, AiPermissions.CopilotUse))
+            .AddPolicy(
+                AiPermissions.CopilotManage,
+                policy => AddPermissionRequirement(policy, AiPermissions.CopilotManage))
             // Spec 2026-10-23 D-14: la otra mitad de los permisos de proveedores; sin ella el síntoma es 500.
             .AddPolicy(
                 SuppliersPermissions.Read,

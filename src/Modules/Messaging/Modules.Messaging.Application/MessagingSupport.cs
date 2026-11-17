@@ -112,8 +112,11 @@ public sealed class ConversationSummaryBuilder(
             .Select(row => row.ResolutionReasonId!.Value).Distinct().ToArray();
         var reasons = reasonIds.Length == 0 ? null : await reasonNames.FindAsync(tenantId, reasonIds, cancellationToken);
         // Spec 2026-10-21 D-M14: los nombres de los chatbots, una consulta por respuesta para todas las conversaciones con asistente.
-        var chatbotIds = rows.Where(row => row.AutomationStatus != ConversationAutomationStatus.None && row.AutomationChatbotId is not null)
-            .Select(row => row.AutomationChatbotId!.Value).Distinct().ToArray();
+        // Spec 2026-10-29 §4.4: el mismo diccionario trae el nombre del agente de IA que atiende.
+        // Spec 2026-11-17 §7: y el del chatbot que delegó en ese agente.
+        var chatbotIds = rows.Where(row => row.AutomationStatus != ConversationAutomationStatus.None)
+            .SelectMany(row => new[] { row.AutomationChatbotId ?? row.AutomationAgentId, row.DelegatedByChatbotId })
+            .OfType<Guid>().Distinct().ToArray();
         var chatbots = chatbotIds.Length == 0 ? null : await chatbotNames.ResolveAsync(tenantId, chatbotIds, cancellationToken);
         return rows.Select(row => ToSummary(row, names, tagged, taggedByPhone, resolvedNames, me, reasons, chatbots)).ToArray();
     }
@@ -163,7 +166,31 @@ public sealed class ConversationSummaryBuilder(
             row.BlockedAt is { } blockedAt
                 ? new ConversationBlockDto(blockedAt, row.BlockedByMemberId is { } blocker ? memberNames.GetValueOrDefault(blocker) ?? MessageMapping.DeletedMemberName : null)
                 : null,
-            row.Imported && row.LastInboundAt is null);
+            row.Imported && row.LastInboundAt is null,
+            AutomationBotFrom(row, chatbotNames));
+    }
+
+    /// <summary>Spec 2026-10-29 §4.4: el bot de una conversación con asistente (activo o en pausa); <c>null</c> en <c>None</c>. Una fila de
+    /// antes de <c>automation_bot_kind</c> con chatbot sale como chatbot.</summary>
+    private static AutomationBotDto? AutomationBotFrom(ConversationRow row, IReadOnlyDictionary<Guid, string>? botNames)
+    {
+        if (row.AutomationStatus == ConversationAutomationStatus.None)
+        {
+            return null;
+        }
+
+        if (row.AutomationBotKind == BotKind.Agent && row.AutomationAgentId is { } agentId)
+        {
+            return new AutomationBotDto(
+                "agent", agentId, botNames?.GetValueOrDefault(agentId) ?? MessageMapping.DeletedAgentName,
+                row.DelegatedByChatbotId is { } chatbot
+                    ? new AutomationDelegatedByDto(chatbot, botNames?.GetValueOrDefault(chatbot) ?? MessageMapping.DeletedChatbotName)
+                    : null);
+        }
+
+        return row.AutomationChatbotId is { } chatbotId
+            ? new AutomationBotDto("chatbot", chatbotId, botNames?.GetValueOrDefault(chatbotId) ?? MessageMapping.DeletedChatbotName)
+            : null;
     }
 
     /// <summary><c>null</c> en <c>None</c> (D-A10). La guarda de <c>StartedAt</c> es inalcanzable por <c>CK_conversations_automation_started</c>;
@@ -244,9 +271,16 @@ internal static class MessageMapping
                     EventCustomer(conversationEvent.CustomerId, customerRefs),
                     EventCustomer(conversationEvent.PreviousCustomerId, customerRefs),
                     ToDto(conversationEvent.Handoff, memberNames),
-                    Chatbot(conversationEvent.ChatbotId, chatbotNames),
+                    conversationEvent.ChatbotId is { } eventChatbot && conversationEvent.ChatbotName is { } chatbotSnapshot
+                        ? new ChatbotRefDto(eventChatbot, chatbotSnapshot)
+                        : Chatbot(conversationEvent.ChatbotId, chatbotNames),
                     conversationEvent.TicketId,
-                    conversationEvent.TicketId is { } ticketId ? ticketNumbers?.GetValueOrDefault(ticketId) : null),
+                    conversationEvent.TicketId is { } ticketId ? ticketNumbers?.GetValueOrDefault(ticketId) : null,
+                    // Spec 2026-11-17 adenda D-5: la foto del nombre gana; sin ella, el de hoy.
+                    conversationEvent.AgentId is { } eventAgent && conversationEvent.AgentName is { } agentSnapshot
+                        ? new AgentRefDto(eventAgent, agentSnapshot)
+                        : Agent(conversationEvent.AgentId, chatbotNames),
+                    conversationEvent.Output),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson), row.Imported) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
@@ -256,22 +290,31 @@ internal static class MessageMapping
             mediaState,
             row.SentByApiKeyId is { } apiKeyId ? new ApiKeyRefDto(apiKeyId, row.SentByApiKeyName ?? string.Empty) : null,
             row.RetryDisabled,
-            row.Kind == MessageKind.Contacts ? ContactsFrom(row.DetailsJson, sharedPhones) : null);
+            row.Kind == MessageKind.Contacts ? ContactsFrom(row.DetailsJson, sharedPhones) : null,
+            Agent(row.SentByAgentId, chatbotNames));
     }
 
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>
     public const string DeletedChatbotName = "Chatbot";
 
+    /// <summary>Spec 2026-10-29 §4.4: lo mismo para un agente de IA borrado.</summary>
+    public const string DeletedAgentName = "Agente IA";
+
     private static ChatbotRefDto? Chatbot(Guid? chatbotId, IReadOnlyDictionary<Guid, string>? chatbotNames) =>
         chatbotId is { } id ? new ChatbotRefDto(id, chatbotNames?.GetValueOrDefault(id) ?? DeletedChatbotName) : null;
 
-    /// <summary>Los chatbots que una página necesita con nombre, sin repetir: los autores de mensajes y el que firma un
-    /// <c>Resolved</c> del bot (sin esto el evento saldría siempre como «Chatbot»).</summary>
+    private static AgentRefDto? Agent(Guid? agentId, IReadOnlyDictionary<Guid, string>? botNames) =>
+        agentId is { } id ? new AgentRefDto(id, botNames?.GetValueOrDefault(id) ?? DeletedAgentName) : null;
+
+    /// <summary>Los bots que una página necesita con nombre, sin repetir: los autores de mensajes (chatbots y agentes de IA, spec
+    /// 2026-10-29 §4.4) y el que firma un <c>Resolved</c> del bot (sin esto el evento saldría siempre como «Chatbot»).</summary>
     public static IReadOnlyCollection<Guid> ChatbotIdsOf(IEnumerable<MessageRow> rows)
     {
         ArgumentNullException.ThrowIfNull(rows);
         return rows
-            .Select(row => row.Kind == MessageKind.Event ? ConversationEventJson.Parse(row.DetailsJson)?.ChatbotId : row.SentByChatbotId)
+            .Select(row => row.Kind == MessageKind.Event
+                ? ConversationEventJson.Parse(row.DetailsJson)?.ChatbotId
+                : row.SentByChatbotId ?? row.SentByAgentId)
             .OfType<Guid>().Distinct().ToArray();
     }
 
@@ -353,8 +396,8 @@ internal static class MessageMapping
         var ids = new HashSet<Guid>();
         foreach (var row in rows)
         {
-            // Una fila de chatbot no tiene miembro; el CHECK de la tabla lo garantiza, esto lo hace explícito.
-            if (row.SentByChatbotId is null && row.SentByMemberId is { } sender)
+            // Una fila de chatbot o de agente no tiene miembro; el CHECK de la tabla lo garantiza, esto lo hace explícito.
+            if (row.SentByChatbotId is null && row.SentByAgentId is null && row.SentByMemberId is { } sender)
             {
                 ids.Add(sender);
             }
@@ -393,7 +436,10 @@ internal static class MessageMapping
                 handoff.Http is { } http
                     ? new AutomationHandoffHttpDto(http.NodeId, http.NodeTitle, http.Outcome, http.ErrorCode, http.Status, http.ConnectionName)
                     : null,
-                Member(handoff.AssignedMemberId, memberNames));
+                Member(handoff.AssignedMemberId, memberNames),
+                handoff.Provider,
+                handoff.ChatbotName,
+                handoff.AgentName);
 
     /// <summary><c>details</c> de un <c>Unsupported</c> es <c>{ type, errors }</c> con los <c>errors</c> de Meta tal cual
     /// (<c>WebhookPayloadParser</c>). El primer <c>code</c> numérico, o <c>null</c> si no hay o el JSON no tiene esa forma.</summary>

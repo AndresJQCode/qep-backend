@@ -33,6 +33,16 @@ internal static class AiApiHarness
     /// Integrations): la prueba le cambia el handler primario por uno de mentira, nunca sale a api.anthropic.com.</summary>
     public const string AnthropicTesterClient = "integrations.anthropic";
 
+    /// <summary>La clave falsa de la conexión de Anthropic sembrada. Es un centinela: las pruebas de no-filtración la buscan en logs, auditoría,
+    /// tablas y trazas.</summary>
+    public const string AnthropicTestKey = "sk-ant-api03-SENTINEL-a3";
+
+    /// <summary>El cliente del probador de la clave de OpenAI (<c>OpenAiConnectionTester.HttpClientName</c>, interno de Integrations).</summary>
+    public const string OpenAiTesterClient = "integrations.openai";
+
+    /// <summary>La clave falsa de la conexión de OpenAI sembrada; centinela de las pruebas de no-filtración, como la de Anthropic.</summary>
+    public const string OpenAiTestKey = "sk-proj-SENTINEL-b7";
+
     public static string AiUrl(string tenantId = TenantId) => $"/api/v1/tenants/{tenantId}/ai";
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
@@ -171,7 +181,18 @@ internal static class AiApiHarness
             TenantId,
             "Cuenta de Anthropic",
             new Dictionary<string, string>(),
-            new Dictionary<string, string> { [AnthropicFieldKeys.ApiKey] = "sk-ant-api03-SENTINEL-a3" },
+            new Dictionary<string, string> { [AnthropicFieldKeys.ApiKey] = AnthropicTestKey },
+            route: null);
+
+    /// <summary>La conexión de OpenAI del tenant, sin pasar por el probador (que se ejerce en <c>AiSettingsApiTests</c>).</summary>
+    public static Task<Guid> SeedOpenAiConnectionAsync(QepApiFactory factory) =>
+        SeedConnectionAsync(
+            factory,
+            IntegrationProviders.OpenAi,
+            TenantId,
+            "Cuenta de OpenAI",
+            new Dictionary<string, string>(),
+            new Dictionary<string, string> { [OpenAiFieldKeys.ApiKey] = OpenAiTestKey },
             route: null);
 
     private static async Task<Guid> SeedConnectionAsync(

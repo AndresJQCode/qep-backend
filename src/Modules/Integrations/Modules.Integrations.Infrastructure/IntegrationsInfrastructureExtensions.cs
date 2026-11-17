@@ -8,6 +8,7 @@ using Modules.Integrations.Application.Shopify;
 using Modules.Integrations.Infrastructure.Anthropic;
 using Modules.Integrations.Infrastructure.ExternalApi;
 using Modules.Integrations.Infrastructure.Meta;
+using Modules.Integrations.Infrastructure.OpenAi;
 using Modules.Integrations.Infrastructure.Persistence;
 using Modules.Integrations.Infrastructure.SecretProtection;
 using Modules.Integrations.Infrastructure.Shopify;
@@ -97,6 +98,11 @@ public static class IntegrationsInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => AnthropicConnectionTester.CreatePrimaryHandler())
             .RemoveAllLoggers();
         services.AddSingleton<IProviderConnectionTester, AnthropicConnectionTester>();
+        // Spec 2026-10-29 §9.1, O-10: el de OpenAI, con el mismo patrón (la clave viaja como Bearer, que los loggers también escribirían).
+        services.AddHttpClient(OpenAiConnectionTester.HttpClientName, OpenAiConnectionTester.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => OpenAiConnectionTester.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<IProviderConnectionTester, OpenAiConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production

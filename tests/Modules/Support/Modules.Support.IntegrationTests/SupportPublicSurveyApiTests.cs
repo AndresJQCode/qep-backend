@@ -69,7 +69,7 @@ public sealed class SupportPublicSurveyApiTests(SupportPublicLoggedHost host) : 
         {
             Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
             Assert.Equal("support.survey.not_found", await CodeOfAsync(response));
-            bodies.Add(WithoutTraceId(await JsonAsync(response)));
+            bodies.Add(WithoutRequestEcho(await JsonAsync(response)));
         }
 
         Assert.Single(bodies.Distinct(StringComparer.Ordinal));
@@ -134,8 +134,12 @@ public sealed class SupportPublicSurveyApiTests(SupportPublicLoggedHost host) : 
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, locked.StatusCode);
         Assert.Equal("support.public.lookup_failed", await CodeOfAsync(locked));
+        // The fifth failure locks the ticket and resets the counter (SupportTicketAccess.RecordFailure), exactly as a lookup does.
         Assert.Equal(
-            "5", await TextAsync(rig.Factory, "SELECT failed_attempts::text FROM support.ticket_access WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
+            "0 locked", await TextAsync(
+                rig.Factory,
+                "SELECT failed_attempts::text || CASE WHEN locked_until IS NULL THEN ' open' ELSE ' locked' END FROM support.ticket_access WHERE tenant_id = @tenant",
+                ("tenant", rig.TenantId)));
         Assert.Equal(
             "", await TextAsync(rig.Factory, "SELECT coalesce(rating, '') FROM support.ticket_surveys WHERE tenant_id = @tenant", ("tenant", rig.TenantId)));
         // Revisión del bloque D: el bloqueo que se alcanzó por la calificación es el mismo de la consulta.
@@ -291,9 +295,10 @@ public sealed class SupportPublicSurveyApiTests(SupportPublicLoggedHost host) : 
             ("tenant", rig.TenantId),
             ("number", SupportTicketNumber.TryParse(number, out var value) ? value : throw new ArgumentException(number))))!);
 
-    private static string WithoutTraceId(JsonElement body) =>
+    // Sin el traceId (cambia en cada request) ni el instance, que repite la ruta que mandó el propio visitante.
+    private static string WithoutRequestEcho(JsonElement body) =>
         JsonSerializer.Serialize(body.EnumerateObject()
-            .Where(property => property.Name != "traceId")
+            .Where(property => property.Name is not ("traceId" or "instance"))
             .ToDictionary(property => property.Name, property => property.Value.ToString()));
 
     private sealed record Rig(QepApiFactory Factory, Guid TenantId, string Slug, Guid TypeId, Guid CityId);

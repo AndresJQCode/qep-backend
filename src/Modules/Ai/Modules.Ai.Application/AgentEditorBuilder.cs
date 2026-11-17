@@ -5,12 +5,20 @@ namespace Modules.Ai.Application;
 /// <summary>Arma la lista y el editor de agentes, y la validación del borrador con lo que saben otros módulos (conexiones, miembros,
 /// lista de modelos). Un solo lugar para que el <c>GET</c>, el guardado y la publicación digan lo mismo.</summary>
 public sealed class AgentEditorBuilder(
-    IAiConnections connections, IAgentConnectionSlots slots, IAiMembers members, IAiModelCatalog catalog)
+    IAiConnections connections,
+    IAgentConnectionSlots slots,
+    IAiMembers members,
+    IAiModelCatalog catalog,
+    IAiQuotationAdvisors advisors,
+    IAiProviderCredentials credentials,
+    IAiQuotationBillingAccounts billingAccountOptions)
 {
     private const string WhatsApp = "WhatsApp";
 
-    /// <summary>Hoy sólo WhatsApp tiene salida de bot; Instagram llega con la Tarea 7 (spec 2026-10-29 §6.5).</summary>
-    public static bool SupportsBot(string channel) => channel == WhatsApp;
+    private const string Instagram = "Instagram";
+
+    /// <summary>Spec 2026-10-29 §6.5: WhatsApp e Instagram tienen salida de bot para un agente (Instagram sólo con texto).</summary>
+    public static bool SupportsBot(string channel) => channel is WhatsApp or Instagram;
 
     public AgentModelAvailability AvailabilityOf(AgentModelRef model)
     {
@@ -29,14 +37,21 @@ public sealed class AgentEditorBuilder(
     {
         ArgumentNullException.ThrowIfNull(agent);
         // Sólo los ids: esto corre en cada autoguardado del borrador, y la lectura completa resuelve cada conexión activa.
-        return await ValidateAsync(agent, publishing, await connections.ListIdsAsync(agent.TenantId, cancellationToken), cancellationToken);
+        return await ValidateAsync(
+            agent, publishing, await connections.ListIdsAsync(agent.TenantId, cancellationToken), billingAccounts: null, cancellationToken);
     }
 
     /// <summary>Sólo cuentan las conexiones que siguen existiendo en Integrations: Integrations borra la conexión sin avisar (nadie
     /// consume <c>integrations.connection.deleted</c>) y la referencia de <c>ai.agent_connections</c> es blanda. Sin el filtro, un agente
     /// cuya única conexión se borró pasaría la validación y se publicaría sin atender nada.</summary>
+    /// <param name="billingAccounts">Las cuentas elegibles si ya se leyeron (el editor las lista igual); <c>null</c> las lee sólo si hacen
+    /// falta.</param>
     private async Task<IReadOnlyList<AgentIssue>> ValidateAsync(
-        Agent agent, bool publishing, IReadOnlySet<Guid> live, CancellationToken cancellationToken)
+        Agent agent,
+        bool publishing,
+        IReadOnlySet<Guid> live,
+        IReadOnlyList<AiBillingAccountOption>? billingAccounts,
+        CancellationToken cancellationToken)
     {
         var config = agent.DraftConfig;
         bool? memberCanReply = null;
@@ -45,8 +60,29 @@ public sealed class AgentEditorBuilder(
             memberCanReply = (await members.ListAsync(agent.TenantId, cancellationToken)).Any(member => member.Id == memberId);
         }
 
+        bool? advisorCanQuote = null;
+        if (config.Tools.QuotationDraft && config.QuotationDraft?.AdvisorMemberId is { } advisorId)
+        {
+            advisorCanQuote = await advisors.CanQuoteAsync(agent.TenantId, advisorId, cancellationToken);
+        }
+
+        // Plan 2026-11-17 A3: la cuenta guardada se compara con las que el editor ofrece, no con una regla propia.
+        bool? billingAccountEligible = null;
+        if (config.Tools.QuotationDraft && config.QuotationDraft?.BillingAccount is { } account)
+        {
+            billingAccounts ??= await billingAccountOptions.ListAsync(agent.TenantId, cancellationToken);
+            billingAccountEligible = billingAccounts.Any(option => option.Matches(account));
+        }
+
         return AgentConfigValidator.Validate(
-            config, new AgentValidationContext(LiveConnectionIds(agent, live).Count, AvailabilityOf(config.Model), memberCanReply, publishing));
+            config,
+            new AgentValidationContext(
+                LiveConnectionIds(agent, live).Count,
+                AvailabilityOf(config.Model),
+                memberCanReply,
+                publishing,
+                advisorCanQuote,
+                billingAccountEligible));
     }
 
     private static List<Guid> LiveConnectionIds(Agent agent, IReadOnlySet<Guid> live) =>
@@ -58,9 +94,12 @@ public sealed class AgentEditorBuilder(
         // Una sola lectura de las conexiones del tenant para la validación, las elegidas y las elegibles.
         var live = await connections.ListAsync(agent.TenantId, cancellationToken);
         var liveIds = live.Select(connection => connection.Id).ToHashSet();
-        var issues = await ValidateAsync(agent, publishing: false, liveIds, cancellationToken);
+        // Una sola lectura de las cuentas de cobro para la validación y la lista que se ofrece.
+        var billingAccounts = await billingAccountOptions.ListAsync(agent.TenantId, cancellationToken);
+        var issues = await ValidateAsync(agent, publishing: false, liveIds, billingAccounts, cancellationToken);
         var selectable = await ListSelectableAsync(agent.TenantId, live, cancellationToken);
         var assignable = await members.ListAsync(agent.TenantId, cancellationToken);
+        var quoting = await advisors.ListAsync(agent.TenantId, cancellationToken);
         var published = agent.PublishedVersion;
         return new AgentEditorDto(
             agent.Id,
@@ -75,11 +114,21 @@ public sealed class AgentEditorBuilder(
             LiveConnectionIds(agent, liveIds),
             selectable,
             [.. assignable.Select(member => new AiMemberDto(member.Id, member.Name))],
-            ModelCatalog.ToDto(catalog));
+            ModelCatalog.ToDto(catalog, await credentials.DescribeAsync(agent.TenantId, cancellationToken)),
+            [.. quoting.Select(member => new AiMemberDto(member.Id, member.Name))],
+            billingAccounts);
     }
 
-    public async Task<AgentListResponse> BuildListAsync(Guid tenantId, IReadOnlyList<Agent> agents, CancellationToken cancellationToken)
+    /// <param name="usedByChatbots">Spec 2026-11-17 §7: los chatbots publicados que usan cada agente (<see cref="IAiChatbotUsage"/>).</param>
+    public async Task<AgentListResponse> BuildListAsync(
+        Guid tenantId,
+        IReadOnlyList<Agent> agents,
+        AgentListActivity activity,
+        IReadOnlyDictionary<Guid, IReadOnlyList<AiChatbotRef>> usedByChatbots,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(activity);
+        ArgumentNullException.ThrowIfNull(usedByChatbots);
         var byId = (await connections.ListAsync(tenantId, cancellationToken)).ToDictionary(connection => connection.Id);
         return new AgentListResponse(
         [
@@ -101,9 +150,40 @@ public sealed class AgentEditorBuilder(
                     ],
                     published?.PublishedAt,
                     agent.HasDraftChanges,
-                    agent.Version);
+                    agent.Version,
+                    activity.UsageByAgent.GetValueOrDefault(agent.Id) ?? [],
+                    activity.TodayByAgent.GetValueOrDefault(agent.Id) ?? AgentTodayDto.None,
+                    usedByChatbots.GetValueOrDefault(agent.Id) ?? []);
             }),
+        ],
+        [
+            .. activity.UsageByAgent.Values
+                .SelectMany(usage => usage)
+                .GroupBy(usage => usage.Provider, StringComparer.Ordinal)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => new AgentUsageDto(
+                    group.Key,
+                    group.Sum(usage => usage.Calls),
+                    group.Sum(usage => usage.InputTokens),
+                    group.Sum(usage => usage.OutputTokens),
+                    SumKnown(group.Select(usage => usage.CacheCreationInputTokens)),
+                    SumKnown(group.Select(usage => usage.CacheReadInputTokens)))),
         ]);
+    }
+
+    /// <summary>C-4: <c>null</c> sólo si ningún agente lo reporta; si alguno lo reporta, la suma de los que sí.</summary>
+    private static long? SumKnown(IEnumerable<long?> values)
+    {
+        long? total = null;
+        foreach (var value in values)
+        {
+            if (value is { } known)
+            {
+                total = (total ?? 0) + known;
+            }
+        }
+
+        return total;
     }
 
     public async Task<IReadOnlyList<AiConnectionDto>> ListSelectableAsync(Guid tenantId, CancellationToken cancellationToken) =>
@@ -140,7 +220,7 @@ public sealed class AgentEditorBuilder(
             if (!SupportsBot(connection.Channel))
             {
                 throw new AiDomainException(
-                    AiErrorCodes.AgentChannelNotSupported, "Por ahora un agente IA sólo puede atender conexiones de WhatsApp.");
+                    AiErrorCodes.AgentChannelNotSupported, "Un agente IA sólo puede atender conexiones de WhatsApp o Instagram.");
             }
         }
     }

@@ -14,4 +14,11 @@ public static class AiPermissions
 
     /// <summary>Crear, editar, probar, publicar, pausar y borrar agentes.</summary>
     public const string AgentManage = "ai.agent.manage";
+
+    /// <summary>Spec 2026-11-17 (copiloto), D-C14: usar el chat del copiloto (sus hilos privados). No da acceso a nada: cada herramienta
+    /// pregunta con los permisos que el miembro ya tiene. De fábrica sólo en <c>admin</c> (OC-1): cada pregunta gasta saldo del tenant.</summary>
+    public const string CopilotUse = "ai.copilot.use";
+
+    /// <summary>Configurar el copiloto del tenant: proveedor y modelo, contexto del negocio, tope mensual y retención.</summary>
+    public const string CopilotManage = "ai.copilot.manage";
 }

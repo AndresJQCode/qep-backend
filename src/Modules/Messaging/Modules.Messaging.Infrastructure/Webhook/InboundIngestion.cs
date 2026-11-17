@@ -23,17 +23,20 @@ internal static class InboundIngestion
     /// <param name="position">Spec 2026-10-21 D-M1: la posición del mensaje dentro de su change. Sólo corre el <c>created_at</c> y el
     /// <c>next_attempt_at</c> de la fila de <c>automation_inbox</c> (un microsegundo por posición); el mensaje, la conversación, los eventos y
     /// el medio se quedan con el <c>now</c> de verdad.</param>
+    /// <param name="onlyBotKind">Spec 2026-10-29 §6.1: si viene, la fila sólo se encola cuando el bot que le toca es de ese tipo. Instagram
+    /// pasa <see cref="BotKind.Agent"/>: el motor de chatbots sigue sin Instagram (D-M6).</param>
     public static async Task<IngestedInbound?> IngestAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
-        bool enqueueAutomation, CancellationToken cancellationToken, ConversationChannel channel = ConversationChannel.WhatsApp, int position = 0)
+        bool enqueueAutomation, CancellationToken cancellationToken, ConversationChannel channel = ConversationChannel.WhatsApp, int position = 0,
+        BotKind? onlyBotKind = null)
     {
         try
         {
-            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, position, cancellationToken);
+            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, onlyBotKind, position, cancellationToken);
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation && exception.ConstraintName == ConnectionUserIndex)
         {
-            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, position, cancellationToken);
+            return await IngestOnceAsync(dbContext, tenantId, connectionId, message, context, now, channel, enqueueAutomation, onlyBotKind, position, cancellationToken);
         }
     }
 
@@ -96,7 +99,7 @@ internal static class InboundIngestion
 
     private static async Task<IngestedInbound?> IngestOnceAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
-        ConversationChannel channel, bool enqueueAutomation, int position, CancellationToken cancellationToken)
+        ConversationChannel channel, bool enqueueAutomation, BotKind? onlyBotKind, int position, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
@@ -160,7 +163,7 @@ internal static class InboundIngestion
             WHERE id = {conversationId}
             RETURNING old.old_status AS "OldStatus", old.old_customer_id AS "OldCustomerId", assigned_member_id AS "AssignedMemberId",
                       automation_status AS "AutomationStatus", automation_pause_reason AS "AutomationPauseReason",
-                      old.old_last_inbound_at AS "OldLastInboundAt"
+                      old.old_last_inbound_at AS "OldLastInboundAt", automation_bot_kind AS "AutomationBotKind"
             """).ToListAsync(cancellationToken)).Single();
 
         if (message.Media is { } media)
@@ -173,15 +176,18 @@ internal static class InboundIngestion
         // creada: nace Open, así que su estado «de antes» no la delata.
         var opened = conversation.Created || before.OldStatus == nameof(ConversationStatus.Resolved);
         if (enqueueAutomation && ShouldEnqueue(message, before)
-            && !await IsSupportSurveyTapAsync(dbContext, tenantId, connectionId, message, cancellationToken))
+            && !await IsSupportSurveyTapAsync(dbContext, tenantId, connectionId, message, cancellationToken)
+            && await BotKindForAsync(dbContext, connectionId, before, cancellationToken) is { } botKind
+            && (onlyBotKind is null || botKind == onlyBotKind))
         {
             // El corrimiento vive sólo en la cola, que es la única que ordena por created_at: correr también el mensaje o los eventos
             // movería timestamps que se ven en el hilo y en la auditoría.
             var enqueuedAt = now.AddTicks(position * TimeSpan.TicksPerMicrosecond);
+            var kindCode = (short)botKind;
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
-                INSERT INTO messaging.automation_inbox (message_id, tenant_id, connection_id, conversation_id, opened, created_at, attempts, next_attempt_at)
-                VALUES ({messageId}, {tenantId}, {connectionId}, {conversationId}, {opened}, {enqueuedAt}, 0, {enqueuedAt})
+                INSERT INTO messaging.automation_inbox (message_id, tenant_id, connection_id, conversation_id, opened, created_at, attempts, next_attempt_at, bot_kind)
+                VALUES ({messageId}, {tenantId}, {connectionId}, {conversationId}, {opened}, {enqueuedAt}, 0, {enqueuedAt}, {kindCode})
                 ON CONFLICT (message_id) DO NOTHING
                 """, cancellationToken);
         }
@@ -234,6 +240,25 @@ internal static class InboundIngestion
         && (state.OldLastInboundAt is null || message.OccurredAt >= state.OldLastInboundAt)
         && message.Kind is MessageKind.Text or MessageKind.Interactive or MessageKind.Image or MessageKind.Document
             or MessageKind.Video or MessageKind.Audio or MessageKind.Unsupported;
+
+    /// <summary>
+    /// Spec 2026-10-29 §6.1: qué procesador recibe la fila. Una conversación con el asistente <c>Active</c> termina con el bot con que empezó
+    /// (<c>automation_bot_kind</c>; una fila de antes de esa columna es de chatbot); si no, el que hoy ocupa la conexión en
+    /// <c>connection_bots</c>. <c>null</c> = sin ocupante: no se encola (antes se encolaba y el motor la marcaba <c>skipped</c>).
+    /// </summary>
+    private static async Task<BotKind?> BotKindForAsync(
+        MessagingDbContext dbContext, Guid connectionId, PreviousState state, CancellationToken cancellationToken)
+    {
+        if (state.AutomationStatus == nameof(ConversationAutomationStatus.Active))
+        {
+            return state.AutomationBotKind is { } kind ? (BotKind)kind : BotKind.Chatbot;
+        }
+
+        var occupant = await dbContext.Database.SqlQuery<short>(
+            $"""SELECT bot_kind AS "Value" FROM messaging.connection_bots WHERE connection_id = {connectionId}""")
+            .ToListAsync(cancellationToken);
+        return occupant.Count == 1 ? (BotKind)occupant[0] : null;
+    }
 
     /// <summary>
     /// Owner, 2026-11-16: el toque de un botón de la encuesta de Soporte no despierta al bot. Es un <c>Interactive</c> que cita un saliente
@@ -416,7 +441,8 @@ internal static class InboundIngestion
     }
 
     private sealed record PreviousState(
-        string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId, string AutomationStatus, string? AutomationPauseReason, DateTimeOffset? OldLastInboundAt);
+        string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId, string AutomationStatus, string? AutomationPauseReason, DateTimeOffset? OldLastInboundAt,
+        short? AutomationBotKind);
 
     private sealed record EchoState(Guid? AssignedMemberId, string AutomationStatus);
 }

@@ -56,11 +56,138 @@ public sealed class AgentEditorBuilderTests
         Assert.Equal((0, 1), (connections.ListCalls, connections.ListIdsCalls));
     }
 
+    // P-4: el editor lista quién puede cotizar (otra lista que la del traspaso) y avisa si la asesora elegida ya no puede.
+    [Fact]
+    public async Task TheEditorListsTheQuotationAdvisorsAndWarnsWhenTheChosenOneCanNoLongerQuote()
+    {
+        var advisor = Guid.CreateVersion7();
+        var agent = Agent.Create(
+            Tenant,
+            "Asesor virtual",
+            AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")) with
+            {
+                Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: true),
+                QuotationDraft = new AgentQuotationDraft(advisor, new AgentBillingAccount(Guid.CreateVersion7(), "Banco", "123", "COP")),
+            },
+            By,
+            Now);
+        var advisors = new FakeAdvisors(canQuote: false, new AiMemberRef(Guid.CreateVersion7(), "Ana"));
+
+        var editor = await Builder(new FakeConnections(), advisors).BuildAsync(agent, Ct);
+
+        Assert.Equal(["Ana"], editor.QuotationAdvisors.Select(member => member.Name));
+        Assert.Contains(editor.Issues, issue => issue is { Code: "quotation_advisor_cannot_quote", Severity: "Warning" });
+        Assert.Equal([advisor], advisors.Asked);
+    }
+
+    // Plan 2026-11-17 A2: el selector de modelo del editor dice lo mismo que GET /ai/models, con la misma lectura de las conexiones.
+    [Fact]
+    public async Task TheEditorModelsCarryTheProviderIssue()
+    {
+        var credentials = new FakeAiProviderCredentials(
+        [
+            new AiProviderConnectionState(AiProviders.Anthropic, Connectable: true, Guid.CreateVersion7(), "Active"),
+            new AiProviderConnectionState(AiProviders.OpenAi, Connectable: true, Guid.CreateVersion7(), "NeedsAttention", "permission_denied"),
+        ]);
+
+        var editor = await Builder(new FakeConnections(), credentials: credentials).BuildAsync(NewAgent(), Ct);
+
+        Assert.Equal(
+            [("anthropic", true, (string?)null), ("openai", false, "permission_denied")],
+            editor.Models.Providers.Select(provider => (provider.Provider, provider.Configured, provider.Issue)));
+        Assert.Equal(1, credentials.DescribeCalls);
+    }
+
+    // Plan 2026-11-17 A3 (F-2): el editor ofrece las cuentas elegibles (el adaptador aplica la regla de la tienda) y avisa si la guardada ya
+    // no está entre ellas. La comparación es la de Quotations: banco sin mayúsculas, número exacto y moneda, recortados.
+    [Fact]
+    public async Task TheEditorOffersTheEligibleBillingAccounts()
+    {
+        var company = Guid.CreateVersion7();
+        var eligible = new AiBillingAccountOption(company, "Verde S.A.S.", "Bancolombia", "CTA-1", "COP");
+        var billing = new FakeBillingAccounts(eligible);
+
+        var matching = await Builder(new FakeConnections(), billing: billing)
+            .BuildAsync(QuotingAgent(new AgentBillingAccount(company, " bancolombia ", "CTA-1", "cop")), Ct);
+        var gone = await Builder(new FakeConnections(), billing: billing)
+            .BuildAsync(QuotingAgent(new AgentBillingAccount(company, "Bancolombia", "CTA-2", "COP")), Ct);
+
+        Assert.Equal([eligible], matching.QuotationBillingAccounts);
+        Assert.DoesNotContain(matching.Issues, issue => issue.Code == "quotation_billing_account_unavailable");
+        Assert.Contains(gone.Issues, issue => issue is { Code: "quotation_billing_account_unavailable", Severity: "Warning" });
+        Assert.Equal(2, billing.ListCalls);
+    }
+
+    // Spec 2026-11-17 §7 y D-B18: cada fila de la lista trae los chatbots publicados cuyo flujo usa el agente; uno que nadie usa trae [].
+    [Fact]
+    public async Task TheAgentListShowsTheChatbotsThatUseIt()
+    {
+        var used = NewAgent();
+        var unused = Agent.Create(Tenant, "Otro", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now);
+        var chatbot = new AiChatbotRef(Guid.CreateVersion7(), "Bienvenida");
+        var usage = new Dictionary<Guid, IReadOnlyList<AiChatbotRef>> { [used.Id] = [chatbot] };
+
+        var list = await Builder(new FakeConnections()).BuildListAsync(
+            Tenant, [used, unused], new AgentListActivity(new Dictionary<Guid, IReadOnlyList<AgentUsageDto>>(), new Dictionary<Guid, AgentTodayDto>()),
+            usage, Ct);
+
+        Assert.Equal([chatbot], list.Items.Single(item => item.Id == used.Id).UsedByChatbots);
+        Assert.Empty(list.Items.Single(item => item.Id == unused.Id).UsedByChatbots);
+    }
+
+    private static Agent QuotingAgent(AgentBillingAccount account) =>
+        Agent.Create(
+            Tenant,
+            "Asesor virtual",
+            AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")) with
+            {
+                Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: true),
+                QuotationDraft = new AgentQuotationDraft(Guid.CreateVersion7(), account),
+            },
+            By,
+            Now);
+
     private static Agent NewAgent() =>
         Agent.Create(Tenant, "Asesor virtual", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now);
 
-    private static AgentEditorBuilder Builder(IAiConnections connections) =>
-        new(connections, new FakeSlots(), new FakeMembers(), new FakeModelCatalog());
+    private static AgentEditorBuilder Builder(
+        IAiConnections connections,
+        FakeAdvisors? advisors = null,
+        FakeAiProviderCredentials? credentials = null,
+        FakeBillingAccounts? billing = null) =>
+        new(
+            connections,
+            new FakeSlots(),
+            new FakeMembers(),
+            new FakeModelCatalog(),
+            advisors ?? new FakeAdvisors(canQuote: true),
+            credentials ?? new FakeAiProviderCredentials([]),
+            billing ?? new FakeBillingAccounts());
+
+    private sealed class FakeBillingAccounts(params AiBillingAccountOption[] options) : IAiQuotationBillingAccounts
+    {
+        public int ListCalls { get; private set; }
+
+        public Task<IReadOnlyList<AiBillingAccountOption>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            ListCalls++;
+            return Task.FromResult<IReadOnlyList<AiBillingAccountOption>>(options);
+        }
+    }
+
+    private sealed class FakeAdvisors(bool canQuote, params AiMemberRef[] members) : IAiQuotationAdvisors
+    {
+        public List<Guid> Asked { get; } = [];
+
+        public Task<IReadOnlyList<AiMemberRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AiMemberRef>>(members);
+
+        public Task<bool> CanQuoteAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken)
+        {
+            Asked.Add(memberId);
+            return Task.FromResult(canQuote);
+        }
+    }
 
     private sealed class FakeConnections(params AiConnectionRef[] connections) : IAiConnections
     {

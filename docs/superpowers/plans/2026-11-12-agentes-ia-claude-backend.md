@@ -333,14 +333,25 @@ demás tablas de §4.2 llegan con las tareas que las usan. Rutas de §5: `GET /c
 **Empieza resolviendo P-1 y P-6 para OpenAI (técnicas, sin el owner).** No bloquea a ningún otro slice: hasta que llegue, `GET /ai/models` marca
 `openai` con `available: false` en sus modelos y publicar un agente de OpenAI responde `ai.agent.model_unavailable`.
 
-- [ ] Resolver P-1 contra la documentación oficial de OpenAI (no de memoria) y anotar la respuesta en el spec.
-- [ ] Paquete (si P-1 elige SDK) con lock files regenerados en el mismo commit.
-- [ ] RED/GREEN: `OpenAiModelClientTests` con las mismas exigencias que `ClaudeModelClientTests` que apliquen
+Hecha en `feat/agentes-ia-claude`. P-1 y P-6 quedaron resueltas en el spec, §9.1 (O-1..O-10, con las fuentes). Cambia respecto de
+lo planeado:
+
+- **Sin paquete:** P-1 eligió la Responses API con `HttpClient` directo (O-2), así que no hay lock files que regenerar. La columna
+  OpenAI de la tabla de errores es O-8 y O-9.
+- **OpenAI entra en Integrations en esta tarea** (proveedor `openai`, migración `AddOpenAiProvider`, `OpenAiConnectionTester`), no
+  en la Tarea 2: allá se dejó fuera para no ofrecer una conexión que nadie podía usar. `GET /ai/settings` lo lista con
+  `connectable: true` y sus modelos quedan `available: true` en `appsettings.json`, con la descripción de D-4a.
+- **El esfuerzo de OpenAI es opcional** (O-6): la lista inicial no lo fija y se manda el default del modelo hasta que AI-B9 diga otra
+  cosa.
+
+- [x] Resolver P-1 contra la documentación oficial de OpenAI (no de memoria) y anotar la respuesta en el spec.
+- [x] Paquete (si P-1 elige SDK) con lock files regenerados en el mismo commit. No aplica: sin SDK.
+- [x] RED/GREEN: `OpenAiModelClientTests` con las mismas exigencias que `ClaudeModelClientTests` que apliquen
   (herramientas, `VolatileContext` fuera del prefijo estable, errores tipados de la columna OpenAI, clave por
   petición, sin estado del lado del proveedor) y las propias que P-1 determine.
-- [ ] `OpenAiConnectionTester` real (reemplaza el `unverified` de la Tarea 2).
-- [ ] Prueba de no-filtración para OpenAI.
-- [ ] Commit `feat(ai): add OpenAI model client`.
+- [x] `OpenAiConnectionTester` real (reemplaza el `unverified` de la Tarea 2).
+- [x] Prueba de no-filtración para OpenAI (`OpenAiNoLeakTests`).
+- [x] Commit `feat(ai): add OpenAI model client`.
 
 ### Task 7 (AI-B6): Mensajería y ejecución en canales reales
 
@@ -348,52 +359,174 @@ Como §4.4, §6.1–§6.8 del spec (`BotRef`, `sent_by_kind = 3` con `sent_by_ag
 Instagram en `IBotOutbound`, `ChannelOutboundRules`, procesador de entrantes, `AiModelWorker`, traspasos, apagado del
 módulo). Cambia:
 
-- [ ] El procesador de entrantes revisa el `issue` **del proveedor del agente** de la conexión (C-19) antes de abrir
+Hecha en `feat/agentes-ia-claude` (`40f6ec87`, `528a3c9d`, `1ddaccfc`), con build en verde y **pruebas escritas sin correr** (las corre el
+owner). Cambia respecto de lo planeado:
+
+- **El `HandoffCauseKind` espejo vive en Ai** (`Modules.Ai.Application.HandoffCauseKind`, los seis kinds de agente de §4.4) y la prueba de
+  paridad compara Automations ∪ Ai con `AutomationHandoffKind`; los códigos `permission_denied`, `refused` y `request_invalid` viajan en
+  `Code` y la prueba exige que todo `AgentHandoffCodes.All` sobreviva la limpieza del hilo. Los topes de D-A20 y la respuesta inválida usan
+  los códigos que ya mostraba el playground (`invalid_response`, `model_calls_exceeded`, `tool_calls_exceeded`, `job_timed_out`) más
+  `max_replies_without_human` y `send_failed`.
+- **El trabajo de una sesión en reintento o con la respuesta guardada sigue `Running` con el lease acortado**, no vuelve a `Pending`: el
+  siguiente trabajo de la sesión puede estar ya pendiente y el índice único `IX_model_jobs_session_open` chocaría.
+- **Los nombres de agentes los resuelve el mismo puerto de los chatbots** (`IAutomationsChatbotNames`, adaptador que ahora lee también Ai):
+  `MessageDto.sentByAgent` y `ConversationSummary.automationBot` salen de ese diccionario.
+- **Una conversación sin ocupante en `connection_bots` ya no encola** (`AutomationInboxTests` siembra un ocupante chatbot).
+- **Dashboard y alertas no están en este repo** (`k8s/platform/dashboards/...` vive en el repo de plataforma): falta sumar `ai_model` y las
+  series `qep.ai.model.calls` / `qep.ai.model.errors` allá.
+- **`issue` en `GET /ai/settings`**: sigue siendo el `status` de la conexión (`NeedsAttention`); el código del fallo no se expone porque
+  `ConnectionListing` de Integrations no lo trae.
+
+- [x] El procesador de entrantes revisa el `issue` **del proveedor del agente** de la conexión (C-19) antes de abrir
   sesión.
-- [ ] Los códigos nuevos de traspaso (`permission_denied`, `refused`, `request_invalid`) en
+- [x] Los códigos nuevos de traspaso (`permission_denied`, `refused`, `request_invalid`) en
   `HandoffCauseKind`/`AutomationHandoffKind` **juntos**, con `HandoffCauseKindParityTests`; el evento lleva `provider`.
-- [ ] Barrido de lectores de autor por `sent_by_kind = 3` (un join al miembro lo pierde en silencio), y CHECK
+- [x] Barrido de lectores de autor por `sent_by_kind = 3` (un join al miembro lo pierde en silencio), y CHECK
   `sent_by_kind IN (1,2,3,4)`.
 - [ ] Cola `ai.model_jobs` en `QueueNames`, `QueueMetricsSource`, dashboard y alertas; métricas de llamadas y errores
-  etiquetadas por `provider`.
-- [ ] El código se mergea apagado por el módulo `ai` (fuera de `DefaultForNewTenants`); se enciende tenant por tenant.
+  etiquetadas por `provider`. Hecho en este repo (`QueueNames`, `QueueMetricsSource`, su prueba y el meter `Qep.Ai`); **faltan dashboard y
+  alertas en el repo de plataforma**.
+- [x] El código se mergea apagado por el módulo `ai` (fuera de `DefaultForNewTenants`); se enciende tenant por tenant.
 
-### Task 8 (AI-B7): `create_quotation_draft`
+### Task 8 (AI-B7): `create_quotation_draft` — hecha
 
-Como §8 y P-4/P-4b del spec, sin cambios por el proveedor.
+Como §8 y P-4/P-4b del spec, sin cambios por el proveedor. Hecha en `feat/agentes-ia-claude` con build en verde y **pruebas escritas sin
+correr** (las corre el owner). Cambia respecto de lo planeado:
 
-### Task 9 (AI-B8): Actividad del agente, historial y conteos
+- **La «empresa facturadora» de P-4 es la cuenta de cobro entera** (`config.quotationDraft.billingAccount { companyId, bankName,
+  accountNumber, currency }`): una cotización no guarda la empresa sola sino una de sus cuentas (`QuotationBillingAccount`), y elegir una
+  cuenta de la empresa por regla sería inventar. La asesora va en `config.quotationDraft.advisorMemberId`. Los dos son nullable para que un
+  `config` guardado antes se siga leyendo.
+- **Validación (D-A7):** con `tools.quotationDraft`, sin asesora → `quotation_advisor_missing` y sin cuenta → `quotation_billing_account_missing`
+  (errores); una asesora que ya no puede cotizar → `quotation_advisor_cannot_quote` como **aviso** («bloquea la herramienta con aviso»): al
+  correr, la herramienta responde `quotation_advisor_unavailable` al modelo sin escribir. «Puede cotizar» = membresía activa con
+  `quotations.quotation.manage` (`AiQuotationAdvisors`, misma regla que `MessagingAssignees`). El editor suma `quotationAdvisors`.
+- **Quotations:** `IExternalQuotationWriter` / `ExternalQuotationService` (asesora explícita, validador y armado de la creación, historial sin
+  miembro, auditoría `PublishByIntegration`), columna `external_key` con `IX_quotations_tenant_external_key` (parcial, traducido por nombre a
+  `quotation.quotation.external_key_taken`) y migración `AddQuotationExternalKey`. El historial por línea no se escribe: audita con la persona
+  que edita y aquí no hay ninguna.
+- **El traspaso lo decide la herramienta, no el modelo:** creado el borrador, el turno termina con `AgentRequested` + `quotation_draft_created`
+  hacia la asesora de la cotización (P-4b); sin cliente o con uno que Quotations no deja cotizar (`client_not_found`, `client_incomplete`,
+  `client_cuc_missing`, `client_inactive`), con `quotation_customer_not_ready` hacia el destino configurado (P-4). Otro rechazo de Quotations
+  vuelve al modelo con su código. El playground simulado traspasa igual.
+- **Un traspaso con borrador escrito no se descarta por un turno nuevo del cliente** (D-A14): el siguiente trabajo crearía otro borrador.
+- `ai.quotation_draft.created` se audita con actor `AiAgent` en el commit corto del traspaso.
+
+- [x] RED/GREEN `CreateQuotationDraftToolTests`, `AgentConfigValidatorTests`, `AgentEditorBuilderTests`, `AgentSessionProcessorTests` (Ai),
+  `AiQuotationDraftsTests` (Bootstrapper), `ExternalQuotationServiceTests` (Quotations, integración).
+
+### Task 9 (AI-B8): Actividad del agente, historial y conteos — hecha
 
 Como el spec. La actividad de cada respuesta muestra proveedor y `served_model`; la lista de agentes suma tokens por
 proveedor, con caché (C-4).
 
+Hecha en `feat/agentes-ia-claude`, sin migración, con build en verde y **pruebas escritas sin correr**. Cambia respecto de lo planeado:
+
+- **`GET /ai/conversations/{conversationId}/agent-activity`**: las sesiones de la conversación y, por cada **trabajo** (respuesta, traspaso o
+  descarte, porque todos gastaron tokens), `provider` de la versión, `servedModels` (sin repetir: con C-9 pueden ser dos), consumo con caché,
+  mensajes enviados, herramientas y fuentes **resueltas** (`faq` con la pregunta, `tool` con el nombre, `quickReply` con el atajo de hoy o
+  `null` si se borró). Permiso `ai.agent.read`; **P-10 sigue abierta** (si también la ve todo asesor de la conversación). Una conversación de
+  otro tenant responde vacía tras el 403 de ruta.
+- **`GET /ai/sessions?agentId=&from=&to=`**: de la más reciente a la más vieja, `from` inclusivo y `to` exclusivo sobre el inicio; `to ≤ from`
+  es 422. El spec no pagina: se devuelven las **200 más recientes** (`ListAgentSessionsHandler.MaxSessions`). `replies` cuenta trabajos con
+  respuesta, no mensajes.
+- **Lista de agentes:** cada agente trae `usageThisMonth` (por proveedor, mes del reloj del tenant, **incluye el playground**, que gasta la
+  misma clave) y `today { handled, handedOff, quotationDrafts }` de las sesiones que empezaron hoy; `handedOff` cuenta `HandedOff`, `Failed` y
+  `WindowClosed` (los caminos de traspaso), no `Interrupted`. La respuesta suma además `usageThisMonth` del tenant por proveedor (D-A27, «el
+  total de la clave»). La caché suma `null` sólo cuando ninguna llamada la reportó.
+- `GET /ai/settings` sigue sin `usageThisMonth` (el spec lo lista; esta tarea no lo pedía).
+
+- [x] RED/GREEN `AgentActivityHandlersTests` (Ai unit) y `AgentActivityApiTests` (Ai integración).
+
 ### Task 10 (AI-B9, nuevo): Eval, ajuste de esfuerzo y comparación de proveedores
 
-- [ ] Conjunto de 30–50 conversaciones sintéticas en español con la respuesta esperada (pregunta fuera de alcance,
+Arnés hecho en `feat/agentes-ia-claude`, con build en verde y **sin correr** (cada corrida gasta dinero real). Cambia respecto de lo
+planeado:
+
+- **Es una consola, no un proyecto de pruebas:** `tests/Modules/Ai/Modules.Ai.Eval` (`OutputType Exe`, `IsTestProject false`). `dotnet test`
+  la salta, así que no corre en la suite ni en ningún pipeline; está en `Backend.slnx` sólo para que el build la compile. Para llamar a un
+  proveedor exige `--confirm-spend`, un tope duro `--max-model-calls` y la clave en `QEP_EVAL_ANTHROPIC_API_KEY` /
+  `QEP_EVAL_OPENAI_API_KEY`; `--dry-run` valida el conjunto sin red. Cómo correrlo: README, «Agentes IA», «Eval».
+- **43 casos** en `eval-set.json` (catorce categorías, las seis del plan incluidas), contra una ferretería ficticia en memoria
+  (`EvalFixture`): catálogo y pedidos falsos, `create_quotation_draft` simulado (modo playground).
+- **Los adaptadores salen de `AddAiInfrastructure`**, el mismo cableado de producción (clientes nombrados sin loggers ni redirecciones,
+  límites de `Ai:Model`); la base nunca se abre.
+- **El juez es un gancho** (`IEvalJudge`, `ModelJudge` sobre `IAiModelClient`, `--judge`): corre sólo en los casos con rúbrica que pasaron
+  las reglas. Sin juez, esos casos quedan «judge pending» y la calidad es sólo por reglas.
+- **El costo necesita precios del día:** QEP no tiene tabla de precios (P-15), así que se pasan con `--prices` (plantilla
+  `prices.example.json`, en `null`). Sin precio de un componente con tokens, el costo sale «unknown»; no se supone.
+
+- [x] Conjunto de 30–50 conversaciones sintéticas en español con la respuesta esperada (pregunta fuera de alcance,
   cliente que pide humano, intento de inyección «ignora tus instrucciones», pedido de otro cliente, ráfaga de tres
   mensajes, imagen sin texto). Calificación por reglas donde se pueda (herramienta final, traspaso correcto, nunca
   revela instrucciones) y por un modelo juez donde no.
-- [ ] El eval corre sobre el **mismo** `AgentTurnRunner` con cualquier proveedor: así la comparación mide el modelo y
+- [x] El eval corre sobre el **mismo** `AgentTurnRunner` con cualquier proveedor: así la comparación mide el modelo y
   no dos arneses distintos.
 - [ ] Correrlo con los modelos de Anthropic (Opus 5.5 en `low`, `medium` y `high`; Sonnet 5.5 y Haiku 5.5 en su mejor
   esfuerzo) y, cuando exista la Tarea 6, con los de OpenAI. Medir calidad, latencia p90 y costo por conversación
-  resuelta. **Cada corrida gasta dinero real:** el presupuesto lo aprueba el owner antes.
-- [ ] Verificar `CacheReadInputTokens > 0` desde la segunda llamada de un trabajo con Anthropic (C-12).
+  resuelta. **Cada corrida gasta dinero real:** el presupuesto lo aprueba el owner antes. Pendiente: aprobación del
+  presupuesto por el owner y la corrida (el arnés ya mide las tres cosas).
+- [ ] Verificar `CacheReadInputTokens > 0` desde la segunda llamada de un trabajo con Anthropic (C-12). Pendiente de la
+  corrida: el reporte lo calcula por variante (`C-12 cache check`: `verified`, `failed` con los casos, o `not_verifiable` si
+  ningún trabajo hizo dos llamadas).
 - [ ] Con el resultado: `effort` por modelo, topes de D-A20 (P-2) y el texto de las instrucciones fijas. Si las
   instrucciones fijas necesitan variar por proveedor, la variación vive en el adaptador, no en el builder común.
-- [ ] Commit `chore(ai): tune effort and limits from eval results`.
+  Pendiente: aprobación del presupuesto por el owner y la corrida.
+- [ ] Commit `chore(ai): tune effort and limits from eval results`. Pendiente: aprobación del presupuesto por el owner y la
+  corrida.
 
 ### Task 11: Documentación y despliegue
 
-- [ ] README: sección «Agentes IA» (módulo, flujo de dos etapas, proveedores elegibles por agente, opciones
-  `Ai:Providers`, cómo agregar un proveedor, cómo probar con servidores falsos).
-- [ ] CLAUDE.md: gotchas que no se deducen del código: sin respaldo entre proveedores (C-20); el `issue` es por
-  proveedor (C-19); y de Anthropic, C-8, C-11, C-12 y C-13; las claves de proveedor jamás se imprimen.
-- [ ] Red: el pod tiene que llegar a `api.anthropic.com` y al host de OpenAI que fije P-1. Ninguna clave de proveedor va
-  en el ConfigMap ni en el Secret del despliegue: con BYOK viven cifradas en `integrations`.
+- [x] README: sección «Agentes IA» (módulo, flujo de dos etapas, proveedores elegibles por agente, opciones
+  `Ai:Providers`, cómo agregar un proveedor, cómo probar con servidores falsos), más «Eval» y «Despliegue».
+- [x] CLAUDE.md: gotchas que no se deducen del código: sin respaldo entre proveedores (C-20); el `issue` es por
+  proveedor (C-19); y de Anthropic, C-8, C-11, C-12 y C-13; las claves de proveedor jamás se imprimen. Suma OpenAI sin SDK y
+  `store: false`, el ruteo por `bot_kind`, `sent_by_kind = 3`, los `Down` de `AddAgentAutomation` y `AddOpenAiProvider`, la
+  idempotencia del borrador de cotización y la paridad de `HandoffCauseKind`.
+- [x] Red: el pod tiene que llegar a `api.anthropic.com` y a `api.openai.com` (P-1 resuelta, O-1). Ninguna clave de proveedor va
+  en el ConfigMap ni en el Secret del despliegue: con BYOK viven cifradas en `integrations`. En README, «Agentes IA», «Despliegue».
 - [ ] Frontend: el spec de producto supone un solo proveedor (OpenAI). Se le avisa a su developer de la elección por
-  agente, de `GET /ai/models` agrupado y de `GET /ai/settings` por proveedor; **no** se edita desde este repo.
-- [ ] Al mergear cada slice a `develop`: fila de Agentes IA en `docs/estado.md` y su Registro.
+  agente, de `GET /ai/models` agrupado y de `GET /ai/settings` por proveedor; **no** se edita desde este repo. Pendiente: el
+  orquestador se lo reporta al owner.
+- [ ] Al mergear cada slice a `develop`: fila de Agentes IA en `docs/estado.md` y su Registro. Se hace al mergear, no en esta rama.
+
+## Revisión final: correcciones (2026-11-15)
+
+La revisión final de la rama encontró seis problemas; los seis se corrigieron, cada uno con su prueba de regresión. Las pruebas
+**no se corrieron** en esta rama (decisión del owner: las corre él al final); la verificación fue `dotnet build Backend.slnx` con 0
+errores y 0 avisos.
+
+- [x] **1. Borradores de cotización duplicados.** La clave pasa de `ai:{jobId}:{callId}` a `ai:{jobId}`, y el bucle corre a lo sumo
+  una herramienta que escribe por respuesta (la segunda vuelve con `one_write_per_response`). No se apagaron las llamadas en paralelo
+  del proveedor: también sirven a las lecturas. Pruebas: `CreateQuotationDraftToolTests.ARerunOfTheSameJobAsksForTheSameDraftKey` y
+  `TwoDraftCallsInOneResponseCreateOneDraft`.
+- [x] **2. Un commit que falla volvía a pagar el modelo para siempre.** La respuesta se guarda en el trabajo (`RememberResult`) antes de
+  enviar; una `RequestConcurrencyException` del commit reprograma en 2 s desde lo guardado (`IAiModelJobs.RetryHeldAsync`); pasado
+  `ModelJob.MaxClaims` (10) reclamos, traspaso `AgentFailed` con `job_timed_out`. Pruebas (`AgentSessionProcessorTests`):
+  `AConcurrencyConflictOnTheHandoffRetriesTheStoredResultSoon`, `ARerunAfterTheDraftWasWrittenNeverCallsTheModelAgain`,
+  `AJobClaimedTooManyTimesHandsOffWithoutCallingTheModel`.
+- [x] **3. Turno perdido si el worker reclamaba durante `ExtendTo`.** `FindPendingJobAsync` toma la fila con `FOR UPDATE`. Prueba:
+  `AgentSessionJobRaceTests.TheWorkerCannotClaimAPendingJobWhileTheInboxExtendsIt` (integración).
+- [x] **4. Conversación asignada a un agente que no contesta.** Una conversación devuelta al agente (`Active`, sin sesión) se traspasa
+  si el agente está pausado, borrado, sin versión legible o sin la cuenta de su proveedor, y también con el módulo apagado; un trabajo
+  cuyo agente se borró termina en traspaso. Pruebas (`AgentSessionProcessorTests`): `AReturnedConversationWithoutTheProviderAccountIsHandedOff`,
+  `AReturnedConversationOfAPausedAgentIsHandedOffWithoutASession`, `AReturnedConversationOfADeletedAgentIsHandedOff`,
+  `WithTheModuleOffAnAgentConversationWithoutSessionIsHandedOff`, `AJobWhoseAgentWasDeletedHandsOff`.
+- [x] **5a. Tomar la conversación no terminaba la sesión.** `ReleaseRun` se encola con el `bot_kind` que tenía la conversación antes
+  del cambio; el procesador de entrantes descarta el trabajo pendiente al interrumpir, y el worker revisa la conversación antes de llamar
+  al modelo. Pruebas: `AgentSessionProcessorTests.AReleaseRunEndsTheAgentSessionAndDiscardsItsPendingJob`,
+  `AJobIsDiscardedBeforeCallingTheModelWhenAPersonTookTheConversation`;
+  `ConversationAutomationApiTests.TheSignalOfAnAgentConversationGoesToTheAgentQueue` y `TheSignalOfAChatbotConversationStaysInTheChatbotQueue`.
+- [x] **5b. Borrar un cliente dejaba sus datos de IA.** `CustomerDeletionReferences` borra `ai.tool_calls`, `ai.model_jobs`, `ai.turns`
+  y `ai.sessions` de sus conversaciones y las `ai.tests` que lo fijaron; `CustomerMergeReferences` mueve `ai.tests.customer_id`.
+  Pruebas: `CustomerDeletionAcrossModulesTests.DeletingACustomerTakesItsAgentSessionsAndPlaygroundTests`, `CustomerMergeReferencesTests`
+  (la réplica suma `ai.tests`) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`. `CustomerWriteDoubles`
+  no cambia: el puerto es el mismo.
+- [x] **6. Instagram encolaba todo con `position: 0`.** Cada mensaje lleva su posición en la entrada, como WhatsApp. Prueba:
+  `AutomationInboxTests.TwoInstagramMessagesOfOneDeliveryAreEnqueuedInOrderOneMicrosecondApart`.
+
+Abierto para el owner: el código del traspaso por tope de reclamos reusa `job_timed_out` (uno propio necesita su texto en el frontend);
+pausar o borrar un agente no traspasa en el acto sus conversaciones devueltas sin sesión, lo hace el siguiente entrante (D-A6).
 
 ## Spec discrepancies
 

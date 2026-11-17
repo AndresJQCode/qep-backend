@@ -50,7 +50,7 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
         {
             Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
             Assert.Equal("support.public.not_found", await CodeOfAsync(response));
-            bodies.Add(WithoutTraceId(await JsonAsync(response)));
+            bodies.Add(WithoutRequestEcho(await JsonAsync(response)));
         }
 
         Assert.Single(bodies.Distinct(StringComparer.Ordinal));
@@ -92,7 +92,7 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
             Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
             Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
             Assert.Equal("support.public.not_found", await CodeOfAsync(response));
-            bodies.Add(WithoutTraceId(await JsonAsync(response)));
+            bodies.Add(WithoutRequestEcho(await JsonAsync(response)));
         }
 
         Assert.Single(bodies.Distinct(StringComparer.Ordinal));
@@ -146,9 +146,9 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
 
         Assert.NotEqual(HttpStatusCode.Forbidden, cookieLookup.StatusCode);
         Assert.Equal(plainForm.StatusCode, cookieForm.StatusCode);
-        Assert.Equal(WithoutTraceId(await JsonAsync(plainForm)), WithoutTraceId(await JsonAsync(cookieForm)));
+        Assert.Equal(WithoutRequestEcho(await JsonAsync(plainForm)), WithoutRequestEcho(await JsonAsync(cookieForm)));
         Assert.Equal(plainLookup.StatusCode, cookieLookup.StatusCode);
-        Assert.Equal(WithoutTraceId(await JsonAsync(plainLookup)), WithoutTraceId(await JsonAsync(cookieLookup)));
+        Assert.Equal(WithoutRequestEcho(await JsonAsync(plainLookup)), WithoutRequestEcho(await JsonAsync(cookieLookup)));
     }
 
     // Fase 4b, Tarea 13: las rutas de la encuesta son del grupo público. Con la autenticación real, una cookie de sesión de la consola no
@@ -175,7 +175,7 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
 
             Assert.NotEqual(HttpStatusCode.Forbidden, plain.StatusCode);
             Assert.Equal(plain.StatusCode, cookie.StatusCode);
-            Assert.Equal(WithoutTraceId(await JsonAsync(plain)), WithoutTraceId(await JsonAsync(cookie)));
+            Assert.Equal(WithoutRequestEcho(await JsonAsync(plain)), WithoutRequestEcho(await JsonAsync(cookie)));
             Assert.Equal("no-store", cookie.Headers.CacheControl?.ToString());
         }
     }
@@ -325,9 +325,10 @@ public sealed class SupportPublicSurfaceApiTests(SupportPublicRealAuthHost host)
     private static string OversizedBody() =>
         JsonSerializer.Serialize(new { number = new string('1', 70_000), pin = "123456", turnstileToken = FakeSupportCaptcha.ValidToken });
 
-    // El cuerpo del problema es idéntico salvo el traceId, que cambia en cada request.
-    private static string WithoutTraceId(JsonElement body) =>
+    // El cuerpo del problema es idéntico salvo el traceId, que cambia en cada request, y el instance, que repite la ruta que mandó el
+    // propio visitante (ApiExceptionHandler): no le cuenta nada que no sepa.
+    private static string WithoutRequestEcho(JsonElement body) =>
         JsonSerializer.Serialize(body.EnumerateObject()
-            .Where(property => property.Name != "traceId")
+            .Where(property => property.Name is not ("traceId" or "instance"))
             .ToDictionary(property => property.Name, property => property.Value.ToString()));
 }

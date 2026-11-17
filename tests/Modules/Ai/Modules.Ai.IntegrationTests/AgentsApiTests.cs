@@ -189,8 +189,106 @@ public sealed class AgentsApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var (code, root) = await ProblemAsync(response);
         Assert.Equal("ai.agent.invalid", code);
-        Assert.Equal(["connections", "instructions"], root.GetProperty("errors").EnumerateObject().Select(error => error.Name).Order(StringComparer.Ordinal));
+        // Spec 2026-11-17 D-B6: sin conexiones es aviso, no error.
+        Assert.Equal(["instructions"], root.GetProperty("errors").EnumerateObject().Select(error => error.Name).Order(StringComparer.Ordinal));
     }
+
+    // Spec 2026-11-17 D-B6: un agente sólo para bloques de chatbots se publica sin conexiones; el aviso sigue en el editor.
+    [Fact]
+    public async Task AnAgentWithoutConnectionsPublishes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        await SeedAnthropicConnectionAsync(factory);
+        var created = await CreateAsync(setup.Client);
+        var id = created.GetProperty("id").GetGuid();
+        var draft = await SendAsync(setup.Client, HttpMethod.Put, $"{Agents}/{id}/draft", ValidConfig(), ifMatch: created.GetProperty("version").GetInt64());
+
+        var response = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/{id}/publish", ifMatch: (await JsonAsync(draft)).GetProperty("version").GetInt64());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var agent = await JsonAsync(response);
+        Assert.Equal("Active", agent.GetProperty("status").GetString());
+        var issue = Assert.Single(agent.GetProperty("issues").EnumerateArray());
+        Assert.Equal(("connections_missing", "Warning"), (issue.GetProperty("code").GetString(), issue.GetProperty("severity").GetString()));
+        Assert.Null(await SlotAsync(setup.ConnectionString, setup.WhatsAppId));
+    }
+
+    // Spec 2026-11-17 §7: la lista dice qué chatbots publicados usan cada agente en un bloque; el borrador de un chatbot no cuenta.
+    [Fact]
+    public async Task TheAgentListShowsTheChatbotsThatUseIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        var id = (await CreateAsync(setup.Client)).GetProperty("id").GetGuid();
+        var other = (await CreateAsync(setup.Client, "Otro")).GetProperty("id").GetGuid();
+        var chatbot = await SeedPublishedChatbotAsync(setup.ConnectionString, "Bienvenida", id);
+        await SeedDraftChatbotAsync(setup.ConnectionString, "Borrador", other);
+
+        var list = await JsonAsync(await setup.Client.GetAsync(Agents, Ct));
+
+        var used = list.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == id).GetProperty("usedByChatbots");
+        var entry = Assert.Single(used.EnumerateArray());
+        Assert.Equal((chatbot, "Bienvenida"), (entry.GetProperty("id").GetGuid(), entry.GetProperty("name").GetString()));
+        Assert.Empty(list.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == other).GetProperty("usedByChatbots").EnumerateArray());
+    }
+
+    // Spec 2026-11-17 D-B18: borrar un agente que usa un chatbot publicado es 409 con los chatbots, y el agente sigue ahí.
+    [Fact]
+    public async Task DeletingAnAgentUsedByAPublishedChatbotIsAConflictWithTheChatbots()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        var created = await CreateAsync(setup.Client);
+        var id = created.GetProperty("id").GetGuid();
+        var chatbot = await SeedPublishedChatbotAsync(setup.ConnectionString, "Bienvenida", id);
+
+        var response = await SendAsync(setup.Client, HttpMethod.Delete, $"{Agents}/{id}", ifMatch: created.GetProperty("version").GetInt64());
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var (code, root) = await ProblemAsync(response);
+        Assert.Equal("ai.agent.in_use_by_chatbots", code);
+        var listed = Assert.Single(root.GetProperty("chatbots").EnumerateArray());
+        Assert.Equal((chatbot, "Bienvenida"), (listed.GetProperty("id").GetGuid(), listed.GetProperty("name").GetString()));
+        Assert.Equal(HttpStatusCode.OK, (await setup.Client.GetAsync($"{Agents}/{id}", Ct)).StatusCode);
+    }
+
+    /// <summary>Un chatbot publicado cuyo flujo tiene un bloque «Agente IA» con <paramref name="agentId"/> (el JSON de <c>FlowJson</c>).</summary>
+    private static async Task<Guid> SeedPublishedChatbotAsync(string connectionString, string name, Guid agentId)
+    {
+        var (chatbot, version) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        await ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@chatbot, @tenant, @name, '{}'::jsonb, now(), @tenant, now(), @tenant, now());
+            INSERT INTO automations.chatbot_versions (id, chatbot_id, tenant_id, number, flow, layout, published_at, published_by)
+            VALUES (@version, @chatbot, @tenant, 1, @flow::jsonb, '{}'::jsonb, now(), @tenant);
+            UPDATE automations.chatbots SET status = 'Active', published_version_id = @version WHERE id = @chatbot;
+            """,
+            ("chatbot", chatbot), ("version", version), ("tenant", Guid.Parse(TenantId)), ("name", name), ("flow", AgentFlow(agentId)));
+        return chatbot;
+    }
+
+    private static async Task SeedDraftChatbotAsync(string connectionString, string name, Guid agentId) =>
+        await ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@chatbot, @tenant, @name, @flow::jsonb, now(), @tenant, now(), @tenant, now());
+            """,
+            ("chatbot", Guid.CreateVersion7()), ("tenant", Guid.Parse(TenantId)), ("name", name), ("flow", AgentFlow(agentId)));
+
+    private static string AgentFlow(Guid agentId) =>
+        $$"""
+        {"schema":1,"start":{"firstNodeId":"ai-1"},"variables":[],"nodes":[{"id":"ai-1","kind":"aiAgent","title":"Asesor IA","outputs":{},"agentId":"{{agentId}}","objective":"Resuelve dudas.","context":"","firstTurn":"lastMessage","idleMinutes":60,"saveTo":"asesor_ia"}]}
+        """;
 
     // C-18: sin la conexión Active del proveedor del agente no se publica, y la respuesta dice cuál falta.
     [Fact]
@@ -366,7 +464,7 @@ public sealed class AgentsApiTests
     }
 
     // Plan 2026-11-12 (correcciones), Tarea 4: la sincronización de la ocupación toma el candado del tenant antes de tocar una fila, el
-    // mismo que toman los chatbots (ConnectionSlotsLock, 20261113). Con el candado tomado desde otra conexión, el renombre espera; al
+    // mismo que toman los chatbots (ConnectionSlotsLock). Con el candado tomado desde otra conexión, el renombre espera; al
     // soltarlo, termina. Sin el candado, dos sincronizaciones del tenant pueden cruzarse en un deadlock.
     [Fact]
     public async Task TheSlotSyncWaitsForTheTenantLock()
@@ -382,7 +480,7 @@ public sealed class AgentsApiTests
         await using var holder = new Npgsql.NpgsqlConnection(setup.ConnectionString);
         await holder.OpenAsync(Ct);
         await using var transaction = await holder.BeginTransactionAsync(Ct);
-        await using (var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(20261113, hashtext(@t))", holder, transaction))
+        await using (var command = new Npgsql.NpgsqlCommand($"SELECT pg_advisory_xact_lock({Bootstrapper.ConnectionSlotsLock.Namespace}, hashtext(@t))", holder, transaction))
         {
             command.Parameters.AddWithValue("t", TenantId);
             await command.ExecuteNonQueryAsync(Ct);
@@ -453,8 +551,8 @@ public sealed class AgentsApiTests
         await sync.OpenAsync(Ct);
         await using var transaction = await sync.BeginTransactionAsync(Ct);
         await using (var command = new Npgsql.NpgsqlCommand(
-            """
-            SELECT pg_advisory_xact_lock(20261113, hashtext(@t));
+            $"""
+            SELECT pg_advisory_xact_lock({Bootstrapper.ConnectionSlotsLock.Namespace}, hashtext(@t));
             INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at)
             VALUES (@c, @tenant, 2, @b, 'Asesor virtual', now());
             """, sync, transaction))
@@ -496,9 +594,9 @@ public sealed class AgentsApiTests
             (occupant.GetProperty("kind").GetString(), occupant.GetProperty("id").GetGuid(), occupant.GetProperty("name").GetString()));
     }
 
-    // §5: una conexión de otro tenant es 404 sin decir de quién es; una sin salida de bot (Instagram, por ahora) es 422.
+    // §5: una conexión de otro tenant es 404 sin decir de quién es. Spec §6.5 (Tarea 7): Instagram ya tiene salida de bot para un agente.
     [Fact]
-    public async Task OnlyTheTenantsWhatsAppConnectionsCanBeChosen()
+    public async Task OnlyTheTenantsConnectionsCanBeChosenAndInstagramIsSupported()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -509,15 +607,14 @@ public sealed class AgentsApiTests
 
         var foreign = await SendAsync(
             setup.Client, HttpMethod.Put, $"{Agents}/{id}", new { name = "Asesor virtual", connectionIds = new[] { Guid.CreateVersion7() } }, ifMatch: 1);
-        var unsupported = await SendAsync(
+        var supported = await SendAsync(
             setup.Client, HttpMethod.Put, $"{Agents}/{id}", new { name = "Asesor virtual", connectionIds = new[] { instagram } }, ifMatch: 1);
 
         Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
         Assert.Equal("ai.connection.not_found", (await ProblemAsync(foreign)).Code);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, unsupported.StatusCode);
-        Assert.Equal("ai.agent.channel_not_supported", (await ProblemAsync(unsupported)).Code);
+        Assert.Equal(HttpStatusCode.OK, supported.StatusCode);
         var connections = await JsonAsync(await setup.Client.GetAsync($"{AiUrl()}/connections", Ct));
-        Assert.False(connections.EnumerateArray().Single(connection => connection.GetProperty("id").GetGuid() == instagram)
+        Assert.True(connections.EnumerateArray().Single(connection => connection.GetProperty("id").GetGuid() == instagram)
             .GetProperty("botSupported").GetBoolean());
     }
 
@@ -563,5 +660,236 @@ public sealed class AgentsApiTests
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, disabled.StatusCode);
         Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(disabled)).Code);
+    }
+
+    // Plan 2026-11-17 A3 (F-2): el editor lista las cuentas de las empresas activas (la regla de la tienda), sin companies.company.read, y la
+    // cuenta guardada de una empresa que se desactivó es un aviso, no un error.
+    [Fact]
+    public async Task TheEditorListsTheActiveCompaniesBillingAccounts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        using var companies = CreateClient(factory, permissions: ["companies.company.read", "companies.company.manage"]);
+        var active = await CreateCompanyAsync(companies, "Verde S.A.S.", ("Davivienda", "VERDE-2", "USD"), ("Bancolombia", "VERDE-1", "COP"));
+        var closed = await CreateCompanyAsync(companies, "Cerrada S.A.S.", ("Bancolombia", "CERRADA-1", "COP"));
+        var deactivated = await SendAsync(companies, HttpMethod.Post, $"/api/v1/tenants/{TenantId}/companies/{closed}/deactivate");
+        Assert.True(deactivated.IsSuccessStatusCode, await BodyAsync(deactivated));
+
+        var created = await CreateAsync(setup.Client);
+        var id = created.GetProperty("id").GetGuid();
+        var draft = await SendAsync(
+            setup.Client,
+            HttpMethod.Put,
+            $"{Agents}/{id}/draft",
+            new
+            {
+                instructions = "Atiende las dudas de los clientes de la tienda.",
+                tone = "friendly",
+                greeting = "¡Hola! Soy el asistente.",
+                faq = Array.Empty<object>(),
+                useQuickReplies = false,
+                answerOnlyFromSources = true,
+                tools = new { catalog = false, orderStatus = false, quotationDraft = true },
+                quotationDraft = new
+                {
+                    advisorMemberId = Guid.CreateVersion7(),
+                    billingAccount = new { companyId = closed, bankName = "Bancolombia", accountNumber = "CERRADA-1", currency = "COP" },
+                },
+                handoff = new { destination = "unassigned", memberId = (Guid?)null, message = (string?)null, maxRepliesWithoutHuman = 20, maxConsecutiveFailures = 2 },
+                trigger = "NewConversation",
+                model = new { provider = "anthropic", id = "claude-sonnet-5-5" },
+            },
+            ifMatch: created.GetProperty("version").GetInt64());
+        Assert.Equal(HttpStatusCode.OK, draft.StatusCode);
+        var editor = await JsonAsync(await setup.Client.GetAsync($"{Agents}/{id}", Ct));
+
+        Assert.Equal(
+            [(active, "Verde S.A.S.", "Bancolombia", "VERDE-1", "COP"), (active, "Verde S.A.S.", "Davivienda", "VERDE-2", "USD")],
+            editor.GetProperty("quotationBillingAccounts").EnumerateArray().Select(account => (
+                account.GetProperty("companyId").GetGuid(),
+                account.GetProperty("companyName").GetString(),
+                account.GetProperty("bankName").GetString(),
+                account.GetProperty("accountNumber").GetString(),
+                account.GetProperty("currency").GetString())));
+        var issue = Assert.Single(
+            editor.GetProperty("issues").EnumerateArray(),
+            candidate => candidate.GetProperty("code").GetString() == "quotation_billing_account_unavailable");
+        Assert.Equal(("Warning", "quotationDraft.billingAccount"), (issue.GetProperty("severity").GetString(), issue.GetProperty("path").GetString()));
+    }
+
+    /// <summary>Una empresa con las cuentas que se pidan, por la API de Companies (como la crea la pantalla).</summary>
+    private static async Task<Guid> CreateCompanyAsync(HttpClient client, string name, params (string Bank, string Number, string Currency)[] accounts)
+    {
+        var response = await SendAsync(
+            client,
+            HttpMethod.Post,
+            $"/api/v1/tenants/{TenantId}/companies",
+            new
+            {
+                name,
+                bankAccounts = accounts.Select(account => new { bankName = account.Bank, accountNumber = account.Number, currency = account.Currency }),
+                taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
+                cityId = await AnyCityIdAsync(client),
+                phone = "6045551234",
+                email = "ventas@verde.example.co",
+                address = "Cra 50 # 10-20, Rionegro",
+            });
+        Assert.True(response.IsSuccessStatusCode, await BodyAsync(response));
+        return (await JsonAsync(response)).GetProperty("id").GetGuid();
+    }
+
+    private static async Task<Guid> AnyCityIdAsync(HttpClient client)
+    {
+        foreach (var department in (await JsonAsync(await client.GetAsync("/api/v1/departments", Ct))).EnumerateArray())
+        {
+            var cities = await JsonAsync(await client.GetAsync($"/api/v1/cities?departmentId={department.GetProperty("id").GetGuid()}", Ct));
+            if (cities.GetArrayLength() > 0)
+            {
+                return cities[0].GetProperty("id").GetGuid();
+            }
+        }
+
+        throw new InvalidOperationException("No hay ciudades sembradas.");
+    }
+
+    /// <summary>Un borrador con todo lo que es del tenant: traspaso a un miembro y borrador de cotización con asesor y cuenta.</summary>
+    private static object ConfigWithTenantIds() => new
+    {
+        instructions = "Atiende las dudas de los clientes de la tienda.",
+        tone = "friendly",
+        greeting = "¡Hola! Soy el asistente.",
+        faq = new[] { new { id = "envios", question = "¿Hacen envíos?", answer = "Sí, a todo el país." } },
+        useQuickReplies = false,
+        answerOnlyFromSources = true,
+        tools = new { catalog = true, orderStatus = false, quotationDraft = true },
+        handoff = new { destination = "member", memberId = (Guid?)Guid.NewGuid(), message = "Te paso con un asesor.", maxRepliesWithoutHuman = 20, maxConsecutiveFailures = 2 },
+        trigger = "NewConversation",
+        model = new { provider = "anthropic", id = "claude-sonnet-5-5" },
+        quotationDraft = new
+        {
+            advisorMemberId = (Guid?)Guid.NewGuid(),
+            billingAccount = new { companyId = Guid.NewGuid(), bankName = "Banco", accountNumber = "123", currency = "COP" },
+        },
+    };
+
+    // Spec 2026-11-17 importar/exportar §3: el archivo lleva el borrador sin el miembro del traspaso, sin el borrador de cotización y sin
+    // conexiones; el destino del traspaso y el modelo viajan.
+    [Fact]
+    public async Task TheExportCarriesTheDraftWithoutTheTenantsIds()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        var (id, _) = await PublishableAsync(setup, config: ConfigWithTenantIds());
+
+        var response = await setup.Client.GetAsync($"{Agents}/{id}/export", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var file = await JsonAsync(response);
+        Assert.Equal(1, file.GetProperty("schema").GetInt32());
+        Assert.Equal("aiAgent", file.GetProperty("kind").GetString());
+        Assert.Equal("Asesor virtual", file.GetProperty("name").GetString());
+        var config = file.GetProperty("config");
+        Assert.Equal("Atiende las dudas de los clientes de la tienda.", config.GetProperty("instructions").GetString());
+        Assert.Equal("member", config.GetProperty("handoff").GetProperty("destination").GetString());
+        Assert.Equal(JsonValueKind.Null, config.GetProperty("handoff").GetProperty("memberId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, config.GetProperty("quotationDraft").ValueKind);
+        Assert.Equal("anthropic", config.GetProperty("model").GetProperty("provider").GetString());
+        Assert.False(file.TryGetProperty("connectionIds", out var _));
+    }
+
+    [Fact]
+    public async Task ExportingAnotherTenantsAgentIs404()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        using var reader = CreateClient(factory, permissions: AiPermissions.AgentRead);
+        var id = (await CreateAsync(setup.Client)).GetProperty("id").GetGuid();
+
+        var missing = await setup.Client.GetAsync($"{Agents}/{Guid.NewGuid()}/export", Ct);
+        var denied = await reader.GetAsync($"{Agents}/{id}/export", Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal("ai.agent.not_found", (await ProblemAsync(missing)).Code);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
+
+    /// <summary>El archivo exportado del agente <paramref name="id"/>, con el miembro y el borrador de cotización puestos otra vez a mano
+    /// (un archivo editado): importar los vuelve a quitar.</summary>
+    private static async Task<Dictionary<string, object?>> HandEditedExportAsync(HttpClient client, Guid id)
+    {
+        var file = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+            await BodyAsync(await client.GetAsync($"{Agents}/{id}/export", Ct)))!;
+        var config = JsonSerializer.Deserialize<Dictionary<string, object?>>(((JsonElement)file["config"]!).GetRawText())!;
+        var handoff = JsonSerializer.Deserialize<Dictionary<string, object?>>(((JsonElement)config["handoff"]!).GetRawText())!;
+        handoff["memberId"] = Guid.NewGuid();
+        config["handoff"] = handoff;
+        config["quotationDraft"] = new
+        {
+            advisorMemberId = Guid.NewGuid(),
+            billingAccount = new { companyId = Guid.NewGuid(), bankName = "Banco", accountNumber = "123", currency = "COP" },
+        };
+        file["config"] = config;
+        return file;
+    }
+
+    // Spec 2026-11-17 importar/exportar §4: importar crea un agente nuevo en borrador, sin conexiones y sin los ids del tenant, y el editor
+    // ya dice qué falta elegir.
+    [Fact]
+    public async Task AnImportedAgentIsBornAsADraftWithoutTheTenantsIds()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        var (id, _) = await PublishableAsync(setup, config: ConfigWithTenantIds());
+        var export = await HandEditedExportAsync(setup.Client, id);
+
+        var response = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/import", new { name = "Ventas importado", export });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var editor = await JsonAsync(response);
+        Assert.NotEqual(id, editor.GetProperty("id").GetGuid());
+        Assert.Equal("Ventas importado", editor.GetProperty("name").GetString());
+        Assert.Equal("Draft", editor.GetProperty("status").GetString());
+        Assert.Empty(editor.GetProperty("connectionIds").EnumerateArray());
+        var config = editor.GetProperty("draft").GetProperty("config");
+        Assert.Equal("Atiende las dudas de los clientes de la tienda.", config.GetProperty("instructions").GetString());
+        Assert.Equal(JsonValueKind.Null, config.GetProperty("handoff").GetProperty("memberId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, config.GetProperty("quotationDraft").ValueKind);
+        var codes = editor.GetProperty("issues").EnumerateArray().Select(issue => issue.GetProperty("code").GetString()).ToList();
+        Assert.Contains("handoff_member_missing", codes);
+        Assert.Contains("quotation_advisor_missing", codes);
+        Assert.Contains("quotation_billing_account_missing", codes);
+    }
+
+    [Fact]
+    public async Task ImportingATakenNameOrAChatbotFileIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        using var reader = CreateClient(factory, permissions: AiPermissions.AgentRead);
+        var id = (await CreateAsync(setup.Client)).GetProperty("id").GetGuid();
+        var export = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+            await BodyAsync(await setup.Client.GetAsync($"{Agents}/{id}/export", Ct)))!;
+
+        var taken = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/import", new { export });
+        export.Remove("kind");
+        var chatbot = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/import", new { name = "Otro", export });
+        var denied = await SendAsync(reader, HttpMethod.Post, $"{Agents}/import", new { name = "Otro", export });
+
+        Assert.Equal(HttpStatusCode.Conflict, taken.StatusCode);
+        Assert.Equal("ai.agent.name_taken", (await ProblemAsync(taken)).Code);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, chatbot.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
     }
 }

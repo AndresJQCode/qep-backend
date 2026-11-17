@@ -67,6 +67,11 @@ public static class MessagingAuditActions
     /// <summary>Spec 2026-11-01 D-13: distinta de <see cref="AutomationResumed"/>, que reinicia el flujo.</summary>
     public const string AutomationContinued = "messaging.conversation.automation_continued";
 
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: el chatbot delegó la conversación en un agente y el agente la devolvió.
+    /// Siempre de sistema.</summary>
+    public const string AutomationDelegated = "messaging.conversation.automation_delegated";
+    public const string AutomationReturned = "messaging.conversation.automation_returned";
+
     /// <summary>Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto, sólo cuando Meta lo aceptó y el estado cambió.</summary>
     public const string ContactBlocked = "messaging.conversation.contact_blocked";
     public const string ContactUnblocked = "messaging.conversation.contact_unblocked";
@@ -87,8 +92,12 @@ public static class MessagingAuditActions
         ConversationEventType.CustomerChanged => CustomerChanged,
         ConversationEventType.AutomationStarted => AutomationStarted,
         ConversationEventType.AutomationContinued => AutomationContinued,
+        ConversationEventType.AutomationDelegated => AutomationDelegated,
+        ConversationEventType.AutomationReturned => AutomationReturned,
         ConversationEventType.ContactBlocked => ContactBlocked,
         ConversationEventType.ContactUnblocked => ContactUnblocked,
+        // Spec 2026-11-17: abrir la conversación del cliente reabre una resuelta en el mismo cambio que la toma.
+        ConversationEventType.Reopened => Reopened,
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "That event type has no assignment audit action."),
     };
 

@@ -52,6 +52,9 @@ public sealed partial class RunProcessor(
     [LoggerMessage(Level = LogLevel.Error, Message = "Manual assistant start row {MessageId} of conversation {ConversationId} (tenant {TenantId}) failed with {ErrorType}; closed without retrying (handed off to a person: {HandedOff}).")]
     private static partial void LogManualStartFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId, Guid messageId, string errorType, bool handedOff);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Inbox row {MessageId} of conversation {ConversationId} (tenant {TenantId}) reached the chatbot engine while its run waits for the agent; skipped.")]
+    private static partial void LogDelegatedInbound(ILogger logger, Guid tenantId, Guid conversationId, Guid messageId);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot version {VersionId} of tenant {TenantId} has a flow that cannot be read; the bot does not run it.")]
     private static partial void LogUnreadableFlow(ILogger logger, Guid tenantId, Guid versionId);
 
@@ -81,7 +84,9 @@ public sealed partial class RunProcessor(
             // un mensaje pudo haber salido antes de la excepción. La fila se cierra.
             // Spec 2026-11-03 D-4: la señal de liberación tampoco tiene mensaje, pero no es un arranque manual: no hay nada que traspasar.
             // Cerrar la corrida es idempotente, así que la excepción sube y el lease la reintenta.
-            if (item.ReleaseRun || await inbox.ReadAsync(item.TenantId, item.MessageId, CancellationToken.None) is not null)
+            // Spec 2026-11-17: el retorno del agente tampoco es un arranque manual; reintentar lo vuelve a leer de la delegación.
+            if (item.ReleaseRun || item.DelegationId is not null
+                || await inbox.ReadAsync(item.TenantId, item.MessageId, CancellationToken.None) is not null)
             {
                 throw;
             }
@@ -281,7 +286,10 @@ public sealed partial class RunProcessor(
         }
 
         var run = await runs.FindLiveForUpdateAsync(candidate.TenantId, candidate.ConversationId, cancellationToken);
-        if (run is null || run.Id != candidate.RunId || run.Status != RunStatus.Waiting || run.UpdatedAt >= now - AbandonAfter)
+        // Spec 2026-11-17 §6.5: una corrida delegada no se mueve mientras el agente conversa; su inactividad la decide el bloque (D-B11).
+        // ClaimAbandonedAsync ya la excluye; esta es la misma pregunta bajo el lock.
+        if (run is null || run.Id != candidate.RunId || run.Status != RunStatus.Waiting || run.UpdatedAt >= now - AbandonAfter
+            || run.ToState().IsDelegated)
         {
             return false;
         }
@@ -323,6 +331,12 @@ public sealed partial class RunProcessor(
         if (conversation.Status != ConversationStates.Open || conversation.AssignedMemberId is not null)
         {
             return null;
+        }
+
+        // Spec 2026-11-17 §6.3: la fila AgentReturned no es un entrante ni un arranque manual; sólo retoma la corrida que delegó.
+        if (item.DelegationId is { } delegationId)
+        {
+            return run is null ? null : await ResumeFromAgentAsync(item, delegationId, run, now, cancellationToken);
         }
 
         if (run is not null)
@@ -373,7 +387,7 @@ public sealed partial class RunProcessor(
             return null;
         }
 
-        return await StartRunAsync(item, conversation, chatbot, flow, now, cancellationToken);
+        return await StartRunAsync(item, conversation, chatbot, flow, now, inbound.MessageId, cancellationToken);
     }
 
     /// <summary>
@@ -413,13 +427,16 @@ public sealed partial class RunProcessor(
             await conversations.SetChatbotAsync(item.TenantId, item.ConversationId, chatbot.ChatbotId, cancellationToken);
         }
 
-        return await StartRunAsync(item, conversation, chatbot, flow, now, cancellationToken);
+        // Spec 2026-11-17 D-B7: la fila de un arranque manual no es un entrante; el bloque «Agente IA» espera entonces el próximo.
+        var inbound = await inbox.ReadAsync(item.TenantId, item.MessageId, cancellationToken);
+        return await StartRunAsync(item, conversation, chatbot, flow, now, inbound?.MessageId, cancellationToken);
     }
 
-    /// <summary>D-M17: la corrida nueva entra sólo con <see cref="EngineInput.Start"/>; el entrante que disparó no es una respuesta.</summary>
+    /// <summary>D-M17: la corrida nueva entra sólo con <see cref="EngineInput.Start"/>; el entrante que disparó no es una respuesta.
+    /// <paramref name="inboundMessageId"/> (spec 2026-11-17 D-B7) es ese entrante, para un bloque «Agente IA» que lo responde.</summary>
     private async Task<string> StartRunAsync(
         InboundQueueItem item, AutomationConversationState conversation, ServingChatbot chatbot, FlowDefinition flow, DateTimeOffset now,
-        CancellationToken cancellationToken)
+        Guid? inboundMessageId, CancellationToken cancellationToken)
     {
         var tenantName = await tenantNames.FindAsync(item.TenantId, cancellationToken);
         var connection = (await connections.ListAsync(item.TenantId, cancellationToken)).FirstOrDefault(candidate => candidate.Id == item.ConnectionId);
@@ -433,7 +450,8 @@ public sealed partial class RunProcessor(
 
         var settings = chatbot.EngineSettings;
         var log = recorder is null ? null : new RunUnitLog();
-        await effects.RunAsync(new RunUnit(run, flow, settings, BaseStepNumber: 0, log), new EngineInput.Start(), now, cancellationToken);
+        await effects.RunAsync(
+            new RunUnit(run, flow, settings, BaseStepNumber: 0, log, inboundMessageId, InboxRowId: item.MessageId), new EngineInput.Start(), now, cancellationToken);
         var outcome = OutcomeOf(run, RunOutcomes.Started);
         recorder?.Write(run, 0, RunUnitTriggers.Start, item.MessageId, outcome, now, log, AttachmentVariablesOf(flow));
         return outcome;
@@ -452,6 +470,16 @@ public sealed partial class RunProcessor(
             return null;
         }
 
+        // Revisión de la rama, hallazgo 1: mientras el agente conversa, la corrida sólo la mueve su AgentReturned. Un entrante que llegó a
+        // esta cola (una ráfaga que entró antes de que la delegación se confirmara) no es una respuesta del bloque: el motor lo leería como
+        // una espera en un bloque que no espera (target_missing) y el traspaso borraría la delegación sin avisarle al agente. Se cierra sin
+        // tocar la corrida; Mensajería mueve esos entrantes a la cola del agente en la misma transacción que delega.
+        if (run.ToState().IsDelegated)
+        {
+            LogDelegatedInbound(logger, item.TenantId, item.ConversationId, item.MessageId);
+            return null;
+        }
+
         run.MarkInbound(item.MessageId);
         // Plan D-P4: una corrida Waiting recibe la respuesta; una Running vuelve a pedir el efecto externo en que murió su unidad.
         var trigger = run.Status == RunStatus.Waiting ? RunUnitTriggers.CustomerMessage : RunUnitTriggers.Resume;
@@ -466,7 +494,7 @@ public sealed partial class RunProcessor(
         }
 
         var log = recorder is null ? null : new RunUnitLog();
-        var unit = new RunUnit(run, flow, settings, baseStep, log);
+        var unit = new RunUnit(run, flow, settings, baseStep, log, InboxRowId: item.MessageId);
         var attachments = AttachmentVariablesOf(flow);
 
         EngineInput input;
@@ -507,6 +535,40 @@ public sealed partial class RunProcessor(
     }
 
     /// <summary>
+    /// Spec 2026-11-17 §6.3 y §6.6: el agente devolvió la conversación. Sólo mueve la corrida que delegó, si sigue esperando delegada en ese
+    /// bloque y la delegación terminó <c>Returned</c>; si no (una fila repetida, una delegación interrumpida por la toma humana, otra corrida)
+    /// es <c>skipped</c>. Marca la fila como el entrante de la corrida (P2-R24) y entra al motor con el resultado.
+    /// </summary>
+    private async Task<string?> ResumeFromAgentAsync(
+        InboundQueueItem item, Guid delegationId, ConversationRun run, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var state = run.ToState();
+        if (await conversations.ReadDelegationResultAsync(item.TenantId, delegationId, cancellationToken)
+                is not { Status: DelegationResult.Returned, ResultJson: { } resultJson } delegation
+            || delegation.RunId != run.Id || !state.IsDelegated || state.CurrentNodeId != delegation.NodeId)
+        {
+            return null;
+        }
+
+        run.MarkInbound(item.MessageId);
+        var baseStep = run.StepNumber;
+        var flow = await LoadFlowAsync(item.TenantId, run.ChatbotVersionId, cancellationToken);
+        var settings = await chatbots.FindEngineSettingsAsync(item.TenantId, run.ChatbotId, cancellationToken);
+        if (flow is null || settings is null)
+        {
+            await effects.FailAsync(run, state, HandoffCause.FlowFailed(AutomationsRunFailures.VersionMissing, null, null), now, cancellationToken);
+            recorder?.Write(run, baseStep, RunUnitTriggers.AgentReturned, item.MessageId, OutcomeOf(run, RunOutcomes.Advanced), now, null, new HashSet<string>());
+            return OutcomeOf(run, RunOutcomes.Advanced);
+        }
+
+        var log = recorder is null ? null : new RunUnitLog();
+        await effects.RunAsync(new RunUnit(run, flow, settings, baseStep, log, InboxRowId: item.MessageId), AgentResults.Parse(delegation.NodeId, delegationId, resultJson), now, cancellationToken);
+        var outcome = OutcomeOf(run, RunOutcomes.Advanced);
+        recorder?.Write(run, baseStep, RunUnitTriggers.AgentReturned, item.MessageId, outcome, now, log, AttachmentVariablesOf(flow));
+        return outcome;
+    }
+
+    /// <summary>
     /// Reinicio con la última versión publicada (2026-10-23). D-C1 deja la corrida viva en la versión con que empezó para que publicar no
     /// le cambie el flujo a nadie a mitad de camino; la palabra de reinicio, en cambio, es un comienzo explícito del cliente. Si el chatbot
     /// que atiende la conexión es el de la corrida, está activo y publicó otra versión que se puede leer, la corrida termina
@@ -529,7 +591,7 @@ public sealed partial class RunProcessor(
         // D-E14: la corrida vieja y la nueva tienen cada una su fila con el mismo entrante (la llave única es por corrida).
         recorder?.WriteClosed(run, item.MessageId, RunCloseReasons.RestartedWithNewVersion, now);
         audit.Record(item.TenantId, Guid.Empty, bySystem: true, AutomationsAuditActions.RunCompleted, AutomationsAuditActions.ResourceRun, run.Id, now);
-        return await StartRunAsync(item, conversation, chatbot, flow, now, cancellationToken);
+        return await StartRunAsync(item, conversation, chatbot, flow, now, item.MessageId, cancellationToken);
     }
 
     /// <summary>

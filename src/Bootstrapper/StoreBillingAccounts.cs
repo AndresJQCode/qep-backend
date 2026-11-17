@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Companies.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -17,23 +17,15 @@ internal sealed class StoreBillingAccounts(IQuotationCompanyLookup lookup, IComp
     public async Task<IReadOnlyList<StoreBillingAccountOption>> ListAsync(
         Guid tenantId, string? currency, CancellationToken cancellationToken)
     {
-        // Sólo empresas activas: una dada de baja no cobra. Nada se ordena con la cultura del servidor.
-        var active = await companies.SearchAsync(tenantId, null, null, null, CompanyStatusFilter.Active, cancellationToken);
-        // Cada empresa activa se ofrece también sin cuenta (spec 2026-11-17 §4.3), con banco, número y moneda en null: esa
-        // opción sirve para cualquier moneda, porque la moneda la pone la entrada de la tienda. Va primero dentro de su empresa
-        // (el comparador ordena null antes que cualquier texto).
-        return active
-            .SelectMany(company => company.BankAccounts
-                .Select(account => new StoreBillingAccountOption(
-                    company.Id.Value, company.Name, account.BankName, account.AccountNumber, account.Currency))
-                .Prepend(new StoreBillingAccountOption(company.Id.Value, company.Name, null, null, null)))
-            .Where(option => currency is null
-                || option.Currency is null
-                || string.Equals(option.Currency, currency, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(option => option.CompanyName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(option => option.BankName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(option => option.AccountNumber, StringComparer.Ordinal)
-            .ToList();
+        // La regla (sólo empresas activas, orden sin cultura) es la de ActiveBillingAccountOptions, compartida con el editor del
+        // agente. La tienda además ofrece cada empresa sin cuenta (spec 2026-11-17 §4.3); el agente no, porque su cuenta exige banco.
+        var options = await ActiveBillingAccountOptions.ListAsync(
+            companies, tenantId, currency, cancellationToken, includeWithoutAccount: true);
+        return
+        [
+            .. options.Select(option => new StoreBillingAccountOption(
+                option.CompanyId, option.CompanyName, option.BankName, option.AccountNumber, option.Currency)),
+        ];
     }
 
     public async Task<StoreBillingAccount> ValidateAsync(

@@ -426,7 +426,7 @@ public sealed partial class EngineEndToEndTests
 
         // «Devolver al asistente» (spec 1): Active sin corrida.
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, version = version + 1",
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, version = version + 1",
             ("c", f.ChatbotId));
         await InboundAsync(f, "w2", "cualquier cosa");
         await DrainAutomationsAsync(f.Host);
