@@ -1,4 +1,4 @@
-using Modules.Ai.Application;
+﻿using Modules.Ai.Application;
 using Modules.Companies.Application;
 
 namespace Bootstrapper;
@@ -14,8 +14,9 @@ internal sealed class AiQuotationBillingAccounts(ICompanyRepository companies) :
         var options = await ActiveBillingAccountOptions.ListAsync(companies, tenantId, currency: null, cancellationToken);
         return
         [
+            // Sin includeWithoutAccount toda opción trae banco, número y moneda.
             .. options.Select(option => new AiBillingAccountOption(
-                option.CompanyId, option.CompanyName, option.BankName, option.AccountNumber, option.Currency)),
+                option.CompanyId, option.CompanyName, option.BankName!, option.AccountNumber!, option.Currency!)),
         ];
     }
 }

@@ -431,6 +431,126 @@ public sealed class ShopifyPersistenceTests
     private static ShopifyCustomLineMapping NewMapping(Guid tenantId, Guid connectionId, string title, Guid? variantId = null) =>
         ShopifyCustomLineMapping.Create(tenantId, connectionId, title, variantId ?? Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
 
+    // Plan 2026-11-17, Tarea 5: una importación viva por tienda, por el índice único parcial y traducida por su nombre.
+    [Fact]
+    public async Task ASecondLiveImportOfTheStoreIs409ImportRunning()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        await SaveImportAsync(factory, NewImport(tenantId, connectionId));
+
+        var conflict = await Assert.ThrowsAsync<ResourceConflictException>(() => SaveImportAsync(factory, NewImport(tenantId, connectionId)));
+
+        Assert.Equal(ShopifyErrorCodes.ProductsImportRunning, conflict.Code);
+        Assert.Equal("shopify.products.import_running", conflict.Code);
+    }
+
+    [Fact]
+    public async Task ADoneImportDoesNotBlockANewOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var done = NewImport(tenantId, connectionId);
+        done.Start(0);
+        done.Complete(Now);
+        await SaveImportAsync(factory, done);
+
+        var next = NewImport(tenantId, connectionId);
+        await SaveImportAsync(factory, next);
+
+        using var scope = factory.Services.CreateScope();
+        var latest = await scope.ServiceProvider.GetRequiredService<IShopifyProductImportRepository>().FindLatestAsync(tenantId, connectionId, Ct);
+        Assert.Equal(next.Id, latest!.Id);
+    }
+
+    [Fact]
+    public async Task TheSameShopifyVariantLinkedTwiceIsAConcurrencyConflict()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        await SaveLinkAsync(factory, NewLink(tenantId, connectionId, 10L, 100L));
+
+        var conflict = await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => SaveLinkAsync(factory, NewLink(tenantId, connectionId, 10L, 100L)));
+
+        Assert.Equal("concurrency.conflict", conflict.Code);
+
+        using var scope = factory.Services.CreateScope();
+        var links = await scope.ServiceProvider.GetRequiredService<IShopifyProductLinkRepository>()
+            .FindByShopifyVariantsAsync(tenantId, connectionId, [100L], Ct);
+        Assert.Single(links);
+    }
+
+    [Fact]
+    public async Task ProductsSyncedAtRoundTrips()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var connectionId = Guid.CreateVersion7();
+        var store = ShopifyStore.Create(connectionId, Guid.CreateVersion7(), Now);
+        store.MarkProductsSynced(Now.AddHours(2));
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ShopifyDbContext>().Stores.Add(store);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var read = factory.Services.CreateScope();
+        var saved = await read.ServiceProvider.GetRequiredService<ShopifyDbContext>().Stores.AsNoTracking()
+            .SingleAsync(value => value.ConnectionId == connectionId, Ct);
+        Assert.Equal(Now.AddHours(2), saved.ProductsSyncedAt);
+    }
+
+    [Fact]
+    public async Task ImportIssuesRoundTripInCreationOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var import = NewImport(Guid.CreateVersion7(), Guid.CreateVersion7());
+        await SaveImportAsync(factory, import);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<IShopifyProductImportRepository>();
+            repository.AddIssue(ShopifyProductImportIssue.Create(import.Id, 1L, "Camisa", ShopifyProductCodes.PartialMatch, Now));
+            repository.AddIssue(ShopifyProductImportIssue.Create(import.Id, 2L, "Pantalón", ShopifyProductCodes.BarcodeTaken, Now.AddSeconds(1)));
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var read = factory.Services.CreateScope();
+        var issues = await read.ServiceProvider.GetRequiredService<IShopifyProductImportRepository>().ListIssuesAsync(import.Id, 50, Ct);
+        Assert.Equal(["partial_match", "barcode_taken"], issues.Select(issue => issue.Code));
+    }
+
+    private static ShopifyProductImport NewImport(Guid tenantId, Guid connectionId) =>
+        ShopifyProductImport.Request(tenantId, connectionId, ShopifyProductImportMode.All, Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
+
+    private static ShopifyProductLink NewLink(Guid tenantId, Guid connectionId, long shopifyProductId, long shopifyVariantId) =>
+        ShopifyProductLink.Create(
+            tenantId, connectionId, shopifyProductId, shopifyVariantId, Guid.CreateVersion7(), Guid.CreateVersion7(),
+            ShopifyProductLinkOrigin.Imported, Now, Now);
+
+    private static async Task SaveImportAsync(QepApiFactory factory, ShopifyProductImport import)
+    {
+        using var scope = factory.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<IShopifyProductImportRepository>().Add(import);
+        await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
+    private static async Task SaveLinkAsync(QepApiFactory factory, ShopifyProductLink link)
+    {
+        using var scope = factory.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<IShopifyProductLinkRepository>().Add(link);
+        await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
     private static async Task SaveAsync(QepApiFactory factory, params ShopifyCustomLineMapping[] mappings)
     {
         using var scope = factory.Services.CreateScope();
@@ -628,5 +748,59 @@ public sealed class ShopifyPersistenceTests
         var found = await repository.FindVariantIdsByTitlesAsync(tenantId, connectionId, ["  Garantía🚛 ", "   "], Ct);
 
         Assert.Equal([KeyValuePair.Create("Garantía🚛", variantId)], found.ToArray());
+    }
+
+    // Spec 2026-11-17 (onboarding) §5 y §7 H7: el estado del asistente (cobertura con su hora, la aceptación y el resumen del
+    // historial) vuelve como se guardó, y guardarlo no sube la versión.
+    [Fact]
+    public async Task TheSetupStateRoundTrips()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var coverage = new ShopifyProductsCoverage(
+            12, 9, false, [new ShopifyCoverageSample("SKU-1", "Camiseta azul"), new ShopifyCoverageSample(null, "Gorra")], Now.AddMinutes(3));
+        var summary = new ShopifySetupHistorySummary(
+            Now.AddMinutes(10), 7, 40, 31,
+            [new ShopifyWaitingCount("product_unmatched", 6), new ShopifyWaitingCount("advisor_inactive", 3)]);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ShopifyDbContext>();
+            var store = ShopifyStore.Create(connectionId, tenantId, Now);
+            store.RecordProductsCoverage(coverage);
+            store.AcceptProductsCoverage(Now.AddMinutes(5));
+            store.RecordSetupHistory(summary);
+            db.Stores.Add(store);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ShopifyDbContext>();
+            var store = await db.Stores.AsNoTracking().SingleAsync(value => value.ConnectionId == connectionId, Ct);
+
+            Assert.NotNull(store.ProductsCoverage);
+            Assert.Equal(
+                (coverage.ShopifyVariants, coverage.Matched, coverage.CatalogEmpty, coverage.MeasuredAt),
+                (store.ProductsCoverage.ShopifyVariants, store.ProductsCoverage.Matched, store.ProductsCoverage.CatalogEmpty, store.ProductsCoverage.MeasuredAt));
+            Assert.Equal(coverage.MissingSample, store.ProductsCoverage.MissingSample);
+            Assert.Equal(Now.AddMinutes(5), store.ProductsCoverageAcceptedAt);
+            Assert.Equal(Now.AddMinutes(10), store.SetupHistoryRanAt);
+            Assert.NotNull(store.SetupHistorySummary);
+            Assert.Equal(
+                (summary.RanAt, summary.Days, summary.Fetched, summary.Imported),
+                (store.SetupHistorySummary.RanAt, store.SetupHistorySummary.Days, store.SetupHistorySummary.Fetched, store.SetupHistorySummary.Imported));
+            Assert.Equal(summary.Waiting, store.SetupHistorySummary.Waiting);
+            Assert.Equal(1L, store.Version);
+        }
+
+        // El jsonb lleva la hora de la medición, en camelCase.
+        Assert.NotNull(await ScalarAsync<string>(
+            connectionString,
+            "SELECT products_coverage->>'measuredAt' FROM shopify.stores WHERE connection_id = @id",
+            ("id", connectionId)));
     }
 }

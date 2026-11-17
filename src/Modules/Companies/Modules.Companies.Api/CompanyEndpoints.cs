@@ -129,7 +129,8 @@ public static class CompanyEndpoints
                 request.Phone,
                 request.Email,
                 request.Address,
-                request.WithholdingTaxRateIds),
+                request.WithholdingTaxRateIds,
+                request.ChargesVat),
             cancellationToken);
 
         return Results.Created(
@@ -158,7 +159,8 @@ public static class CompanyEndpoints
                 request.Phone,
                 request.Email,
                 request.Address,
-                request.WithholdingTaxRateIds),
+                request.WithholdingTaxRateIds,
+                request.ChargesVat),
             cancellationToken);
 
         return Results.Ok(ToResponse(company));
@@ -219,7 +221,8 @@ public static class CompanyEndpoints
         company.CityName,
         company.CreatedAt,
         company.UpdatedAt,
-        company.WithholdingTaxRates);
+        company.WithholdingTaxRates,
+        company.ChargesVat);
 
     // Del detalle de cada cuenta la grilla recibe banco y numero, sin la moneda. Ver el porque
     // en CompanyListItemResponse.
@@ -235,5 +238,6 @@ public static class CompanyEndpoints
         company.DocumentType,
         company.Phone,
         company.City?.Name ?? company.CityName ?? string.Empty,
-        company.IsActive);
+        company.IsActive,
+        company.ChargesVat);
 }

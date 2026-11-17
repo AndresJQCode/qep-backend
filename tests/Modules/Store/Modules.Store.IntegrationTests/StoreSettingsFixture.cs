@@ -19,7 +19,7 @@ namespace Modules.Store.IntegrationTests;
 internal sealed class StoreSettingsFixture : IAsyncDisposable
 {
     public const string AdminPermissions =
-        "store.settings.manage,companies.company.read,companies.company.manage,catalog.product.read,catalog.product.manage";
+        "store.settings.manage,companies.company.read,companies.company.manage,catalog.product.read,catalog.product.manage,catalog.tax_rate.manage";
 
     public static readonly Guid Tenant = Guid.Parse(TenantId);
 
@@ -101,7 +101,8 @@ internal sealed class StoreSettingsFixture : IAsyncDisposable
         return body;
     }
 
-    public object CurrencyEntry(string currency, string bank, string account, string? accountCurrency = null, Guid? companyId = null) =>
+    /// <summary>Banco y número en null es la empresa sin cuenta (spec 2026-11-17 §4.3).</summary>
+    public object CurrencyEntry(string currency, string? bank, string? account, string? accountCurrency = null, Guid? companyId = null) =>
         new
         {
             currency,

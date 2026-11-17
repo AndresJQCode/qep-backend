@@ -1046,6 +1046,48 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec 2026-11-17 §5.4: los puertos de productos de Shopify tienen adaptador en el composition root. Sin alguno, la importación
+    /// y los webhooks de productos no arrancan; con <c>ValidateOnBuild</c> el contenedor lo dice antes.
+    /// </summary>
+    [Fact]
+    public void TheProductPortsAreRegistered()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyCatalogWriter>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyProductImageStore>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyImageFetcher>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyReauthorization>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyProductsSource>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyProductPayloadParser>());
+        Assert.NotNull(provider.GetRequiredService<IShopifyProductSyncMetrics>());
+    }
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4: el asistente de la tienda crea la empresa por Companies desde el composition
+    /// root. Sin el adaptador, el <c>POST …/setup/company</c> no arranca.</summary>
+    [Fact]
+    public void TheSetupPortsAreRegistered()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifySetupCompanies>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyMemberDirectory>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IShopifyStoreReferences>());
+    }
+
+    /// <summary>
     /// Spec cobros-recurrentes §3.3: sin el worker registrado, o con un puerto del procesador sin adaptador, ningún cobro se genera
     /// después de crear el servicio y ningún cliente recibe su aviso, sin error en ningún lado. Mismo armado que el de Shopify.
     /// </summary>

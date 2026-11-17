@@ -19,7 +19,10 @@ public sealed class RequestUnauthorizedException(string code, string message) : 
     public string Code { get; } = code;
 }
 
-public sealed class RequestConcurrencyException(
+// 412: el recurso cambió desde que lo leíste. No sellada, como ResourceConflictException: un 412 puede llevar datos para la
+// pantalla (spec 2026-11-17 onboarding §7, la empresa que el asistente creó antes de perder la asignación) con una subclase que
+// implementa IHasProblemExtensions; el mapeo central a 412 la sigue reconociendo por el tipo base.
+public class RequestConcurrencyException(
     string code,
     string message,
     Exception? innerException = null) : Exception(message, innerException)

@@ -88,9 +88,9 @@ public sealed class Quotation
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
         // The billing account rules when there is one; otherwise the tenant default, read and
-        // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it). A pending account
-        // (company without account, previews only) is no account here: it never sets the currency.
-        Currency = HasBillingAccount ? BillingAccount!.Currency : defaultCurrency;
+        // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it). Una empresa sin
+        // cuenta (spec 2026-11-17, R3) no fija la moneda: elegir una cuenta es la forma de cambiarla.
+        Currency = BillingAccount is { HasBankAccount: true } account ? account.Currency : defaultCurrency;
         CustomerVatSurplus = customerVatSurplus;
         // Spec ReteICA por empresa §7.6, «En la creación»: el municipio sale del mismo cuerpo (P13); en un país sin tipos
         // municipales no hay (A7).
@@ -571,7 +571,8 @@ public sealed class Quotation
         CarrierName = shipping.CarrierName;
         FreightChargeMode = shipping.ChargeMode;
         FreightAmount = shipping.FreightAmount;
-        FreightTaxPercentage = shipping.FreightTaxPercentage;
+        // Una empresa sin IVA no cobra IVA en el envío (spec 2026-11-17 §5.2), venga lo que venga.
+        FreightTaxPercentage = ChargesVat ? shipping.FreightTaxPercentage : 0;
         CashOnDelivery = shipping.CashOnDelivery;
     }
 
@@ -638,8 +639,9 @@ public sealed class Quotation
                 "La variante ya está en la cotización.");
         }
 
+        // taxPercentage es la tasa del producto; la línea aplica el IVA de la empresa (spec 2026-11-17, R1).
         var item = QuotationItem.Create(
-            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, ChargesVat,
             _items.Count + 1, Currency, PriceRounding, occurredAt);
         _items.Add(item);
         Touch(updatedBy, occurredAt);
@@ -657,7 +659,8 @@ public sealed class Quotation
     {
         EnsureEditable();
 
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, PriceRounding, occurredAt);
+        FindItem(itemId).UpdateQuantity(
+            quantity, discountPercentage, taxPercentage, ChargesVat, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -703,7 +706,11 @@ public sealed class Quotation
     /// se ofrece ahí (spec ReteICA por empresa §7.6). Cambiar la empresa o el municipio re-resuelve las filas municipales
     /// de las dos fuentes: la del cliente con la regla del cliente, la de facturación propia moviendo lo elegido (plan
     /// P5). Reenviar la misma empresa completa su municipio en la cuenta sin re-resolver. Devuelve lo que pasó, para el
-    /// historial.</summary>
+    /// historial.
+    ///
+    /// <paramref name="freightTaxPercentageWithVat"/> es la tasa del envío del tenant, y sólo hace falta cuando
+    /// <see cref="NeedsFreightTaxRateFor"/> dice que sí: pasar a una empresa con IVA con un envío cobrado en COP vuelve a
+    /// gravarlo (spec 2026-11-17, R2). Faltar ahí es un error del llamador, no del usuario.</summary>
     public MunicipalReResolution UpdateDetails(
         DateOnly? validUntil,
         string? paymentMethod,
@@ -715,7 +722,8 @@ public sealed class Quotation
         int? globalScaleFloor,
         MunicipalContext municipal,
         MemberId updatedBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        int? freightTaxPercentageWithVat = null)
     {
         ArgumentNullException.ThrowIfNull(municipal);
         EnsureEditable();
@@ -744,7 +752,7 @@ public sealed class Quotation
         // Las retenciones nacionales no se tocan acá: volver a los datos del cliente deja guardados los selectores
         // (spec §7.5, «no borra la foto del otro modo»), y los selectores los fija SetBillingWithholdings.
         var previousCompanyId = BillingAccount?.CompanyId;
-        ApplyBillingAccount(billingAccount, repricing, occurredAt);
+        ApplyBillingAccount(billingAccount, repricing, freightTaxPercentageWithVat, occurredAt);
         var result = ReResolveMunicipal(previousCompanyId, municipal);
         Touch(updatedBy, occurredAt);
         return result;
@@ -818,11 +826,61 @@ public sealed class Quotation
     /// haya preguntado.
     /// </summary>
     public string CurrencyFor(QuotationBillingAccount? billingAccount) =>
-        billingAccount is { IsPending: false } ? billingAccount.Currency : Currency;
+        billingAccount is { HasBankAccount: true } ? billingAccount.Currency : Currency;
 
-    // A pending account (spec 2026-11-16 withholdings by company) only feeds the withholdings of a preview: every rule
-    // that asks «is there an account?» answers what it answers with none.
-    private bool HasBillingAccount => BillingAccount is { IsPending: false };
+    /// <summary>
+    /// Si lo que emite esta cotización lleva IVA (spec 2026-11-17 §5.2): el de la empresa congelado con la cuenta. Sin
+    /// empresa todavía calcula con IVA, como hasta ahora, y se recalcula al elegirla.
+    /// </summary>
+    public bool ChargesVat => BillingAccount?.ChargesVat ?? true;
+
+    // Enviar y convertir exigen la empresa emisora, no la cuenta (spec 2026-11-17 §4.2): una empresa sin cuenta emite
+    // igual, con «Pago: por definir».
+    private bool HasBillingCompany => BillingAccount is not null;
+
+    /// <summary>
+    /// Si guardar esa cuenta vuelve a gravar el envío (spec 2026-11-17, R2): hoy sin IVA, con IVA después, con un envío
+    /// cobrado con valor y en una moneda que discrimina el IVA, sin que la cuenta cambie la moneda (ahí el envío se
+    /// limpia). Si dice que sí, el handler lee la tasa del envío del tenant —que puede faltar:
+    /// <c>quotation.quotation.freight_tax_rate_missing</c>— y la pasa a <see cref="UpdateDetails"/>.
+    /// </summary>
+    public bool NeedsFreightTaxRateFor(QuotationBillingAccount? billingAccount) =>
+        !ChargesVat
+        && (FrozenVat(billingAccount)?.ChargesVat ?? true)
+        && FreightChargeMode == Domain.FreightChargeMode.Charged
+        && FreightAmount > 0
+        && CurrencyFor(billingAccount) == Currency
+        && QuotationItem.ItemizesTaxIn(Currency);
+
+    // El IVA es la foto de la empresa al elegirla (spec 2026-11-17 §5.2): reenviar la misma empresa —el guardado manda el
+    // encabezado entero— no lo relee aunque la empresa lo haya cambiado después. Sólo otra empresa trae el suyo.
+    private QuotationBillingAccount? FrozenVat(QuotationBillingAccount? account) =>
+        account is not null && BillingAccount is { } current && current.CompanyId == account.CompanyId
+            ? account with { ChargesVat = current.ChargesVat }
+            : account;
+
+    // R2: cambió el IVA de la empresa emisora. Cada línea se rehace desde la tasa del producto y el envío sigue al
+    // documento; los totales los rehace Touch.
+    private void ApplyChargesVat(int? freightTaxPercentageWithVat, DateTimeOffset occurredAt)
+    {
+        foreach (var item in _items)
+        {
+            item.ApplyChargesVat(ChargesVat, Currency, PriceRounding, occurredAt);
+        }
+
+        if (!ChargesVat)
+        {
+            FreightTaxPercentage = 0;
+        }
+        else if (FreightChargeMode == Domain.FreightChargeMode.Charged
+            && FreightAmount > 0
+            && QuotationItem.ItemizesTaxIn(Currency))
+        {
+            FreightTaxPercentage = freightTaxPercentageWithVat
+                ?? throw new InvalidOperationException(
+                    "Turning VAT on with a charged freight needs the tenant freight tax rate (NeedsFreightTaxRateFor).");
+        }
+    }
 
     // Cambiar de cuenta puede cambiar la moneda, y con ella el precio de cada línea: los importes
     // guardados son el precio del producto en la moneda vieja, no una cifra convertible. Por eso
@@ -831,12 +889,19 @@ public sealed class Quotation
     private void ApplyBillingAccount(
         QuotationBillingAccount? billingAccount,
         IReadOnlyDictionary<Guid, QuotationItemPricing>? repricing,
+        int? freightTaxPercentageWithVat,
         DateTimeOffset occurredAt)
     {
-        BillingAccount = billingAccount?.Normalized();
+        var chargedVat = ChargesVat;
+        BillingAccount = FrozenVat(billingAccount?.Normalized());
         var currency = CurrencyFor(BillingAccount);
         if (currency == Currency)
         {
+            if (chargedVat != ChargesVat)
+            {
+                ApplyChargesVat(freightTaxPercentageWithVat, occurredAt);
+            }
+
             return;
         }
 
@@ -854,7 +919,7 @@ public sealed class Quotation
                     "Every line needs a price in the new currency before the quotation can change currency.");
             }
 
-            item.Reprice(pricing, currency, rounding, occurredAt);
+            item.Reprice(pricing, currency, ChargesVat, rounding, occurredAt);
         }
 
         Currency = currency;
@@ -1076,11 +1141,11 @@ public sealed class Quotation
         // Sin empresa facturadora no hay país, y sin país no se sabe qué retenciones aplican (spec impuestos
         // por tipo §7.7): la cotización que le llega al cliente tiene que decir lo que va a cobrar. Guardar un
         // borrador sin ella sigue permitido.
-        if (!HasBillingAccount)
+        if (!HasBillingCompany)
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
-                "A quotation must have a billing account before it can be sent.");
+                "A quotation must have a billing company before it can be sent.");
         }
 
         // Una cotización que le llega al cliente facturada a otra persona sin su documento es una
@@ -1155,13 +1220,13 @@ public sealed class Quotation
                 "A quotation must have a validity date before it can be converted to an order.");
         }
 
-        // Sin cuenta de cobro el pedido no sabe a donde se paga, que es justo lo que un pedido
-        // tiene que decir.
-        if (!HasBillingAccount)
+        // Sin empresa emisora el pedido no sabe quién lo emite. La cuenta sí puede faltar (spec 2026-11-17 §4.2): el
+        // pedido nace con «Pago: por definir».
+        if (!HasBillingCompany)
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
-                "A quotation must have a billing account before it can be converted to an order.");
+                "A quotation must have a billing company before it can be converted to an order.");
         }
 
         // Una parte con datos propios a medio llenar es la misma condicion que ya exige
@@ -1209,7 +1274,7 @@ public sealed class Quotation
         Status is QuotationStatus.Draft or QuotationStatus.Sent
         && _items.Count > 0
         && ValidUntil is not null
-        && HasBillingAccount
+        && HasBillingCompany
         && (Billing is not { } billing || billing.IsComplete)
         && (Shipping is not { } shipping || shipping.IsComplete)
         && !BillingLacksIdentification

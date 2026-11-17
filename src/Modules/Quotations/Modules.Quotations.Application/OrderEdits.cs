@@ -163,7 +163,8 @@ internal sealed record OrderWithholdingEditsContext(
     IQuotationWithholdingLookup WithholdingLookup,
     IQuotationGeographyLookup GeographyLookup,
     ITenantClock TenantClock,
-    Guid TenantId);
+    Guid TenantId,
+    ShippingResolver Shipping);
 
 /// <summary>
 /// Aplica la empresa (D22), el municipio de la operación, los selectores de retención (D21), «Sin retención» y los
@@ -184,8 +185,8 @@ internal static class OrderWithholdingEdits
         CancellationToken cancellationToken)
     {
         // Con cuerpo, el resolver siempre devuelve la cuenta validada contra la empresa (o lanza).
-        // A company without account (preview only) resolves to a pending account in the order's own currency: an order
-        // never changes currency (plan P10), and the pending account must not trip that rule.
+        // Una empresa sin cuenta (spec 2026-11-17, R3) sale en la moneda del propio pedido: un pedido nunca cambia de
+        // moneda (plan P10), y la cuenta sin banco no puede tropezar con esa regla.
         var account = await QuotationBillingAccountResolver.ResolveAsync(
             context.CompanyLookup, context.TenantId, edits.BillingAccount, edits.BillingCompanyId, order.Currency,
             cancellationToken);
@@ -223,7 +224,12 @@ internal static class OrderWithholdingEdits
         string? accountSummary = null;
         var accountBefore = OrderChangeSummary.BillingAccountLabel(order.BillingAccount);
         var companyCityBefore = order.BillingAccount?.CityId;
-        var applied = order.ApplyBillingContext(account, municipal, updatedBy, now);
+        // Spec 2026-11-17 (R2): pasar a una empresa con IVA vuelve a gravar el envío cobrado con la tasa del tenant, que se
+        // lee antes de tocar el pedido (puede faltar: order.order.freight_tax_rate_missing).
+        int? freightTaxPercentageWithVat = order.NeedsFreightTaxRateFor(account)
+            ? await context.Shipping.FreightTaxPercentageAsync(context.TenantId, "order.order", cancellationToken)
+            : null;
+        var applied = order.ApplyBillingContext(account, municipal, updatedBy, now, freightTaxPercentageWithVat);
         if (applied.AccountChanged)
         {
             accountSummary = OrderChangeSummary.BillingAccountChanged(

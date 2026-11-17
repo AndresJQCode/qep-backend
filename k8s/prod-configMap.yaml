@@ -140,7 +140,8 @@ data:
   # topics en la URL nueva (ShopifyWebhookRegistration compara topic y URL) y las suscripciones de la vieja siguen ahí.
   Shopify__App__ClientId: "#{SHOPIFY_APP_CLIENT_ID}#"
   Shopify__App__ApiVersion: "2026-10"
-  Shopify__App__Scopes: "read_orders,write_orders,read_customers"
+  # read_products (spec 2026-11-17): agrégalo antes en los scopes de la app del Partner Dashboard.
+  Shopify__App__Scopes: "read_orders,write_orders,read_customers,read_products"
   Shopify__App__WebhookCallbackUrl: "https://qep-api.qcode.co/api/webhooks/shopify"
   Shopify__App__AllowedRedirectOrigins__0: "https://qep.qcode.co"
   # Cada cuánto la conciliación trae de Shopify lo que el webhook no entregó y reintenta lo que espera (spec §5.3). Repite el

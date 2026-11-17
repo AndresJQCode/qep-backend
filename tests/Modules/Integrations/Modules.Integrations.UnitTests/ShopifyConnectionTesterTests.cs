@@ -96,6 +96,78 @@ public sealed class ShopifyConnectionTesterTests
         Assert.Equal(IntegrationProviders.Shopify.Key, Tester(gateway).ProviderKey);
     }
 
+    // Spec 2026-11-17 §2 (onboarding): un 200 también refresca el perfil de la tienda, como el nombre.
+    [Fact]
+    public async Task TheTesterRefreshesTheShopProfile()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+
+        var result = await Tester(gateway, new FakeShopifyAppSettings { WebhookCallbackUrl = null }).TestAsync(Fields(), Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, result.Outcome);
+        Assert.NotNull(result.RefreshedFields);
+        var profile = ShopifyShopProfile.TryParse(result.RefreshedFields[ShopifyFieldKeys.ShopProfile]);
+        Assert.NotNull(profile);
+        Assert.Equal("COP", profile.CurrencyCode);
+        Assert.Equal("Medellín", profile.BillingAddress?.City);
+    }
+
+    // Sin perfil (Shopify no devolvió ninguno de sus campos) no se pisa el guardado.
+    [Fact]
+    public async Task AShopWithoutProfileDoesNotRefreshIt()
+    {
+        var gateway = new FakeShopifyAdminGateway { Profile = null };
+
+        var result = await Tester(gateway, new FakeShopifyAppSettings { WebhookCallbackUrl = null }).TestAsync(Fields(), Secrets(), Ct);
+
+        Assert.NotNull(result.RefreshedFields);
+        Assert.False(result.RefreshedFields.ContainsKey(ShopifyFieldKeys.ShopProfile));
+    }
+
+    // Spec 2026-11-17 P10: sin read_products no se intentan los products/*, y la tienda no pasa a NeedsAttention por ellos.
+    [Fact]
+    public void ProductTopicsAreSkippedWithoutReadProducts()
+    {
+        var topics = ShopifyWebhookTopics.ForScopes(["read_orders", "read_customers"]);
+
+        Assert.Equal(["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "app/uninstalled"], topics);
+    }
+
+    [Fact]
+    public void WriteProductsRegistersProductTopics()
+    {
+        Assert.Equal(ShopifyWebhookTopics.Registered, ShopifyWebhookTopics.ForScopes(["read_orders", "write_products"]));
+        Assert.Equal(ShopifyWebhookTopics.Registered, ShopifyWebhookTopics.ForScopes(["read_products"]));
+    }
+
+    [Fact]
+    public async Task TheTesterDoesNotMarkNeedsAttentionWithoutReadProducts()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+        var fields = Fields();
+        fields[ShopifyFieldKeys.Scopes] = "read_orders,read_customers";
+
+        var result = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, result.Outcome);
+        Assert.DoesNotContain(gateway.Calls, call => call.StartsWith("create-webhook:products/", StringComparison.Ordinal));
+        Assert.Equal(5, result.RefreshedFields![ShopifyFieldKeys.WebhookSubscriptionIds].Split(',').Length);
+    }
+
+    [Fact]
+    public async Task TheTesterRegistersProductTopicsWithReadProducts()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+        var fields = Fields();
+        fields[ShopifyFieldKeys.Scopes] = "read_orders,read_customers,read_products";
+
+        var result = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, result.Outcome);
+        Assert.Contains("create-webhook:products/update", gateway.Calls);
+        Assert.Equal(8, result.RefreshedFields![ShopifyFieldKeys.WebhookSubscriptionIds].Split(',').Length);
+    }
+
     [Fact]
     public async Task Test200WithEveryTopicRegisteredCreatesNothing()
     {

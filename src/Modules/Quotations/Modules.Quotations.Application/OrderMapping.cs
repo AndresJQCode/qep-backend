@@ -41,7 +41,7 @@ internal static class OrderMapping
         order.BillingAccount is { } account
             ? new QuotationBillingAccountDto(
                 account.CompanyId, account.BankName, account.AccountNumber, account.Currency, account.Country, account.CityId,
-                account.IsPending)
+                account.ChargesVat)
             : null,
         order.Parties.Select(ToDto).ToArray(),
         order.Items.OrderBy(item => item.Position).Select(item => ToDto(item, order.PriceRounding)).ToArray(),

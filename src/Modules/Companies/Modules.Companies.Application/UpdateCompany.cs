@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Companies.Domain;
 using Modules.Tenancy.Application;
 
@@ -18,7 +19,8 @@ public sealed record UpdateCompanyCommand(
     string? Phone,
     string? Email,
     string? Address,
-    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CompanyWriteRules.
 public sealed class UpdateCompanyValidator : AbstractValidator<UpdateCompanyCommand>
@@ -34,7 +36,9 @@ public sealed class UpdateCompanyHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateCompanyCommand> validator,
-    ICompanyTaxRateLookup taxRateLookup)
+    ICompanyTaxRateLookup taxRateLookup,
+    ICompanyDefaultTaxRates defaultTaxRates,
+    ILogger<UpdateCompanyHandler> logger)
     : ICommandHandler<UpdateCompanyCommand, CompanyDto>
 {
     public async Task<CompanyDto> HandleAsync(
@@ -76,6 +80,9 @@ public sealed class UpdateCompanyHandler(
             withholdingTaxRates, withholdingTaxRateIds, company.WithholdingTaxRateIds, command.Country!);
 
         var now = clock.UtcNow;
+        // Spec 2026-11-17 §5.3: la siembra corre sólo si la empresa *pasa* a ser colombiana con IVA (prendió el IVA o se
+        // mudó a CO), no en cada edición de una que ya lo era.
+        var neededDefaultRatesBefore = CompanyDefaultTaxRateSeeding.Applies(company.ChargesVat, company.Country);
 
         // Los tres opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
         // entero, asi que un campo ausente se limpia. La coleccion de cuentas sigue la misma
@@ -95,7 +102,10 @@ public sealed class UpdateCompanyHandler(
                 Email = command.Email,
                 Address = command.Address
             },
-            now);
+            now,
+            // Ausente conserva (no «true»): un frontend que todavía no manda el campo no puede
+            // prender el IVA que otro apagó. Mismo criterio que las tasas de retención.
+            command.ChargesVat ?? company.ChargesVat);
         company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
 
         auditPublisher.Publish(
@@ -106,6 +116,12 @@ public sealed class UpdateCompanyHandler(
             "success",
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        if (!neededDefaultRatesBefore && CompanyDefaultTaxRateSeeding.Applies(company.ChargesVat, company.Country))
+        {
+            await CompanyDefaultTaxRateSeeding.TryEnsureAsync(
+                defaultTaxRates, logger, command.TenantId, executionContext.SubjectId, cancellationToken);
+        }
 
         return company.ToDto(
             city,

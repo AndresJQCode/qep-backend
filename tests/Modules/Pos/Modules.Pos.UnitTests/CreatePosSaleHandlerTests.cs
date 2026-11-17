@@ -109,6 +109,39 @@ public sealed class CreatePosSaleHandlerTests
         Assert.Equal(["discount:1:SH-400:10"], audit.ChangedFields.ToArray());
     }
 
+    // Spec 2026-11-17 R4: en una caja de empresa sin IVA la tasa que se espera es 0 y la venta no lleva impuesto.
+    [Fact]
+    public async Task ASaleOfACashSessionWithoutVatHasNoTax()
+    {
+        var bed = new PosTestBed();
+        bed.AddWorkedExampleProducts();
+        var session = bed.OpenSessionInStore(chargesVat: false);
+
+        var result = await Handler(bed, Seller).HandleAsync(
+            Command(session, lines: [new(Shampoo, 1m, 0m, 11_900m, 0)], payments: [new("Cash", null, 20_000m, null)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Created);
+        var line = Assert.Single(result.Sale.Lines);
+        Assert.Equal((0, 0m), (line.TaxPercentage, line.TaxAmount));
+        Assert.Equal((0m, 11_900m), (result.Sale.TaxAmount, result.Sale.Total));
+    }
+
+    [Fact]
+    public async Task ASaleWithTheProductRateInACashSessionWithoutVatIsPriceChanged()
+    {
+        var bed = new PosTestBed();
+        bed.AddWorkedExampleProducts();
+        var session = bed.OpenSessionInStore(chargesVat: false);
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, Seller).HandleAsync(
+            Command(session, lines: [new(Shampoo, 1m, 0m, 11_900m, 19)], payments: [new("Cash", null, 20_000m, null)]),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.price_changed", error.Code);
+        Assert.Empty(bed.Sales.Stored);
+    }
+
     // Spec 2026-10-27: la venta guarda la regla con la que se cobró, leída al momento de cobrar.
     [Fact]
     public async Task TheSaleStoresTheRuleReadAtSaleTime()

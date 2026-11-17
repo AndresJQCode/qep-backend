@@ -19,6 +19,10 @@ internal sealed class FakeMemberDirectory : IShopifyMemberDirectory
 
     public Task<string?> NameAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
         Task.FromResult<string?>(null);
+
+    public Task<IReadOnlyList<ShopifyMemberOption>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyMemberOption>>(
+            Active.Select(id => new ShopifyMemberOption(id, id.ToString())).OrderBy(option => option.Name, StringComparer.Ordinal).ToArray());
 }
 
 internal sealed class FakeBillingAccounts : IShopifyBillingAccounts
@@ -32,6 +36,17 @@ internal sealed class FakeBillingAccounts : IShopifyBillingAccounts
     {
         Calls++;
         return Task.FromResult(Account is { } account && account.CompanyId == companyId ? account : null);
+    }
+
+    /// <summary>La empresa sin cuenta (spec 2026-11-17 §4.4); por defecto existe y cobra IVA.</summary>
+    public ShopifyBillingCompanyRef? Company { get; set; } = new(ImporterWorld.CompanyId, true);
+
+    public int CompanyCalls { get; private set; }
+
+    public Task<ShopifyBillingCompanyRef?> FindCompanyAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken)
+    {
+        CompanyCalls++;
+        return Task.FromResult(Company is { } company && company.CompanyId == companyId ? company : null);
     }
 }
 
@@ -142,6 +157,15 @@ internal sealed class FakeProductLookup : IShopifyProductLookup
         return Task.FromResult<IReadOnlyDictionary<Guid, ShopifyProductRef>>(
             variantIds.Where(ByVariant.ContainsKey).Distinct().ToDictionary(id => id, id => ByVariant[id]));
     }
+
+    public Task<IReadOnlySet<string>> FindExistingCodesAsync(
+        Guid tenantId, IReadOnlyCollection<string> codes, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<string>>(codes
+            .Where(code => Products.ContainsKey(code) || ByVariant.Values.Any(variant => variant.Code == code))
+            .ToHashSet(StringComparer.Ordinal));
+
+    public Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Products.Values.Concat(ByVariant.Values).Where(product => product.IsActive).Select(product => product.ProductId).Distinct().Count());
 }
 
 /// <summary>Ciudades por <c>(departamento, ciudad)</c> exactos: la normalización de tildes y mayúsculas es de Geography y se
@@ -287,6 +311,84 @@ internal sealed class FakeCustomLineMappings : IShopifyCustomLineMappingReposito
     public void Add(ShopifyCustomLineMapping mapping) => throw new NotSupportedException();
 
     public void Remove(ShopifyCustomLineMapping mapping) => throw new NotSupportedException();
+}
+
+/// <summary>Spec 2026-11-17: los vínculos de variantes en memoria. Confirma al instante (no hay unidad de trabajo que esperar);
+/// <see cref="VariantRequests"/> anota cada consulta del resolver.</summary>
+internal sealed class FakeProductLinks : IShopifyProductLinkRepository
+{
+    public List<ShopifyProductLink> Rows { get; } = [];
+
+    public List<long[]> VariantRequests { get; } = [];
+
+    public FakeProductLinks Link(
+        Guid tenantId,
+        Guid connectionId,
+        long shopifyProductId,
+        long shopifyVariantId,
+        Guid productId,
+        Guid variantId,
+        ShopifyProductLinkOrigin origin = ShopifyProductLinkOrigin.Imported,
+        DateTimeOffset? shopifyUpdatedAt = null)
+    {
+        Rows.Add(ShopifyProductLink.Create(
+            tenantId, connectionId, shopifyProductId, shopifyVariantId, productId, variantId, origin, shopifyUpdatedAt,
+            new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero)));
+        return this;
+    }
+
+    public Task<IReadOnlyList<ShopifyProductLink>> FindByShopifyProductAsync(
+        Guid connectionId, long shopifyProductId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
+            Rows.Where(link => link.ConnectionId == connectionId && link.ShopifyProductId == shopifyProductId).ToList());
+
+    public Task<IReadOnlyDictionary<long, ShopifyProductLink>> FindByShopifyVariantsAsync(
+        Guid tenantId, Guid connectionId, IReadOnlyCollection<long> shopifyVariantIds, CancellationToken cancellationToken)
+    {
+        VariantRequests.Add([.. shopifyVariantIds]);
+        return Task.FromResult<IReadOnlyDictionary<long, ShopifyProductLink>>(Rows
+            .Where(link => link.TenantId == tenantId && link.ConnectionId == connectionId && shopifyVariantIds.Contains(link.ShopifyVariantId))
+            .ToDictionary(link => link.ShopifyVariantId));
+    }
+
+    public Task<IReadOnlyList<ShopifyProductLink>> FindByShopifyProductInAsync(
+        IReadOnlyCollection<Guid> connectionIds, long shopifyProductId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
+            Rows.Where(link => connectionIds.Contains(link.ConnectionId) && link.ShopifyProductId == shopifyProductId).ToList());
+
+    public Task<IReadOnlyList<ShopifyProductLink>> FindByProductAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> connectionIds, Guid productId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
+            Rows.Where(link => link.TenantId == tenantId && connectionIds.Contains(link.ConnectionId) && link.ProductId == productId).ToList());
+
+    public Task<IReadOnlyList<ShopifyProductLink>> FindByProductInTenantAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
+            Rows.Where(link => link.TenantId == tenantId && link.ProductId == productId).ToList());
+
+    public Task<IReadOnlyList<ShopifyProductLink>> FindByVariantsAsync(
+        Guid connectionId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
+            Rows.Where(link => link.ConnectionId == connectionId && variantIds.Contains(link.VariantId)).ToList());
+
+    public Task<IReadOnlySet<Guid>> ListImportedProductIdsAsync(IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(Rows
+            .Where(link => connectionIds.Contains(link.ConnectionId) && link.Origin == ShopifyProductLinkOrigin.Imported)
+            .Select(link => link.ProductId)
+            .ToHashSet());
+
+    public Task<IReadOnlySet<long>> ListLinkedShopifyVariantIdsAsync(Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<long>>(Rows.Where(link => link.ConnectionId == connectionId).Select(link => link.ShopifyVariantId).ToHashSet());
+
+    public Task<int> CountLinkedProductsAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Rows
+            .Where(link => link.TenantId == tenantId && link.ConnectionId == connectionId)
+            .Select(link => link.ProductId)
+            .Distinct()
+            .Count());
+
+    public void Add(ShopifyProductLink link) => Rows.Add(link);
+
+    public void Remove(ShopifyProductLink link) => Rows.Remove(link);
 }
 
 /// <summary>Transportadoras por título exacto y la tasa del envío del tenant; anota qué se le preguntó. La normalización del
@@ -531,6 +633,8 @@ internal sealed class ImporterWorld
 
     public FakeCustomLineMappings CustomLines { get; } = new();
 
+    public FakeProductLinks ProductLinks { get; } = new();
+
     public FakeGeographyLookup Geography { get; } = new();
 
     public FakeShippingLookup Shipping { get; } = new();
@@ -555,7 +659,7 @@ internal sealed class ImporterWorld
 
     public ShopifyOrderImporter Importer =>
         new(
-            Members, Billing, Resolver, Products, CustomLines, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
+            Members, Billing, Resolver, Products, CustomLines, ProductLinks, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
             CityCorrections, CityCorrectionJobs, UnresolvedCities, Synonyms, UnitOfWork, new FakeClock(Now));
 
     /// <summary>La tienda con clasificación por defecto: con documento y dirección, el comprador puede nacer completo.</summary>
@@ -565,6 +669,26 @@ internal sealed class ImporterWorld
             AdvisorId,
             new ShopifyBillingAccount(CompanyId, "Bancolombia", "123-456", "COP"),
             ClassificationId,
+            ShopifyStore.DefaultDocumentAttributeKey,
+            ShopifyStore.DefaultDocumentTypeAttributeKey,
+            ShopifyStore.DefaultIdentificationTypeCode,
+            null,
+            ShopifyEditSync.Manual,
+            ShopifyPaymentStatuses.All,
+            AdvisorId,
+            Now.AddDays(-1));
+        return this;
+    }
+
+    /// <summary>La tienda con la empresa sola, sin cuenta bancaria, en COP (spec 2026-11-17 §4.4).</summary>
+    public ImporterWorld WithoutAccount(bool chargesVat = true)
+    {
+        Billing.Account = null;
+        Billing.Company = new ShopifyBillingCompanyRef(CompanyId, chargesVat);
+        Store.Configure(
+            AdvisorId,
+            new ShopifyBillingAccount(CompanyId, null, null, "COP"),
+            null,
             ShopifyStore.DefaultDocumentAttributeKey,
             ShopifyStore.DefaultDocumentTypeAttributeKey,
             ShopifyStore.DefaultIdentificationTypeCode,

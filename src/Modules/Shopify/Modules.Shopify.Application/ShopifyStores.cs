@@ -51,8 +51,14 @@ public sealed class UpdateShopifyStoreValidator : AbstractValidator<UpdateShopif
     {
         RuleFor(command => command.AdvisorMembershipId).NotEmpty().OverridePropertyName("advisorMembershipId");
         RuleFor(command => command.BillingCompanyId).NotEmpty().OverridePropertyName("billingCompanyId");
-        RequiredText(command => command.BillingBankName, ShopifyBillingAccount.BankNameMaxLength, "billingBankName");
-        RequiredText(command => command.BillingAccountNumber, ShopifyBillingAccount.AccountNumberMaxLength, "billingAccountNumber");
+        // Spec 2026-11-17 §4.4: banco y número van los dos o ninguno (empresa sin cuenta). Cada campo marca su error: el que
+        // falta cuando el otro vino, o el que pasa del tope.
+        PairedText(
+            command => command.BillingBankName, command => command.BillingAccountNumber,
+            ShopifyBillingAccount.BankNameMaxLength, "billingBankName");
+        PairedText(
+            command => command.BillingAccountNumber, command => command.BillingBankName,
+            ShopifyBillingAccount.AccountNumberMaxLength, "billingAccountNumber");
         RuleFor(command => command.BillingCurrency)
             .Must(currency => currency?.Trim() is { Length: ShopifyBillingAccount.CurrencyLength } code && code.All(char.IsAsciiLetter))
             .WithMessage("The billing currency must be a three-letter ISO 4217 code.")
@@ -100,6 +106,18 @@ public sealed class UpdateShopifyStoreValidator : AbstractValidator<UpdateShopif
         Enum.GetValues<ShopifyEditSync>()
             .Select(mode => (ShopifyEditSync?)mode)
             .FirstOrDefault(mode => string.Equals(mode.ToString(), value, StringComparison.Ordinal));
+
+    private void PairedText(
+        System.Linq.Expressions.Expression<Func<UpdateShopifyStoreCommand, string?>> field,
+        Func<UpdateShopifyStoreCommand, string?> other,
+        int maxLength,
+        string name) =>
+        RuleFor(field)
+            .Must((command, value) => string.IsNullOrWhiteSpace(value)
+                ? string.IsNullOrWhiteSpace(other(command))
+                : value.Trim().Length <= maxLength)
+            .WithMessage($"The bank and the account number go together, or neither; each cannot exceed its limit ({maxLength}).")
+            .OverridePropertyName(name);
 
     private void RequiredText(System.Linq.Expressions.Expression<Func<UpdateShopifyStoreCommand, string?>> field, int maxLength, string name) =>
         RuleFor(field)
@@ -169,35 +187,8 @@ public sealed class GetShopifyStoreHandler(
         await ShopifyAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, ShopifyPermissions.ConnectionRead, cancellationToken);
         var connection = await ShopifyStoreSupport.ConnectionAsync(connections, query.TenantId, query.ConnectionId, cancellationToken);
 
-        var store = await stores.FindAsync(query.TenantId, query.ConnectionId, cancellationToken);
-        if (store is null)
-        {
-            store = await CreateAsync(connection, cancellationToken);
-        }
-
+        var store = await ShopifyStoreSupport.FindOrCreateAsync(stores, unitOfWork, connection, clock.UtcNow, cancellationToken);
         return await ShopifyStoreSupport.ToDtoAsync(store, members, references, cancellationToken);
-    }
-
-    // Dos primeras lecturas a la vez chocan con PK_stores (concurrency.conflict): la perdedora lee la que creó la otra.
-    private async Task<ShopifyStore> CreateAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var created = ShopifyStoreSupport.NewStore(connection, clock.UtcNow);
-            await ShopifyStoreSupport.AddNewAsync(stores, created, cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            return created;
-        }
-        catch (RequestConcurrencyException exception) when (ShopifyStoreSupport.IsConflict(exception))
-        {
-            unitOfWork.DiscardPendingChanges();
-            if (await stores.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken) is { } winner)
-            {
-                return winner;
-            }
-
-            throw;
-        }
     }
 }
 
@@ -272,7 +263,7 @@ public sealed class UpdateShopifyStoreHandler(
         var updatedBy = await memberships.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
             ?? throw ShopifyAuthorization.Denied();
 
-        var before = ComparedFields(store);
+        var before = ShopifyStoreSupport.ComparedFields(store);
         store.Configure(
             command.AdvisorMembershipId,
             billing,
@@ -299,39 +290,11 @@ public sealed class UpdateShopifyStoreHandler(
             ShopifyAuditActions.StoreUpdated,
             ShopifyAuditActions.ConnectionResourceType,
             store.ConnectionId.ToString(),
-            ChangedFieldNamesJson(before, ComparedFields(store)),
+            ShopifyStoreSupport.ChangedFieldNamesJson(before, ShopifyStoreSupport.ComparedFields(store)),
             clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await ShopifyStoreSupport.ToDtoAsync(store, members, references, cancellationToken);
     }
-
-    // Lo que el formulario edita, con los nombres de los campos del cuerpo. Los valores sólo sirven para comparar el antes y el
-    // después: a la auditoría llegan los nombres de los que cambiaron, nunca los valores (el número de cuenta no se audita).
-    private static Dictionary<string, string?> ComparedFields(ShopifyStore store) => new(StringComparer.Ordinal)
-    {
-        ["advisorMembershipId"] = store.AdvisorMembershipId?.ToString(),
-        ["billingCompanyId"] = store.Billing?.CompanyId.ToString(),
-        ["billingBankName"] = store.Billing?.BankName,
-        ["billingAccountNumber"] = store.Billing?.AccountNumber,
-        ["billingCurrency"] = store.Billing?.Currency,
-        ["defaultClassificationId"] = store.DefaultClassificationId?.ToString(),
-        ["documentAttributeKey"] = store.DocumentAttributeKey,
-        ["documentTypeAttributeKey"] = store.DocumentTypeAttributeKey,
-        ["defaultIdentificationType"] = store.DefaultIdentificationType,
-        ["historyDays"] = store.HistoryDays?.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        ["editSync"] = store.EditSync.ToString(),
-        ["editPaymentStatuses"] = string.Join(',', store.EditPaymentStatuses),
-    };
-
-    /// <summary>El detalle de <c>shopify.store.updated</c>, con la misma forma que <c>tenancy.settings.updated</c>: un arreglo JSON
-    /// con los <b>nombres</b> de los campos que cambiaron, en el orden del formulario, sin ningún valor. Un <c>PUT</c> que no
-    /// cambia nada audita <c>[]</c>.</summary>
-    private static string ChangedFieldNamesJson(Dictionary<string, string?> before, Dictionary<string, string?> after) =>
-        JsonSerializer.Serialize(
-            after
-                .Where(pair => !string.Equals(before.GetValueOrDefault(pair.Key), pair.Value, StringComparison.Ordinal))
-                .Select(pair => pair.Key)
-                .ToArray());
 
     // La cuenta se guarda como la tiene Companies (banco y número recortados como allá): es la misma comparación con la que el
     // importador la vuelve a buscar en cada pedido (billing_account_missing). La moneda tiene que ser la de la cuenta: una tienda
@@ -344,6 +307,30 @@ public sealed class UpdateShopifyStoreHandler(
                 ShopifyErrorCodes.StoreAdvisorNotMember, "The store advisor is not an active membership of the tenant.");
         }
 
+        var billing = await ValidatedBillingAsync(command, cancellationToken);
+
+        if (command.DefaultClassificationId is { } classificationId
+            && await references.ClassificationNameAsync(command.TenantId, classificationId, cancellationToken) is null)
+        {
+            throw new ShopifyDomainException(
+                ShopifyErrorCodes.StoreClassificationNotFound, "The default classification does not belong to the tenant.");
+        }
+
+        return billing;
+    }
+
+    // Spec 2026-11-17 §4.4: sin banco ni número basta la empresa del tenant, y la moneda es la que se eligió (no hay cuenta que
+    // la fije). Con cuenta, como siempre: la cuenta y su moneda.
+    private async Task<ShopifyBillingAccount> ValidatedBillingAsync(UpdateShopifyStoreCommand command, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command.BillingBankName) && string.IsNullOrWhiteSpace(command.BillingAccountNumber))
+        {
+            var company = await billingAccounts.FindCompanyAsync(command.TenantId, command.BillingCompanyId, cancellationToken)
+                ?? throw new ShopifyDomainException(
+                    ShopifyErrorCodes.StoreBillingAccountNotFound, "The billing company does not exist in this tenant.");
+            return new ShopifyBillingAccount(company.CompanyId, null, null, command.BillingCurrency!.Trim());
+        }
+
         var account = await billingAccounts.FindAsync(
             command.TenantId, command.BillingCompanyId, command.BillingBankName!, command.BillingAccountNumber!, cancellationToken);
         if (account is null
@@ -351,13 +338,6 @@ public sealed class UpdateShopifyStoreHandler(
         {
             throw new ShopifyDomainException(
                 ShopifyErrorCodes.StoreBillingAccountNotFound, "The billing account does not exist in that company with that currency.");
-        }
-
-        if (command.DefaultClassificationId is { } classificationId
-            && await references.ClassificationNameAsync(command.TenantId, classificationId, cancellationToken) is null)
-        {
-            throw new ShopifyDomainException(
-                ShopifyErrorCodes.StoreClassificationNotFound, "The default classification does not belong to the tenant.");
         }
 
         return new ShopifyBillingAccount(account.CompanyId, account.BankName, account.AccountNumber, account.Currency);
@@ -412,6 +392,71 @@ internal static class ShopifyStoreSupport
             await stores.AdoptWaitingOrdersAsync(store.TenantId, store.ConnectionId, shopDomain, cancellationToken);
         }
     }
+
+    /// <summary>
+    /// La tienda de la conexión; si el módulo todavía no la tiene, la crea vacía y la guarda (§6.1: la crean las lecturas de la
+    /// pantalla, el <c>GET</c> de la tienda, la cobertura, «Seguir así» y el asistente). Dos primeras lecturas a la vez chocan con
+    /// <c>PK_stores</c> (<c>concurrency.conflict</c>): la perdedora lee la que creó la otra.
+    /// </summary>
+    public static async Task<ShopifyStore> FindOrCreateAsync(
+        IShopifyStoreRepository stores,
+        IShopifyUnitOfWork unitOfWork,
+        ShopifyConnectionRef connection,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (await stores.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken) is { } existing)
+        {
+            return existing;
+        }
+
+        try
+        {
+            var created = NewStore(connection, now);
+            await AddNewAsync(stores, created, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return created;
+        }
+        catch (RequestConcurrencyException exception) when (IsConflict(exception))
+        {
+            unitOfWork.DiscardPendingChanges();
+            if (await stores.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken) is { } winner)
+            {
+                return winner;
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>Lo que el formulario edita, con los nombres de los campos del cuerpo del <c>PUT</c>. Los valores sólo sirven para
+    /// comparar el antes y el después: a la auditoría llegan los nombres de los que cambiaron, nunca los valores (el número de cuenta
+    /// no se audita). Lo comparten el <c>PUT</c> y la empresa del asistente, para auditar igual.</summary>
+    public static Dictionary<string, string?> ComparedFields(ShopifyStore store) => new(StringComparer.Ordinal)
+    {
+        ["advisorMembershipId"] = store.AdvisorMembershipId?.ToString(),
+        ["billingCompanyId"] = store.Billing?.CompanyId.ToString(),
+        ["billingBankName"] = store.Billing?.BankName,
+        ["billingAccountNumber"] = store.Billing?.AccountNumber,
+        ["billingCurrency"] = store.Billing?.Currency,
+        ["defaultClassificationId"] = store.DefaultClassificationId?.ToString(),
+        ["documentAttributeKey"] = store.DocumentAttributeKey,
+        ["documentTypeAttributeKey"] = store.DocumentTypeAttributeKey,
+        ["defaultIdentificationType"] = store.DefaultIdentificationType,
+        ["historyDays"] = store.HistoryDays?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        ["editSync"] = store.EditSync.ToString(),
+        ["editPaymentStatuses"] = string.Join(',', store.EditPaymentStatuses),
+    };
+
+    /// <summary>El detalle de <c>shopify.store.updated</c>, con la misma forma que <c>tenancy.settings.updated</c>: un arreglo JSON
+    /// con los <b>nombres</b> de los campos que cambiaron, en el orden del formulario, sin ningún valor. Un guardado que no
+    /// cambia nada audita <c>[]</c>.</summary>
+    public static string ChangedFieldNamesJson(Dictionary<string, string?> before, Dictionary<string, string?> after) =>
+        JsonSerializer.Serialize(
+            after
+                .Where(pair => !string.Equals(before.GetValueOrDefault(pair.Key), pair.Value, StringComparison.Ordinal))
+                .Select(pair => pair.Key)
+                .ToArray());
 
     public static async Task<ShopifyStoreDto> ToDtoAsync(
         ShopifyStore store, IShopifyMemberDirectory members, IShopifyStoreReferences references, CancellationToken cancellationToken)

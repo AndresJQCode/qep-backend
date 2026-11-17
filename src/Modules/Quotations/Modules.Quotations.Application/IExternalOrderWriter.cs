@@ -83,7 +83,9 @@ public enum ExternalShippingOutcomeKind
 /// distinga un pedido abierto pero congelado de uno cancelado o archivado. Con <see cref="ExternalShippingOutcomeKind.NotFound"/> viajan nulos.</summary>
 public sealed record ExternalShippingOutcome(ExternalShippingOutcomeKind Kind, ExternalShippingParty? Party, OrderStatus? Status);
 
-/// <summary>Una línea del pedido como la compara la sincronización de ediciones (spec 2026-11-14): lo guardado, sin la foto.</summary>
+/// <summary>Una línea del pedido como la compara la sincronización de ediciones (spec 2026-11-14): lo guardado, sin la foto.
+/// <see cref="TaxPercentage"/> es la tasa <b>del producto</b> (spec 2026-11-17 R1), la misma que manda la integración en
+/// <see cref="ExternalOrderLine"/>: la efectiva es 0 en un pedido sin IVA y no se podría comparar.</summary>
 public sealed record ExternalOrderLineState(
     Guid VariantId, Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
 
@@ -108,7 +110,9 @@ public sealed record ExternalOrderEditState(
     ExternalShippingParty? ShippingParty,
     string? ShippingCountry,
     string? BuyerNotes,
-    string? Notes);
+    string? Notes,
+    // Spec 2026-11-17 R7: el IVA congelado del pedido; la integración recalcula sus precios con él.
+    bool ChargesVat = true);
 
 /// <summary>
 /// Spec 2026-11-14 §4: una edición de la plataforma para aplicar. Cada grupo en <c>null</c> no se toca;
@@ -243,10 +247,13 @@ public sealed class ExternalOrderService(
 
         var customer = await customerLookup.FindAsync(draft.TenantId, draft.ClientId, cancellationToken);
         OrderCustomerEligibility.Ensure(customer, draft.TenantId, draft.ClientId, allowIncomplete: true);
+        // Sin cuenta bancaria (spec 2026-11-17, R3/R7) la moneda es la del pedido de origen: la integración la manda en
+        // la cuenta del borrador.
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
-                companyLookup, draft.TenantId, draft.BillingAccount, cancellationToken)
+                companyLookup, draft.TenantId, draft.BillingAccount, draft.BillingAccount.Currency ?? string.Empty,
+                cancellationToken)
             ?? throw new QuotationsDomainException(
-                "order.billing.account_required", "An order needs a billing account.");
+                "order.billing.account_required", "An order needs a billing company.");
 
         // La foto de la variante se toma del catálogo; el precio no: es el que cobró la plataforma.
         var products = await productLookup.FindManyAsync(
@@ -520,14 +527,16 @@ public sealed class ExternalOrderService(
             order.IsStorePickup,
             order.Items
                 .OrderBy(item => item.Position)
+                // La tasa del producto (R1), no la efectiva: es la que la integración vuelve a mandar en cada edición.
                 .Select(item => new ExternalOrderLineState(
-                    item.VariantId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
+                    item.VariantId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.ProductTaxRate))
                 .ToArray(),
             order.ShippingDetails,
             ToExternal(order.Shipping),
             order.Shipping?.Country,
             order.BuyerNotes,
-            order.Notes);
+            order.Notes,
+            order.ChargesVat);
 
     // Sin auditoría ni historial acá (desvío S9): la entrada la escribe el consumidor, que sabe el sinónimo y el operador.
     // Un código del dominio que no es de los rechazos conocidos se propaga.

@@ -206,10 +206,13 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
             database.Orders.Values.FirstOrDefault(row => row.TenantId == tenantId && row.Id == id)
             ?? database.PendingOrders.FirstOrDefault(row => row.TenantId == tenantId && row.Id == id));
 
-    // Es SQL sobre el jsonb del payload: se prueba contra Postgres (ShopifyDocumentSourcesApiTests), no acá.
+    /// <summary>Lo que responde <see cref="ListAttributeKeysAsync"/>: la consulta real es SQL sobre el jsonb del payload y se prueba
+    /// contra Postgres (<c>ShopifyDocumentSourcesApiTests</c>); acá sólo alimenta al asistente.</summary>
+    public List<string> AttributeKeys { get; } = [];
+
     public Task<IReadOnlyList<string>> ListAttributeKeysAsync(
         Guid tenantId, Guid connectionId, int recentOrders, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyList<string>>([.. AttributeKeys]);
 
     // Los filtros y los conteos son SQL: se prueban contra Postgres (ShopifyInboxApiTests), no acá.
     public Task<(IReadOnlyList<ShopifyOrderMirror> Items, int Total)> SearchAsync(
@@ -227,6 +230,46 @@ internal sealed class FakeOrderMirrorRepository(FakeShopifyDatabase database) : 
 
     public Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    // En memoria, con la misma regla que el SQL (ShopifySetupAdaptersTests lo prueba contra Postgres): motivos de las filas
+    // Waiting, y hasta 5 SKU distintos para product_unmatched.
+    public Task<IReadOnlyList<ShopifyWaitingGroup>> SummarizeWaitingAsync(
+        Guid tenantId, Guid connectionId, IReadOnlyCollection<long>? shopifyOrderIds, CancellationToken cancellationToken)
+    {
+        var rows = database.Orders.Values
+            .Where(row => row.TenantId == tenantId && row.ConnectionId == connectionId && row.ImportState == ShopifyImportState.Waiting)
+            .Where(row => row.WaitReason is not null && (shopifyOrderIds is null || shopifyOrderIds.Contains(row.ShopifyOrderId)))
+            .ToList();
+        var sample = rows
+            .Where(row => row.WaitReason == ShopifyWaitReasons.ProductUnmatched && row.WaitDetail is not null)
+            .SelectMany(row => SkusOf(row.WaitDetail!))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .Take(5)
+            .ToArray();
+        return Task.FromResult<IReadOnlyList<ShopifyWaitingGroup>>(
+            [.. rows
+                .GroupBy(row => row.WaitReason!, StringComparer.Ordinal)
+                .Select(group => new ShopifyWaitingGroup(
+                    group.Key, group.Count(), group.Key == ShopifyWaitReasons.ProductUnmatched ? sample : []))
+                .OrderByDescending(group => group.Count)
+                .ThenBy(group => group.Reason, StringComparer.Ordinal)]);
+    }
+
+    public Task<int> CountImportedSinceAsync(Guid tenantId, Guid connectionId, DateTimeOffset since, CancellationToken cancellationToken) =>
+        Task.FromResult(database.Orders.Values.Count(row =>
+            row.TenantId == tenantId && row.ConnectionId == connectionId && row.ImportedAt >= since));
+
+    private static string[] SkusOf(string detail)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(detail);
+        return document.RootElement.TryGetProperty("skus", out var skus) && skus.ValueKind == System.Text.Json.JsonValueKind.Array
+            ? skus.EnumerateArray()
+                .Where(sku => sku.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrEmpty(sku.GetString()))
+                .Select(sku => sku.GetString()!)
+                .ToArray()
+            : [];
+    }
 
     public Task<ShopifyOrderMirror?> FindByQepOrderIdAsync(Guid tenantId, Guid qepOrderId, CancellationToken cancellationToken) =>
         Task.FromResult(
@@ -394,6 +437,12 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
     {
         SynonymLocks.Add(synonymId);
         database.Log.Add($"synonym-lock:{synonymId}");
+        return Task.CompletedTask;
+    }
+
+    public Task LockProductAsync(Guid connectionId, long shopifyProductId, CancellationToken cancellationToken)
+    {
+        database.Log.Add($"product-lock:{connectionId}:{shopifyProductId}");
         return Task.CompletedTask;
     }
 

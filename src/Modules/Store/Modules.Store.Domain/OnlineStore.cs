@@ -336,13 +336,16 @@ public sealed class OnlineStore
         return blockers;
     }
 
+    private static string? TrimToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private static StoreCurrency NormalizeCurrency(StoreCurrency entry) =>
         new(
             entry.Currency.Trim().ToUpperInvariant(),
             entry.BillingAccount with
             {
-                BankName = entry.BillingAccount.BankName.Trim(),
-                AccountNumber = entry.BillingAccount.AccountNumber.Trim(),
+                // En blanco es «sin cuenta» (spec 2026-11-17 §4.3): se guarda null, nunca "".
+                BankName = TrimToNull(entry.BillingAccount.BankName),
+                AccountNumber = TrimToNull(entry.BillingAccount.AccountNumber),
                 Currency = entry.BillingAccount.Currency.Trim().ToUpperInvariant(),
             });
 

@@ -121,6 +121,38 @@ public sealed class ShopifyStoresApiTests
                 ("c", world.ConnectionId)));
     }
 
+    // Spec 2026-11-17 §4.4: la tienda se guarda con la empresa sola; banco y número quedan en NULL y se releen así.
+    [Fact]
+    public async Task AStoreWithoutAccountRoundTrips()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        using var client = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.TenantId, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(StoreRoute(world.TenantId, world.ConnectionId), Ct)).StatusCode);
+        var body = Body(world);
+        body["billingBankName"] = null;
+        body["billingAccountNumber"] = null;
+
+        var saved = await PutAsync(client, world.TenantId, world.ConnectionId, body, "\"1\"");
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var read = await client.GetFromJsonAsync<JsonObject>(StoreRoute(world.TenantId, world.ConnectionId), Ct);
+        Assert.NotNull(read);
+        Assert.Equal(
+            (true, world.Company.Id.ToString(), (string?)null, (string?)null, "COP"),
+            (read["isConfigured"]!.GetValue<bool>(), Str(read, "billingCompanyId"), Str(read, "billingBankName"),
+                Str(read, "billingAccountNumber"), Str(read, "billingCurrency")));
+        Assert.Equal(
+            1L,
+            await ScalarAsync<long>(
+                connectionString,
+                "SELECT count(*) FROM shopify.stores WHERE connection_id = @c AND billing_bank_name IS NULL AND billing_account_number IS NULL",
+                ("c", world.ConnectionId)));
+    }
+
     // El PUT deja shopify.store.updated en audit.entries en la misma transacción; el que pierde con 412 no deja nada.
     [Fact]
     public async Task StoresPutRecordsAuditAndAStalePutDoesNot()

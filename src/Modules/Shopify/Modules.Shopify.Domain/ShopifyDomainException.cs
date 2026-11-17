@@ -92,4 +92,17 @@ public static class ShopifyErrorCodes
     /// <summary>Owner 2026-11-14: «Sincronizar con Shopify» de un pedido que no tiene un envío retenido (nunca lo tuvo, ya salió o
     /// ya se soltó). 409: el estado cambió, la pantalla recarga el panel.</summary>
     public const string PushNothingHeld = "shopify.push.nothing_held";
+
+    /// <summary>Spec 2026-11-17 §5.2: ya hay una importación de productos viva en esa tienda. 409, por el índice único parcial
+    /// <c>IX_product_imports_connection_live</c>.</summary>
+    public const string ProductsImportRunning = "shopify.products.import_running";
+
+    /// <summary>Spec 2026-11-17 §5.1: la conexión no tiene <c>read_products</c>. 422 con <c>reauthorizeUrl</c>.</summary>
+    public const string ProductsScopeMissing = "shopify.products.scope_missing";
+
+    /// <summary>Spec 2026-11-17 §10 P4: la tienda no tiene empresa emisora. 422.</summary>
+    public const string ProductsCompanyRequired = "shopify.products.company_required";
+
+    /// <summary>Spec 2026-11-17 §7: el producto no tiene vínculos con ninguna tienda del tenant. 404.</summary>
+    public const string ProductsLinkNotFound = "shopify.products.link_not_found";
 }

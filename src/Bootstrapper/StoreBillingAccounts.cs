@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Companies.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -17,8 +17,10 @@ internal sealed class StoreBillingAccounts(IQuotationCompanyLookup lookup, IComp
     public async Task<IReadOnlyList<StoreBillingAccountOption>> ListAsync(
         Guid tenantId, string? currency, CancellationToken cancellationToken)
     {
-        // La regla (sólo empresas activas, orden sin cultura) es la de ActiveBillingAccountOptions, compartida con el editor del agente.
-        var options = await ActiveBillingAccountOptions.ListAsync(companies, tenantId, currency, cancellationToken);
+        // La regla (sólo empresas activas, orden sin cultura) es la de ActiveBillingAccountOptions, compartida con el editor del
+        // agente. La tienda además ofrece cada empresa sin cuenta (spec 2026-11-17 §4.3); el agente no, porque su cuenta exige banco.
+        var options = await ActiveBillingAccountOptions.ListAsync(
+            companies, tenantId, currency, cancellationToken, includeWithoutAccount: true);
         return
         [
             .. options.Select(option => new StoreBillingAccountOption(
@@ -29,14 +31,16 @@ internal sealed class StoreBillingAccounts(IQuotationCompanyLookup lookup, IComp
     public async Task<StoreBillingAccount> ValidateAsync(
         Guid tenantId,
         Guid companyId,
-        string bankName,
-        string accountNumber,
+        string? bankName,
+        string? accountNumber,
         string currency,
         CancellationToken cancellationToken)
     {
         VerifiedBillingAccount account;
         try
         {
+            // Sin banco ni número el verificador sólo comprueba la empresa y devuelve la moneda que se le pasa: la de la
+            // entrada de la tienda (spec 2026-11-17 §4.3).
             account = await QuotationBillingAccountVerifier.VerifyAsync(
                 lookup, tenantId, companyId, bankName, accountNumber, currency, cancellationToken);
         }
@@ -46,7 +50,8 @@ internal sealed class StoreBillingAccounts(IQuotationCompanyLookup lookup, IComp
             throw new ResourceNotFoundException(exception.Code, exception.Message);
         }
 
-        // Se guarda la cuenta como la tiene la empresa, no como la escribió el cliente HTTP.
-        return new StoreBillingAccount(account.CompanyId, account.BankName, account.AccountNumber, account.Currency.ToUpperInvariant());
+        // Se guarda la cuenta como la tiene la empresa, no como la escribió el cliente HTTP; sin cuenta, banco y número en null.
+        return new StoreBillingAccount(
+            account.CompanyId, account.BankName, account.AccountNumber, account.Currency.ToUpperInvariant());
     }
 }

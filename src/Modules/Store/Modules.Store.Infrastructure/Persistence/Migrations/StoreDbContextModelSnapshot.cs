@@ -377,13 +377,11 @@ namespace Modules.Store.Infrastructure.Persistence.Migrations
                                         .HasColumnType("character varying(3)");
 
                                     b2.Property<string>("AccountNumber")
-                                        .IsRequired()
                                         .HasMaxLength(32)
                                         .HasColumnType("character varying(32)")
                                         .HasColumnName("billing_account_number");
 
                                     b2.Property<string>("BankName")
-                                        .IsRequired()
                                         .HasMaxLength(120)
                                         .HasColumnType("character varying(120)")
                                         .HasColumnName("billing_bank_name");

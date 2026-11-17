@@ -75,6 +75,25 @@ public sealed class ShopifyStoreTests
         Assert.Equal((2L, LinkedAt.AddHours(1), (Guid?)advisor, (int?)7), (store.Version, store.UpdatedAt, store.UpdatedBy, store.HistoryDays));
     }
 
+    // Spec 2026-11-17 §4.4: banco y número en blanco los dos es la empresa sin cuenta, guardada en null; uno solo, no.
+    [Fact]
+    public void ConfigureKeepsACompanyWithoutAccountAndRejectsHalfAnAccount()
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+        var advisor = Guid.CreateVersion7();
+        var company = Guid.CreateVersion7();
+
+        store.Configure(
+            advisor, new ShopifyBillingAccount(company, " ", "", "usd"), null, "Cédula", "Tipo", "CC", null, ShopifyEditSync.Manual,
+            ShopifyPaymentStatuses.All, advisor, LinkedAt);
+
+        Assert.True(store.IsConfigured);
+        Assert.Equal(new ShopifyBillingAccount(company, null, null, "USD"), store.Billing);
+        Assert.Throws<ArgumentException>(() => store.Configure(
+            advisor, new ShopifyBillingAccount(company, "Bancolombia", null, "COP"), null, "Cédula", "Tipo", "CC", null,
+            ShopifyEditSync.Manual, ShopifyPaymentStatuses.All, advisor, LinkedAt));
+    }
+
     [Fact]
     public void ConfigureRejectsAnEmptyAttributeKey()
     {

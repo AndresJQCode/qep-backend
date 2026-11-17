@@ -88,12 +88,15 @@ public sealed class IntegrationCatalogTests
             [
                 ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes,
                 ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.TokenExpiresAt, ShopifyFieldKeys.RefreshTokenExpiresAt,
-                ShopifyFieldKeys.AccessToken, ShopifyFieldKeys.RefreshToken,
+                ShopifyFieldKeys.AccessToken, ShopifyFieldKeys.RefreshToken, ShopifyFieldKeys.ShopProfile,
             ],
             provider.Fields.Select(field => field.Key));
         Assert.Equal(
-            ["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "tokenExpiresAt", "refreshTokenExpiresAt", "accessToken", "refreshToken"],
+            ["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "tokenExpiresAt", "refreshTokenExpiresAt", "accessToken", "refreshToken", "shopProfile"],
             provider.Fields.Select(field => field.Key));
+        // Spec 2026-11-17 §2: el perfil lleva correo y teléfono; es interno y cabe en el JSON que arma ShopifyShopProfile.
+        Assert.True(provider.FindField("shopProfile")!.Internal);
+        Assert.Equal(Modules.Integrations.Application.Shopify.ShopifyShopProfile.FieldMaxLength, provider.FindField("shopProfile")!.MaxLength);
         Assert.Equal(["shopDomain", "shopName"], provider.CatalogFields.Select(field => field.Key));
         Assert.Equal(["accessToken", "refreshToken"], provider.SecretFields.Select(field => field.Key));
         Assert.True(provider.FindField("accessToken")!.Internal);

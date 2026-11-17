@@ -20,8 +20,11 @@ public static class DoorbellQueues
     /// <summary>Soporte fase 4b (H15): las encuestas de satisfacción que pide cada resolución.</summary>
     public const string SupportSurvey = "support_survey";
 
+    /// <summary>Spec 2026-11-17 §5.2: las importaciones de productos de Shopify.</summary>
+    public const string ShopifyProducts = "shopify_products";
+
     public static IReadOnlyList<string> All { get; } =
-        [Automation, Webhook, ShopifyWebhook, Media, Scheduled, Campaign, Export, Outbox, SupportSurvey];
+        [Automation, Webhook, ShopifyWebhook, Media, Scheduled, Campaign, Export, Outbox, SupportSurvey, ShopifyProducts];
 
     public static TimeSpan SafetyNet(string queue) => queue switch
     {
@@ -34,6 +37,7 @@ public static class DoorbellQueues
         Export => TimeSpan.FromSeconds(30),
         Outbox => TimeSpan.FromSeconds(30),
         SupportSurvey => TimeSpan.FromSeconds(30),
+        ShopifyProducts => TimeSpan.FromSeconds(30),
         _ => throw new ArgumentOutOfRangeException(nameof(queue), queue, "Unknown doorbell queue."),
     };
 }

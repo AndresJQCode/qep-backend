@@ -23,7 +23,8 @@ public sealed class OrderItem
         decimal quantity,
         decimal unitPrice,
         decimal discountPercentage,
-        int taxPercentage,
+        int productTaxPercentage,
+        bool chargesVat,
         int position,
         string currency,
         PriceRounding rounding,
@@ -36,7 +37,7 @@ public sealed class OrderItem
         Position = position;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
-        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
+        Apply(quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat, currency, rounding, occurredAt);
     }
 
     public OrderItemId Id { get; private set; }
@@ -66,7 +67,15 @@ public sealed class OrderItem
 
     public decimal Subtotal { get; private set; }
 
+    /// <summary>La tasa efectiva (spec 2026-11-17, R1): 0 fuera de COP y cuando la empresa emisora no cobra IVA.</summary>
     public int TaxPercentage { get; private set; }
+
+    /// <summary>La tasa del producto al tomar la foto (R1), igual que <see cref="QuotationItem.ProductTaxPercentage"/>.
+    /// Null en una fila anterior a la columna.</summary>
+    public int? ProductTaxPercentage { get; private set; }
+
+    /// <summary>La tasa del producto, con el respaldo de las filas viejas (R1).</summary>
+    public int ProductTaxRate => ProductTaxPercentage ?? TaxPercentage;
 
     public decimal TaxAmount { get; private set; }
 
@@ -121,12 +130,15 @@ public sealed class OrderItem
         decimal quantity,
         decimal unitPrice,
         decimal discountPercentage,
-        int taxPercentage,
+        int productTaxPercentage,
+        bool chargesVat,
         int position,
         string currency,
         PriceRounding rounding,
         DateTimeOffset occurredAt) =>
-        new(id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, position, currency, rounding, occurredAt);
+        new(
+            id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat,
+            position, currency, rounding, occurredAt);
 
     internal void CaptureProduct(QuotationProductSnapshot product)
     {
@@ -142,11 +154,12 @@ public sealed class OrderItem
     internal void UpdateQuantity(
         decimal quantity,
         decimal discountPercentage,
-        int taxPercentage,
+        int productTaxPercentage,
+        bool chargesVat,
         string currency,
         PriceRounding rounding,
         DateTimeOffset occurredAt) =>
-        Apply(quantity, UnitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
+        Apply(quantity, UnitPrice, discountPercentage, productTaxPercentage, chargesVat, currency, rounding, occurredAt);
 
     /// <summary>Spec 2026-11-14 §4: la línea que una edición de la plataforma conserva, con el precio y el descuento que la
     /// plataforma cobró ahora (sin repreciar contra el catálogo). Conserva su id y su costo congelado.</summary>
@@ -154,7 +167,8 @@ public sealed class OrderItem
         decimal quantity,
         decimal unitPrice,
         decimal discountPercentage,
-        int taxPercentage,
+        int productTaxPercentage,
+        bool chargesVat,
         int position,
         string currency,
         PriceRounding rounding,
@@ -162,8 +176,12 @@ public sealed class OrderItem
     {
         DiscountOrigin = QuotationDiscountOrigin.Own;
         Position = position;
-        Apply(quantity, unitPrice, discountPercentage, taxPercentage, currency, rounding, occurredAt);
+        Apply(quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat, currency, rounding, occurredAt);
     }
+
+    /// <summary>Rehace la línea con el IVA de la empresa emisora (spec 2026-11-17, R2) desde la tasa del producto.</summary>
+    internal void ApplyChargesVat(bool chargesVat, string currency, PriceRounding rounding, DateTimeOffset occurredAt) =>
+        Apply(Quantity, UnitPrice, DiscountPercentage, ProductTaxRate, chargesVat, currency, rounding, occurredAt);
 
     /// <summary>La misma línea, comparada como se guarda: precio redondeado con la regla del documento y sin IVA fuera de
     /// COP. Así una edición que llega igual a lo que el pedido ya tiene no cuenta como cambio.</summary>
@@ -183,15 +201,39 @@ public sealed class OrderItem
         DateTimeOffset occurredAt)
     {
         DiscountOrigin = origin;
-        Apply(Quantity, UnitPrice, discountPercentage, TaxPercentage, currency, rounding, occurredAt);
+        // La tasa efectiva se conserva tal cual: el descuento no cambia si la línea lleva IVA.
+        Compute(Quantity, UnitPrice, discountPercentage, TaxPercentage, ProductTaxRate, rounding, occurredAt);
     }
 
+    // Misma regla que QuotationItem.Apply: la tasa efectiva es la del producto sólo si la empresa cobra IVA y la moneda
+    // lo discrimina (spec 2026-11-17, R1).
     private void Apply(
         decimal quantity,
         decimal unitPrice,
         decimal discountPercentage,
-        int taxPercentage,
+        int productTaxPercentage,
+        bool chargesVat,
         string currency,
+        PriceRounding rounding,
+        DateTimeOffset occurredAt)
+    {
+        if (productTaxPercentage < 0 || productTaxPercentage > 100)
+        {
+            throw new QuotationsDomainException(
+                "order.item.tax_percentage_out_of_range",
+                "The item tax percentage must be between 0 and 100.");
+        }
+
+        var effective = chargesVat && QuotationItem.ItemizesTaxIn(currency) ? productTaxPercentage : 0;
+        Compute(quantity, unitPrice, discountPercentage, effective, productTaxPercentage, rounding, occurredAt);
+    }
+
+    private void Compute(
+        decimal quantity,
+        decimal unitPrice,
+        decimal discountPercentage,
+        int taxPercentage,
+        int productTaxPercentage,
         PriceRounding rounding,
         DateTimeOffset occurredAt)
     {
@@ -223,18 +265,14 @@ public sealed class OrderItem
                 "The item tax percentage must be between 0 and 100.");
         }
 
-        // Mismas dos reglas que QuotationItem.Apply: pesos enteros en COP y sin IVA discriminado
-        // fuera de COP.
+        // Pesos enteros en COP, la misma regla que QuotationItem.
         unitPrice = VatIncludedLine.ChargedListPrice(unitPrice, rounding);
-        if (!QuotationItem.ItemizesTaxIn(currency))
-        {
-            taxPercentage = 0;
-        }
 
         Quantity = quantity;
         UnitPrice = unitPrice;
         DiscountPercentage = discountPercentage;
         TaxPercentage = taxPercentage;
+        ProductTaxPercentage = productTaxPercentage;
         var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage, rounding);
         DiscountAmount = amounts.DiscountAmount;
         TaxAmount = amounts.TaxAmount;

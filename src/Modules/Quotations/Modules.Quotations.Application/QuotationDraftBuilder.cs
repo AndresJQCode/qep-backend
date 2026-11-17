@@ -59,8 +59,8 @@ public sealed class QuotationDraftBuilder(
         QuotationCustomerEligibility.Ensure(customer, input.TenantId, input.ClientId);
 
         // Sin cuenta de cobro, la cotización nace en la moneda por defecto del tenant. Se lee siempre, haya
-        // cuenta o no: el agregado decide cuál gana, no el handler. Antes de resolver la cuenta porque la empresa sola
-        // del cálculo previo (spec 2026-11-16) arma una cuenta pendiente en esa moneda.
+        // cuenta o no: el agregado decide cuál gana, no el handler. Antes de resolver la cuenta porque la empresa sin
+        // cuenta (spec 2026-11-17, R3) se arma en esa moneda.
         var defaultCurrency = Currencies.Normalize(
             await tenantDefaultCurrency.GetAsync(input.TenantId, cancellationToken));
 

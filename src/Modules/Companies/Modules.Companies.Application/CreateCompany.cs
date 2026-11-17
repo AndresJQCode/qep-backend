@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Companies.Domain;
 using Modules.Tenancy.Application;
 
@@ -17,7 +18,8 @@ public sealed record CreateCompanyCommand(
     string? Phone,
     string? Email,
     string? Address,
-    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Las reglas viven en CompanyWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCompanyValidator : AbstractValidator<CreateCompanyCommand>
@@ -33,7 +35,9 @@ public sealed class CreateCompanyHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<CreateCompanyCommand> validator,
-    ICompanyTaxRateLookup taxRateLookup)
+    ICompanyTaxRateLookup taxRateLookup,
+    ICompanyDefaultTaxRates defaultTaxRates,
+    ILogger<CreateCompanyHandler> logger)
     : ICommandHandler<CreateCompanyCommand, CompanyDto>
 {
     public async Task<CompanyDto> HandleAsync(
@@ -89,7 +93,9 @@ public sealed class CreateCompanyHandler(
                 Email = command.Email,
                 Address = command.Address
             },
-            now);
+            now,
+            // Spec 2026-11-17 §5.1: ausente es «cobra IVA».
+            command.ChargesVat ?? true);
         company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
 
         repository.Add(company);
@@ -106,6 +112,13 @@ public sealed class CreateCompanyHandler(
         // agregado y ya la hizo cumplir Company.Create en memoria. Por eso este SaveChanges no
         // tiene detras ninguna rama de traduccion de 23505.
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Spec 2026-11-17 §5.3: después del commit, nunca dentro. Un fallo no deshace la empresa.
+        if (CompanyDefaultTaxRateSeeding.Applies(company.ChargesVat, company.Country))
+        {
+            await CompanyDefaultTaxRateSeeding.TryEnsureAsync(
+                defaultTaxRates, logger, command.TenantId, executionContext.SubjectId, cancellationToken);
+        }
 
         return company.ToDto(
             city,

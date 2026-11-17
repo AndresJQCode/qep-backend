@@ -169,13 +169,12 @@ public sealed class CompanyBankAccountTests
         Assert.Equal(3, company.BankAccounts.Count);
     }
 
-    // Una empresa sin ninguna cuenta seria un dato menos completo del que el modulo ya
-    // garantizaba: AccountNumber era NOT NULL. Bajar el minimo a cero es ampliar el alcance, y
-    // eso lo decide el gate del modulo, no este slice.
+    // Una empresa puede existir sin cuentas (spec 2026-11-17 §4.1): una empresa nueva no tiene
+    // cuenta, y el cobro por tarjeta o pasarela no la necesita.
     [Fact]
-    public void CreateRejectsAnEmptyAccountList()
+    public void CreateWithoutBankAccountsKeepsAnEmptyList()
     {
-        var exception = Assert.Throws<CompaniesDomainException>(() => Company.Create(
+        var company = Company.Create(
             CompanyId.New(),
             TenantId,
             "Andes",
@@ -186,9 +185,9 @@ public sealed class CompanyBankAccountTests
             CityId,
             null,
             CompanyContactInfo.Empty,
-            Now));
+            Now);
 
-        Assert.Equal("companies.company.bank_accounts_required", exception.Code);
+        Assert.Empty(company.BankAccounts);
     }
 
     // Tope defensivo. Sin el, un cuerpo con diez mil cuentas se convierte en diez mil INSERT en
@@ -224,7 +223,8 @@ public sealed class CompanyBankAccountTests
             CityId,
             null,
             CompanyContactInfo.Empty,
-            Now.AddMinutes(5));
+            Now.AddMinutes(5),
+            chargesVat: true);
 
         var account = Assert.Single(company.BankAccounts);
         Assert.Equal("Davivienda", account.BankName);
@@ -233,11 +233,11 @@ public sealed class CompanyBankAccountTests
     }
 
     [Fact]
-    public void UpdateRejectsAnEmptyAccountList()
+    public void UpdateCanRemoveEveryBankAccount()
     {
         var company = Create();
 
-        var exception = Assert.Throws<CompaniesDomainException>(() => company.Update(
+        company.Update(
             "Andes",
             [],
             "900-1",
@@ -246,9 +246,10 @@ public sealed class CompanyBankAccountTests
             CityId,
             null,
             CompanyContactInfo.Empty,
-            Now.AddMinutes(5)));
+            Now.AddMinutes(5),
+            chargesVat: true);
 
-        Assert.Equal("companies.company.bank_accounts_required", exception.Code);
+        Assert.Empty(company.BankAccounts);
     }
 
     // Que el agregado quede intacto cuando la escritura se rechaza no es un detalle: Update muta
@@ -269,7 +270,8 @@ public sealed class CompanyBankAccountTests
             CityId,
             null,
             CompanyContactInfo.Empty,
-            Now.AddMinutes(5)));
+            Now.AddMinutes(5),
+            chargesVat: true));
 
         Assert.Equal("CTA-1", Assert.Single(company.BankAccounts).AccountNumber);
         Assert.Equal(1, company.Version);

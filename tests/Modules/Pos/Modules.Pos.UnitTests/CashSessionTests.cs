@@ -16,6 +16,18 @@ public sealed class CashSessionTests
         Assert.Equal("NIF", session.CompanyDocumentType);
     }
 
+    // Spec 2026-11-17 R4: el IVA de la empresa se congela al abrir, como el resto de la empresa.
+    [Fact]
+    public void OpeningACashSessionFreezesChargesVat()
+    {
+        var withoutVat = CashSession.Open(
+            CashSessionId.New(), TenantId, Cashier, "Laura Gómez", Company with { ChargesVat = false }, "COP", 100_000m, Now);
+        var withVat = CashSession.Open(CashSessionId.New(), TenantId, Cashier, "Laura Gómez", Company, "COP", 100_000m, Now);
+
+        Assert.False(withoutVat.CompanyChargesVat);
+        Assert.True(withVat.CompanyChargesVat);
+    }
+
     [Fact]
     public void OpenStartsAtVersionOneWithTheCompanySnapshotAndNoSales()
     {

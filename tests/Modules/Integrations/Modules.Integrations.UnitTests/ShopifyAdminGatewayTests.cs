@@ -101,6 +101,71 @@ public sealed class ShopifyAdminGatewayTests : IDisposable
         AssertNothingSecretLogged();
     }
 
+    // Spec 2026-11-17 §2: el perfil de la tienda viaja en la misma consulta que el id.
+    [Fact]
+    public async Task TheShopQueryAsksForEveryProfileField()
+    {
+        _shopify.Body = """{"data":{"shop":{"id":"gid://shopify/Shop/12345678","name":"Mi Tienda","myshopifyDomain":"mi-tienda.myshopify.com"}}}""";
+
+        await Gateway.GetShopAsync(Shop, Token, Ct);
+
+        var request = Assert.Single(_shopify.Requests);
+        using var body = JsonDocument.Parse(request.Body!);
+        var query = body.RootElement.GetProperty("query").GetString()!;
+        foreach (var field in new[] { "email", "contactEmail", "currencyCode", "ianaTimezone", "taxesIncluded" })
+        {
+            Assert.Contains($" {field} ", query, StringComparison.Ordinal);
+        }
+
+        Assert.Contains(
+            "billingAddress { company address1 address2 city province provinceCode zip countryCodeV2 phone }",
+            query,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetShopReadsTheProfile()
+    {
+        _shopify.Body = """
+            {"data":{"shop":{"id":"gid://shopify/Shop/12345678","name":"Mi Tienda","myshopifyDomain":"mi-tienda.myshopify.com",
+            "email":"dueno@mitienda.co","contactEmail":"contacto@mitienda.co","currencyCode":"COP","ianaTimezone":"America/Bogota",
+            "taxesIncluded":true,"billingAddress":{"company":"Mi Tienda SAS","address1":"Calle 10 # 43-12","address2":"Local 3",
+            "city":"Medellín","province":"Antioquia","provinceCode":"ANT","zip":"050021","countryCodeV2":"CO","phone":"+573001112233"}}}}
+            """;
+
+        var shop = await Gateway.GetShopAsync(Shop, Token, Ct);
+
+        var profile = Assert.IsType<ShopifyShopProfile>(shop.Profile);
+        Assert.Equal("COP", profile.CurrencyCode);
+        Assert.Equal("contacto@mitienda.co", profile.ContactEmail);
+        Assert.Equal("America/Bogota", profile.IanaTimezone);
+        Assert.True(profile.TaxesIncluded);
+        var address = Assert.IsType<ShopifyShopAddress>(profile.BillingAddress);
+        Assert.Equal("Medellín", address.City);
+        Assert.Equal("CO", address.CountryCode);
+        Assert.Equal("ANT", address.ProvinceCode);
+        Assert.Equal("Mi Tienda SAS", address.Company);
+        // El perfil lleva correo y teléfono: no van a logs (spec §2).
+        Assert.DoesNotContain(_logs.Entries, entry => entry.Contains("mitienda.co", StringComparison.Ordinal)
+            || entry.Contains("3001112233", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AShopWithoutBillingAddressHasANullAddress()
+    {
+        _shopify.Body = """
+            {"data":{"shop":{"id":"gid://shopify/Shop/12345678","name":"Mi Tienda","myshopifyDomain":"mi-tienda.myshopify.com",
+            "currencyCode":"COP","taxesIncluded":"no","billingAddress":null}}}
+            """;
+
+        var shop = await Gateway.GetShopAsync(Shop, Token, Ct);
+
+        var profile = Assert.IsType<ShopifyShopProfile>(shop.Profile);
+        Assert.Equal("COP", profile.CurrencyCode);
+        Assert.Null(profile.TaxesIncluded);
+        Assert.Null(profile.BillingAddress);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.PaymentRequired)]

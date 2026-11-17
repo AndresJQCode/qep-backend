@@ -196,7 +196,8 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
                 state.Shipping.CashOnDelivery),
             Fingerprint(state.ShippingParty),
             state.ShippingCountry,
-            state.BuyerNotes);
+            state.BuyerNotes,
+            state.ChargesVat);
 
     private static ExternalOrderDraft ToExternal(ShopifyOrderDraft draft)
     {

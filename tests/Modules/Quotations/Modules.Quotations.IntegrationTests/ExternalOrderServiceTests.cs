@@ -952,7 +952,9 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         Assert.NotNull(state);
         Assert.Equal((order.OrderId, OrderStatus.Open, true, false, false), (state.OrderId, state.Status, state.IsEditable, state.IsPrepared, state.IsInvoiced));
         Assert.Equal((OrderPaymentStatus.PaymentPending, setup.ClientId, "COP", false), (state.PaymentStatus, state.ClientId, state.Currency, state.IsStorePickup));
+        // La tasa de la línea es la del producto (spec 2026-11-17 R1), y el IVA del pedido viaja aparte (R7).
         Assert.Equal(new ExternalOrderLineState(setup.ProductId, setup.ProductId, 2m, 11_900m, 0m, 19), Assert.Single(state.Lines));
+        Assert.True(state.ChargesVat);
         Assert.Equal(ShippingDetails.None, state.Shipping);
         Assert.Equal(Party(), state.ShippingParty);
         Assert.Null(state.ShippingCountry);

@@ -34,6 +34,7 @@ internal sealed class QuotationCompanyLookup(ICompanyRepository repository)
                     .Select(account => new QuotationCompanyAccountRef(
                         account.BankName, account.AccountNumber, account.Currency))
                     .ToArray(),
-                company.CityId);
+                company.CityId,
+                company.ChargesVat);
     }
 }

@@ -521,6 +521,32 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(expectedLabel, document.BillingAccount!.CompanyDocumentLabel);
     }
 
+    // Spec 2026-11-17 §4.2: una empresa sin cuenta llega al PDF con su membrete y banco y número nulos.
+    [Fact]
+    public void AnAccountWithoutBankMapsNullBankFields()
+    {
+        var billing = new QuotationBillingResponse(
+            Guid.CreateVersion7(), "Empresa Sin Cuenta S.A.S.", "900123456", "NIT", null, null, null, null, "COP");
+
+        var document = Map(Response() with { BillingAccount = billing });
+
+        Assert.NotNull(document.BillingAccount);
+        Assert.Equal("Empresa Sin Cuenta S.A.S.", document.BillingAccount.CompanyName);
+        Assert.Null(document.BillingAccount.BankName);
+        Assert.Null(document.BillingAccount.AccountNumber);
+    }
+
+    [Fact]
+    public void TheBillingResponseCarriesChargesVat()
+    {
+        var account = new QuotationBillingAccountDto(Guid.CreateVersion7(), null, null, "COP", ChargesVat: false);
+
+        var response = QuotationResponseComposer.ToBillingResponse(account, null)!;
+
+        Assert.False(response.ChargesVat);
+        Assert.Null(response.BankName);
+    }
+
     [Fact]
     public void TheBillingResponseCarriesTheCompanyDocumentType()
     {

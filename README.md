@@ -1037,6 +1037,11 @@ máscara de permisos del módulo apagado ya los descarta antes, y las rutas púb
   rechaza, incompleto. El recibo trae el id y el número del pedido (el consecutivo de pedidos del tenant). El detalle
   (`GET /orders/{orderId}`) ya no trae `storeRequest`; `GET /orders?source=Store` los filtra. El consentimiento del visitante queda en
   `store.order_consents`, una fila por pedido.
+- **Moneda y empresa (spec 2026-11-17 §4.3):** cada moneda de la tienda elige la empresa emisora; la cuenta bancaria es opcional.
+  En `PUT /settings`, banco y número de cuenta van los dos o ninguno (`422 validation.failed` con un solo). Sin cuenta, el pedido sale
+  en la moneda de la tienda con `billingAccount.bankName` y `accountNumber` en `null`, y la tienda no muestra instrucciones de pago.
+  `GET /settings/billing-accounts` ofrece, además de cada cuenta, una fila por empresa activa sin cuenta (`bankName`, `accountNumber`
+  y `currency` en `null`). Si la empresa no cobra IVA, el checkout cobra el precio de lista (líneas al 0 %).
 
 ### Secretos
 
@@ -1704,9 +1709,12 @@ mismas reglas que la cotización. `quotationId` es opcional y `source` dice de d
 - `Manual`: `POST /orders` crea un pedido sin cotización desde la pantalla, con el mismo cuerpo que
   una cotización más los comprobantes (un `paymentStatus` en el cuerpo se ignora: el pago lo calcula
   el sistema); `POST /orders/preview` lo calcula sin
-  guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant (crear
-  sí la exige). Exige cliente completo con CUC, como convertir. Permiso
-  `quotations.order.manage`.
+  guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant. Crear
+  exige la **empresa** emisora, no la cuenta (spec 2026-11-17 §4.2): `billingAccount` con `companyId` y
+  `bankName`/`accountNumber` en `null` es una empresa sin cuenta, y el pedido sale en la moneda por
+  defecto del tenant (el `currency` de ese cuerpo se ignora; elegir una cuenta es la forma de cambiarla).
+  Banco y número van los dos o ninguno. Sin empresa sigue siendo `order.billing.account_required`.
+  Exige cliente completo con CUC, como convertir. Permiso `quotations.order.manage`.
 - Integraciones (`Shopify`): sin sesión HTTP, por `IExternalOrderWriter`; acepta un cliente
   incompleto y lleva `externalReference` (`#1001`).
 
@@ -1715,6 +1723,31 @@ Todos nacen `Open` y publican `quotations.order.created.v1` con `source` y `quot
 del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?source=`), el
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
+
+#### Empresa sin cuenta e IVA por empresa
+
+Spec `docs/superpowers/specs/2026-11-17-reglas-de-empresa-design.md`. Una empresa puede no tener cuentas
+bancarias (`bankAccounts: []`) y dice si cobra IVA (`chargesVat`; ausente en el `POST` es `true`, ausente
+en el `PUT` conserva el guardado).
+
+- **Cuenta de cobro.** Cotizaciones y pedidos exigen la empresa para enviar, convertir y crear; la cuenta
+  es opcional. Sin ella, `billingAccount.bankName` y `billingAccount.accountNumber` viajan en `null` en el
+  detalle, la lista y las vistas previas, el PDF omite el bloque de pago y las celdas de forma de pago del
+  Excel del ERP quedan vacías. «Pago: por definir» lo pinta el frontend.
+- **IVA.** El documento congela `billingAccount.chargesVat` de su empresa al elegirla
+  (`billing_company_charges_vat`). Con `false`, cada línea y el envío van al 0 %: el cliente paga el precio
+  de lista y el envío nunca pide la tasa del tenant (`freight_tax_rate_missing`). La línea guarda la tasa
+  del producto (`product_tax_percentage`) y la efectiva (`tax_percentage`), así que cambiar la empresa de un
+  documento editable rehace las dos sin volver a Catalog; volver a una empresa con IVA con el envío cobrado
+  sí pide la tasa del envío. Cambiar la empresa después no toca los documentos ya emitidos. En POS, la caja
+  congela `company_charges_vat` al abrirse.
+- **Tasas por defecto.** Crear una empresa colombiana que cobra IVA, o pasar una a «cobra IVA» en Colombia,
+  siembra «IVA 19 %», «IVA 5 %» y «Exento» si el tenant no tiene ninguna tasa de IVA activa de `CO`, y fija
+  la de 19 % como tasa del envío si estaba vacía (`CompanyDefaultTaxRates`, en Bootstrapper, bajo un
+  advisory lock por tenant). Salta la que ya exista con el mismo nombre y porcentaje, activa o no. Corre
+  después de guardar la empresa: si falla, queda un `Warning` y la empresa se guarda igual. Una prueba de
+  integración que necesite el tenant sin tasa del envío la borra después de crear la empresa
+  (`QuotationsApiHarness.ClearFreightTaxRateAsync`).
 
 #### Cuenta de comprador del pedido
 
@@ -2638,6 +2671,13 @@ ya pasa (`maxSurge: 1`); con dos, son dos pods viejos contra el esquema nuevo. P
    réplicas, como se hizo con las variantes ([Catálogo: opciones, variantes y galería](#catálogo-opciones-variantes-y-galería),
    «Despliegue»). El PDB no lo impide: sólo frena desalojos, no un `scale` ni un `Recreate`.
 3. **El handoff de cada spec dice si su migración es aditiva.** Si no lo dice, asume que no.
+
+**Precedente no aditivo: reglas de empresa (spec 2026-11-17, R5).** Las cinco migraciones (`AddCompanyChargesVat`,
+`OptionalBillingAccountAndChargesVat`, `OptionalStoreBillingAccount`, `OptionalShopifyStoreBillingAccount`,
+`AddCashSessionCompanyChargesVat`) se despliegan **con corte**. Las columnas nuevas son aditivas, pero relajar a nullable el
+banco y el número de la cuenta de un pedido no lo es: un pod viejo materializa el pedido sin cuenta y el Excel del ERP
+revienta, recalcula con IVA un documento sin IVA y rechaza `bankAccounts: []`. El `Down` de la de Quotations falla si ya hay
+pedidos sin cuenta: no se corre después de emitir uno.
 
 **El candado de arranque.** Las 26 inicializaciones (migraciones de cada módulo y siembras) y `RunQepSeedAsync` corren
 dentro de `RunUnderStartupLockAsync` (`src/Api/Program.cs`, `src/Bootstrapper/Startup/StartupLock.cs`): una
@@ -4818,6 +4858,12 @@ prendido, al importador:
   `GET /tenants/{tenantId}/shopify/stores/{connectionId}/document-sources` (`integrations.connection.read`):
   `{ "sources": ["shipping_address.company", …] }`, con los nombres de atributo de los 500 pedidos más recientes de esa
   tienda en el espejo.
+- **Empresa sin cuenta o sin IVA (spec 2026-11-17 §4.4, R7).** La cuenta de cobro de la tienda es opcional: `billingBankName` y
+  `billingAccountNumber` van los dos o ninguno, y la empresa y la moneda siguen obligatorias. Con cuenta, las esperas son las de
+  siempre (`billing_account_missing` si la cuenta ya no existe, `currency_mismatch` si el pedido viene en otra moneda). Sin cuenta,
+  sólo `billing_account_missing` si la empresa ya no es del tenant, y no hay `currency_mismatch`: el pedido entra en la moneda que
+  trae Shopify. Si la empresa no cobra IVA, las líneas y el envío van al 0 % sin importar `taxesIncluded` (el precio es el de
+  Shopify, sin sumarle IVA) y el pedido nunca espera por `freight_tax_rate_missing`.
 - El comprador se busca por documento, por el cliente de Shopify ya visto en el espejo, por teléfono y por correo; si no
   aparece, nace completo (con CUC) cuando hay documento, clasificación, dirección y ciudad, e incompleto si no. El
   cliente nunca detiene la importación salvo que exista y esté inactivo.
@@ -4995,7 +5041,7 @@ sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`
 | `Shopify:App:ClientId` | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID` | Client ID de la app en el Dev Dashboard |
 | `Shopify:App:ClientSecret` | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET` | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code` |
 | `Shopify:App:ApiVersion` | ConfigMap, `2026-10` | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`) |
-| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers` | Lo que pide la autorización (`write_orders` desde el 2026-11-14) |
+| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers,read_products` | Lo que pide la autorización (`write_orders` desde el 2026-11-14, `read_products` desde el 2026-11-17) |
 | `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
 | `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
 | `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
@@ -5011,6 +5057,47 @@ Shopify con `orderUpdate`, que exige `write_orders`. Según el owner, los comerc
 `Shopify:App:Scopes` es para que una instalación nueva lo pida, y un canje nuevo sin él falla con `scopes_missing`. Falta
 verificarlo (V-13): si una tienda no lo tuviera, sus envíos quedan retenidos (`Held`) con `access_denied`; el comercio tiene que
 volver a abrir la app desde su Shopify para concederlo, y después alguien los suelta con `POST …/stores/{connectionId}/pushes/release`.
+
+**Productos desde Shopify (spec 2026-11-17).** Traer el catálogo de una tienda a Catalog, mantenerlo con los webhooks y medir
+cuánto ya tiene par en QEP. Rutas (BFF, todas revalidan tenant, permiso, módulo y conexión con 403):
+
+| Ruta | Permiso | Qué |
+| --- | --- | --- |
+| `POST …/shopify/stores/{connectionId}/products/import` `{ mode: "All" \| "Missing", redirectUri? }` | `integrations.connection.manage` | 202 `{ importId }`; 409 `shopify.products.import_running`; 422 `shopify.store.not_operational`, `shopify.products.company_required` o `shopify.products.scope_missing` (con `reauthorizeUrl`, `null` sin `redirectUri`) |
+| `GET …/shopify/stores/{connectionId}/products/import` | `integrations.connection.read` | La última importación (contadores e issues, hasta 50) o `null` |
+| `GET …/shopify/stores/{connectionId}/products/coverage?redirectUri=` | `integrations.connection.read` | `{ shopifyVariants, matched, catalogEmpty, missingSample }`, consultado en el momento; 503 `shopify.store.sync_unavailable` si Shopify no responde |
+| `DELETE …/shopify/products/{productId}/link` | `integrations.connection.manage` | 204: quita los vínculos del producto en cualquier tienda del tenant y lo deja propio de QEP; 404 `shopify.products.link_not_found` |
+
+La importación la corre `ShopifyProductImportWorker` (cola `shopify.product_imports`, lease de 2 min, 4 intentos, timbre
+`shopify_products`), página por página. Cuando termina `Done`, la tienda queda con `products_synced_at` y desde ahí los
+`products/create|update|delete` crean, actualizan y desactivan; antes se ignoran con `products_not_synced`. Un producto que falla
+en un webhook se loguea (id y código, nunca el cuerpo) y suma en `qep_shopify_product_sync_failures_total{reason}`.
+
+**`read_products` (spec 2026-11-17).** Lo piden la importación, la cobertura y los `products/*`. Una tienda instalada antes no lo
+tiene: importar y la cobertura le responden 422 `shopify.products.scope_missing` con la URL para reautorizar, y el registro de
+webhooks no le pide los `products/*` (ni la pasa a `NeedsAttention` por ellos) hasta que el comercio vuelva a autorizar la app y
+el canje guarde el scope nuevo; el siguiente enlace o probador los registra.
+
+**Asistente de la tienda (onboarding, spec `2026-11-17-onboarding-tienda-shopify-design.md`).** Una tienda recién enlazada se
+configura en cinco pasos (`company`, `advisor`, `buyers`, `products`, `history`) con una sola lectura que dice qué falta. Rutas
+(todas revalidan tenant, permiso, módulo y conexión con 403):
+
+| Ruta | Permiso | Qué |
+| --- | --- | --- |
+| `GET …/shopify/stores/{connectionId}/setup?redirectUri=` | `integrations.connection.manage` | `ShopifySetupDto`: los cinco pasos con `status`, `blockedBy` y `missing`, el `openStep`, la tienda con `settings` (el cuerpo del `PUT`, con su `version`), la empresa elegida y la sugerida, las empresas activas, el asesor, los compradores, los productos, el historial, `waiting` y `stats`. Crea la tienda si el módulo no la tenía |
+| `POST …/shopify/stores/{connectionId}/setup/company` (`If-Match`) `{ companyId?, name?, taxId?, documentType?, country?, cityId?, cityName?, address?, phone?, email?, chargesVat?, bankAccount? }` | `integrations.connection.manage` (y `companies.company.manage` para crear) | Sin `companyId` crea la empresa por Companies (sus `errors`, su 403, la siembra de tasas) y la asigna: 201 `{ companyId, storeVersion }`. Con `companyId` sólo asigna: 200. 412 `concurrency.conflict` antes de crear si la versión no es la actual; si la asignación pierde después de crear, el 412 trae `details.companyId` y el reintento lo manda. 422 `shopify.store.billing_account_not_found`; 503 `shopify.store.sync_unavailable` si no hay moneda (ni cuenta, ni perfil, ni la guardada) |
+| `POST …/shopify/stores/{connectionId}/products/coverage/accept` | `integrations.connection.manage` | 204: «Seguir así», el paso `products` queda hecho con la cobertura que hay |
+| `POST …/shopify/stores/{connectionId}/sync?source=setup` | `quotations.order.manage` | La respuesta de siempre; además la tienda guarda el resumen de la corrida (`history.lastRun`). Otro `source` es 422 `errors.source` |
+
+- **El perfil de la tienda** (`shopProfile`) es un campo **interno** de la conexión de Integrations: un JSON con el correo, el
+  correo de contacto, la moneda, si los precios incluyen impuestos y la dirección de facturación de `ShopQuery`. Lo escriben el
+  enlace (de mejor esfuerzo) y el probador. No sale en la respuesta de la conexión ni en logs: lleva datos personales del
+  comerciante. Con él el asistente sugiere la empresa (la ciudad se resuelve en Geography sólo en `CO`) y la moneda.
+- **«¿Cobras impuestos?»** se sugiere con `productVariants(first: 1, query: "taxable:true")` mientras el paso `company` no esté
+  hecho y haya `read_products`; sin productos, sin scope o con Shopify caído es `null`.
+- **La cobertura se guarda en la tienda** (`products_coverage`, con `measuredAt`) en cada `GET …/products/coverage`, y el asistente
+  la mide sola (tope de 15 s) la primera vez que hay scope y no hubo importación. Ni la medición, ni «Seguir así», ni el resumen del
+  historial suben la versión de la tienda.
 
 **Ediciones en la tienda.** `GET|PUT …/shopify/stores/{connectionId}` llevan además `editSync` (`Manual`, por defecto, o
 `Automatic`) y `editPaymentStatuses` (los estados de pago de QEP en que un cambio de Shopify se aplica; por defecto los cuatro:
@@ -5081,6 +5168,37 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada, y que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo y mirar `shopify.orders.payload` y `shopify.order_edits` |
    | V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes`, y que el `orders/updated` de vuelta salga como eco. Además: (a) el teléfono de ida y vuelta: si Shopify guarda en E.164 el teléfono nacional que QEP mandó, el eco tiene que salir igual (QEP compara sin el indicativo de país, `ShopifyOrderProjection.SamePhone`); (b) que `note: null` borre la nota en Shopify y no se ignore (si la ignora, mandar `""`) | Corregir una ciudad en QEP, ver el envío `Sent` y la dirección en Shopify, y que no aparezca un cambio; mirar el teléfono que quedó en Shopify; borrar la nota del cliente en QEP y verla vacía en Shopify |
    | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` de cada tienda; un envío `Held` con `access_denied` también lo delata |
+5. **Productos desde Shopify (spec 2026-11-17).** Migraciones aditivas, sin backfill: `AddProductExternalSource` (Catalog) y
+   `AddProductSync` (Shopify: `product_links`, `product_imports`, `product_import_issues` y `stores.products_synced_at`). El
+   worker de importaciones (`ShopifyProductImportWorker`) entra con el backend, y `Shopify:App:Scopes` pasa a
+   `read_orders,write_orders,read_customers,read_products` en el ConfigMap.
+
+   **Antes del ConfigMap, la app.** Igual que con `write_orders`: `CompleteShopifyInstall` exige todo scope configurado, así que
+   primero se publica en el Partner Dashboard una versión de la app que pida `read_products` y después llega el ConfigMap. Al
+   revés, toda instalación nueva o reenlace falla con `integrations.shopify.scopes_missing`. Las tiendas ya instaladas siguen
+   funcionando sin `read_products`: reciben 422 `scope_missing` al importar y no reciben `products/*` hasta reautorizar.
+
+   Quedan por verificar contra Shopify real (§9):
+
+   | Qué | Cómo se cierra |
+   | --- | --- |
+   | `productsCount(limit: null)` devuelve el total de activos y borradores | Importar una tienda de desarrollo y comparar `total` con su lista de productos |
+   | `featuredMedia.preview.image.url(transform:)` entrega un JPG de hasta 2048×2048 | Mirar el archivo que quedó en Storage para un producto con imagen |
+   | El filtro `product_status` de `productVariants` (la cobertura) deja fuera los archivados | Archivar un producto y ver que la cobertura no lo cuente |
+   | Una tienda con variantes sin SKU y con `taxesIncluded = false` | Importarla: códigos `shp-{id}` y precios con IVA sumado si la empresa cobra IVA y la moneda es COP |
+6. **Asistente de la tienda (spec 2026-11-17 onboarding).** Una sola migración, **aditiva**, sin backfill: `AddStoreSetup`
+   (Shopify: cuatro columnas nulas en `shopify.stores`, `products_coverage`, `products_coverage_accepted_at`,
+   `setup_history_ran_at` y `setup_history_summary`). Un pod viejo las ignora. El perfil de la tienda no tiene migración: es un
+   campo de la conexión, y una conexión enlazada antes lo recibe en el siguiente probador o reenlace (hasta entonces la sugerencia
+   es sólo el nombre de la tienda).
+
+   Quedan por verificar contra una tienda de desarrollo:
+
+   | Qué | Cómo se cierra |
+   | --- | --- |
+   | `shop.billingAddress` (empresa, ciudad, `provinceCode` de Colombia, `countryCodeV2`, teléfono) llega como lo lee `ShopQuery` | Enlazar la tienda y mirar la sugerencia del `GET …/setup` |
+   | `shop.contactEmail` existe y es el correo que el comercio ve como de contacto | El mismo `GET …/setup`: `company.suggested.email` |
+   | `productVariants(first: 1, query: "taxable:true")` distingue una tienda con variantes gravadas de una sin | Marcar todas las variantes como no gravadas y ver `suggestedChargesVat: false`; marcar una y ver `true` |
 
 ### Contratos de servicio (cobros recurrentes)
 

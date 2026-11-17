@@ -122,12 +122,12 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
             .EmailAddress()
             .When(command => !string.IsNullOrWhiteSpace(command.Email));
 
-        // NotEmpty cubre los dos casos que el formulario puede producir: la lista ausente del JSON
-        // —que System.Text.Json deja en null— y la lista vacia de quien quito la ultima fila. Sin
-        // esta regla, la primera llega al dominio como null y sale como 500.
+        // La lista vacía es válida (spec 2026-11-17 §4.1: una empresa puede no tener cuentas). La
+        // ausente del JSON —que System.Text.Json deja en null— no: sin esta regla llegaría al
+        // dominio como null y saldría como 500.
         RuleFor(command => command.BankAccounts)
-            .NotEmpty()
-            .WithMessage("The company needs at least one bank account.");
+            .NotNull()
+            .WithMessage("The bank account list is required (it can be empty).");
         RuleFor(command => command.BankAccounts)
             .Must(accounts => accounts!.Count <= CompanyBankAccount.MaxPerCompany)
             .WithMessage(

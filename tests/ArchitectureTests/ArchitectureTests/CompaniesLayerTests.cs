@@ -77,6 +77,19 @@ public sealed class CompaniesLayerTests
             !name.StartsWith("Modules.Tenancy", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Spec 2026-11-17 §5.3 y §8: las tasas por defecto las crea Catalog y la del envío la guarda Quotations, y Companies no
+    /// ve a ninguno de los dos. El puerto vive en Application y su adaptador en el composition root.
+    /// </summary>
+    [Fact]
+    public void TheDefaultTaxRatesPortLivesInApplicationAndItsAdapterInBootstrapper()
+    {
+        Assert.Equal(typeof(ListCompaniesQuery).Assembly, typeof(ICompanyDefaultTaxRates).Assembly);
+        Assert.Contains(
+            typeof(Bootstrapper.QepServiceCollectionExtensions).Assembly.GetTypes(),
+            type => type is { IsClass: true, IsAbstract: false } && typeof(ICompanyDefaultTaxRates).IsAssignableFrom(type));
+    }
+
     private static string?[] ReferenceNamesOf(Assembly assembly) => assembly
         .GetReferencedAssemblies()
         .Select(name => name.Name)

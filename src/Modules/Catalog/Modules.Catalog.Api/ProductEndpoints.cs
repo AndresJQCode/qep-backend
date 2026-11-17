@@ -313,6 +313,7 @@ public static class ProductEndpoints
         product.Name,
         product.IsActive,
         product.VisibleInStore,
+        product.ExternalSource,
         product.Description,
         product.ImageFileId,
         product.ImageUrl,

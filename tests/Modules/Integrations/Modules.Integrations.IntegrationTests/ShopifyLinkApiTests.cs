@@ -233,6 +233,76 @@ public sealed class ShopifyLinkApiTests
         Assert.Equal(0, await CountInstallsAsync(connectionString));
     }
 
+    // Spec 2026-11-17 §2 y Review Focus 4: el enlace guarda el perfil de la tienda como campo interno; ni la respuesta del
+    // enlace ni el GET de la conexión lo traen, ni el correo del comerciante.
+    [Fact]
+    public async Task TheShopProfileIsNotInTheConnectionResponse()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId);
+
+        var link = await SendAsync(owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId), new { installId });
+        var linkText = await link.Content.ReadAsStringAsync(Ct);
+        var connection = System.Text.Json.JsonSerializer.Deserialize<ConnectionResponse>(
+            linkText, System.Text.Json.JsonSerializerOptions.Web);
+        var read = await owner.GetAsync($"/api/v1/tenants/{tenant.TenantId}/integrations/connections/{connection!.Id}", Ct);
+        var readText = await read.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.Created, link.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        foreach (var text in new[] { linkText, readText })
+        {
+            Assert.DoesNotContain(ShopifyFieldKeys.ShopProfile, text, StringComparison.Ordinal);
+            Assert.DoesNotContain(FakeShopifyHandler.ProfileEmail, text, StringComparison.Ordinal);
+            Assert.DoesNotContain("3001112233", text, StringComparison.Ordinal);
+        }
+
+        var stored = await ScalarAsync<string>(
+            connectionString,
+            "SELECT fields->>'shopProfile' FROM integrations.connections WHERE id = @id AND tenant_id = @tenantId",
+            ("id", connection.Id),
+            ("tenantId", tenant.TenantId));
+        var profile = ShopifyShopProfile.TryParse(stored);
+        Assert.NotNull(profile);
+        Assert.Equal("COP", profile.CurrencyCode);
+        Assert.Equal("Medellín", profile.BillingAddress?.City);
+        Assert.Equal(0, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM audit.entries WHERE changed_fields::text LIKE @email",
+            ("email", $"%{FakeShopifyHandler.ProfileEmail}%")));
+    }
+
+    // Spec 2026-11-17 §3 y §7: al volver a instalar una tienda ya enlazada, la pantalla de enlace la ve en connectedShops
+    // del tenant y ofrece «Ir a la configuración».
+    [Fact]
+    public async Task TheInstallShowsTheShopAlreadyInTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var first = await SendAsync(
+            owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId),
+            new { installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId) });
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+
+        var secondInstall = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId);
+        var response = await owner.GetAsync($"/api/v1/integrations/shopify/installs/{secondInstall}", Ct);
+        var install = await response.Content.ReadFromJsonAsync<ShopifyInstallResponse>(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var row = Assert.Single(install!.Tenants, candidate => candidate.TenantId == tenant.TenantId);
+        Assert.True(row.CanLink);
+        Assert.Equal([new ShopifyConnectedShopResponse("Mi Tienda", ShopifyFlow.Shop)], row.ConnectedShops);
+    }
+
     // §4.1: desinstalar y volver a enlazar la misma tienda en el mismo tenant reutiliza la conexión, con el token nuevo.
     [Fact]
     public async Task LinkSameTenantTwiceReactivatesTheSameConnectionWithTheNewToken()

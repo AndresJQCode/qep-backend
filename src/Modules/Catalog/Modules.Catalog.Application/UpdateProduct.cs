@@ -70,6 +70,10 @@ public sealed class UpdateProductHandler(
                 "The product changed after it was loaded.");
         }
 
+        // Productos desde Shopify (spec 2026-11-17 §5.5): lo que administra la tienda no se cambia
+        // acá. Después de la versión, para que un formulario viejo reciba primero el 412.
+        ExternallyManagedProducts.EnsureAllowed(product, command);
+
         var taxRateId = await ProductTaxRateResolver.ResolveAsync(
             taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
         var categoryId = await ProductCategoryResolver.ResolveAsync(

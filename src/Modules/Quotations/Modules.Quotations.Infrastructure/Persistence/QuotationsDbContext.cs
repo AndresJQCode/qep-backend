@@ -51,49 +51,6 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<PdfPaymentAccountRow> PdfPaymentAccounts => Set<PdfPaymentAccountRow>();
 
-    public override int SaveChanges(bool acceptAllChangesOnSuccess)
-    {
-        RefusePendingBillingAccounts();
-        return base.SaveChanges(acceptAllChangesOnSuccess);
-    }
-
-    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
-    {
-        RefusePendingBillingAccounts();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
-    }
-
-    // A pending billing account (spec 2026-11-16 withholdings by company) is the company without its bank account, built
-    // only by the previews. IsPending has no column, so one that reached a save would be written as a real account with
-    // an empty bank and number and read back as complete. The guard is here and not in the domain because the previews run
-    // the same domain operations (Create, ApplyEdits) on in-memory or untracked aggregates: only saving tells a preview
-    // from a write. And here rather than in QuotationsUnitOfWork because a few writers save this context directly (the
-    // seeder, the expiration processor); the other SaveChanges overloads all end in these two. Today no write command
-    // carries a company without an account; this keeps a future one from persisting the placeholder silently. A bug, not
-    // a request error, so it surfaces as a 500 and never as a 422.
-    private void RefusePendingBillingAccounts()
-    {
-        foreach (var entry in ChangeTracker.Entries())
-        {
-            if (entry.State is EntityState.Deleted or EntityState.Detached)
-            {
-                continue;
-            }
-
-            var account = entry.Entity switch
-            {
-                Quotation quotation => quotation.BillingAccount,
-                Order order => order.BillingAccount,
-                _ => null,
-            };
-            if (account is { IsPending: true })
-            {
-                throw new InvalidOperationException(
-                    $"A pending billing account cannot be persisted ({entry.Entity.GetType().Name}); only previews build one.");
-            }
-        }
-    }
-
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -239,9 +196,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
             // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
             billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
-            // Spec 2026-11-16 withholdings by company: a pending account is preview-only and has no column; a save that carries
-            // one is refused by RefusePendingBillingAccounts, so the flag is never silently dropped on the way to the database.
-            billing.Ignore(value => value.IsPending);
+            // Spec 2026-11-17 §5.2: el IVA de la empresa, congelado con la cuenta. Sale nullable porque el owned es
+            // opcional; la migración lo rellena en true donde hay empresa, y EF siempre lo escribe (sin default). Se mapea
+            // por StoredChargesVat (bool?), que lee NULL como true: un pod sin la columna (rollout o rollback) deja NULL en
+            // una cotización con empresa, y el bool no se podía materializar desde ahí.
+            billing.Ignore(value => value.ChargesVat);
+            billing.Property<bool?>("StoredChargesVat").HasColumnName("billing_company_charges_vat");
+            // Banco y número nulos es «empresa sin cuenta» (R3); se deriva, no se guarda.
+            billing.Ignore(value => value.HasBankAccount);
         });
         quotation.Navigation(value => value.BillingAccount).IsRequired(false);
         // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
@@ -423,6 +385,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasPrecision(14, 2);
         item.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         item.Property(value => value.TaxPercentage).HasColumnName("tax_percentage");
+        // Spec 2026-11-17 (R1): la tasa del producto; tax_percentage es la efectiva. Null en filas anteriores, sin relleno.
+        item.Property(value => value.ProductTaxPercentage).HasColumnName("product_tax_percentage");
         item.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         item.Property(value => value.Position).HasColumnName("position");
         item.Property(value => value.CreatedAt).HasColumnName("created_at");
@@ -724,9 +688,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
             // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
             billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
-            // Spec 2026-11-16 withholdings by company: a pending account is preview-only and has no column; a save that carries
-            // one is refused by RefusePendingBillingAccounts, so the flag is never silently dropped on the way to the database.
-            billing.Ignore(value => value.IsPending);
+            // Spec 2026-11-17 §5.2: el IVA de la empresa, congelado con la cuenta. Default true para los pedidos que ya
+            // existen; el sentinel hace que EF escriba el false en vez de omitirlo (precedente: stores.show_prices).
+            billing.Property(value => value.ChargesVat)
+                .HasColumnName("billing_company_charges_vat")
+                .HasDefaultValue(true)
+                .HasSentinel(true);
+            // Banco y número nulos es «empresa sin cuenta» (R3); se deriva, no se guarda.
+            billing.Ignore(value => value.HasBankAccount);
         });
         order.Navigation(value => value.BillingAccount).IsRequired();
         // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
@@ -912,6 +881,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasPrecision(14, 2);
         item.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         item.Property(value => value.TaxPercentage).HasColumnName("tax_percentage");
+        // Spec 2026-11-17 (R1): la tasa del producto; tax_percentage es la efectiva. Null en filas anteriores, sin relleno.
+        item.Property(value => value.ProductTaxPercentage).HasColumnName("product_tax_percentage");
         item.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         item.Property(value => value.Position).HasColumnName("position");
         item.Property(value => value.CreatedAt).HasColumnName("created_at");

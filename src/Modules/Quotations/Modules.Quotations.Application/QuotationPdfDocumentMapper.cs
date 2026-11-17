@@ -236,6 +236,7 @@ public static class QuotationPdfDocumentMapper
                 CompanyDocumentLabels.For(account.CompanyDocumentType),
                 account.CompanyAddress ?? string.Empty,
                 account.CompanyPhone ?? string.Empty,
+                // Null en una empresa sin cuenta (spec 2026-11-17 §4.2): la plantilla no pinta el bloque de pago.
                 account.BankName,
                 account.AccountNumber,
                 account.Currency)

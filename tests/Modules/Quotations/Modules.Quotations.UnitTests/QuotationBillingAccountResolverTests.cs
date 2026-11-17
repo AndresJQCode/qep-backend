@@ -18,17 +18,18 @@ public sealed class QuotationBillingAccountResolverTests
                 lookup,
                 Guid.NewGuid(),
                 new QuotationBillingAccountRequest(Guid.NewGuid(), "Bancolombia", "12345678", "MXN"),
+                "COP",
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("tenancy.currency.unsupported", exception.Code);
     }
 
-    // Spec 2026-11-16 withholdings by company: only the company was chosen, so the preview gets a pending account with the
-    // company's country and city and the tenant default currency, and no bank data.
+    // Spec 2026-11-17 (R3): only the company was chosen, so the account carries the company's country, city and VAT, the
+    // currency the caller decides, and no bank data.
     [Fact]
-    public async Task ACompanyWithoutAccountResolvesAPendingAccountOfThatCompany()
+    public async Task ACompanyWithoutAccountResolvesTheCompanyWithNullBankFields()
     {
-        var company = Company(Guid.NewGuid(), "CO", Guid.NewGuid());
+        var company = Company(Guid.NewGuid(), "CO", Guid.NewGuid()) with { ChargesVat = false };
         var lookup = new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef> { [company.Id] = company });
 
         var account = await QuotationBillingAccountResolver.ResolveAsync(
@@ -36,9 +37,27 @@ public sealed class QuotationBillingAccountResolverTests
 
         Assert.NotNull(account);
         Assert.Equal(
-            (company.Id, "", "", "COP", (string?)"CO", company.CityId, true),
+            (company.Id, (string?)null, (string?)null, "COP", (string?)"CO", company.CityId, false, false),
             (account.CompanyId, account.BankName, account.AccountNumber, account.Currency, account.Country, account.CityId,
-                account.IsPending));
+                account.HasBankAccount, account.ChargesVat));
+    }
+
+    // Sin banco ni número, la moneda la decide quien llama; la del request se ignora (R3).
+    [Fact]
+    public async Task ARequestWithoutBankIgnoresItsCurrency()
+    {
+        var company = Company(Guid.NewGuid(), "CO", null);
+        var lookup = new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef> { [company.Id] = company });
+
+        var account = await QuotationBillingAccountResolver.ResolveAsync(
+            lookup,
+            Guid.NewGuid(),
+            new QuotationBillingAccountRequest(company.Id, null, null, "USD"),
+            "COP",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(account);
+        Assert.Equal(("COP", false), (account.Currency, account.HasBankAccount));
     }
 
     [Fact]
@@ -74,7 +93,9 @@ public sealed class QuotationBillingAccountResolverTests
             TestContext.Current.CancellationToken);
 
         Assert.NotNull(account);
-        Assert.Equal((accountCompany.Id, "12345678", false), (account.CompanyId, account.AccountNumber, account.IsPending));
+        Assert.Equal(
+            (accountCompany.Id, (string?)"12345678", true),
+            (account.CompanyId, account.AccountNumber, account.HasBankAccount));
     }
 
     [Fact]

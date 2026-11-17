@@ -95,7 +95,13 @@ public static class OrderChangeSummary
 
     /// <summary>La cuenta de cobro como la reconoce una persona: banco y número. <c>null</c> sin cuenta.</summary>
     public static string? BillingAccountLabel(QuotationBillingAccount? account) =>
-        account is null ? null : $"{account.BankName} {account.AccountNumber}";
+        account switch
+        {
+            null => null,
+            // Empresa sin cuenta (spec 2026-11-17, R3).
+            { HasBankAccount: false } => "sin cuenta",
+            _ => $"{account.BankName} {account.AccountNumber}",
+        };
 
     /// <summary>La empresa y la cuenta con que se cobra un pedido pendiente (spec impuestos por tipo D22).</summary>
     public static string BillingAccountChanged(string? before, string after) =>

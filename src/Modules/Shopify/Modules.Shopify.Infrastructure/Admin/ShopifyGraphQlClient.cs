@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
@@ -34,7 +33,7 @@ internal sealed partial class ShopifyGraphQlClient(
     TimeProvider time,
     ILogger<ShopifyGraphQlClient> logger) : IShopifyOrdersSource
 {
-    public const string HttpClientName = "shopify.admin";
+    public const string HttpClientName = ShopifyGraphQlTransport.HttpClientName;
 
     internal static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
@@ -71,11 +70,8 @@ internal sealed partial class ShopifyGraphQlClient(
         "query OrderShippingLines($id: ID!, $after: String) { order(id: $id) { shippingLines(first: 10, after: $after, includeRemovals: true) { "
         + PageInfo + " nodes { " + ShippingLineFields + " } } } }";
 
-    private readonly Dictionary<string, double> lastCost = new(StringComparer.Ordinal);
-
-    private double? available;
-
-    private double restoreRate;
+    // El envío, la clasificación y el balde, compartidos con el cliente de productos. El balde es de esta instancia (scoped).
+    private readonly ShopifyGraphQlTransport transport = new(httpClientFactory, apiVersion, time);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Shopify {Operation} failed: {Failure} (HTTP {StatusCode}, {Detail})")]
     private static partial void LogFailed(ILogger logger, string operation, ShopifyOrdersSourceFailure failure, int statusCode, string detail);
@@ -227,118 +223,23 @@ internal sealed partial class ShopifyGraphQlClient(
     private async Task<JsonNode?> SendAsync(
         string operation, ShopifyConnectionRef connection, string query, JsonObject variables, CancellationToken cancellationToken)
     {
-        await PaceAsync(query, cancellationToken);
-        var body = new JsonObject { ["query"] = query, ["variables"] = variables }.ToJsonString();
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post, new Uri($"https://{Host(connection.ShopDomain)}/admin/api/{apiVersion.Value}/graphql.json", UriKind.Absolute))
-        {
-            Content = new StringContent(body, Encoding.UTF8, "application/json"),
-        };
-        request.Headers.TryAddWithoutValidation("X-Shopify-Access-Token", connection.AccessToken);
-
-        string content;
-        HttpStatusCode status;
-        TimeSpan? retryAfter;
         try
         {
-            using var response = await httpClientFactory.CreateClient(HttpClientName).SendAsync(request, cancellationToken);
-            status = response.StatusCode;
-            retryAfter = RetryAfterHeader(response);
-            content = await response.Content.ReadAsStringAsync(cancellationToken);
+            return await transport.SendAsync(operation, connection, query, variables, cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (ShopifyGraphQlTransportException exception)
         {
-            throw;
-        }
-        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or IOException)
-        {
-            // Ni el mensaje ni la excepción viajan: pueden traer la URL o los headers.
-            throw Fail(operation, ShopifyOrdersSourceFailure.Unavailable, 0, exception.GetType().Name);
-        }
-
-        switch (status)
-        {
-            case HttpStatusCode.TooManyRequests:
-                throw Fail(operation, ShopifyOrdersSourceFailure.Throttled, (int)status, "http_429", retryAfter);
-            // §5.3: sólo 401 y 402 son credencial rechazada. Un 403 cae abajo, a Unavailable.
-            case HttpStatusCode.Unauthorized or HttpStatusCode.PaymentRequired:
-                throw Fail(operation, ShopifyOrdersSourceFailure.Rejected, (int)status, "http");
-            case < HttpStatusCode.OK or >= HttpStatusCode.MultipleChoices:
-                throw Fail(operation, ShopifyOrdersSourceFailure.Unavailable, (int)status, "http");
-        }
-
-        JsonNode? root;
-        try
-        {
-            root = JsonNode.Parse(content);
-        }
-        catch (JsonException)
-        {
-            throw Fail(operation, ShopifyOrdersSourceFailure.Unavailable, (int)status, "invalid_json");
-        }
-
-        var cost = ReadCost(query, root);
-        if (root?["errors"] is JsonArray { Count: > 0 } errors)
-        {
-            // ACCESS_DENIED es de alcance (p. ej. sin la aprobación de datos protegidos, V-3), no de credencial: Unavailable con su
-            // código en el log, sin reportar la conexión, que apagaría también el webhook.
-            var code = errors[0]?["extensions"]?["code"] is JsonValue value && value.TryGetValue(out string? text) ? text : "unknown";
-            throw code switch
+            // ACCESS_DENIED y 403 son de alcance (p. ej. sin la aprobación de datos protegidos, V-3), no de credencial: Unavailable
+            // con su código en el log, sin reportar la conexión, que apagaría también el webhook.
+            var failure = exception.Failure switch
             {
-                "THROTTLED" => Fail(operation, ShopifyOrdersSourceFailure.Throttled, (int)status, code, cost),
-                _ => Fail(operation, ShopifyOrdersSourceFailure.Unavailable, (int)status, code),
+                ShopifyGraphQlFailure.Throttled => ShopifyOrdersSourceFailure.Throttled,
+                ShopifyGraphQlFailure.Rejected => ShopifyOrdersSourceFailure.Rejected,
+                _ => ShopifyOrdersSourceFailure.Unavailable,
             };
-        }
-
-        return root?["data"];
-    }
-
-    // Lee el balde de la respuesta y devuelve lo que falta para la consulta pedida, si falta algo.
-    private TimeSpan? ReadCost(string query, JsonNode? root)
-    {
-        var cost = root?["extensions"]?["cost"];
-        if (Number(cost?["throttleStatus"]?["currentlyAvailable"]) is not { } current
-            || Number(cost?["throttleStatus"]?["restoreRate"]) is not { } rate || rate <= 0)
-        {
-            return null;
-        }
-
-        available = current;
-        restoreRate = rate;
-        if (Number(cost?["requestedQueryCost"]) is not { } requested)
-        {
-            return null;
-        }
-
-        lastCost[query] = requested;
-        return requested > current ? TimeSpan.FromSeconds((requested - current) / rate) : null;
-    }
-
-    private async Task PaceAsync(string query, CancellationToken cancellationToken)
-    {
-        if (available is { } current && restoreRate > 0 && lastCost.TryGetValue(query, out var needed) && needed > current)
-        {
-            await Task.Delay(TimeSpan.FromSeconds((needed - current) / restoreRate), time, cancellationToken);
-            available = needed;
+            throw Fail(exception.Operation, failure, exception.StatusCode, exception.Detail, exception.RetryAfter);
         }
     }
-
-    private static double? Number(JsonNode? node) =>
-        node is JsonValue value && value.TryGetValue(out double number) ? number : null;
-
-    private static TimeSpan? RetryAfterHeader(HttpResponseMessage response) =>
-        response.Headers.TryGetValues("Retry-After", out var values)
-        && double.TryParse(values.FirstOrDefault(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
-        && seconds >= 0
-            ? TimeSpan.FromSeconds(seconds)
-            : null;
-
-    // El dominio arma el host de la URL que lleva el token: sólo una tienda *.myshopify.com ya normalizada.
-    private static string Host(string shopDomain) =>
-        shopDomain.EndsWith(".myshopify.com", StringComparison.Ordinal)
-        && shopDomain.All(character => character is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '.')
-            ? shopDomain
-            : throw new InvalidOperationException("The connection shop domain is not a normalized *.myshopify.com domain.");
 
     private ShopifyOrdersSourceException Fail(
         string operation, ShopifyOrdersSourceFailure failure, int statusCode, string detail, TimeSpan? retryAfter = null)

@@ -1,4 +1,4 @@
-namespace ArchitectureTests;
+﻿namespace ArchitectureTests;
 
 /// <summary>
 /// Cómo convive un hosted service con otro pod que corre el mismo código (spec 2026-10-29, D-6, y la decisión P3 del plan
@@ -108,6 +108,8 @@ public static class MultiReplicaInventory
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyRepositories.cs:199-202 — lease por tienda (reconcile_lease_until)"),
         new("Modules.Shopify.Infrastructure.Workers.ShopifyOrderPushWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyOrderPushQueue.cs:36-39 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por envío"),
+        new("Modules.Shopify.Infrastructure.Workers.ShopifyProductImportWorker", WorkerClassification.Claimed,
+            "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyProductImportQueue.cs:27-32 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por importación"),
         new("Modules.Ai.Infrastructure.AiInboxWorker", WorkerClassification.Claimed,
             "Modules/Messaging/Modules.Messaging.Infrastructure/Persistence/AutomationInbox.cs:45 — FOR UPDATE SKIP LOCKED con lease, filas bot_kind = 2 (adaptador Bootstrapper/AiConversations.cs:194); los barridos cierran cada sesión bajo pg_try_advisory_xact_lock(ConversationBotLock) y FOR UPDATE de la sesión (Modules/Ai/Modules.Ai.Application/AiSessionSweeper.cs:60-66), así que el segundo pod no encuentra nada; el de delegaciones huérfanas (spec 2026-11-17 §6.5) es una sola sentencia: UPDATE con FOR UPDATE SKIP LOCKED y status = 'Live', que en la misma encola la señal ReleaseRun de cada interrumpida (Bootstrapper/AiDelegationSweep.cs:26-55); la retención del copiloto (CopilotRetentionSweeper) borra cada hilo con DELETE … RETURNING y FOR UPDATE SKIP LOCKED y audita sólo lo que borró, y el registro de preguntas con un DELETE por corte (Modules/Ai/Modules.Ai.Infrastructure/Persistence/CopilotRepository.cs, DeleteThreadAsync y DeleteQuestionsBeforeAsync)"),
         new("Modules.Ai.Infrastructure.AiModelWorker", WorkerClassification.Claimed,

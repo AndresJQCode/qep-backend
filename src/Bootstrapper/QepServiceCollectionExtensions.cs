@@ -1464,6 +1464,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetShopifyStoreQuery, ShopifyStoreDto>, GetShopifyStoreHandler>();
         services.AddScoped<IQueryHandler<GetShopifyDocumentSourcesQuery, ShopifyDocumentSourcesDto>, GetShopifyDocumentSourcesHandler>();
         services.AddScoped<ICommandHandler<UpdateShopifyStoreCommand, ShopifyStoreDto>, UpdateShopifyStoreHandler>();
+        // Spec 2026-11-17 (onboarding) §4.1: el asistente de la tienda (integrations.connection.manage, política de Integrations).
+        services.AddScoped<IQueryHandler<GetShopifySetupQuery, ShopifySetupDto>, GetShopifySetupHandler>();
+        services.AddScoped<ICommandHandler<AssignShopifySetupCompanyCommand, ShopifySetupCompanyResultDto>, AssignShopifySetupCompanyHandler>();
         services.AddScoped<IQueryHandler<ListShopifyOrdersQuery, ShopifyOrderPageDto>, ListShopifyOrdersHandler>();
         services.AddScoped<IQueryHandler<GetShopifyOrdersSummaryQuery, ShopifyOrdersSummaryDto>, GetShopifyOrdersSummaryHandler>();
         services.AddScoped<ICommandHandler<RetryShopifyOrderCommand, ShopifyOrderRowDto>, RetryShopifyOrderHandler>();
@@ -1488,6 +1491,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderNumbers, ShopifyOrderNumbers>();
         services.AddScoped<IShopifyTenantConnections, ShopifyTenantConnections>();
         services.AddScoped<IShopifyStoreReferences, ShopifyStoreReferences>();
+        // Spec 2026-11-17 §5.4: productos desde Shopify. El escritor enrola un CatalogDbContext de un scope hijo en la transacción
+        // de Shopify; la imagen va por la subida de servidor de Storage, fuera de esa transacción; la reautorización es el inicio A
+        // de la instalación de Integrations.
+        services.AddScoped<IShopifyCatalogWriter, ShopifyCatalogWriter>();
+        services.AddScoped<IShopifyProductImageStore, ShopifyProductImageStore>();
+        services.AddScoped<IShopifyReauthorization, ShopifyReauthorization>();
+        // Spec 2026-11-17 (onboarding) §4.2: el asistente crea la empresa con el caso de uso de Companies.
+        services.AddScoped<IShopifySetupCompanies, ShopifySetupCompanies>();
         // §6.2: el importador y, con él, el procesador de entregas y su worker. Sin estas tres líneas el webhook
         // responde 200, encola y nadie procesa nunca; CompositionRootTests arma el contenedor con ValidateOnBuild y resuelve el
         // worker para que eso no pase en silencio.
@@ -1527,6 +1538,9 @@ public static class QepServiceCollectionExtensions
         services.AddShopifyOrderEditDecisions();
         // Spec 2026-11-14 §5: el worker que manda a Shopify las correcciones (orderUpdate).
         services.AddShopifyOrderPushes();
+        // Spec 2026-11-17 §5.2: la importación de productos (procesador, cola y worker), sobre los adaptadores de Catalog y Storage
+        // registrados arriba.
+        services.AddShopifyProductSync();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
@@ -1536,6 +1550,9 @@ public static class QepServiceCollectionExtensions
         // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
         // consulta comparta la transacción del PUT.
         services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();
+        // Productos desde Shopify (spec 2026-11-17 §5.4): el camino de sistema de Catalog, sin miembro. Scoped como el
+        // CatalogDbContext sobre el que guarda, para que el adaptador de Shopify lo enrole en su transacción.
+        services.AddScoped<IExternalProductWriter, ExternalProductWriter>();
         // Borrado de producto (spec 2026-11-08): congelar y quitar las líneas de Quotations y las de las solicitudes
         // nuevas de la tienda, que Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que
         // todo comparta la transacción del DELETE.
@@ -1933,6 +1950,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationAdvisorLookup, QuotationAdvisorLookup>();
         services.AddScoped<IQuotationProductLookup, QuotationProductLookup>();
         services.AddScoped<IQuotationCompanyLookup, QuotationCompanyLookup>();
+        // Spec 2026-11-17 §5.3: las tasas de IVA por defecto de Colombia que pide Companies, sobre Catalog y Quotations.
+        services.AddScoped<ICompanyDefaultTaxRates, CompanyDefaultTaxRates>();
         // Mismo patron (CAT-05) entre `quotations` y `geography`: resuelve la ciudad de una parte
         // con datos propios para el Excel de pedidos.
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();

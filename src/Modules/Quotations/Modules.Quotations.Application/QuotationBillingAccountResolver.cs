@@ -1,5 +1,4 @@
 using Modules.Quotations.Domain;
-using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -15,58 +14,46 @@ namespace Modules.Quotations.Application;
 /// Compara con la misma clave con la que <c>CompanyBankAccount</c> detecta duplicados: banco sin
 /// distinguir mayúsculas, número tal cual. Usar otra dejaría entrar como "cuenta distinta" lo que
 /// la empresa considera repetido, o al revés.
+///
+/// <b>Empresa sin cuenta</b> (spec 2026-11-17, R3): un request sin banco ni número arma la cuenta con la empresa y banco
+/// y número nulos. Su moneda es <c>currencyWithoutAccount</c>, la que decide quien llama (la por defecto del tenant en un
+/// documento nuevo, la del documento al editarlo, la de la tienda o la del pedido de origen); el <c>Currency</c> del
+/// request se ignora.
 /// </summary>
 internal static class QuotationBillingAccountResolver
 {
     /// <summary>
-    /// The previews' variant (spec 2026-11-16 withholdings by company): with no account but a company, a
-    /// <see cref="QuotationBillingAccount.IsPending"/> account of that company, so withholdings follow the company before
-    /// the bank account is picked. The account, when present, already names the company and wins. Write paths never pass
-    /// a company: they use the overload without it and keep requiring the full account.
+    /// La variante de las vistas previas (spec 2026-11-16, retenciones por empresa): sin cuenta pero con empresa, arma la
+    /// empresa sin cuenta, como un request <c>(companyId, null, null, null)</c>. La cuenta, si viene, ya nombra la empresa
+    /// y gana.
     /// </summary>
-    public static async Task<QuotationBillingAccount?> ResolveAsync(
+    public static Task<QuotationBillingAccount?> ResolveAsync(
         IQuotationCompanyLookup lookup,
         Guid tenantId,
         QuotationBillingAccountRequest? request,
         Guid? billingCompanyId,
-        string defaultCurrency,
+        string currencyWithoutAccount,
         CancellationToken cancellationToken)
     {
-        if (request is not null || billingCompanyId is not { } companyId)
-        {
-            return await ResolveAsync(lookup, tenantId, request, cancellationToken);
-        }
-
-        ArgumentNullException.ThrowIfNull(lookup);
-        var company = await lookup.FindAsync(tenantId, companyId, cancellationToken)
-            // Same code and message as an account naming an unknown company: unknown and another tenant's look alike.
-            ?? throw new QuotationsDomainException(
-                QuotationBillingAccountVerifier.CompanyNotFoundCode,
-                $"Company '{companyId}' was not found in this tenant.");
-
-        // The currency the caller says the document has without an account (the tenant default, or an existing
-        // document's own): choosing only a company never changes it, because the currency belongs to the missing account.
-        return new QuotationBillingAccount
-        {
-            CompanyId = company.Id,
-            BankName = string.Empty,
-            AccountNumber = string.Empty,
-            Currency = defaultCurrency,
-            Country = company.Country,
-            CityId = company.CityId,
-            IsPending = true,
-        };
+        var effective = request
+            ?? (billingCompanyId is { } companyId
+                ? new QuotationBillingAccountRequest(companyId, null, null, null)
+                : null);
+        return ResolveAsync(lookup, tenantId, effective, currencyWithoutAccount, cancellationToken);
     }
 
     public static async Task<QuotationBillingAccount?> ResolveAsync(
         IQuotationCompanyLookup lookup,
         Guid tenantId,
         QuotationBillingAccountRequest? request,
+        string currencyWithoutAccount,
         CancellationToken cancellationToken)
     {
-        // Null es "no se eligió cuenta" y es válido: un borrador nace así, y el PATCH reemplaza
+        // Null es "no se eligió empresa" y es válido: un borrador nace así, y el PATCH reemplaza
         // el recurso entero, así que mandarlo en null la limpia.
         if (request is null) return null;
+
+        var withoutAccount = string.IsNullOrWhiteSpace(request.BankName) && string.IsNullOrWhiteSpace(request.AccountNumber);
 
         // La comprobación vive en un solo lugar (QuotationBillingAccountVerifier), compartida con la tienda pública.
         var verified = await QuotationBillingAccountVerifier.VerifyAsync(
@@ -75,17 +62,18 @@ internal static class QuotationBillingAccountResolver
             request.CompanyId,
             request.BankName,
             request.AccountNumber,
-            request.Currency,
+            withoutAccount ? currencyWithoutAccount : request.Currency,
             cancellationToken);
 
         return new QuotationBillingAccount
         {
             CompanyId = verified.CompanyId,
-            BankName = request.BankName,
-            AccountNumber = request.AccountNumber,
+            BankName = withoutAccount ? null : request.BankName,
+            AccountNumber = withoutAccount ? null : request.AccountNumber,
             Currency = verified.Currency,
             Country = verified.Country,
             CityId = verified.CityId,
+            ChargesVat = verified.ChargesVat,
         };
     }
 }

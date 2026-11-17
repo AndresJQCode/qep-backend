@@ -582,9 +582,9 @@ internal sealed class PosTestBed
     public FakeExecutionContext Context(params string[] permissions) =>
         new(PosFixtures.TenantId, SubjectId, permissions);
 
-    public CashSession OpenSessionInStore(decimal openingFloat = 100_000m, string currency = "COP")
+    public CashSession OpenSessionInStore(decimal openingFloat = 100_000m, string currency = "COP", bool chargesVat = true)
     {
-        var session = PosFixtures.OpenSession(openingFloat, currency: currency);
+        var session = PosFixtures.OpenSession(openingFloat, currency: currency, chargesVat: chargesVat);
         Sessions.Add(session);
         return session;
     }
@@ -597,9 +597,11 @@ internal sealed class PosTestBed
         Products.Add("JB-03", "Jabón", 2_990m, 5, id: PosFixtures.Jabon);
     }
 
-    public PosCompanyRef AddCompany(string name = "Origen Botánico SAS", bool active = true, Guid? tenantId = null)
+    public PosCompanyRef AddCompany(
+        string name = "Origen Botánico SAS", bool active = true, Guid? tenantId = null, bool chargesVat = true)
     {
-        var company = new PosCompanyRef(Guid.CreateVersion7(), name, "900123456-1", "NIT", "Cra 50 # 10-20", "6045551234", active);
+        var company = new PosCompanyRef(
+            Guid.CreateVersion7(), name, "900123456-1", "NIT", "Cra 50 # 10-20", "6045551234", active, chargesVat);
         Companies.Companies.Add((tenantId ?? PosFixtures.TenantId, company));
         return company;
     }

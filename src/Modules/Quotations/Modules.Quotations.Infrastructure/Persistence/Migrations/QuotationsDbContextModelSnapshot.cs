@@ -604,6 +604,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("product_name");
 
+                    b.Property<int?>("ProductTaxPercentage")
+                        .HasColumnType("integer")
+                        .HasColumnName("product_tax_percentage");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(10, 2)
                         .HasColumnType("numeric(10,2)")
@@ -1144,6 +1148,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("product_name");
+
+                    b.Property<int?>("ProductTaxPercentage")
+                        .HasColumnType("integer")
+                        .HasColumnName("product_tax_percentage");
 
                     b.Property<decimal>("Quantity")
                         .HasPrecision(10, 2)
@@ -1772,16 +1780,20 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("uuid");
 
                             b1.Property<string>("AccountNumber")
-                                .IsRequired()
                                 .HasMaxLength(32)
                                 .HasColumnType("character varying(32)")
                                 .HasColumnName("billing_account_number");
 
                             b1.Property<string>("BankName")
-                                .IsRequired()
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
+
+                            b1.Property<bool>("ChargesVat")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("boolean")
+                                .HasDefaultValue(true)
+                                .HasColumnName("billing_company_charges_vat");
 
                             b1.Property<Guid?>("CityId")
                                 .HasColumnType("uuid")
@@ -1997,13 +2009,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("uuid");
 
                             b1.Property<string>("AccountNumber")
-                                .IsRequired()
                                 .HasMaxLength(32)
                                 .HasColumnType("character varying(32)")
                                 .HasColumnName("billing_account_number");
 
                             b1.Property<string>("BankName")
-                                .IsRequired()
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
@@ -2026,6 +2036,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(3)
                                 .HasColumnType("character varying(3)")
                                 .HasColumnName("billing_account_currency");
+
+                            b1.Property<bool?>("StoredChargesVat")
+                                .HasColumnType("boolean")
+                                .HasColumnName("billing_company_charges_vat");
 
                             b1.HasKey("QuotationId");
 

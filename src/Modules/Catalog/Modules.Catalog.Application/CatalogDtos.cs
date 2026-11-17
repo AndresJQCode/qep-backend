@@ -20,6 +20,7 @@ public sealed record ProductDto(
     string Name,
     bool IsActive,
     bool VisibleInStore,
+    string? ExternalSource,
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
@@ -39,6 +40,10 @@ public sealed record ProductResponse(
     // Si la tienda pública lo publica. Aparte de IsActive: lo cambia el PUT o el lote
     // POST /products/store-visibility, no /deactivate.
     bool VisibleInStore,
+    // Quién administra el producto fuera de QEP: null si es propio, "shopify" si lo creó la
+    // importación (spec 2026-11-17 §5.5). Viaja para que el formulario bloquee los campos que el
+    // PUT rechazaría con catalog.product.managed_externally, en vez de descubrirlo al guardar.
+    string? ExternalSource,
     string? Description,
     // La imagen principal: el archivo de la primera foto de Gallery. Derivada; se cambia
     // reordenando Gallery en el PUT.

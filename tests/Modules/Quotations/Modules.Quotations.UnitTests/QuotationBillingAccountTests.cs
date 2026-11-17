@@ -3,18 +3,17 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// A pending account (spec 2026-11-16 withholdings by company, «Decided while planning») is the company without the bank
-/// account yet, built only inside a preview: its bank fields are empty on purpose, so normalising it must not ask for them.
-/// A real account keeps every rule it had.
+/// Una empresa sin cuenta (spec 2026-11-17, R3) es banco y número nulos: normalizarla no los pide y conserva lo demás. Una
+/// cuenta con banco sigue con todas sus reglas.
 /// </summary>
 public sealed class QuotationBillingAccountTests
 {
     [Fact]
-    public void NormalizedWhenPendingAcceptsEmptyBankFields()
+    public void NormalizedWithoutBankKeepsTheCompanyData()
     {
         var companyId = Guid.NewGuid();
         var cityId = Guid.NewGuid();
-        var pending = new QuotationBillingAccount
+        var withoutBank = new QuotationBillingAccount
         {
             CompanyId = companyId,
             BankName = "",
@@ -22,19 +21,19 @@ public sealed class QuotationBillingAccountTests
             Currency = "cop",
             Country = "co",
             CityId = cityId,
-            IsPending = true,
+            ChargesVat = false,
         };
 
-        var normalized = pending.Normalized();
+        var normalized = withoutBank.Normalized();
 
         Assert.Equal(
-            (companyId, "", "", "COP", "CO", (Guid?)cityId, true),
+            (companyId, (string?)null, (string?)null, "COP", (string?)"CO", (Guid?)cityId, false),
             (normalized.CompanyId, normalized.BankName, normalized.AccountNumber, normalized.Currency, normalized.Country,
-                normalized.CityId, normalized.IsPending));
+                normalized.CityId, normalized.ChargesVat));
     }
 
     [Fact]
-    public void NormalizedWhenNotPendingStillRequiresAccountNumber()
+    public void NormalizedWithABankStillRequiresAccountNumber()
     {
         var account = new QuotationBillingAccount
         {

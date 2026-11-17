@@ -162,6 +162,8 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
             currency.OwnsOne(value => value.BillingAccount, account =>
             {
                 account.Property(value => value.CompanyId).HasColumnName("billing_company_id");
+                // Banco y número nullable (spec 2026-11-17 §4.3): null los dos es la empresa sin cuenta. El CHECK de la moneda
+                // se queda: la moneda de la cuenta sigue siendo la de la entrada.
                 account.Property(value => value.BankName).HasColumnName("billing_bank_name").HasMaxLength(120);
                 account.Property(value => value.AccountNumber).HasColumnName("billing_account_number").HasMaxLength(32);
                 account.Property(value => value.Currency).HasColumnName("billing_currency").HasMaxLength(3);

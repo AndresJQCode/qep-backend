@@ -135,6 +135,60 @@ public sealed class StorageSystemUploadsApiTests
         Assert.True(factory.ObjectStorage.Exists(finalKey));
     }
 
+    // Productos desde Shopify (spec 2026-11-17 P1): la imagen que baja la importación queda Available, en files/, por el pipeline real
+    // (magic bytes y variantes con ImageSharp).
+    [Fact]
+    public async Task StoringAProductImageLeavesItAvailable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        var productId = Guid.CreateVersion7();
+
+        var stored = await StoreProductImageAsync(factory, productId, await PngAsync(64, 64));
+
+        Assert.Equal(SystemUploadOutcome.Available, stored.Outcome);
+        var row = await ReadFileAsync(database.GetConnectionString(), stored.FileId);
+        Assert.Equal(("Available", "Product"), (row.Status, row.OwnerType));
+        Assert.StartsWith("files/", row.StorageKey, StringComparison.Ordinal);
+    }
+
+    // Bytes en cero no decodifican: ImageSharp los pone en cuarentena y la importación anota image_failed.
+    [Fact]
+    public async Task StoringAnInvalidImageIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+
+        var stored = await StoreProductImageAsync(factory, Guid.CreateVersion7(), new byte[2048]);
+
+        Assert.Equal(SystemUploadOutcome.Rejected, stored.Outcome);
+        Assert.Equal("Quarantined", (await ReadFileAsync(database.GetConnectionString(), stored.FileId)).Status);
+    }
+
+    // P1 verificado: el barrido de staging sólo toca PendingUpload, comprobantes y adjuntos de Soporte. Un archivo Product Available
+    // no se barre por viejo; su purga sólo llega con una liberación de Catalog, que consulta la sonda de la galería.
+    [Fact]
+    public async Task TheStagingSweepLeavesAnAvailableProductFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        var stored = await StoreProductImageAsync(factory, Guid.CreateVersion7(), await PngAsync(32, 32));
+        var finalKey = (await ReadFileAsync(database.GetConnectionString(), stored.FileId)).StorageKey;
+        await BackdateAsync(database.GetConnectionString(), stored.FileId, TimeSpan.FromDays(3));
+
+        await RunStagingCleanupAsync(factory);
+
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), stored.FileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(finalKey));
+    }
+
+    private static async Task<SystemStoredFile> StoreProductImageAsync(StorageApiFactory factory, Guid productId, byte[] content)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IStorageSystemUploads>().StoreAsync(
+            TenantId, FileOwnerType.Product, productId, "foto.png", "image/png", content, 10 * 1024 * 1024, Ct);
+    }
+
     private static async Task SetOwnerTypeAsync(string connectionString, Guid fileId, string ownerType)
     {
         await using var connection = new NpgsqlConnection(connectionString);
