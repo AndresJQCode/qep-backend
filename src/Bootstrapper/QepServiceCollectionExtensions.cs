@@ -477,6 +477,35 @@ public static class QepServiceCollectionExtensions
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
+        // Purchases, spec 2026-11-17. A mano: un handler olvidado responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Purchases.Application.ListPurchaseOrdersQuery, Modules.Purchases.Application.PurchaseOrdersResponse>,
+            Modules.Purchases.Application.ListPurchaseOrdersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Purchases.Application.GetPurchaseOrderQuery, Modules.Purchases.Application.PurchaseOrderDetailDto>,
+            Modules.Purchases.Application.GetPurchaseOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.CreatePurchaseOrderCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
+            Modules.Purchases.Application.CreatePurchaseOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.PreviewPurchaseOrderCommand, Modules.Purchases.Application.PurchaseOrderPreviewDto>,
+            Modules.Purchases.Application.PreviewPurchaseOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.UpdatePurchaseOrderCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
+            Modules.Purchases.Application.UpdatePurchaseOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.DeletePurchaseOrderCommand, bool>,
+            Modules.Purchases.Application.DeletePurchaseOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.TransitionPurchaseOrderCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
+            Modules.Purchases.Application.TransitionPurchaseOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.ConfirmPurchaseOrderCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
+            Modules.Purchases.Application.ConfirmPurchaseOrderHandler>();
+        services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();
+        // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
+        services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
+
         // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
         // responde 500.
         services.AddScoped<
@@ -1323,6 +1352,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
