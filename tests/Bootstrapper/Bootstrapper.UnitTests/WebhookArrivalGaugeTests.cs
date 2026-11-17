@@ -83,15 +83,14 @@ public sealed class WebhookArrivalGaugeTests
         var gauge = new WebhookArrivalGauge(factory, new MutableClock(DateTimeOffset.UtcNow));
         using var recorder = new Recorder(factory);
 
-        gauge.Record(new Dictionary<string, DateTimeOffset>
-        {
-            ["whatsapp"] = new(2026, 11, 16, 15, 0, 0, TimeSpan.Zero),
-            ["instagram"] = new(2026, 11, 16, 14, 0, 0, TimeSpan.Zero),
-        });
+        var whatsapp = new DateTimeOffset(2026, 11, 16, 15, 0, 0, TimeSpan.Zero);
+        var instagram = whatsapp.AddHours(-1);
+        gauge.Record(new Dictionary<string, DateTimeOffset> { ["whatsapp"] = whatsapp, ["instagram"] = instagram });
 
+        // 2026-11-16 15:00 UTC es 1 794 841 200; el literal anterior (1 763 305 200) era la misma hora de 2025.
         var measurements = recorder.Collect();
-        Assert.Equal(1_763_305_200d, Assert.Single(measurements, m => m.Provider == "whatsapp").Value);
-        Assert.Equal(1_763_301_600d, Assert.Single(measurements, m => m.Provider == "instagram").Value);
+        Assert.Equal(1_794_841_200d, Assert.Single(measurements, m => m.Provider == "whatsapp").Value);
+        Assert.Equal(instagram.ToUnixTimeSeconds(), Assert.Single(measurements, m => m.Provider == "instagram").Value);
     }
 
     [Fact]
