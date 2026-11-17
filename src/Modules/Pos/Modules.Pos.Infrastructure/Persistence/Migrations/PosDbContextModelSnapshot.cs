@@ -67,6 +67,12 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("company_address");
 
+                    b.Property<bool>("CompanyChargesVat")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("company_charges_vat");
+
                     b.Property<string>("CompanyDocumentType")
                         .IsRequired()
                         .HasMaxLength(16)
