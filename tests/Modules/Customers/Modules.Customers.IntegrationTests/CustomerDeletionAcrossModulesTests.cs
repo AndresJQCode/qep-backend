@@ -242,7 +242,7 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
             await TextAsync(
                 "SELECT status || '|' || coalesce(message_id::text, '') FROM support.ticket_replies WHERE id = @id", ("id", replyId)));
         Assert.Equal(
-            "Good|Muy amables.|t",
+            "Good|Muy amables.|true",
             await TextAsync(
                 """
                 SELECT rating || '|' || comment || '|'

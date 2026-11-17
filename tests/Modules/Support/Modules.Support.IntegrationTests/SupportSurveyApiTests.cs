@@ -92,7 +92,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         var email = Assert.Single(_email.Sent);
         Assert.Equal("ana@example.com", email.ToAddress);
         Assert.Equal(
-            "Sent|Email|t",
+            "Sent|Email|true",
             await TextAsync(
                 Factory,
                 "SELECT status || '|' || channel || '|' || (token_hash IS NOT NULL)::text FROM support.ticket_surveys WHERE ticket_id = @id",
@@ -184,7 +184,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         Assert.Equal(1, await worker.RunOnceAsync(10, Ct));
 
         Assert.Equal(
-            "Pending|send_failed|1|t|t",
+            "Pending|send_failed|1|true|true",
             await TextAsync(
                 Factory,
                 """
@@ -224,7 +224,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         await AnswersTickAsync();
 
         Assert.Equal(
-            $"Good|WhatsApp|{tap}|t",
+            $"Good|WhatsApp|{tap}|true",
             await TextAsync(
                 Factory,
                 """
@@ -256,7 +256,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
             (send.ConversationId, send.ClientId, send.Text, send.UploadId));
         Assert.Equal("Gracias. Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.", send.Text);
         Assert.Equal(
-            $"{prompt}|t|",
+            $"{prompt}|true|",
             await TextAsync(
                 Factory,
                 """
@@ -306,7 +306,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
 
         Assert.Single(_channels.ThreadSends);
         Assert.Equal(
-            "Good|window_closed|f",
+            "Good|window_closed|false",
             await TextAsync(
                 Factory,
                 "SELECT rating || '|' || prompt_failure_code || '|' || (prompt_message_id IS NOT NULL)::text FROM support.ticket_surveys WHERE id = @id",
