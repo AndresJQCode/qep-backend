@@ -182,6 +182,7 @@
   </Folder>
   <Folder Name="/tests/Modules/Purchases/">
     <Project Path="tests/Modules/Purchases/Modules.Purchases.UnitTests/Modules.Purchases.UnitTests.csproj" />
+    <Project Path="tests/Modules/Purchases/Modules.Purchases.IntegrationTests/Modules.Purchases.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Support/">
     <Project Path="src/Modules/Support/Modules.Support.Api/Modules.Support.Api.csproj" />

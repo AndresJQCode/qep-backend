@@ -53,6 +53,7 @@ using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Loans.Api;
 using Modules.Loans.Infrastructure;
+using Modules.Purchases.Infrastructure;
 using Modules.Support.Api;
 using Modules.Support.Infrastructure;
 using Modules.ServiceContracts.Api;
@@ -516,6 +517,11 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Store (spec 2026-11-03): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant, empresa, categorías,
     // clientes, pedidos y membresías son referencias blandas.
     await services.InitializeStoreDatabaseAsync(
+        cancellationToken);
+
+    // Purchases (spec 2026-11-17): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: proveedor, variante y
+    // membresías son referencias blandas.
+    await services.InitializePurchasesDatabaseAsync(
         cancellationToken);
 
     // Buyers (spec 2026-11-07): esquema propio, sin FKs a otros esquemas. Escribe en platform.outbox_messages (proyección).
