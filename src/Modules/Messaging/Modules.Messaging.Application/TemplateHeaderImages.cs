@@ -43,10 +43,12 @@ public sealed class CreateTemplateHeaderImageSessionValidator : AbstractValidato
 /// <summary>
 /// Spec 2026-11-17: firma el PUT de la imagen del encabezado. La autoriza sólo <c>messaging.template.manage</c>, nunca
 /// <c>storage.file.*</c>: quien administra plantillas sin permisos de archivos puede crear una con imagen. El orden es el de
-/// <see cref="CreateMediaUploadSessionHandler"/>: el 422 de formato o tamaño llega antes del PUT, no después de subir el archivo.
+/// <see cref="CreateMediaUploadSessionHandler"/> más la conexión de <see cref="CreateTemplateHandler"/>: autorización, validador,
+/// conexión, formato y tamaño. El 422 de formato o tamaño llega antes del PUT, no después de subir el archivo.
 /// </summary>
 public sealed class CreateTemplateHeaderImageSessionHandler(
     IMessagingTemplateImageStore images,
+    IMessagingConnectionDirectory connections,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IValidator<CreateTemplateHeaderImageSessionCommand> validator)
@@ -58,6 +60,9 @@ public sealed class CreateTemplateHeaderImageSessionHandler(
         ArgumentNullException.ThrowIfNull(command);
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        // Como el resto de la administración de plantillas: una conexión ajena, pausada o borrada no abre nada en Storage.
+        _ = await connections.ResolveTemplateSourceAsync(command.TenantId, command.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
 
         if (!TemplateHeaderImagePolicy.IsAllowedMimeType(command.MimeType))
         {

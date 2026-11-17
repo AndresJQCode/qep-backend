@@ -21,6 +21,7 @@ public sealed class TemplateHeaderImageSessionTests
             string? fileName = "banner.png", string? mimeType = "image/png", long sizeBytes = 1024, params string[] permissions) =>
             new CreateTemplateHeaderImageSessionHandler(
                     Store,
+                    Bed.Connections,
                     Bed.TenantModules,
                     new FakeExecutionContext(
                         Bed.TenantId, Bed.SubjectId, permissions.Length == 0 ? [MessagingPermissions.TemplateManage] : permissions),
@@ -73,6 +74,30 @@ public sealed class TemplateHeaderImageSessionTests
         await rig.OpenAsync(fileName: "banner.jpg", mimeType: " IMAGE/JPEG ", sizeBytes: TemplateHeaderImagePolicy.MaxSizeBytes);
 
         Assert.Single(rig.Store.Opened);
+    }
+
+    // Como todo handler de administración de plantillas: una conexión ajena, pausada o borrada es 422 connection_unavailable, antes de
+    // tocar Storage.
+    [Fact]
+    public async Task AForeignConnectionIsUnavailableBeforeAnyUpload()
+    {
+        var rig = new Rig();
+        rig.Bed.Connections.TemplateSource = null;
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.OpenAsync());
+
+        Assert.Equal(MessagingErrorCodes.ConnectionUnavailable, error.Code);
+        Assert.Empty(rig.Store.Opened);
+    }
+
+    // El orden es autorización, validador, conexión y después formato: un cuerpo inválido no pregunta por la conexión.
+    [Fact]
+    public async Task AnInvalidBodyFailsValidationBeforeTheConnection()
+    {
+        var rig = new Rig();
+        rig.Bed.Connections.TemplateSource = null;
+
+        await Assert.ThrowsAsync<ValidationException>(() => rig.OpenAsync(fileName: ""));
     }
 
     [Fact]
