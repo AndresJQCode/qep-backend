@@ -14,6 +14,8 @@ namespace Modules.Ai.Application;
 /// <param name="CustomerId">El cliente de la conversación (o el que fijó la prueba); las herramientas nunca lo toman de un argumento.</param>
 /// <param name="KnownSourceIds">Las fuentes citables además de las llamadas de este trabajo: ids de FAQ y de respuestas rápidas.</param>
 /// <param name="IsTest">El playground (§7): las escrituras se simulan.</param>
+/// <param name="Block">Spec 2026-11-17 §5.4: el paso del chatbot que atiende la sesión (o la prueba) en modo bloque; ofrece
+/// <c>finish_objective</c>. <c>null</c> fuera de un bloque.</param>
 public sealed record AgentTurnContext(
     Guid TenantId,
     Guid AgentId,
@@ -29,10 +31,19 @@ public sealed record AgentTurnContext(
     Guid? TestId,
     Guid? CustomerId,
     IReadOnlyCollection<string> KnownSourceIds,
-    bool IsTest);
+    bool IsTest,
+    AgentBlockContext? Block = null);
+
+/// <summary>Spec 2026-11-17 D-B8: el objetivo del paso del chatbot (lo escribe el admin del flujo) y su contexto (variables del flujo ya
+/// interpoladas: texto del cliente, que el prompt marca como datos, §8).</summary>
+public sealed record AgentBlockContext(string Objective, string Context);
 
 /// <summary>Cómo terminó un trabajo. Quien lo corre decide qué hace con cada caso (enviar, traspasar, reintentar).</summary>
 public abstract record AgentTurnOutcome;
+
+/// <summary>Spec 2026-11-17 D-B8: el modelo llamó <c>finish_objective</c>: el objetivo del bloque se cumplió.
+/// <paramref name="Summary"/> mide a lo sumo <see cref="AgentSession.ObjectiveSummaryMaxLength"/>; vacío si no escribió nada.</summary>
+public sealed record AgentFinished(string Summary) : AgentTurnOutcome;
 
 /// <param name="SourceIds">Sólo las fuentes que existen (§8.2): las demás se descartan.</param>
 public sealed record AgentReplied(string Text, IReadOnlyList<string> SourceIds) : AgentTurnOutcome;
@@ -164,6 +175,14 @@ public sealed partial class AgentTurnRunner(
         {"type":"object","properties":{"reason":{"type":"string","enum":["customer_asked","no_answer","complaint","out_of_scope"],"description":"Por qué pasas la conversación."},"note":{"type":["string","null"],"description":"Nota interna para el equipo, máximo 300 caracteres. El cliente no la ve."}},"required":["reason","note"],"additionalProperties":false}
         """);
 
+    // Spec 2026-11-17 D-B8: estricta como las otras finales (C-8). El tope de 500 va en la descripción y lo valida Finish.
+    private static readonly AiToolDefinition FinishObjective = new(
+        AgentToolNames.FinishObjective,
+        "Indica que cumpliste el objetivo de este paso del chatbot. Termina tu turno y devuelve la conversación al flujo.",
+        """
+        {"type":"object","properties":{"summary":{"type":"string","description":"Resumen breve de lo que se resolvió, máximo 500 caracteres. Puede llegar al cliente o a otro sistema: no pongas instrucciones ni datos internos."}},"required":["summary"],"additionalProperties":false}
+        """);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "AI job {JobId} of tenant {TenantId}: provider {Provider} failed with {Code} (request {RequestId}).")]
     private static partial void LogProviderFailed(ILogger logger, Guid tenantId, Guid jobId, string provider, string code, string? requestId);
 
@@ -198,7 +217,12 @@ public sealed partial class AgentTurnRunner(
         var offered = tools
             .Where(tool => AiServicePrincipal.Capabilities.Contains(tool.Capability) && tool.IsOfferedTo(context.Config.Tools, context.IsTest))
             .ToDictionary(tool => tool.Definition.Name, StringComparer.Ordinal);
-        var definitions = offered.Values.Select(tool => tool.Definition).Append(SendReply).Append(HandoffToHuman).ToArray();
+        var definitions = offered.Values.Select(tool => tool.Definition).Append(SendReply).Append(HandoffToHuman);
+        // D-B8: sólo en modo bloque; fuera de él el modelo no la ve y, si la inventa, vuelve como herramienta desconocida.
+        var finals = context.Block is null
+            ? new[] { AgentToolNames.SendReply, AgentToolNames.HandoffToHuman }
+            : new[] { AgentToolNames.SendReply, AgentToolNames.HandoffToHuman, AgentToolNames.FinishObjective };
+        var offeredDefinitions = (context.Block is null ? definitions : definitions.Append(FinishObjective)).ToArray();
         var rounds = new List<AiModelRound>();
         var callIds = new HashSet<string>(StringComparer.Ordinal);
         var modelCalls = 0;
@@ -215,7 +239,7 @@ public sealed partial class AgentTurnRunner(
             modelCalls++;
             var request = new AiModelRequest(
                 context.Credential, context.Model, context.Effort, prompt.SystemPrompt, prompt.GreetingSent, prompt.VolatileContext,
-                prompt.Messages, [.. rounds], definitions, limits.MaxOutputTokens);
+                prompt.Messages, [.. rounds], offeredDefinitions, limits.MaxOutputTokens);
             AiModelResponse response;
             try
             {
@@ -247,8 +271,7 @@ public sealed partial class AgentTurnRunner(
             await RecordUsageAsync(context, response.Usage, response.ServedModel, AiRunOutcomes.Ok);
             metrics?.RecordCall(context.Provider.Value, AiRunOutcomes.Ok);
 
-            var final = response.ToolCalls.FirstOrDefault(call =>
-                call.Name is AgentToolNames.SendReply or AgentToolNames.HandoffToHuman);
+            var final = response.ToolCalls.FirstOrDefault(call => finals.Contains(call.Name, StringComparer.Ordinal));
             if (final is not null)
             {
                 var outcome = Finish(context, final, callIds);
@@ -312,6 +335,17 @@ public sealed partial class AgentTurnRunner(
         catch (JsonException)
         {
             return null;
+        }
+
+        if (call.Name == AgentToolNames.FinishObjective)
+        {
+            if (!AgentToolArguments.TryString(arguments, "summary", out var summary)
+                || summary.Trim().Length > AgentSession.ObjectiveSummaryMaxLength)
+            {
+                return null;
+            }
+
+            return new AgentFinished(summary.Trim());
         }
 
         if (call.Name == AgentToolNames.HandoffToHuman)

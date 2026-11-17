@@ -17,6 +17,9 @@ public static class AgentToolNames
     /// <summary>Herramienta final: el traspaso a una persona.</summary>
     public const string HandoffToHuman = "handoff_to_human";
 
+    /// <summary>Spec 2026-11-17 D-B8: herramienta final sólo en modo bloque: el objetivo del paso del chatbot se cumplió.</summary>
+    public const string FinishObjective = "finish_objective";
+
     /// <summary>Las herramientas que escriben fuera de Ai. El bucle corre a lo sumo una por respuesta del modelo.</summary>
     public static bool Writes(string name) => name == CreateQuotationDraft;
 }

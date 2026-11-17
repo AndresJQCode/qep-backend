@@ -250,6 +250,62 @@ public sealed class AgentTurnRunnerTests
         Assert.Contains(AgentToolErrors.CustomerUnknown, result.ContentJson, StringComparison.Ordinal);
     }
 
+    // Spec 2026-11-17 D-B8: finish_objective es una herramienta final sólo en modo bloque.
+    [Fact]
+    public async Task FinishObjectiveIsOfferedOnlyInBlockMode()
+    {
+        _model.Enqueue(Reply("Hola."));
+        _model.Enqueue(Reply("Hola."));
+
+        await RunAsync(Context());
+        await RunAsync(Context() with { Block = new AgentBlockContext("Resuelve dudas.", "") });
+
+        Assert.DoesNotContain(_model.Requests[0].Tools, tool => tool.Name == AgentToolNames.FinishObjective);
+        var finish = Assert.Single(_model.Requests[1].Tools, tool => tool.Name == AgentToolNames.FinishObjective);
+        Assert.Contains("\"summary\"", finish.InputSchemaJson, StringComparison.Ordinal);
+        Assert.Contains("\"additionalProperties\":false", finish.InputSchemaJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FinishObjectiveEndsTheTurnWithTheSummary()
+    {
+        _model.Enqueue(Final(AgentToolNames.FinishObjective, new { summary = "  El cliente quiere 3 jabones.  " }));
+
+        var outcome = await RunAsync(Context() with { Block = new AgentBlockContext("Resuelve dudas.", "") });
+
+        Assert.Equal("El cliente quiere 3 jabones.", Assert.IsType<AgentFinished>(outcome).Summary);
+        Assert.Single(_model.Requests);
+    }
+
+    // §5.1: el resumen mide a lo sumo 500. Uno más largo es una respuesta inválida: se reintenta una vez y después falla.
+    [Fact]
+    public async Task ASummaryOver500IsAnInvalidArgument()
+    {
+        _model.Enqueue(Final(AgentToolNames.FinishObjective, new { summary = new string('x', 501) }));
+        _model.Enqueue(Final(AgentToolNames.FinishObjective, new { summary = new string('x', 501) }));
+
+        var outcome = await RunAsync(Context() with { Block = new AgentBlockContext("Resuelve dudas.", "") });
+
+        Assert.Equal(AgentFailureReason.InvalidResponse, Assert.IsType<AgentTurnFailed>(outcome).Reason);
+        Assert.Equal(2, _model.Requests.Count);
+    }
+
+    // Fuera del bloque, finish_objective no es una herramienta: el bucle la trata como desconocida y sigue.
+    [Fact]
+    public async Task FinishObjectiveOutsideABlockIsAnUnknownTool()
+    {
+        _model.Enqueue(Final(AgentToolNames.FinishObjective, new { summary = "Listo." }));
+        _model.Enqueue(Reply("Hola."));
+
+        var outcome = await RunAsync(Context());
+
+        Assert.IsType<AgentReplied>(outcome);
+        Assert.Equal(AgentToolErrors.UnknownTool, Assert.Single(_ledger.ToolCalls).ErrorCode);
+    }
+
+    private static AiModelResponse Final(string name, object arguments) =>
+        new(null, [Call("final", name, arguments)], [], AiStopReason.ToolUse, new AiModelUsage(1200, 30, null, 1000), "claude-opus-5-5", "req_3");
+
     private Task<AgentTurnOutcome> RunAsync(AgentTurnContext context, AiRunLimits? limits = null, IEnumerable<IAgentTool>? tools = null) =>
         new AgentTurnRunner(
                 _resolver,
