@@ -402,7 +402,8 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
     {
         var world = new World().WithConnection(operational: true);
 
-        var result = await world.Processor.ProcessAsync(Delivery("products/update", "{}"), Ct);
+        // products/update dejó de servir de ejemplo: desde el spec 2026-11-17 el worker sí lo atiende.
+        var result = await world.Processor.ProcessAsync(Delivery("inventory_levels/update", "{}"), Ct);
 
         Assert.Equal(ShopifyIgnoredReasons.UnsupportedTopic, result.IgnoredReason);
     }

@@ -424,23 +424,25 @@ public sealed class ShopifyGraphQlQueryContractTests
             Assert.True(fields.ContainsKey("title"), "LineFields no pide title.");
             Assert.True(fields.ContainsKey("id"), "LineFields no pide id.");
             Assert.True(fields.ContainsKey("currentQuantity"), "LineFields no pide currentQuantity.");
-            fields["variant"] = null;
-            fields["product"] = null;
         }
 
+        // Spec 2026-11-17 §4: el pedido completo se lee con la variante puesta, para que VariantId salga poblado.
         var snapshot = GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(order));
 
-        // Una custom no tiene SKU, así que con SKU poblado IsCustom es false: se comprueba aparte, y el resto se mira poblado.
+        // Con SKU y variante IsCustom es false: se comprueba aparte, y el resto se mira poblado.
         Assert.All(snapshot.Lines, line => Assert.False(line.IsCustom));
         // D2: la cantidad es la vigente (currentQuantity 1), no la original (quantity 2).
         Assert.All(snapshot.Lines, line => Assert.Equal((1m, 2m), (line.Quantity, line.OriginalQuantity)));
-        var withoutSku = JsonNode.Parse(order.ToJsonString())!;
-        foreach (var line in withoutSku["lineItems"]!["nodes"]!.AsArray())
+        var custom = JsonNode.Parse(order.ToJsonString())!;
+        foreach (var line in custom["lineItems"]!["nodes"]!.AsArray())
         {
-            line!.AsObject()["sku"] = null;
+            var fields = line!.AsObject();
+            fields["variant"] = null;
+            fields["product"] = null;
+            fields["sku"] = null;
         }
 
-        Assert.All(GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(withoutSku)).Lines, line => Assert.True(line.IsCustom));
+        Assert.All(GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(custom)).Lines, line => Assert.True(line.IsCustom));
         AssertPopulated(snapshot with { Lines = [.. snapshot.Lines.Select(line => line with { IsCustom = true })] }, "snapshot");
     }
 
