@@ -56,6 +56,8 @@ Una llamada con todo lo que la pantalla dibuja (BFF). Cada paso trae `status` (`
 | `history` | se corrió una sincronización desde el asistente | `history_not_run` |
 
 - `history` está `Blocked` con `blockedBy: ["products"]` mientras haya una importación viva.
+  Además, mientras la tienda no esté configurada, está `Blocked` por `company` y `advisor`, los que falten (revisión
+  2026-11-17): sin empresa ni asesor la sincronización no arma pedidos.
 - El paso abierto por defecto es el primero que no está `Done` **(criterio:** retomar donde quedó, también días después).
 
 Secciones del cuerpo:

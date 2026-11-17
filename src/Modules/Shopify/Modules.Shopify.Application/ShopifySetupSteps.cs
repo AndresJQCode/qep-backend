@@ -120,12 +120,16 @@ public static class ShopifySetupSteps
             waitsForCompany,
             [ProductsMissing(facts)]);
 
+        // Sin la tienda configurada la sincronización no arma pedidos (sin empresa ni asesor no hay a nombre de quién): el
+        // historial espera de los pasos que falten, y además de la importación viva.
         var importLive = facts.LastImportStatus is ShopifyProductImportStatus.Pending or ShopifyProductImportStatus.Running;
-        var history = Build(
-            ShopifySetupStepKeys.History,
-            facts.HistoryRan,
-            importLive ? [ShopifySetupStepKeys.Products] : [],
-            [ShopifySetupMissing.HistoryNotRun]);
+        string[] historyWaitsFor =
+        [
+            .. facts.IsConfigured ? Array.Empty<string>() : waitsForCompany,
+            .. facts.IsConfigured || advisorDone ? Array.Empty<string>() : [ShopifySetupStepKeys.Advisor],
+            .. importLive ? [ShopifySetupStepKeys.Products] : Array.Empty<string>(),
+        ];
+        var history = Build(ShopifySetupStepKeys.History, facts.HistoryRan, historyWaitsFor, [ShopifySetupMissing.HistoryNotRun]);
 
         return [company, advisor, buyers, products, history];
     }

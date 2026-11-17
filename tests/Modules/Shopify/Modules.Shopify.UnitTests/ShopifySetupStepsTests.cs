@@ -25,6 +25,14 @@ public sealed class ShopifySetupStepsTests
 
     private static readonly ShopifySetupFacts WithCompany = Fresh with { HasCompany = true, CompanyActive = true, CompanyHasTaxId = true };
 
+    private static readonly ShopifySetupFacts Configured = WithCompany with
+    {
+        HasAdvisor = true,
+        AdvisorActive = true,
+        HasClassification = true,
+        IsConfigured = true,
+    };
+
     private static ShopifySetupStep Step(ShopifySetupFacts facts, string key) =>
         Assert.Single(ShopifySetupSteps.Evaluate(facts), step => step.Key == key);
 
@@ -46,7 +54,7 @@ public sealed class ShopifySetupStepsTests
                 ("advisor", ShopifySetupStepStatus.Blocked, "company", "advisor_missing"),
                 ("buyers", ShopifySetupStepStatus.Blocked, "company,advisor", "classification_missing,document_source_missing"),
                 ("products", ShopifySetupStepStatus.Blocked, "company", "scope_missing"),
-                ("history", ShopifySetupStepStatus.Pending, "", "history_not_run"),
+                ("history", ShopifySetupStepStatus.Blocked, "company,advisor", "history_not_run"),
             ],
             steps.Select(step => (step.Key, step.Status, string.Join(',', step.BlockedBy), string.Join(',', step.Missing))));
         Assert.Equal("company", ShopifySetupSteps.OpenStep(steps));
@@ -146,11 +154,29 @@ public sealed class ShopifySetupStepsTests
     [InlineData(ShopifyProductImportStatus.Running)]
     public void HistoryIsBlockedWhileAnImportIsLive(ShopifyProductImportStatus live)
     {
-        var history = Step(WithCompany with { ScopeGranted = true, LastImportStatus = live }, ShopifySetupStepKeys.History);
+        var history = Step(Configured with { ScopeGranted = true, LastImportStatus = live }, ShopifySetupStepKeys.History);
 
         Assert.Equal(ShopifySetupStepStatus.Blocked, history.Status);
         Assert.Equal([ShopifySetupStepKeys.Products], history.BlockedBy);
         Assert.Equal([ShopifySetupMissing.HistoryNotRun], history.Missing);
+    }
+
+    // Revisión: sin la tienda configurada la sincronización no importa nada (sin empresa ni asesor no hay pedido), así que el
+    // historial espera de los pasos que falten, además de la importación viva.
+    [Fact]
+    public void HistoryWaitsForTheCompanyAndAdvisorUntilTheStoreIsConfigured()
+    {
+        Assert.Equal(
+            [ShopifySetupStepKeys.Company, ShopifySetupStepKeys.Advisor],
+            Step(Fresh, ShopifySetupStepKeys.History).BlockedBy);
+        Assert.Equal([ShopifySetupStepKeys.Advisor], Step(WithCompany, ShopifySetupStepKeys.History).BlockedBy);
+        Assert.Equal(
+            [ShopifySetupStepKeys.Advisor, ShopifySetupStepKeys.Products],
+            Step(WithCompany with { LastImportStatus = ShopifyProductImportStatus.Running }, ShopifySetupStepKeys.History).BlockedBy);
+
+        var configured = Step(Configured, ShopifySetupStepKeys.History);
+        Assert.Equal(ShopifySetupStepStatus.Pending, configured.Status);
+        Assert.Empty(configured.BlockedBy);
     }
 
     [Fact]

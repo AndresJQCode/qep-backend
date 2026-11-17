@@ -26,13 +26,17 @@ public sealed class ShopifySetupHandlerTests
         var setup = await bed.GetAsync();
 
         Assert.Equal(ShopifySetupStepKeys.All, setup.Steps.Select(step => step.Key));
-        Assert.Equal(("Pending", new[] { ShopifySetupMissing.CompanyMissing }), (setup.Steps[0].Status, setup.Steps[0].Missing.ToArray()));
-        Assert.Equal(("Blocked", new[] { ShopifySetupStepKeys.Company }), (setup.Steps[1].Status, setup.Steps[1].BlockedBy.ToArray()));
-        Assert.Equal(
-            ("Blocked", new[] { ShopifySetupStepKeys.Company, ShopifySetupStepKeys.Advisor }),
-            (setup.Steps[2].Status, setup.Steps[2].BlockedBy.ToArray()));
-        Assert.Equal(("Blocked", new[] { ShopifySetupMissing.ScopeMissing }), (setup.Steps[3].Status, setup.Steps[3].Missing.ToArray()));
-        Assert.Equal(("Pending", new[] { ShopifySetupMissing.HistoryNotRun }), (setup.Steps[4].Status, setup.Steps[4].Missing.ToArray()));
+        // Estado y listas por separado: una tupla compara el arreglo por referencia y nunca da igual.
+        AssertStep(setup.Steps[0], "Pending", [], [ShopifySetupMissing.CompanyMissing]);
+        AssertStep(setup.Steps[1], "Blocked", [ShopifySetupStepKeys.Company], [ShopifySetupMissing.AdvisorMissing]);
+        AssertStep(
+            setup.Steps[2],
+            "Blocked",
+            [ShopifySetupStepKeys.Company, ShopifySetupStepKeys.Advisor],
+            [ShopifySetupMissing.ClassificationMissing, ShopifySetupMissing.DocumentSourceMissing]);
+        AssertStep(setup.Steps[3], "Blocked", [ShopifySetupStepKeys.Company], [ShopifySetupMissing.ScopeMissing]);
+        AssertStep(
+            setup.Steps[4], "Blocked", [ShopifySetupStepKeys.Company, ShopifySetupStepKeys.Advisor], [ShopifySetupMissing.HistoryNotRun]);
         Assert.Equal(ShopifySetupStepKeys.Company, setup.OpenStep);
         Assert.Null(setup.Company.Selected);
         Assert.NotNull(setup.Companies);
@@ -229,6 +233,13 @@ public sealed class ShopifySetupHandlerTests
         var bed = new SetupBed(permissions: [ShopifyPermissions.ConnectionRead]);
 
         await Assert.ThrowsAsync<BuildingBlocks.Application.RequestForbiddenException>(() => bed.GetAsync());
+    }
+
+    private static void AssertStep(ShopifySetupStepDto step, string status, string[] blockedBy, string[] missing)
+    {
+        Assert.Equal(status, step.Status);
+        Assert.Equal(blockedBy, step.BlockedBy);
+        Assert.Equal(missing, step.Missing);
     }
 }
 
