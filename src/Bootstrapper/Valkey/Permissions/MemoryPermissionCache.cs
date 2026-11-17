@@ -29,7 +29,12 @@ internal sealed class MemoryPermissionCache(TimeProvider time) : IDisposable
     private readonly MemoryCache _entries = new(new MemoryCacheOptions { SizeLimit = 50_000 });
     private readonly ConcurrentDictionary<Guid, long> _versions = new();
 
-    public long CurrentVersion(Guid tenantId) => _versions.GetOrAdd(tenantId, 0L);
+    // Leer no registra: con GetOrAdd cada id de tenant probado, también uno al azar, dejaba una entrada para siempre. Sólo
+    // Bump crea la entrada, y un tenant que nunca subió está en 0.
+    public long CurrentVersion(Guid tenantId) => _versions.TryGetValue(tenantId, out var version) ? version : 0L;
+
+    /// <summary>Cuántos tenants tienen versión registrada. Sólo para las pruebas.</summary>
+    internal int TrackedTenants => _versions.Count;
 
     public void Bump(Guid tenantId) => _versions.AddOrUpdate(tenantId, 1L, (_, current) => current + 1);
 

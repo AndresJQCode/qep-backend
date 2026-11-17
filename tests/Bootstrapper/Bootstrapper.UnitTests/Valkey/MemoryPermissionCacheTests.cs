@@ -76,6 +76,28 @@ public sealed class MemoryPermissionCacheTests
         Assert.False(cache.TryGet(User, Tenant, out _));
     }
 
+    // Leer la versión de un tenant que nunca subió no la registra: si no, cada id de tenant probado (también uno al azar)
+    // dejaría una entrada para siempre en el contador del proceso, que no tiene tope ni vencimiento.
+    [Fact]
+    public void ReadingAnUnknownTenantLeavesNoVersionEntry()
+    {
+        using var cache = new MemoryPermissionCache(new ManualTimeProvider());
+
+        for (var i = 0; i < 100; i++)
+        {
+            var tenant = Guid.NewGuid();
+            Assert.Equal(0L, cache.CurrentVersion(tenant));
+            Assert.False(cache.TryGet(User, tenant, out _));
+            cache.Set(User, tenant, cache.CurrentVersion(tenant), Read);
+            Assert.True(cache.TryGet(User, tenant, out _));
+        }
+
+        Assert.Equal(0, cache.TrackedTenants);
+
+        cache.Bump(Tenant);
+        Assert.Equal((1L, 1), (cache.CurrentVersion(Tenant), cache.TrackedTenants));
+    }
+
     [Fact]
     public async Task TheAccessVersionBumpsTheSharedCounter()
     {

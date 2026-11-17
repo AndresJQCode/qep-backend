@@ -14,13 +14,30 @@ namespace Bootstrapper.Valkey.Sessions;
 /// Con más de una réplica, una revocación en un pod no saca la entrada del otro hasta que venza (≤ 15 min): el área de Valkey es
 /// prerrequisito de <c>replicas &gt; 1</c> (<c>MultiReplicaInventory.SharedStateSwitches</c>).
 /// </remarks>
-internal sealed class MemorySessionCache(TimeProvider time) : ISessionCache, IDisposable
+internal sealed class MemorySessionCache : ISessionCache, IDisposable
 {
-    private readonly MemoryCache _entries = new(new MemoryCacheOptions { SizeLimit = 50_000 });
+    private readonly TimeProvider _time;
+    private readonly MemoryCache _entries;
+
+    public MemorySessionCache(TimeProvider time)
+        : this(time, 50_000)
+    {
+    }
+
+    /// <param name="time">El reloj.</param>
+    /// <param name="sizeLimit">Tope de entradas (una unidad cada una). Las pruebas lo bajan para forzar la compactación.</param>
+    internal MemorySessionCache(TimeProvider time, long sizeLimit)
+    {
+        _time = time;
+        _entries = new MemoryCache(new MemoryCacheOptions { SizeLimit = sizeLimit });
+    }
+
+    /// <summary>Cuántas entradas hay, marcas incluidas. Sólo para las pruebas.</summary>
+    internal int Count => _entries.Count;
 
     public Task<CachedSession?> GetAsync(string tokenHash, CancellationToken cancellationToken)
     {
-        var now = time.GetUtcNow();
+        var now = _time.GetUtcNow();
         if (IsMarkedRevoked(tokenHash, now))
         {
             return Task.FromResult<CachedSession?>(null);
@@ -36,7 +53,7 @@ internal sealed class MemorySessionCache(TimeProvider time) : ISessionCache, IDi
 
     public Task SetAsync(string tokenHash, CachedSession session, CancellationToken cancellationToken)
     {
-        var now = time.GetUtcNow();
+        var now = _time.GetUtcNow();
         // Sin tiempo restante no se escribe; revocada hace poco, la marca gana sobre la escritura tardía.
         if (SessionCacheTtl.EntryTtl(session.ValidUntil, now) is not { } ttl || IsMarkedRevoked(tokenHash, now))
         {
@@ -52,13 +69,20 @@ internal sealed class MemorySessionCache(TimeProvider time) : ISessionCache, IDi
 
     public Task RemoveAsync(IReadOnlyCollection<RevokedSession> sessions, CancellationToken cancellationToken)
     {
-        var now = time.GetUtcNow();
+        var now = _time.GetUtcNow();
         foreach (var session in sessions)
         {
+            // NeverRemove: la marca comparte el tope de tamaño con las entradas, y la compactación saca primero lo menos usado,
+            // que es justo la marca. Sin esto podría irse antes que la entrada vieja que vigila. Igual vence por su TTL.
             _entries.Set(
                 MarkerKey(session.TokenHash),
                 new Stamp(now + SessionCacheTtl.RevocationMarker),
-                new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = SessionCacheTtl.RevocationMarker });
+                new MemoryCacheEntryOptions
+                {
+                    Size = 1,
+                    AbsoluteExpirationRelativeToNow = SessionCacheTtl.RevocationMarker,
+                    Priority = CacheItemPriority.NeverRemove,
+                });
             _entries.Remove(EntryKey(session.TokenHash));
         }
 

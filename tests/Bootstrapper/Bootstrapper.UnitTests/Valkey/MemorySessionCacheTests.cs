@@ -78,6 +78,37 @@ public sealed class MemorySessionCacheTests
         Assert.Null(await cache.GetAsync(Hash, CancellationToken.None));
     }
 
+    // La marca comparte el MemoryCache con las entradas: si la compactación por tamaño la sacara antes que la entrada vieja que
+    // vigila, un request que leyó Postgres antes del commit volvería a cachear la sesión revocada.
+    [Fact]
+    public async Task TheRevocationMarkSurvivesCompactionBySize()
+    {
+        // Con el 5 % de compactación por defecto, un tope menor que 20 nunca compacta (el 5 % se trunca a cero).
+        const int limit = 100;
+        var time = new ManualTimeProvider();
+        using var cache = new MemorySessionCache(time, limit);
+        var session = SessionValidFor(time, TimeSpan.FromHours(1));
+        await cache.RemoveAsync([new RevokedSession(session.SessionId, Hash)], CancellationToken.None);
+
+        // Más entradas que el tope: MemoryCache rechaza las que no caben y compacta en segundo plano.
+        for (var i = 0; i < limit * 3; i++)
+        {
+            await cache.SetAsync($"filler-{i}", SessionValidFor(time, TimeSpan.FromHours(1)), CancellationToken.None);
+        }
+
+        // La compactación corre en el pool: se espera a que haya sacado algo antes de mirar la marca.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (cache.Count >= limit && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        Assert.True(cache.Count < limit, "la compactación no corrió");
+
+        await cache.SetAsync(Hash, session, CancellationToken.None);
+        Assert.Null(await cache.GetAsync(Hash, CancellationToken.None));
+    }
+
     [Fact]
     public async Task TheRevocationMarkExpiresAndTheHashCanBeCachedAgain()
     {
