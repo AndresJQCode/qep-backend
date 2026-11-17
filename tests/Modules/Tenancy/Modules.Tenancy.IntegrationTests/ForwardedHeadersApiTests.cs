@@ -128,12 +128,11 @@ public sealed class ForwardedHeadersApiTests
         string realIp,
         Func<int, string> forwardedFor)
     {
-        for (var i = 0; i < PublicPermitLimit; i++)
-        {
-            Assert.Equal(
-                StatusCodes.Status200OK,
-                await GetOpenApiAsync(factory, peer, realIp, forwardedFor(i)));
-        }
+        // At once, not one by one: the window is one minute from the partition's first request, and 120 sequential OpenAPI
+        // documents took over a minute on a loaded machine, so the window rolled over and the next request got 200, not 429.
+        var statuses = await Task.WhenAll(
+            Enumerable.Range(0, PublicPermitLimit).Select(i => GetOpenApiAsync(factory, peer, realIp, forwardedFor(i))));
+        Assert.All(statuses, status => Assert.Equal(StatusCodes.Status200OK, status));
     }
 
     private static async Task<int> GetOpenApiAsync(
