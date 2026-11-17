@@ -1037,6 +1037,11 @@ máscara de permisos del módulo apagado ya los descarta antes, y las rutas púb
   rechaza, incompleto. El recibo trae el id y el número del pedido (el consecutivo de pedidos del tenant). El detalle
   (`GET /orders/{orderId}`) ya no trae `storeRequest`; `GET /orders?source=Store` los filtra. El consentimiento del visitante queda en
   `store.order_consents`, una fila por pedido.
+- **Moneda y empresa (spec 2026-11-17 §4.3):** cada moneda de la tienda elige la empresa emisora; la cuenta bancaria es opcional.
+  En `PUT /settings`, banco y número de cuenta van los dos o ninguno (`422 validation.failed` con un solo). Sin cuenta, el pedido sale
+  en la moneda de la tienda con `billingAccount.bankName` y `accountNumber` en `null`, y la tienda no muestra instrucciones de pago.
+  `GET /settings/billing-accounts` ofrece, además de cada cuenta, una fila por empresa activa sin cuenta (`bankName`, `accountNumber`
+  y `currency` en `null`). Si la empresa no cobra IVA, el checkout cobra el precio de lista (líneas al 0 %).
 
 ### Secretos
 
@@ -1704,9 +1709,12 @@ mismas reglas que la cotización. `quotationId` es opcional y `source` dice de d
 - `Manual`: `POST /orders` crea un pedido sin cotización desde la pantalla, con el mismo cuerpo que
   una cotización más los comprobantes (un `paymentStatus` en el cuerpo se ignora: el pago lo calcula
   el sistema); `POST /orders/preview` lo calcula sin
-  guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant (crear
-  sí la exige). Exige cliente completo con CUC, como convertir. Permiso
-  `quotations.order.manage`.
+  guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant. Crear
+  exige la **empresa** emisora, no la cuenta (spec 2026-11-17 §4.2): `billingAccount` con `companyId` y
+  `bankName`/`accountNumber` en `null` es una empresa sin cuenta, y el pedido sale en la moneda por
+  defecto del tenant (el `currency` de ese cuerpo se ignora; elegir una cuenta es la forma de cambiarla).
+  Banco y número van los dos o ninguno. Sin empresa sigue siendo `order.billing.account_required`.
+  Exige cliente completo con CUC, como convertir. Permiso `quotations.order.manage`.
 - Integraciones (`Shopify`): sin sesión HTTP, por `IExternalOrderWriter`; acepta un cliente
   incompleto y lleva `externalReference` (`#1001`).
 
@@ -1715,6 +1723,31 @@ Todos nacen `Open` y publican `quotations.order.created.v1` con `source` y `quot
 del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?source=`), el
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
+
+#### Empresa sin cuenta e IVA por empresa
+
+Spec `docs/superpowers/specs/2026-11-17-reglas-de-empresa-design.md`. Una empresa puede no tener cuentas
+bancarias (`bankAccounts: []`) y dice si cobra IVA (`chargesVat`; ausente en el `POST` es `true`, ausente
+en el `PUT` conserva el guardado).
+
+- **Cuenta de cobro.** Cotizaciones y pedidos exigen la empresa para enviar, convertir y crear; la cuenta
+  es opcional. Sin ella, `billingAccount.bankName` y `billingAccount.accountNumber` viajan en `null` en el
+  detalle, la lista y las vistas previas, el PDF omite el bloque de pago y las celdas de forma de pago del
+  Excel del ERP quedan vacías. «Pago: por definir» lo pinta el frontend.
+- **IVA.** El documento congela `billingAccount.chargesVat` de su empresa al elegirla
+  (`billing_company_charges_vat`). Con `false`, cada línea y el envío van al 0 %: el cliente paga el precio
+  de lista y el envío nunca pide la tasa del tenant (`freight_tax_rate_missing`). La línea guarda la tasa
+  del producto (`product_tax_percentage`) y la efectiva (`tax_percentage`), así que cambiar la empresa de un
+  documento editable rehace las dos sin volver a Catalog; volver a una empresa con IVA con el envío cobrado
+  sí pide la tasa del envío. Cambiar la empresa después no toca los documentos ya emitidos. En POS, la caja
+  congela `company_charges_vat` al abrirse.
+- **Tasas por defecto.** Crear una empresa colombiana que cobra IVA, o pasar una a «cobra IVA» en Colombia,
+  siembra «IVA 19 %», «IVA 5 %» y «Exento» si el tenant no tiene ninguna tasa de IVA activa de `CO`, y fija
+  la de 19 % como tasa del envío si estaba vacía (`CompanyDefaultTaxRates`, en Bootstrapper, bajo un
+  advisory lock por tenant). Salta la que ya exista con el mismo nombre y porcentaje, activa o no. Corre
+  después de guardar la empresa: si falla, queda un `Warning` y la empresa se guarda igual. Una prueba de
+  integración que necesite el tenant sin tasa del envío la borra después de crear la empresa
+  (`QuotationsApiHarness.ClearFreightTaxRateAsync`).
 
 #### Cuenta de comprador del pedido
 
@@ -2638,6 +2671,13 @@ ya pasa (`maxSurge: 1`); con dos, son dos pods viejos contra el esquema nuevo. P
    réplicas, como se hizo con las variantes ([Catálogo: opciones, variantes y galería](#catálogo-opciones-variantes-y-galería),
    «Despliegue»). El PDB no lo impide: sólo frena desalojos, no un `scale` ni un `Recreate`.
 3. **El handoff de cada spec dice si su migración es aditiva.** Si no lo dice, asume que no.
+
+**Precedente no aditivo: reglas de empresa (spec 2026-11-17, R5).** Las cinco migraciones (`AddCompanyChargesVat`,
+`OptionalBillingAccountAndChargesVat`, `OptionalStoreBillingAccount`, `OptionalShopifyStoreBillingAccount`,
+`AddCashSessionCompanyChargesVat`) se despliegan **con corte**. Las columnas nuevas son aditivas, pero relajar a nullable el
+banco y el número de la cuenta de un pedido no lo es: un pod viejo materializa el pedido sin cuenta y el Excel del ERP
+revienta, recalcula con IVA un documento sin IVA y rechaza `bankAccounts: []`. El `Down` de la de Quotations falla si ya hay
+pedidos sin cuenta: no se corre después de emitir uno.
 
 **El candado de arranque.** Las 26 inicializaciones (migraciones de cada módulo y siembras) y `RunQepSeedAsync` corren
 dentro de `RunUnderStartupLockAsync` (`src/Api/Program.cs`, `src/Bootstrapper/Startup/StartupLock.cs`): una
@@ -4649,6 +4689,12 @@ prendido, al importador:
   `GET /tenants/{tenantId}/shopify/stores/{connectionId}/document-sources` (`integrations.connection.read`):
   `{ "sources": ["shipping_address.company", …] }`, con los nombres de atributo de los 500 pedidos más recientes de esa
   tienda en el espejo.
+- **Empresa sin cuenta o sin IVA (spec 2026-11-17 §4.4, R7).** La cuenta de cobro de la tienda es opcional: `billingBankName` y
+  `billingAccountNumber` van los dos o ninguno, y la empresa y la moneda siguen obligatorias. Con cuenta, las esperas son las de
+  siempre (`billing_account_missing` si la cuenta ya no existe, `currency_mismatch` si el pedido viene en otra moneda). Sin cuenta,
+  sólo `billing_account_missing` si la empresa ya no es del tenant, y no hay `currency_mismatch`: el pedido entra en la moneda que
+  trae Shopify. Si la empresa no cobra IVA, las líneas y el envío van al 0 % sin importar `taxesIncluded` (el precio es el de
+  Shopify, sin sumarle IVA) y el pedido nunca espera por `freight_tax_rate_missing`.
 - El comprador se busca por documento, por el cliente de Shopify ya visto en el espejo, por teléfono y por correo; si no
   aparece, nace completo (con CUC) cuando hay documento, clasificación, dirección y ciudad, e incompleto si no. El
   cliente nunca detiene la importación salvo que exista y esté inactivo.
