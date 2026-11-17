@@ -342,10 +342,14 @@ public sealed class DeleteCopilotThreadHandler(
     {
         await CopilotAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.CopilotUse, cancellationToken);
         var thread = await CopilotThreadSupport.RequireOwnAsync(repository, executionContext, command.TenantId, command.ThreadId, cancellationToken);
-        audit.RecordCopilot(
-            command.TenantId, executionContext.SubjectId, AiAuditActions.CopilotThreadDeleted, AiAuditActions.ResourceCopilotThread, thread.Id,
-            clock.UtcNow);
-        await repository.DeleteThreadAsync(command.TenantId, thread.Id, cancellationToken);
+        // Hallazgo 8 de la revisión: la entrada se anota sólo si el borrado ocurre, en su transacción. El dueño espera un candado ajeno (el
+        // commit corto del worker) en vez de saltarlo; si el barrido se le adelantó, el hilo ya no está y el borrado es idempotente.
+        await repository.DeleteThreadAsync(
+            command.TenantId, thread.Id,
+            () => audit.RecordCopilot(
+                command.TenantId, executionContext.SubjectId, AiAuditActions.CopilotThreadDeleted, AiAuditActions.ResourceCopilotThread, thread.Id,
+                clock.UtcNow),
+            skipLocked: false, cancellationToken);
         return true;
     }
 }

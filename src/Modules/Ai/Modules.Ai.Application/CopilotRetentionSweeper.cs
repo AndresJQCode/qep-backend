@@ -38,10 +38,14 @@ public sealed class CopilotRetentionSweeper(ICopilotRepository repository, IAiAu
             var expired = await repository.ListExpiredThreadsAsync(now, BatchSize, cancellationToken);
             foreach (var thread in expired)
             {
-                audit.RecordCopilot(
-                    thread.TenantId, null, AiAuditActions.CopilotThreadDeleted, AiAuditActions.ResourceCopilotThread, thread.ThreadId, now);
-                await repository.DeleteThreadAsync(thread.TenantId, thread.ThreadId, cancellationToken);
-                threads++;
+                // Hallazgo 8 de la revisión: cada pod barre. La auditoría va sólo con un borrado que ocurrió (DELETE … RETURNING), y un hilo
+                // que otro pod tiene tomado se salta (SKIP LOCKED) en vez de esperarlo y auditar un borrado que no fue suyo.
+                var deleted = await repository.DeleteThreadAsync(
+                    thread.TenantId, thread.ThreadId,
+                    () => audit.RecordCopilot(
+                        thread.TenantId, null, AiAuditActions.CopilotThreadDeleted, AiAuditActions.ResourceCopilotThread, thread.ThreadId, now),
+                    skipLocked: true, cancellationToken);
+                threads += deleted ? 1 : 0;
             }
 
             if (expired.Count < BatchSize)

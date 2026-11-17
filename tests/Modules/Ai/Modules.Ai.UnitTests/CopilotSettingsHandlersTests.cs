@@ -507,14 +507,24 @@ internal sealed class FakeCopilotRepository : ICopilotRepository
         }
     }
 
-    public Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken)
+    /// <summary>Hallazgo 8: con qué <c>skipLocked</c> se pidió cada borrado.</summary>
+    public List<bool> SkipLockedAtDelete { get; } = [];
+
+    public Task<bool> DeleteThreadAsync(Guid tenantId, Guid threadId, Action recordAudit, bool skipLocked, CancellationToken cancellationToken)
     {
+        SkipLockedAtDelete.Add(skipLocked);
+        Expired.RemoveAll(candidate => candidate.TenantId == tenantId && candidate.ThreadId == threadId);
+        // Como el real: sin fila borrada (otro pod la borró o la tiene) no hay auditoría.
+        if (Threads.RemoveAll(thread => thread.TenantId == tenantId && thread.Id == threadId) == 0)
+        {
+            return Task.FromResult(false);
+        }
+
         Deleted.Add(threadId);
+        recordAudit();
         // El real guarda lo pendiente (la auditoría) en la misma transacción del borrado.
         AuditPendingAtDelete.Add(Audit?.TakePending() ?? 0);
-        Threads.RemoveAll(thread => thread.TenantId == tenantId && thread.Id == threadId);
-        Expired.RemoveAll(candidate => candidate.TenantId == tenantId && candidate.ThreadId == threadId);
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
     public FakeCopilotAudit? Audit { get; set; }

@@ -47,6 +47,21 @@ public sealed class CopilotRetentionSweeperTests
         Assert.Empty(bed.Audit.Entries);
     }
 
+    // Revisión de la rama, hallazgo 8: cada pod barre. Un hilo que otro pod ya borró (o que tiene tomado) no se borra acá, y entonces no se
+    // audita: la entrada va sólo con un borrado que ocurrió, y en su misma transacción.
+    [Fact]
+    public async Task AThreadAnotherPodAlreadyDeletedIsNeitherCountedNorAudited()
+    {
+        var bed = new CopilotBed();
+        bed.Repository.Expired.Add(new CopilotExpiredThread(Tenant, Guid.CreateVersion7()));
+
+        var result = await Sweeper(bed).SweepAsync(Ct);
+
+        Assert.Equal(0, result.Threads);
+        Assert.Empty(bed.Audit.Entries);
+        Assert.Equal([true], bed.Repository.SkipLockedAtDelete);
+    }
+
     // Revisión de la rama, hallazgo 4: el registro de preguntas del tope por miembro se guarda dos días, el doble del tope más largo.
     [Fact]
     public async Task TheQuestionLogKeepsTwoDays()

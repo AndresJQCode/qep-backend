@@ -110,12 +110,32 @@ internal sealed class CopilotRepository(AiDbContext dbContext) : ICopilotReposit
     }
 
     /// <summary>SQL directo en una transacción propia: los <c>tool_calls</c> no tienen FK al hilo (cuelgan del trabajo), así que el cascade de
-    /// los mensajes no los alcanza. Lo pendiente del contexto (la auditoría del borrado) se guarda adentro, antes del commit.</summary>
-    public async Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken)
+    /// los mensajes no los alcanza. Revisión de la rama, hallazgo 8: primero el hilo, con <c>RETURNING</c>; sólo si se borró se anota la
+    /// auditoría y se guarda lo pendiente del contexto, antes del commit. Si no se borró nada, la transacción se deshace al disponerse.</summary>
+    public async Task<bool> DeleteThreadAsync(
+        Guid tenantId, Guid threadId, Action recordAudit, bool skipLocked, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(recordAudit);
         await using var transaction = dbContext.Database.CurrentTransaction is null
             ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
             : null;
+        // Con skipLocked (el barrido de cada pod), un hilo que otra transacción tiene tomado se salta: lo borra quien lo tiene.
+        var deleted = skipLocked
+            ? await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                DELETE FROM ai.copilot_threads
+                 WHERE id IN (SELECT id FROM ai.copilot_threads WHERE tenant_id = {tenantId} AND id = {threadId} FOR UPDATE SKIP LOCKED)
+                RETURNING id AS "Value"
+                """).ToListAsync(cancellationToken)
+            : await dbContext.Database.SqlQuery<Guid>(
+                $"""DELETE FROM ai.copilot_threads WHERE tenant_id = {tenantId} AND id = {threadId} RETURNING id AS "Value" """)
+                .ToListAsync(cancellationToken);
+        if (deleted.Count == 0)
+        {
+            return false;
+        }
+
+        recordAudit();
         await dbContext.SaveChangesAsync(cancellationToken);
         await dbContext.Database.ExecuteSqlAsync(
             $"""
@@ -124,12 +144,12 @@ internal sealed class CopilotRepository(AiDbContext dbContext) : ICopilotReposit
                AND job_id IN (SELECT id FROM ai.model_jobs WHERE tenant_id = {tenantId} AND copilot_thread_id = {threadId})
             """,
             cancellationToken);
-        await dbContext.Database.ExecuteSqlAsync(
-            $"DELETE FROM ai.copilot_threads WHERE tenant_id = {tenantId} AND id = {threadId}", cancellationToken);
         if (transaction is not null)
         {
             await transaction.CommitAsync(cancellationToken);
         }
+
+        return true;
     }
 
     public async Task<IReadOnlyList<CopilotMemberTokenUsage>> SumTokensByMemberAsync(

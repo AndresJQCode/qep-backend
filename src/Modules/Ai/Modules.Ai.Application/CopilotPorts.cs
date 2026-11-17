@@ -45,8 +45,11 @@ public interface ICopilotRepository
 
     /// <summary>D-C8: borra en una transacción los <c>tool_calls</c> de los trabajos del hilo y el hilo con sus mensajes. Los trabajos y el
     /// consumo se quedan: la cola los cierra y el consumo es lo pagado. D-C13: en esa misma transacción guarda lo que haya pendiente en la
-    /// unidad de trabajo (la entrada <c>ai.copilot.thread_deleted</c>): sin borrado no hay auditoría, y sin auditoría no hay borrado.</summary>
-    Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken);
+    /// unidad de trabajo (la entrada <c>ai.copilot.thread_deleted</c>): sin borrado no hay auditoría, y sin auditoría no hay borrado.
+    /// <para>Revisión de la rama, hallazgo 8: <paramref name="recordAudit"/> corre sólo si el <c>DELETE … RETURNING</c> borró la fila, dentro
+    /// de esa transacción; si no borró nada (otro pod o el dueño se adelantaron) la transacción se deshace y devuelve <c>false</c>. Con
+    /// <paramref name="skipLocked"/> (el barrido) un hilo que otra transacción tiene tomado se salta en vez de esperarlo.</para></summary>
+    Task<bool> DeleteThreadAsync(Guid tenantId, Guid threadId, Action recordAudit, bool skipLocked, CancellationToken cancellationToken);
 
     /// <summary>D-C12, plan C3.4: los tokens del copiloto del tenant desde <paramref name="since"/>, por miembro que preguntó
     /// (<c>member_user_id</c>). Incluye el consumo de hilos ya borrados: es lo pagado.</summary>

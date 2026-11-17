@@ -170,6 +170,51 @@ public sealed class CopilotPersistenceTests
                 ("id", expired.Id.ToString())));
     }
 
+    /// <summary>Revisión de la rama, hallazgo 8: cada pod barre. Un hilo que otra transacción tiene tomado se salta sin auditar, y uno que
+    /// otro pod ya borró tampoco se audita: hay una sola entrada por borrado real.</summary>
+    [Fact]
+    public async Task TheRetentionSweepAuditsOnlyWhatItDeleted()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = Factory(connectionString);
+        await SeedTenantAsync(factory);
+        var expired = CopilotThread.Create(
+            Guid.CreateVersion7(), Tenant, Member, "¿Cuánto vendimos?", Guid.CreateVersion7(), DateTimeOffset.UtcNow.AddDays(-91));
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ICopilotRepository>().AddThread(expired);
+            await scope.ServiceProvider.GetRequiredService<IAiUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        // Otra transacción tiene el hilo: el barrido lo salta.
+        await using (var holder = new Npgsql.NpgsqlConnection(connectionString))
+        {
+            await holder.OpenAsync(Ct);
+            await using var transaction = await holder.BeginTransactionAsync(Ct);
+            await using (var command = new Npgsql.NpgsqlCommand("SELECT 1 FROM ai.copilot_threads WHERE id = @id FOR UPDATE", holder, transaction))
+            {
+                command.Parameters.AddWithValue("id", expired.Id);
+                await command.ExecuteScalarAsync(Ct);
+            }
+
+            await using var scope = factory.Services.CreateAsyncScope();
+            Assert.Equal(0, (await scope.ServiceProvider.GetRequiredService<CopilotRetentionSweeper>().SweepAsync(Ct)).Threads);
+            await transaction.RollbackAsync(Ct);
+        }
+
+        for (var pod = 0; pod < 2; pod++)
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            Assert.Equal(1 - pod, (await scope.ServiceProvider.GetRequiredService<CopilotRetentionSweeper>().SweepAsync(Ct)).Threads);
+        }
+
+        // El segundo pod no encontró nada que borrar: sigue habiendo una sola entrada.
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM audit.entries WHERE action = 'ai.copilot.thread_deleted' AND resource_id = @id",
+            ("id", expired.Id.ToString())));
+    }
+
     private static Task<int> InsertJobWithIdAsync(string connectionString, Guid id, Guid? sessionId, Guid? testId, Guid? threadId) =>
         ExecuteAsync(
             connectionString,
