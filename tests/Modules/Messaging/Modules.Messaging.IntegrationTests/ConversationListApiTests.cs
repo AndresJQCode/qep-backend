@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -168,6 +170,86 @@ public sealed class ConversationListApiTests
 
         Assert.Equal((complete, true), (legacyBody.GetProperty("customer").GetProperty("id").GetGuid(), legacyBody.GetProperty("customer").GetProperty("isComplete").GetBoolean()));
         Assert.False(freshBody.GetProperty("customer").GetProperty("isComplete").GetBoolean());
+    }
+
+    // Consultas por request, fase 2: los seis contadores de la bandeja son un solo viaje a la base.
+    [Fact]
+    public async Task TheCountsOfTheInboxAreOneStatement()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var mine = await IngestAsync(f, "CO.A", "w1", 1760000100);
+        await IngestAsync(f, "CO.B", "w2", 1760000200);
+        var resolved = await IngestAsync(f, "CO.C", "w3", 1760000300);
+        await AssignAsync(f, mine, f.Owner);
+        await AssignAsync(f, resolved, null, "Resolved");
+        using var client = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+
+        var statements = await StatementsOfAsync(client, ConversationsUrl(f.Tenant.TenantId));
+
+        // «sum(» también: unread es una suma y, separada, sería un segundo viaje que «count(» solo no vería.
+        var counts = statements
+            .Where(sql => (sql.Contains("count(", StringComparison.OrdinalIgnoreCase) || sql.Contains("sum(", StringComparison.OrdinalIgnoreCase))
+                && sql.Contains("messaging.conversations", StringComparison.Ordinal))
+            .ToList();
+        Assert.Single(counts);
+    }
+
+    // Sin conversaciones el agregado no devuelve fila: los contadores son ceros, no null.
+    [Fact]
+    public async Task AnEmptyTenantGetsZeroCounts()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var client = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+
+        var counts = (await ListAsync(client, f.Tenant.TenantId, string.Empty)).GetProperty("counts");
+
+        Assert.Equal(
+            (0, 0, 0, 0, 0, 0),
+            (counts.GetProperty("open").GetInt32(), counts.GetProperty("unread").GetInt32(), counts.GetProperty("mine").GetInt32(),
+                counts.GetProperty("unassigned").GetInt32(), counts.GetProperty("automated").GetInt32(), counts.GetProperty("automationActive").GetInt32()));
+    }
+
+    /// <summary>
+    /// Las sentencias de un solo request, copia del contador de <c>QuotationPreviewStatementCountApiTests</c>. El
+    /// <c>ActivityListener</c> es global al proceso y en el host hay workers leyendo la base: lo único que separa el
+    /// request de todo eso es su traza, que entra por el header <c>traceparent</c>.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> StatementsOfAsync(HttpClient client, string url)
+    {
+        var traceId = ActivityTraceId.CreateRandom();
+        var statements = new ConcurrentQueue<string>();
+
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name is "Npgsql" or "Microsoft.AspNetCore",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+                options.TraceId == traceId
+                    ? ActivitySamplingResult.AllDataAndRecorded
+                    : ActivitySamplingResult.None,
+            ActivityStopped = activity =>
+            {
+                if (activity.Source.Name == "Npgsql" && activity.TraceId == traceId)
+                {
+                    statements.Enqueue(activity.GetTagItem("db.query.text")?.ToString() ?? activity.DisplayName);
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("traceparent", $"00-{traceId}-{ActivitySpanId.CreateRandom()}-01");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        // Sin esto, una traza que dejara de propagarse daría 0 sentencias y la prueba no mediría nada.
+        Assert.NotEmpty(statements);
+
+        return statements.ToArray();
     }
 
     private static (Guid, string?, bool) AssignedTo(JsonElement conversation)

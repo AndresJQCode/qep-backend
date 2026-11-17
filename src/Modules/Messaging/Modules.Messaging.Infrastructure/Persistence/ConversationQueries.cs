@@ -5,8 +5,8 @@ using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Infrastructure.Persistence;
 
-/// <summary>§7.6: la lista por <c>IX_conversations_tenant_status_activity</c>; los counts por los dos
-/// índices parciales; la búsqueda por los GIN de trigramas (ILIKE / LIKE) y por <c>wa_id = ANY</c>.</summary>
+/// <summary>§7.6: la lista por <c>IX_conversations_tenant_status_activity</c>; los counts en una sola
+/// sentencia por <c>tenant_id</c>; la búsqueda por los GIN de trigramas (ILIKE / LIKE) y por <c>wa_id = ANY</c>.</summary>
 internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConversationQueries
 {
     // De instancia y no estática: la subconsulta de la delegación (spec 2026-11-17 §7, chip «Agente IA · desde el chatbot X») usa el
@@ -105,28 +105,29 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
 
     public async Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)
     {
-        // Las dos condiciones son literalmente las de los parciales IX_conversations_tenant_open e
-        // IX_conversations_tenant_unread: así el planner puede usarlos (index-only scan).
-        var open = await dbContext.Conversations.AsNoTracking()
-            .CountAsync(conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open, cancellationToken);
-        var unread = await dbContext.Conversations.AsNoTracking()
-            .Where(conversation => conversation.TenantId == tenantId && conversation.UnreadCount > 0)
-            .SumAsync(conversation => conversation.UnreadCount, cancellationToken);
-        // D-A10: sólo abiertas, por los parciales de asignado (IX_conversations_tenant_assignee/unassigned_status_activity).
-        var mine = memberId is { } me
-            ? await dbContext.Conversations.AsNoTracking().CountAsync(
-                conversation => conversation.TenantId == tenantId && conversation.AssignedMemberId == me && conversation.Status == ConversationStatus.Open, cancellationToken)
-            : 0;
-        var unassigned = await dbContext.Conversations.AsNoTracking().CountAsync(
-            conversation => conversation.TenantId == tenantId && conversation.AssignedMemberId == null && conversation.Status == ConversationStatus.Open, cancellationToken);
-        // Misma condición que IX_conversations_tenant_automation_activity (parcial) más el estado abierto.
-        var automated = await dbContext.Conversations.AsNoTracking().CountAsync(
-            conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open
-                && conversation.AutomationStatus != ConversationAutomationStatus.None, cancellationToken);
-        var automationActive = await dbContext.Conversations.AsNoTracking().CountAsync(
-            conversation => conversation.TenantId == tenantId && conversation.Status == ConversationStatus.Open
-                && conversation.AutomationStatus == ConversationAutomationStatus.Active, cancellationToken);
-        return new ConversationCountsDto(open, unread, mine, unassigned, automated, automationActive);
+        // Una sola sentencia con count(*) FILTER (WHERE …): recorre por tenant_id un índice IX_conversations_tenant_* en vez
+        // de seis index-only scans sobre los parciales. Con la base en otro nodo, un viaje gana a seis aunque cada uno fuera
+        // más barato. D-A10: mine y unassigned cuentan sólo abiertas.
+        var counts = await dbContext.Conversations.AsNoTracking()
+            .Where(conversation => conversation.TenantId == tenantId)
+            .GroupBy(_ => 1)
+            .Select(group => new
+            {
+                Open = group.Count(conversation => conversation.Status == ConversationStatus.Open),
+                Unread = group.Sum(conversation => conversation.UnreadCount > 0 ? conversation.UnreadCount : 0),
+                Mine = group.Count(conversation => memberId != null && conversation.AssignedMemberId == memberId && conversation.Status == ConversationStatus.Open),
+                Unassigned = group.Count(conversation => conversation.AssignedMemberId == null && conversation.Status == ConversationStatus.Open),
+                Automated = group.Count(conversation => conversation.Status == ConversationStatus.Open
+                    && conversation.AutomationStatus != ConversationAutomationStatus.None),
+                AutomationActive = group.Count(conversation => conversation.Status == ConversationStatus.Open
+                    && conversation.AutomationStatus == ConversationAutomationStatus.Active),
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        // Un tenant sin conversaciones no tiene grupo: el agregado no devuelve fila.
+        return counts is null
+            ? new ConversationCountsDto(0, 0, 0, 0, 0, 0)
+            : new ConversationCountsDto(counts.Open, counts.Unread, counts.Mine, counts.Unassigned, counts.Automated, counts.AutomationActive);
     }
 
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
