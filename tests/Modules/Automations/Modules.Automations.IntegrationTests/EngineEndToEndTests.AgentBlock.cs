@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Ai.Application;
-using Modules.Ai.Domain;
 using Modules.Messaging.Application;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
@@ -53,31 +52,13 @@ public sealed partial class EngineEndToEndTests
         });
         var tenant = await RegisterTenantAsync(host);
         await EnableAutomationsAsync(connectionString, tenant.TenantId);
-        await ExecuteAsync(connectionString,
-            """
-            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source) VALUES (@tenantId, 'ai', now(), 'manual')
-            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
-            """,
-            ("tenantId", tenant.TenantId));
-        var agentId = await SeedPublishedAgentAsync(host, tenant);
+        await EnableAiAsync(connectionString, tenant.TenantId);
+        var agentId = await SeedAgentAsync(host, tenant);
         var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Servicio", PhoneNumberId, "222");
         using var admin = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
         var chatbotId = await PublishChatbotAsync(
             admin, tenant.TenantId, AgentBlockFlow.Replace("{agentId}", agentId.ToString(), StringComparison.Ordinal), connectionId);
         return (new Fixture(factory, host, connectionString, tenant, connectionId, chatbotId, host.CreateClient(), notifier, new BotMeta(factory.MetaHandler)), agentId);
-    }
-
-    private static async Task<Guid> SeedPublishedAgentAsync(Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> host, RegisteredTenant tenant)
-    {
-        using var scope = host.Services.CreateScope();
-        var now = DateTimeOffset.UtcNow;
-        var agent = Agent.Create(
-            tenant.TenantId, "Ventas", AgentConfig.Default(new AgentModelRef("anthropic", "claude-sonnet-5-5")) with { Instructions = "Atiende." },
-            tenant.OwnerUserId, now);
-        agent.Publish([], tenant.OwnerUserId, now);
-        scope.ServiceProvider.GetRequiredService<IAgentRepository>().Add(agent);
-        await scope.ServiceProvider.GetRequiredService<IAiUnitOfWork>().SaveChangesAsync(Ct);
-        return agent.Id;
     }
 
     /// <summary>Lo que hace Ai al terminar la sesión del bloque: devolver con el resultado (§6.3).</summary>

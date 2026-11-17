@@ -104,6 +104,10 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                     case Effect.EndRun end:
                         lines.System(end.NodeId, EndText(end.Reason));
                         break;
+                    case Effect.DelegateToAgent delegation:
+                        // Spec 2026-11-17 D-B17: el simulador nunca llama al modelo; se queda en el bloque hasta que el tester elige la salida.
+                        lines.System(delegation.NodeId, "Aquí conversaría el agente de IA: elige cómo termina para seguir.");
+                        break;
                     default:
                         throw new InvalidOperationException($"Efecto del motor desconocido: {effect.GetType().Name}.");
                 }
@@ -167,7 +171,45 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
         EndReasons.OutputUnconnected => "Terminó: salida sin conectar",
         EndReasons.LoopDetected => "Terminó: el flujo da vueltas sin esperar al cliente",
         EndReasons.TargetMissing => "Terminó: una salida apunta a un bloque que no existe",
+        EndReasons.WindowClosed => "Terminó: la ventana de 24 horas se cerró",
+        EndReasons.Interrupted => "Terminó: el contacto está bloqueado",
         _ => "Terminó",
+    };
+
+    /// <summary>Spec 2026-11-17 adenda D-3: dónde espera la simulación un <c>agentResult</c>; <c>null</c> si no está en un bloque «Agente IA».</summary>
+    public static SimulationWaitingAtDto? WaitingAtOf(RunState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.IsDelegated ? new SimulationWaitingAtDto(state.CurrentNodeId!, FlowNodeKinds.AiAgent) : null;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 D-B17 y adenda D-3/D-4: la salida que eligió el tester como si el agente hubiera devuelto la conversación. Fuera del
+    /// bloque es 422 <c>automations.simulation.not_waiting_at_agent</c>. Sin <c>reason</c>, el motivo canónico de la salida (§6.3); sin
+    /// <c>summary</c> ni <c>quotationNumber</c>, vacíos. Nunca asigna a nadie: el simulador no traspasa de verdad.
+    /// </summary>
+    public static EngineInput.AgentResult AgentResultInput(RunState state, SimulationAgentResultRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(request);
+        if (!state.IsDelegated)
+        {
+            throw new AutomationsDomainException(
+                AutomationsErrorCodes.SimulationNotWaitingAtAgent, "La simulación no está esperando en un bloque de agente de IA.");
+        }
+
+        var reason = string.IsNullOrWhiteSpace(request.Reason) ? CanonicalReason(request.Output) : request.Reason;
+        return new EngineInput.AgentResult(state.CurrentNodeId!, null, request.Output, reason, request.Summary, request.QuotationNumber);
+    }
+
+    /// <summary>§6.3: el motivo más común de cada salida.</summary>
+    private static string CanonicalReason(string output) => output switch
+    {
+        FlowOutputs.Done => "objective_completed",
+        FlowOutputs.Human => "customer_asked",
+        FlowOutputs.NoAnswer => "no_answer",
+        FlowOutputs.Idle => "idle",
+        _ => "agent_unavailable",
     };
 
     /// <summary>Las líneas que agrega una llamada, con el título del bloque que las escribe (el primero con ese id, como el motor).</summary>
@@ -213,7 +255,9 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
 /// Spec 2026-10-21 §4.4 y §8: lo que el panel Simular pinta después de cada paso. <see cref="Transcript"/> viaja entera (la pantalla la
 /// repinta, no la mezcla con lo que tenía); <see cref="CurrentNodeId"/> es el bloque que el lienzo marca; <see cref="Status"/> es el nombre
 /// del <c>RunStatus</c> y <see cref="Ended"/> le ahorra al panel conocer cuáles terminan: con <c>true</c> no hay a quién escribirle.
-/// <see cref="Variables"/> son las de la corrida, como objeto JSON.
+/// <see cref="Variables"/> son las de la corrida, como objeto JSON. <see cref="WaitingAt"/> (spec 2026-11-17 adenda D-3, BFF): la simulación
+/// está parada en un bloque «Agente IA» y el siguiente envío es un <c>agentResult</c>, no un mensaje; <c>null</c> en cualquier otro momento.
+/// Va aparte porque <c>Status = Waiting</c> también es una pregunta, y el panel no tendría que buscar el tipo del bloque en el borrador.
 /// </summary>
 public sealed record SimulationDto(
     Guid Id,
@@ -224,16 +268,26 @@ public sealed record SimulationDto(
     bool Ended,
     JsonElement Variables,
     IReadOnlyList<TranscriptEntry> Transcript,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    SimulationWaitingAtDto? WaitingAt = null);
+
+/// <summary>Spec 2026-11-17 adenda D-3: <c>{ nodeId, kind: "aiAgent" }</c>.</summary>
+public sealed record SimulationWaitingAtDto(string NodeId, string Kind);
 
 /// <summary>El adjunto de mentira del tester (§8): sólo nombre y tipo; no hay archivo.</summary>
 public sealed record SimulationAttachmentRequest(string FileName, string MimeType);
 
+/// <summary>Spec 2026-11-17 D-B17: cómo termina el agente en el simulador. <see cref="Output"/> es una de las cinco salidas del bloque; el
+/// resto es opcional (adenda D-3: el frontend sólo manda <c>output</c>).</summary>
+public sealed record SimulationAgentResultRequest(string Output, string? Summary, string? Reason, string? QuotationNumber);
+
 public sealed record StartSimulationCommand(Guid TenantId, Guid ChatbotId, bool LiveHttp) : ICommand<SimulationDto>;
 
-/// <summary>Texto escrito, el <paramref name="ReplyId"/> de un botón o una fila, o un adjunto ficticio (§8).</summary>
+/// <summary>Texto escrito, el <paramref name="ReplyId"/> de un botón o una fila, o un adjunto ficticio (§8). Spec 2026-11-17 D-B17:
+/// <paramref name="AgentResult"/>, en lugar de los tres, con la simulación parada en un bloque «Agente IA».</summary>
 public sealed record SendSimulationMessageCommand(
-    Guid TenantId, Guid SimulationId, string? Text, string? ReplyId, SimulationAttachmentRequest? Attachment) : ICommand<SimulationDto>;
+    Guid TenantId, Guid SimulationId, string? Text, string? ReplyId, SimulationAttachmentRequest? Attachment,
+    SimulationAgentResultRequest? AgentResult = null) : ICommand<SimulationDto>;
 
 public sealed record DeleteSimulationCommand(Guid TenantId, Guid SimulationId) : ICommand<bool>;
 
@@ -248,6 +302,12 @@ public static class SimulationLimits
     public const int FileNameMaxLength = 255;
 
     public const int MimeTypeMaxLength = 127;
+
+    /// <summary>Spec 2026-11-17 D-B8: el resumen de <c>finish_objective</c>.</summary>
+    public const int AgentSummaryMaxLength = 500;
+
+    /// <summary>La regla de códigos del hilo (<c>^[a-z0-9_.]{1,64}$</c>); el número de cotización cabe.</summary>
+    public const int AgentReasonMaxLength = 64;
 }
 
 public sealed class SendSimulationMessageValidator : AbstractValidator<SendSimulationMessageCommand>
@@ -255,9 +315,23 @@ public sealed class SendSimulationMessageValidator : AbstractValidator<SendSimul
     public SendSimulationMessageValidator()
     {
         RuleFor(command => command.Text)
-            .Must((command, text) => !string.IsNullOrWhiteSpace(text) || !string.IsNullOrEmpty(command.ReplyId) || command.Attachment is not null)
-            .WithMessage("Send a text, a reply id or an attachment.")
+            .Must((command, text) =>
+                !string.IsNullOrWhiteSpace(text) || !string.IsNullOrEmpty(command.ReplyId) || command.Attachment is not null || command.AgentResult is not null)
+            .WithMessage("Send a text, a reply id, an attachment or an agent result.")
             .MaximumLength(SimulationLimits.TextMaxLength);
+        // Spec 2026-11-17 D-B17: el resultado del agente va solo; con un mensaje no se sabría cuál de los dos entra al motor.
+        When(command => command.AgentResult is not null, () =>
+        {
+            RuleFor(command => command.AgentResult)
+                .Must((command, _) => string.IsNullOrWhiteSpace(command.Text) && string.IsNullOrEmpty(command.ReplyId) && command.Attachment is null)
+                .WithMessage("An agent result goes alone, without text, reply id or attachment.");
+            RuleFor(command => command.AgentResult!.Output)
+                .Must(output => output is FlowOutputs.Done or FlowOutputs.Human or FlowOutputs.NoAnswer or FlowOutputs.Idle or FlowOutputs.Error)
+                .WithMessage("The output must be done, human, noAnswer, idle or error.");
+            RuleFor(command => command.AgentResult!.Summary).MaximumLength(SimulationLimits.AgentSummaryMaxLength);
+            RuleFor(command => command.AgentResult!.Reason).MaximumLength(SimulationLimits.AgentReasonMaxLength);
+            RuleFor(command => command.AgentResult!.QuotationNumber).MaximumLength(SimulationLimits.AgentReasonMaxLength);
+        });
         RuleFor(command => command.ReplyId).MaximumLength(SimulationLimits.ReplyIdMaxLength);
         When(command => command.Attachment is not null, () =>
         {
@@ -300,7 +374,8 @@ internal static class SimulationSupport
         var state = simulation.ToState();
         return new SimulationDto(
             simulation.Id, simulation.ChatbotId, simulation.LiveHttp, state.CurrentNodeId, state.Status.ToString(), simulation.IsEnded,
-            JsonSerializer.Deserialize<JsonElement>(state.Variables.ToJson()), simulation.ReadTranscript(), simulation.ExpiresAt);
+            JsonSerializer.Deserialize<JsonElement>(state.Variables.ToJson()), simulation.ReadTranscript(), simulation.ExpiresAt,
+            SimulationRunner.WaitingAtOf(state));
     }
 }
 
@@ -393,12 +468,33 @@ public sealed class SendSimulationMessageHandler(
         var flow = ParseDraft(chatbot);
         var connection = SimulationSupport.FirstConnection(chatbot, await connections.ListAsync(command.TenantId, cancellationToken));
         var transcript = simulation.ReadTranscript();
-        var customer = new TranscriptEntry(TranscriptSenders.Customer, null, null, CustomerText(command, transcript), null, null, null, now);
+        var current = simulation.ToState();
+        EngineInput input;
+        TranscriptEntry first;
+        if (command.AgentResult is { } agentResult)
+        {
+            // D-B17: lo que eligió el tester entra como el retorno del agente; fuera del bloque es 422 (adenda D-4).
+            input = SimulationRunner.AgentResultInput(current, agentResult);
+            first = new TranscriptEntry(
+                TranscriptSenders.System, current.CurrentNodeId, RunEffects.TitleOf(flow, current.CurrentNodeId),
+                $"El agente devolvió la conversación por «{agentResult.Output}».", null, null, null, now);
+        }
+        else
+        {
+            // Parada en el bloque, la conversación es del agente: un mensaje del cliente no le llega al flujo.
+            if (current.IsDelegated)
+            {
+                throw new AutomationsDomainException(
+                    AutomationsErrorCodes.SimulationWaitingAtAgent, "La simulación espera cómo termina el agente de IA: elige una salida.");
+            }
+
+            input = CustomerMessage(command);
+            first = new TranscriptEntry(TranscriptSenders.Customer, null, null, CustomerText(command, transcript), null, null, null, now);
+        }
 
         var (state, appended) = await runner.RunAsync(
-            flow, SimulationSupport.SettingsOf(chatbot), simulation.ToState(), CustomerMessage(command),
-            SimulationSupport.ContextOf(simulation, connection), cancellationToken);
-        simulation.Apply(state, [customer, .. appended], clock.UtcNow);
+            flow, SimulationSupport.SettingsOf(chatbot), current, input, SimulationSupport.ContextOf(simulation, connection), cancellationToken);
+        simulation.Apply(state, [first, .. appended], clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return SimulationSupport.ToDto(simulation);
     }
