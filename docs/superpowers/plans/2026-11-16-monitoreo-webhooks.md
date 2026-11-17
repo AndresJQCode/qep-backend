@@ -2,11 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Contar los webhooks de Meta que llegan y se descartan, y alertar por rechazo, silencio y descarte sospechoso.
+**Goal:** Contar los webhooks de Meta que llegan y se descartan, mostrar cuándo llegó el último de cada proveedor, y
+alertar por rechazo y por descarte sospechoso.
 
 **Architecture:** Un contador OTel `qep.webhook.discarded{provider,reason}` en `MessagingMetrics`, sumado en cada punto donde
-`WebhookDeliveryProcessor` ya loguea un descarte. Las alertas y el panel viven en `migracion-k8s` y leen la métrica y las
-métricas HTTP que ya existen.
+`WebhookDeliveryProcessor` ya loguea un descarte. Un gauge `qep.webhook.last_received{provider}` que `QueueSamplerWorker`
+llena desde `messaging.webhook_deliveries`. Las alertas y los paneles viven en `migracion-k8s`.
 
 **Tech Stack:** .NET 10, `System.Diagnostics.Metrics`, OTel → Prometheus; PrometheusRule y dashboard de Grafana en YAML.
 
@@ -31,7 +32,8 @@ métricas HTTP que ya existen.
 2. Un mismo delivery reintentado (`RetryLater`) vuelve a pasar por el descarte: se cuenta otra vez. Aceptado (el log ya hace
    lo mismo); la alerta compara con la semana anterior, no cuenta exacto.
 3. `paused`/`module_off` nunca deben entrar en la alerta: la expresión filtra por `reason` explícito, no por exclusión.
-4. Una ruta sin tráfico la semana anterior (Instagram sin conexiones) no alerta por silencio: lo garantiza el `offset 7d > 10`.
+4. Un proveedor sin ninguna fila (Instagram sin conexiones) no publica `last_received`: el panel muestra «No data», no
+   1970. Lo fija `AProviderWithoutDeliveriesIsAbsent`.
 5. Pods múltiples: los contadores se suman con `sum by`, nunca `max by` (a diferencia de los gauges de cola).
 
 ---
@@ -113,7 +115,47 @@ Las pruebas siguen el patrón de `InboundLagMetricTests` (listener filtrado por 
 - [ ] **Step 5: GREEN** — `dotnet build` de la solución, 0 errores, 0 warnings (`TreatWarningsAsErrors`).
 - [ ] **Step 6: Commit** `feat(messaging): count discarded meta webhooks`.
 
-### Task 3: Alertas y panel (`migracion-k8s`)
+### Task 3: Último webhook recibido
+
+**Files:**
+- Create: `src/Bootstrapper/Observability/IWebhookArrivalSource.cs`, `WebhookArrivalSource.cs`, `WebhookArrivalGauge.cs`
+- Modify: `src/Bootstrapper/Observability/QueueSamplerWorker.cs` (`SampleAsync`), y el registro DI donde se registran
+  `QueueGauges` e `IQueueMetricsSource`
+- Test: `tests/Bootstrapper/Bootstrapper.UnitTests/WebhookArrivalGaugeTests.cs`,
+  `tests/Modules/Messaging/Modules.Messaging.IntegrationTests/WebhookArrivalSourceTests.cs`
+
+**Interfaces:**
+- Produces:
+  - `public interface IWebhookArrivalSource { Task<IReadOnlyDictionary<string, DateTimeOffset>> ReadLastReceivedAsync(CancellationToken cancellationToken); }`
+    — clave = valor de la columna `provider` (`"whatsapp"`, `"instagram"`); un proveedor sin filas no aparece.
+  - `WebhookArrivalSource` (scoped, sobre la conexión de `MessagingDbContext` como `QueueMetricsSource`, timeout 5 s): por
+    cada proveedor `SELECT received_at FROM messaging.webhook_deliveries WHERE provider = @p ORDER BY id DESC LIMIT 1`.
+    Comentario de clase: lee la tabla por nombre (como `QueueMetricsSource`).
+  - `public sealed class WebhookArrivalGauge` (singleton, meter `QepObservability.MeterName`):
+    `void Record(IReadOnlyDictionary<string, DateTimeOffset> lastReceived)`; observable gauge `"qep.webhook.last_received"`,
+    unidad `"s"`, valor `ToUnixTimeSeconds()` como `double`, tag `provider`. No publica nada si la lectura tiene más de
+    `QueueGauges.MaxReadingAge`.
+  - `QueueSamplerWorker.SampleAsync`: después del bucle de colas, un bloque propio con try/catch que resuelve
+    `IWebhookArrivalSource` en un scope y llama `WebhookArrivalGauge.Record`; ante error `LogReadFailed(logger, "webhook_arrival", ...)`.
+
+- [ ] **Step 1: Write the failing tests**
+  - `WebhookArrivalGaugeTests` (patrón de `QueueGaugesTests`, reloj fijo): `PublishesTheUnixSecondsPerProvider`
+    (registro `{"whatsapp": 2026-11-16T15:00:00Z}` → medición `1_763_305_200d` con `provider = "whatsapp"`);
+    `AStaleReadingIsNotPublished` (avanzar el reloj 61 s → sin mediciones).
+  - `WebhookArrivalSourceTests` (contra el esquema migrado, como `QueueMetricsSourceTests`): `ReturnsTheNewestDeliveryPerProvider`
+    (insertar dos de whatsapp y una de instagram con `received_at` distintos → el más reciente de cada uno);
+    `AProviderWithoutDeliveriesIsAbsent` (sólo whatsapp → la clave `"instagram"` no está).
+- [ ] **Step 2: RED** — `dotnet build` de los dos proyectos de prueba → no compila por `WebhookArrivalGauge` /
+  `IWebhookArrivalSource`. Guardar la salida.
+- [ ] **Step 3: Implement** las tres clases, el registro DI y el bloque en `SampleAsync`. Si `MultiReplicaInventory`
+  pide clasificar el singleton nuevo, clasificarlo como `QueueGauges` (mismo motivo: sólo publica el líder).
+- [ ] **Step 4: Docs** — `README.md`, junto a las métricas `qep_queue_*`: la métrica nueva, que la publica sólo el líder del
+  muestreador y que un proveedor sin entregas no aparece. En el comentario de `QueueMetricsSource` que lista las tablas
+  leídas por nombre no hace falta tocar nada (es otra clase).
+- [ ] **Step 5: GREEN** — `dotnet build` de la solución, 0 errores, 0 warnings.
+- [ ] **Step 6: Commit** `feat(observability): publish the last meta webhook received`.
+
+### Task 4: Alertas y paneles (`migracion-k8s`)
 
 **Files (en el worktree de `migracion-k8s`, rama `feat/qep-webhook-alerts` desde `main`):**
 - Modify: `k8s/platform/prometheusrules/qep-backend-prometheusrule.yaml`
@@ -131,17 +173,6 @@ Reglas, en el grupo existente, con `severity: warning` y `annotations` en inglé
   expr: |
     sum by (http_route) (rate(http_server_request_duration_seconds_count{exported_job="qep/qep-backend",http_route=~"/api/webhooks/(whatsapp|instagram)",http_response_status_code="401"}[5m])) > 0
   for: 10m
-# Without the `or 0 * ...offset 7d` a route with no sample this hour has no series and `== 0` never fires.
-- alert: QepWebhookSilent
-  expr: |
-    (
-      sum by (http_route) (increase(http_server_request_duration_seconds_count{exported_job="qep/qep-backend",http_route=~"/api/webhooks/(whatsapp|instagram)",http_response_status_code=~"2.."}[1h]))
-      or
-      0 * sum by (http_route) (increase(http_server_request_duration_seconds_count{exported_job="qep/qep-backend",http_route=~"/api/webhooks/(whatsapp|instagram)",http_response_status_code=~"2.."}[1h] offset 7d))
-    ) == 0
-    and on (http_route)
-    sum by (http_route) (increase(http_server_request_duration_seconds_count{exported_job="qep/qep-backend",http_route=~"/api/webhooks/(whatsapp|instagram)",http_response_status_code=~"2.."}[1h] offset 7d)) > 10
-  for: 5m
 # Compared with the same hour a week earlier so chronic noise (a number without connection) does not fire forever.
 - alert: QepWebhookDiscarding
   expr: |
@@ -158,17 +189,21 @@ Reglas, en el grupo existente, con `severity: warning` y `annotations` en inglé
 Panel nuevo «Descartados por motivo»: `sum by (provider, reason) (rate(qep_webhook_discarded_total{exported_job="qep/qep-backend"}[$__rate_interval]))`,
 timeseries, copiando la forma del panel «Estados» vecino (id nuevo, `gridPos` debajo).
 
+Panel stat nuevo «Último webhook de Meta»: `max by (provider) (qep_webhook_last_received_seconds{exported_job="qep/qep-backend"}) * 1000`,
+unidad `dateTimeFromNow`, `legendFormat` `{{provider}}`, `reduceOptions.calcs = ["lastNotNull"]`. El nombre exacto con que
+el exportador publica el gauge (sufijo `_seconds`) se confirma en Explore después de desplegar el backend.
+
 - [ ] **Step 1:** crear el worktree desde `main` en WSL (`git worktree add ../migracion-k8s-worktrees/qep-webhook-alerts -b feat/qep-webhook-alerts main`).
-- [ ] **Step 2:** agregar las tres reglas y el panel.
+- [ ] **Step 2:** agregar las dos reglas y los dos paneles.
 - [ ] **Step 3: Verificar** — `promtool check rules` sobre el `spec` extraído si `promtool` está; si no, cargar los dos YAML
   con `python3 -c "import yaml,sys; list(yaml.safe_load_all(open(sys.argv[1])))"` y validar el JSON del dashboard embebido
   con `python3 -m json.tool`. Probar cada `expr` en Grafana → Explore contra prod (sólo lectura) y anotar el resultado: la
-  de silencio debe devolver vacío hoy; la de descartes, vacío hasta desplegar el backend.
+  de descartes y el panel del último webhook dan vacío hasta desplegar el backend.
 - [ ] **Step 4:** doc corta en `docs/` (qué mide cada alerta, umbrales iniciales, que se ajustan con una semana de datos,
   y que Shopify queda pendiente).
 - [ ] **Step 5: Commit** `feat(alerts): add qep meta webhook alerts`. No aplicar al clúster ni empujar sin el owner.
 
 ## Orden de despliegue
 
-Backend (Tasks 1–2) a `develop` y luego a producción por el owner; después Task 3. Antes del despliegue del backend, las
+Backend (Tasks 1–3) a `develop` y luego a producción por el owner; después Task 3. Antes del despliegue del backend, las
 reglas sobre `qep_webhook_discarded_total` dan vacío y no alertan, así que el orden inverso tampoco rompe nada.

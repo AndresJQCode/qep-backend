@@ -13,7 +13,8 @@ todo se ve sano.
 ## Metas
 
 1. Alerta por **rechazo**: 401 sostenidos en una ruta de webhook.
-2. Alerta por **silencio**: una ruta sin 2xx durante 1 h cuando la misma hora de la semana anterior sí tuvo tráfico.
+2. **Ver cuándo llegó el último webhook** de cada proveedor (WhatsApp, Instagram), en el dashboard, como «hace X min».
+   Sin alerta de silencio por ahora (owner, 2026-11-16): primero mirar el dato.
 3. Alerta por **descarte silencioso** sospechoso, con una métrica nueva del backend.
 
 ## No metas
@@ -38,8 +39,9 @@ todo se ve sano.
    `QueueMetricsSource` para un detalle que el log ya tiene.
 3. Alertas sobre logs: descartado, el clúster tiene Prometheus y Tempo, no Loki.
 
-Para el silencio se eligió **comparar con la misma hora de hace 7 días** en vez de un horario fijo (owner: de noche es
-normal no recibir): se adapta solo a noches, festivos y rutas sin uso.
+Para el silencio se diseñó una alerta que compara con la misma hora de hace 7 días (de noche es normal no recibir), y el
+owner la dejó fuera: por ahora basta con **ver la hora del último webhook**. Se lee de la base (`max` de `received_at` por
+proveedor) y no de la métrica HTTP, porque la base sobrevive a reinicios y sólo guarda lo que pasó la firma.
 
 ## Diseño
 
@@ -67,6 +69,13 @@ conjunto cerrado. El valor sumado es el número de eventos descartados (mensajes
 - Los motivos viven como constantes (`WebhookDiscardReasons`); una prueba unitaria fija el conjunto, porque las alertas de
   `migracion-k8s` los leen por nombre.
 
+Gauge `qep.webhook.last_received` (unidad `s`, segundos Unix; etiqueta `provider`): el `received_at` de la entrega más
+reciente de cada proveedor en `messaging.webhook_deliveries`. Lo lee `QueueSamplerWorker` en cada vuelta (sólo el pod
+líder, como las colas) y deja de publicarse si la lectura tiene más de 60 s, igual que `QueueGauges`. Un proveedor sin
+ninguna fila no publica. La entrega más reciente se busca por `id` descendente (la PK), sin índice nuevo: no hay índice
+sobre `received_at` y la tabla se purga por `DeliveryRetentionDays`. Si Instagram es raro, esa búsqueda recorre hacia
+atrás las de WhatsApp: aceptable con la purga, a revisar con `EXPLAIN` en producción.
+
 ### Shopify (pendiente)
 
 Cuando haya un tenant conectado: clase de métricas propia en Infrastructure (meter `Qep.Shopify`), con el mismo contador y
@@ -79,12 +88,12 @@ worker para `ShopifyDeliveryResult.Ignored`). Alertarían `unknown_shop`, `shop_
 En `qep-backend-prometheusrule.yaml`, por ruta (`/api/webhooks/whatsapp`, `/api/webhooks/instagram`):
 
 - `QepWebhookSignatureRejected`: tasa de 401 > 0 durante 10 min.
-- `QepWebhookSilent`: `increase(2xx[1h]) == 0` y `increase(2xx[1h] offset 7d) > 10`.
 - `QepWebhookDiscarding`: descartes de motivos sospechosos en 1 h > 3 × los de la misma hora hace 7 días + 5. La
   comparación con la semana anterior es para no sonar por ruido crónico conocido (el `phone_number_id`
   1100135673190922 que llega sin conexión).
 
-En `qep-backend-dashboard.yaml`, fila «4. Webhooks»: panel «Descartados por motivo» (`provider`, `reason`).
+En `qep-backend-dashboard.yaml`, fila «4. Webhooks»: panel «Descartados por motivo» (`provider`, `reason`) y panel stat
+«Último webhook de Meta» por proveedor, en formato «hace X» (`dateTimeFromNow`).
 
 Los nombres exactos de la métrica HTTP y del label de ruta se toman del dashboard existente al escribir las reglas.
 
