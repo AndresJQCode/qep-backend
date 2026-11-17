@@ -69,6 +69,9 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyImageFetcher, ShopifyImageFetcher>();
         // El IMeterFactory es el del host, como el de MessagingMetrics.
         services.AddSingleton<IShopifyProductSyncMetrics, ShopifyMetrics>();
+        // Spec 2026-11-17: un producto de Shopify aplicado a Catalog (importación y webhooks). Sus puertos de Catalog y Storage los
+        // registra Bootstrapper.
+        services.AddScoped<ShopifyProductSync>();
         services.AddScoped<IShopifyReconcileLeases, ShopifyReconcileLeases>();
         return services;
     }
