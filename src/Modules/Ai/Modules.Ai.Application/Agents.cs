@@ -42,6 +42,9 @@ public static class AgentLimits
     /// <summary>Como los chatbots: cuántas conexiones puede atender un agente.</summary>
     public const int MaxConnections = 10;
 
+    /// <summary>El cuerpo de importar un agente: un <c>config</c> con todos sus topes llenos cabe de sobra.</summary>
+    public const int ImportBodyMaxBytes = 1024 * 1024;
+
     /// <summary>§4.7: <c>draft_saved</c> se audita como máximo una vez por minuto, como Automations.</summary>
     public static readonly TimeSpan DraftAuditInterval = TimeSpan.FromMinutes(1);
 }
@@ -85,58 +88,62 @@ public sealed class UpdateAgentValidator : AbstractValidator<UpdateAgentCommand>
 /// guarda; lo que falta para publicar (instrucciones vacías, un miembro que ya no responde) se guarda y vuelve como problema (D-A7).</summary>
 public sealed class SaveAgentDraftValidator : AbstractValidator<SaveAgentDraftCommand>
 {
-    public SaveAgentDraftValidator()
+    public SaveAgentDraftValidator() =>
+        RuleFor(command => command.Config).NotNull().SetValidator(new AgentConfigFieldsValidator());
+}
+
+/// <summary>Los topes de cada campo del <c>config</c>, los mismos al guardar el borrador y al importar un agente. Quien lo usa con
+/// <c>SetValidator</c> antepone su propiedad a las claves (<c>Config.Faq[3].Answer</c>), que el editor mapea a campo.</summary>
+public sealed class AgentConfigFieldsValidator : AbstractValidator<AgentConfig>
+{
+    public AgentConfigFieldsValidator()
     {
-        RuleFor(command => command.Config).NotNull();
-        When(command => command.Config is not null, () =>
+        RuleFor(config => config.Instructions).NotNull().MaximumLength(AgentConfig.InstructionsMaxLength);
+        RuleFor(config => config.Tone).Must(tone => AgentConfig.Tones.Contains(tone))
+            .WithMessage($"Tone must be one of {string.Join(", ", AgentConfig.Tones)}.");
+        RuleFor(config => config.Greeting).MaximumLength(AgentConfig.GreetingMaxLength);
+        RuleFor(config => config.Trigger).Must(trigger => AgentConfig.Triggers.Contains(trigger))
+            .WithMessage($"Trigger must be one of {string.Join(", ", AgentConfig.Triggers)}.");
+        RuleFor(config => config.Faq)
+            .NotNull()
+            .Must(faq => faq.Count <= AgentConfig.MaxFaq)
+            .WithMessage($"At most {AgentConfig.MaxFaq} questions are allowed.")
+            .Must(faq => faq.Where(entry => entry is not null).Select(entry => entry.Id).Distinct(StringComparer.Ordinal).Count() == faq.Count)
+            .WithMessage("Each question needs its own id.");
+        RuleForEach(config => config.Faq).ChildRules(entry =>
         {
-            RuleFor(command => command.Config.Instructions).NotNull().MaximumLength(AgentConfig.InstructionsMaxLength);
-            RuleFor(command => command.Config.Tone).Must(tone => AgentConfig.Tones.Contains(tone))
-                .WithMessage($"Tone must be one of {string.Join(", ", AgentConfig.Tones)}.");
-            RuleFor(command => command.Config.Greeting).MaximumLength(AgentConfig.GreetingMaxLength);
-            RuleFor(command => command.Config.Trigger).Must(trigger => AgentConfig.Triggers.Contains(trigger))
-                .WithMessage($"Trigger must be one of {string.Join(", ", AgentConfig.Triggers)}.");
-            RuleFor(command => command.Config.Faq)
-                .NotNull()
-                .Must(faq => faq.Count <= AgentConfig.MaxFaq)
-                .WithMessage($"At most {AgentConfig.MaxFaq} questions are allowed.")
-                .Must(faq => faq.Where(entry => entry is not null).Select(entry => entry.Id).Distinct(StringComparer.Ordinal).Count() == faq.Count)
-                .WithMessage("Each question needs its own id.");
-            RuleForEach(command => command.Config.Faq).ChildRules(entry =>
-            {
-                entry.RuleFor(value => value.Id).NotEmpty().MaximumLength(AgentConfig.FaqIdMaxLength);
-                entry.RuleFor(value => value.Question).NotEmpty().MaximumLength(AgentConfig.FaqQuestionMaxLength);
-                entry.RuleFor(value => value.Answer).NotEmpty().MaximumLength(AgentConfig.FaqAnswerMaxLength);
-            }).When(command => command.Config.Faq is not null);
-            RuleFor(command => command.Config.Tools).NotNull();
-            RuleFor(command => command.Config.Handoff).NotNull();
-            When(command => command.Config.Handoff is not null, () =>
-            {
-                RuleFor(command => command.Config.Handoff.Destination).Must(destination => AgentHandoff.Destinations.Contains(destination))
-                    .WithMessage("Destination must be unassigned or member.");
-                RuleFor(command => command.Config.Handoff.Message).MaximumLength(AgentHandoff.MessageMaxLength);
-                RuleFor(command => command.Config.Handoff.MaxRepliesWithoutHuman)
-                    .InclusiveBetween(AgentHandoff.MinRepliesWithoutHuman, AgentHandoff.MaxRepliesWithoutHumanLimit);
-                RuleFor(command => command.Config.Handoff.MaxConsecutiveFailures)
-                    .InclusiveBetween(AgentHandoff.MinConsecutiveFailures, AgentHandoff.MaxConsecutiveFailuresLimit);
-            });
-            RuleFor(command => command.Config.Model).NotNull();
-            When(command => command.Config.Model is not null, () =>
-            {
-                RuleFor(command => command.Config.Model.Provider).NotEmpty().MaximumLength(AgentModelRef.ProviderMaxLength);
-                RuleFor(command => command.Config.Model.Id).NotEmpty().MaximumLength(AgentModelRef.IdMaxLength);
-            });
-            // P-4: la cuenta de cobro del borrador viaja entera; los topes son los de Quotations, que además la verifica al crear.
-            When(command => command.Config.QuotationDraft?.BillingAccount is not null, () =>
-            {
-                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.CompanyId).NotEmpty();
-                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.BankName)
-                    .NotEmpty().MaximumLength(AgentBillingAccount.BankNameMaxLength);
-                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.AccountNumber)
-                    .NotEmpty().MaximumLength(AgentBillingAccount.AccountNumberMaxLength);
-                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.Currency)
-                    .NotEmpty().Length(AgentBillingAccount.CurrencyLength);
-            });
+            entry.RuleFor(value => value.Id).NotEmpty().MaximumLength(AgentConfig.FaqIdMaxLength);
+            entry.RuleFor(value => value.Question).NotEmpty().MaximumLength(AgentConfig.FaqQuestionMaxLength);
+            entry.RuleFor(value => value.Answer).NotEmpty().MaximumLength(AgentConfig.FaqAnswerMaxLength);
+        }).When(config => config.Faq is not null);
+        RuleFor(config => config.Tools).NotNull();
+        RuleFor(config => config.Handoff).NotNull();
+        When(config => config.Handoff is not null, () =>
+        {
+            RuleFor(config => config.Handoff.Destination).Must(destination => AgentHandoff.Destinations.Contains(destination))
+                .WithMessage("Destination must be unassigned or member.");
+            RuleFor(config => config.Handoff.Message).MaximumLength(AgentHandoff.MessageMaxLength);
+            RuleFor(config => config.Handoff.MaxRepliesWithoutHuman)
+                .InclusiveBetween(AgentHandoff.MinRepliesWithoutHuman, AgentHandoff.MaxRepliesWithoutHumanLimit);
+            RuleFor(config => config.Handoff.MaxConsecutiveFailures)
+                .InclusiveBetween(AgentHandoff.MinConsecutiveFailures, AgentHandoff.MaxConsecutiveFailuresLimit);
+        });
+        RuleFor(config => config.Model).NotNull();
+        When(config => config.Model is not null, () =>
+        {
+            RuleFor(config => config.Model.Provider).NotEmpty().MaximumLength(AgentModelRef.ProviderMaxLength);
+            RuleFor(config => config.Model.Id).NotEmpty().MaximumLength(AgentModelRef.IdMaxLength);
+        });
+        // P-4: la cuenta de cobro del borrador viaja entera; los topes son los de Quotations, que además la verifica al crear.
+        When(config => config.QuotationDraft?.BillingAccount is not null, () =>
+        {
+            RuleFor(config => config.QuotationDraft!.BillingAccount!.CompanyId).NotEmpty();
+            RuleFor(config => config.QuotationDraft!.BillingAccount!.BankName)
+                .NotEmpty().MaximumLength(AgentBillingAccount.BankNameMaxLength);
+            RuleFor(config => config.QuotationDraft!.BillingAccount!.AccountNumber)
+                .NotEmpty().MaximumLength(AgentBillingAccount.AccountNumberMaxLength);
+            RuleFor(config => config.QuotationDraft!.BillingAccount!.Currency)
+                .NotEmpty().Length(AgentBillingAccount.CurrencyLength);
         });
     }
 }

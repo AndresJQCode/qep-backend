@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Modules.Ai.Application;
 using Modules.Ai.Domain;
@@ -58,6 +59,23 @@ public static class AiEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Spec 2026-11-17 importar/exportar §4. El tope es metadato que Kestrel aplica; los campos ya tienen los suyos en el validador.
+        agents.MapPost("/import", ImportAgentAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .WithMetadata(new RequestSizeLimitAttribute(AgentLimits.ImportBodyMaxBytes))
+            .Accepts<ImportAgentRequest>("application/json")
+            .Produces<AgentEditorDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        agents.MapGet("/{agentId:guid}/export", ExportAgentAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Produces<AgentExportDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
 
         agents.MapGet("/{agentId:guid}", GetAgentAsync)
             .RequireAuthorization(AiPermissions.AgentRead)
@@ -367,6 +385,17 @@ public static class AiEndpoints
                     tenantId, request.Name, request.Source is null ? null! : new AgentSource(request.Source.Kind, request.Source.AgentId)),
                 cancellationToken));
 
+    // Sin Location, como crear: el editor abre con el agente que vuelve. Un export nulo lo frena el validador.
+    private static async Task<IResult> ImportAgentAsync(
+        Guid tenantId, ImportAgentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Created(
+            (string?)null,
+            await dispatcher.SendAsync(
+                new ImportAgentCommand(tenantId, request.Name ?? request.Export?.Name ?? string.Empty, request.Export!), cancellationToken));
+
+    private static async Task<IResult> ExportAgentAsync(Guid tenantId, Guid agentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ExportAgentQuery(tenantId, agentId), cancellationToken));
+
     private static async Task<IResult> GetAgentAsync(Guid tenantId, Guid agentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetAgentQuery(tenantId, agentId), cancellationToken));
 
@@ -414,6 +443,9 @@ public static class AiEndpoints
 public sealed record AgentSourceRequest(string Kind, Guid? AgentId);
 
 public sealed record CreateAgentRequest(string Name, AgentSourceRequest Source);
+
+/// <summary><c>name</c> (si viene) pisa el del archivo.</summary>
+public sealed record ImportAgentRequest(string? Name, AgentExportDto? Export);
 
 public sealed record UpdateAgentRequest(string Name, IReadOnlyList<Guid>? ConnectionIds);
 
