@@ -164,7 +164,10 @@ public static class ShopifyInfrastructureExtensions
         // (mismo ensamblado que UpdateShopifyStoreValidator).
         services.AddScoped<ICommandHandler<StartShopifyProductImportCommand, ShopifyProductImportStarted>, StartShopifyProductImportHandler>();
         services.AddScoped<IQueryHandler<GetShopifyProductImportQuery, ShopifyProductImportDto?>, GetShopifyProductImportHandler>();
+        services.AddScoped<ShopifyProductCoverageCalculator>();
         services.AddScoped<IQueryHandler<GetShopifyProductCoverageQuery, ShopifyProductCoverageDto>, GetShopifyProductCoverageHandler>();
+        // Spec 2026-11-17 (onboarding) §4.2: «Seguir así».
+        services.AddScoped<ICommandHandler<AcceptShopifyProductCoverageCommand, bool>, AcceptShopifyProductCoverageHandler>();
         services.AddScoped<ICommandHandler<UnlinkShopifyProductCommand, bool>, UnlinkShopifyProductHandler>();
         return services;
     }

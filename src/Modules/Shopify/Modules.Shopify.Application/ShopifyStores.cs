@@ -187,35 +187,8 @@ public sealed class GetShopifyStoreHandler(
         await ShopifyAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, ShopifyPermissions.ConnectionRead, cancellationToken);
         var connection = await ShopifyStoreSupport.ConnectionAsync(connections, query.TenantId, query.ConnectionId, cancellationToken);
 
-        var store = await stores.FindAsync(query.TenantId, query.ConnectionId, cancellationToken);
-        if (store is null)
-        {
-            store = await CreateAsync(connection, cancellationToken);
-        }
-
+        var store = await ShopifyStoreSupport.FindOrCreateAsync(stores, unitOfWork, connection, clock.UtcNow, cancellationToken);
         return await ShopifyStoreSupport.ToDtoAsync(store, members, references, cancellationToken);
-    }
-
-    // Dos primeras lecturas a la vez chocan con PK_stores (concurrency.conflict): la perdedora lee la que creó la otra.
-    private async Task<ShopifyStore> CreateAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var created = ShopifyStoreSupport.NewStore(connection, clock.UtcNow);
-            await ShopifyStoreSupport.AddNewAsync(stores, created, cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            return created;
-        }
-        catch (RequestConcurrencyException exception) when (ShopifyStoreSupport.IsConflict(exception))
-        {
-            unitOfWork.DiscardPendingChanges();
-            if (await stores.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken) is { } winner)
-            {
-                return winner;
-            }
-
-            throw;
-        }
     }
 }
 
@@ -445,6 +418,42 @@ internal static class ShopifyStoreSupport
         if (store.ShopDomain is { } shopDomain)
         {
             await stores.AdoptWaitingOrdersAsync(store.TenantId, store.ConnectionId, shopDomain, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// La tienda de la conexión; si el módulo todavía no la tiene, la crea vacía y la guarda (§6.1: la crean las lecturas de la
+    /// pantalla, el <c>GET</c> de la tienda, la cobertura, «Seguir así» y el asistente). Dos primeras lecturas a la vez chocan con
+    /// <c>PK_stores</c> (<c>concurrency.conflict</c>): la perdedora lee la que creó la otra.
+    /// </summary>
+    public static async Task<ShopifyStore> FindOrCreateAsync(
+        IShopifyStoreRepository stores,
+        IShopifyUnitOfWork unitOfWork,
+        ShopifyConnectionRef connection,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (await stores.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken) is { } existing)
+        {
+            return existing;
+        }
+
+        try
+        {
+            var created = NewStore(connection, now);
+            await AddNewAsync(stores, created, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return created;
+        }
+        catch (RequestConcurrencyException exception) when (IsConflict(exception))
+        {
+            unitOfWork.DiscardPendingChanges();
+            if (await stores.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken) is { } winner)
+            {
+                return winner;
+            }
+
+            throw;
         }
     }
 

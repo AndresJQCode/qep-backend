@@ -163,6 +163,140 @@ public sealed class ShopifyProductsApiTests
         world.Tenant.Seeder.Dispose();
     }
 
+    // Spec 2026-11-17 (onboarding) §7 H7: cada GET de la cobertura deja la medición en la tienda, con su hora.
+    [Fact]
+    public async Task CoverageIsStoredOnTheStoreWithItsInstant()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var source = new VariantKeysSource([new ShopifyVariantKey(903L, "NO-EXISTE-1", "Taza")]);
+        var (factory, world) = await ArrangeAsync(connectionString, source);
+        using var _ = factory;
+        using var client = ClientOf(factory, world);
+        var before = DateTimeOffset.UtcNow.AddSeconds(-1);
+
+        var response = await client.GetAsync($"{StoreRoute(world)}/coverage", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var measuredAt = await ScalarAsync<string>(
+            connectionString,
+            "SELECT products_coverage->>'measuredAt' FROM shopify.stores WHERE tenant_id = @t AND connection_id = @c",
+            ("t", world.TenantId), ("c", world.ConnectionId));
+        Assert.InRange(DateTimeOffset.Parse(measuredAt, System.Globalization.CultureInfo.InvariantCulture), before, DateTimeOffset.UtcNow.AddSeconds(1));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT (products_coverage->>'shopifyVariants')::bigint FROM shopify.stores WHERE connection_id = @c",
+            ("c", world.ConnectionId)));
+        // La respuesta conserva su forma: la medición guardada no se cuela en el contrato del GET.
+        Assert.Null((await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["measuredAt"]);
+        world.Tenant.Seeder.Dispose();
+    }
+
+    // Review Focus 2: medir la cobertura no sube la versión; el formulario abierto guarda sin 412.
+    [Fact]
+    public async Task ThePutStillSucceedsAfterCoverageWasMeasured()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var (factory, world) = await ArrangeAsync(connectionString);
+        using var _ = factory;
+        using var client = ClientOf(factory, world);
+        var storeRoute = $"/api/v1/tenants/{world.TenantId}/shopify/stores/{world.ConnectionId}";
+        var loaded = (await client.GetFromJsonAsync<JsonObject>(storeRoute, Ct))!;
+        var version = loaded["version"]!.GetValue<long>();
+
+        (await client.GetAsync($"{StoreRoute(world)}/coverage", Ct)).EnsureSuccessStatusCode();
+        using var put = new HttpRequestMessage(HttpMethod.Put, storeRoute)
+        {
+            Content = JsonContent.Create(new
+            {
+                advisorMembershipId = world.AdvisorMembershipId,
+                billingCompanyId = world.Company.Id,
+                billingBankName = world.Company.BankName,
+                billingAccountNumber = world.Company.AccountNumber,
+                billingCurrency = "COP",
+                defaultClassificationId = world.ClassificationId,
+                documentAttributeKey = ShopifyStore.DefaultDocumentAttributeKey,
+                documentTypeAttributeKey = ShopifyStore.DefaultDocumentTypeAttributeKey,
+                defaultIdentificationType = "CC",
+                historyDays = 7,
+            }),
+        };
+        put.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        var saved = await client.SendAsync(put, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        world.Tenant.Seeder.Dispose();
+    }
+
+    // Spec 2026-11-17 (onboarding) §4.2: «Seguir así» guarda el instante, sin subir la versión, y se audita.
+    [Fact]
+    public async Task AcceptReturns204AndRecordsTheInstant()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var (factory, world) = await ArrangeAsync(connectionString);
+        using var _ = factory;
+        using var client = ClientOf(factory, world);
+        var versionBefore = await ScalarAsync<long>(
+            connectionString, "SELECT version FROM shopify.stores WHERE connection_id = @c", ("c", world.ConnectionId));
+
+        var accepted = await client.PostAsync($"{StoreRoute(world)}/coverage/accept", content: null, Ct);
+        var again = await client.PostAsync($"{StoreRoute(world)}/coverage/accept", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, again.StatusCode);
+        Assert.True(await ScalarAsync<bool>(
+            connectionString,
+            "SELECT products_coverage_accepted_at IS NOT NULL FROM shopify.stores WHERE connection_id = @c",
+            ("c", world.ConnectionId)));
+        Assert.Equal(versionBefore, await ScalarAsync<long>(
+            connectionString, "SELECT version FROM shopify.stores WHERE connection_id = @c", ("c", world.ConnectionId)));
+        Assert.Equal(2L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM audit.entries WHERE tenant_id = @t AND action = 'shopify.products.coverage_accepted' AND resource_id = @r",
+            ("t", world.TenantId), ("r", world.ConnectionId.ToString())));
+        world.Tenant.Seeder.Dispose();
+    }
+
+    [Fact]
+    public async Task AcceptOfAnotherTenantsConnectionIs403()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var (factory, world) = await ArrangeAsync(connectionString);
+        using var _ = factory;
+        var otherTenant = Guid.CreateVersion7();
+        using var client = CreateClient(
+            factory, world.Tenant.OwnerUserId, otherTenant, ShopifyPermissions.ConnectionRead, ShopifyPermissions.ConnectionManage);
+
+        var response = await client.PostAsync(
+            $"/api/v1/tenants/{otherTenant}/shopify/stores/{world.ConnectionId}/products/coverage/accept", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("authorization.denied", await CodeAsync(response));
+        Assert.True(await ScalarAsync<bool>(
+            connectionString,
+            "SELECT products_coverage_accepted_at IS NULL FROM shopify.stores WHERE connection_id = @c",
+            ("c", world.ConnectionId)));
+        world.Tenant.Seeder.Dispose();
+    }
+
+    [Fact]
+    public async Task AcceptWithReadPermissionOnlyIs403()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var (factory, world) = await ArrangeAsync(connectionString);
+        using var _ = factory;
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, ShopifyPermissions.ConnectionRead);
+
+        var response = await client.PostAsync($"{StoreRoute(world)}/coverage/accept", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        world.Tenant.Seeder.Dispose();
+    }
+
     [Fact]
     public async Task UnlinkReleasesTheProductAndWebhooksIgnoreIt()
     {

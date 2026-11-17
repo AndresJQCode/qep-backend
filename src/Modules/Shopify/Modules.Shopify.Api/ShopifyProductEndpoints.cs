@@ -37,6 +37,12 @@ public static class ShopifyProductEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Spec 2026-11-17 (onboarding) §4.2: «Seguir así» con la cobertura que hay.
+        group.MapPost("/stores/{connectionId:guid}/products/coverage/accept", AcceptCoverageAsync)
+            .RequireAuthorization(ShopifyPermissions.ConnectionManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapDelete("/products/{productId:guid}/link", UnlinkAsync)
             .RequireAuthorization(ShopifyPermissions.ConnectionManage)
             .Produces(StatusCodes.Status204NoContent)
@@ -69,6 +75,13 @@ public static class ShopifyProductEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetShopifyProductCoverageQuery(tenantId, connectionId, redirectUri), cancellationToken));
+
+    private static async Task<IResult> AcceptCoverageAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new AcceptShopifyProductCoverageCommand(tenantId, connectionId), cancellationToken);
+        return Results.NoContent();
+    }
 
     private static async Task<IResult> UnlinkAsync(
         Guid tenantId, Guid productId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)

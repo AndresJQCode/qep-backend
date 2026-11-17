@@ -72,4 +72,8 @@ public static class ShopifyAuditActions
     public const string ProductUnlinked = "shopify.products.unlinked";
 
     public const string ProductResourceType = "product";
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4.2: alguien eligió «Seguir así» con la cobertura del catálogo. Recurso: la conexión
+    /// (<see cref="ConnectionResourceType"/>); detalle: <c>[]</c>.</summary>
+    public const string ProductsCoverageAccepted = "shopify.products.coverage_accepted";
 }
