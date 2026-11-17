@@ -796,4 +796,60 @@ public sealed class ProductTests
 
         Assert.Equal([100, 150], product.Variants.Single().PackagingUnits);
     }
+
+    // Productos desde Shopify (spec 2026-11-17 §5.4): el origen es lo que hace que el PUT proteja
+    // los campos que administra la tienda.
+    private static Product NewExternalProduct(string? externalSource, IReadOnlyList<Guid>? gallery = null) =>
+        Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Camiseta",
+            ProductDetails.Empty,
+            [],
+            [new ProductVariantInput { Code = "CAM-001", Pricing = ValidPricing }],
+            gallery ?? [],
+            Now,
+            externalSource: externalSource);
+
+    [Fact]
+    public void AProductCreatedFromShopifyKeepsItsSource()
+    {
+        var product = NewExternalProduct(Product.ShopifySource);
+
+        Assert.Equal("shopify", product.ExternalSource);
+        Assert.Equal(1, product.Version);
+    }
+
+    [Fact]
+    public void ReleasingClearsTheSourceAndBumpsTheVersion()
+    {
+        var product = NewExternalProduct(Product.ShopifySource);
+
+        product.ReleaseExternal(Now.AddMinutes(5));
+
+        Assert.Null(product.ExternalSource);
+        Assert.Equal(2, product.Version);
+        Assert.Equal(Now.AddMinutes(5), product.UpdatedAt);
+    }
+
+    // Desvincular dos veces no le da un 412 a quien tiene el formulario abierto.
+    [Fact]
+    public void ReleasingAnOwnProductChangesNothing()
+    {
+        var product = NewExternalProduct(externalSource: null);
+
+        product.ReleaseExternal(Now.AddMinutes(5));
+
+        Assert.Null(product.ExternalSource);
+        Assert.Equal(1, product.Version);
+        Assert.Equal(Now, product.UpdatedAt);
+    }
+
+    [Fact]
+    public void ASourceLongerThan20IsRejected()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() => NewExternalProduct(new string('s', 21)));
+
+        Assert.Equal("catalog.product.external_source_too_long", error.Code);
+    }
 }

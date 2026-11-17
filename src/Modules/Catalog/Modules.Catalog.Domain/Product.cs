@@ -24,6 +24,11 @@ public sealed class Product
     public const int MaxVariants = 2048;
     public const int MaxGalleryImages = 250;
 
+    // Productos desde Shopify (spec 2026-11-17 §5.4): el ancho de catalog.products.external_source y
+    // el único origen que existe hoy.
+    public const int ExternalSourceMaxLength = 20;
+    public const string ShopifySource = "shopify";
+
     private readonly List<ProductVariant> _variants = [];
     private readonly List<ProductGalleryImage> _gallery = [];
     private readonly List<ProductOption> _options = [];
@@ -64,6 +69,14 @@ public sealed class Product
     /// borrar lo que el tenant eligió mostrar.
     /// </summary>
     public bool VisibleInStore { get; private set; }
+
+    /// <summary>
+    /// Quién administra el producto fuera de QEP: <c>null</c> en un producto propio,
+    /// <see cref="ShopifySource"/> en uno que creó la importación de Shopify (spec 2026-11-17 §5.4).
+    /// Con origen, el PUT de la consola rechaza cambiar lo que la tienda administra (§5.5);
+    /// <see cref="ReleaseExternal"/> lo devuelve a propio.
+    /// </summary>
+    public string? ExternalSource { get; private set; }
 
     // --- CAT-04: propiedades opcionales. Nacen nullable porque hay productos ya cargados: una
     // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por los
@@ -162,6 +175,8 @@ public sealed class Product
     /// el resto nace con id nuevo. Los <c>Id</c> que traigan las variantes se ignoran: en un
     /// producto nuevo no hay ninguna guardada con la cual emparejar.
     /// </summary>
+    /// <param name="externalSource">Sólo el camino de sistema lo pasa (la importación de Shopify);
+    /// la consola siempre crea productos propios.</param>
     public static Product Create(
         ProductId id,
         Guid tenantId,
@@ -171,20 +186,23 @@ public sealed class Product
         IReadOnlyList<ProductVariantInput> variants,
         IReadOnlyList<Guid> galleryFileIds,
         DateTimeOffset occurredAt,
-        bool visibleInStore = false)
+        bool visibleInStore = false,
+        string? externalSource = null)
     {
         ArgumentNullException.ThrowIfNull(optionIds);
         ArgumentNullException.ThrowIfNull(variants);
         ArgumentNullException.ThrowIfNull(galleryFileIds);
 
         var normalizedName = NormalizeName(name);
+        var normalizedSource = NormalizeExternalSource(externalSource);
         EnsureOptions(optionIds);
         EnsureGallery(galleryFileIds);
         EnsureVariantCount(variants);
 
         var product = new Product(id, tenantId, normalizedName, details, occurredAt)
         {
-            VisibleInStore = visibleInStore
+            VisibleInStore = visibleInStore,
+            ExternalSource = normalizedSource
         };
         product.ReplaceOptions(optionIds);
         product.ReplaceGallery(galleryFileIds);
@@ -586,6 +604,39 @@ public sealed class Product
         Version++;
         UpdatedAt = occurredAt;
         return true;
+    }
+
+    /// <summary>
+    /// Devuelve el producto a propio de QEP (desvincular, spec 2026-11-17 §5.5): quita el origen y
+    /// con él la protección del PUT. Sin efecto, y sin subir la versión, si ya era propio: un
+    /// segundo «desvincular» no le da un 412 a quien tiene el formulario abierto. No exige activo.
+    /// </summary>
+    public void ReleaseExternal(DateTimeOffset occurredAt)
+    {
+        if (ExternalSource is null)
+        {
+            return;
+        }
+
+        ExternalSource = null;
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
+    private static string? NormalizeExternalSource(string? externalSource)
+    {
+        if (string.IsNullOrWhiteSpace(externalSource))
+        {
+            return null;
+        }
+
+        var trimmed = externalSource.Trim();
+        // Interno: sólo lo dispara el camino de sistema, nunca la consola.
+        return trimmed.Length > ExternalSourceMaxLength
+            ? throw new CatalogDomainException(
+                "catalog.product.external_source_too_long",
+                $"The external source cannot exceed {ExternalSourceMaxLength} characters.")
+            : trimmed;
     }
 
     private void EnsureActive()
