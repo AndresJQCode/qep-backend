@@ -60,7 +60,9 @@ public sealed class UpdateStoreSettingsValidator : AbstractValidator<UpdateStore
                 .Must(entry => entry is { BillingAccount: not null })
                 .WithMessage("Cada moneda lleva su cuenta de cobro.")
                 .OverridePropertyName("currencies");
+            // Stop: cada moneda reporta su primer problema una sola vez; «sólo el banco» fallaría también la regla de largos.
             RuleForEach(command => command.Body.Currencies)
+                .Cascade(CascadeMode.Stop)
                 .Where(entry => entry?.BillingAccount is not null)
                 .Must(entry => entry!.BillingAccount!.CompanyId is { } id && id != Guid.Empty)
                 .WithMessage("La cuenta de cobro necesita su empresa.")
@@ -146,9 +148,9 @@ public sealed class UpdateStoreSettingsHandler(
                 entry!.Currency ?? string.Empty,
                 new StoreBillingAccount(
                     entry.BillingAccount!.CompanyId!.Value,
-                    // En blanco los dos es «empresa sin cuenta»; el dominio los guarda en null.
-                    entry.BillingAccount.BankName,
-                    entry.BillingAccount.AccountNumber,
+                    // En blanco los dos es «empresa sin cuenta», y se guarda en null, no en " ".
+                    BlankToNull(entry.BillingAccount.BankName),
+                    BlankToNull(entry.BillingAccount.AccountNumber),
                     entry.BillingAccount.Currency ?? string.Empty)))
             .ToList();
         var salesCountries = body.SalesCountries!.Select(country => country ?? string.Empty).ToList();
@@ -260,6 +262,8 @@ public sealed class UpdateStoreSettingsHandler(
     /// Cada moneda debe tener precios en el catálogo (una sola consulta) y cada cuenta se comprueba, en el orden de la lista, con la
     /// regla con que un pedido resuelve la suya. El resultado lleva la cuenta tal como la guarda la empresa.
     /// </summary>
+    private static string? BlankToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
     private async Task<List<StoreCurrency>> ResolveCurrenciesAsync(
         Guid tenantId, List<StoreCurrency> entries, CancellationToken cancellationToken)
     {
