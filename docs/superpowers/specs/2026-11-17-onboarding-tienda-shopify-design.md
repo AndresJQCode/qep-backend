@@ -102,7 +102,27 @@ pantalla no preselecciona **(criterio:** no adivinar sin datos).
 - Manual contra una tienda de desarrollo (§9.9 del spec viejo), con el frontend.
 - Las pruebas se escriben; se corren todas al final.
 
-## 7. Lo que queda a quien construye
+## 7. Ajustes por el spec del frontend (criterio)
+
+El spec del frontend (`qep-frontend`, `2026-11-17-onboarding-tienda-shopify-frontend-design.md` §12) encontró huecos del
+contrato. Se resuelven así:
+- **H3:** `POST …/setup/company` acepta `bankAccount?: { bankName, accountNumber, currency }`, opcional, que se guarda en
+  la empresa y en la tienda.
+- **H5:** `advisor` y `buyers` quedan `Blocked` con `blockedBy: ["company"]` mientras la tienda no tenga empresa (el `PUT`
+  de la tienda la exige).
+- **H7:** la cobertura se guarda en la tienda (`products_coverage` jsonb con su hora) cada vez que se pide
+  `GET …/products/coverage`; el BFF devuelve la última, y la pide sola la primera vez que se abre el paso con el scope
+  concedido y sin importación.
+- **Cuerpo de la tienda:** `store` trae la configuración completa que el `PUT` necesita, con su `version`.
+- **Estadísticas de la cabecera:** `stats: { importedLast7Days, productsSynced, lastSyncAt }`.
+- **Sincronización:** `POST …/sync` conserva su forma de hoy (días de historial) y gana `source=setup` como parámetro de
+  query; el permiso es el de hoy.
+- **Empresa creada y asignación fallida:** `201 { companyId, storeVersion }`; si la asignación da 412, la respuesta de
+  error trae `companyId` en `details` y el reintento lo manda.
+- **Volver de Shopify tras conceder `read_products`:** pasa por la pantalla de enlace; como la tienda ya está en ese tenant
+  (`connectedShops`), la pantalla ofrece «Ir a la configuración». El enlace de hoy reutiliza la conexión del mismo tenant.
+
+## 8. Lo que queda a quien construye
 - Dónde vive el ensamblado del BFF (Shopify.Application con puertos a Integrations, Companies y Geography, adaptadores en
   Bootstrapper, como el resto del módulo).
 - La forma exacta de guardar el perfil de la tienda (campos de la conexión o columna jsonb).
