@@ -1,4 +1,4 @@
-using Modules.Customers.Application;
+﻿using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Domain;
 
@@ -275,6 +275,19 @@ public sealed class ExcelCustomerRowRulesTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, error =>
             error.ErrorCode == "customers.import.row.phone_too_long");
+    }
+
+    // La direccion es opcional, igual que en el formulario de alta (CustomerWriteRules): sin calle el
+    // cliente nace sin domicilio y sin libreta, como un contacto que solo trae nombre y celular.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ARowWithoutAnAddressIsValid(string? address)
+    {
+        var result = validator.Validate(ValidRow(address: address));
+
+        Assert.True(result.IsValid);
     }
 
     [Fact]

@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using ClosedXML.Excel;
@@ -859,12 +859,10 @@ public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHo
         Assert.Equal("El Fusionado", (await GetAsync(manager, merged.Id)).Name);
     }
 
-    // La celda Direccion es obligatoria: es el domicilio del cliente y, al crear, siembra ademas
-    // la primera fila de la libreta (spec 2026-09-18). En modo actualizacion cambia solo el
-    // domicilio. Se rechaza como fila, con su codigo, y no como una excepcion del dominio a mitad
-    // del archivo -- que se llevaria puesto el resto del lote.
+    // La celda Direccion es opcional, como en el formulario de alta: una lista de contactos con solo nombre y
+    // celular tiene que entrar. Sin calle el cliente nace sin domicilio y sin libreta (no hay fila que sembrar).
     [Fact]
-    public async Task ImportRowWithoutAnAddressIsRejectedWithItsOwnCode()
+    public async Task ImportRowWithoutAnAddressCreatesTheCustomerWithoutAddressOrBook()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -891,9 +889,11 @@ public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHo
         var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(result);
-        Assert.Equal(0, result.ImportedCount);
-        Assert.Contains(result.Errors, error =>
-            error.RowNumber == 2 && error.Code == "customers.import.row.address_required");
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, result.ImportedCount);
+        var customer = await ImportedCustomerAsync(client, result);
+        Assert.Null(customer.Address);
+        Assert.Empty(customer.Addresses);
     }
 
     // El telefono es obligatorio y el correo no. Un telefono vacio se rechaza como fila, con su

@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Customers.Domain;
@@ -129,15 +129,12 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithErrorCode("customers.import.row.phone_too_long")
                 .WithMessage($"The phone cannot exceed {CustomerContactInfo.PhoneMaxLength} characters.");
 
-        // La celda es el domicilio del cliente (Customer.Address, CustomerContactInfo.AddressMaxLength);
-        // cuando la fila crea un cliente, ademas siembra la primera fila de la libreta de
-        // direcciones con la misma calle y ciudad. Se rechaza como fila, con su codigo, y no
-        // dejando que reviente el dominio a mitad del archivo -- este metodo no tiene try/catch
-        // por fila, y eso se llevaria puesto el resto del lote.
+        // La celda es el domicilio del cliente (Customer.Address, CustomerContactInfo.AddressMaxLength) y es
+        // opcional, igual que en el formulario de alta (CustomerWriteRules): el dominio acepta la calle vacia
+        // (CustomerContactInfo.NormalizeAddress la vuelve null) y sin ella el cliente nace sin libreta
+        // (CustomerMapping.ToFirstAddress). Una lista de contactos con solo nombre y celular tiene que entrar.
+        // Solo se limita el largo, y se rechaza como fila para no reventar el lote a mitad del archivo.
         RuleFor(row => row.Address)
-            .NotEmpty()
-                .WithErrorCode("customers.import.row.address_required")
-                .WithMessage("The address is required.")
             .MaximumLength(CustomerContactInfo.AddressMaxLength)
                 .WithErrorCode("customers.import.row.address_too_long")
                 .WithMessage(
