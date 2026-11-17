@@ -10,7 +10,8 @@ public static class ConversationBotLock
 {
     /// <summary>Primera clave del lock de dos claves: la fecha del plan de Automations. Cualquier constante sirve mientras ningún otro lock de
     /// dos claves la use. Los demás son <c>TenantChangeLock.Namespace</c> = 20261008, <c>ShopifyTokenLock.Namespace</c> = 20261112,
-    /// <c>StartupLock.Namespace</c> = 20261113 (Bootstrapper) e <c>InstagramTokenLock.Namespace</c> = 20261114. No se cambia: es el mismo
+    /// <c>StartupLock.Namespace</c> = 20261113 (Bootstrapper), <c>InstagramTokenLock.Namespace</c> = 20261114 y
+    /// <c>ConnectionSlotsLock.Namespace</c> = 20261115 (Bootstrapper). No se cambia: es el mismo
     /// valor que ya toman los procesos en curso.</summary>
     public const int Namespace = 20261022;
 }
