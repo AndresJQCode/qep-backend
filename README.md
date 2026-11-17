@@ -2827,6 +2827,15 @@ Lo hace el owner, un área por commit
 `Valkey__Areas__ApiKeyTouch`. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
 (`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
 
+**Con `Sessions` y `Permissions` apagadas hay caché igual, pero por pod** (2026-11-17). Antes, apagada el área era «cada request
+lee Postgres», y con la base en otro nodo eso costaba cinco viajes en serie (sesión, membresía, estado del tenant, roles y
+módulos) antes de que corra ningún handler. `MemorySessionCache` y `MemoryPermissionCache` (`src/Bootstrapper/Valkey/`) son las
+mismas reglas que las de Valkey —15 min con marca de revocación; 60 s con la versión de acceso del tenant, que suben los mismos
+casos de uso— en la memoria del pod. Con una réplica son equivalentes; con dos, un bump o una revocación en un pod no llega al
+otro hasta que la entrada venza, y por eso `MultiReplicaInventory` exige las dos áreas prendidas para `replicas > 1`. Dentro de un
+request, además, `MembershipDirectory` y `TenantModules` memoizan por scope: la membresía y los módulos se leen una vez aunque
+los pidan la autenticación y el handler.
+
 **El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
 producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
 el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiqueta `area`). En Grafana, durante el día
@@ -6265,3 +6274,15 @@ La suite cubre reglas de los agregados Tenant, Membership y User, dependencias
 entre capas, aislamiento entre tenants, permisos de solo lectura, invitaciones
 repetidas, concurrencia con `ETag`, escritura de auditoría/Outbox e idempotencia
 de Inbox.
+
+### Consultas por request
+
+Con Postgres en otro nodo, la latencia de un endpoint es consultas en serie × ida y vuelta de red (10-20 ms), así que
+lo que se mide es cuántos comandos SQL ejecuta un request, no cuánto tarda cada uno.
+`RequestQueryBudgetTests` (Tenancy) levanta el host con la autenticación real, pone un `DbCommandInterceptor` en todos
+los `DbContext` de módulo y agrupa los comandos por el header `X-Query-Budget` del request; falla si
+`GET /memberships?search=` pasa de 8 comandos en frío o de 5 con la caché caliente (hoy son 8 y 3; antes eran 7 + N
+miembros). Para presupuestar otra ruta, copia la prueba: un header distinto por request y el listado de SQL sale en el
+mensaje de la falla. En producción el mismo número es la cantidad de spans de Npgsql dentro de la traza del request en
+Tempo (`{ span.http.route = "/api/v1/tenants/{tenantId}/memberships" } | count() by (span:name)`), o
+`db.client.operation.duration` por ruta en Prometheus.
