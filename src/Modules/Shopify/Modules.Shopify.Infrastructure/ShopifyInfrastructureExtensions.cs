@@ -62,6 +62,13 @@ public static class ShopifyInfrastructureExtensions
         // Spec 2026-11-17 §5.2: el catálogo, con el mismo transporte (y su propio balde por scope).
         services.AddScoped<IShopifyProductsSource, ShopifyProductsClient>();
         services.AddSingleton<IShopifyProductPayloadParser, ShopifyProductPayloadParser>();
+        // La imagen destacada: sólo el CDN de Shopify, sin redirecciones ni loggers (la query de la URL lleva la firma del CDN).
+        services.AddHttpClient(ShopifyImageFetcher.HttpClientName, ShopifyImageFetcher.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => ShopifyImageFetcher.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddScoped<IShopifyImageFetcher, ShopifyImageFetcher>();
+        // El IMeterFactory es el del host, como el de MessagingMetrics.
+        services.AddSingleton<IShopifyProductSyncMetrics, ShopifyMetrics>();
         services.AddScoped<IShopifyReconcileLeases, ShopifyReconcileLeases>();
         return services;
     }

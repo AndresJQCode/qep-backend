@@ -153,6 +153,15 @@ internal sealed class FakeProductLookup : IShopifyProductLookup
         return Task.FromResult<IReadOnlyDictionary<Guid, ShopifyProductRef>>(
             variantIds.Where(ByVariant.ContainsKey).Distinct().ToDictionary(id => id, id => ByVariant[id]));
     }
+
+    public Task<IReadOnlySet<string>> FindExistingCodesAsync(
+        Guid tenantId, IReadOnlyCollection<string> codes, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<string>>(codes
+            .Where(code => Products.ContainsKey(code) || ByVariant.Values.Any(variant => variant.Code == code))
+            .ToHashSet(StringComparer.Ordinal));
+
+    public Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Products.Values.Concat(ByVariant.Values).Where(product => product.IsActive).Select(product => product.ProductId).Distinct().Count());
 }
 
 /// <summary>Ciudades por <c>(departamento, ciudad)</c> exactos: la normalización de tildes y mayúsculas es de Geography y se

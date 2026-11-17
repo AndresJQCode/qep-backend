@@ -92,6 +92,23 @@ public sealed class ShopifyLayerTests
         }
     }
 
+    // Spec 2026-11-17 §5.4: escribir en Catalog y subir a Storage son adaptadores del composition root; si alguien los moviera a
+    // Infrastructure, tendría que referenciar Catalog o Storage, y esta prueba y la de arriba se pondrían rojas.
+    [Theory]
+    [InlineData(typeof(IShopifyCatalogWriter))]
+    [InlineData(typeof(IShopifyProductImageStore))]
+    [InlineData(typeof(IShopifyReauthorization))]
+    public void TheCatalogWriterAndImageStoreLiveInBootstrapper(Type port)
+    {
+        var bootstrapper = typeof(Bootstrapper.QepServiceCollectionExtensions).Assembly;
+
+        Assert.Contains(bootstrapper.GetTypes(), type => type is { IsClass: true, IsAbstract: false } && port.IsAssignableFrom(type));
+        foreach (var assembly in ModuleAssemblies)
+        {
+            Assert.DoesNotContain(assembly.GetTypes(), type => type is { IsClass: true, IsAbstract: false } && port.IsAssignableFrom(type));
+        }
+    }
+
     private static string?[] ReferenceNamesOf(Assembly assembly) => assembly
         .GetReferencedAssemblies()
         .Select(name => name.Name)

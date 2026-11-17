@@ -96,6 +96,8 @@ internal sealed class ShopifyConnectionDirectory(
         return new ShopifyConnectionRef(route.TenantId, route.ConnectionId, shopId, domain, token is not null, expired ? null : token)
         {
             LinkedAt = connection.CreatedAt,
+            // Spec 2026-11-17 §5.1: los scopes que guardó el canje; una tienda instalada antes de read_products no lo tiene.
+            Scopes = ShopifyScopes.Parse(connection.Fields.GetValueOrDefault(ShopifyFieldKeys.Scopes)),
         };
     }
 

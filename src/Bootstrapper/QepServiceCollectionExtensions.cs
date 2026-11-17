@@ -1434,6 +1434,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderNumbers, ShopifyOrderNumbers>();
         services.AddScoped<IShopifyTenantConnections, ShopifyTenantConnections>();
         services.AddScoped<IShopifyStoreReferences, ShopifyStoreReferences>();
+        // Spec 2026-11-17 §5.4: productos desde Shopify. El escritor enrola un CatalogDbContext de un scope hijo en la transacción
+        // de Shopify; la imagen va por la subida de servidor de Storage, fuera de esa transacción; la reautorización es el inicio A
+        // de la instalación de Integrations.
+        services.AddScoped<IShopifyCatalogWriter, ShopifyCatalogWriter>();
+        services.AddScoped<IShopifyProductImageStore, ShopifyProductImageStore>();
+        services.AddScoped<IShopifyReauthorization, ShopifyReauthorization>();
         // §6.2: el importador y, con él, el procesador de entregas y su worker. Sin estas tres líneas el webhook
         // responde 200, encola y nadie procesa nunca; CompositionRootTests arma el contenedor con ValidateOnBuild y resuelve el
         // worker para que eso no pase en silencio.

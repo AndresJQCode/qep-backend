@@ -41,6 +41,10 @@ public sealed record ShopifyConnectionRef(
     /// aunque su webhook se pierda. Nulo si el adaptador no lo sabe: entonces, «ahora».</summary>
     public DateTimeOffset? LinkedAt { get; init; }
 
+    /// <summary>Spec 2026-11-17 §5.1: los scopes concedidos (<c>ShopifyFieldKeys.Scopes</c>, separados por coma). Vacío si el
+    /// adaptador no los sabe. <see cref="ShopifyScopes.CanReadProducts"/> decide con ellos.</summary>
+    public IReadOnlyCollection<string> Scopes { get; init; } = [];
+
     public override string ToString() =>
         $"ShopifyConnectionRef {{ TenantId = {TenantId}, ConnectionId = {ConnectionId}, ShopId = {ShopId}, ShopDomain = {ShopDomain}, IsOperational = {IsOperational} }}";
 }
@@ -231,6 +235,12 @@ public interface IShopifyProductLookup
     /// Inactivas incluidas, con <c>IsActive = false</c> (vendible, como <c>FindByCodesAsync</c>). La tasa, con la misma regla.</summary>
     Task<IReadOnlyDictionary<Guid, ShopifyProductRef>> FindByVariantIdsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17: los códigos de esa lista que ya usa alguna variante del tenant, en una consulta (la cobertura).</summary>
+    Task<IReadOnlySet<string>> FindExistingCodesAsync(Guid tenantId, IReadOnlyCollection<string> codes, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17: cuántos productos activos tiene el tenant (<c>catalogEmpty</c> de la cobertura).</summary>
+    Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Lo que pinta la lista de asociaciones de líneas personalizadas (spec 2026-11-13, D3/D4): <see cref="DisplayName"/> es
@@ -790,4 +800,111 @@ public interface IShopifyCityCorrectionWriter
     /// <summary>Spec 2026-10-26 D-C12: el estado del pedido para el recorrido de la historia previa, o <c>null</c> si ya no existe
     /// en ese tenant. Sólo lee.</summary>
     Task<ShopifyOrderCityState?> ReadOrderCityStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 §5.3: una opción del producto para Catalog, por nombre.</summary>
+public sealed record ShopifyCatalogOption(string Name, IReadOnlyList<string> Values);
+
+/// <summary>Una variante para Catalog: <see cref="Code"/> es el SKU recortado o <c>shp-{id}</c>; <see cref="Price"/> ya con la
+/// regla de impuestos y redondeo; <see cref="OptionValues"/> en el orden de las opciones.</summary>
+public sealed record ShopifyCatalogVariant(
+    long ShopifyVariantId, string Code, string? Barcode, IReadOnlyList<string> OptionValues, decimal Price);
+
+/// <summary>El producto como lo escribe la importación o el webhook. <see cref="TaxRateId"/> sólo se usa al crear (plan D4).
+/// <see cref="ActorId"/> firma la auditoría: el usuario que pidió la importación o <see cref="Guid.Empty"/> para el sistema (P3).</summary>
+public sealed record ShopifyCatalogProduct(
+    Guid TenantId,
+    string Name,
+    bool IsActive,
+    Guid? TaxRateId,
+    string Currency,
+    IReadOnlyList<ShopifyCatalogOption> Options,
+    IReadOnlyList<ShopifyCatalogVariant> Variants,
+    Guid ActorId,
+    DateTimeOffset OccurredAt);
+
+/// <summary>Lo que dejó la escritura. <see cref="RejectedCode"/>: el código de la regla de Catalog que la rechazó (P7); con él,
+/// <see cref="ProductId"/> es <see cref="Guid.Empty"/>, no hay variantes y <b>la transacción ya no sirve</b> (quien llama la
+/// descarta). <see cref="Changed"/> es <c>false</c> si nada cambiaba y no se guardó (la versión del producto sigue igual).</summary>
+public sealed record ShopifyCatalogWrite(
+    Guid ProductId,
+    IReadOnlyDictionary<long, Guid> VariantIds,
+    IReadOnlyList<long> DroppedBarcodes,
+    bool Changed,
+    string? RejectedCode)
+{
+    public static ShopifyCatalogWrite Rejected(string code) => new(Guid.Empty, new Dictionary<long, Guid>(), [], false, code);
+}
+
+/// <summary>Plan D4: la tasa de IVA 19 % y la Exento del tenant (la activa más antigua), o <c>null</c> si no la tiene.</summary>
+public sealed record ShopifyDefaultTaxRates(Guid? Vat19Id, Guid? ExemptId);
+
+/// <summary>
+/// Spec 2026-11-17 §5.4: escribe en Catalog <b>dentro de la transacción abierta de Shopify</b> (sin ella lanza
+/// <see cref="InvalidOperationException"/>). Cada llamada abre un scope hijo, enrola su <c>CatalogDbContext</c> en la conexión y la
+/// transacción del <c>ShopifyDbContext</c> (precedente <c>ShopifyOrderCorrectionWriter</c>) y llama al camino de sistema de Catalog:
+/// producto, opciones y vínculos se confirman juntos o no se confirman. Una regla de Catalog vuelve como
+/// <see cref="ShopifyCatalogWrite.RejectedCode"/>; el resto se propaga. Adaptador en Bootstrapper.
+/// </summary>
+public interface IShopifyCatalogWriter
+{
+    Task<ShopifyCatalogWrite> CreateAsync(ShopifyCatalogProduct product, CancellationToken cancellationToken);
+
+    /// <param name="existing">La variante de QEP de cada variante de Shopify ya vinculada. Una variante del producto a la que no
+    /// apunta ninguna del borrador se borra si ninguna línea la usa y se desactiva si alguna sí, como el PUT.</param>
+    Task<ShopifyCatalogWrite> UpdateAsync(
+        Guid productId, ShopifyCatalogProduct product, IReadOnlyDictionary<long, Guid> existing, CancellationToken cancellationToken);
+
+    /// <summary>Activa o desactiva. Un rechazo de Catalog sale como excepción (el producto ya existía).</summary>
+    Task SetActiveAsync(Guid tenantId, Guid productId, bool active, Guid actorId, CancellationToken cancellationToken);
+
+    /// <summary>Desvincular (§5.5): el producto queda propio de QEP. Sin efecto si ya lo era o si ya no existe.</summary>
+    Task ReleaseAsync(Guid tenantId, Guid productId, Guid actorId, CancellationToken cancellationToken);
+
+    /// <summary>Sólo lee: no necesita transacción.</summary>
+    Task<ShopifyDefaultTaxRates> FindDefaultTaxRatesAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>La imagen descargada y su tipo (<c>image/jpeg</c>, <c>image/png</c> o <c>image/webp</c>).</summary>
+public sealed record ShopifyFetchedImage(byte[] Content, string ContentType);
+
+/// <summary>
+/// Spec 2026-11-17 §5.3: baja la imagen destacada. Sólo <c>https://cdn.shopify.com</c>, sin redirecciones, 10 s, tope de
+/// <see cref="MaxBytes"/> (lee hasta el tope más uno y corta). <c>null</c> con cualquier falla (quien llama anota
+/// <c>image_failed</c>); nunca registra la URL con su query.
+/// </summary>
+public interface IShopifyImageFetcher
+{
+    public const long MaxBytes = 10L * 1024 * 1024;
+
+    Task<ShopifyFetchedImage?> FetchAsync(Uri url, CancellationToken cancellationToken);
+}
+
+/// <summary>Cómo terminó la imagen: <see cref="FileId"/> el archivo que quedó en la galería (<c>null</c> si no entró), o
+/// <see cref="FailureCode"/> si no se pudo guardar.</summary>
+public sealed record ShopifyImageAttach(Guid? FileId, string? FailureCode);
+
+/// <summary>
+/// Spec 2026-11-17 §10 P1: guarda la imagen como archivo <c>Product</c> de Storage (dueño = el producto) y la pone en la galería en
+/// lugar de <paramref name="previousFileId"/> (la que puso la importación). Fuera de la transacción del producto, con un scope propio
+/// por llamada; un <c>concurrency.conflict</c> de Catalog reintenta una vez. Adaptador en Bootstrapper.
+/// </summary>
+public interface IShopifyProductImageStore
+{
+    Task<ShopifyImageAttach> AttachAsync(
+        Guid tenantId, Guid productId, ShopifyFetchedImage image, Guid? previousFileId, Guid actorId, CancellationToken cancellationToken);
+}
+
+/// <summary>Plan D6: la URL para volver a autorizar la app con los scopes actuales (<c>StartShopifyInstallForTenantCommand</c>).
+/// Corre en el request del asesor, con su permiso.</summary>
+public interface IShopifyReauthorization
+{
+    Task<string> CreateUrlAsync(Guid tenantId, string shopDomain, string redirectUri, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 §10 P8: <c>qep.shopify.product_sync.failures {reason}</c> (Prometheus
+/// <c>qep_shopify_product_sync_failures_total</c>). Sin tenant ni datos del producto.</summary>
+public interface IShopifyProductSyncMetrics
+{
+    void RecordFailure(string reason);
 }
