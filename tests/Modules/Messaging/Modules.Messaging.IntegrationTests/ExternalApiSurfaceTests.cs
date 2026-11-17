@@ -63,6 +63,10 @@ public sealed class ExternalApiSurfaceTests
                 builder.UseSetting("Valkey:Enabled", "true");
                 builder.UseSetting("Valkey:Areas:RateLimiting", "true");
                 builder.UseSetting("ConnectionStrings:Valkey", valkey);
+                // Más holgado que los 100 ms de producción (mismo criterio que ValkeyAclCompatibilityTests): pasado el tope, el
+                // limitador cae a la memoria de cada host y el cupo deja de ser compartido. Con la máquina cargada eso pasaba y la
+                // tercera request salía 200 sin que la prueba midiera lo que dice medir.
+                builder.UseSetting("Valkey:OperationTimeoutMs", "2000");
             }
 
             builder.ConfigureTestServices(services => services.AddTransient<IStartupFilter, ProbeStartupFilter>());

@@ -812,7 +812,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.Property(value => value.Status).HasColumnName("status").HasMaxLength(MessageTemplateStatuses.MaxLength);
         template.Property(value => value.StatusReason).HasColumnName("status_reason").HasMaxLength(MessageTemplate.StatusReasonMaxLength);
         template.Property(value => value.ComponentsJson).HasColumnName("components").HasColumnType("jsonb");
-        template.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16);
+        template.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(MessageTemplate.KindMaxLength);
         template.Property(value => value.CreatedByMemberId).HasColumnName("created_by_member_id");
         template.Property(value => value.CreatedAt).HasColumnName("created_at");
         template.Property(value => value.UpdatedAt).HasColumnName("updated_at");

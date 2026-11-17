@@ -1,12 +1,15 @@
 using System.Text.Json;
 using System.Text.Json.Schema;
+using System.Text.Json.Serialization.Metadata;
 using Modules.Catalog.Application;
 
 namespace Modules.Catalog.UnitTests;
 
 public sealed class UpdateTaxRateRequestTests
 {
-    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+    // The resolver is explicit: JsonSchemaExporter refuses options without one, and the serializer only fills it on first use, so the
+    // schema test passed or failed depending on whether a Deserialize test ran before it.
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web) { TypeInfoResolver = new DefaultJsonTypeInfoResolver() };
 
     // /openapi/v1.json arma el esquema de cada cuerpo con JsonSchemaExporter. Un parámetro `JsonElement X = default` en el
     // constructor del record le daba un valor por defecto que no puede escribir, y el documento entero respondía 500.

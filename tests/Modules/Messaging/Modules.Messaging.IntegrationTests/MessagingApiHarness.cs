@@ -262,6 +262,11 @@ internal static class MessagingApiHarness
             // Pinned, never inherited: the developer's user-secrets may turn the seed on.
             builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
+            // An empty endpoint does not turn the export off: QepObservability always registers the OTLP exporters, which fall back to
+            // localhost:4317. Nothing listens there, so every host spent ~8 s of its dispose flushing traces and metrics into a refused
+            // connection (80% of a typical test), while each live host's listeners also processed every other host's activities and
+            // instruments, which are process-wide. No test here reads the SDK; the metric tests use their own MeterListener.
+            builder.UseSetting("OTEL_SDK_DISABLED", "true");
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
@@ -303,6 +308,8 @@ internal static class MessagingApiHarness
 
             builder.ConfigureTestServices(services =>
             {
+                // Last registered, first stopped: frees the rate limiter that would otherwise keep this host alive (see the class).
+                services.AddHostedService<RateLimiterRelease>();
                 services.AddHttpClient(IntegrationsGraphClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphClientName)

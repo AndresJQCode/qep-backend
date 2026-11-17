@@ -151,6 +151,10 @@ public sealed class MessageTemplate
     public const int ParameterFormatMaxLength = 16;
     public const int StatusReasonMaxLength = 64;
 
+    /// <summary>La columna guarda el nombre del <see cref="MessageTemplateKind"/>: tiene que alcanzar para el más largo
+    /// (<c>SupportFormalReply</c>, 18). Con 16 ese tipo no se podía guardar.</summary>
+    public const int KindMaxLength = 32;
+
     private MessageTemplate()
     {
     }

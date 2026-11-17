@@ -241,7 +241,7 @@ public sealed class SupportPublicIdempotencyApiTests(SupportPublicHost host) : I
         Assert.Equal(1L, await CountAsync(rig, "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant"));
         Assert.Equal(1L, await ScalarAsync(
             rig.Factory,
-            "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant AND subject = 'No me llegó el pedido' AND type_id = @type",
+            "SELECT count(*) FROM support.tickets WHERE tenant_id = @tenant AND subject = 'No me llegó el pedido' AND ticket_type_id = @type",
             ("tenant", rig.TenantId),
             ("type", rig.TypeId)));
     }

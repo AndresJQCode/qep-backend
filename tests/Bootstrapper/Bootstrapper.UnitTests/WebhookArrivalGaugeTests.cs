@@ -90,8 +90,9 @@ public sealed class WebhookArrivalGaugeTests
         });
 
         var measurements = recorder.Collect();
-        Assert.Equal(1_763_305_200d, Assert.Single(measurements, m => m.Provider == "whatsapp").Value);
-        Assert.Equal(1_763_301_600d, Assert.Single(measurements, m => m.Provider == "instagram").Value);
+        // 2026-11-16T15:00:00Z and 14:00:00Z in Unix seconds.
+        Assert.Equal(1_794_841_200d, Assert.Single(measurements, m => m.Provider == "whatsapp").Value);
+        Assert.Equal(1_794_837_600d, Assert.Single(measurements, m => m.Provider == "instagram").Value);
     }
 
     [Fact]
