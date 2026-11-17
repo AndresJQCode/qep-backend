@@ -46,7 +46,8 @@ internal static class SimulationEndpoints
     private static async Task<IResult> SendAsync(
         Guid tenantId, Guid simulationId, SimulationMessageRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
-            new SendSimulationMessageCommand(tenantId, simulationId, request.Text, request.ReplyId, request.Attachment), cancellationToken));
+            new SendSimulationMessageCommand(tenantId, simulationId, request.Text, request.ReplyId, request.Attachment, request.AgentResult),
+            cancellationToken));
 
     private static async Task<IResult> DeleteAsync(Guid tenantId, Guid simulationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
@@ -58,5 +59,8 @@ internal static class SimulationEndpoints
 /// <summary>D-S2: <see cref="LiveHttp"/> apagado por defecto; prendido, el bloque HTTP llama a la API de la conexión.</summary>
 public sealed record StartSimulationRequest(bool LiveHttp);
 
-/// <summary>§8: texto escrito, el <c>replyId</c> de un botón o una fila, o un adjunto ficticio (<c>{ fileName, mimeType }</c>).</summary>
-public sealed record SimulationMessageRequest(string? Text, string? ReplyId, SimulationAttachmentRequest? Attachment);
+/// <summary>§8: texto escrito, el <c>replyId</c> de un botón o una fila, o un adjunto ficticio (<c>{ fileName, mimeType }</c>). Spec 2026-11-17
+/// D-B17: con la simulación parada en un bloque «Agente IA», <c>{ agentResult: { output, summary?, reason?, quotationNumber? } }</c> en lugar
+/// de los tres.</summary>
+public sealed record SimulationMessageRequest(
+    string? Text, string? ReplyId, SimulationAttachmentRequest? Attachment, SimulationAgentResultRequest? AgentResult = null);

@@ -27,7 +27,7 @@ public sealed class AiProviderCredentialsTests
                 new Dictionary<string, string> { ["apiKey"] = "sk-ant-SENTINEL" })),
         };
 
-        var resolution = await new AiProviderCredentials(connections).ResolveAsync(TenantId, AiProviders.Anthropic, Ct);
+        var resolution = await new AiProviderCredentials(connections, new StubReporter()).ResolveAsync(TenantId, AiProviders.Anthropic, Ct);
 
         Assert.Null(resolution.Unavailable);
         Assert.Equal((id, "sk-ant-SENTINEL"), (resolution.Credential?.ConnectionId, resolution.Credential?.ApiKey));
@@ -38,13 +38,13 @@ public sealed class AiProviderCredentialsTests
     [Fact]
     public async Task WithoutAConnectionItIsNotConfigured()
     {
-        var resolution = await new AiProviderCredentials(new StubConnections()).ResolveAsync(TenantId, AiProviders.Anthropic, Ct);
+        var resolution = await new AiProviderCredentials(new StubConnections(), new StubReporter()).ResolveAsync(TenantId, AiProviders.Anthropic, Ct);
 
         Assert.Equal(AiCredentialUnavailableReason.NotConfigured, resolution.Unavailable);
         Assert.Null(resolution.Credential);
     }
 
-    // C-19: la conexión de un proveedor no habilita al otro. OpenAI no es todavía un proveedor de Integrations (Tarea 6).
+    // C-19: la conexión de un proveedor no habilita al otro.
     [Fact]
     public async Task OpenAiIsNotConfiguredEvenWithAnAnthropicConnection()
     {
@@ -53,7 +53,7 @@ public sealed class AiProviderCredentialsTests
             Listings = { ["anthropic"] = [new ConnectionListing(Guid.CreateVersion7(), "Anthropic", ConnectionStatus.Active)] },
         };
 
-        var resolution = await new AiProviderCredentials(connections).ResolveAsync(TenantId, AiProviders.OpenAi, Ct);
+        var resolution = await new AiProviderCredentials(connections, new StubReporter()).ResolveAsync(TenantId, AiProviders.OpenAi, Ct);
 
         Assert.Equal(AiCredentialUnavailableReason.NotConfigured, resolution.Unavailable);
     }
@@ -74,7 +74,7 @@ public sealed class AiProviderCredentialsTests
             Resolution = ConnectionResolution.Unusable(reason, "Anthropic"),
         };
 
-        var resolution = await new AiProviderCredentials(connections).ResolveAsync(TenantId, AiProviders.Anthropic, Ct);
+        var resolution = await new AiProviderCredentials(connections, new StubReporter()).ResolveAsync(TenantId, AiProviders.Anthropic, Ct);
 
         Assert.Equal(expected, resolution.Unavailable);
         Assert.Null(resolution.Credential);
@@ -92,7 +92,7 @@ public sealed class AiProviderCredentialsTests
                 id, "anthropic", "Anthropic", new Dictionary<string, string>(), new Dictionary<string, string>())),
         };
 
-        var resolution = await new AiProviderCredentials(connections).ResolveAsync(TenantId, AiProviders.Anthropic, Ct);
+        var resolution = await new AiProviderCredentials(connections, new StubReporter()).ResolveAsync(TenantId, AiProviders.Anthropic, Ct);
 
         Assert.Equal(AiCredentialUnavailableReason.SecretUnreadable, resolution.Unavailable);
     }
@@ -107,20 +107,93 @@ public sealed class AiProviderCredentialsTests
             Listings = { ["anthropic"] = [new ConnectionListing(id, "Anthropic", ConnectionStatus.NeedsAttention)] },
         };
 
-        var states = await new AiProviderCredentials(connections).DescribeAsync(TenantId, Ct);
+        var states = await new AiProviderCredentials(connections, new StubReporter()).DescribeAsync(TenantId, Ct);
 
         Assert.Equal(
             [
                 new AiProviderConnectionState(AiProviders.Anthropic, Connectable: true, id, "NeedsAttention"),
-                new AiProviderConnectionState(AiProviders.OpenAi, Connectable: false, null, null),
+                new AiProviderConnectionState(AiProviders.OpenAi, Connectable: true, null, null),
             ],
             states);
     }
+
+    // Plan 2026-11-17 A1: Integrations no limpia last_failure_code al verificar (IntegrationConnection.MarkVerified), así que el código
+    // sólo viaja mientras la conexión está en NeedsAttention; en una conexión sana sería un fallo viejo.
+    [Theory]
+    [InlineData(ConnectionStatus.NeedsAttention, "quota_exhausted")]
+    [InlineData(ConnectionStatus.Active, null)]
+    [InlineData(ConnectionStatus.Paused, null)]
+    public async Task DescribeCarriesTheFailureCodeOnlyWhileTheConnectionNeedsAttention(ConnectionStatus status, string? expected)
+    {
+        var id = Guid.CreateVersion7();
+        var connections = new StubConnections
+        {
+            Listings = { ["anthropic"] = [new ConnectionListing(id, "Anthropic", status, LastFailureCode: "quota_exhausted")] },
+        };
+
+        var states = await new AiProviderCredentials(connections, new StubReporter()).DescribeAsync(TenantId, Ct);
+
+        Assert.Equal(new AiProviderConnectionState(AiProviders.Anthropic, Connectable: true, id, status.ToString(), FailureCode: expected), states[0]);
+        Assert.Null(states[1].FailureCode);
+    }
+
+    // Tarea 6: OpenAI es un proveedor de Integrations con la misma forma; su clave se resuelve igual, de su propia conexión.
+    [Fact]
+    public async Task ResolveReturnsTheKeyOfTheActiveOpenAiConnection()
+    {
+        var id = Guid.CreateVersion7();
+        var connections = new StubConnections
+        {
+            Listings = { ["openai"] = [new ConnectionListing(id, "Cuenta de OpenAI", ConnectionStatus.Active)] },
+            Resolution = ConnectionResolution.Resolved(new ResolvedConnection(
+                id, "openai", "Cuenta de OpenAI", new Dictionary<string, string>(),
+                new Dictionary<string, string> { ["apiKey"] = "sk-proj-SENTINEL" })),
+        };
+
+        var resolution = await new AiProviderCredentials(connections, new StubReporter()).ResolveAsync(TenantId, AiProviders.OpenAi, Ct);
+
+        Assert.Null(resolution.Unavailable);
+        Assert.Equal((id, "sk-proj-SENTINEL"), (resolution.Credential?.ConnectionId, resolution.Credential?.ApiKey));
+    }
+
+    [Fact]
+    public void TheOpenAiProviderKeyMatchesIntegrations() =>
+        Assert.Equal(IntegrationProviders.OpenAi.Key, AiProviders.OpenAi.Value);
 
     // El adaptador nombra el proveedor de Integrations con la misma clave que Ai: si alguna diverge, la conexión nunca se encuentra.
     [Fact]
     public void TheAnthropicProviderKeyMatchesIntegrations() =>
         Assert.Equal(IntegrationProviders.Anthropic.Key, AiProviders.Anthropic.Value);
+
+    // C-19: un rechazo definitivo de la cuenta deja la conexión de ESE proveedor en NeedsAttention, con el motivo, por el camino de
+    // Integrations (auditoría y evento en la misma transacción).
+    [Theory]
+    [InlineData(AiCredentialFailures.CredentialsRejected)]
+    [InlineData(AiCredentialFailures.PermissionDenied)]
+    [InlineData(AiCredentialFailures.QuotaExhausted)]
+    public async Task MarkNeedsAttentionReportsTheConnectionWithItsFailureCode(string failureCode)
+    {
+        var reporter = new StubReporter();
+        var connectionId = Guid.CreateVersion7();
+
+        await new AiProviderCredentials(new StubConnections(), reporter).MarkNeedsAttentionAsync(TenantId, connectionId, failureCode, Ct);
+
+        Assert.Equal([(TenantId, connectionId, failureCode)], reporter.Reported);
+    }
+
+    private sealed class StubReporter : IConnectionHealthReporter
+    {
+        public List<(Guid TenantId, Guid ConnectionId, string FailureCode)> Reported { get; } = [];
+
+        public Task ReportCredentialsRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken)
+        {
+            Reported.Add((tenantId, connectionId, failureCode));
+            return Task.CompletedTask;
+        }
+
+        public Task ReportTokenExpiredAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
 
     private sealed class StubConnections : IIntegrationConnections
     {

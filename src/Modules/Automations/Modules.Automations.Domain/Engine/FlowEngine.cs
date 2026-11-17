@@ -30,6 +30,7 @@ public static class FlowEngine
             EngineInput.BusinessHours hours => OnBusinessHours(flow, state, hours, now),
             EngineInput.DataConsent consent => OnDataConsent(flow, state, consent, now),
             EngineInput.CustomerMessage message => OnCustomerMessage(flow, settings, state, message, now),
+            EngineInput.AgentResult result => OnAgentResult(flow, state, result, now),
             _ => throw new ArgumentOutOfRangeException(nameof(input), input.GetType().Name, "Entrada del motor desconocida."),
         };
     }
@@ -166,6 +167,34 @@ public static class FlowEngine
         return node.OnReject == DataConsentRejectActions.RejectedOutput
             ? walk.Leave(node, FlowOutputs.Rejected)
             : walk.HandOff(node, HandoffReasons.DataConsentUnavailable, node.OnRejectMemberId);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 §6.3, D-B12 y D-B13, sobre la plantilla de <see cref="OnHttpResult"/>: sólo con la corrida esperando delegada en ese
+    /// bloque; un resultado de otro bloque, o una fila repetida que llega con la corrida ya movida, no cambia nada. Sin salida (§6.4) la
+    /// corrida termina sin seguir por ninguna; con salida, el bloque guarda sus variables y sale. Una salida de problema sin conectar traspasa,
+    /// a la asesora del borrador si la hay (D-B13); <c>done</c> e <c>idle</c> sin conectar terminan como cualquier salida.
+    /// </summary>
+    private static StepResult OnAgentResult(FlowDefinition flow, RunState state, EngineInput.AgentResult result, DateTimeOffset now)
+    {
+        if (!state.IsDelegated || state.CurrentNodeId != result.NodeId
+            || flow.Nodes.OfType<AiAgentNode>().FirstOrDefault(node => node.Id == result.NodeId) is not { } node)
+        {
+            return Unchanged(state);
+        }
+
+        var walk = new Walk(flow, state, now);
+        if (result.Output is null)
+        {
+            return result.Reason == EndReasons.WindowClosed
+                ? walk.EndWithoutOutput(node, RunStatus.WindowClosed, TraceOutcomes.WindowClosed, EndReasons.WindowClosed)
+                : walk.EndWithoutOutput(node, RunStatus.Interrupted, TraceOutcomes.Interrupted, EndReasons.Interrupted);
+        }
+
+        // Una salida que no es de las cinco (un resultado escrito por una versión futura) es una falla del agente.
+        var output = FlowNodeKinds.OutputsOf(node).Contains(result.Output, StringComparer.Ordinal) ? result.Output : FlowOutputs.Error;
+        walk.SaveAgentResult(node, result.Reason, result.Summary, result.QuotationNumber);
+        return walk.ExitAgent(node, output, result.AssignToMemberId);
     }
 
     /// <summary>
@@ -318,13 +347,43 @@ public static class FlowEngine
 
         /// <summary>Pasa la conversación a la bandeja desde el bloque en que la corrida espera, con <paramref name="memberId"/> de destino
         /// (<c>null</c> = sin asignar). La corrida termina <c>HandedOff</c>.</summary>
-        public StepResult HandOff(FlowNode node, string reason, Guid? memberId)
+        public StepResult HandOff(FlowNode node, string reason, Guid? memberId, string? code = null)
         {
             consentPrompt = null;
-            effects.Add(new Effect.Handoff(node.Id, reason, memberId));
+            effects.Add(new Effect.Handoff(node.Id, reason, memberId, code));
             _ = Stop(node, RunStatus.HandedOff, TraceOutcomes.HandedOff);
             return Result();
         }
+
+        /// <summary>Spec 2026-11-17 §5.1: <c>{saveTo}</c> es un objeto con <c>summary</c>, <c>reason</c> y <c>quotationNumber</c>; lo que no
+        /// llegó se guarda vacío, así un bloque siguiente que lo interpola no muestra el de una vuelta anterior.</summary>
+        public void SaveAgentResult(AiAgentNode node, string? reason, string? summary, string? quotationNumber) =>
+            Save(node.SaveTo, new JsonObject
+            {
+                ["summary"] = summary ?? string.Empty,
+                ["reason"] = reason ?? string.Empty,
+                ["quotationNumber"] = quotationNumber ?? string.Empty,
+            });
+
+        /// <summary>Sale del bloque «Agente IA» en que la corrida esperaba. Spec 2026-11-17 D-B12: <c>human</c>, <c>noAnswer</c> y
+        /// <c>error</c> sin conectar pasan la conversación a la bandeja (D-B13: <c>human</c>, a <paramref name="assignToMemberId"/>, la asesora
+        /// del borrador) con la salida como código (adenda D-6).</summary>
+        public StepResult ExitAgent(AiAgentNode node, string output, Guid? assignToMemberId) =>
+            IsUnhandledAgentOutput(node, output)
+                ? HandOff(node, HandoffReasons.AgentBlockOutputUnhandled, output == FlowOutputs.Human ? assignToMemberId : null, output)
+                : Leave(node, output);
+
+        /// <summary>Spec 2026-11-17 §6.4: el agente volvió sin salida (ventana cerrada, contacto bloqueado); no hay a quién mandarle nada.</summary>
+        public StepResult EndWithoutOutput(AiAgentNode node, RunStatus stopped, string outcome, string reason)
+        {
+            consentPrompt = null;
+            effects.Add(new Effect.EndRun(node.Id, reason));
+            _ = Stop(node, stopped, outcome);
+            return Result();
+        }
+
+        private static bool IsUnhandledAgentOutput(AiAgentNode node, string output) =>
+            output is FlowOutputs.Human or FlowOutputs.NoAnswer or FlowOutputs.Error && node.Outputs.GetValueOrDefault(output) is null;
 
         /// <summary>
         /// D-I5 y D-M7: la corrida vuelve a empezar con sólo las variables fijas y cero intentos, y se recorre desde el Inicio como un
@@ -501,9 +560,47 @@ public static class FlowEngine
                 case OpenQuestionNode or ButtonsNode or AttachmentNode:
                     AddSend(Prompt(node));
                     return Wait(node);
+                case AiAgentNode agent:
+                    return EnterAgent(agent);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin semántica en el motor.");
             }
+        }
+
+        /// <summary>
+        /// Spec 2026-11-17 §6.1 y D-B4: pide delegar con el contexto interpolado y cortado, y espera <c>Waiting</c> con
+        /// <see cref="TraceOutcomes.Delegated"/>, como una pregunta. Sin agente (un borrador corrupto: el validador no lo publica) sale por
+        /// <c>error</c> con <c>agent_missing</c> sin pedir nada.
+        /// </summary>
+        private string? EnterAgent(AiAgentNode agent)
+        {
+            if (agent.AgentId is not { } agentId)
+            {
+                SaveAgentResult(agent, AgentBlockReasons.AgentMissing, null, null);
+                if (IsUnhandledAgentOutput(agent, FlowOutputs.Error))
+                {
+                    effects.Add(new Effect.Handoff(agent.Id, HandoffReasons.AgentBlockOutputUnhandled, null, FlowOutputs.Error));
+                    return Stop(agent, RunStatus.HandedOff, TraceOutcomes.HandedOff);
+                }
+
+                return Took(agent, FlowOutputs.Error);
+            }
+
+            effects.Add(new Effect.DelegateToAgent(
+                agent.Id, agentId, agent.Objective, Cut(Text(agent.Context), AiAgentLimits.TextMaxLength), agent.FirstTurn, agent.IdleMinutes));
+            return Stop(agent, RunStatus.Waiting, TraceOutcomes.Delegated);
+        }
+
+        /// <summary>Corta a <paramref name="max"/> unidades sin partir un par sustituto (un emoji).</summary>
+        private static string Cut(string text, int max)
+        {
+            if (text.Length <= max)
+            {
+                return text;
+            }
+
+            var end = char.IsHighSurrogate(text[max - 1]) ? max - 1 : max;
+            return text[..end];
         }
 
         private string? Wait(FlowNode node)

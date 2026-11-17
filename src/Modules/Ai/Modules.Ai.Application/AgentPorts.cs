@@ -75,6 +75,14 @@ public interface IAgentConnectionSlots
 public interface IAiAuditRecorder
 {
     void Record(Guid tenantId, Guid actorId, string action, Guid agentId, DateTimeOffset at);
+
+    /// <summary>Lo que hace el agente sin persona detrás (§4.7, <c>ai.quotation_draft.created</c>): actor <c>AiAgent</c> con el id del
+    /// agente.</summary>
+    void RecordByAgent(Guid tenantId, string action, Guid agentId, DateTimeOffset at);
+
+    /// <summary>Spec 2026-11-17 (copiloto) D-C13: auditoría de metadatos, nunca de contenido; por eso no hay parámetro para texto libre.
+    /// <paramref name="actorId"/> <c>null</c> es el sistema (el barrido de retención).</summary>
+    void RecordCopilot(Guid tenantId, Guid? actorId, string action, string resourceType, Guid resourceId, DateTimeOffset at);
 }
 
 /// <summary>Spec 2026-10-29 §4.7: las acciones de auditoría de los agentes.</summary>
@@ -88,6 +96,19 @@ public static class AiAuditActions
     public const string AgentPaused = "ai.agent.paused";
     public const string AgentResumed = "ai.agent.resumed";
     public const string AgentDeleted = "ai.agent.deleted";
+
+    /// <summary>§4.7: el agente creó un borrador de cotización (P-4b).</summary>
+    public const string QuotationDraftCreated = "ai.quotation_draft.created";
+
+    /// <summary>Spec 2026-11-17 (copiloto) D-C13: la configuración del tenant; el id del recurso es el del tenant (una fila por tenant).</summary>
+    public const string ResourceCopilotSettings = "ai_copilot_settings";
+
+    public const string ResourceCopilotThread = "ai_copilot_thread";
+
+    public const string CopilotSettingsUpdated = "ai.copilot.settings_updated";
+
+    /// <summary>Por el miembro (actor humano) o por la retención (actor sistema).</summary>
+    public const string CopilotThreadDeleted = "ai.copilot.thread_deleted";
 }
 
 /// <summary>§4.3: el 409 <c>ai.agent.connection_taken</c> lleva <c>occupant</c> para que la pantalla ofrezca ir a pausar al que la ocupa.</summary>
@@ -103,6 +124,36 @@ public sealed class AgentConnectionTakenException(AiConnectionOccupant occupant,
     public IReadOnlyDictionary<string, object?> ProblemExtensions { get; } = new Dictionary<string, object?>(StringComparer.Ordinal)
     {
         ["occupant"] = new { kind = occupant.Kind, id = occupant.Id, name = occupant.Name },
+    };
+}
+
+/// <summary>Un chatbot por su id y su nombre, como lo lee el frontend (<c>{ id, name }</c>).</summary>
+public sealed record AiChatbotRef(Guid Id, string Name);
+
+/// <summary>Spec 2026-11-17 §7 y D-B18: qué chatbots publicados usan cada agente en un bloque «Agente IA» de su versión publicada (adaptador
+/// en Bootstrapper con SQL sobre <c>automations</c>: Ai no ve Automations, D-A3). Un agente que nadie usa no aparece.</summary>
+public interface IAiChatbotUsage
+{
+    Task<IReadOnlyDictionary<Guid, IReadOnlyList<AiChatbotRef>>> ListByAgentAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 §7: el nombre de ahora de los chatbots, por tenant e ids (adaptador en Bootstrapper sobre
+/// <c>automations.chatbots</c>). Uno borrado no aparece.</summary>
+public interface IAiChatbotNames
+{
+    Task<IReadOnlyDictionary<Guid, string>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 D-B18: el 409 lleva los chatbots para que la pantalla diga cuáles hay que cambiar antes de borrar.</summary>
+public sealed class AgentInUseByChatbotsException(IReadOnlyList<AiChatbotRef> chatbots)
+    : ResourceConflictException(
+        AiErrorCodes.AgentInUseByChatbots,
+        "Un chatbot publicado usa este agente. Quítalo del flujo y publica el chatbot para poder borrarlo."),
+      IHasProblemExtensions
+{
+    public IReadOnlyDictionary<string, object?> ProblemExtensions { get; } = new Dictionary<string, object?>(StringComparer.Ordinal)
+    {
+        ["chatbots"] = chatbots,
     };
 }
 

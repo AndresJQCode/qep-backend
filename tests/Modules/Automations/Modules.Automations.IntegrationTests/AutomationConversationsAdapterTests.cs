@@ -354,7 +354,7 @@ public sealed class AutomationConversationsAdapterTests
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_chatbot_id = @c, automation_paused_at = now(), automation_pause_reason = 'Manual'",
+            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, automation_paused_at = now(), automation_pause_reason = 'Manual'",
             ("c", Guid.CreateVersion7()));
 
         await WithAdapterAsync(f, adapter => adapter.EndAsync(f.TenantId, f.ConversationId, Ct));

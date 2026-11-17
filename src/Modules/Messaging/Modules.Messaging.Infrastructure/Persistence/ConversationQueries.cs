@@ -9,14 +9,22 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// índices parciales; la búsqueda por los GIN de trigramas (ILIKE / LIKE) y por <c>wa_id = ANY</c>.</summary>
 internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConversationQueries
 {
-    private static readonly Expression<Func<Conversation, ConversationRow>> Projection = conversation => new ConversationRow(
+    // De instancia y no estática: la subconsulta de la delegación (spec 2026-11-17 §7, chip «Agente IA · desde el chatbot X») usa el
+    // DbSet de este contexto. Sólo la resuelve una conversación delegada, por la llave primaria.
+    private Expression<Func<Conversation, ConversationRow>> Projection => conversation => new ConversationRow(
         conversation.Id, conversation.TenantId, conversation.ConnectionId, conversation.UserId, conversation.WaId, conversation.Username,
         conversation.ProfileName, conversation.CustomerId, conversation.AssignedMemberId, conversation.Status,
         conversation.UnreadCount, conversation.LastInboundAt, conversation.LastMessageId, conversation.LastMessageDirection, conversation.LastMessageKind,
         conversation.LastMessagePreview, conversation.LastMessageStatus, conversation.LastMessageAt, conversation.UpdatedAt, conversation.Version, conversation.Channel, conversation.ResolutionReasonId, conversation.LastActivityAt,
         conversation.AutomationStatus, conversation.AutomationStartedAt, conversation.AutomationPausedAt, conversation.AutomationPausedByMemberId, conversation.AutomationPauseReason,
         conversation.AutomationChatbotId, conversation.AutomationStep, conversation.AutomationResumedAt,
-        conversation.BlockedAt, conversation.BlockedByMemberId, conversation.Imported, conversation.LastInboundWamid);
+        conversation.BlockedAt, conversation.BlockedByMemberId, conversation.Imported, conversation.LastInboundWamid,
+        conversation.AutomationBotKind, conversation.AutomationAgentId,
+        dbContext.BotDelegations
+            .Where(delegation => delegation.Id == conversation.AutomationDelegationId)
+            .Select(delegation => (Guid?)delegation.ChatbotId)
+            .FirstOrDefault(),
+        conversation.AutomationDelegationId);
 
     public async Task<IReadOnlyList<ConversationRow>> ListAsync(
         Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken)

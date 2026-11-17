@@ -52,6 +52,10 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // pedido que ganó. La prueba es ExternalOrderServiceTests.CreateAsyncConcurrentSameExternalKeyCreatesOneOrder.
     private const string OrderExternalKeyIndex = "IX_orders_tenant_external_key";
 
+    // Lo mismo para el borrador de cotización de un agente IA (spec 2026-10-29 §8.3, D-A16): ExternalQuotationService busca
+    // antes de crear, y este índice cierra la carrera de un trabajo retomado; el servicio devuelve la cotización que ganó.
+    private const string QuotationExternalKeyIndex = "IX_quotations_tenant_external_key";
+
     // El nombre de una transportadora, o cualquiera de sus alias, ya es de otra del mismo tenant
     // (spec 2026-10-17). Es la regla de negocio, no una red: la comprobación previa en el handler
     // no cierra la carrera entre dos altas simultáneas, este índice sí.
@@ -168,6 +172,18 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
             throw new QuotationsDomainException(
                 ExternalOrderErrors.ExternalKeyTaken,
                 "Another order from this source already uses that external key.");
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      QuotationExternalKeyIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new QuotationsDomainException(
+                ExternalQuotationErrors.ExternalKeyTaken,
+                "Another quotation already uses that external key.");
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

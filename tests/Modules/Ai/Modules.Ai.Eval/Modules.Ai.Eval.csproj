@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Plan 2026-11-12, Task 10 (AI-B9): the agent eval. A console app, not a test project, on purpose: `dotnet test` skips it, so it
+       never runs in the normal test run nor in CI. It calls real providers and spends real money; it only runs by hand, with the
+       owner's approved budget (README, «Agentes IA», «Eval»). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>false</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- IHttpClientFactory, options and console logging come from the shared framework, as in Modules.Ai.Infrastructure. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Ai\Modules.Ai.Application\Modules.Ai.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Ai\Modules.Ai.Domain\Modules.Ai.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Ai\Modules.Ai.Infrastructure\Modules.Ai.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="eval-set.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="prices.example.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

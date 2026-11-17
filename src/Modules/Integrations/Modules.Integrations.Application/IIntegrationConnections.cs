@@ -61,7 +61,9 @@ public sealed record ConnectionSummary(Guid Id, string ProviderKey, string Name)
 
 /// <summary>Nombre y estado de una conexión del proveedor, Active o no (spec 2026-10-09 §6.1): la
 /// bandeja muestra <c>connectionName</c> también en conversaciones de una conexión pausada.</summary>
-public sealed record ConnectionListing(Guid Id, string Name, ConnectionStatus Status);
+/// <param name="LastFailureCode">El último motivo de <c>NeedsAttention</c>, tal cual está guardado. Ojo: <c>MarkVerified</c> no lo
+/// limpia, así que en una conexión <c>Active</c> puede quedar un fallo viejo; quien lo muestre filtra por estado.</param>
+public sealed record ConnectionListing(Guid Id, string Name, ConnectionStatus Status, string? LastFailureCode = null);
 
 /// <summary>
 /// Spec 2026-10-08, «Puertos para los consumidores». Cada consumidor declara su propio puerto en su
@@ -158,6 +160,6 @@ public sealed class IntegrationConnections(
             .Where(connection => string.Equals(connection.ProviderKey, providerKey, StringComparison.Ordinal))
             .OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(connection => connection.Id)
-            .Select(connection => new ConnectionListing(connection.Id, connection.Name, connection.Status))
+            .Select(connection => new ConnectionListing(connection.Id, connection.Name, connection.Status, connection.LastFailureCode))
             .ToArray();
 }

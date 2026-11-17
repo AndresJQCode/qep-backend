@@ -8,7 +8,7 @@ using Modules.Messaging.Domain;
 namespace Bootstrapper;
 
 /// <summary>
-/// Adapta Quotations, Loans, ServiceContracts, Support, Messaging, Automations, Pipeline, Pos, Geography y Shopify al puerto
+/// Adapta Quotations, Loans, ServiceContracts, Support, Messaging, Automations, Ai, Pipeline, Pos, Geography y Shopify al puerto
 /// <see cref="ICustomerDeletionReferences"/> de Customers (spec 2026-11-10, borrar clientes, §4.2, §4.3 y §5). Vive en el
 /// composition root por la misma razón que <see cref="CustomerMergeReferences"/>: Customers no referencia los otros módulos
 /// (<c>CustomersLayerTests</c>) y el acoplamiento entre esquemas se cablea acá.
@@ -31,10 +31,12 @@ namespace Bootstrapper;
 /// (<c>ticket_id</c>, <c>message_id</c>, <c>rating_message_id</c>, <c>comment_message_id</c>, <c>prompt_message_id</c>,
 /// <c>updated_at</c>); en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
 /// <c>blocked_at</c>), <c>messages</c> (<c>conversation_id</c>, <c>direction</c>), <c>message_media.storage_key</c>,
-/// <c>scheduled_messages.media_storage_key</c>, <c>automation_inbox.conversation_id</c>, <c>campaign_recipients</c>
+/// <c>scheduled_messages.media_storage_key</c>, <c>automation_inbox.conversation_id</c>, <c>bot_delegations.conversation_id</c>, <c>campaign_recipients</c>
 /// (<c>customer_id</c>, <c>conversation_id</c>, <c>message_id</c>, <c>status</c>, <c>failure_code</c>, <c>failure_reason</c>) y
 /// <c>campaigns</c> (<c>audience_customer_ids</c>, <c>audience_tag_ids</c>, <c>status</c>, <c>version</c>); en
-/// <c>automations</c>: <c>conversation_runs</c>, <c>run_units.run_id</c> y <c>http_calls.run_id</c>; en <c>pipeline</c>:
+/// <c>automations</c>: <c>conversation_runs</c>, <c>run_units.run_id</c> y <c>http_calls.run_id</c>; en <c>ai</c>:
+/// <c>sessions.conversation_id</c>, <c>turns.session_id</c>, <c>model_jobs</c> (<c>session_id</c>, <c>test_id</c>),
+/// <c>tool_calls.job_id</c> y <c>tests.customer_id</c>; en <c>pipeline</c>:
 /// <c>deals</c> (<c>customer_id</c>, <c>origin_conversation_id</c>), <c>deal_stage_history</c>, <c>deal_quotations</c>,
 /// <c>deal_orders</c> y <c>triage_decisions</c> (<c>deal_id</c>, <c>customer_id</c>, <c>conversation_id</c>);
 /// <c>pos.sales.customer_id</c>, <c>geography.unresolved_city_occurrences.customer_id</c> y
@@ -225,6 +227,40 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
             """, cancellationToken);
         await database.ExecuteSqlAsync($"""
             DELETE FROM messaging.automation_inbox WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
+            """, cancellationToken);
+        // Spec 2026-11-17 §8: la delegación guarda el contexto interpolado del flujo (puede traer el nombre del cliente) y se va con la
+        // conversación. Sin FK a conversations: va a mano.
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM messaging.bot_delegations WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
+            """, cancellationToken);
+
+        // Los agentes de IA de estas conversaciones (sesiones, turnos, trabajos y llamadas a herramientas, que guardan los pedidos y las
+        // cotizaciones del cliente) y las pruebas del playground que fijaron a uno de estos clientes, con sus trabajos y llamadas. Sin FK
+        // hacia Messaging ni Customers: van a mano. ai.usage_records se queda: es el consumo pagado, sin datos del cliente.
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM ai.tool_calls
+            WHERE tenant_id = {tenantId}
+              AND job_id IN (SELECT id FROM ai.model_jobs
+                             WHERE tenant_id = {tenantId}
+                               AND (session_id IN (SELECT id FROM ai.sessions WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv}))
+                                    OR test_id IN (SELECT id FROM ai.tests WHERE tenant_id = {tenantId} AND customer_id = ANY({ids}))))
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM ai.model_jobs
+            WHERE tenant_id = {tenantId}
+              AND (session_id IN (SELECT id FROM ai.sessions WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv}))
+                   OR test_id IN (SELECT id FROM ai.tests WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})))
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM ai.turns
+            WHERE tenant_id = {tenantId}
+              AND session_id IN (SELECT id FROM ai.sessions WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv}))
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM ai.sessions WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM ai.tests WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
             """, cancellationToken);
 
         // A-10 y P10: los destinatarios se conservan (las estadísticas de la campaña se cuentan en vivo de esta tabla). Primero el

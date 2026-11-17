@@ -41,6 +41,13 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.QuickReplyShortcutTaken, "Another quick reply in this tenant already uses that shortcut.", exception);
         }
+        // Revisión de la rama, hallazgo 3: dos delegaciones vivas de una conversación. La de dominio y no un 23505 crudo: el motor de chatbots
+        // la atiende como cualquier cambio que la conversación ya no admite (la corrida termina Interrupted) en vez de reintentar la fila.
+        catch (DbUpdateException exception) when (IsLiveDelegationConflict(exception))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.DelegationLiveExists, "The conversation already has a live delegation to an agent.", exception);
+        }
         // Spec 2026-10-15 §3.3 y D-R11: 409 y no 422, como customers.tag.name_taken. Es un choque con lo que ya existe —el resolver
         // reintenta y lo reutiliza; el renombrar elige otro nombre—, por eso ResourceConflictException y no un error de dominio.
         catch (DbUpdateException exception)
@@ -164,6 +171,12 @@ internal static class MessagingSaveChanges
             throw new RequestConcurrencyException("concurrency.conflict", "Another request assigned the connection to a schedule first.", exception);
         }
     }
+
+    /// <summary>Hallazgo 3: por nombre de índice, como el resto; un 23505 de otro índice de la tabla no es este choque.</summary>
+    internal static bool IsLiveDelegationConflict(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres
+        && postgres.SqlState == PostgresErrorCodes.UniqueViolation
+        && string.Equals(postgres.ConstraintName, MessagingDbContext.BotDelegationLiveIndex, StringComparison.Ordinal);
 
     /// <summary>
     /// La sincronización que perdió deja sus filas del espejo pendientes en el contexto, y el catálogo atrapa el 412 del llenado implícito

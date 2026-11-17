@@ -12,9 +12,11 @@ internal sealed class AutomationInboundQueue(IAutomationInbox inbox) : IAutomati
 {
     public async Task<IReadOnlyList<InboundQueueItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken) =>
     [
-        .. (await inbox.ClaimAsync(now, batch, cancellationToken)).Select(item => new InboundQueueItem(
+        // Spec 2026-10-29 §6.1: el motor de chatbots sólo reclama filas de chatbot; las de agente son del procesador de Ai.
+        .. (await inbox.ClaimAsync(now, batch, Modules.Messaging.Domain.BotKind.Chatbot, cancellationToken)).Select(item => new InboundQueueItem(
             item.MessageId, item.TenantId, item.ConnectionId, item.ConversationId, item.Opened, item.CreatedAt, item.Attempts,
-            ReleaseRun: item.Kind == AutomationInboxKinds.ReleaseRun)),
+            ReleaseRun: item.Kind == AutomationInboxKinds.ReleaseRun,
+            DelegationId: item.Kind == AutomationInboxKinds.AgentReturned ? item.DelegationId : null)),
     ];
 
     public Task<bool> CompleteAsync(Guid tenantId, Guid messageId, int attempts, string outcome, CancellationToken cancellationToken) =>

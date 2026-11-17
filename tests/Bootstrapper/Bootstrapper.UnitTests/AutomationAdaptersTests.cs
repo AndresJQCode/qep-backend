@@ -236,7 +236,7 @@ public sealed class AutomationAdaptersTests
             TenantId, conversationId, chatbotId, clientId, new InteractiveMessage.CtaUrl("Paga aquí", "Pagar", "https://pagos.example.com/p/1"), Ct);
         await messenger.SendTextAsync(TenantId, conversationId, chatbotId, clientId, "Hola", Ct);
 
-        Assert.All(outbound.Sends, send => Assert.Equal((TenantId, conversationId, chatbotId, clientId), (send.TenantId, send.ConversationId, send.ChatbotId, send.ClientId)));
+        Assert.All(outbound.Sends, send => { Assert.Equal(Modules.Messaging.Domain.BotKind.Chatbot, send.Bot.Kind); Assert.Equal((TenantId, conversationId, chatbotId, clientId), (send.TenantId, send.ConversationId, send.Bot.Id, send.ClientId)); });
         var buttons = Assert.IsType<ButtonsSend>(outbound.Sends[0].Interactive);
         Assert.Null(outbound.Sends[0].Text);
         Assert.Equal("¿Qué necesitas?", buttons.Body);
@@ -423,7 +423,7 @@ public sealed class AutomationAdaptersTests
 
         public List<string> Calls { get; } = [];
 
-        public Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, Modules.Messaging.Domain.BotKind botKind, CancellationToken cancellationToken)
         {
             ClaimedWith = (now, batch);
             return Task.FromResult(Claimed);
@@ -451,7 +451,16 @@ public sealed class AutomationAdaptersTests
         {
         }
 
-        public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now)
+        public void EnqueueDelegated(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+            throw new NotSupportedException();
+
+        public void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+            throw new NotSupportedException();
+
+        public Task<DateTimeOffset?> ReassignPendingEngineAsync(Guid tenantId, Guid conversationId, BotKind target, Guid? exceptMessageId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, Modules.Messaging.Domain.BotKind botKind, DateTimeOffset now)
         {
         }
 

@@ -181,6 +181,30 @@ public sealed class MessageMappingTests
             new ChatbotRefDto(Bot, MessageMapping.DeletedChatbotName),
             MessageMapping.ToDto(BotResolvedRow(), TenantId, Names, NoTargets).Event!.Chatbot);
 
+    // Spec 2026-11-17 adenda D-5: la foto del nombre gana sobre el de hoy; sin foto, el de hoy o el de borrado.
+    [Fact]
+    public void AReturnFromTheAgentCarriesChatbotAgentAndOutput()
+    {
+        var agent = Guid.CreateVersion7();
+        var row = Row(MessageDirection.System, MessageKind.Event, details: ConversationEventJson.Serialize(new ConversationEvent(
+            ConversationEventType.AutomationReturned, ChatbotId: Bot, ChatbotName: "Ventas (antes)", AgentId: agent, AgentName: "Asesor IA",
+            Output: "human")));
+        var withoutSnapshot = Row(MessageDirection.System, MessageKind.Event, details: ConversationEventJson.Serialize(new ConversationEvent(
+            ConversationEventType.AutomationDelegated, ChatbotId: Bot, AgentId: agent)));
+
+        var returned = MessageMapping.ToDto(row, TenantId, Names, NoTargets, chatbotNames: ChatbotNames).Event!;
+        var delegated = MessageMapping.ToDto(withoutSnapshot, TenantId, Names, NoTargets, chatbotNames: ChatbotNames).Event!;
+
+        Assert.Equal(
+            new MessageEventDto(
+                "AutomationReturned", null, null, null, Chatbot: new ChatbotRefDto(Bot, "Ventas (antes)"), Agent: new AgentRefDto(agent, "Asesor IA"),
+                Output: "human"),
+            returned);
+        Assert.Equal(new ChatbotRefDto(Bot, "Ventas"), delegated.Chatbot);
+        Assert.Equal(new AgentRefDto(agent, MessageMapping.DeletedAgentName), delegated.Agent);
+        Assert.Null(delegated.Output);
+    }
+
     [Fact]
     public void AResolvedByAMemberHasNoChatbot()
     {
@@ -205,5 +229,29 @@ public sealed class MessageMappingTests
     {
         Assert.Equal([Andres], MessageMapping.MemberIdsOf([CustomerChangedRow()]));
         Assert.Equal(new[] { CustomerA, CustomerB }.Order(), MessageMapping.CustomerIdsOf([CustomerChangedRow()]).Order());
+    }
+
+    // Spec 2026-10-29 §4.4: un mensaje de agente de IA (sent_by_kind = 3) no tiene miembro; un join al miembro lo perdería en silencio.
+    [Fact]
+    public void AnAgentMessageIsSignedByTheAgentAndNeverByAMember()
+    {
+        var agent = Guid.CreateVersion7();
+        var row = Row(MessageDirection.Outbound, MessageKind.Text, "hola") with { SentByAgentId = agent };
+
+        var dto = MessageMapping.ToDto(row, TenantId, Names, NoTargets, chatbotNames: new Dictionary<Guid, string> { [agent] = "Sofía" });
+
+        Assert.Equal(new AgentRefDto(agent, "Sofía"), dto.SentByAgent);
+        Assert.Null(dto.SentBy);
+        Assert.Null(dto.SentByChatbot);
+        Assert.Contains(agent, MessageMapping.ChatbotIdsOf([row]));
+        Assert.Empty(MessageMapping.MemberIdsOf([row]));
+    }
+
+    [Fact]
+    public void ADeletedAgentSignsAsAgenteIa()
+    {
+        var row = Row(MessageDirection.Outbound, MessageKind.Text, "hola") with { SentByAgentId = Guid.CreateVersion7() };
+
+        Assert.Equal(MessageMapping.DeletedAgentName, MessageMapping.ToDto(row, TenantId, Names, NoTargets).SentByAgent!.Name);
     }
 }

@@ -108,6 +108,10 @@ public static class MultiReplicaInventory
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyRepositories.cs:199-202 — lease por tienda (reconcile_lease_until)"),
         new("Modules.Shopify.Infrastructure.Workers.ShopifyOrderPushWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyOrderPushQueue.cs:36-39 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por envío"),
+        new("Modules.Ai.Infrastructure.AiInboxWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Persistence/AutomationInbox.cs:45 — FOR UPDATE SKIP LOCKED con lease, filas bot_kind = 2 (adaptador Bootstrapper/AiConversations.cs:194); los barridos cierran cada sesión bajo pg_try_advisory_xact_lock(ConversationBotLock) y FOR UPDATE de la sesión (Modules/Ai/Modules.Ai.Application/AiSessionSweeper.cs:60-66), así que el segundo pod no encuentra nada; el de delegaciones huérfanas (spec 2026-11-17 §6.5) es una sola sentencia: UPDATE con FOR UPDATE SKIP LOCKED y status = 'Live', que en la misma encola la señal ReleaseRun de cada interrumpida (Bootstrapper/AiDelegationSweep.cs:26-55); la retención del copiloto (CopilotRetentionSweeper) borra cada hilo con DELETE … RETURNING y FOR UPDATE SKIP LOCKED y audita sólo lo que borró, y el registro de preguntas con un DELETE por corte (Modules/Ai/Modules.Ai.Infrastructure/Persistence/CopilotRepository.cs, DeleteThreadAsync y DeleteQuestionsBeforeAsync)"),
+        new("Modules.Ai.Infrastructure.AiModelWorker", WorkerClassification.Claimed,
+            "Modules/Ai/Modules.Ai.Infrastructure/Persistence/AiRunPersistence.cs:64-75 — FOR UPDATE SKIP LOCKED y lease_until (LeaseMinutes, mayor que el tope de 120 s del trabajo)"),
         // Un solo hosted drena en secuencia los trece consumidores de correo (spec 2026-11-13, D-7); cada uno reclama igual que antes.
         new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
 
@@ -203,6 +207,10 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookRouting.cs:12 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
         new("Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus", StateClassification.PerPodByDesign,
             "Modules/Automations/Modules.Automations.Infrastructure/Engine/AutomationsModuleStatus.cs:14 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
+        new("Modules.Ai.Infrastructure.AiModuleStatus", StateClassification.PerPodByDesign,
+            "Modules/Ai/Modules.Ai.Infrastructure/AiInboxWorker.cs:15-29 — IMemoryCache de 60 s, como AutomationsModuleStatus; el retraso de un minuto ya existe con un pod"),
+        new("Modules.Ai.Infrastructure.AiInboxWorker", StateClassification.PerPodByDesign,
+            "Modules/Ai/Modules.Ai.Infrastructure/AiInboxWorker.cs:43-44 — la hora del próximo barrido de cada pod; dos pods barren dos veces y el segundo no cierra nada (AiSessionSweeper.cs:60-66)"),
         new("Modules.Authorization.Application.ModuleEntitlementMask", StateClassification.PerPodByDesign,
             "Modules/Authorization/Modules.Authorization.Application/ModuleEntitlementMask.cs:17 — tabla inmutable armada de los permisos registrados; igual en cada pod"),
         new("Modules.Authorization.Application.RoleCatalog", StateClassification.PerPodByDesign,

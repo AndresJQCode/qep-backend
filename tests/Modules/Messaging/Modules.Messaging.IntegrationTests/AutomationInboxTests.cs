@@ -18,7 +18,9 @@ public sealed class AutomationInboxTests
 
     private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, string ConnectionString, RegisteredTenant Tenant, HttpClient Client);
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool enqueue = true)
+    /// <param name="occupant">Spec 2026-10-29 §6.1: quién atiende la conexión en <c>connection_bots</c> (1 chatbot, 2 agente); sin ocupante
+    /// la ingesta no encola.</param>
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool enqueue = true, short? occupant = 1)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString, enqueue);
@@ -26,8 +28,41 @@ public sealed class AutomationInboxTests
         var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services => services.AddSingleton<IMessagingMediaStore>(new MemoryMediaStore())));
         var tenant = await RegisterTenantAsync(host);
         await EnableMessagingAsync(connectionString, tenant.TenantId);
-        await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Ventas", "111", "222");
+        var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Ventas", "111", "222");
+        if (occupant is { } kind)
+        {
+            await ExecuteAsync(
+                connectionString,
+                "INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at) VALUES (@c, @t, @k, gen_random_uuid(), 'Bot', now())",
+                ("c", connectionId), ("t", tenant.TenantId), ("k", kind));
+        }
+
         return new Fixture(factory, host, connectionString, tenant, host.CreateClient());
+    }
+
+    [Fact]
+    public async Task WithoutAnOccupantTheInboundIsNotEnqueued()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, occupant: null);
+
+        await PostTextAsync(f, "wamid.no-bot");
+
+        Assert.Equal(0, await InboxCountAsync(f));
+    }
+
+    [Fact]
+    public async Task AnAgentOccupantRoutesTheRowToTheAgentAndTheChatbotEngineDoesNotClaimIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, occupant: 2);
+
+        await PostTextAsync(f, "wamid.agent");
+
+        Assert.Equal(1, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.automation_inbox WHERE bot_kind = 2"));
+        var later = DateTimeOffset.UtcNow.AddMinutes(5);
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
+        Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Agent, Ct)));
     }
 
     private sealed class MemoryMediaStore : IMessagingMediaStore
@@ -137,7 +172,7 @@ public sealed class AutomationInboxTests
         using var _ = f.Factory;
         await PostTextAsync(f, "w1");
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_chatbot_id = @c, automation_paused_at = now(), automation_pause_reason = 'Manual'",
+            "UPDATE messaging.conversations SET automation_status = 'Paused', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, automation_paused_at = now(), automation_pause_reason = 'Manual'",
             ("c", Guid.CreateVersion7()));
 
         await PostTextAsync(f, "w2", 10);
@@ -217,7 +252,7 @@ public sealed class AutomationInboxTests
         var first = await ScalarAsync<Guid>(f.ConnectionString, "SELECT message_id FROM messaging.automation_inbox ORDER BY created_at, message_id LIMIT 1");
         var later = DateTimeOffset.UtcNow.AddMinutes(5);
 
-        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct));
+        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct));
 
         var item = Assert.Single(claimed);
         Assert.Equal(first, item.MessageId);
@@ -225,10 +260,10 @@ public sealed class AutomationInboxTests
         Assert.True(item.Opened);
         Assert.Equal(1, item.Attempts);
         // Mientras la primera sigue pendiente (aunque esté en lease) la segunda espera.
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, BotKind.Chatbot, Ct)));
 
         Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first, item.Attempts, "handled", Ct)));
-        var next = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var next = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
 
         Assert.NotEqual(first, next.MessageId);
         Assert.False(next.Opened);
@@ -251,12 +286,12 @@ public sealed class AutomationInboxTests
         await EnqueueManualStartAsync(f, connectionId, conversationId, later.AddMinutes(-1));
 
         // Mientras el entrante anterior siga pendiente, la manual espera.
-        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
         Assert.Equal(inboundId, first.MessageId);
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, BotKind.Chatbot, Ct)));
         Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "handled", Ct)));
 
-        var manual = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var manual = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
 
         Assert.NotEqual(inboundId, manual.MessageId);
         Assert.False(manual.Opened);
@@ -305,7 +340,7 @@ public sealed class AutomationInboxTests
         await EnqueueManualStartAsync(f, connectionId, Guid.CreateVersion7(), start);
         await EnqueueReleaseRunAsync(f, connectionId, Guid.CreateVersion7(), start.AddSeconds(1));
 
-        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(start.AddMinutes(5), 10, Ct));
+        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(start.AddMinutes(5), 10, BotKind.Chatbot, Ct));
 
         Assert.Equal(["Engine", "Engine", "ReleaseRun"], claimed.OrderBy(item => item.CreatedAt).Select(item => item.Kind));
     }
@@ -335,11 +370,11 @@ public sealed class AutomationInboxTests
         // Un entrante posterior de la misma conversación: una fila Engine más nueva.
         await EnqueueManualStartAsync(f, connectionId, conversationId, now.AddSeconds(1));
 
-        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, Ct)));
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, BotKind.Chatbot, Ct)));
         Assert.Equal(AutomationInboxKinds.ReleaseRun, first.Kind);
         Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "skipped", Ct)));
 
-        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, Ct)));
+        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, BotKind.Chatbot, Ct)));
         Assert.Equal(AutomationInboxKinds.Engine, second.Kind);
     }
 
@@ -360,10 +395,142 @@ public sealed class AutomationInboxTests
         Assert.Equal("23514", error.SqlState);
     }
 
-    private static async Task EnqueueReleaseRunAsync(Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now)
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: la fila <c>Delegated</c> la reclama sólo el procesador de agentes y la
+    /// <c>AgentReturned</c> sólo el motor de chatbots, las dos con su delegación y sin mensaje; las dos van en el orden de su conversación.</summary>
+    [Fact]
+    public async Task ADelegatedRowGoesToTheAgentQueueAndAReturnedRowToTheChatbotQueue()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var delegationId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        using (var scope = f.Host.Services.CreateScope())
+        {
+            var inbox = scope.ServiceProvider.GetRequiredService<IAutomationInbox>();
+            inbox.EnqueueDelegated(f.Tenant.TenantId, connectionId, conversationId, delegationId, now);
+            inbox.EnqueueAgentReturned(f.Tenant.TenantId, connectionId, conversationId, delegationId, now.AddSeconds(1));
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var later = now.AddMinutes(5);
+        // El motor de chatbots no ve la Delegated, y la AgentReturned espera detrás de ella (la más vieja de la conversación).
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
+        var delegated = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Agent, Ct)));
+        Assert.Equal(AutomationInboxKinds.Delegated, delegated.Kind);
+        Assert.Equal(delegationId, delegated.DelegationId);
+        Assert.NotEqual(delegationId, delegated.MessageId);
+        Assert.Null(await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, delegated.MessageId, Ct)));
+        Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, delegated.MessageId, delegated.Attempts, "opened", Ct)));
+
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Agent, Ct)));
+        var returned = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
+        Assert.Equal(AutomationInboxKinds.AgentReturned, returned.Kind);
+        Assert.Equal(delegationId, returned.DelegationId);
+        // Una fila de arranque manual no es una de delegación.
+        Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
+    }
+
+    [Fact]
+    public async Task TheDelegationColumnIsOnlyForDelegationRowsAndOnePerKind()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var delegationId = Guid.CreateVersion7();
+        await EnqueueManualStartAsync(f, Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        var manualId = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT message_id FROM messaging.automation_inbox WHERE message_id NOT IN (SELECT id FROM messaging.messages)");
+
+        var onEngine = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.automation_inbox SET delegation_id = @d WHERE message_id = @id", ("id", manualId), ("d", delegationId)));
+        Assert.Equal("CK_automation_inbox_delegation", onEngine.ConstraintName);
+
+        using (var scope = f.Host.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IAutomationInbox>()
+                .EnqueueDelegated(f.Tenant.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), delegationId, DateTimeOffset.UtcNow);
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using (var scope = f.Host.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IAutomationInbox>()
+                .EnqueueDelegated(f.Tenant.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), delegationId, DateTimeOffset.UtcNow);
+            await Assert.ThrowsAnyAsync<Exception>(() => scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct));
+        }
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.automation_inbox WHERE delegation_id = @d", ("d", delegationId)));
+    }
+
+    /// <summary>Revisión de la rama, hallazgos 1 y 6: al cambiar de bot, los entrantes pendientes del otro bot pasan al nuevo, menos la fila que
+    /// procesa quien cambia. Las señales y las filas de delegación no son entrantes: se quedan donde están.</summary>
+    [Fact]
+    public async Task ReassigningMovesThePendingEngineRowsOfTheOtherBotExceptTheOneInProcess()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await EnqueueManualStartAsync(f, connectionId, conversationId, now);
+        await EnqueueManualStartAsync(f, connectionId, conversationId, now.AddSeconds(1));
+        await EnqueueReleaseRunAsync(f, connectionId, conversationId, now.AddSeconds(2));
+        var inProcess = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT message_id FROM messaging.automation_inbox WHERE conversation_id = @c ORDER BY created_at LIMIT 1", ("c", conversationId));
+
+        var oldest = await WithInboxAsync(f, inbox =>
+            inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Agent, inProcess, Ct));
+
+        Assert.NotNull(oldest);
+        Assert.Equal(now.AddSeconds(1), oldest.Value, TimeSpan.FromMilliseconds(1));
+        Assert.Equal("Engine:1,Engine:2,ReleaseRun:1", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(kind || ':' || bot_kind, ',' ORDER BY created_at) FROM messaging.automation_inbox WHERE conversation_id = @c",
+            ("c", conversationId)));
+        // Otro tenant no mueve nada, y lo que ya está en la cola pedida tampoco.
+        Assert.Null(await WithInboxAsync(f, inbox =>
+            inbox.ReassignPendingEngineAsync(Guid.CreateVersion7(), conversationId, BotKind.Chatbot, null, Ct)));
+        Assert.Null(await WithInboxAsync(f, inbox =>
+            inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Agent, inProcess, Ct)));
+    }
+
+    /// <summary>Hallazgo 6: al volver del agente, la fila AgentReturned se encola un microsegundo antes del entrante más viejo que pasó al
+    /// chatbot, así que el motor la reclama primero y la corrida sale del bloque antes de leer el entrante.</summary>
+    [Fact]
+    public async Task AnAgentReturnedRowQueuedBeforeTheMovedRowsIsClaimedFirst()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var delegationId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await EnqueueManualStartAsync(f, connectionId, conversationId, now);
+        await WithInboxAsync(f, inbox => inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Agent, null, Ct));
+
+        using (var scope = f.Host.Services.CreateScope())
+        {
+            var inbox = scope.ServiceProvider.GetRequiredService<IAutomationInbox>();
+            var oldest = await inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Chatbot, null, Ct);
+            Assert.NotNull(oldest);
+            inbox.EnqueueAgentReturned(f.Tenant.TenantId, connectionId, conversationId, delegationId, oldest.Value.AddTicks(-10));
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, BotKind.Chatbot, Ct)));
+        Assert.Equal((AutomationInboxKinds.AgentReturned, (Guid?)delegationId), (claimed.Kind, claimed.DelegationId));
+    }
+
+    private static async Task EnqueueReleaseRunAsync(
+        Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now, BotKind botKind = BotKind.Chatbot)
     {
         using var scope = f.Host.Services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<IAutomationInbox>().EnqueueReleaseRun(f.Tenant.TenantId, connectionId, conversationId, now);
+        scope.ServiceProvider.GetRequiredService<IAutomationInbox>().EnqueueReleaseRun(f.Tenant.TenantId, connectionId, conversationId, botKind, now);
         await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
     }
 
@@ -385,11 +552,11 @@ public sealed class AutomationInboxTests
         var now = DateTimeOffset.UtcNow.AddMinutes(5);
 
         // El primer reclamo toma un lease de 30 s: antes de que venza, nadie más lo ve.
-        Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now, 10, Ct)));
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(20), 10, Ct)));
-        var claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31), 10, Ct)));
+        Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now, 10, BotKind.Chatbot, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(20), 10, BotKind.Chatbot, Ct)));
+        var claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31), 10, BotKind.Chatbot, Ct)));
         // El segundo es de 2 min.
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31).AddSeconds(100), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddSeconds(31).AddSeconds(100), 10, BotKind.Chatbot, Ct)));
 
         for (var attempt = 3; attempt <= 5; attempt++)
         {
@@ -397,14 +564,14 @@ public sealed class AutomationInboxTests
             Assert.True(await WithInboxAsync(f, inbox => inbox.RetryLaterAsync(f.Tenant.TenantId, id, token, TimeSpan.FromSeconds(1), Ct)));
             Assert.Equal("false", await ScalarAsync<string>(f.ConnectionString, "SELECT (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
             var at = now.AddHours(attempt);
-            claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(at, 10, Ct)));
+            claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(at, 10, BotKind.Chatbot, Ct)));
         }
 
         Assert.Equal(5, claimed.Attempts);
         Assert.True(await WithInboxAsync(f, inbox => inbox.RetryLaterAsync(f.Tenant.TenantId, id, claimed.Attempts, TimeSpan.FromSeconds(1), Ct)));
 
         Assert.Equal("failed|true", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome || '|' || (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddDays(1), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddDays(1), 10, BotKind.Chatbot, Ct)));
     }
 
     /// <summary>M4: un worker que se pasó de su lease no cierra ni reprograma la fila que otra réplica ya volvió a reclamar.</summary>
@@ -415,7 +582,7 @@ public sealed class AutomationInboxTests
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
         await PostTextAsync(f, "w1");
-        var item = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(DateTimeOffset.UtcNow.AddMinutes(5), 10, Ct)));
+        var item = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(DateTimeOffset.UtcNow.AddMinutes(5), 10, BotKind.Chatbot, Ct)));
         Assert.Equal(1, item.Attempts);
         // Otra réplica la reclamó tras vencer el lease: attempts avanzó y el testigo del primer worker quedó viejo.
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.automation_inbox SET attempts = 2");
@@ -545,11 +712,11 @@ public sealed class AutomationInboxTests
         await PostAsync(f, MetaPayloads.InboundTwoTexts("111", "573001234567", ("w1", "primero"), ("w2", "segundo"), DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600));
         var later = DateTimeOffset.UtcNow.AddMinutes(5);
 
-        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
         Assert.Equal("primero", (await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, first.MessageId, Ct)))!.Text);
         await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "handled", Ct));
 
-        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
         Assert.Equal("segundo", (await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, second.MessageId, Ct)))!.Text);
         // M5: el microsegundo por posición sólo corre la cola; los dos mensajes guardan el mismo instante de ingesta.
         Assert.Equal(1L, await ScalarAsync<long>(f.ConnectionString, "SELECT count(DISTINCT created_at) FROM messaging.messages WHERE direction = 1"));
@@ -568,10 +735,10 @@ public sealed class AutomationInboxTests
         // El worker se cuelga: reclama, nunca llama a Complete ni a RetryLater, y el lease vence.
         for (var attempt = 1; attempt <= 5; attempt++)
         {
-            Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(attempt), 10, Ct)));
+            Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(attempt), 10, BotKind.Chatbot, Ct)));
         }
 
-        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(6), 10, Ct)));
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddHours(6), 10, BotKind.Chatbot, Ct)));
         Assert.Equal("failed|true", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome || '|' || (processed_at IS NOT NULL)::text FROM messaging.automation_inbox"));
     }
 
@@ -676,5 +843,44 @@ public sealed class AutomationInboxTests
 
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 1"));
         Assert.Equal(0L, await InboxCountAsync(f));
+    }
+
+    // Revisión final de agentes de IA, hallazgo 6 (D-M1): dos DM de la misma entrega de Instagram para un agente se encolan con su posición,
+    // un microsegundo aparte y en el orden de la entrega, como en WhatsApp. Con el reloj quieto, sin la posición empataban en created_at.
+    [Fact]
+    public async Task TwoInstagramMessagesOfOneDeliveryAreEnqueuedInOrderOneMicrosecondApart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var clock = new TestClock { UtcNow = DateTimeOffset.UtcNow };
+        using var factory = new QepApiFactory(connectionString, true);
+        using var host = factory.WithTestClock(clock);
+        var tenant = await RegisterTenantAsync(host);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedInstagramConnectionAsync(host, tenant.TenantId, "Instagram Ventas", InstagramPayloads.DefaultAccountId);
+        await ExecuteAsync(
+            connectionString,
+            "INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at) VALUES (@c, @t, 2, gen_random_uuid(), 'Agente', now())",
+            ("c", connectionId), ("t", tenant.TenantId));
+        factory.MetaHandler.Respond($@"^/v24\.0/{InstagramPayloads.DefaultUserId}\?", System.Net.HttpStatusCode.OK, """{"name":"Laura","username":"laura","id":"1234567890123456"}""");
+        var sent = clock.UtcNow.ToUnixTimeSeconds() - 600;
+        using var client = host.CreateClient();
+
+        await PostInstagramWebhookAsync(client, InstagramPayloads.Many(
+            InstagramPayloads.DefaultAccountId,
+            InstagramPayloads.Event(InstagramPayloads.DefaultUserId, InstagramPayloads.DefaultAccountId, sent, "message",
+                new System.Text.Json.Nodes.JsonObject { ["mid"] = "m1", ["text"] = "hola" }),
+            InstagramPayloads.Event(InstagramPayloads.DefaultUserId, InstagramPayloads.DefaultAccountId, sent + 1, "message",
+                new System.Text.Json.Nodes.JsonObject { ["mid"] = "m2", ["text"] = "¿precio?" })));
+        await DrainDeliveriesAsync(host);
+
+        Assert.Equal("hola,¿precio?", await ScalarAsync<string>(connectionString,
+            """
+            SELECT string_agg(message.text, ',' ORDER BY inbox.created_at, inbox.message_id)
+              FROM messaging.automation_inbox AS inbox JOIN messaging.messages AS message ON message.id = inbox.message_id
+             WHERE inbox.bot_kind = 2
+            """));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT round(extract(epoch FROM max(created_at) - min(created_at)) * 1000000)::bigint FROM messaging.automation_inbox WHERE bot_kind = 2"));
     }
 }

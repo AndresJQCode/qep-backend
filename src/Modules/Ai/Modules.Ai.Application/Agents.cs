@@ -126,18 +126,43 @@ public sealed class SaveAgentDraftValidator : AbstractValidator<SaveAgentDraftCo
                 RuleFor(command => command.Config.Model.Provider).NotEmpty().MaximumLength(AgentModelRef.ProviderMaxLength);
                 RuleFor(command => command.Config.Model.Id).NotEmpty().MaximumLength(AgentModelRef.IdMaxLength);
             });
+            // P-4: la cuenta de cobro del borrador viaja entera; los topes son los de Quotations, que además la verifica al crear.
+            When(command => command.Config.QuotationDraft?.BillingAccount is not null, () =>
+            {
+                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.CompanyId).NotEmpty();
+                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.BankName)
+                    .NotEmpty().MaximumLength(AgentBillingAccount.BankNameMaxLength);
+                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.AccountNumber)
+                    .NotEmpty().MaximumLength(AgentBillingAccount.AccountNumberMaxLength);
+                RuleFor(command => command.Config.QuotationDraft!.BillingAccount!.Currency)
+                    .NotEmpty().Length(AgentBillingAccount.CurrencyLength);
+            });
         });
     }
 }
 
+/// <summary>Spec §5 y plan 2026-11-12 Tarea 9: la lista con el consumo del mes por proveedor (C-4) y la actividad del día, en el reloj del
+/// tenant.</summary>
 public sealed class ListAgentsHandler(
-    IExecutionContext executionContext, ITenantModules tenantModules, IAgentRepository agents, AgentEditorBuilder builder)
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    IAgentRepository agents,
+    AgentEditorBuilder builder,
+    IAgentActivityReader activity,
+    ITenantClock tenantClock,
+    IAiChatbotUsage chatbotUsage)
     : IQueryHandler<ListAgentsQuery, AgentListResponse>
 {
     public async Task<AgentListResponse> HandleAsync(ListAgentsQuery query, CancellationToken cancellationToken)
     {
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AiPermissions.AgentRead, cancellationToken);
-        return await builder.BuildListAsync(query.TenantId, await agents.ListAsync(query.TenantId, query.Search, cancellationToken), cancellationToken);
+        var window = AgentActivityWindows.For(await tenantClock.GetAsync(query.TenantId, cancellationToken));
+        return await builder.BuildListAsync(
+            query.TenantId,
+            await agents.ListAsync(query.TenantId, query.Search, cancellationToken),
+            await activity.SummarizeAsync(query.TenantId, window, cancellationToken),
+            await chatbotUsage.ListByAgentAsync(query.TenantId, cancellationToken),
+            cancellationToken);
     }
 }
 
@@ -374,12 +399,15 @@ public sealed class ResumeAgentHandler(
     }
 }
 
-/// <summary>Borra el agente con sus versiones y conexiones, y libera la ocupación en el mismo commit. El 409 <c>has_live_sessions</c> del
-/// spec llega con las sesiones (plan 2026-11-12, Tarea 7): hoy no hay sesiones que cuidar.</summary>
+/// <summary>Borra el agente con sus versiones y conexiones, y libera la ocupación en el mismo commit. Con sesiones vivas responde 409
+/// <c>ai.agent.has_live_sessions</c> (§4.7, §6.4); si no, con un chatbot publicado que lo usa, 409 <c>ai.agent.in_use_by_chatbots</c>
+/// (spec 2026-11-17 D-B18).</summary>
 public sealed class DeleteAgentHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IAgentRepository agents,
+    IAgentSessionRepository sessions,
+    IAiChatbotUsage chatbotUsage,
     IAiUnitOfWork unitOfWork,
     IAiAuditRecorder audit,
     IClock clock)
@@ -390,6 +418,20 @@ public sealed class DeleteAgentHandler(
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.AgentManage, cancellationToken);
         var agent = await agents.FindAsync(command.TenantId, command.AgentId, cancellationToken) ?? throw AiNotFound.Agent(command.AgentId);
         AiVersions.Ensure(agent.Version, command.Version);
+        // Una sesión viva termina con su versión (D-A5); borrar el agente la dejaría sin versión a mitad de la conversación.
+        if (await sessions.HasLiveSessionsAsync(command.TenantId, agent.Id, cancellationToken))
+        {
+            throw new ResourceConflictException(
+                AiErrorCodes.AgentHasLiveSessions, "El agente todavía atiende conversaciones. Pausa el agente y espera a que terminen para borrarlo.");
+        }
+
+        // D-B18: un bloque publicado que lo nombra saldría por error en cada corrida. Una publicación del chatbot que se cruce con este
+        // borrado no la frena nada: el bloque sale por error con agent_unavailable (D-B18), que es lo mismo que con el agente pausado.
+        if ((await chatbotUsage.ListByAgentAsync(command.TenantId, cancellationToken)).GetValueOrDefault(agent.Id) is { Count: > 0 } chatbots)
+        {
+            throw new AgentInUseByChatbotsException(chatbots);
+        }
+
         agents.Remove(agent);
         audit.Record(command.TenantId, executionContext.SubjectId, AiAuditActions.AgentDeleted, agent.Id, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);

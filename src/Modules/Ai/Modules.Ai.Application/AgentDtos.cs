@@ -10,6 +10,12 @@ namespace Modules.Ai.Application;
 /// <param name="ModelRetired">D-A12: el modelo del borrador ya no está en la lista de su proveedor; el agente sigue con él hasta que el tenant lo
 /// cambie, pero no se puede volver a publicar así.</param>
 /// <param name="HasDraftChanges">Hay cambios guardados sin publicar: la lista muestra «Cambios sin publicar» sin pedir el editor.</param>
+/// <param name="UsageThisMonth">Plan 2026-11-12 C-4: los tokens del mes del tenant por proveedor, con caché; vacío si no gastó nada. Incluye
+/// el playground, que gasta la misma clave.</param>
+/// <param name="Today">Spec §5: lo del día del tenant.</param>
+/// <param name="UsedByChatbots">Backend for frontend (spec 2026-11-17 §7, D-B18): los chatbots publicados que usan el agente en un bloque, para
+/// que la lista avise antes de borrar o pausar. Viaja acá porque quien ve agentes tiene <c>ai.agent.read</c> y no necesariamente permiso de
+/// chatbots; <c>[]</c> si ninguno.</param>
 public sealed record AgentSummaryDto(
     Guid Id,
     string Name,
@@ -19,13 +25,17 @@ public sealed record AgentSummaryDto(
     IReadOnlyList<AgentConnectionSummaryDto> Connections,
     DateTimeOffset? PublishedAt,
     bool HasDraftChanges,
-    long Version);
+    long Version,
+    IReadOnlyList<AgentUsageDto> UsageThisMonth,
+    AgentTodayDto Today,
+    IReadOnlyList<AiChatbotRef> UsedByChatbots);
 
 /// <summary>El nombre y el canal viajan con la conexión para que la lista no cruce con <c>GET /connections</c>.</summary>
 public sealed record AgentConnectionSummaryDto(Guid Id, string Name, string Channel);
 
-/// <summary>El consumo del mes y la actividad del día (§5) llegan con las tareas que los producen (plan 2026-11-12, Tareas 5 y 9).</summary>
-public sealed record AgentListResponse(IReadOnlyList<AgentSummaryDto> Items);
+/// <param name="UsageThisMonth">El total del mes de todos los agentes por proveedor (D-A27, «el total de la clave»; C-4: por proveedor, porque
+/// cada uno es una cuenta y una factura distintas). Lo suma el backend para que el total no dependa de los agentes que filtre la búsqueda.</param>
+public sealed record AgentListResponse(IReadOnlyList<AgentSummaryDto> Items, IReadOnlyList<AgentUsageDto> UsageThisMonth);
 
 public sealed record AgentDraftDto(AgentConfig Config, DateTimeOffset UpdatedAt, Guid UpdatedBy);
 
@@ -39,7 +49,7 @@ public sealed record AgentIssueDto(string Severity, string Code, string Path, st
 /// <summary>Quién ocupa una conexión (§4.3): un chatbot o un agente, para que la pantalla ofrezca ir a pausarlo.</summary>
 public sealed record AiServedByDto(string Kind, Guid Id, string Name);
 
-/// <param name="BotSupported"><c>false</c> en un canal sin salida de bot (hoy, todo lo que no es WhatsApp): se muestra deshabilitada en vez
+/// <param name="BotSupported"><c>false</c> en un canal sin salida de bot (hoy, todo lo que no es WhatsApp ni Instagram): se muestra deshabilitada en vez
 /// de desaparecer, para que el tenant sepa por qué no la puede elegir.</param>
 public sealed record AiConnectionDto(
     Guid Id, string Name, string Channel, string Handle, string Status, AiServedByDto? ServedBy, bool BotSupported);
@@ -47,6 +57,13 @@ public sealed record AiConnectionDto(
 /// <summary>Un destino posible del traspaso a un miembro.</summary>
 public sealed record AiMemberDto(Guid Id, string Name);
 
+/// <param name="Members">Los destinos posibles del traspaso a un miembro (pueden responder conversaciones).</param>
+/// <param name="QuotationAdvisors">P-4: quién puede quedar como asesor de los borradores de cotización (pueden cotizar). Es otra lista que
+/// <paramref name="Members"/>: responder conversaciones y cotizar son permisos distintos, y la pantalla no puede cruzarlos.</param>
+/// <param name="QuotationBillingAccounts">Backend for frontend (plan 2026-11-17 A3, F-2): las cuentas de cobro que se pueden elegir para los
+/// borradores, las de las empresas activas, en orden. Viajan acá y no por <c>GET /companies</c> porque quien edita un agente tiene
+/// <c>ai.agent.manage</c> y no necesariamente <c>companies.company.read</c>, igual que <paramref name="QuotationAdvisors"/>; sin esta lista
+/// el agente con <c>create_quotation_draft</c> no se podría publicar desde la pantalla.</param>
 public sealed record AgentEditorDto(
     Guid Id,
     string Name,
@@ -60,7 +77,9 @@ public sealed record AgentEditorDto(
     IReadOnlyList<Guid> ConnectionIds,
     IReadOnlyList<AiConnectionDto> Connections,
     IReadOnlyList<AiMemberDto> Members,
-    AiModelCatalogDto Models);
+    AiModelCatalogDto Models,
+    IReadOnlyList<AiMemberDto> QuotationAdvisors,
+    IReadOnlyList<AiBillingAccountOption> QuotationBillingAccounts);
 
 /// <summary>D-A7: guardar responde la versión nueva (para el siguiente <c>If-Match</c>) y los problemas, sin el editor entero: el
 /// borrador lo tiene la pantalla.</summary>

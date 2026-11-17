@@ -17,16 +17,13 @@ internal sealed class StoreBillingAccounts(IQuotationCompanyLookup lookup, IComp
     public async Task<IReadOnlyList<StoreBillingAccountOption>> ListAsync(
         Guid tenantId, string? currency, CancellationToken cancellationToken)
     {
-        // Sólo empresas activas: una dada de baja no cobra. Nada se ordena con la cultura del servidor.
-        var active = await companies.SearchAsync(tenantId, null, null, null, CompanyStatusFilter.Active, cancellationToken);
-        return active
-            .SelectMany(company => company.BankAccounts.Select(account => new StoreBillingAccountOption(
-                company.Id.Value, company.Name, account.BankName, account.AccountNumber, account.Currency)))
-            .Where(option => currency is null || string.Equals(option.Currency, currency, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(option => option.CompanyName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(option => option.BankName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(option => option.AccountNumber, StringComparer.Ordinal)
-            .ToList();
+        // La regla (sólo empresas activas, orden sin cultura) es la de ActiveBillingAccountOptions, compartida con el editor del agente.
+        var options = await ActiveBillingAccountOptions.ListAsync(companies, tenantId, currency, cancellationToken);
+        return
+        [
+            .. options.Select(option => new StoreBillingAccountOption(
+                option.CompanyId, option.CompanyName, option.BankName, option.AccountNumber, option.Currency)),
+        ];
     }
 
     public async Task<StoreBillingAccount> ValidateAsync(

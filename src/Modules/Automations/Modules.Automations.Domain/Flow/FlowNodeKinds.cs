@@ -17,9 +17,12 @@ public static class FlowNodeKinds
     public const string Resolve = "resolve";
     public const string DataConsent = "dataConsent";
 
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.1.</summary>
+    public const string AiAgent = "aiAgent";
+
     public static readonly IReadOnlySet<string> All = new[]
     {
-        Message, OpenQuestion, Buttons, List, Attachment, Condition, BusinessHours, Http, Handoff, Resolve, DataConsent,
+        Message, OpenQuestion, Buttons, List, Attachment, Condition, BusinessHours, Http, Handoff, Resolve, DataConsent, AiAgent,
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>
@@ -38,6 +41,8 @@ public static class FlowNodeKinds
         ListNode list => ListOutputs(list),
         AttachmentNode => [FlowOutputs.Received, FlowOutputs.Invalid],
         DataConsentNode consent => [FlowOutputs.Accepted, .. RejectedOutput(consent.OnReject)],
+        // Spec 2026-11-17 D-B10: siempre las cinco, en este orden.
+        AiAgentNode => [FlowOutputs.Done, FlowOutputs.Human, FlowOutputs.NoAnswer, FlowOutputs.Idle, FlowOutputs.Error],
         HandoffNode or ResolveNode => [],
         _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin salidas definidas."),
     };
@@ -91,4 +96,10 @@ public static class FlowOutputs
     public const string Error = "error";
     public const string Accepted = "accepted";
     public const string Rejected = "rejected";
+
+    // Spec 2026-11-17 D-B10: las salidas del bloque «Agente IA» (error es la de siempre). Son contrato con Ai y el frontend.
+    public const string Done = "done";
+    public const string Human = "human";
+    public const string NoAnswer = "noAnswer";
+    public const string Idle = "idle";
 }

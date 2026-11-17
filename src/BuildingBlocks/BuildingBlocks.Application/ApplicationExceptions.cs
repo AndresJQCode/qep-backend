@@ -59,7 +59,9 @@ public sealed class UpstreamServiceException(string code, string message) : Exce
 }
 
 // 429: el llamador superó su cupo de la API externa. RetryAfter, si se conoce, viaja en el header Retry-After.
-public sealed class RequestRateLimitedException(string code, string message, TimeSpan? retryAfter) : Exception(message)
+// No sellada, como ResourceConflictException: un 429 puede llevar datos para la pantalla (spec 2026-11-17 copiloto, adenda D-7:
+// retryAfterSeconds, porque la CORS de la API no expone headers) con una subclase que implementa IHasProblemExtensions.
+public class RequestRateLimitedException(string code, string message, TimeSpan? retryAfter) : Exception(message)
 {
     public string Code { get; } = code;
 

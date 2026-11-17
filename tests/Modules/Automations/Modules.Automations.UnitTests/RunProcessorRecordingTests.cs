@@ -245,7 +245,8 @@ public sealed class RunProcessorRecordingTests
             var chatbots = new ServingChatbots();
             var clock = new FixedClock();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new OkHttp(), media, audit, new NoDataConsents(), chatbots, NullLogger<RunEffects>.Instance);
+                Messenger, conversations, hours, http ?? new OkHttp(), media, audit, new NoDataConsents(), chatbots, new ModuleStatus(moduleEnabled),
+                NullLogger<RunEffects>.Instance);
             var recorder = new RunUnitWriter(Units, clock, Logs.CreateLogger<RunUnitWriter>());
             return new RunProcessor(
                 UnitOfWork, Runs, chatbots, Inbox, conversations, new TenantNames(), new Connections(), hours, media, new ModuleStatus(moduleEnabled),
@@ -406,6 +407,12 @@ public sealed class RunProcessorRecordingTests
 
     private sealed class Conversations(AutomationConversationState? state) : IAutomationConversations
     {
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
@@ -479,6 +486,8 @@ public sealed class RunProcessorRecordingTests
     private sealed class ModuleStatus(bool enabled) : IAutomationsModuleStatus
     {
         public Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(enabled);
+
+        public Task<bool> IsAiEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     private sealed class NoAudit : IAutomationsAuditRecorder

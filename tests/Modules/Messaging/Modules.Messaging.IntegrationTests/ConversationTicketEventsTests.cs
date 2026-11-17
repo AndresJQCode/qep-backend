@@ -130,6 +130,7 @@ public sealed class ConversationTicketEventsTests
                 "Taken", "Transferred", "Released", "AutoTaken", "Inherited", "Resolved", "Reopened", "CustomerCreated", "CustomerLinked",
                 "ContactChangedNumber", "AutomationPaused", "AutomationResumed", "CustomerChanged", "ContactBlocked", "ContactUnblocked",
                 "AutomationStarted", "AutomationContinued", "TicketOpened", "TicketClosed",
+                "AutomationDelegated", "AutomationReturned",
             ],
             Enum.GetNames<ConversationEventType>());
         Assert.Equal(17, (int)ConversationEventType.TicketOpened);

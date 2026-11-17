@@ -27,6 +27,9 @@ public sealed class Quotation
     public const int QuotationNumberMaxLength = 20;
     public const int PaymentMethodMaxLength = 50;
 
+    /// <summary>Como <c>Order.ExternalKeyMaxLength</c>: la clave de idempotencia de un borrador creado sin sesión.</summary>
+    public const int ExternalKeyMaxLength = 128;
+
     private readonly List<QuotationItem> _items = [];
 
     private readonly List<QuotationParty> _parties = [];
@@ -252,6 +255,13 @@ public sealed class Quotation
 
     /// <summary>Token de concurrencia optimista, mismo criterio que Product/Customer.</summary>
     public long Version { get; private set; }
+
+    /// <summary>
+    /// Spec 2026-10-29 §8.3 y D-A16: la clave de idempotencia del borrador que crea una integración sin sesión (hoy, un agente IA:
+    /// <c>ai:{jobId}:{callId}</c>). <c>null</c> en toda cotización creada por una persona. El índice único parcial
+    /// <c>IX_quotations_tenant_external_key</c> es lo que deja una sola cotización si el trabajo se repite.
+    /// </summary>
+    public string? ExternalKey { get; private set; }
 
     public IReadOnlyCollection<QuotationItem> Items => _items;
 
@@ -1295,6 +1305,23 @@ public sealed class Quotation
     /// <see cref="EnsureConvertibleToOrder"/>. Las dos transiciones además atajan las filas
     /// guardadas antes de la columna, que tienen nombre y no número: se leen igual, pero no avanzan.
     /// </summary>
+    /// <summary>La clave externa se pone una vez, al crear el borrador y antes de guardarlo; después no cambia.</summary>
+    public void AssignExternalKey(string externalKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(externalKey);
+        if (ExternalKey is not null)
+        {
+            throw new InvalidOperationException("The quotation already has an external key.");
+        }
+
+        var trimmed = externalKey.Trim();
+        ExternalKey = trimmed.Length > ExternalKeyMaxLength
+            ? throw new QuotationsDomainException(
+                "quotation.quotation.external_key_too_long",
+                $"The external key cannot exceed {ExternalKeyMaxLength} characters.")
+            : trimmed;
+    }
+
     public void EnsureBillingIdentified()
     {
         if (BillingLacksIdentification)

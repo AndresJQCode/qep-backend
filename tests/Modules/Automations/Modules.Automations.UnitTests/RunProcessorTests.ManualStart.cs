@@ -430,6 +430,12 @@ public sealed partial class RunProcessorTests
 
     private sealed class ManualConversations(AutomationConversationState? state, bool taken = false) : IAutomationConversations
     {
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         /// <summary>Spec 2026-11-01 D-5: desde cuándo se preguntó si un asesor la tuvo.</summary>
         public List<DateTimeOffset> TakenChecks { get; } = [];
 

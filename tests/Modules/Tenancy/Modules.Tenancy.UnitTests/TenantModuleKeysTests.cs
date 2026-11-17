@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "support"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -112,6 +112,18 @@ public sealed class TenantModuleKeysTests
     {
         Assert.Equal([TenantModuleKeys.Messaging], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Ai));
         Assert.DoesNotContain(TenantModuleKeys.Ai, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-17 (copiloto), D-C2 y OC-4: no cuelga de ai (que exige messaging); va justo después de ai (adenda D-14) y se
+    // prende por tenant.
+    [Fact]
+    public void CopilotIsAModuleWithoutDependenciesOutOfTheDefaults()
+    {
+        var all = TenantModuleKeys.All.ToList();
+        Assert.Equal("copilot", TenantModuleKeys.Copilot.Value);
+        Assert.Equal(all.IndexOf(TenantModuleKeys.Ai) + 1, all.IndexOf(TenantModuleKeys.Copilot));
+        Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Copilot));
+        Assert.DoesNotContain(TenantModuleKeys.Copilot, TenantModuleKeys.DefaultForNewTenants);
     }
 
     // Spec 2026-11-14 (soporte, C9): tickets y PQRSF; no depende de ningún módulo y se prende por tenant.
