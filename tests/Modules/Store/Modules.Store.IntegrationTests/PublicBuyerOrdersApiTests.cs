@@ -138,6 +138,11 @@ public sealed class PublicBuyerOrdersApiTests
         public Task<QuotationFileRef?> FindAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
             Task.FromResult<QuotationFileRef?>(new QuotationFileRef(fileId, tenantId, "application/pdf", 1024, IsAvailable: true));
 
+        public Task<IReadOnlyDictionary<Guid, QuotationFileRef>> FindManyAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationFileRef>>(fileIds.Distinct().ToDictionary(
+                fileId => fileId, fileId => new QuotationFileRef(fileId, tenantId, "application/pdf", 1024, IsAvailable: true)));
+
         public Task<string> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, string downloadFileName, CancellationToken cancellationToken) =>
             Task.FromResult($"https://files.test/{fileId}");
     }

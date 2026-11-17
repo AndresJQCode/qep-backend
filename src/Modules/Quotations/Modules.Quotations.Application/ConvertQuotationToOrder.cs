@@ -78,11 +78,14 @@ public sealed class ConvertQuotationToOrderHandler(
             command.TenantId, quotation.ClientId, cancellationToken);
         QuotationCustomerEligibility.Ensure(customer, command.TenantId, quotation.ClientId);
 
-        foreach (var proof in command.PaymentProofs)
-        {
-            await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, orderRepository, command.TenantId, proof.FileId, exceptProofId: null, cancellationToken);
-        }
+        // Todos los comprobantes del cuerpo en dos lecturas, no dos por comprobante (consultas por request, fase 2).
+        await OrderPaymentProofResolver.ResolveManyAsync(
+            fileLookup,
+            orderRepository,
+            command.TenantId,
+            command.PaymentProofs.Select(proof => proof.FileId).ToArray(),
+            exceptProofId: null,
+            cancellationToken);
 
         var convertedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);

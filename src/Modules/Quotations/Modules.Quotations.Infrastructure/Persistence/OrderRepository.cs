@@ -404,16 +404,24 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 select entry)
             .ToListAsync(cancellationToken);
 
-    public Task<bool> IsPaymentProofFileInUseAsync(
-        Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
+    public async Task<IReadOnlySet<Guid>> ListPaymentProofFilesInUseAsync(
+        IReadOnlyCollection<Guid> fileIds, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
     {
-        var proofs = dbContext.OrderPaymentProofs.AsNoTracking().Where(proof => proof.FileId == fileId);
+        if (fileIds.Count == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        // Un arreglo, no la colección: Npgsql lo manda como un solo parámetro (file_id = ANY (@ids)).
+        var ids = fileIds.Distinct().ToArray();
+        var proofs = dbContext.OrderPaymentProofs.AsNoTracking().Where(proof => ids.Contains(proof.FileId));
         if (exceptProofId is { } except)
         {
             proofs = proofs.Where(proof => proof.Id != except);
         }
 
-        return proofs.AnyAsync(cancellationToken);
+        var inUse = await proofs.Select(proof => proof.FileId).Distinct().ToListAsync(cancellationToken);
+        return inUse.ToHashSet();
     }
 
     public void Add(Order order) => dbContext.Orders.Add(order);

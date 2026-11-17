@@ -13,6 +13,13 @@ public interface IQuotationFileLookup
     Task<QuotationFileRef?> FindAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// La versión en lote de <see cref="FindAsync"/>, en una sola lectura: los archivos de <paramref name="tenantId"/>
+    /// entre <paramref name="fileIds"/>, por id. Uno que no existe, es de otro tenant o no es para Quotations no viene.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, QuotationFileRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken);
+
+    /// <summary>
     /// URL de descarga directa del archivo, para entregársela a un tercero que no tiene sesión
     /// en el sistema — hoy WhatsApp, que descarga el PDF de la cotización desde los servidores
     /// de Meta (<c>SendQuotation</c>).
