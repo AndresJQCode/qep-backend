@@ -230,18 +230,23 @@ public sealed class QuotationWithholdingLookupTests
         Assert.Equal(1, customers.FindCalls);
     }
 
-    // Review Focus 5: la misma instancia, no una copia.
+    // Review Focus 5: el memo guarda la instancia que siguió el repositorio, no una copia. Si el mismo scope le cambia
+    // los municipios al cliente, la siguiente pregunta lo ve sin volver a la base.
     [Fact]
-    public async Task TheMemoReturnsTheTrackedInstance()
+    public async Task TheMemoServesTheTrackedCustomerWithoutReReading()
     {
         var customer = NewCustomer();
         var customers = new FakeCustomerRepository(customer);
         var lookup = Lookup(customers, [Retefuente]);
+        var ct = TestContext.Current.CancellationToken;
 
-        await lookup.IsWithholdingAgentAsync(
-            TenantId, customer.Id.Value, "CO", "ReteICA", CityId, TestContext.Current.CancellationToken);
+        var before = await lookup.IsWithholdingAgentAsync(TenantId, customer.Id.Value, "CO", "ReteICA", Bogota, ct);
+        customer.SetWithholdingAgentCities([new WithholdingAgentCityEntry("CO", "ReteICA", Bogota)], Now);
+        var after = await lookup.IsWithholdingAgentAsync(TenantId, customer.Id.Value, "CO", "ReteICA", Bogota, ct);
 
-        Assert.Same(customer, customers.LastReturned);
+        Assert.False(before);
+        Assert.True(after);
+        Assert.Equal(1, customers.FindCalls);
     }
 
     [Fact]

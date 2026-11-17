@@ -247,15 +247,11 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
     /// <summary>Sólo las lecturas por id: lo que se prueba es que quien llama no vuelve a pedir el mismo cliente.</summary>
     public int FindCalls { get; private set; }
 
-    /// <summary>La instancia que devolvió el último <see cref="FindAsync"/>: la misma que siembra la prueba, no una copia.</summary>
-    public Customer? LastReturned { get; private set; }
-
     public Task<Customer?> FindAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken)
     {
         Calls++;
         FindCalls++;
-        LastReturned = customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.Id == customerId);
-        return Task.FromResult(LastReturned);
+        return Task.FromResult(customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.Id == customerId));
     }
 
     public Task<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>> FindExistingIdentificationsAsync(
@@ -713,13 +709,10 @@ internal sealed class FakeCompanyRepository(params Company[] companies) : ICompa
 {
     public int FindCalls { get; private set; }
 
-    public Company? LastReturned { get; private set; }
-
     public Task<Company?> FindAsync(Guid tenantId, CompanyId companyId, CancellationToken cancellationToken)
     {
         FindCalls++;
-        LastReturned = companies.FirstOrDefault(company => company.TenantId == tenantId && company.Id == companyId);
-        return Task.FromResult(LastReturned);
+        return Task.FromResult(companies.FirstOrDefault(company => company.TenantId == tenantId && company.Id == companyId));
     }
 
     public Task<IReadOnlyList<Company>> SearchAsync(
