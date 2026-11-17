@@ -324,6 +324,10 @@ public sealed class SupportReplyOutboundTests
         Assert.False(await ScalarAsync<bool>(f.ConnectionString, "SELECT history_managed FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId)));
 
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET history_managed = true");
+        // Meta da un wamid por mensaje: repetir el del primer envío choca con IX_messages_connection_wamid.
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.OK,
+            """{"messaging_product":"whatsapp","contacts":[{"input":"573001234567","wa_id":"573001234567"}],"messages":[{"id":"wamid.support.template"}]}""");
         Assert.IsType<SupportReplySendResult.Sent>(await SendTemplateAsync(f, Template(f, f.ConversationId)));
         Assert.False(await ScalarAsync<bool>(f.ConnectionString, "SELECT history_managed FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId)));
     }
