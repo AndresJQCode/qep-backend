@@ -96,4 +96,12 @@ public interface IAutomationInbox
     /// <summary>Spec 2026-11-17 §6.3: la fila <see cref="AutomationInboxKinds.AgentReturned"/> para el motor de chatbots, en el
     /// <c>SaveChanges</c> que marca la delegación devuelta y le devuelve la conversación al chatbot. Una sola por delegación.</summary>
     void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now);
+
+    /// <summary>Revisión de la rama, hallazgos 1 y 6: pasa a la cola de <paramref name="target"/> las filas <c>Engine</c> pendientes de la
+    /// conversación que están en la del otro bot, menos <paramref name="exceptMessageId"/> (la que procesa quien llama). Las encoló la ingesta
+    /// antes de que el cambio de bot se confirmara, así que el bot que ya no la tiene las perdía. Corre en el acto (SQL), así que va dentro de la
+    /// transacción del cambio de bot; con la versión de la conversación cargada antes, un entrante que entre en el medio hace chocar el guardado.
+    /// Devuelve la hora de la fila más vieja que movió, o <c>null</c> si no movió ninguna.</summary>
+    Task<DateTimeOffset?> ReassignPendingEngineAsync(
+        Guid tenantId, Guid conversationId, BotKind target, Guid? exceptMessageId, CancellationToken cancellationToken);
 }

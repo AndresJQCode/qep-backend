@@ -368,8 +368,11 @@ public interface IAutomationConversations
 /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: lo que el motor manda al delegar. <see cref="NodeId"/> es el id del bloque
 /// <c>aiAgent</c> (hasta 64). <see cref="LastInboundMessageId"/> (D-B7) es el entrante que llevó la corrida hasta el bloque, <c>null</c> sin
 /// entrante. <see cref="BriefJson"/> es <c>{objective, context, firstTurn, idleMinutes}</c> con el contexto ya interpolado: lo arma
-/// Automations y lo lee Ai; Mensajería no lo interpreta.</summary>
-public sealed record DelegationRequest(Guid RunId, Guid ChatbotId, string NodeId, Guid AgentId, Guid? LastInboundMessageId, string BriefJson);
+/// Automations y lo lee Ai; Mensajería no lo interpreta. <see cref="InboxRowId"/> (revisión de la rama, hallazgo 1) es la fila de la cola
+/// que procesa la unidad que delega: Mensajería pasa a la cola del agente los demás entrantes pendientes de la conversación, pero no ésa,
+/// que cierra el motor de chatbots al confirmar su unidad.</summary>
+public sealed record DelegationRequest(
+    Guid RunId, Guid ChatbotId, string NodeId, Guid AgentId, Guid? LastInboundMessageId, string BriefJson, Guid? InboxRowId = null);
 
 /// <summary>Spec 2026-11-17 §6.3: la delegación leída por el motor. <see cref="Status"/> es <c>Live</c>, <c>Returned</c> o
 /// <c>Interrupted</c> (los nombres del enum de Mensajería). <see cref="ResultJson"/>, sólo con <c>Returned</c>, es

@@ -205,6 +205,39 @@ public sealed partial class RunProcessorTests
         Assert.Empty(bed.Audit.Actions);
     }
 
+    // Revisión de la rama, hallazgo 1: un entrante que quedó en la cola del chatbot mientras la corrida espera al agente no es una respuesta
+    // del bloque. Entrarlo al motor fallaba con target_missing y el traspaso borraba la delegación sin avisarle al agente.
+    [Fact]
+    public async Task ACustomerMessageForADelegatedRunIsSkippedAndNeverFailsTheFlow()
+    {
+        var run = DelegatedRun(DateTimeOffset.UtcNow.AddMinutes(-10));
+        var bed = new Bed(null, ActiveState(), flow: AgentFlow);
+        bed.Runs.Added.Add(run);
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Skipped, outcome);
+        Assert.True(run.ToState().IsDelegated);
+        Assert.Empty(bed.Conversations.Handoffs);
+        Assert.Empty(bed.Messenger.Sent);
+        Assert.Equal([$"complete {Item.MessageId} 1 skipped"], bed.Inbox.Calls);
+    }
+
+    // Hallazgo 1: Mensajería mueve a la cola del agente los entrantes pendientes de la conversación, menos la fila que esta unidad procesa;
+    // ésa es la que la delegación nombra, también en un arranque manual sin entrante.
+    [Fact]
+    public async Task TheDelegationNamesTheInboxRowBeingProcessed()
+    {
+        var bed = new Bed(null, ActiveState(), flow: AgentFlow);
+        var manual = Item with { MessageId = Guid.CreateVersion7(), Opened = false };
+        bed.Inbox.NotInbound.Add(manual.MessageId);
+
+        await bed.Processor().ProcessAsync(manual, TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(bed.Conversations.Delegations);
+        Assert.Equal(((Guid?)null, (Guid?)manual.MessageId), (request.LastInboundMessageId, request.InboxRowId));
+    }
+
     // D-B14: la señal de la toma humana (bot_kind = 1) cierra la corrida delegada sin salir por ninguna salida.
     [Fact]
     public async Task TakingOverDuringTheDelegationInterruptsTheRunWithoutAnyOutput()

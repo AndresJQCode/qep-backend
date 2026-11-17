@@ -12,9 +12,11 @@ namespace Modules.Automations.Application.Engine;
 /// unidad (0 en una corrida nueva): la base de los clientIds de P2-R5. <see cref="Log"/> (spec 2026-10-25 D-E5) junta los pasos de la unidad
 /// para su fila de <c>run_units</c>; sin él no se registra nada. <see cref="InboundMessageId"/> (spec 2026-11-17 D-B7) es el entrante que
 /// arrancó la unidad cuando la entrada del motor no lo trae (un <see cref="EngineInput.Start"/> por disparador): el que un bloque «Agente IA»
-/// le pasa al agente para que lo responda. <c>null</c> en un arranque sin entrante.</summary>
+/// le pasa al agente para que lo responda. <c>null</c> en un arranque sin entrante. <see cref="InboxRowId"/> (revisión de la rama, hallazgo 1)
+/// es la fila de la cola que procesa la unidad, entrante o no: la delegación la nombra para que Mensajería no la mueva a la cola del agente.</summary>
 public sealed record RunUnit(
-    ConversationRun Run, FlowDefinition Flow, EngineSettings Settings, int BaseStepNumber, RunUnitLog? Log = null, Guid? InboundMessageId = null);
+    ConversationRun Run, FlowDefinition Flow, EngineSettings Settings, int BaseStepNumber, RunUnitLog? Log = null, Guid? InboundMessageId = null,
+    Guid? InboxRowId = null);
 
 /// <summary>
 /// Spec 2026-10-21 §5.2 paso 5, D-M5 y D-M14: el bucle de efectos que <see cref="RunProcessor"/> delega. Ejecuta en orden lo que pide
@@ -146,7 +148,7 @@ public sealed partial class RunEffects(
                             return;
                         }
 
-                        var delegated = await DelegateAsync(run, state, delegation, lastInbound, now, cancellationToken);
+                        var delegated = await DelegateAsync(run, state, delegation, lastInbound, unit.InboxRowId, now, cancellationToken);
                         if (delegated is null)
                         {
                             return;
@@ -285,7 +287,8 @@ public sealed partial class RunEffects(
     /// el claim y el efecto) la corrida termina <c>Interrupted</c>, como con cualquier otro efecto. <c>null</c> = la unidad se corta.
     /// </summary>
     private async Task<Delegated?> DelegateAsync(
-        ConversationRun run, RunState state, Effect.DelegateToAgent delegation, Guid? lastInbound, DateTimeOffset now, CancellationToken cancellationToken)
+        ConversationRun run, RunState state, Effect.DelegateToAgent delegation, Guid? lastInbound, Guid? inboxRowId, DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         if (!await modules.IsAiEnabledAsync(run.TenantId, cancellationToken))
         {
@@ -299,7 +302,7 @@ public sealed partial class RunEffects(
                 run, state,
                 () => conversations.DelegateToAgentAsync(
                     run.TenantId, run.ConversationId,
-                    new DelegationRequest(run.Id, run.ChatbotId, delegation.NodeId, delegation.AgentId, lastInbound, brief), cancellationToken),
+                    new DelegationRequest(run.Id, run.ChatbotId, delegation.NodeId, delegation.AgentId, lastInbound, brief, inboxRowId), cancellationToken),
                 now))
         {
             return null;

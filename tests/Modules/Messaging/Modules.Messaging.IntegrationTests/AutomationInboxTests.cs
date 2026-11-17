@@ -466,6 +466,38 @@ public sealed class AutomationInboxTests
             "SELECT count(*) FROM messaging.automation_inbox WHERE delegation_id = @d", ("d", delegationId)));
     }
 
+    /// <summary>Revisión de la rama, hallazgos 1 y 6: al cambiar de bot, los entrantes pendientes del otro bot pasan al nuevo, menos la fila que
+    /// procesa quien cambia. Las señales y las filas de delegación no son entrantes: se quedan donde están.</summary>
+    [Fact]
+    public async Task ReassigningMovesThePendingEngineRowsOfTheOtherBotExceptTheOneInProcess()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await EnqueueManualStartAsync(f, connectionId, conversationId, now);
+        await EnqueueManualStartAsync(f, connectionId, conversationId, now.AddSeconds(1));
+        await EnqueueReleaseRunAsync(f, connectionId, conversationId, now.AddSeconds(2));
+        var inProcess = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT message_id FROM messaging.automation_inbox WHERE conversation_id = @c ORDER BY created_at LIMIT 1", ("c", conversationId));
+
+        var oldest = await WithInboxAsync(f, inbox =>
+            inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Agent, inProcess, Ct));
+
+        Assert.NotNull(oldest);
+        Assert.Equal(now.AddSeconds(1), oldest.Value, TimeSpan.FromMilliseconds(1));
+        Assert.Equal("Engine:1,Engine:2,ReleaseRun:1", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(kind || ':' || bot_kind, ',' ORDER BY created_at) FROM messaging.automation_inbox WHERE conversation_id = @c",
+            ("c", conversationId)));
+        // Otro tenant no mueve nada, y lo que ya está en la cola pedida tampoco.
+        Assert.Null(await WithInboxAsync(f, inbox =>
+            inbox.ReassignPendingEngineAsync(Guid.CreateVersion7(), conversationId, BotKind.Chatbot, null, Ct)));
+        Assert.Null(await WithInboxAsync(f, inbox =>
+            inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Agent, inProcess, Ct)));
+    }
+
     private static async Task EnqueueReleaseRunAsync(
         Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now, BotKind botKind = BotKind.Chatbot)
     {

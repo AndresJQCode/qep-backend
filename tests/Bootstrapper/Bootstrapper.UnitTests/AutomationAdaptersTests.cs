@@ -457,6 +457,9 @@ public sealed class AutomationAdaptersTests
         public void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
             throw new NotSupportedException();
 
+        public Task<DateTimeOffset?> ReassignPendingEngineAsync(Guid tenantId, Guid conversationId, BotKind target, Guid? exceptMessageId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, Modules.Messaging.Domain.BotKind botKind, DateTimeOffset now)
         {
         }

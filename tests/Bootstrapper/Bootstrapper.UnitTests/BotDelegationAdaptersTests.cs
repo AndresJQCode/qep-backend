@@ -3,6 +3,7 @@ using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Automations.Application;
+using Modules.Automations.Application.Engine;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
 
@@ -53,6 +54,69 @@ public sealed class BotDelegationAdaptersTests
         Assert.Equal([MessagingAuditActions.AutomationDelegated], world.Audits);
         Assert.Equal(1, world.Saves);
     }
+
+    // Revisión de la rama, hallazgo 1: un entrante que llegó mientras la unidad del chatbot corría quedó en la cola del chatbot. En la
+    // transacción que delega pasa a la del agente (menos la fila que la unidad procesa), y como es más viejo que la fila Delegated, el
+    // agente lo atiende primero y abre la sesión con él.
+    [Fact]
+    public async Task DelegatingMovesTheOtherPendingRowsToTheAgentQueueInTheSameTransaction()
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var row = Guid.CreateVersion7();
+
+        await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id,
+            new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, row, Brief, InboxRowId: row), Ct);
+
+        Assert.Equal(["begin", $"reassign {BotKind.Agent} except {row}", "save", "commit"], world.Log);
+    }
+
+    // Hallazgo 1: el traspaso, la resolución y el fin del chatbot sobre una conversación delegada sacan al agente como lo hace una persona:
+    // la delegación queda Interrupted y los dos bots reciben su señal (ReleaseRunSignal). Antes sólo se limpiaba la columna.
+    [Theory]
+    [InlineData("handoff")]
+    [InlineData("resolve")]
+    [InlineData("end")]
+    public async Task LeavingADelegatedConversationInterruptsTheDelegationAndSignalsBothBots(string change)
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct);
+        world.Reset();
+
+        await ChangeAsync(world.Automations(), conversation, change);
+
+        Assert.Equal(BotDelegationStatus.Interrupted, Assert.Single(world.Delegations).Status);
+        Assert.Equal([$"{AutomationInboxKinds.ReleaseRun} {BotKind.Agent}", $"{AutomationInboxKinds.ReleaseRun} {BotKind.Chatbot}"], world.Queued);
+        Assert.Null(conversation.AutomationDelegationId);
+        Assert.Equal(1, world.Saves);
+    }
+
+    // D-6 de 2026-11-03: sin delegación el bot no se suelta a sí mismo; nada cambia ahí.
+    [Theory]
+    [InlineData("handoff")]
+    [InlineData("resolve")]
+    [InlineData("end")]
+    public async Task LeavingAConversationWithoutDelegationSignalsNobody(string change)
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+
+        await ChangeAsync(world.Automations(), conversation, change);
+
+        Assert.Empty(world.Queued);
+        Assert.Equal(1, world.Saves);
+    }
+
+    private static Task ChangeAsync(AutomationConversations automations, Conversation conversation, string change) => change switch
+    {
+        "handoff" => automations.HandoffAsync(
+            conversation.TenantId, conversation.Id, HandoffCause.FlowFailed(AutomationsRunFailures.ManualStartFailed, null, null), null, Ct),
+        "resolve" => automations.ResolveAsync(conversation.TenantId, conversation.Id, ChatbotId, null, Ct),
+        _ => automations.EndAsync(conversation.TenantId, conversation.Id, Ct),
+    };
 
     [Fact]
     public async Task DelegatingAConversationAPersonTookThrowsTheDomainError()
@@ -188,7 +252,25 @@ public sealed class BotDelegationAdaptersTests
                 if (method.Name is nameof(IAutomationInbox.EnqueueDelegated) or nameof(IAutomationInbox.EnqueueAgentReturned))
                 {
                     Queued.Add($"{(method.Name == nameof(IAutomationInbox.EnqueueDelegated) ? AutomationInboxKinds.Delegated : AutomationInboxKinds.AgentReturned)} {args![3]}");
+                    QueuedAt.Add((DateTimeOffset)args[4]!);
                     return null;
+                }
+
+                if (method.Name == nameof(IAutomationInbox.EnqueueReleaseRun))
+                {
+                    Queued.Add($"{AutomationInboxKinds.ReleaseRun} {args![3]}");
+                    return null;
+                }
+
+                if (method.Name == nameof(IAutomationInbox.ReassignPendingEngineAsync))
+                {
+                    Log.Add($"reassign {args![2]} except {args[3]?.ToString() ?? "none"}");
+                    return Task.FromResult(OldestReassigned);
+                }
+
+                if (method.Name == nameof(IAutomationInbox.FindLastInboundIdAsync))
+                {
+                    return Task.FromResult<Guid?>(null);
                 }
 
                 throw new NotSupportedException(method.Name);
@@ -205,7 +287,23 @@ public sealed class BotDelegationAdaptersTests
             }));
             services.AddScoped(_ => Stub<IMessagingUnitOfWork>((method, _) =>
             {
+                if (method.Name == nameof(IMessagingUnitOfWork.BeginTransactionAsync))
+                {
+                    Log.Add("begin");
+                    return Task.FromResult(Stub<IMessagingTransaction>((step, _) =>
+                    {
+                        if (step.Name == nameof(IMessagingTransaction.CommitAsync))
+                        {
+                            Log.Add("commit");
+                            return Task.CompletedTask;
+                        }
+
+                        return ValueTask.CompletedTask;
+                    }));
+                }
+
                 Saves++;
+                Log.Add("save");
                 return method.Name == nameof(IMessagingUnitOfWork.SaveChangesAsync) ? Task.FromResult(1) : throw new NotSupportedException(method.Name);
             }));
             services.AddScoped(_ => Stub<IMessagingNotifier>((_, _) => Task.CompletedTask));
@@ -217,6 +315,15 @@ public sealed class BotDelegationAdaptersTests
 
         public List<string> Queued { get; } = [];
 
+        /// <summary>El <c>now</c> con que se encoló cada fila <c>Delegated</c> o <c>AgentReturned</c>: el orden de la cola es por esa hora.</summary>
+        public List<DateTimeOffset> QueuedAt { get; } = [];
+
+        /// <summary>Hallazgos 1, 3 y 6 de la revisión: lo que pasa en la transacción de Mensajería, en orden.</summary>
+        public List<string> Log { get; } = [];
+
+        /// <summary>Lo que responde el puerto al mover filas: la hora de la más vieja que movió, o <c>null</c> si no movió ninguna.</summary>
+        public DateTimeOffset? OldestReassigned { get; set; }
+
         public List<ConversationEvent> Events { get; } = [];
 
         public List<string> Audits { get; } = [];
@@ -226,6 +333,8 @@ public sealed class BotDelegationAdaptersTests
         public void Reset()
         {
             Queued.Clear();
+            QueuedAt.Clear();
+            Log.Clear();
             Events.Clear();
             Audits.Clear();
             Saves = 0;

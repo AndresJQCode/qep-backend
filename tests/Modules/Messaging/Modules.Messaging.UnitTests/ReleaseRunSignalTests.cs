@@ -148,5 +148,8 @@ public sealed class ReleaseRunSignalTests
 
         public void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
             throw new NotSupportedException();
+
+        public Task<DateTimeOffset?> ReassignPendingEngineAsync(Guid tenantId, Guid conversationId, BotKind target, Guid? exceptMessageId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }

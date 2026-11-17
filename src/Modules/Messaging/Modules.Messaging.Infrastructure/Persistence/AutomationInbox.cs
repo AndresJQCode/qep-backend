@@ -180,6 +180,25 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
         DelegationId = delegationId,
     };
 
+    // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Ninguna de esas filas está en lease: el reclamo sólo entrega la más
+    // vieja pendiente de la conversación, y ésa es la que procesa quien llama (exceptMessageId) o una del otro bot que espera el candado.
+    public async Task<DateTimeOffset?> ReassignPendingEngineAsync(
+        Guid tenantId, Guid conversationId, BotKind target, Guid? exceptMessageId, CancellationToken cancellationToken)
+    {
+        var kind = (short)target;
+        var except = exceptMessageId ?? Guid.Empty;
+        var rows = await dbContext.Database.SqlQuery<DateTimeOffset?>(
+            $"""
+            WITH moved AS (
+                UPDATE messaging.automation_inbox SET bot_kind = {kind}
+                 WHERE conversation_id = {conversationId} AND tenant_id = {tenantId} AND processed_at IS NULL
+                   AND kind = 'Engine' AND bot_kind <> {kind} AND message_id <> {except}
+                RETURNING created_at)
+            SELECT MIN(created_at) AS "Value" FROM moved
+            """).ToListAsync(cancellationToken);
+        return rows.Count == 0 ? null : rows[0];
+    }
+
     // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Lo que distingue a la manual es que es Engine y su id no está en messages.
     public async Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {

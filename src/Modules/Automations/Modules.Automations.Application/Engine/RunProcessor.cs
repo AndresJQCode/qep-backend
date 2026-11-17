@@ -52,6 +52,9 @@ public sealed partial class RunProcessor(
     [LoggerMessage(Level = LogLevel.Error, Message = "Manual assistant start row {MessageId} of conversation {ConversationId} (tenant {TenantId}) failed with {ErrorType}; closed without retrying (handed off to a person: {HandedOff}).")]
     private static partial void LogManualStartFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId, Guid messageId, string errorType, bool handedOff);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Inbox row {MessageId} of conversation {ConversationId} (tenant {TenantId}) reached the chatbot engine while its run waits for the agent; skipped.")]
+    private static partial void LogDelegatedInbound(ILogger logger, Guid tenantId, Guid conversationId, Guid messageId);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot version {VersionId} of tenant {TenantId} has a flow that cannot be read; the bot does not run it.")]
     private static partial void LogUnreadableFlow(ILogger logger, Guid tenantId, Guid versionId);
 
@@ -447,7 +450,8 @@ public sealed partial class RunProcessor(
 
         var settings = chatbot.EngineSettings;
         var log = recorder is null ? null : new RunUnitLog();
-        await effects.RunAsync(new RunUnit(run, flow, settings, BaseStepNumber: 0, log, inboundMessageId), new EngineInput.Start(), now, cancellationToken);
+        await effects.RunAsync(
+            new RunUnit(run, flow, settings, BaseStepNumber: 0, log, inboundMessageId, InboxRowId: item.MessageId), new EngineInput.Start(), now, cancellationToken);
         var outcome = OutcomeOf(run, RunOutcomes.Started);
         recorder?.Write(run, 0, RunUnitTriggers.Start, item.MessageId, outcome, now, log, AttachmentVariablesOf(flow));
         return outcome;
@@ -466,6 +470,16 @@ public sealed partial class RunProcessor(
             return null;
         }
 
+        // Revisión de la rama, hallazgo 1: mientras el agente conversa, la corrida sólo la mueve su AgentReturned. Un entrante que llegó a
+        // esta cola (una ráfaga que entró antes de que la delegación se confirmara) no es una respuesta del bloque: el motor lo leería como
+        // una espera en un bloque que no espera (target_missing) y el traspaso borraría la delegación sin avisarle al agente. Se cierra sin
+        // tocar la corrida; Mensajería mueve esos entrantes a la cola del agente en la misma transacción que delega.
+        if (run.ToState().IsDelegated)
+        {
+            LogDelegatedInbound(logger, item.TenantId, item.ConversationId, item.MessageId);
+            return null;
+        }
+
         run.MarkInbound(item.MessageId);
         // Plan D-P4: una corrida Waiting recibe la respuesta; una Running vuelve a pedir el efecto externo en que murió su unidad.
         var trigger = run.Status == RunStatus.Waiting ? RunUnitTriggers.CustomerMessage : RunUnitTriggers.Resume;
@@ -480,7 +494,7 @@ public sealed partial class RunProcessor(
         }
 
         var log = recorder is null ? null : new RunUnitLog();
-        var unit = new RunUnit(run, flow, settings, baseStep, log);
+        var unit = new RunUnit(run, flow, settings, baseStep, log, InboxRowId: item.MessageId);
         var attachments = AttachmentVariablesOf(flow);
 
         EngineInput input;
@@ -548,7 +562,7 @@ public sealed partial class RunProcessor(
         }
 
         var log = recorder is null ? null : new RunUnitLog();
-        await effects.RunAsync(new RunUnit(run, flow, settings, baseStep, log), AgentResults.Parse(delegation.NodeId, delegationId, resultJson), now, cancellationToken);
+        await effects.RunAsync(new RunUnit(run, flow, settings, baseStep, log, InboxRowId: item.MessageId), AgentResults.Parse(delegation.NodeId, delegationId, resultJson), now, cancellationToken);
         var outcome = OutcomeOf(run, RunOutcomes.Advanced);
         recorder?.Write(run, baseStep, RunUnitTriggers.AgentReturned, item.MessageId, outcome, now, log, AttachmentVariablesOf(flow));
         return outcome;

@@ -106,7 +106,9 @@ internal sealed partial class AutomationConversations(
 
         // Spec 2026-10-24 §5.3: la causa viaja en el mismo evento, un solo cambio con el mismo now; el dominio de Mensajería la limpia.
         // Spec 2026-10-25 D-1, D-7: pausa y asignación en un solo cambio, sin evento Transferred.
+        var before = Before.Of(conversation);
         var change = conversation.HandOffAutomation(ToHandoff(cause, assignee, names), now);
+        await services.ReleaseDelegationAsync(conversation, before, now, cancellationToken);
         services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationPaused, conversation.Id, now);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
@@ -157,7 +159,9 @@ internal sealed partial class AutomationConversations(
             ? await scope.ServiceProvider.GetRequiredService<IResolutionReasonRepository>().FindActiveAsync(tenantId, id, cancellationToken)
             : null;
         var now = services.Clock.UtcNow;
+        var before = Before.Of(conversation);
         conversation.Resolve(now, reason?.Id);
+        await services.ReleaseDelegationAsync(conversation, before, now, cancellationToken);
         // Spec 2026-10-10 §6.1.5: el evento lleva quién. El bot no es una membresía, así que Actor queda null (ConversationEventJson lo
         // omite) y el chatbot va en ChatbotId: el hilo lo resuelve a nombre al leer, como SentByChatbotId (spec 2026-10-21 D-I3).
         services.Events.Record(
@@ -180,7 +184,10 @@ internal sealed partial class AutomationConversations(
             return;
         }
 
-        conversation.EndAutomation(services.Clock.UtcNow);
+        var now = services.Clock.UtcNow;
+        var before = Before.Of(conversation);
+        conversation.EndAutomation(now);
+        await services.ReleaseDelegationAsync(conversation, before, now, cancellationToken);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
         await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
     }
@@ -199,14 +206,21 @@ internal sealed partial class AutomationConversations(
         // Spec 2026-11-17 §6.1: la regla del agregado va primero; si una persona tomó la conversación lanza y nada se agrega.
         var change = conversation.DelegateToAgent(
             delegationId, request.AgentId, now, names.GetValueOrDefault(request.ChatbotId), names.GetValueOrDefault(request.AgentId));
+        // Revisión de la rama, hallazgo 1: una transacción explícita porque mover las filas es SQL que corre en el acto. La versión de la
+        // conversación ya está cargada: un entrante que la ingesta encole después la sube y el guardado choca (se reintenta la unidad).
+        await using var transaction = await services.UnitOfWork.BeginTransactionAsync(cancellationToken);
+        // Los entrantes que la ingesta encoló para el chatbot mientras su unidad corría pasan al agente. Son más viejos que la fila Delegated,
+        // así que el agente los atiende primero y abre la sesión del bloque con ellos (AiInboxProcessor.TryOpenAsync).
+        await services.Inbox.ReassignPendingEngineAsync(tenantId, conversationId, BotKind.Agent, request.InboxRowId, cancellationToken);
         services.Delegations.Add(BotDelegation.Start(
             delegationId, tenantId, conversationId, conversation.ConnectionId, request.ChatbotId, request.RunId, request.NodeId, request.AgentId,
             request.LastInboundMessageId, request.BriefJson, now));
         services.Inbox.EnqueueDelegated(tenantId, conversation.ConnectionId, conversationId, delegationId, now);
         services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationDelegated, conversation.Id, now);
-        // Delegación, conversación, fila de la cola, evento y auditoría: un solo guardado (D-B3).
+        // Delegación, conversación, filas de la cola, evento y auditoría: una sola transacción (D-B3).
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
         return delegationId;
     }
@@ -258,5 +272,24 @@ internal sealed partial class AutomationConversations(
         public async Task<Conversation> LoadAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             await provider.GetRequiredService<IConversationRepository>().FindAsync(tenantId, conversationId, cancellationToken)
             ?? throw new ResourceNotFoundException(MessagingErrorCodes.ConversationNotFound, $"Conversation '{conversationId}' was not found.");
+
+        /// <summary>
+        /// Revisión de la rama, hallazgo 1: el chatbot traspasa, resuelve o termina una conversación que tiene delegada (un fallo del flujo
+        /// con la corrida esperando al agente, o una carrera con la delegación). El agregado limpia la columna; sin esto la delegación quedaba
+        /// <c>Live</c> y la sesión del agente seguía esperando. Es la regla de los handlers de Mensajería (<see cref="ReleaseRunSignal"/>):
+        /// delegación <c>Interrupted</c> y una señal a cada bot, en el mismo guardado. Sin delegación no hace nada: el bot no se suelta a sí
+        /// mismo (D-6 de 2026-11-03).
+        /// </summary>
+        public Task ReleaseDelegationAsync(Conversation conversation, Before before, DateTimeOffset now, CancellationToken cancellationToken) =>
+            before.Delegation is null
+                ? Task.CompletedTask
+                : Inbox.EnqueueIfAssistedAsync(Delegations, conversation, before.Status, before.Bot, before.Delegation, changes: 1, now, cancellationToken);
+    }
+
+    /// <summary>El asistente antes del cambio: el agregado limpia el bot y la delegación al sacarla de <c>Active</c>.</summary>
+    private sealed record Before(ConversationAutomationStatus Status, BotKind? Bot, Guid? Delegation)
+    {
+        public static Before Of(Conversation conversation) =>
+            new(conversation.AutomationStatus, conversation.AutomationBotKind, conversation.AutomationDelegationId);
     }
 }
