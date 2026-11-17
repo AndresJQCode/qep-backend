@@ -561,7 +561,8 @@ public sealed class Quotation
         CarrierName = shipping.CarrierName;
         FreightChargeMode = shipping.ChargeMode;
         FreightAmount = shipping.FreightAmount;
-        FreightTaxPercentage = shipping.FreightTaxPercentage;
+        // Una empresa sin IVA no cobra IVA en el envío (spec 2026-11-17 §5.2), venga lo que venga.
+        FreightTaxPercentage = ChargesVat ? shipping.FreightTaxPercentage : 0;
         CashOnDelivery = shipping.CashOnDelivery;
     }
 
@@ -628,8 +629,9 @@ public sealed class Quotation
                 "La variante ya está en la cotización.");
         }
 
+        // taxPercentage es la tasa del producto; la línea aplica el IVA de la empresa (spec 2026-11-17, R1).
         var item = QuotationItem.Create(
-            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, ChargesVat,
             _items.Count + 1, Currency, PriceRounding, occurredAt);
         _items.Add(item);
         Touch(updatedBy, occurredAt);
@@ -647,7 +649,8 @@ public sealed class Quotation
     {
         EnsureEditable();
 
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, PriceRounding, occurredAt);
+        FindItem(itemId).UpdateQuantity(
+            quantity, discountPercentage, taxPercentage, ChargesVat, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -693,7 +696,11 @@ public sealed class Quotation
     /// se ofrece ahí (spec ReteICA por empresa §7.6). Cambiar la empresa o el municipio re-resuelve las filas municipales
     /// de las dos fuentes: la del cliente con la regla del cliente, la de facturación propia moviendo lo elegido (plan
     /// P5). Reenviar la misma empresa completa su municipio en la cuenta sin re-resolver. Devuelve lo que pasó, para el
-    /// historial.</summary>
+    /// historial.
+    ///
+    /// <paramref name="freightTaxPercentageWithVat"/> es la tasa del envío del tenant, y sólo hace falta cuando
+    /// <see cref="NeedsFreightTaxRateFor"/> dice que sí: pasar a una empresa con IVA con un envío cobrado en COP vuelve a
+    /// gravarlo (spec 2026-11-17, R2). Faltar ahí es un error del llamador, no del usuario.</summary>
     public MunicipalReResolution UpdateDetails(
         DateOnly? validUntil,
         string? paymentMethod,
@@ -705,7 +712,8 @@ public sealed class Quotation
         int? globalScaleFloor,
         MunicipalContext municipal,
         MemberId updatedBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        int? freightTaxPercentageWithVat = null)
     {
         ArgumentNullException.ThrowIfNull(municipal);
         EnsureEditable();
@@ -734,7 +742,7 @@ public sealed class Quotation
         // Las retenciones nacionales no se tocan acá: volver a los datos del cliente deja guardados los selectores
         // (spec §7.5, «no borra la foto del otro modo»), y los selectores los fija SetBillingWithholdings.
         var previousCompanyId = BillingAccount?.CompanyId;
-        ApplyBillingAccount(billingAccount, repricing, occurredAt);
+        ApplyBillingAccount(billingAccount, repricing, freightTaxPercentageWithVat, occurredAt);
         var result = ReResolveMunicipal(previousCompanyId, municipal);
         Touch(updatedBy, occurredAt);
         return result;
@@ -820,6 +828,50 @@ public sealed class Quotation
     // igual, con «Pago: por definir».
     private bool HasBillingCompany => BillingAccount is not null;
 
+    /// <summary>
+    /// Si guardar esa cuenta vuelve a gravar el envío (spec 2026-11-17, R2): hoy sin IVA, con IVA después, con un envío
+    /// cobrado con valor y en una moneda que discrimina el IVA, sin que la cuenta cambie la moneda (ahí el envío se
+    /// limpia). Si dice que sí, el handler lee la tasa del envío del tenant —que puede faltar:
+    /// <c>quotation.quotation.freight_tax_rate_missing</c>— y la pasa a <see cref="UpdateDetails"/>.
+    /// </summary>
+    public bool NeedsFreightTaxRateFor(QuotationBillingAccount? billingAccount) =>
+        !ChargesVat
+        && (FrozenVat(billingAccount)?.ChargesVat ?? true)
+        && FreightChargeMode == Domain.FreightChargeMode.Charged
+        && FreightAmount > 0
+        && CurrencyFor(billingAccount) == Currency
+        && QuotationItem.ItemizesTaxIn(Currency);
+
+    // El IVA es la foto de la empresa al elegirla (spec 2026-11-17 §5.2): reenviar la misma empresa —el guardado manda el
+    // encabezado entero— no lo relee aunque la empresa lo haya cambiado después. Sólo otra empresa trae el suyo.
+    private QuotationBillingAccount? FrozenVat(QuotationBillingAccount? account) =>
+        account is not null && BillingAccount is { } current && current.CompanyId == account.CompanyId
+            ? account with { ChargesVat = current.ChargesVat }
+            : account;
+
+    // R2: cambió el IVA de la empresa emisora. Cada línea se rehace desde la tasa del producto y el envío sigue al
+    // documento; los totales los rehace Touch.
+    private void ApplyChargesVat(int? freightTaxPercentageWithVat, DateTimeOffset occurredAt)
+    {
+        foreach (var item in _items)
+        {
+            item.ApplyChargesVat(ChargesVat, Currency, PriceRounding, occurredAt);
+        }
+
+        if (!ChargesVat)
+        {
+            FreightTaxPercentage = 0;
+        }
+        else if (FreightChargeMode == Domain.FreightChargeMode.Charged
+            && FreightAmount > 0
+            && QuotationItem.ItemizesTaxIn(Currency))
+        {
+            FreightTaxPercentage = freightTaxPercentageWithVat
+                ?? throw new InvalidOperationException(
+                    "Turning VAT on with a charged freight needs the tenant freight tax rate (NeedsFreightTaxRateFor).");
+        }
+    }
+
     // Cambiar de cuenta puede cambiar la moneda, y con ella el precio de cada línea: los importes
     // guardados son el precio del producto en la moneda vieja, no una cifra convertible. Por eso
     // el repricing es obligatorio cuando hay líneas —lo trae la aplicación, resuelto contra el
@@ -827,12 +879,19 @@ public sealed class Quotation
     private void ApplyBillingAccount(
         QuotationBillingAccount? billingAccount,
         IReadOnlyDictionary<Guid, QuotationItemPricing>? repricing,
+        int? freightTaxPercentageWithVat,
         DateTimeOffset occurredAt)
     {
-        BillingAccount = billingAccount?.Normalized();
+        var chargedVat = ChargesVat;
+        BillingAccount = FrozenVat(billingAccount?.Normalized());
         var currency = CurrencyFor(BillingAccount);
         if (currency == Currency)
         {
+            if (chargedVat != ChargesVat)
+            {
+                ApplyChargesVat(freightTaxPercentageWithVat, occurredAt);
+            }
+
             return;
         }
 
@@ -850,7 +909,7 @@ public sealed class Quotation
                     "Every line needs a price in the new currency before the quotation can change currency.");
             }
 
-            item.Reprice(pricing, currency, rounding, occurredAt);
+            item.Reprice(pricing, currency, ChargesVat, rounding, occurredAt);
         }
 
         Currency = currency;

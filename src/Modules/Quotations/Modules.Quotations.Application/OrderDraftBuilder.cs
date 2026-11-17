@@ -62,7 +62,7 @@ public sealed class OrderDraftBuilder(
         // Sólo al guardar: el cálculo previo corre mientras la persona escribe (spec 2026-10-26).
         var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(input.TenantId), cancellationToken);
         BillingPartyFiscalRules.EnsureConsistent(parties.Billing, regional?.Country);
-        var shipping = await ResolveShippingAsync(input, parties, account.Currency, cancellationToken);
+        var shipping = await ResolveShippingAsync(input, parties, account.Currency, account.ChargesVat, cancellationToken);
         var order = Order.CreateManual(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,
             shipping, lines,
@@ -89,7 +89,8 @@ public sealed class OrderDraftBuilder(
         var currency = account?.Currency ?? defaultCurrency;
         var orderDate = await LocalDateAsync(input.TenantId, now, cancellationToken);
         var (header, parties, lines) = await PriceAsync(input, customer, account, currency, orderDate, cancellationToken);
-        var shipping = await ResolveShippingAsync(input, parties, currency, cancellationToken);
+        var shipping = await ResolveShippingAsync(
+            input, parties, currency, account?.ChargesVat ?? true, cancellationToken);
         var order = Order.Preview(
             OrderId.New(), input.TenantId, PreviewOrderNumber, header, parties, account,
             shipping, lines,
@@ -108,10 +109,11 @@ public sealed class OrderDraftBuilder(
     // El pedido todavía no existe: la recogida y la moneda salen del borrador, las mismas con las que el
     // agregado va a validar el envío. Sin cuerpo (o con recogida) el resolver devuelve null: sin envío.
     private async Task<ShippingDetails> ResolveShippingAsync(
-        OrderDraftInput input, QuotationParties parties, string currency, CancellationToken cancellationToken) =>
+        OrderDraftInput input, QuotationParties parties, string currency, bool chargesVat,
+        CancellationToken cancellationToken) =>
         await shippingResolver.ResolveAsync(
-            input.TenantId, input.Shipping, ShippingDetails.None, parties.IsStorePickup, currency, "order.order",
-            cancellationToken)
+            input.TenantId, input.Shipping, ShippingDetails.None, parties.IsStorePickup, currency, chargesVat,
+            "order.order", cancellationToken)
         ?? ShippingDetails.None;
 
     // El cliente se valida antes que la cuenta, el mismo orden de errores que antes de separar guardar y

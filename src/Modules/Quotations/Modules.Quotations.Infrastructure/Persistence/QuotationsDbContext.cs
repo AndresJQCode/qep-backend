@@ -373,6 +373,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasPrecision(14, 2);
         item.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         item.Property(value => value.TaxPercentage).HasColumnName("tax_percentage");
+        // Spec 2026-11-17 (R1): la tasa del producto; tax_percentage es la efectiva. Null en filas anteriores, sin relleno.
+        item.Property(value => value.ProductTaxPercentage).HasColumnName("product_tax_percentage");
         item.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         item.Property(value => value.Position).HasColumnName("position");
         item.Property(value => value.CreatedAt).HasColumnName("created_at");
@@ -867,6 +869,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasPrecision(14, 2);
         item.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         item.Property(value => value.TaxPercentage).HasColumnName("tax_percentage");
+        // Spec 2026-11-17 (R1): la tasa del producto; tax_percentage es la efectiva. Null en filas anteriores, sin relleno.
+        item.Property(value => value.ProductTaxPercentage).HasColumnName("product_tax_percentage");
         item.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         item.Property(value => value.Position).HasColumnName("position");
         item.Property(value => value.CreatedAt).HasColumnName("created_at");

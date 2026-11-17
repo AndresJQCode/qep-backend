@@ -209,7 +209,7 @@ public sealed class SaveOrderEditsHandler(
             var withholdingEdits = await OrderWithholdingEdits.ApplyAsync(
                 order, command,
                 new OrderWithholdingEditsContext(
-                    companyLookup, withholdingLookup, geographyLookup, tenantClock, command.TenantId),
+                    companyLookup, withholdingLookup, geographyLookup, tenantClock, command.TenantId, shippingResolver),
                 updatedBy, now, cancellationToken);
             var accountChanged = withholdingEdits.BillingAccountSummary is not null;
             var municipalTexts = await OrderMunicipalHistory.DescribeAsync(
@@ -221,7 +221,7 @@ public sealed class SaveOrderEditsHandler(
             var shippingBefore = order.ShippingDetails;
             var shipping = await shippingResolver.ResolveAsync(
                 command.TenantId, command.Shipping, shippingBefore, order.IsStorePickup, order.Currency,
-                "order.order", cancellationToken);
+                order.ChargesVat, "order.order", cancellationToken);
             var shippingChanged = shipping is not null && shipping != shippingBefore;
             string? shippingSummary = null;
             if (shippingChanged)

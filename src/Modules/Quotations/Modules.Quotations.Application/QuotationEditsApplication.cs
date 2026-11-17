@@ -109,6 +109,12 @@ internal static class QuotationEditsApplication
             "quotation",
             cancellationToken);
 
+        // Spec 2026-11-17 (R2): pasar de una empresa sin IVA a una con IVA vuelve a gravar el envío cobrado, y su tasa
+        // es la del tenant. Se lee antes de tocar el agregado, para que una tasa faltante sea 422 sin nada a medias.
+        int? freightTaxPercentageWithVat = quotation.NeedsFreightTaxRateFor(billingAccount)
+            ? await shippingResolver.FreightTaxPercentageAsync(tenantId, "quotation.quotation", cancellationToken)
+            : null;
+
         // El encabezado va antes que las líneas y no al revés: es el que fija la moneda, y las
         // líneas nuevas del diff se valorizan contra la que quede.
         var reResolution = quotation.UpdateDetails(
@@ -122,7 +128,8 @@ internal static class QuotationEditsApplication
             edits.GlobalScaleFloor,
             municipal,
             updatedBy,
-            now);
+            now,
+            freightTaxPercentageWithVat);
         // Los selectores después del encabezado: se validan contra el país de la cuenta que acaba de quedar (spec
         // impuestos por tipo §7.5), y antes de la foto de después, para que el historial cuente el cambio.
         var selection = await ApplyBillingWithholdingsAsync(
@@ -143,7 +150,7 @@ internal static class QuotationEditsApplication
             : edits.Shipping;
         var shipping = await shippingResolver.ResolveAsync(
             tenantId, shippingRequest, quotation.ShippingDetails, quotation.IsStorePickup, quotation.Currency,
-            "quotation.quotation", cancellationToken);
+            quotation.ChargesVat, "quotation.quotation", cancellationToken);
         if (shipping is not null)
         {
             quotation.SetShipping(shipping, updatedBy, now);
