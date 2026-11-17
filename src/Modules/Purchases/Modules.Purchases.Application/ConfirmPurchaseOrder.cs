@@ -14,7 +14,8 @@ public sealed record ConfirmPurchaseOrderCommand(
 
 /// <summary>
 /// D-9: cantidad confirmada ≥ 0 (0 rechaza la línea) y costo confirmado &gt; 0 siempre, también en la rechazada. El dominio no
-/// mira signos, así que es acá o en ningún lado.
+/// mira signos, así que es acá o en ningún lado. Los dos valores tienen que caber en su columna, como en el alta
+/// (<see cref="PurchaseOrderWriteRules"/>).
 /// </summary>
 public sealed class ConfirmPurchaseOrderValidator : AbstractValidator<ConfirmPurchaseOrderCommand>
 {
@@ -22,8 +23,12 @@ public sealed class ConfirmPurchaseOrderValidator : AbstractValidator<ConfirmPur
     {
         RuleForEach(command => command.Lines).ChildRules(line =>
         {
-            line.RuleFor(input => input.ConfirmedQuantity).GreaterThanOrEqualTo(0m);
-            line.RuleFor(input => input.ConfirmedUnitCost).GreaterThan(0m);
+            line.RuleFor(input => input.ConfirmedQuantity)
+                .GreaterThanOrEqualTo(0m)
+                .PrecisionScale(PurchaseOrderWriteRules.QuantityPrecision, PurchaseOrderWriteRules.Scale, ignoreTrailingZeros: true);
+            line.RuleFor(input => input.ConfirmedUnitCost)
+                .GreaterThan(0m)
+                .PrecisionScale(PurchaseOrderWriteRules.CostPrecision, PurchaseOrderWriteRules.Scale, ignoreTrailingZeros: true);
         });
     }
 }

@@ -28,6 +28,15 @@ public interface IPurchaseOrderWriteCommand
 /// </summary>
 internal sealed class PurchaseOrderWriteRules : AbstractValidator<IPurchaseOrderWriteCommand>
 {
+    // Las columnas: cantidades numeric(10,2) y costos numeric(14,2). Un valor que no cabe es un 500 de Postgres (22003), y uno con
+    // más de dos decimales se redondea recién al guardar: la vista previa y la respuesta del alta mostrarían un total y la siguiente
+    // lectura otro (D-19). Los ceros a la derecha no cuentan: 1.50 cabe igual que 1.5.
+    public const int QuantityPrecision = 10;
+
+    public const int CostPrecision = 14;
+
+    public const int Scale = 2;
+
     public PurchaseOrderWriteRules()
     {
         RuleFor(command => command.Notes).MaximumLength(PurchaseOrder.NotesMaxLength);
@@ -37,8 +46,12 @@ internal sealed class PurchaseOrderWriteRules : AbstractValidator<IPurchaseOrder
         RuleForEach(command => command.Lines).ChildRules(line =>
         {
             line.RuleFor(input => input.VariantId).NotEqual(Guid.Empty);
-            line.RuleFor(input => input.Quantity).GreaterThan(0m);
-            line.RuleFor(input => input.UnitCost).GreaterThan(0m);
+            line.RuleFor(input => input.Quantity)
+                .GreaterThan(0m)
+                .PrecisionScale(QuantityPrecision, Scale, ignoreTrailingZeros: true);
+            line.RuleFor(input => input.UnitCost)
+                .GreaterThan(0m)
+                .PrecisionScale(CostPrecision, Scale, ignoreTrailingZeros: true);
         });
         // La segunda aparición es la que sobra: la primera queda como la buena, igual que en la pantalla.
         RuleFor(command => command.Lines).Custom((lines, context) =>

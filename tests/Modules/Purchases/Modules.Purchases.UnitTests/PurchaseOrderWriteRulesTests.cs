@@ -36,6 +36,65 @@ public sealed class PurchaseOrderWriteRulesTests
         Assert.Contains(result.Errors, error => error.PropertyName == "Lines[0].UnitCost");
     }
 
+    // Las columnas son numeric(10,2) y numeric(14,2): un valor que no cabe es un 500 de Postgres (22003), y uno con más de dos
+    // decimales se redondea al guardar, así el total de la vista previa y el de la siguiente lectura difieren (D-19).
+    public static TheoryData<string, decimal, decimal, string> OutOfColumnLines => new()
+    {
+        { "create", 1.234m, 10m, "Lines[0].Quantity" },
+        { "create", 100_000_000m, 10m, "Lines[0].Quantity" },
+        { "create", 3m, 20.255m, "Lines[0].UnitCost" },
+        { "create", 1m, 1_000_000_000_000m, "Lines[0].UnitCost" },
+        { "update", 1.234m, 10m, "Lines[0].Quantity" },
+        { "update", 100_000_000m, 10m, "Lines[0].Quantity" },
+        { "update", 3m, 20.255m, "Lines[0].UnitCost" },
+        { "update", 1m, 1_000_000_000_000m, "Lines[0].UnitCost" },
+        { "preview", 1.234m, 10m, "Lines[0].Quantity" },
+        { "preview", 100_000_000m, 10m, "Lines[0].Quantity" },
+        { "preview", 3m, 20.255m, "Lines[0].UnitCost" },
+        { "preview", 1m, 1_000_000_000_000m, "Lines[0].UnitCost" },
+    };
+
+    [Theory]
+    [MemberData(nameof(OutOfColumnLines))]
+    public void AValueThatDoesNotFitItsColumnFailsOnTheRow(string command, decimal quantity, decimal unitCost, string property)
+    {
+        IReadOnlyList<PurchaseOrderLineInput> lines = [Line(quantity: quantity, unitCost: unitCost)];
+        var result = command switch
+        {
+            "create" => Validate(Create(lines)),
+            "update" => new UpdatePurchaseOrderValidator().Validate(
+                new UpdatePurchaseOrderCommand(TenantId, Guid.CreateVersion7(), 1, Guid.CreateVersion7(), "COP", null, lines)),
+            _ => new PreviewPurchaseOrderValidator().Validate(
+                new PreviewPurchaseOrderCommand(TenantId, Guid.CreateVersion7(), "COP", null, lines)),
+        };
+
+        Assert.Contains(result.Errors, error => error.PropertyName == property);
+    }
+
+    [Fact]
+    public void TheLargestValuesThatFitTheColumnsPass()
+    {
+        Assert.True(Validate(Create([Line(quantity: 99_999_999.99m, unitCost: 999_999_999_999.99m)])).IsValid);
+        Assert.True(Validate(Create([Line(quantity: 1.50m, unitCost: 20.25m)])).IsValid);
+    }
+
+    public static TheoryData<decimal, decimal, string> OutOfColumnConfirmations => new()
+    {
+        { 1.234m, 10m, "Lines[0].ConfirmedQuantity" },
+        { 100_000_000m, 10m, "Lines[0].ConfirmedQuantity" },
+        { 3m, 20.255m, "Lines[0].ConfirmedUnitCost" },
+        { 1m, 1_000_000_000_000m, "Lines[0].ConfirmedUnitCost" },
+    };
+
+    [Theory]
+    [MemberData(nameof(OutOfColumnConfirmations))]
+    public void AConfirmationThatDoesNotFitItsColumnFailsOnTheRow(decimal confirmedQuantity, decimal confirmedUnitCost, string property)
+    {
+        var result = new ConfirmPurchaseOrderValidator().Validate(Confirm(confirmedQuantity, confirmedUnitCost));
+
+        Assert.Contains(result.Errors, error => error.PropertyName == property);
+    }
+
     [Fact]
     public void AnEmptyVariantIdFailsOnTheRow()
     {
