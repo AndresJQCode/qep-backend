@@ -19,7 +19,7 @@ namespace Modules.Store.IntegrationTests;
 internal sealed class StoreSettingsFixture : IAsyncDisposable
 {
     public const string AdminPermissions =
-        "store.settings.manage,companies.company.read,companies.company.manage,catalog.product.read,catalog.product.manage";
+        "store.settings.manage,companies.company.read,companies.company.manage,catalog.product.read,catalog.product.manage,catalog.tax_rate.manage";
 
     public static readonly Guid Tenant = Guid.Parse(TenantId);
 
