@@ -51,6 +51,49 @@ public sealed class AgentActivityHandlersTests
         Assert.Equal(new AgentUsageDto("anthropic", 2, 3000, 120, 800, null), response.Usage);
     }
 
+    // Plan 2026-11-17 A4 (F-4): la transcripción del playground trae sus fuentes resueltas como la actividad real: la FAQ sale de la foto del
+    // borrador de la prueba y la herramienta de las llamadas de la prueba. SourceIds se conserva para el frontend que ya lo lee.
+    [Fact]
+    public async Task ThePlaygroundTranscriptResolvesItsSources()
+    {
+        var at = new DateTimeOffset(2026, 11, 17, 14, 0, 0, TimeSpan.Zero);
+        var draft = AgentConfig.Default(new AgentModelRef("anthropic", "claude-sonnet-5-5")) with
+        {
+            Instructions = "Atiende.",
+            Faq = [new AgentFaq("envios", "¿Hacen envíos?", "Sí.")],
+            UseQuickReplies = true,
+        };
+        var test = AgentTest.Open(Guid.CreateVersion7(), Tenant, Guid.CreateVersion7(), Guid.CreateVersion7(), null, draft, at);
+        var job = Guid.CreateVersion7();
+        test.AddCustomerMessage("¿Envían a Cali?", job, at);
+        test.RecordReply(job, "Sí, enviamos.", ["envios", "qr-1", "call_1", "qr-borrada"], at.AddSeconds(3));
+        var tests = new FakeTests(test)
+        {
+            Activity = new AgentTestActivity(
+                [
+                    new AgentTestToolCallDto(
+                        "call_1", AgentToolNames.SearchCatalog, JsonDocument.Parse("""{"query":"jabón"}""").RootElement, null, "ok", null, 40, at),
+                ],
+                []),
+        };
+
+        var dto = await new GetAgentTestHandler(
+                new FakeExecutionContext(Tenant, AiPermissions.AgentManage), AllModules(), tests, new FakeQuickReplies(), new FixedClock(at))
+            .HandleAsync(new GetAgentTestQuery(Tenant, test.Id), Ct);
+
+        var reply = Assert.Single(dto.Transcript, entry => entry.Role == AgentTestEntry.Agent);
+        Assert.Equal(["envios", "qr-1", "call_1", "qr-borrada"], reply.SourceIds);
+        Assert.Equal(
+            [
+                new AgentActivitySourceDto("faq", "envios", "¿Hacen envíos?"),
+                new AgentActivitySourceDto("quickReply", "qr-1", "/envio"),
+                new AgentActivitySourceDto("tool", "call_1", AgentToolNames.SearchCatalog),
+                new AgentActivitySourceDto("quickReply", "qr-borrada", null),
+            ],
+            reply.Sources);
+        Assert.Empty(Assert.Single(dto.Transcript, entry => entry.Role == AgentTestEntry.Customer).Sources);
+    }
+
     [Fact]
     public async Task WithoutReadPermissionTheActivityIsDenied()
     {
@@ -128,6 +171,26 @@ public sealed class AgentActivityHandlersTests
 
         public Task<IReadOnlyList<AgentConversationSession>> LoadConversationAsync(
             Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(Conversation);
+    }
+
+    private sealed class FakeTests(AgentTest test) : IAgentTestRepository
+    {
+        public AgentTestActivity Activity { get; init; } = new([], []);
+
+        public Task<AgentTest?> FindAsync(Guid tenantId, Guid testId, CancellationToken cancellationToken) =>
+            Task.FromResult<AgentTest?>(tenantId == test.TenantId && testId == test.Id ? test : null);
+
+        public Task<AgentTestActivity> LoadActivityAsync(Guid tenantId, Guid testId, CancellationToken cancellationToken) =>
+            Task.FromResult(Activity);
+
+        public void Add(AgentTest test) => throw new NotSupportedException();
+
+        public void Remove(AgentTest test) => throw new NotSupportedException();
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : IClock
+    {
+        public DateTimeOffset UtcNow => now;
     }
 
     private sealed class FakeQuickReplies : IAiQuickReplies

@@ -98,6 +98,36 @@ public sealed class AgentPlaygroundApiTests
         Assert.All(anthropic.Requests, request => Assert.True(request.KeyMatched, "The call must carry the tenant's own key."));
     }
 
+    // Plan 2026-11-17 A4 (F-4): una respuesta que cita una FAQ trae su fuente resuelta a la pregunta, como la actividad real; los ids crudos
+    // siguen viajando.
+    [Fact]
+    public async Task AReplyBasedOnAFaqShowsTheQuestion()
+    {
+        await using var database = await StartDatabaseAsync();
+        var anthropic = new FakeAnthropicMessagesHandler(AnthropicTestKey);
+        anthropic.Enqueue(FakeAnthropicMessagesHandler.ToolUse(
+            "toolu_01", AgentToolNames.SendReply, """{"text":"Sí, enviamos a todo el país.","sourceIds":["envios"]}"""));
+        using var factory = new QepApiFactory(database.GetConnectionString(), services => UseFakeAnthropic(services, anthropic));
+        await SeedTenantAsync(factory);
+        await SeedAnthropicConnectionAsync(factory);
+        using var client = CreateClient(factory, permissions: Manage);
+        var agentId = await DraftAgentAsync(client);
+
+        var opened = await SendAsync(client, HttpMethod.Post, $"{Agents}/{agentId}/tests", new { customerId = (Guid?)null });
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        var testId = (await JsonAsync(opened)).GetProperty("id").GetGuid();
+        var sent = await SendAsync(client, HttpMethod.Post, $"{Tests}/{testId}/messages", new { text = "¿Hacen envíos a Cali?" });
+        Assert.Equal(HttpStatusCode.Accepted, sent.StatusCode);
+        var test = await WaitUntilAnsweredAsync(client, testId);
+
+        var reply = Assert.Single(test.GetProperty("transcript").EnumerateArray(), entry => entry.GetProperty("role").GetString() == "agent");
+        Assert.Equal(["envios"], reply.GetProperty("sourceIds").EnumerateArray().Select(id => id.GetString()));
+        var source = Assert.Single(reply.GetProperty("sources").EnumerateArray());
+        Assert.Equal(
+            ("faq", "envios", "¿Hacen envíos?"),
+            (source.GetProperty("kind").GetString(), source.GetProperty("id").GetString(), source.GetProperty("label").GetString()));
+    }
+
     internal static void UseFakeAnthropic(IServiceCollection services, HttpMessageHandler handler) =>
         services.AddHttpClient(ClaudeModelClient.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => handler);
 

@@ -165,9 +165,9 @@ public sealed class GetConversationAgentActivityHandler(
     IExecutionContext executionContext, ITenantModules tenantModules, IAgentActivityReader reader, IAiQuickReplies quickReplies)
     : IQueryHandler<GetConversationAgentActivityQuery, AgentActivityDto>
 {
-    public const string FaqSource = "faq";
-    public const string QuickReplySource = "quickReply";
-    public const string ToolSource = "tool";
+    public const string FaqSource = AgentSourceResolver.FaqSource;
+    public const string QuickReplySource = AgentSourceResolver.QuickReplySource;
+    public const string ToolSource = AgentSourceResolver.ToolSource;
 
     public async Task<AgentActivityDto> HandleAsync(GetConversationAgentActivityQuery query, CancellationToken cancellationToken)
     {
@@ -178,46 +178,25 @@ public sealed class GetConversationAgentActivityHandler(
             return new AgentActivityDto(query.ConversationId, []);
         }
 
-        // Las respuestas rápidas son las de hoy: una que se borró después sigue citada, sin atajo.
-        var shortcuts = sessions.Any(session => session.Jobs.Any(job => job.SourceIds.Count > 0))
-            ? (await quickReplies.ListAsync(query.TenantId, cancellationToken)).ToDictionary(reply => reply.Id, reply => reply.Shortcut, StringComparer.Ordinal)
-            : new Dictionary<string, string>(StringComparer.Ordinal);
+        var shortcuts = await AgentSourceResolver.ShortcutsAsync(
+            quickReplies, query.TenantId, sessions.Any(session => session.Jobs.Any(job => job.SourceIds.Count > 0)), cancellationToken);
         return new AgentActivityDto(
             query.ConversationId,
             [
                 .. sessions.Select(session =>
                 {
-                    var faq = AgentConfig.FromJson(session.ConfigJson).Faq.ToDictionary(entry => entry.Id, entry => entry.Question, StringComparer.Ordinal);
+                    var faq = AgentSourceResolver.FaqOf(AgentConfig.FromJson(session.ConfigJson));
                     return new AgentActivitySessionDto(
                         session.Id, session.AgentId, session.AgentName, session.VersionNumber, session.Provider, session.Model, session.Status,
                         session.EndReason, session.FailureCode, session.StartedAt, session.EndedAt,
                         [
                             .. session.Jobs.Select(job => new AgentActivityResponseDto(
                                 job.Id, job.Status, job.Outcome, job.ErrorCode, job.CreatedAt, job.CompletedAt, job.MessageIds, job.Truncated,
-                                [.. job.SourceIds.Select(id => Resolve(id, faq, shortcuts, job.ToolCalls))],
+                                [.. job.SourceIds.Select(id => AgentSourceResolver.Resolve(id, faq, shortcuts, job.ToolCalls))],
                                 job.ToolCalls, session.Provider, job.ServedModels, job.Usage)),
                         ]);
                 }),
             ]);
-    }
-
-    /// <summary>§8.2: una fuente es una pregunta frecuente de la versión, una llamada a herramienta del mismo trabajo o una respuesta rápida. El
-    /// bucle ya descartó las que no existían al responder; lo que no se reconoce ahora es una respuesta rápida borrada después.</summary>
-    private static AgentActivitySourceDto Resolve(
-        string id, Dictionary<string, string> faq, Dictionary<string, string> shortcuts, IReadOnlyList<AgentTestToolCallDto> calls)
-    {
-        if (faq.TryGetValue(id, out var question))
-        {
-            return new AgentActivitySourceDto(FaqSource, id, question);
-        }
-
-        var call = calls.FirstOrDefault(candidate => candidate.CallId == id);
-        if (call is not null)
-        {
-            return new AgentActivitySourceDto(ToolSource, id, call.Tool);
-        }
-
-        return new AgentActivitySourceDto(QuickReplySource, id, shortcuts.GetValueOrDefault(id));
     }
 }
 

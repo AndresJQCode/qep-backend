@@ -65,8 +65,19 @@ public sealed record AgentTestDto(
     IReadOnlyList<AgentTestUsageDto> Usage);
 
 /// <param name="Role"><c>customer</c>, <c>agent</c> o <c>handoff</c>.</param>
+/// <param name="SourceIds">Los ids crudos; se conservan porque el frontend ya los lee.</param>
+/// <param name="Sources">Backend for frontend (plan 2026-11-17 A4, F-4): las mismas fuentes ya resueltas, con la forma de la actividad real
+/// (<see cref="AgentActivitySourceDto"/>), para que el playground muestre la pregunta, el atajo o la herramienta sin cruzar el borrador ni las
+/// respuestas rápidas.</param>
 public sealed record AgentTestEntryDto(
-    int Seq, string Role, string? Text, IReadOnlyList<string> SourceIds, string? Reason, string? Code, DateTimeOffset At);
+    int Seq,
+    string Role,
+    string? Text,
+    IReadOnlyList<string> SourceIds,
+    IReadOnlyList<AgentActivitySourceDto> Sources,
+    string? Reason,
+    string? Code,
+    DateTimeOffset At);
 
 public sealed record AgentTestToolCallDto(
     string CallId, string Tool, JsonElement Arguments, JsonElement? Result, string Outcome, string? ErrorCode, int DurationMs, DateTimeOffset At);
@@ -102,9 +113,15 @@ internal static class AgentTestSupport
         return resolution.Credential is null ? throw new AiProviderNotConfiguredException(provider!) : provider!;
     }
 
-    public static AgentTestDto ToDto(AgentTest test, AgentTestActivity activity)
+    /// <summary>Las FAQ salen de la foto del borrador de la prueba, las herramientas de las llamadas de la prueba y las respuestas rápidas se
+    /// leen sólo si alguna entrada tiene fuentes, como en la actividad real (<see cref="AgentSourceResolver"/>).</summary>
+    public static async Task<AgentTestDto> ToDtoAsync(
+        AgentTest test, AgentTestActivity activity, IAiQuickReplies quickReplies, CancellationToken cancellationToken)
     {
         var config = test.Config;
+        var faq = AgentSourceResolver.FaqOf(config);
+        var shortcuts = await AgentSourceResolver.ShortcutsAsync(
+            quickReplies, test.TenantId, test.Transcript.Any(entry => entry.SourceIds.Count > 0), cancellationToken);
         return new AgentTestDto(
             test.Id,
             test.AgentId,
@@ -115,7 +132,14 @@ internal static class AgentTestSupport
             test.PendingJobId is not null,
             test.HandedOff,
             [.. test.Transcript.Select(entry => new AgentTestEntryDto(
-                entry.Seq, entry.Role, entry.Text, entry.SourceIds, entry.Reason, entry.Code, entry.At))],
+                entry.Seq,
+                entry.Role,
+                entry.Text,
+                entry.SourceIds,
+                [.. entry.SourceIds.Select(id => AgentSourceResolver.Resolve(id, faq, shortcuts, activity.ToolCalls))],
+                entry.Reason,
+                entry.Code,
+                entry.At))],
             activity.ToolCalls,
             activity.Usage);
     }
@@ -128,6 +152,7 @@ public sealed class CreateAgentTestHandler(
     IAgentRepository agents,
     IAiProviderCredentials credentials,
     IAgentTestRepository tests,
+    IAiQuickReplies quickReplies,
     IAiUnitOfWork unitOfWork,
     IClock clock) : ICommandHandler<CreateAgentTestCommand, AgentTestDto>
 {
@@ -142,7 +167,7 @@ public sealed class CreateAgentTestHandler(
         var test = AgentTest.Open(Guid.CreateVersion7(), command.TenantId, agent.Id, memberId, command.CustomerId, draft, clock.UtcNow);
         tests.Add(test);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return AgentTestSupport.ToDto(test, new AgentTestActivity([], []));
+        return await AgentTestSupport.ToDtoAsync(test, new AgentTestActivity([], []), quickReplies, cancellationToken);
     }
 }
 
@@ -153,6 +178,7 @@ public sealed class SendAgentTestMessageHandler(
     IAgentTestRepository tests,
     IAiModelJobs jobs,
     IAiProviderCredentials credentials,
+    IAiQuickReplies quickReplies,
     IAiUnitOfWork unitOfWork,
     IClock clock) : ICommandHandler<SendAgentTestMessageCommand, AgentTestDto>
 {
@@ -177,12 +203,13 @@ public sealed class SendAgentTestMessageHandler(
         test.AddCustomerMessage(command.Text, jobId, now);
         jobs.Add(ModelJob.ForTest(jobId, command.TenantId, test.Id, test.Transcript[^1].Seq, now));
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return AgentTestSupport.ToDto(test, await tests.LoadActivityAsync(command.TenantId, test.Id, cancellationToken));
+        return await AgentTestSupport.ToDtoAsync(
+            test, await tests.LoadActivityAsync(command.TenantId, test.Id, cancellationToken), quickReplies, cancellationToken);
     }
 }
 
 public sealed class GetAgentTestHandler(
-    IExecutionContext executionContext, ITenantModules tenantModules, IAgentTestRepository tests, IClock clock)
+    IExecutionContext executionContext, ITenantModules tenantModules, IAgentTestRepository tests, IAiQuickReplies quickReplies, IClock clock)
     : IQueryHandler<GetAgentTestQuery, AgentTestDto>
 {
     public async Task<AgentTestDto> HandleAsync(GetAgentTestQuery query, CancellationToken cancellationToken)
@@ -194,7 +221,8 @@ public sealed class GetAgentTestHandler(
             throw AgentTestSupport.NotFound(query.TestId);
         }
 
-        return AgentTestSupport.ToDto(test, await tests.LoadActivityAsync(query.TenantId, test.Id, cancellationToken));
+        return await AgentTestSupport.ToDtoAsync(
+            test, await tests.LoadActivityAsync(query.TenantId, test.Id, cancellationToken), quickReplies, cancellationToken);
     }
 }
 
