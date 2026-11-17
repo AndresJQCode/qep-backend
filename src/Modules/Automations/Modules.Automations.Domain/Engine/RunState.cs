@@ -34,6 +34,16 @@ public static class TraceOutcomes
     /// <summary>La palabra de reinicio (D-I5) o los intentos agotados sin salida conectada (D-M7): la corrida vuelve al Inicio desde el
     /// bloque que esperaba.</summary>
     public const string Restart = "restart";
+
+    /// <summary>Spec 2026-11-17 D-B4: «Agente IA» le pasó la conversación al agente y la corrida espera su retorno. El barrido de abandono
+    /// la salta (§6.5) y sólo la mueve el <see cref="EngineInput.AgentResult"/> de ese bloque.</summary>
+    public const string Delegated = "delegated";
+
+    /// <summary>Spec 2026-11-17 §6.4: el agente volvió sin salida porque la ventana del canal se cerró.</summary>
+    public const string WindowClosed = "windowClosed";
+
+    /// <summary>Spec 2026-11-17 §6.4: el agente volvió sin salida porque el contacto está bloqueado.</summary>
+    public const string Interrupted = "interrupted";
 }
 
 /// <summary>Spec 2026-10-26 D-6: lo que se le mostró al cliente al pedirle la política de datos. El registro guarda este texto, no la
@@ -64,6 +74,11 @@ public sealed record RunState(
 {
     /// <summary>§4.2: el trace guarda sólo las últimas 200 entradas.</summary>
     public const int TraceMax = 200;
+
+    /// <summary>Spec 2026-11-17 D-B4 y §6.5: espera en un bloque «Agente IA» con la conversación delegada (la última entrada del trace es la
+    /// de ese bloque, con <see cref="TraceOutcomes.Delegated"/>).</summary>
+    public bool IsDelegated =>
+        Status == RunStatus.Waiting && Trace.Count > 0 && Trace[^1].Outcome == TraceOutcomes.Delegated && Trace[^1].NodeId == CurrentNodeId;
 
     /// <summary>Una corrida nueva: sólo las variables fijas (<c>nombre</c>, <c>telefono</c>, <c>empresa</c>, <c>conexion</c>).</summary>
     public static RunState Initial(RunVariables fixedVariables)

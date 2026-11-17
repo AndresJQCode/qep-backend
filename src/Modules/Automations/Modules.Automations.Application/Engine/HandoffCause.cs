@@ -24,6 +24,10 @@ public enum HandoffCauseKind
 
     /// <summary>Spec 2026-10-26 repetir R-4b: Política de datos en <c>repeat</c> o <c>handoff</c> sin cliente al que registrarle la respuesta.</summary>
     DataConsentUnavailable,
+
+    /// <summary>Spec 2026-11-17 adenda D-6: el bloque «Agente IA» volvió por <c>human</c>, <c>noAnswer</c> o <c>error</c> sin esa salida
+    /// conectada (D-B12, D-B13). <see cref="HandoffCause.Code"/> es la salida.</summary>
+    AgentBlockOutputUnhandled,
 }
 
 /// <summary>Spec 2026-10-24 D-T6: el bloque HTTP fallido que arrancó el paso que terminó en traspaso. Sólo códigos y la foto del título y
@@ -37,6 +41,9 @@ public sealed record HandoffHttpFailure(string NodeId, string? NodeTitle, string
 /// <see cref="HandoffCauseKind.InvalidReply"/>.</param>
 /// <param name="ConnectionName">Sólo en un envío rechazado: la conexión de WhatsApp.</param>
 /// <param name="ConnectionReason">Sólo en un envío rechazado: el motivo de esa conexión (spec §3.4).</param>
+/// <param name="ChatbotId">Spec 2026-11-17 adenda D-6, sólo en <see cref="HandoffCauseKind.AgentBlockOutputUnhandled"/>: el chatbot de la
+/// corrida; el adaptador guarda la foto de su nombre.</param>
+/// <param name="AgentId">Como <paramref name="ChatbotId"/>: el agente del bloque.</param>
 public sealed record HandoffCause(
     HandoffCauseKind Kind,
     string? Code,
@@ -44,7 +51,9 @@ public sealed record HandoffCause(
     string? NodeTitle,
     string? ConnectionName,
     string? ConnectionReason,
-    HandoffHttpFailure? Http)
+    HandoffHttpFailure? Http,
+    Guid? ChatbotId = null,
+    Guid? AgentId = null)
 {
     /// <summary>Un traspaso por falla del flujo, sin envío ni conexión de por medio.</summary>
     public static HandoffCause FlowFailed(string code, string? nodeId, string? nodeTitle, HandoffHttpFailure? http = null) =>

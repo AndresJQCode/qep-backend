@@ -168,10 +168,12 @@ public sealed record MessageEventDto(
 /// Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.
 /// <c>Provider</c> (plan 2026-11-12): sólo en el traspaso de un agente de IA, el proveedor de su modelo (<c>anthropic</c>, <c>openai</c>);
 /// los kinds de agente son <c>AgentRequested</c>, <c>AgentLimitReached</c>, <c>AgentFailed</c>, <c>ProviderFailed</c>, <c>ModuleDisabled</c>
-/// y <c>WindowClosed</c>.</summary>
+/// y <c>WindowClosed</c>. Spec 2026-11-17 adenda D-6: <c>AgentBlockOutputUnhandled</c> es el bloque «Agente IA» que volvió por una salida sin
+/// conectar; <c>Code</c> es esa salida (<c>human</c>, <c>noAnswer</c>, <c>error</c>) y <c>ChatbotName</c>/<c>AgentName</c> la foto de los
+/// nombres del momento, para que la bandeja diga qué chatbot y qué agente sin otra consulta (sólo en ese kind; si no, <c>null</c>).</summary>
 public sealed record AutomationHandoffDto(
     string Kind, string? Code, string? NodeId, string? NodeTitle, string? ConnectionName, string? ConnectionReason,
-    AutomationHandoffHttpDto? Http, MemberRefDto? AssignedTo = null, string? Provider = null);
+    AutomationHandoffHttpDto? Http, MemberRefDto? AssignedTo = null, string? Provider = null, string? ChatbotName = null, string? AgentName = null);
 
 /// <summary>Spec 2026-10-24 §6: el bloque HTTP fallido que arrancó el paso del traspaso. <c>Status</c> sólo si la API respondió.</summary>
 public sealed record AutomationHandoffHttpDto(

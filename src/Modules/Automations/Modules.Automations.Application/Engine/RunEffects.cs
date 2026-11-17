@@ -135,16 +135,21 @@ public sealed partial class RunEffects(
                         break;
                     case Effect.Handoff handoff:
                         // D-T9: el motor dice por qué camino llegó; el procesador no lo deduce por el tipo de bloque.
-                        var cause = new HandoffCause(
-                            handoff.Reason switch
-                            {
-                                HandoffReasons.InvalidReply => HandoffCauseKind.InvalidReply,
-                                HandoffReasons.AttemptsExhausted => HandoffCauseKind.AttemptsExhausted,
-                                HandoffReasons.DataConsentRejected => HandoffCauseKind.DataConsentRejected,
-                                HandoffReasons.DataConsentUnavailable => HandoffCauseKind.DataConsentUnavailable,
-                                _ => HandoffCauseKind.Block,
-                            },
-                            null, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null, http);
+                        var cause = handoff.Reason == HandoffReasons.AgentBlockOutputUnhandled
+                            // Spec 2026-11-17 adenda D-6: la salida es el código; el adaptador guarda los nombres del chatbot y del agente.
+                            ? new HandoffCause(
+                                HandoffCauseKind.AgentBlockOutputUnhandled, handoff.Code, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null,
+                                http, run.ChatbotId, AgentOf(unit.Flow, handoff.NodeId))
+                            : new HandoffCause(
+                                handoff.Reason switch
+                                {
+                                    HandoffReasons.InvalidReply => HandoffCauseKind.InvalidReply,
+                                    HandoffReasons.AttemptsExhausted => HandoffCauseKind.AttemptsExhausted,
+                                    HandoffReasons.DataConsentRejected => HandoffCauseKind.DataConsentRejected,
+                                    HandoffReasons.DataConsentUnavailable => HandoffCauseKind.DataConsentUnavailable,
+                                    _ => HandoffCauseKind.Block,
+                                },
+                                null, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null, http);
                         // Spec 2026-10-25 D-1: el motor trae el destino; el adaptador decide si todavía puede responder (D-5).
                         if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cause, handoff.MemberId, cancellationToken), now))
                         {
@@ -231,6 +236,10 @@ public sealed partial class RunEffects(
         ArgumentNullException.ThrowIfNull(flow);
         return nodeId is null ? null : flow.Nodes.FirstOrDefault(node => node.Id == nodeId)?.Title;
     }
+
+    /// <summary>Spec 2026-11-17: el agente del bloque «Agente IA» con ese id en la versión de la corrida; <c>null</c> si no lo es o no tiene.</summary>
+    private static Guid? AgentOf(FlowDefinition flow, string nodeId) =>
+        flow.Nodes.OfType<AiAgentNode>().FirstOrDefault(node => node.Id == nodeId)?.AgentId;
 
     private static HandoffHttpFailure? FailedHttpOf(FlowDefinition flow, EngineInput input) =>
         input is EngineInput.HttpResult { Ok: false } failed

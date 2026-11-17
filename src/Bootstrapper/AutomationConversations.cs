@@ -99,9 +99,14 @@ internal sealed partial class AutomationConversations(
                 ? id
                 : null;
 
+        // Spec 2026-11-17 adenda D-6: la foto de los nombres del chatbot y del agente del bloque, del mismo diccionario que la delegación.
+        var names = cause is { ChatbotId: { } chatbotId, AgentId: { } agentId }
+            ? await services.Names.ResolveAsync(tenantId, [chatbotId, agentId], cancellationToken)
+            : null;
+
         // Spec 2026-10-24 §5.3: la causa viaja en el mismo evento, un solo cambio con el mismo now; el dominio de Mensajería la limpia.
         // Spec 2026-10-25 D-1, D-7: pausa y asignación en un solo cambio, sin evento Transferred.
-        var change = conversation.HandOffAutomation(ToHandoff(cause, assignee), now);
+        var change = conversation.HandOffAutomation(ToHandoff(cause, assignee, names), now);
         services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationPaused, conversation.Id, now);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
@@ -123,7 +128,7 @@ internal sealed partial class AutomationConversations(
     }
 
     /// <summary>Spec 2026-10-24 §5.3: el kind se traduce por nombre (<c>HandoffCauseKindParityTests</c> amarra los dos enums).</summary>
-    private static AutomationHandoff ToHandoff(HandoffCause cause, Guid? assignedMemberId)
+    private static AutomationHandoff ToHandoff(HandoffCause cause, Guid? assignedMemberId, IReadOnlyDictionary<Guid, string>? names)
     {
         ArgumentNullException.ThrowIfNull(cause);
         return AutomationHandoff.Create(
@@ -136,7 +141,9 @@ internal sealed partial class AutomationConversations(
             cause.Http is { } http
                 ? new AutomationHandoffHttp(http.NodeId, http.NodeTitle, http.Outcome, http.ErrorCode, http.Status, http.ConnectionName)
                 : null,
-            assignedMemberId);
+            assignedMemberId,
+            chatbotName: cause.ChatbotId is { } chatbotId ? names?.GetValueOrDefault(chatbotId) : null,
+            agentName: cause.AgentId is { } agentId ? names?.GetValueOrDefault(agentId) : null);
     }
 
     public async Task ResolveAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid? reasonId, CancellationToken cancellationToken)

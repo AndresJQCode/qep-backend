@@ -437,7 +437,9 @@ internal static class MessageMapping
                     ? new AutomationHandoffHttpDto(http.NodeId, http.NodeTitle, http.Outcome, http.ErrorCode, http.Status, http.ConnectionName)
                     : null,
                 Member(handoff.AssignedMemberId, memberNames),
-                handoff.Provider);
+                handoff.Provider,
+                handoff.ChatbotName,
+                handoff.AgentName);
 
     /// <summary><c>details</c> de un <c>Unsupported</c> es <c>{ type, errors }</c> con los <c>errors</c> de Meta tal cual
     /// (<c>WebhookPayloadParser</c>). El primer <c>code</c> numérico, o <c>null</c> si no hay o el JSON no tiene esa forma.</summary>

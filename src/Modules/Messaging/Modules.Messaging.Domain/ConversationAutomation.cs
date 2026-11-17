@@ -46,6 +46,10 @@ public enum AutomationHandoffKind
     /// <summary>Spec 2026-10-26 repetir R-4b: la política de datos no se pudo preguntar porque no hay cliente al que registrarle la respuesta.</summary>
     DataConsentUnavailable,
 
+    /// <summary>Spec 2026-11-17 adenda D-6: el bloque «Agente IA» volvió por una salida de problema (<c>human</c>, <c>noAnswer</c>,
+    /// <c>error</c>) que no estaba conectada; <see cref="AutomationHandoff.Code"/> es la salida y lleva los nombres del chatbot y del agente.</summary>
+    AgentBlockOutputUnhandled,
+
     // Spec 2026-10-29 §4.4: los traspasos de un agente de IA. Su espejo es el HandoffCauseKind de Ai (HandoffCauseKindParityTests); los
     // de arriba son el espejo del de Automations. Se guardan por nombre: no se renombran.
 
@@ -87,7 +91,9 @@ public sealed partial record AutomationHandoff(
     string? ConnectionReason,
     AutomationHandoffHttp? Http,
     Guid? AssignedMemberId = null,
-    string? Provider = null)
+    string? Provider = null,
+    string? ChatbotName = null,
+    string? AgentName = null)
 {
     /// <summary>Títulos y nombres: <see cref="SnapshotText.Fit"/>. Es el largo del paso del asistente.</summary>
     public const int TextMaxLength = 120;
@@ -100,7 +106,9 @@ public sealed partial record AutomationHandoff(
     /// <paramref name="http"/> que queda sin nodo ni outcome se descarta entero. Spec 2026-10-25 D-7:
     /// <paramref name="assignedMemberId"/> es el asesor a quien el traspaso asigna la conversación; <see cref="Guid.Empty"/> es «nadie».
     /// Plan 2026-11-12: <paramref name="provider"/> es el proveedor del modelo de un agente (<c>anthropic</c>, <c>openai</c>), con la regla
-    /// de los códigos.</summary>
+    /// de los códigos. Spec 2026-11-17 adenda D-6: <paramref name="chatbotName"/> y <paramref name="agentName"/> son la foto de los nombres
+    /// en un traspaso por una salida del bloque «Agente IA», cuyo código es la salida (<see cref="BotDelegationOutputs"/>, en camelCase:
+    /// <c>noAnswer</c> no pasaría la regla de los códigos).</summary>
     public static AutomationHandoff Create(
         AutomationHandoffKind kind,
         string? code,
@@ -110,9 +118,13 @@ public sealed partial record AutomationHandoff(
         string? connectionReason,
         AutomationHandoffHttp? http,
         Guid? assignedMemberId = null,
-        string? provider = null) =>
-        new(kind, CleanCode(code), CleanId(nodeId), CleanText(nodeTitle), CleanText(connectionName), CleanCode(connectionReason), CleanHttp(http),
-            assignedMemberId == Guid.Empty ? null : assignedMemberId, CleanCode(provider));
+        string? provider = null,
+        string? chatbotName = null,
+        string? agentName = null) =>
+        new(kind,
+            kind == AutomationHandoffKind.AgentBlockOutputUnhandled && code is not null && BotDelegationOutputs.IsValid(code) ? code : CleanCode(code),
+            CleanId(nodeId), CleanText(nodeTitle), CleanText(connectionName), CleanCode(connectionReason), CleanHttp(http),
+            assignedMemberId == Guid.Empty ? null : assignedMemberId, CleanCode(provider), CleanText(chatbotName), CleanText(agentName));
 
     /// <summary>Si <paramref name="code"/> sobrevive a la limpieza de <see cref="Create"/>. Lo usan las pruebas de paridad de los códigos
     /// que otros módulos mandan.</summary>
