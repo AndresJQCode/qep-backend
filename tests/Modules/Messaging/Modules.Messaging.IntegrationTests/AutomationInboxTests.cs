@@ -395,6 +395,77 @@ public sealed class AutomationInboxTests
         Assert.Equal("23514", error.SqlState);
     }
 
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: la fila <c>Delegated</c> la reclama sólo el procesador de agentes y la
+    /// <c>AgentReturned</c> sólo el motor de chatbots, las dos con su delegación y sin mensaje; las dos van en el orden de su conversación.</summary>
+    [Fact]
+    public async Task ADelegatedRowGoesToTheAgentQueueAndAReturnedRowToTheChatbotQueue()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var delegationId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        using (var scope = f.Host.Services.CreateScope())
+        {
+            var inbox = scope.ServiceProvider.GetRequiredService<IAutomationInbox>();
+            inbox.EnqueueDelegated(f.Tenant.TenantId, connectionId, conversationId, delegationId, now);
+            inbox.EnqueueAgentReturned(f.Tenant.TenantId, connectionId, conversationId, delegationId, now.AddSeconds(1));
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var later = now.AddMinutes(5);
+        // El motor de chatbots no ve la Delegated, y la AgentReturned espera detrás de ella (la más vieja de la conversación).
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
+        var delegated = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Agent, Ct)));
+        Assert.Equal(AutomationInboxKinds.Delegated, delegated.Kind);
+        Assert.Equal(delegationId, delegated.DelegationId);
+        Assert.NotEqual(delegationId, delegated.MessageId);
+        Assert.Null(await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, delegated.MessageId, Ct)));
+        Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, delegated.MessageId, delegated.Attempts, "opened", Ct)));
+
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Agent, Ct)));
+        var returned = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, BotKind.Chatbot, Ct)));
+        Assert.Equal(AutomationInboxKinds.AgentReturned, returned.Kind);
+        Assert.Equal(delegationId, returned.DelegationId);
+        // Una fila de arranque manual no es una de delegación.
+        Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
+    }
+
+    [Fact]
+    public async Task TheDelegationColumnIsOnlyForDelegationRowsAndOnePerKind()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var delegationId = Guid.CreateVersion7();
+        await EnqueueManualStartAsync(f, Guid.CreateVersion7(), Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        var manualId = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT message_id FROM messaging.automation_inbox WHERE message_id NOT IN (SELECT id FROM messaging.messages)");
+
+        var onEngine = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.automation_inbox SET delegation_id = @d WHERE message_id = @id", ("id", manualId), ("d", delegationId)));
+        Assert.Equal("CK_automation_inbox_delegation", onEngine.ConstraintName);
+
+        using (var scope = f.Host.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IAutomationInbox>()
+                .EnqueueDelegated(f.Tenant.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), delegationId, DateTimeOffset.UtcNow);
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using (var scope = f.Host.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IAutomationInbox>()
+                .EnqueueDelegated(f.Tenant.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), delegationId, DateTimeOffset.UtcNow);
+            await Assert.ThrowsAnyAsync<Exception>(() => scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct));
+        }
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.automation_inbox WHERE delegation_id = @d", ("d", delegationId)));
+    }
+
     private static async Task EnqueueReleaseRunAsync(
         Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now, BotKind botKind = BotKind.Chatbot)
     {

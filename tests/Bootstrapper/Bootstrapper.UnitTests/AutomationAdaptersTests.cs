@@ -451,6 +451,12 @@ public sealed class AutomationAdaptersTests
         {
         }
 
+        public void EnqueueDelegated(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+            throw new NotSupportedException();
+
+        public void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+            throw new NotSupportedException();
+
         public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, Modules.Messaging.Domain.BotKind botKind, DateTimeOffset now)
         {
         }

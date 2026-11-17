@@ -8,14 +8,24 @@ public static class AutomationInboxKinds
 {
     public const string Engine = "Engine";
     public const string ReleaseRun = "ReleaseRun";
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: el chatbot delegó la conversación; la reclama el procesador de agentes
+    /// (<c>bot_kind = 2</c>) para abrir la sesión del bloque.</summary>
+    public const string Delegated = "Delegated";
+
+    /// <summary>Spec 2026-11-17 §6.3: el agente devolvió la conversación; la reclama el motor de chatbots (<c>bot_kind = 1</c>) para seguir
+    /// el flujo por la salida del resultado.</summary>
+    public const string AgentReturned = "AgentReturned";
 }
 
 /// <summary>Spec 2026-10-21 §5.1: un entrante pendiente de procesar por el motor de chatbots. <c>Opened</c> (D-M16) dice que este
-/// entrante abrió o reabrió la conversación; <c>Attempts</c> ya cuenta el reclamo que lo devolvió. <c>Kind</c> (spec 2026-11-03) es
-/// <see cref="AutomationInboxKinds.Engine"/> o <see cref="AutomationInboxKinds.ReleaseRun"/>.</summary>
+/// entrante abrió o reabrió la conversación; <c>Attempts</c> ya cuenta el reclamo que lo devolvió. <c>Kind</c> (spec 2026-11-03) es uno de
+/// <see cref="AutomationInboxKinds"/>. <c>DelegationId</c> (spec 2026-11-17 §5.3) es la delegación de una fila
+/// <see cref="AutomationInboxKinds.Delegated"/> o <see cref="AutomationInboxKinds.AgentReturned"/>, y <c>null</c> en las demás; en esas
+/// dos <c>MessageId</c> es un id propio de la fila, sin mensaje detrás.</summary>
 public sealed record AutomationInboxItem(
     Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts,
-    string Kind = AutomationInboxKinds.Engine);
+    string Kind = AutomationInboxKinds.Engine, Guid? DelegationId = null);
 
 /// <summary><c>Stored</c>: la copia a R2 ya terminó; mientras sea <c>false</c> el medio todavía no se puede servir ni reenviar.</summary>
 public sealed record InboundMediaForAutomation(string MimeType, string? FileName, bool Stored);
@@ -77,4 +87,13 @@ public interface IAutomationInbox
     /// <c>SaveChanges</c> del cambio que la pidió. Se reclama en el orden de su conversación, detrás de lo anterior.
     /// <paramref name="botKind"/> es el bot que tenía la conversación: la reclama su procesador (spec 2026-10-29 §6.1).</summary>
     void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, BotKind botKind, DateTimeOffset now);
+
+    /// <summary>Spec 2026-11-17 §5.3: la fila <see cref="AutomationInboxKinds.Delegated"/> para el procesador de agentes. Fila sin mensaje,
+    /// con la delegación en su columna; sólo agrega al contexto y viaja en el <c>SaveChanges</c> que crea la delegación y cambia la
+    /// conversación. Una sola por delegación (<c>IX_automation_inbox_delegation</c>).</summary>
+    void EnqueueDelegated(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now);
+
+    /// <summary>Spec 2026-11-17 §6.3: la fila <see cref="AutomationInboxKinds.AgentReturned"/> para el motor de chatbots, en el
+    /// <c>SaveChanges</c> que marca la delegación devuelta y le devuelve la conversación al chatbot. Una sola por delegación.</summary>
+    void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now);
 }

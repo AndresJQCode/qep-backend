@@ -111,7 +111,8 @@ public sealed class ConversationAssignmentSteps(
 }
 
 /// <summary>Spec 2026-11-03 D-6: tomar una conversación con asistente encola la señal que suelta la corrida viva, en el mismo guardado.</summary>
-public sealed class TakeConversationHandler(ConversationAssignmentSteps steps, IAutomationInbox inbox) : ICommandHandler<TakeConversationCommand, ConversationSummary>
+public sealed class TakeConversationHandler(ConversationAssignmentSteps steps, IAutomationInbox inbox, IBotDelegationRepository delegations)
+    : ICommandHandler<TakeConversationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(TakeConversationCommand command, CancellationToken cancellationToken)
     {
@@ -121,14 +122,16 @@ public sealed class TakeConversationHandler(ConversationAssignmentSteps steps, I
         var now = steps.Now;
         var before = conversation.AutomationStatus;
         var beforeBot = conversation.AutomationBotKind;
+        var beforeDelegation = conversation.AutomationDelegationId;
         var changes = conversation.Take(member, now);
-        inbox.EnqueueIfAssisted(conversation, before, beforeBot, changes.Count, now);
+        await inbox.EnqueueIfAssistedAsync(delegations, conversation, before, beforeBot, beforeDelegation, changes.Count, now, cancellationToken);
         return await steps.CommitAsync(command.TenantId, conversation, changes, now, cancellationToken);
     }
 }
 
 public sealed class TransferConversationHandler(
-    ConversationAssignmentSteps steps, IMessagingAssignees assignees, IValidator<TransferConversationCommand> validator, IAutomationInbox inbox)
+    ConversationAssignmentSteps steps, IMessagingAssignees assignees, IValidator<TransferConversationCommand> validator, IAutomationInbox inbox,
+    IBotDelegationRepository delegations)
     : ICommandHandler<TransferConversationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(TransferConversationCommand command, CancellationToken cancellationToken)
@@ -147,8 +150,9 @@ public sealed class TransferConversationHandler(
         var now = steps.Now;
         var before = conversation.AutomationStatus;
         var beforeBot = conversation.AutomationBotKind;
+        var beforeDelegation = conversation.AutomationDelegationId;
         var changes = conversation.TransferTo(member, target, now);
-        inbox.EnqueueIfAssisted(conversation, before, beforeBot, changes.Count, now);
+        await inbox.EnqueueIfAssistedAsync(delegations, conversation, before, beforeBot, beforeDelegation, changes.Count, now, cancellationToken);
         return await steps.CommitAsync(command.TenantId, conversation, changes, now, cancellationToken);
     }
 }

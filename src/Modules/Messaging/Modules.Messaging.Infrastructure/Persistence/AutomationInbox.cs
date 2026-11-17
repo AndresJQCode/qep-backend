@@ -46,7 +46,7 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
              WHERE inbox.message_id = pending.message_id
             RETURNING inbox.message_id AS "MessageId", inbox.tenant_id AS "TenantId", inbox.connection_id AS "ConnectionId",
                       inbox.conversation_id AS "ConversationId", inbox.opened AS "Opened", inbox.created_at AS "CreatedAt",
-                      inbox.attempts::int AS "Attempts", inbox.kind AS "Kind"
+                      inbox.attempts::int AS "Attempts", inbox.kind AS "Kind", inbox.delegation_id AS "DelegationId"
             """).ToListAsync(cancellationToken);
     }
 
@@ -153,6 +153,31 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
         NextAttemptAt = now,
         Kind = AutomationInboxKinds.ReleaseRun,
         BotKind = (short)botKind,
+    };
+
+    public void EnqueueDelegated(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+        dbContext.AutomationInbox.Add(NewDelegationRow(
+            tenantId, connectionId, conversationId, delegationId, AutomationInboxKinds.Delegated, BotKind.Agent, now));
+
+    public void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+        dbContext.AutomationInbox.Add(NewDelegationRow(
+            tenantId, connectionId, conversationId, delegationId, AutomationInboxKinds.AgentReturned, BotKind.Chatbot, now));
+
+    /// <summary>Spec 2026-11-17 §5.3: id propio (no el de la delegación, como dice el spec: <c>message_id</c> es la llave y las dos filas de
+    /// una delegación chocarían) y la delegación en <c>delegation_id</c>.</summary>
+    private static AutomationInboxRecord NewDelegationRow(
+        Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, string kind, BotKind botKind, DateTimeOffset now) => new()
+    {
+        MessageId = Guid.CreateVersion7(),
+        TenantId = tenantId,
+        ConnectionId = connectionId,
+        ConversationId = conversationId,
+        Opened = false,
+        CreatedAt = now,
+        NextAttemptAt = now,
+        Kind = kind,
+        BotKind = (short)botKind,
+        DelegationId = delegationId,
     };
 
     // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Lo que distingue a la manual es que es Engine y su id no está en messages.

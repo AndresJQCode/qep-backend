@@ -347,6 +347,51 @@ public sealed class ConversationAutomationApiTests
         Assert.Equal("1", await ReleaseBotKindsAsync(f));
     }
 
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots): la conversación como la deja el chatbot al delegar en un agente (Mensajería, §5.3).</summary>
+    private static async Task<Guid> DelegateToAnAgentAsync(Fixture f)
+    {
+        var delegationId = Guid.CreateVersion7();
+        var chatbotId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT automation_chatbot_id FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId));
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO messaging.bot_delegations (id, tenant_id, conversation_id, connection_id, chatbot_id, run_id, node_id, agent_id, brief, status, started_at)
+            SELECT @d, tenant_id, id, connection_id, @chatbot, gen_random_uuid(), 'ai-agent-1', gen_random_uuid(), '{"objective":"x"}', 'Live', now()
+              FROM messaging.conversations WHERE id = @id
+            """,
+            ("d", delegationId), ("chatbot", chatbotId), ("id", f.ConversationId));
+        Assert.Equal(1, await ExecuteAsync(
+            f.ConnectionString,
+            "UPDATE messaging.conversations SET automation_chatbot_id = NULL, automation_bot_kind = 2, automation_agent_id = @agent, automation_delegation_id = @d, version = version + 1 WHERE id = @id",
+            ("id", f.ConversationId), ("agent", Guid.CreateVersion7()), ("d", delegationId)));
+        return delegationId;
+    }
+
+    // Spec 2026-11-17 §6.4: con una delegación viva la toma avisa a los dos bots (el agente cierra la sesión, el chatbot la corrida que espera en
+    // el bloque), limpia la delegación de la conversación (o CK_conversations_delegation fallaría) y la interrumpe en el mismo guardado. Pausar
+    // a mano no suelta la corrida sin delegación (D-6a); con ella, sí.
+    [Theory]
+    [InlineData("take")]
+    [InlineData("resolve")]
+    [InlineData("automation/pause")]
+    public async Task TakingADelegatedConversationSignalsTheAgentAndTheChatbot(string action)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var delegationId = await DelegateToAnAgentAsync(f);
+
+        var response = await ActAsync(f, f.Client, action, await VersionAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("1,2", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(bot_kind::text, ',' ORDER BY bot_kind) FROM messaging.automation_inbox WHERE kind = 'ReleaseRun' AND conversation_id = @id",
+            ("id", f.ConversationId)));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.conversations WHERE automation_delegation_id IS NOT NULL"));
+        Assert.Equal("Interrupted", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT status FROM messaging.bot_delegations WHERE id = @d", ("d", delegationId)));
+    }
+
     [Fact]
     public async Task TakingQueuesTheSignalAndTakingAgainDoesNot()
     {
