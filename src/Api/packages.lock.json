@@ -226,6 +226,8 @@
           "Modules.Platform.Infrastructure": "[1.0.0, )",
           "Modules.Pos.Application": "[1.0.0, )",
           "Modules.Pos.Infrastructure": "[1.0.0, )",
+          "Modules.Purchases.Application": "[1.0.0, )",
+          "Modules.Purchases.Infrastructure": "[1.0.0, )",
           "Modules.Quotations.Application": "[1.0.0, )",
           "Modules.Quotations.Infrastructure": "[1.0.0, )",
           "Modules.Reporting.Application": "[1.0.0, )",
@@ -867,6 +869,42 @@
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Modules.Pos.Application": "[1.0.0, )",
           "Modules.Pos.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.purchases.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Purchases.Application": "[1.0.0, )",
+          "Modules.Purchases.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.purchases.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Purchases.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.purchases.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.purchases.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Purchases.Application": "[1.0.0, )",
+          "Modules.Purchases.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
