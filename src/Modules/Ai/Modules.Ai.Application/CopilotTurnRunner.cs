@@ -148,7 +148,7 @@ public sealed class CopilotTurnRunner(
                     && CannotAnswerReasons.Contains(reason, StringComparer.Ordinal)
                     && AgentToolArguments.TryString(arguments, "text", out var explanation)
                     && explanation.Trim().Length is > 0 and <= CannotAnswerMaxLength
-                        ? new CopilotAnswered(explanation.Trim(), [], reason)
+                        ? new CopilotAnswered(CopilotAnswerText.Neutralize(explanation.Trim()), [], reason)
                         : null;
             }
 
@@ -168,7 +168,10 @@ public sealed class CopilotTurnRunner(
                     .Take(MaxCitations)
                     .ToArray()
                 : [];
-            return new CopilotAnswered(text.Trim(), citations);
+            // Hallazgo 7 de la revisión: D-C10 punto 4 en el servidor; el texto guardado no lleva enlaces, sólo las citas los dan.
+            // El marcador de una URL corta puede pasar el tope por pocos caracteres: se recorta en vez de rechazar una respuesta ya pagada.
+            var neutral = CopilotAnswerText.Neutralize(text.Trim());
+            return new CopilotAnswered(neutral.Length > CopilotThread.AnswerMaxLength ? neutral[..CopilotThread.AnswerMaxLength] : neutral, citations);
         }
 
         private static bool IsFinalName(string name) => name is CopilotToolNames.Answer or CopilotToolNames.CannotAnswer;

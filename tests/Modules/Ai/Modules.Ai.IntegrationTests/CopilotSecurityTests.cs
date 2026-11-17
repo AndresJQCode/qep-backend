@@ -107,7 +107,15 @@ public sealed class CopilotSecurityTests
 
         // El dato llegó al modelo sólo dentro del resultado de la herramienta, nunca en el system.
         Assert.DoesNotContain(evil, anthropic.Bodies[0], StringComparison.Ordinal);
-        var citations = thread.GetProperty("messages").EnumerateArray().Last().GetProperty("citations").EnumerateArray().ToList();
+        var answer = thread.GetProperty("messages").EnumerateArray().Last();
+        // Revisión de la rama, hallazgo 7: el texto guardado no lleva el enlace; queda su texto.
+        var text = answer.GetProperty("text").GetString()!;
+        Assert.DoesNotContain(evil, text, StringComparison.Ordinal);
+        Assert.DoesNotContain("](", text, StringComparison.Ordinal);
+        Assert.Contains("aquí", text, StringComparison.Ordinal);
+        Assert.Equal(0L, await ScalarAsync<long>(database.GetConnectionString(),
+            "SELECT count(*) FROM ai.copilot_messages WHERE text LIKE '%evil.example%'"));
+        var citations = answer.GetProperty("citations").EnumerateArray().ToList();
         var citation = Assert.Single(citations);
         Assert.Equal((CopilotCitationKinds.Customer, customerId.ToString()), (citation.GetProperty("kind").GetString(), citation.GetProperty("id").GetString()));
         Assert.All(citations, item => Assert.True(Guid.TryParse(item.GetProperty("id").GetString(), out _)));
