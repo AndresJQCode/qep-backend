@@ -814,7 +814,7 @@ POST   /api/v1/tenants/{tenantId}/shopify/stores/{connectionId}/products/import 
        { "mode": "All" | "Missing", "redirectUri": string? }  → 202 { importId }
 GET    …/stores/{connectionId}/products/import                                       integrations.connection.read → 200 dto | null
 GET    …/stores/{connectionId}/products/coverage?redirectUri=                         integrations.connection.read
-DELETE …/stores/{connectionId}/products/{productId:guid}/link                        integrations.connection.manage → 204
+DELETE /api/v1/tenants/{tenantId}/shopify/products/{productId:guid}/link             integrations.connection.manage → 204
 ```
 
 ```csharp
@@ -835,7 +835,8 @@ mayúsculas; `errors["mode"]`) → conexión (`ShopifyStoreSupport.ConnectionAsy
 `Request(...)`, auditoría `Human`, guardar (el índice da el 409; el interceptor timbra la cola) → 202.
 Cobertura: mismas guardas de conexión y scope; recorre todas las páginas de `ListVariantKeysAsync`; `matched` = variante con
 vínculo o con SKU recortado en `FindExistingCodesAsync` (lotes de 500); `catalogEmpty` = `IShopifyProductLookup.CountActiveAsync == 0` (Tarea 8); `missingSample` las 20 primeras sin par, en el orden de Shopify. No guarda nada.
-`DELETE …/link`: vínculos del producto en esa conexión (ninguno → 404 `link_not_found`); en una transacción: borra los vínculos y
+`DELETE …/link`: vínculos del producto en **cualquier** tienda del tenant (el detalle de Catalog no conoce la conexión; ajuste
+del spec por el frontend, H13) (ninguno → 404 `link_not_found`); en una transacción: borra los vínculos y
 `IShopifyCatalogWriter.ReleaseAsync`; auditoría `Human`.
 
 - [ ] **Step 1: Pruebas**

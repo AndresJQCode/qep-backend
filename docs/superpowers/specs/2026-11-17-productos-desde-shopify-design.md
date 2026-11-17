@@ -118,7 +118,7 @@ relee el vínculo existente (precedente `IX_orders_tenant_external_key`).
   precios de lista con **422 `catalog.product.managed_externally`** (en el validador del `PUT`, con el campo en
   `errors`). Se siguen editando la tasa de IVA, las escalas, los empaques, los costos, la descripción, la categoría, la
   galería y `visibleInStore` (S-2).
-- **Desvincular:** `DELETE …/shopify/stores/{id}/products/{productId}/link` quita los vínculos y `ExternalSource`; el
+- **Desvincular:** `DELETE …/shopify/products/{productId}/link` quita los vínculos y `ExternalSource`; el
   producto queda como propio de QEP y los webhooks lo ignoran **(criterio:** la salida para quien quiera dejar de
   sincronizar un producto, sin borrar nada).
 
@@ -153,7 +153,8 @@ GET  …/stores/{connectionId}/products/import            → 200 la última imp
        issues: [{ shopifyProductId, title, code }] (hasta 50) }
 GET  …/stores/{connectionId}/products/coverage           → 200 { shopifyVariants, matched, catalogEmpty,
        missingSample: [{ sku, title }] (hasta 20) }   · 422 scope_missing
-DELETE …/stores/{connectionId}/products/{productId}/link → 204
+DELETE /api/v1/tenants/{tenantId}/shopify/products/{productId}/link → 204   (busca los vínculos del producto
+       en cualquier tienda del tenant: el detalle de Catalog no conoce la conexión; ajuste por el spec del frontend H13)
 ```
 
 La cobertura consulta Shopify en el momento (SKUs e ids de variante) y la compara con vínculos y códigos de QEP; con
