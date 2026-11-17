@@ -53,6 +53,7 @@ using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Loans.Api;
 using Modules.Loans.Infrastructure;
+using Modules.Purchases.Api;
 using Modules.Purchases.Infrastructure;
 using Modules.Support.Api;
 using Modules.Support.Infrastructure;
@@ -394,6 +395,8 @@ app.MapAutomationsEndpoints();
 // Spec 2026-10-29 y plan 2026-11-12: los agentes IA, con el proveedor que elige el tenant.
 app.MapAiEndpoints();
 app.MapSupplierEndpoints();
+// Spec 2026-11-17: órdenes de compra a proveedores.
+app.MapPurchaseOrderEndpoints();
 // Spec 2026-10-30: administración de claves de API.
 app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();

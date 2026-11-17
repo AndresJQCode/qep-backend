@@ -19,6 +19,21 @@ namespace Modules.Purchases.IntegrationTests;
 /// <summary>Un tenant sembrado para una prueba: quien llama (<c>SubjectId</c>) y su membresía activa <c>admin</c>.</summary>
 internal sealed record PurchasesTestTenant(Guid TenantId, Guid SubjectId, Guid MemberId);
 
+/// <summary>Lo que siembra <see cref="PurchasesApiHarness.NewScenarioAsync"/>. <c>Manager</c> lo libera la prueba.</summary>
+internal sealed record PurchasesScenario(
+    PurchasesTestTenant Tenant,
+    HttpClient Manager,
+    Guid SupplierId,
+    Guid TaxRateId,
+    Guid VariantA,
+    Guid VariantB,
+    Guid VariantC) : IDisposable
+{
+    public Guid TenantId => Tenant.TenantId;
+
+    public void Dispose() => Manager.Dispose();
+}
+
 /// <summary>
 /// El arranque compartido de las pruebas de integración del módulo. Copia el de Loans (base, fábrica y stub de permisos por
 /// <c>X-Permissions</c>), con un tenant nuevo por prueba (<see cref="NewTenantAsync"/>) para que varias compartan host
@@ -206,6 +221,139 @@ internal static class PurchasesApiHarness
     {
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
         return request;
+    }
+
+    /// <summary>
+    /// Un tenant listo para comprar: el gestor, un proveedor activo «Textiles Andinos», una tasa de IVA del 19 % y tres variantes
+    /// (A y B con IVA, C sin tasa).
+    /// </summary>
+    public static async Task<PurchasesScenario> NewScenarioAsync(QepApiFactory factory)
+    {
+        var tenant = await NewTenantAsync(factory);
+        var manager = CreateManager(factory, tenant);
+        var supplierId = await CreateSupplierAsync(manager, tenant.TenantId, "Textiles Andinos");
+        var taxRateId = await CreateTaxRateAsync(manager, tenant.TenantId, "IVA", 19);
+        var variantA = await CreateVariantAsync(manager, tenant.TenantId, "SKU-A", "Camiseta", taxRateId);
+        var variantB = await CreateVariantAsync(manager, tenant.TenantId, "SKU-B", "Pantalón", taxRateId);
+        var variantC = await CreateVariantAsync(manager, tenant.TenantId, "SKU-C", "Gorra", null);
+        return new PurchasesScenario(tenant, manager, supplierId, taxRateId, variantA, variantB, variantC);
+    }
+
+    /// <summary>El cuerpo de <c>POST /</c>, <c>PUT /{id}</c> y <c>POST /preview</c>, en COP.</summary>
+    public static Dictionary<string, object?> OrderBody(
+        Guid supplierId, params (Guid VariantId, decimal Quantity, decimal UnitCost)[] lines) =>
+        OrderBodyIn(supplierId, "COP", lines);
+
+    public static Dictionary<string, object?> OrderBodyIn(
+        Guid supplierId, string currency, params (Guid VariantId, decimal Quantity, decimal UnitCost)[] lines) =>
+        new()
+        {
+            ["supplierId"] = supplierId,
+            ["currency"] = currency,
+            ["notes"] = null,
+            ["lines"] = lines
+                .Select(line => new { variantId = line.VariantId, quantity = line.Quantity, unitCost = line.UnitCost })
+                .ToArray(),
+        };
+
+    /// <summary>Crea una orden y devuelve su detalle; falla la prueba si el alta no sale bien.</summary>
+    public static async Task<PurchaseOrderDetailDto> CreateOrderAsync(
+        HttpClient client, Guid tenantId, Dictionary<string, object?> body)
+    {
+        var response = await client.PostAsJsonAsync(OrderUrl(tenantId), body, Ct);
+        await EnsureSuccessAsync(response);
+        return (await response.Content.ReadFromJsonAsync<PurchaseOrderDetailDto>(Ct))!;
+    }
+
+    public static async Task<PurchaseOrderDetailDto> GetOrderAsync(HttpClient client, Guid tenantId, Guid orderId)
+    {
+        var response = await client.GetAsync(OrderUrl(tenantId, orderId), Ct);
+        await EnsureSuccessAsync(response);
+        return (await response.Content.ReadFromJsonAsync<PurchaseOrderDetailDto>(Ct))!;
+    }
+
+    /// <summary>Una escritura sobre una orden existente con su <c>If-Match</c>: <c>PUT</c>, <c>DELETE</c> o una transición.</summary>
+    public static async Task<HttpResponseMessage> WriteAsync(
+        HttpClient client, HttpMethod method, string url, long? version, object? body = null)
+    {
+        using var request = new HttpRequestMessage(method, url);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+
+        if (version is { } value)
+        {
+            WithIfMatch(request, value);
+        }
+
+        return await client.SendAsync(request, Ct);
+    }
+
+    /// <summary>Una transición sin cuerpo (<c>send</c>, <c>receive</c>, <c>cancel</c>) que tiene que salir bien.</summary>
+    public static async Task<PurchaseOrderDetailDto> TransitionAsync(
+        HttpClient client, Guid tenantId, PurchaseOrderDetailDto order, string action)
+    {
+        var response = await WriteAsync(client, HttpMethod.Post, $"{OrderUrl(tenantId, order.Id)}/{action}", order.Version);
+        await EnsureSuccessAsync(response);
+        return (await response.Content.ReadFromJsonAsync<PurchaseOrderDetailDto>(Ct))!;
+    }
+
+    /// <summary>Confirma cada línea tal como se pidió.</summary>
+    public static async Task<PurchaseOrderDetailDto> ConfirmAsIsAsync(HttpClient client, Guid tenantId, PurchaseOrderDetailDto order)
+    {
+        var response = await WriteAsync(
+            client,
+            HttpMethod.Post,
+            $"{OrderUrl(tenantId, order.Id)}/confirm",
+            order.Version,
+            ConfirmBody(order.Lines.Select(line => (line.Id, line.Quantity, line.UnitCost)).ToArray()));
+        await EnsureSuccessAsync(response);
+        return (await response.Content.ReadFromJsonAsync<PurchaseOrderDetailDto>(Ct))!;
+    }
+
+    public static object ConfirmBody(params (Guid LineId, decimal Quantity, decimal UnitCost)[] lines) => new
+    {
+        lines = lines
+            .Select(line => new { lineId = line.LineId, confirmedQuantity = line.Quantity, confirmedUnitCost = line.UnitCost })
+            .ToArray(),
+    };
+
+    public static async Task<string?> CodeOfAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        return document.RootElement.TryGetProperty("code", out var code) ? code.GetString() : null;
+    }
+
+    /// <summary>Las claves de <c>errors</c> de un 422 de validación.</summary>
+    public static async Task<IReadOnlyList<string>> ErrorKeysAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        return document.RootElement.TryGetProperty("errors", out var errors)
+            ? errors.EnumerateObject().Select(property => property.Name).ToList()
+            : [];
+    }
+
+    /// <summary>Un escalar por SQL directo sobre la base de la prueba (la columna tiene que llamarse <c>"Value"</c>).</summary>
+    public static async Task<T> ScalarAsync<T>(QepApiFactory factory, FormattableString sql)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        return await tenancy.Database.SqlQuery<T>(sql).SingleAsync(Ct);
+    }
+
+    public static async Task<IReadOnlyList<T>> RowsAsync<T>(QepApiFactory factory, FormattableString sql)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        return await tenancy.Database.SqlQuery<T>(sql).ToListAsync(Ct);
+    }
+
+    public static async Task ExecuteAsync(QepApiFactory factory, FormattableString sql)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        await tenancy.Database.ExecuteSqlInterpolatedAsync(sql, Ct);
     }
 
     public static async Task<string> BodyAsync(HttpResponseMessage response) =>
