@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -22,7 +22,7 @@ public sealed class TaxRateTypeMigrationTests
     [Fact]
     public async Task ExistingRatesBecomeIvaColombia()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewCatalogContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -48,7 +48,7 @@ public sealed class TaxRateTypeMigrationTests
     [Fact]
     public async Task TheTypeAndCountryColumnsHaveNoDefault()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewCatalogContext(connectionString);
         await context.GetService<IMigrator>().MigrateAsync(null, TestContext.Current.CancellationToken);
@@ -89,16 +89,5 @@ public sealed class TaxRateTypeMigrationTests
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
         return (T)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 }

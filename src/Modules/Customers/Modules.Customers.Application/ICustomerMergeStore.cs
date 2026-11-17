@@ -33,9 +33,10 @@ public interface ICustomerMergeStore
     /// <summary>
     /// Los contactos de los fusionados pasan a ser contactos del que queda (<c>company_id = survivor</c>), con la misma regla de
     /// <see cref="CountContactsMovedAsync"/>. Como <see cref="RepointMergedIntoAsync"/>, no sube <c>version</c> ni
-    /// <c>updated_at</c>: es el mismo cambio de dueño, y el contacto no se edita.
+    /// <c>updated_at</c>: es el mismo cambio de dueño, y el contacto no se edita. Devuelve los contactos que movió, para que la
+    /// fusión audite el cambio de vínculo de cada uno.
     /// </summary>
-    Task RepointContactsAsync(
+    Task<IReadOnlyList<Guid>> RepointContactsAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken);
 
     /// <summary>Las notas y las direcciones de envío de estos clientes (la vista previa, §3.4).</summary>

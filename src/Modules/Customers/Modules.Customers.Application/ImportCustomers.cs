@@ -295,18 +295,19 @@ public sealed class ImportCustomersHandler(
                 command.TenantId, writable, loaded, parsed.WithholdingColumns ?? CustomerImportColumns.WithholdingTypes, now,
                 cancellationToken);
             imported = written.Imported;
-            ApplyCompanyLinks(links, written.CustomersByRow, now);
+            var companyChanged = ApplyCompanyLinks(links, written.CustomersByRow, now);
 
             // Un solo evento por el import completo, no uno por cliente: mil clientes importados de
             // una vez no deben dejar mil filas en el outbox. Los conteos van en el resourceId porque
             // ICustomersAuditPublisher.Publish no tiene un campo propio para ellos y el resto del
-            // modulo ya usa ese parametro para identificar "sobre que fue esta accion". Los vinculos de empresa no
-            // llevan evento propio por lo mismo: son parte de este.
+            // modulo ya usa ese parametro para identificar "sobre que fue esta accion". Decisión del owner 2026-11-16: los
+            // vínculos de empresa que cambian se cuentan aquí (companyChanged), sin un company_changed por contacto; un vínculo
+            // repetido no cambia nada y no cuenta.
             auditPublisher.Publish(
                 command.TenantId,
                 executionContext.SubjectId,
                 "customers.customer.imported",
-                $"{fileName} (imported={imported.Count}, errors={errors.Count})",
+                $"{fileName} (imported={imported.Count}, errors={errors.Count}, companyChanged={companyChanged})",
                 "success",
                 now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -447,7 +448,7 @@ public sealed class ImportCustomersHandler(
             }
 
             var withholdingTaxRateIds = Array.Empty<Guid>();
-            if (!string.IsNullOrWhiteSpace(row.Retefuente) || !string.IsNullOrWhiteSpace(row.ReteIca))
+            if (!string.IsNullOrWhiteSpace(row.Retefuente))
             {
                 withholdingRates ??= await taxRateLookup.ListWithholdingAsync(tenantId, cancellationToken);
                 var (resolvedIds, withholdingError) = ResolveWithholdings(row, withholdingRates);
@@ -509,8 +510,8 @@ public sealed class ImportCustomersHandler(
     }
 
     /// <summary>
-    /// Resuelve las columnas por tipo (Retefuente, ReteICA) al id de la tasa del catalogo, por nombre y sin importar
-    /// mayusculas. Una celda vacia no asigna tasa. Un nombre que no es una tasa activa de ese tipo es un error de la fila,
+    /// Resuelve las columnas por tipo (hoy sólo Retefuente: la ReteICA ya no es del cliente, spec ReteICA por empresa A3) al
+    /// id de la tasa del catalogo, por nombre y sin importar mayusculas. Una celda vacia no asigna tasa. Un nombre que no es una tasa activa de ese tipo es un error de la fila,
     /// con la columna como campo; el resultado pasa por las mismas reglas que el alta por API
     /// (<see cref="CustomerWithholdingRules"/>), asi el Excel no se salta ningun invariante.
     /// </summary>
@@ -520,7 +521,6 @@ public sealed class ImportCustomersHandler(
         (string Type, string? Cell, string Field)[] columns =
         [
             (CustomerImportColumns.Retefuente, row.Retefuente, nameof(ExcelCustomerRow.Retefuente)),
-            (CustomerImportColumns.ReteIca, row.ReteIca, nameof(ExcelCustomerRow.ReteIca))
         ];
 
         var chosen = new Dictionary<Guid, CustomerTaxRateRef>();
@@ -1132,16 +1132,23 @@ public sealed class ImportCustomersHandler(
     /// bloqueos puestos, así que aquí <see cref="Customer.LinkToCompany"/> no debería lanzar; si lo hiciera, la excepción
     /// sube, no se confirma la transacción y no queda nada escrito.
     /// </summary>
-    private static void ApplyCompanyLinks(
+    /// <returns>Cuántos vínculos cambiaron, para el evento de la importación.</returns>
+    private static int ApplyCompanyLinks(
         List<CompanyLink> links, Dictionary<int, Customer> customersByRow, DateTimeOffset now)
     {
+        var changed = 0;
         foreach (var link in links)
         {
             var contact = customersByRow[link.Contact.RowNumber];
             var company = link.CompanyEntity ?? customersByRow[link.CompanyRow!.RowNumber];
             // Un cliente con contactos ya se rechazó en la planificación (has_contacts): aquí nunca los tiene.
-            contact.LinkToCompany(company, false, now);
+            if (contact.LinkToCompany(company, false, now))
+            {
+                changed++;
+            }
         }
+
+        return changed;
     }
 
     private static CustomerIdentification? ToIdentification(CandidateRow candidate) =>
@@ -1175,7 +1182,8 @@ public sealed class ImportCustomersHandler(
         row.City ?? string.Empty,
         row.Classification ?? string.Empty,
         row.Retefuente,
-        row.ReteIca,
+        // P9: el campo heredado se queda en el contrato para no romper al frontend que reenvía la fila, siempre null.
+        ReteIca: null,
         row.VatSurplus,
         row.CompanyIdentificationNumber);
 

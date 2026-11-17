@@ -36,7 +36,8 @@ public sealed class ExternalApiSurfaceTests
 
     private sealed record Fixture(WebApplicationFactory<Program> Factory, string ConnectionString, Guid TenantId, Guid MemberId);
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, int? perKey = null, int? perIp = null)
+    private static async Task<Fixture> ArrangeAsync(
+        TestDatabase database, int? perKey = null, int? perIp = null, string? valkey = null)
     {
         var connectionString = database.GetConnectionString();
         var seeding = new QepApiFactory(connectionString);
@@ -54,6 +55,14 @@ public sealed class ExternalApiSurfaceTests
             if (perIp is { } ip)
             {
                 builder.UseSetting("ApiAccess:RateLimit:PerIpPerMinute", ip.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            // Con UseSetting y no con ConfigureAppConfiguration: AddQepValkey decide qué registra al armar el contenedor.
+            if (valkey is not null)
+            {
+                builder.UseSetting("Valkey:Enabled", "true");
+                builder.UseSetting("Valkey:Areas:RateLimiting", "true");
+                builder.UseSetting("ConnectionStrings:Valkey", valkey);
             }
 
             builder.ConfigureTestServices(services => services.AddTransient<IStartupFilter, ProbeStartupFilter>());
@@ -156,6 +165,68 @@ public sealed class ExternalApiSurfaceTests
         Assert.Equal("application/problem+json", fourth.Content.Headers.ContentType?.MediaType);
         Assert.Equal("external.rate_limited", (await BodyAsync(fourth)).GetProperty("code").GetString());
         Assert.True(fourth.Headers.Contains("Retry-After"));
+    }
+
+    // Spec 2026-11-13, D-3: con Valkey:Areas:RateLimiting el cupo de la clave se cuenta en Valkey y no por pod. Dos hosts son
+    // dos pods: cada uno con su contenedor de DI y su limitador particionado, y el mismo Valkey.
+    [Fact]
+    public async Task TheKeyLimitIsSharedAcrossTwoHosts()
+    {
+        await using var valkey = await ValkeyTestServer.StartAsync(Ct);
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, perKey: 2, valkey: ValkeyTestServer.ConnectionString(valkey));
+        using var _ = f.Factory;
+        using var second = f.Factory.WithWebHostBuilder(_ => { });
+        var (_, plaintext) = await SeedApiKeyAsync(f.ConnectionString, f.TenantId, f.MemberId, SendScope);
+        using var clientA = CreateExternalClient(f.Factory, plaintext);
+        using var clientB = CreateExternalClient(second, plaintext);
+        await AwayFromTheMinuteBoundaryAsync();
+
+        Assert.Equal(HttpStatusCode.OK, (await clientA.GetAsync(ExternalConnectionsUrl, Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await clientB.GetAsync(ExternalConnectionsUrl, Ct)).StatusCode);
+        var third = await clientA.GetAsync(ExternalConnectionsUrl, Ct);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, third.StatusCode);
+        Assert.Equal("external.rate_limited", (await BodyAsync(third)).GetProperty("code").GetString());
+        AssertRetryAfterWithinTheWindow(third);
+    }
+
+    [Fact]
+    public async Task TheIpLimitIsSharedAcrossTwoHosts()
+    {
+        await using var valkey = await ValkeyTestServer.StartAsync(Ct);
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, perIp: 2, valkey: ValkeyTestServer.ConnectionString(valkey));
+        using var _ = f.Factory;
+        using var second = f.Factory.WithWebHostBuilder(_ => { });
+        using var clientA = CreateExternalClient(f.Factory, InventedKey);
+        using var clientB = CreateExternalClient(second, InventedKey);
+        await AwayFromTheMinuteBoundaryAsync();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await clientA.GetAsync(ExternalConnectionsUrl, Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await clientB.GetAsync(ExternalConnectionsUrl, Ct)).StatusCode);
+        var third = await clientA.GetAsync(ExternalConnectionsUrl, Ct);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, third.StatusCode);
+        Assert.Equal("external.rate_limited", (await BodyAsync(third)).GetProperty("code").GetString());
+        AssertRetryAfterWithinTheWindow(third);
+    }
+
+    private static void AssertRetryAfterWithinTheWindow(HttpResponseMessage response)
+    {
+        var retryAfter = Assert.Single(response.Headers.GetValues("Retry-After"));
+        Assert.InRange(int.Parse(retryAfter, System.Globalization.CultureInfo.InvariantCulture), 1, 60);
+    }
+
+    // La ventana de Valkey corta en cada minuto de la época Unix (V6): tres requests a ambos lados del corte caerían en dos
+    // ventanas y la tercera pasaría. Cerca del corte se espera al minuto siguiente.
+    private static async Task AwayFromTheMinuteBoundaryAsync()
+    {
+        var second = DateTimeOffset.UtcNow.ToUnixTimeSeconds() % 60;
+        if (second >= 50)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(61 - second), Ct);
+        }
     }
 
     [Fact]

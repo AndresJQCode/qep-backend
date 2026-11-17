@@ -5,7 +5,8 @@ using Modules.Messaging.Infrastructure.Persistence;
 namespace Modules.Messaging.Infrastructure.Realtime;
 
 /// <summary>
-/// Spec 2026-10-14, decisión 6: el fanout entre pods es <c>pg_notify</c>, sin Redis. Va por el <c>MessagingDbContext</c>
+/// Spec 2026-10-14, decisión 6: el fanout entre pods es <c>pg_notify</c>. Nació sin Redis en el stack, y con Valkey se queda
+/// igual (docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md, «Fuera de alcance»). Va por el <c>MessagingDbContext</c>
 /// del scope: dentro de una transacción abierta Postgres lo entrega al commit, y fuera de ella al instante. El payload son
 /// ids, muy por debajo de los 8000 bytes del canal. Quien llama ya commiteó y no reintenta por esto: un fallo acá se
 /// registra arriba y el polling relajado del frontend cubre el hueco.

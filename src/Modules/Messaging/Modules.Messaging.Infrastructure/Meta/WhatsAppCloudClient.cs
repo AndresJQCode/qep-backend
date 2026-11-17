@@ -175,17 +175,28 @@ internal sealed partial class WhatsAppCloudClient(
             ["language"] = new JsonObject { ["code"] = send.Language },
         };
         var components = new JsonArray();
-        if (send.HeaderDocument is { } header)
+        if (send.Header is { } header)
         {
+            var media = new JsonObject();
+            if (header.Link is not null)
+            {
+                media["link"] = header.Link;
+            }
+            else
+            {
+                media["id"] = header.MediaId;
+            }
+
+            if (header.FileName is not null)
+            {
+                media["filename"] = header.FileName;
+            }
+
             // El encabezado va primero: Meta lo ata al de la plantilla aprobada por el orden de los componentes.
             components.Add(new JsonObject
             {
                 ["type"] = "header",
-                ["parameters"] = new JsonArray(new JsonObject
-                {
-                    ["type"] = "document",
-                    ["document"] = new JsonObject { ["id"] = header.MediaId, ["filename"] = header.FileName },
-                }),
+                ["parameters"] = new JsonArray(new JsonObject { ["type"] = header.Type, [header.Type] = media }),
             });
         }
 

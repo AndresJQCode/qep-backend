@@ -13,6 +13,11 @@ public sealed class ShopifyAppOptionsValidatorTests
     private static ShopifyAppOptionsValidator Validator(bool production) =>
         new(new UnitTestHostEnvironment(production ? Environments.Production : Environments.Development));
 
+    // Spec 2026-11-14: la corrección del asesor escribe en Shopify (orderUpdate), que pide write_orders.
+    [Fact]
+    public void DefaultScopesAskForWriteOrders() =>
+        Assert.Equal("read_orders,write_orders,read_customers", ShopifyAppOptions.DefaultScopes);
+
     private static ShopifyAppOptions Complete() => new()
     {
         ClientId = "0123456789abcdef0123456789abcdef",
@@ -161,7 +166,7 @@ public sealed class ShopifyAppOptionsValidatorTests
         Assert.Null(settings.ClientSecret);
         Assert.Null(settings.WebhookCallbackUrl);
         Assert.Equal("2026-10", settings.ApiVersion);
-        Assert.Equal(["read_orders", "read_customers"], settings.Scopes);
+        Assert.Equal(["read_orders", "write_orders", "read_customers"], settings.Scopes);
         Assert.False(settings.IsRedirectAllowed(new Uri("http://localhost:3002/shopify/callback")));
     }
 }

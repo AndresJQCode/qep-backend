@@ -8,7 +8,7 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>Spec 2026-10-13 §4.5: los tres eventos del ciclo de una cotización, con el payload que Pipeline lee por nombre, y
 /// sólo cuando el cambio se guardó (mismo SaveChanges). Un rechazo no deja evento.</summary>
-public sealed class QuotationLifecycleEventsApiTests
+public sealed class QuotationLifecycleEventsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string Sent = "quotations.quotation.sent.v1";
     private const string Converted = "quotations.quotation.converted.v1";
@@ -36,8 +36,7 @@ public sealed class QuotationLifecycleEventsApiTests
     [Fact]
     public async Task ConvertingPublishesConvertedAndOrderCreatedWithTheOrderAsCorrelation()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -59,8 +58,7 @@ public sealed class QuotationLifecycleEventsApiTests
     [Fact]
     public async Task SendingWritesTheSentEventWithTheContractPayload()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -86,8 +84,7 @@ public sealed class QuotationLifecycleEventsApiTests
     [Fact]
     public async Task ARejectedSendWritesNoEvent()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -106,8 +103,7 @@ public sealed class QuotationLifecycleEventsApiTests
     [Fact]
     public async Task ConvertingWritesTheConvertedEventWithTheOrderOnce()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -137,8 +133,7 @@ public sealed class QuotationLifecycleEventsApiTests
     [Fact]
     public async Task CancellingWritesTheCancelledEventOnce()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, CancellerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

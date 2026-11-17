@@ -8,6 +8,7 @@ public sealed record GetTaxRateQuery(Guid TenantId, Guid TaxRateId) : IQuery<Tax
 
 public sealed class GetTaxRateHandler(
     ITaxRateRepository repository,
+    ITaxRateGeographyLookup geography,
     IExecutionContext executionContext)
     : IQueryHandler<GetTaxRateQuery, TaxRateDto>
 {
@@ -23,6 +24,6 @@ public sealed class GetTaxRateHandler(
 
         return taxRate is null
             ? throw TaxRateNotFound.For(query.TaxRateId)
-            : taxRate.ToDto();
+            : await taxRate.ToDtoAsync(geography, cancellationToken);
     }
 }

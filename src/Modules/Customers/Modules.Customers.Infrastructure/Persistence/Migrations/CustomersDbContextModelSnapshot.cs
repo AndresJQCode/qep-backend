@@ -743,7 +743,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                                 .HasColumnName("customer_id");
 
                             b1.Property<Guid>("TaxRateId")
-                                .ValueGeneratedOnAdd()
                                 .HasColumnType("uuid")
                                 .HasColumnName("tax_rate_id");
 
@@ -762,6 +761,45 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                             b1.WithOwner()
                                 .HasForeignKey("CustomerId");
                         });
+
+                    b.OwnsMany("Modules.Customers.Domain.CustomerWithholdingAgentCity", "WithholdingAgentCities", b1 =>
+                        {
+                            b1.Property<Guid>("CustomerId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("customer_id");
+
+                            b1.Property<string>("Country")
+                                .HasMaxLength(2)
+                                .HasColumnType("character(2)")
+                                .HasColumnName("country")
+                                .IsFixedLength();
+
+                            b1.Property<string>("Type")
+                                .HasMaxLength(32)
+                                .HasColumnType("character varying(32)")
+                                .HasColumnName("type");
+
+                            b1.Property<Guid>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("city_id");
+
+                            b1.Property<Guid>("TenantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tenant_id");
+
+                            b1.HasKey("CustomerId", "Country", "Type", "CityId")
+                                .HasName("PK_customer_withholding_agent_cities");
+
+                            b1.HasIndex("CityId")
+                                .HasDatabaseName("IX_customer_withholding_agent_cities_city");
+
+                            b1.ToTable("customer_withholding_agent_cities", "customers");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CustomerId");
+                        });
+
+                    b.Navigation("WithholdingAgentCities");
 
                     b.Navigation("_withholdingTaxRates");
                 });

@@ -132,7 +132,6 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         // El nombre de la tasa de cada tipo, que es lo que el importador lee de vuelta; vacia si no tiene (spec impuestos por
         // tipo §7.4). Un cliente no tiene dos tasas del mismo pais y tipo, asi que la primera es la unica.
         [CustomerImportColumns.Retefuente] = RateName(customer, CustomerImportColumns.Retefuente),
-        [CustomerImportColumns.ReteIca] = RateName(customer, CustomerImportColumns.ReteIca),
         // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
         // que abre el archivo.
         [CustomerImportColumns.VatSurplus] = customer.VatSurplus ? "Si" : "No",

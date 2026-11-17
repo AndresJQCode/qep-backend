@@ -35,7 +35,7 @@ public static class OrderEndpoints
 
         collection.MapPost("/preview", PreviewOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Accepts<CreateOrderRequest>("application/json")
+            .Accepts<PreviewOrderRequest>("application/json")
             .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -64,7 +64,7 @@ public static class OrderEndpoints
 
         collection.MapPost("/{orderId:guid}/preview", PreviewOrderEditsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Accepts<SaveOrderEditsRequest>("application/json")
+            .Accepts<PreviewOrderEditsRequest>("application/json")
             .Produces<OrderDetailResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -127,6 +127,15 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // «Descargar PDF» (spec 2026-11-16): el mismo documento del envío, como enlace firmado. POST y
+        // no GET porque genera el documento, igual que POST /quotations/{id}/pdf; `OrderRead` porque
+        // exportar es leer el pedido en otro formato.
+        collection.MapPost("/{orderId:guid}/pdf", ExportOrderPdfAsync)
+            .RequireAuthorization(OrdersPermissions.OrderRead)
+            .Produces<OrderPdfExportDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         collection.MapPost("/{orderId:guid}/proofs", AddOrderPaymentProofsAsync)
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<AddOrderPaymentProofsRequest>("application/json")
@@ -150,6 +159,27 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-15 §4: el asesor cambia o quita la cuenta de comprador de un pedido de la tienda, con If-Match
+        // como la edición del pedido.
+        collection.MapPut("/{orderId:guid}/buyer-account", SetOrderBuyerAccountAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Accepts<OrderBuyerAccountRequest>("application/json")
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        collection.MapDelete("/{orderId:guid}/buyer-account", RemoveOrderBuyerAccountAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Produces<OrderDetailResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations/{quotationId:guid}/order")
             .WithTags("Orders");
@@ -166,6 +196,14 @@ public static class OrderEndpoints
             .RequireAuthorization(OrdersPermissions.OrderManage)
             .Accepts<ConvertQuotationToOrderRequest>("application/json")
             .Produces<OrderDetailResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Spec alerta UVT §5.3: lo que la conversión daría hoy, sin convertir. No escribe ni toma el contador.
+        group.MapGet("/preview", PreviewQuotationConversionAsync)
+            .RequireAuthorization(OrdersPermissions.OrderManage)
+            .Produces<QuotationConversionPreviewResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -260,7 +298,8 @@ public static class OrderEndpoints
         order.Total,
         order.Source,
         order.ExternalReference,
-        ShippingResponse.From(order.Shipping));
+        ShippingResponse.From(order.Shipping),
+        order.OrderDate);
 
     private static async Task<IResult> GetOrderAsync(
         Guid tenantId,
@@ -272,6 +311,18 @@ public static class OrderEndpoints
         var detail = await dispatcher.QueryAsync(
             new GetOrderQuery(tenantId, quotationId), cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static async Task<IResult> PreviewQuotationConversionAsync(
+        Guid tenantId,
+        Guid quotationId,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var preview = await dispatcher.QueryAsync(
+            new PreviewQuotationConversionQuery(tenantId, quotationId), cancellationToken);
+        return Results.Ok(await composer.ComposeConversionPreviewAsync(tenantId, preview, cancellationToken));
     }
 
     private static async Task<IResult> ConvertQuotationToOrderAsync(
@@ -310,11 +361,20 @@ public static class OrderEndpoints
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
+    private static async Task<IResult> ExportOrderPdfAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ExportOrderPdfCommand(tenantId, orderId), cancellationToken));
+
     private static async Task<IResult> AddOrderPaymentProofsAsync(
         Guid tenantId,
         Guid orderId,
         AddOrderPaymentProofsRequest request,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
@@ -325,7 +385,7 @@ public static class OrderEndpoints
                 request.PaymentProofs,
                 request.UpdatedProofs ?? []),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     private static async Task<IResult> RemoveOrderPaymentProofAsync(
@@ -333,12 +393,13 @@ public static class OrderEndpoints
         Guid orderId,
         Guid proofId,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
             new RemoveOrderPaymentProofCommand(tenantId, orderId, proofId),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     private static async Task<IResult> CreateOrderAsync(
@@ -361,7 +422,7 @@ public static class OrderEndpoints
 
     private static async Task<IResult> PreviewOrderAsync(
         Guid tenantId,
-        CreateOrderRequest request,
+        PreviewOrderRequest request,
         IRequestDispatcher dispatcher,
         IOrderResponseComposer composer,
         CancellationToken cancellationToken)
@@ -370,7 +431,7 @@ public static class OrderEndpoints
             new PreviewOrderQuery(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentProofs, request.Shipping),
+                request.PaymentProofs, request.Shipping, request.BillingCompanyId),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
@@ -417,16 +478,57 @@ public static class OrderEndpoints
         var detail = await dispatcher.SendAsync(
             new SaveOrderEditsCommand(
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
-                request.IsRetail, request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount),
+                request.IsRetail, request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
+                OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
+                request.ClearedWithholdingTypes, request.OrderDate),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
+    private static async Task<IResult> SetOrderBuyerAccountAsync(
+        Guid tenantId,
+        Guid orderId,
+        OrderBuyerAccountRequest request,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var expectedVersion = RequireIfMatch(httpContext);
+        var detail = await dispatcher.SendAsync(
+            new SetOrderBuyerAccountCommand(tenantId, orderId, expectedVersion, request.Email ?? string.Empty),
+            cancellationToken);
+        httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static async Task<IResult> RemoveOrderBuyerAccountAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var expectedVersion = RequireIfMatch(httpContext);
+        var detail = await dispatcher.SendAsync(
+            new RemoveOrderBuyerAccountCommand(tenantId, orderId, expectedVersion), cancellationToken);
+        httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
+        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
+    }
+
+    private static long RequireIfMatch(HttpContext httpContext) =>
+        TryParseVersion(httpContext.Request.Headers.IfMatch, out var expectedVersion)
+            ? expectedVersion
+            : throw new PreconditionRequiredException(
+                "precondition.if_match_required",
+                "A valid If-Match header containing the loaded order version is required.");
+
     private static async Task<IResult> PreviewOrderEditsAsync(
         Guid tenantId,
         Guid orderId,
-        SaveOrderEditsRequest request,
+        PreviewOrderEditsRequest request,
         IRequestDispatcher dispatcher,
         IOrderResponseComposer composer,
         CancellationToken cancellationToken)
@@ -435,7 +537,9 @@ public static class OrderEndpoints
         var detail = await dispatcher.QueryAsync(
             new PreviewOrderEditsQuery(
                 tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail,
-                request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount),
+                request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
+                OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
+                request.ClearedWithholdingTypes, request.OrderDate, request.BillingCompanyId),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
@@ -473,24 +577,26 @@ public static class OrderEndpoints
         Guid orderId,
         CancelOrderRequest request,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
             new CancelOrderCommand(tenantId, orderId, request.Reason),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     private static async Task<IResult> InvoiceOrderAsync(
         Guid tenantId,
         Guid orderId,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
             new InvoiceOrderCommand(tenantId, orderId),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     private static void MapStateAction<TCommand>(
@@ -501,9 +607,16 @@ public static class OrderEndpoints
         where TCommand : ICommand<OrderDto> =>
         collection.MapPost(
                 $"/{{orderId:guid}}/{action}",
-                async (Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-                    Results.Ok(OrderResponses.ToResponse(
-                        await dispatcher.SendAsync(createCommand(tenantId, orderId), cancellationToken))))
+                async (
+                    Guid tenantId,
+                    Guid orderId,
+                    IRequestDispatcher dispatcher,
+                    IOrderResponseComposer composer,
+                    CancellationToken cancellationToken) =>
+                    Results.Ok(await composer.ComposeOrderAsync(
+                        tenantId,
+                        await dispatcher.SendAsync(createCommand(tenantId, orderId), cancellationToken),
+                        cancellationToken)))
             .RequireAuthorization(permission)
             .Produces<OrderResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -514,12 +627,13 @@ public static class OrderEndpoints
         Guid tenantId,
         Guid orderId,
         IRequestDispatcher dispatcher,
+        IOrderResponseComposer composer,
         CancellationToken cancellationToken)
     {
         var order = await dispatcher.SendAsync(
             new RevertOrderInvoicingCommand(tenantId, orderId),
             cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
+        return Results.Ok(await composer.ComposeOrderAsync(tenantId, order, cancellationToken));
     }
 
     // Acepta un ETag fuerte o débil, con o sin comillas: el frontend manda lo que recibió.

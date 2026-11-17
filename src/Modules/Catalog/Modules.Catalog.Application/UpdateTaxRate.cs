@@ -53,7 +53,8 @@ public sealed class UpdateTaxRateHandler(
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<UpdateTaxRateCommand> validator)
+    IValidator<UpdateTaxRateCommand> validator,
+    ITaxRateGeographyLookup geography)
     : ICommandHandler<UpdateTaxRateCommand, TaxRateDto>
 {
     public async Task<TaxRateDto> HandleAsync(
@@ -84,6 +85,6 @@ public sealed class UpdateTaxRateHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return taxRate.ToDto();
+        return await taxRate.ToDtoAsync(geography, cancellationToken);
     }
 }

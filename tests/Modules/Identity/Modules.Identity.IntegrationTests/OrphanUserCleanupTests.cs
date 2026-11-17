@@ -823,6 +823,7 @@ public sealed class OrphanUserCleanupTests
             // lo que se ejercita aca es la limpieza de usuarios huerfanos, no los totales.
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             advisor,
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -863,7 +864,8 @@ public sealed class OrphanUserCleanupTests
             notes: null,
             convertedBy,
             proofs: [],
-            occurredAt);
+            occurredAt,
+            orderDate: DateOnly.FromDateTime(occurredAt.UtcDateTime));
 
         if (approvedByMembershipId is { } approvedBy)
         {
@@ -1263,6 +1265,8 @@ public sealed class OrphanUserCleanupTests
 
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

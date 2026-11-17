@@ -39,7 +39,9 @@ internal static class OrderMapping
         order.NetTotal,
         order.Notes,
         order.BillingAccount is { } account
-            ? new QuotationBillingAccountDto(account.CompanyId, account.BankName, account.AccountNumber, account.Currency)
+            ? new QuotationBillingAccountDto(
+                account.CompanyId, account.BankName, account.AccountNumber, account.Currency, account.Country, account.CityId,
+                account.IsPending)
             : null,
         order.Parties.Select(ToDto).ToArray(),
         order.Items.OrderBy(item => item.Position).Select(item => ToDto(item, order.PriceRounding)).ToArray(),
@@ -68,7 +70,12 @@ internal static class OrderMapping
         order.PreparedBy?.Value,
         order.ArchivedAt,
         order.ArchivedBy?.Value,
-        order.Balance);
+        order.Balance,
+        order.OperationCityId,
+        order.BuyerNotes,
+        order.BuyerAccountId,
+        [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)],
+        order.OrderDate);
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
@@ -104,7 +111,8 @@ internal static class OrderMapping
         order.Total,
         order.Source.ToString(),
         order.ExternalReference,
-        order.ShippingDtoOf());
+        order.ShippingDtoOf(),
+        order.OrderDate);
 
     public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
         entry.Id.Value,

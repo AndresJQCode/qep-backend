@@ -34,10 +34,11 @@ public static class RestOrderParser
             OptionalString(order, "note", "note"),
             Strings(order, "payment_gateway_names", "payment_gateway_names"),
             Buyer(order, customer),
-            Find(order, "shipping_address") is { } address ? Address(address) : null,
+            Find(order, "shipping_address") is { } address ? Address(address, "shipping_address") : null,
             Attributes(order, "note_attributes", "name", "note_attributes"),
             Lines(order),
-            ShippingLines(order));
+            ShippingLines(order),
+            Find(order, "billing_address") is { } billing ? Address(billing, "billing_address") : null);
     }
 
     private static ShopifyBuyer Buyer(JsonElement order, JsonElement? customer) => new(
@@ -46,29 +47,37 @@ public static class RestOrderParser
         OptionalString(order, "email", "email") ?? (customer is { } e ? OptionalString(e, "email", "customer.email") : null),
         OptionalString(order, "phone", "phone") ?? (customer is { } f ? OptionalString(f, "phone", "customer.phone") : null));
 
-    private static ShopifyAddress Address(JsonElement address) => new(
-        OptionalString(address, "name", "shipping_address.name"),
-        OptionalString(address, "address1", "shipping_address.address1"),
-        OptionalString(address, "address2", "shipping_address.address2"),
-        OptionalString(address, "city", "shipping_address.city"),
-        OptionalString(address, "province", "shipping_address.province"),
-        OptionalString(address, "province_code", "shipping_address.province_code"),
-        OptionalString(address, "country_code", "shipping_address.country_code"),
-        OptionalString(address, "phone", "shipping_address.phone"),
-        OptionalString(address, "company", "shipping_address.company"));
+    private static ShopifyAddress Address(JsonElement address, string field) => new(
+        OptionalString(address, "name", $"{field}.name"),
+        OptionalString(address, "address1", $"{field}.address1"),
+        OptionalString(address, "address2", $"{field}.address2"),
+        OptionalString(address, "city", $"{field}.city"),
+        OptionalString(address, "province", $"{field}.province"),
+        OptionalString(address, "province_code", $"{field}.province_code"),
+        OptionalString(address, "country_code", $"{field}.country_code"),
+        OptionalString(address, "phone", $"{field}.phone"),
+        OptionalString(address, "company", $"{field}.company"));
 
     private static ShopifyLine[] Lines(JsonElement order) =>
         Items(order, "line_items", "line_items")
             .Select((line, index) =>
             {
                 var field = $"line_items[{index}]";
+                var sku = OptionalString(line, "sku", $"{field}.sku");
+                var original = Find(line, "quantity") is { } quantity ? Decimal(quantity, $"{field}.quantity") : 0m;
                 return new ShopifyLine(
-                    OptionalString(line, "sku", $"{field}.sku"),
-                    Find(line, "quantity") is { } quantity ? Decimal(quantity, $"{field}.quantity") : 0m,
+                    sku,
+                    // D2: la vigente; sin la llave, la original (las fixtures y los webhooks viejos no la traen).
+                    Find(line, "current_quantity") is { } current ? Decimal(current, $"{field}.current_quantity") : original,
                     OptionalAmount(line, $"{field}.price", "price_set.shop_money.amount", "price") ?? 0m,
                     Items(line, "discount_allocations", $"{field}.discount_allocations")
                         .Select((allocation, i) => OptionalAmount(allocation, $"{field}.discount_allocations[{i}].amount", "amount_set.shop_money.amount", "amount") ?? 0m)
-                        .Sum());
+                        .Sum(),
+                    OptionalString(line, "title", $"{field}.title"),
+                    // Una custom nunca tiene SKU: con SKU es una línea de producto cuya variante ya no existe.
+                    IsExplicitNull(line, "product_id") && IsExplicitNull(line, "variant_id") && string.IsNullOrWhiteSpace(sku),
+                    OptionalId(line, "id", $"{field}.id", "LineItem"),
+                    original);
             })
             .ToArray();
 

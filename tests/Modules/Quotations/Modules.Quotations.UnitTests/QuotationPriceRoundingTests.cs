@@ -87,7 +87,7 @@ public sealed class QuotationPriceRoundingTests
 
         var order = Order.FromQuotation(
             OrderId.New(), TenantId, "PED-2026-0001", quotation, null,
-            AdvisorId, [], Now);
+            AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(UsdUp, order.PriceRounding);
         var (quoted, ordered) = (quotation.Items.Single(), order.Items.Single());
@@ -135,6 +135,7 @@ public sealed class QuotationPriceRoundingTests
             currency,
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

@@ -169,6 +169,32 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Companies.Domain.Company", b =>
                 {
+                    b.OwnsMany("Modules.Companies.Domain.CompanyTaxRate", "_withholdingTaxRates", b1 =>
+                        {
+                            b1.Property<Guid>("CompanyId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("company_id");
+
+                            b1.Property<Guid>("TaxRateId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tax_rate_id");
+
+                            b1.Property<Guid>("TenantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tenant_id");
+
+                            b1.HasKey("CompanyId", "TaxRateId")
+                                .HasName("PK_company_withholding_tax_rates");
+
+                            b1.HasIndex("TenantId", "TaxRateId")
+                                .HasDatabaseName("IX_company_withholding_tax_rates_tenant_tax_rate");
+
+                            b1.ToTable("company_withholding_tax_rates", "companies");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CompanyId");
+                        });
+
                     b.OwnsMany("Modules.Companies.Domain.CompanyBankAccount", "BankAccounts", b1 =>
                         {
                             b1.Property<Guid>("company_id")
@@ -214,6 +240,8 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
                         });
 
                     b.Navigation("BankAccounts");
+
+                    b.Navigation("_withholdingTaxRates");
                 });
 #pragma warning restore 612, 618
         }

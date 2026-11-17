@@ -27,6 +27,7 @@ public sealed class Company
     public const string ColombiaCountryCode = "CO";
 
     private readonly List<CompanyBankAccount> _bankAccounts = [];
+    private readonly List<CompanyTaxRate> _withholdingTaxRates = [];
 
     // EF Core materializa por aca. El codigo nunca construye el agregado asi: Create es el unico
     // punto de entrada, y es el que hace cumplir los invariantes.
@@ -83,6 +84,14 @@ public sealed class Company
     /// empresas distintas no comparten numero de cuenta— no salia de ningun requisito.
     /// </summary>
     public IReadOnlyList<CompanyBankAccount> BankAccounts => _bankAccounts;
+
+    /// <summary>
+    /// Las tasas municipales (ReteICA) que la empresa aplica, una por municipio y tipo (spec ReteICA por empresa §7.3). Que
+    /// cada id sea una tasa municipal activa del país de la empresa lo valida Application contra Catalog; el agregado sólo
+    /// guarda el conjunto.
+    /// </summary>
+    public IReadOnlyCollection<Guid> WithholdingTaxRateIds =>
+        _withholdingTaxRates.Select(rate => rate.TaxRateId).ToArray();
 
     /// <summary>
     /// Número del documento, cuyo tipo es <see cref="DocumentType"/>. **No es unico todavia.** Un
@@ -258,6 +267,39 @@ public sealed class Company
         IsActive = true;
         Version++;
         UpdatedAt = occurredAt;
+    }
+
+    /// <summary>
+    /// Reemplaza las tasas municipales de la empresa. Deduplica; <see cref="Guid.Empty"/> se rechaza. Sube la versión y
+    /// devuelve <c>true</c> sólo si el conjunto cambió: guardar lo mismo no es un cambio (mismo criterio que
+    /// <c>Customer.SetWithholdingTaxRates</c>).
+    /// </summary>
+    public bool SetWithholdingTaxRates(IReadOnlyCollection<Guid> taxRateIds, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(taxRateIds);
+        if (taxRateIds.Any(id => id == Guid.Empty))
+        {
+            throw new CompaniesDomainException(
+                "companies.company.withholding_tax_rate_invalid",
+                "A withholding tax rate id cannot be empty.");
+        }
+
+        var wanted = taxRateIds.ToHashSet();
+        if (wanted.SetEquals(_withholdingTaxRates.Select(rate => rate.TaxRateId)))
+        {
+            return false;
+        }
+
+        _withholdingTaxRates.RemoveAll(rate => !wanted.Contains(rate.TaxRateId));
+        var kept = _withholdingTaxRates.Select(rate => rate.TaxRateId).ToHashSet();
+        foreach (var id in wanted.Where(id => !kept.Contains(id)))
+        {
+            _withholdingTaxRates.Add(new CompanyTaxRate(TenantId, id));
+        }
+
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
     }
 
     private void EnsureActive()

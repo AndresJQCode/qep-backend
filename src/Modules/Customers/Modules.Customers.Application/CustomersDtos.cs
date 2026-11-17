@@ -101,15 +101,39 @@ public sealed record CustomerDto(
     IReadOnlyList<CustomerContactDto>? Contacts = null,
     /// <summary>Spec impuestos por tipo §9.2: las tasas de retención asignadas, con lo que la ficha pinta. <c>null</c> se
     /// lee como vacío. <see cref="WithRetention"/> se deriva de ellas.</summary>
-    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
+    /// <summary>Spec ReteICA por empresa §9.3: los municipios donde el cliente es agente retenedor. <c>null</c> se lee como
+    /// vacío; el listado no lo trae.</summary>
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null)
 {
     /// <summary>Nunca <c>null</c>: un llamador que no conoce el campo recibe la lista vacía.</summary>
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+
+    /// <summary>Nunca <c>null</c>, por lo mismo que <see cref="WithholdingTaxRates"/>.</summary>
+    public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
 }
 
 /// <summary>
+/// La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y documentos.
+/// No reusa <see cref="CustomerCityDto"/>, que trae el código DIVIPOLA y no el departamento.
+/// </summary>
+public sealed record CustomerMunicipalityDto(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
+
+/// <summary>
+/// Un municipio donde el cliente es agente retenedor de un impuesto municipal (spec ReteICA por empresa §9.3), con el
+/// municipio resuelto (BFF): la ficha lo pinta sin preguntarle a Geography.
+/// </summary>
+public sealed record CustomerWithholdingAgentCityDto(string Type, string Country, CustomerMunicipalityDto City);
+
+/// <summary>
+/// Un municipio donde el cliente es agente retenedor, como llega en el cuerpo de crear y editar (spec ReteICA por empresa
+/// §9.3). <c>Type</c> tiene que ser un tipo municipal de <c>Country</c>.
+/// </summary>
+public sealed record WithholdingAgentCityRequest(string Type, string Country, Guid CityId);
+
+/// <summary>
 /// Una tasa de retención asignada a un cliente, con los datos del catálogo que la ficha necesita para pintarla sin otra
-/// llamada (BFF). <c>Type</c> es <c>"Retefuente"</c> o <c>"ReteICA"</c>.
+/// llamada (BFF). Desde el spec ReteICA por empresa (A15) sólo son tasas nacionales (<c>"Retefuente"</c>).
 /// </summary>
 public sealed record CustomerWithholdingTaxRateDto(
     Guid Id,
@@ -179,9 +203,13 @@ public sealed record CustomerResponse(
     /// <summary>Todos los contactos sin fusionar, aunque <c>Contacts</c> venga recortada.</summary>
     int ContactCount = 0,
     /// <summary>Spec impuestos por tipo §9.2: viaja siempre, vacía si el cliente no retiene.</summary>
-    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
+    /// <summary>Spec ReteICA por empresa §9.3: viaja siempre, vacía si el cliente no es agente en ningún municipio.</summary>
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null)
 {
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+
+    public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
 }
 
 /// <summary>
@@ -276,7 +304,13 @@ public sealed record CreateCustomerRequest(
     /// <c>null</c> no toca lo guardado (en el alta, ninguna); una lista vacía las quita.</summary>
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
     /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
-    bool? WithRetention = null);
+    bool? WithRetention = null,
+    /// <summary>Spec ReteICA por empresa §9.3: los municipios donde el cliente es agente retenedor. Ausente o <c>null</c> no
+    /// toca lo guardado (en el alta, ninguno); una lista vacía los quita.</summary>
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
+    /// <summary>Spec 2026-11-15 «Contacto de» en el alta: la empresa de la que el cliente nace como contacto. Ausente o
+    /// <c>null</c> lo crea sin empresa. Sólo en el alta: editar no lo toca, el vínculo va por <c>PUT …/company</c>.</summary>
+    Guid? CompanyId = null);
 
 public sealed record UpdateCustomerRequest(
     string Name,
@@ -297,7 +331,9 @@ public sealed record UpdateCustomerRequest(
     /// <c>null</c> no toca lo guardado (en el alta, ninguna); una lista vacía las quita.</summary>
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
     /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
-    bool? WithRetention = null);
+    bool? WithRetention = null,
+    /// <summary>Spec ReteICA por empresa §9.3: ausente o <c>null</c> conserva; una lista vacía quita.</summary>
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null);
 
 /// <summary>
 /// Una fila que se importo con exito: su numero de fila en el Excel (2-based; la fila 1 es la
@@ -333,6 +369,8 @@ public sealed record CustomerImportRowData(
     string City,
     string Classification,
     string? Retefuente,
+    /// <summary>Heredado (spec ReteICA por empresa, P9): la columna «ReteICA» salió del Excel. Se queda en el record para no
+    /// romper al frontend que reenvía la fila; viaja siempre <c>null</c> y se ignora al recibirlo.</summary>
     string? ReteIca,
     string? VatSurplus,
     /// <summary>Spec 2026-11-10 A22: el valor de la columna «Empresa» tal como vino. Último y opcional: el frontend viejo no lo manda.</summary>
@@ -591,7 +629,10 @@ public sealed record CustomerMergeResponse(
     IReadOnlyList<CustomerContactDto> Contacts,
     int ContactCount,
     IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags,
-    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null)
 {
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+
+    public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
 }

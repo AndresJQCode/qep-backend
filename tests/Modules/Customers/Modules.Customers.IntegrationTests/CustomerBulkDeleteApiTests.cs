@@ -5,7 +5,6 @@ using System.Text.Json;
 using BuildingBlocks.Infrastructure;
 using Modules.Customers.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
@@ -13,7 +12,7 @@ namespace Modules.Customers.IntegrationTests;
 /// <summary>Una base migrada y un host para toda la clase. Cada prueba siembra sus propios clientes (ids nuevos) en el tenant de desarrollo.</summary>
 public sealed class CustomerBulkDeleteApiDatabase : IAsyncLifetime
 {
-    private PostgreSqlContainer? _database;
+    private TestDatabase? _database;
 
     internal QepApiFactory Factory { get; private set; } = null!;
 

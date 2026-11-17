@@ -19,8 +19,9 @@ public sealed class ShopifyDocumentSourcesApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    // Both address paths come first even without orders: billing_address.company since spec 2026-11-14 (f1c3c0f4).
     [Fact]
-    public async Task DocumentSourcesOfAStoreWithoutOrdersOfferOnlyTheShippingCompany()
+    public async Task DocumentSourcesOfAStoreWithoutOrdersOfferOnlyTheAddressCompanies()
     {
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
@@ -33,7 +34,7 @@ public sealed class ShopifyDocumentSourcesApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
         Assert.Equal(["sources"], body.Select(pair => pair.Key));
-        Assert.Equal(["shipping_address.company"], Sources(body));
+        Assert.Equal(["shipping_address.company", "billing_address.company"], Sources(body));
     }
 
     // Los nombres de los pedidos de esta tienda, sin repetir y ordenados; los de otra tienda del tenant y los de otro tenant no
@@ -55,7 +56,7 @@ public sealed class ShopifyDocumentSourcesApiTests
 
         var body = await client.GetFromJsonAsync<JsonObject>(Route(tenant.TenantId, connectionId), Ct);
 
-        Assert.Equal(["shipping_address.company", "Cédula", "documento", "tipo_documento"], Sources(body!));
+        Assert.Equal(["shipping_address.company", "billing_address.company", "Cédula", "documento", "tipo_documento"], Sources(body!));
     }
 
     // El recorrido mira los pedidos más recientes de la tienda (shopify_created_at), no todo el espejo.

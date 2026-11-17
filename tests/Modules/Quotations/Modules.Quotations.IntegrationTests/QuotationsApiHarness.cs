@@ -23,6 +23,10 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using Testcontainers.PostgreSql;
 
+// Las clases comparten un servidor de Postgres (ver StartServerAsync): este tope es el que dimensiona su
+// max_connections. Mismo valor que MessagingApiHarness.
+[assembly: CollectionBehavior(MaxParallelThreads = 16)]
+
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
@@ -52,6 +56,35 @@ internal static class QuotationsApiHarness
     public static async Task<OrderResponse?> ReadConvertedOrderAsync(
         this HttpContent content, CancellationToken cancellationToken) =>
         (await content.ReadFromJsonAsync<OrderDetailResponse>(cancellationToken))?.Order;
+
+    /// <summary>Spec 2026-11-16: mueve la fecha de un pedido abierto con el guardado de «Editar pedido», con las mismas
+    /// líneas y la versión que tiene ahora. Devuelve el detalle guardado.</summary>
+    public static async Task<OrderDetailResponse> MoveOrderDateAsync(
+        HttpClient client, Guid tenantId, Guid orderId, DateOnly orderDate)
+    {
+        var url = $"/api/v1/tenants/{tenantId}/orders/{orderId}";
+        var current = await client.GetFromJsonAsync<OrderDetailResponse>(url, TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+        using var request = new HttpRequestMessage(HttpMethod.Put, url)
+        {
+            Content = JsonContent.Create(new SaveOrderEditsRequest(
+                [.. current.Items.Select(item => new OrderEditItemRequest(item.VariantId, item.Quantity))],
+                null,
+                current.Order.Notes,
+                current.Order.GlobalScaleFloor,
+                current.Order.IsRetail,
+                OrderDate: orderDate)),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{current.Order.Version}\"");
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"PUT order date: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
+        var saved = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(saved);
+        Assert.Equal(orderDate, saved.Order.OrderDate);
+        return saved;
+    }
 
     /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá, que en UTC ya es 2027: la frontera
     /// de la spec 2026-09-17. Las pruebas del día del tenant fijan acá el reloj del host.</summary>
@@ -128,15 +161,99 @@ internal static class QuotationsApiHarness
     public static DateOnly TodayInBogota() =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, BogotaTimeZone).DateTime);
 
-    public static async Task<PostgreSqlContainer> StartDatabaseAsync()
+    private const string TemplateDatabase = "qep_template_quotations";
+
+    // Un solo contenedor por ensamblado, con una plantilla ya migrada: cada prueba clona la plantilla
+    // (CREATE DATABASE … TEMPLATE) y su host sólo comprueba que no hay migraciones pendientes. Copia de
+    // AutomationsApiHarness/MessagingApiHarness: no hay un proyecto de pruebas compartido donde ponerlo.
+    private static readonly Lazy<Task<PostgreSqlContainer>> SharedServer = new(StartServerAsync);
+
+    // Postgres rechaza dos CREATE DATABASE simultáneos desde la misma plantilla: los clones van de a uno.
+    private static readonly SemaphoreSlim CloneGate = new(1, 1);
+
+    /// <summary>Una base limpia y migrada para esta prueba, clonada de la plantilla. Se borra en
+    /// <c>DisposeAsync</c>.</summary>
+    public static async Task<TestDatabase> StartDatabaseAsync()
     {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
+        var server = await SharedServer.Value;
+        var name = $"t_{Guid.CreateVersion7():N}";
+        await CloneGate.WaitAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            await ExecuteAdminAsync(server, $"CREATE DATABASE \"{name}\" TEMPLATE \"{TemplateDatabase}\"");
+        }
+        finally
+        {
+            CloneGate.Release();
+        }
+
+        return new TestDatabase(server, name);
+    }
+
+    /// <summary>Una base vacía, sin migrar, en el mismo servidor. Para las pruebas de migración, que suben
+    /// desde cero hasta una migración puntual (y bajan): un clon de la plantilla ya trae todo.</summary>
+    public static async Task<TestDatabase> StartEmptyDatabaseAsync()
+    {
+        var server = await SharedServer.Value;
+        var name = $"e_{Guid.CreateVersion7():N}";
+        await ExecuteAdminAsync(server, $"CREATE DATABASE \"{name}\"");
+        return new TestDatabase(server, name);
+    }
+
+    private static async Task<PostgreSqlContainer> StartServerAsync()
+    {
+        // Sin el token de una prueba: el servidor es de todas, y cancelar la primera no puede dejar a las
+        // demás sin base.
+        var server = new PostgreSqlBuilder("postgres:18-alpine")
             .WithDatabase("qep")
             .WithUsername("qep")
             .WithPassword("qep-integration")
+            // Las clases corren en paralelo (MaxParallelThreads, arriba), cada prueba con su host y sus pools
+            // de Npgsql por módulo, más los workers: el límite por defecto (100) se agota con 53300. Mismo
+            // margen que MessagingApiHarness. fsync, synchronous_commit y full_page_writes apagados: la base
+            // es desechable y lo que se mide es la lógica, no la durabilidad.
+            .WithCommand(
+                "-c", "max_connections=800",
+                "-c", "fsync=off",
+                "-c", "synchronous_commit=off",
+                "-c", "full_page_writes=off")
             .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
+        await server.StartAsync(CancellationToken.None);
+        await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
+
+        // El host migra al arrancar: arrancarlo una vez contra la plantilla la deja con todo.
+        using (var factory = new QepApiFactory(ConnectionStringFor(server, TemplateDatabase)))
+        using (factory.CreateClient())
+        {
+        }
+
+        // Una conexión viva a la plantilla haría fallar todos los clones.
+        NpgsqlConnection.ClearAllPools();
+        await ExecuteAdminAsync(server, $"ALTER DATABASE \"{TemplateDatabase}\" WITH ALLOW_CONNECTIONS false");
+        return server;
+    }
+
+    private static string ConnectionStringFor(PostgreSqlContainer server, string database) =>
+        new NpgsqlConnectionStringBuilder(server.GetConnectionString()) { Database = database }.ConnectionString;
+
+    private static async Task ExecuteAdminAsync(PostgreSqlContainer server, string sql)
+    {
+        await using var connection = new NpgsqlConnection(server.GetConnectionString());
+        await connection.OpenAsync(CancellationToken.None);
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    /// <summary>La base de una prueba en el servidor compartido.</summary>
+    public sealed class TestDatabase(PostgreSqlContainer server, string name) : IAsyncDisposable
+    {
+        public string GetConnectionString() => ConnectionStringFor(server, name);
+
+        public async ValueTask DisposeAsync()
+        {
+            NpgsqlConnection.ClearPool(new NpgsqlConnection(GetConnectionString()));
+            await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
+        }
     }
 
     public static HttpClient CreateClient(
@@ -453,7 +570,8 @@ internal static class QuotationsApiHarness
         string type,
         decimal percentage,
         decimal? minimumBase = null,
-        string country = "CO")
+        string country = "CO",
+        Guid? cityId = null)
     {
         var id = Guid.CreateVersion7();
         await using var scope = factory.Services.CreateAsyncScope();
@@ -461,11 +579,61 @@ internal static class QuotationsApiHarness
         await dbContext.Database.ExecuteSqlAsync(
             $"""
             INSERT INTO catalog.tax_rates
-                (id, tenant_id, name, percentage, type, country, minimum_base, is_active, version, created_at, updated_at)
-            VALUES ({id}, {tenantId}, {name}, {percentage}, {type}, {country}, {minimumBase}, true, 1, now(), now())
+                (id, tenant_id, name, percentage, type, country, minimum_base, city_id, is_active, version, created_at, updated_at)
+            VALUES ({id}, {tenantId}, {name}, {percentage}, {type}, {country}, {minimumBase}, {cityId}, true, 1, now(), now())
             """,
             TestContext.Current.CancellationToken);
         return id;
+    }
+
+    /// <summary>Asigna una tasa municipal a la empresa (spec ReteICA por empresa §7.3), por SQL como
+    /// <see cref="InsertWithholdingRateAsync"/>: la validación del alta es de las pruebas de Companies.</summary>
+    public static async Task AssignCompanyWithholdingRateAsync(
+        QepApiFactory factory, Guid tenantId, Guid companyId, Guid taxRateId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO companies.company_withholding_tax_rates (company_id, tax_rate_id, tenant_id)
+            VALUES ({companyId}, {taxRateId}, {tenantId})
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Una sentencia SQL suelta contra la base del host (para simular un documento anterior a una migración).
+    /// Devuelve las filas afectadas.</summary>
+    public static async Task<int> ExecuteSqlAsync(QepApiFactory factory, string sql)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return await dbContext.Database.ExecuteSqlRawAsync(sql, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Registra al cliente como agente retenedor de ReteICA en el municipio (spec §7.4), por SQL; con
+    /// <paramref name="remove"/> lo quita.</summary>
+    public static async Task SetWithholdingAgentAsync(
+        QepApiFactory factory, Guid tenantId, Guid customerId, Guid cityId, bool remove = false)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        if (remove)
+        {
+            await dbContext.Database.ExecuteSqlAsync(
+                $"""
+                DELETE FROM customers.customer_withholding_agent_cities
+                WHERE customer_id = {customerId} AND type = 'ReteICA' AND city_id = {cityId}
+                """,
+                TestContext.Current.CancellationToken);
+            return;
+        }
+
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO customers.customer_withholding_agent_cities (customer_id, country, type, city_id, tenant_id)
+            VALUES ({customerId}, 'CO', 'ReteICA', {cityId}, {tenantId})
+            """,
+            TestContext.Current.CancellationToken);
     }
 
     /// <summary>
@@ -792,9 +960,9 @@ internal static class QuotationsApiHarness
     /// antes de copiarla, así que no alcanza con inventar un nombre de banco.
     /// </summary>
     public static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
-        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency = "COP")
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency = "COP", Guid? cityId = null)
     {
-        var cityId = await EnsureCityIdAsync(client);
+        cityId ??= await EnsureCityIdAsync(client);
         const string bankName = "Bancolombia";
         var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
 
@@ -1025,11 +1193,30 @@ internal static class QuotationsApiHarness
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
-        return await dbContext.Outbox
+        var messages = await dbContext.Outbox
             .AsNoTracking()
             .Where(message => message.EventName == eventName)
             .OrderBy(message => message.OccurredAt)
             .ToListAsync(TestContext.Current.CancellationToken);
+
+        // En el host compartido de una clase (SharedQuotationsHost) la base trae los eventos de las pruebas
+        // anteriores: se descartan los que ya estaban cuando esta prueba empezó, y quedan los mismos que vería
+        // con una base propia.
+        return factory is QepApiFactory { OutboxBaseline: { } baseline }
+            ? messages.Where(message => !baseline.Contains(message.Id)).ToList()
+            : messages;
+    }
+
+    /// <summary>Los ids del outbox que ya existen: el punto de partida de una prueba en el host compartido.</summary>
+    internal static async Task<HashSet<Guid>> OutboxIdsAsync(WebApplicationFactory<Program> factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        return (await dbContext.Outbox
+            .AsNoTracking()
+            .Select(message => message.Id)
+            .ToListAsync(TestContext.Current.CancellationToken))
+            .ToHashSet();
     }
 
     // Los workers de Notifications sí corren en el host de pruebas: el correo sale solo, y se
@@ -1172,6 +1359,10 @@ internal static class QuotationsApiHarness
         /// <summary>Lo que el envío le entregó al sender, sin salir a Zenvia.</summary>
         public RecordingWhatsAppSender WhatsAppSender { get; } = new();
 
+        /// <summary>Sólo en el host compartido de una clase: los eventos del outbox que existían cuando empezó la
+        /// prueba en curso, que <see cref="OutboxMessagesAsync"/> descarta. <c>null</c> en un host propio.</summary>
+        internal IReadOnlySet<Guid>? OutboxBaseline { get; set; }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
@@ -1207,6 +1398,12 @@ internal static class QuotationsApiHarness
             // cada host de este proyecto sembraría la carga de exportación. Las pruebas de la carga lo
             // prenden con WithWebHostBuilder, que se aplica después y gana.
             builder.UseSetting("Seed:ExportLoad:Quotations", "0");
+
+            // Pinned for the same reason: with Seed:Enabled=true in the user-secrets of whoever runs the
+            // tests, every host seeds the development tenant at startup. A test that writes the seed tenant's
+            // rows first then collides with the seeder, and the seed validator fails startup before the
+            // export-load one. The seed tests turn it on with WithWebHostBuilder, which wins.
+            builder.UseSetting("Seed:Enabled", "false");
 
             builder.ConfigureServices(services =>
             {

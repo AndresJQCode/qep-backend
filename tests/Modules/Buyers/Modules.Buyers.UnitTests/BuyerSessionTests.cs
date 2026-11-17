@@ -21,6 +21,25 @@ public sealed class BuyerSessionTests
         Assert.All(reasons, reason => Assert.InRange(reason.Length, 1, BuyerSession.MaxRevokedReasonLength));
     }
 
+    // Plan P3: la caché sirve una entidad reconstruida, que tiene que valer igual que la leída de la base.
+    [Fact]
+    public void ARestoredSessionKeepsItsValuesAndIsNotRevoked()
+    {
+        var id = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+
+        var session = BuyerSession.Restore(
+            id, accountId, "a.lulocrm.com", "hash", Now.AddDays(-2), Now.AddMinutes(-1), Now.AddDays(28));
+
+        Assert.Equal(
+            (id, accountId, "a.lulocrm.com", "hash", Now.AddDays(-2), Now.AddMinutes(-1), Now.AddDays(28)),
+            (session.Id, session.AccountId, session.StoreHost, session.TokenHash, session.CreatedAt, session.LastSeenAt,
+                session.ExpiresAt));
+        Assert.Null(session.RevokedAt);
+        Assert.True(session.IsValidFor("a.lulocrm.com", Now));
+        Assert.False(session.IsValidFor("a.lulocrm.com", Now.AddDays(29)));
+    }
+
     [Fact]
     public void ASessionIsValidOnlyForItsOwnHost()
     {

@@ -21,7 +21,10 @@ public sealed record CreateQuotationCommand(
     ShippingRequest? Shipping = null,
     IReadOnlyList<QuotationItemAddition>? Items = null,
     int? GlobalScaleFloor = null,
-    bool IsRetail = false) : ICommand<QuotationDto>, IQuotationEdits
+    bool IsRetail = false,
+    OperationCityChoice OperationCity = default,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null) : ICommand<QuotationDto>, IQuotationEdits
 {
     IReadOnlyList<QuotationItemAddition> IQuotationEdits.Items => Items ?? [];
 }

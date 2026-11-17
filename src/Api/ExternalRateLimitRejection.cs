@@ -17,7 +17,9 @@ internal static class ExternalRateLimitRejection
     {
         ArgumentNullException.ThrowIfNull(context);
         var httpContext = context.HttpContext;
-        var storefront = StorefrontPaths.IsStorefront(httpContext.Request.Path);
+        // El formulario público de Soporte, como la tienda, sólo suma el Retry-After: la página decide qué mostrar.
+        var storefront = StorefrontPaths.IsStorefront(httpContext.Request.Path)
+            || SupportPublicPaths.IsSupportPublic(httpContext.Request.Path);
         if (!ExternalApiPaths.IsExternal(httpContext.Request.Path) && !storefront)
         {
             return;

@@ -114,6 +114,7 @@ public sealed class GetShopifyOrdersSummaryHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IShopifyOrderMirrorRepository mirrors,
+    IShopifyOrderEditRepository edits,
     ITenantClock tenantClock) : IQueryHandler<GetShopifyOrdersSummaryQuery, ShopifyOrdersSummaryDto>
 {
     public async Task<ShopifyOrdersSummaryDto> HandleAsync(GetShopifyOrdersSummaryQuery query, CancellationToken cancellationToken)
@@ -123,7 +124,10 @@ public sealed class GetShopifyOrdersSummaryHandler(
 
         var calendar = await tenantClock.GetAsync(query.TenantId, cancellationToken);
         var counts = await mirrors.CountAsync(query.TenantId, calendar.StartOfDayUtc(calendar.Today), cancellationToken);
-        return new ShopifyOrdersSummaryDto(counts.Waiting, counts.WithWarnings, counts.CancelledAfterInvoice, counts.ImportedToday);
+        // Spec 2026-11-14 §6: «Cambios por revisar», siempre presente (también en cero).
+        var changesToReview = await edits.CountToReviewAsync(query.TenantId, cancellationToken);
+        return new ShopifyOrdersSummaryDto(
+            counts.Waiting, counts.WithWarnings, counts.CancelledAfterInvoice, counts.ImportedToday, changesToReview);
     }
 }
 

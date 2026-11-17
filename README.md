@@ -46,6 +46,10 @@ dotnet restore --locked-mode
 # Requerido una sola vez: la cadena de conexión no vive en appsettings.json.
 dotnet user-secrets set "ConnectionStrings:QepDatabase" "Host=localhost;Port=5432;Database=qep;Username=qep;Password=qep_dev" --project src/Api
 
+# Valkey (estado compartido entre pods). Con Valkey:Enabled = false, el default, no conecta nada; si ya tienes
+# otro Valkey en 6379, no levantes el servicio valkey de compose.yaml.
+dotnet user-secrets set "ConnectionStrings:Valkey" "localhost:6379" --project src/Api
+
 dotnet run --project src/Api --launch-profile http
 ```
 
@@ -97,7 +101,7 @@ corren con `ValidateOnStart` (`StorageOptionsValidator`,
 `NotificationsOptionsValidator`, `SessionOptionsValidator`,
 `AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator`,
 `PaymentProofsOptionsValidator`, `ForwardedHeadersSettingsValidator`,
-`CorsSettingsValidator`, `OperatorTenantOptionsValidator` y los dos de Integrations,
+`CorsSettingsValidator`, `OperatorTenantOptionsValidator`, `ValkeyOptionsValidator` y los dos de Integrations,
 `SecretProtectionOptionsValidator` y `ZenviaOptionsValidator`): si algo
 falta o está mal escrito, la API **no arranca**.
 
@@ -111,6 +115,9 @@ local y por variable de entorno en k8s
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                     | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase` |
+| `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                               | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente |
+| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
+| `Valkey:OperationTimeoutMs`                            | `100`                                                                                         | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
 | `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
@@ -489,7 +496,8 @@ Existe para medir en el pod real cuánto cuesta exportar un año (spec
 `docs/superpowers/specs/2026-09-13-ajustes-post-export-design.md`). No depende de `Seed:Enabled`,
 pero también exige `Seed:OwnerEmail`.
 
-- **No corre dentro del arranque.** El `startupProbe` le da al pod 60 s, y sembrar decenas de miles
+- **No corre dentro del arranque.** El `startupProbe` le da al pod 180 s (36 intentos cada 5 s), de
+  los que un segundo pod gasta una parte esperando el candado de arranque, y sembrar decenas de miles
   de filas ahí haría que Kubernetes lo matara. La siembra termina con la línea
   `Export load seed finished: …` en el log.
 - **Va con SQL masivo en una transacción.** No pasa por los handlers, así que la siembra no deja
@@ -843,9 +851,9 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans` y `store`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai` y `support`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers` y `store` exige `orders`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -901,7 +909,9 @@ pide `operator.usage.read` y sólo responde en el tenant operador (otro tenant r
 los tres), el `period` normalizado y una fila por tenant con sus conversaciones del periodo (`whatsApp`, `instagram`, `total`) y los
 `connected` ahora mismo. Una conversación cuenta una vez por canal si tuvo al menos un mensaje entrante en vivo (no importado) desde el inicio del
 periodo, con la semana desde el lunes y el día y el mes en hora de Bogotá; un tenant sin actividad aparece en cero y el operador no aparece.
-Los conectados salen de la presencia del hub de la bandeja, que es por proceso: sólo vale con una réplica.
+Los conectados salen de la presencia del hub de la bandeja. Con `Valkey:Areas:Presence` prendido es compartida entre
+pods (`ValkeyMessagingPresence`); apagado es por pod, y con más de una réplica el reporte ve sólo a los conectados al pod
+que lo atiende.
 
 ### Tenant operador
 
@@ -1173,7 +1183,9 @@ Notas:
 Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de la petición; el tenant sale del host, nunca del cuerpo.
 
 - `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status` (`Open` \| `Archived` \| `Cancelled`), `paymentStatus`, `fulfillmentStatus` (`NotPrepared` \| `Prepared`), `invoiced`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`, `isStorePickup` (en la lista para que la tienda muestre «Listo para recoger» o «Enviado» sin abrir el detalle). `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`), `cancelledAt`, `subtotal`, `taxAmount`, `freightTotal` (`subtotal + taxAmount + freightTotal == total`), `carrierName`, `billedTo` (`FinalConsumer | BillingParty | Customer`), `billing` (sólo con `BillingParty`), `shipping` (sin correo ni documento; `null` con recogida) y `buyerNotes`. Con excedente de IVA, las líneas van sin IVA.
-- **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: salvo el pedido que pidió el alta diferida (punto 2), un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
+- **Sólo aparecen los pedidos enlazados a la cuenta** (`buyer_account_id`). Desde el spec 2026-11-15 el enlace también llega por el correo de
+  facturación (puntos 3 y 4), así que un pedido hecho como invitado aparece en cuanto su comprador inicia sesión en esa tienda con una cuenta
+  verificada del mismo correo; los anteriores al despliegue también (spec 2026-11-15 §3.4). Un pedido sin cuenta no se lista ni se puede abrir.
 - **Cómo llega la cuenta al pedido** (`quotations.orders.buyer_account_id`, sin FK):
   1. **En el checkout.** Si llega `X-Qep-Buyer-Session`, Store resuelve la cuenta **antes** de crear el pedido, con o sin `updateProfile`. Una sesión que no
      sirve (vencida, de otro host, de cuenta borrada) o una falla de Buyers (queda un `Warning`) deja un pedido de invitado; sin `updateProfile` el recibo
@@ -1182,6 +1194,17 @@ Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de 
      mensaje (`IBuyerOrderLinker`, después del commit del alta y fuera de él). Si el email ya tenía una cuenta verificada no se enlaza nada: esa rama no
      toca la cuenta. El enlace sólo escribe si el pedido no tiene cuenta, así que nunca pisa la del checkout; si falla, queda un `Warning` y el pedido
      sin cuenta, sin reintento.
+  3. **En el checkout, por el correo de facturación** (spec 2026-11-15 §3.1). Si la sesión no resolvió cuenta, Store busca la cuenta **verificada**
+     del correo de facturación, normalizado como en Buyers (`BuyerEmail.TryNormalize`), y la pone en el pedido. La sesión gana siempre: con una
+     sesión válida va su cuenta aunque el correo sea otro. Una cuenta sin verificar no enlaza, y una falla de la búsqueda deja el pedido de invitado
+     (queda un `Warning`, sin el correo).
+  4. **Al iniciar sesión** (spec 2026-11-15 §3.2). Después de confirmar la sesión y fuera de su transacción, `POST /buyer/session` enlaza los pedidos
+     del tenant de la tienda con origen `Store`, sin cuenta, sin decisión del asesor y cuyo correo de facturación recortado y en minúsculas es el de
+     la cuenta. Una sola sentencia que no sube la versión. Una falla (también una cancelación) se registra con el id de la cuenta y el ingreso
+     responde igual.
+- **La decisión del asesor manda** (`quotations.orders.buyer_account_set_by_member`). Cuando alguien de la consola cambia o quita la cuenta
+  (`PUT`/`DELETE /orders/{id}/buyer-account`, ver «Cuenta de comprador del pedido» en § Pedidos), la marca queda en `true` y ningún camino
+  automático (alta diferida, inicio de sesión) vuelve a tocar la cuenta de ese pedido.
 - **La anulación del comprador es más estricta que la del equipo** (D5, spec 2026-11-10): sólo si `Status == Open`, `PaymentStatus == PaymentPending`, no hay ningún comprobante de pago registrado, el pedido no está preparado **y** no está facturado (`Order.CanBeCancelledByBuyer`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
 - Orden de chequeos: IP del visitante (422 `store.public.visitor_ip_required`), host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
 #### Cambios en `POST /order-requests`
@@ -1693,6 +1716,26 @@ del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?s
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
 
+#### Cuenta de comprador del pedido
+
+Spec 2026-11-15 §4 (`docs/superpowers/specs/2026-11-15-store-order-buyer-link-design.md`). Sólo pedidos con `source = Store`.
+
+- El detalle (`GET /orders/{id}` y las respuestas de escritura que devuelven `OrderDetailResponse`) trae en la raíz `buyerAccount`:
+  `{ "id", "email" }` o `null`. Es `null` sin cuenta y también si la cuenta se borró: borrarla no limpia `buyer_account_id` del pedido.
+  El listado no lo trae.
+- `PUT /api/v1/tenants/{tenantId}/orders/{orderId}/buyer-account` con `{ "email": "…" }` enlaza el pedido a la cuenta **verificada** de ese
+  correo (las cuentas son de la plataforma, no del tenant). `DELETE` en la misma ruta la quita; sobre un pedido sin cuenta también vale y
+  significa «no lo enlaces solo».
+- Los dos: permiso `quotations.order.manage`, `If-Match` con la versión del pedido (sin él `428 precondition.if_match_required`, viejo
+  `412 concurrency.conflict`), responden `200` con el `OrderDetailResponse` completo y el `ETag` nuevo. Suben la versión, ponen la marca
+  `buyer_account_set_by_member` y auditan `quotation.order.buyer_account_changed` con el id anterior y el nuevo, nunca correos. Además
+  dejan en el historial del pedido una entrada `BuyerAccountChanged` con el asesor como autor, cuyo texto sí nombra el correo anterior y
+  el nuevo («Cambió la cuenta de comprador de … a …»); los enlaces automáticos no escriben historial. Un `PUT` con la misma cuenta y la
+  marca ya puesta responde `200` sin cambiar nada, sin historial ni auditoría.
+- Errores: `422 validation.failed` (`Email` vacío, inválido o de más de 254 caracteres), `422 order.buyer_account.not_found` (no hay cuenta
+  con ese correo o no está verificada: un solo código para los dos), `422 order.order.source_invalid` (el pedido no es de la tienda), `403`
+  (sin permiso o de otro tenant, nunca 404).
+
 #### Los cuatro ejes del pedido
 
 Desde el spec 2026-11-10 el pedido tiene cuatro ejes independientes, al estilo de Shopify. Viajan por
@@ -2157,6 +2200,22 @@ no del catálogo de hoy: renombrar o recodificar la variante después no cambia 
 configuración; su encabezado cae bajo la regla de choque de arriba. El PDF de la cotización no cambió de
 plantilla: `productName` ya es ese nombre visible.
 
+**Notas del cliente** (2026-11-14): el catálogo gana una columna más al final, `Notas del cliente`
+(`buyer_notes`), que sale de `Order.BuyerNotes`: la nota que el comprador escribió en la tienda pública o en
+Shopify. `Observaciones` (`notes`) sigue saliendo de `Notes`, que es del asesor (en un pedido de Shopify,
+«Shopify #N» y, si aplica, la dirección cruda). **Nace oculta**, también sin layout guardado: un tenant sin
+layout puede tener un ERP leyendo la hoja por defecto. Su encabezado no choca con ninguno de «MIGRACION 1».
+
+**Tarifas de retención** (spec 2026-11-16): dos columnas más al final, para un sistema de facturación (Siigo) que
+busca el impuesto por su tarifa y calcula el monto él mismo. `Tarifa Retefuente` (`withholding_retefuente_rate`)
+lleva el porcentaje (`2.5`); `Tarifa ReteICA` (`withholding_reteica_rate`), también el porcentaje tal como está
+guardado (`1.104` en Bogotá), **sin** pasarlo a por mil (owner, 2026-11-16). Es la tarifa efectiva —la editada por el asesor, si la editó—, por
+pedido y repetida en cada fila; `0` si el pedido no tiene retención aplicada de ese tipo. **Nacen ocultas.** El
+tenant las prende y les pone el encabezado que su import lee (por ejemplo `Retefuente`); si ya tenía visibles
+`Retefuente` o `ReteICA` (los montos), tiene que ocultarlas o renombrarlas en el mismo guardado, o el `PUT` responde
+`header_duplicated`. **Límite conocido:** con dos retenciones aplicadas del mismo tipo sale la tarifa de la primera
+por orden del pedido; los selectores ya exigen una por tipo, así que sólo puede pasar con la foto del cliente.
+
 **Aviso para operadores:** la hoja sembrada «MIGRACION 1» conserva su columna fija `valor flete`, vacía, y
 por eso `Valor Flete` del catálogo queda oculta en ella. Para que el ERP reciba el valor real, en
 Configuración › Excel de pedidos cambia la fija por la columna del catálogo «Valor Flete».
@@ -2190,8 +2249,8 @@ y ETag `"1"`. Cada columna viaja con `kind` (`Catalog` | `Fixed`), `key` y
 `defaultHeader`/`defaultPosition`/`defaultVisible` (sólo las del catálogo; `null` en las fijas),
 `header`, `value` (sólo las fijas) y `visible`. `defaultVisible` es `true` en todas menos en
 `coordinadora_city` (2026-10-02), las `payment_method_N` (2026-10-03), `carrier` (2026-10-05),
-`freight_without_tax`, `freight_tax`, `freight_charge_mode` y `cash_on_delivery` (2026-10-17) y
-`variant` (2026-10-20).
+`freight_without_tax`, `freight_tax`, `freight_charge_mode` y `cash_on_delivery` (2026-10-17),
+`variant` (2026-10-20) y `buyer_notes` (2026-11-14).
 
 El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
 vieja, incluido el choque de dos primeros guardados). No exige el catálogo entero: lo que no
@@ -2566,6 +2625,34 @@ secuencial en `Program.cs` después de `app.Build()`; el orden importa (por
 ejemplo, Tenancy se inicializa antes que Audit porque
 `DropAuditOwnership` transfiere la propiedad de una tabla entre ambos).
 
+#### Migraciones con pods viejos y nuevos (expand/contract)
+
+Durante un rollout, el pod nuevo migra mientras los viejos siguen atendiendo con el código anterior. Con una réplica
+ya pasa (`maxSurge: 1`); con dos, son dos pods viejos contra el esquema nuevo. Por eso (spec
+`2026-10-29-replicas-multiples-design.md`, D-5):
+
+1. **Toda migración es expand/contract.** Una versión agrega —columna nullable o con default, tabla, índice— y el
+   código viejo la ignora. Quitar, renombrar o volver `NOT NULL` algo que el código viejo escribe va en **otra**
+   versión, cuando ya no queda ningún pod viejo vivo.
+2. **Una migración que rompe al código viejo se despliega con corte:** estrategia `Recreate` o el backend a cero
+   réplicas, como se hizo con las variantes ([Catálogo: opciones, variantes y galería](#catálogo-opciones-variantes-y-galería),
+   «Despliegue»). El PDB no lo impide: sólo frena desalojos, no un `scale` ni un `Recreate`.
+3. **El handoff de cada spec dice si su migración es aditiva.** Si no lo dice, asume que no.
+
+**El candado de arranque.** Las 26 inicializaciones (migraciones de cada módulo y siembras) y `RunQepSeedAsync` corren
+dentro de `RunUnderStartupLockAsync` (`src/Api/Program.cs`, `src/Bootstrapper/Startup/StartupLock.cs`): una
+transacción sobre una conexión propia, directa a Postgres y sin pool, que toma `pg_advisory_xact_lock(20261113, 1)`.
+Así dos pods nunca migran ni siembran a la vez; el segundo espera al primero, y cuando le toca, las migraciones ya
+están aplicadas y no hace nada. El candado es un semáforo, no una unidad de trabajo: las migraciones siguen en sus
+propias conexiones del pool. La conexión se resuelve como la del listener de Mensajería —`QepDatabaseListener` si está,
+no está vacía y no es un `#{…}#` sin resolver; si no, `QepDatabase`—: va directo por preferencia; si cae a
+`QepDatabase` sigue serializando, porque el candado es de transacción y PgBouncer en modo `transaction` sostiene el
+mismo backend mientras la transacción está abierta. Lo que se degrada es el costo: ocupa un backend del pooler durante
+todo el bloque y queda sujeto a los timeouts del pooler, que pueden cortar la conexión a mitad del bloque. Los logs dicen cuánto esperó el pod (`EventId` 4108, con el **nombre** de la clave de
+conexión, nunca su valor) y cuánto tardó el bloque (4109). Un 4110 (`Warning`) avisa que la conexión del candado se
+perdió antes de soltarlo: si pasó a mitad del bloque, otro pod pudo empezar a migrar a la vez, y conviene revisar
+el log de los dos. Una inicialización nueva va **dentro** del lambda de `RunUnderStartupLockAsync`, nunca después.
+
 ### Observabilidad
 
 OpenTelemetry (único estándar, sin SDKs propietarios) para trazas y métricas,
@@ -2640,19 +2727,119 @@ la cola esté vacía.
 | `qep.queue.retrying`        | —      | `queue`   | De esas, las que ya se intentaron al menos una vez y reintentan                                       |
 | `qep.queue.oldest_age`      | s      | `queue`   | Edad de la pendiente más vieja que nadie ha intentado (`attempts = 0`)                                |
 | `qep.messaging.inbound.lag` | s      | `channel` | Histograma: segundos entre la hora que Meta le pone a un mensaje entrante y el momento en que se guarda |
+| `qep.webhook.discarded`     | —      | `provider`, `reason` | Contador: eventos de Meta que llegaron con firma válida y no se ingresaron a propósito     |
+| `qep.webhook.last_received` | s      | `provider` | Hora Unix del último webhook de Meta aceptado (el `received_at` más reciente de `webhook_deliveries`) |
 
 `oldest_age` ignora lo que ya reintenta (una fila sana en reintento largo o un outbox envenenado no son atraso); en
 `automation` también las que espera una anterior de su misma conversación, y en `media` los medios importados con el
 historial y los abandonados. `campaign` no tiene columna de edad, así que sólo publica `backlog` y `retrying`. En
 `qep.messaging.inbound.lag` la etiqueta `channel` es `whatsapp` o `instagram`; un timestamp a futuro (reloj desfasado) cuenta cero.
 
+`qep.webhook.discarded` (spec 2026-11-16) suma en el mismo punto donde `WebhookDeliveryProcessor` loguea un descarte, con
+el mismo conteo. `provider` es `whatsapp` o `instagram`; `reason`, uno de `WebhookDiscardReasons`: `unknown_route` (número o
+cuenta sin conexión), `without_user_id`, `paused`, `module_off`, `foreign_status` (estado de un mensaje que QEP no mandó:
+coexistencia), `unhandled_field`, `foreign_event` (visto o borrado de Instagram sin mensaje) e `ignored`. La alerta
+`QepWebhookDiscarding` de `migracion-k8s` mira sólo `unknown_route` y `without_user_id`, comparados con la misma hora de la
+semana anterior; los demás son tráfico normal y sólo van al panel. Un reintento de la entrega vuelve a contar, como el log.
+
+`qep.webhook.last_received` la lee `QueueSamplerWorker` en la misma vuelta que las colas (sólo el pod líder) y caduca igual a los
+60 s. Sale de la base, no del tráfico HTTP: sobrevive a un reinicio y sólo cuenta lo que pasó la firma, así que después de un
+despliegue dice cuándo entró el último webhook de verdad. Un proveedor sin entregas no publica. El panel «Último webhook de
+Meta» la muestra como «hace X»; no hay alerta de silencio (owner, 2026-11-16).
+
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
 
+El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Platform`. Valkey **no** entra a
+`/health/ready`: si se cae, cada área vuelve a su respaldo local y la caída se ve acá, no sacando pods del Service.
+
+| Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
+| ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
+| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area}` | `area`   | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch` |
+
+La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
+
+**Limitadores compartidos (D-3, `Valkey:Areas:RateLimiting`).** Las siete políticas de ventana fija de `Program.cs` y el
+límite por clave de la API externa pasan por `SharedRateLimitPartitions`. Con el área prendida cuentan en Valkey, en la
+clave `qep:rl:{política}:{partición}:{inicioDeVentana}`. La ventana está alineada a la época Unix, así que todos los pods
+cortan en el mismo segundo. Si Valkey no responde, cada partición vuelve al limitador de memoria de su pod: nunca deja
+pasar sin límite. El limitador de concurrencia del webhook se queda en memoria siempre, porque protege al pod.
+
+- **Claves con IP.** En las políticas sin hash (`public`, `telemetry`, `external`, las de la tienda menos credenciales) la
+  IP del cliente va tal cual en el nombre de la clave. La clave vive como mucho la ventana más 1 s.
+- **Claves con patrón de ruta.** `credentials` y `storefront-credentials` llevan el patrón de ruta, y entran hasheadas
+  (`ShortHash`).
+- **Métricas.** Con el área prendida, la métrica `aspnetcore.rate_limiting` de requests en cola cuenta **todos** los
+  requests como encolados. El middleware los manda a `AcquireAsync`, porque el camino síncrono siempre niega: no es una
+  cola real.
+
+**Prender las áreas en producción (paso 3 del despliegue).** El orden, el criterio entre pasos y el rollback están en
+[spec de Valkey § Despliegue](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#despliegue) y
+[§ Verificación](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#verificación); acá va sólo lo que el código fijó.
+Lo hace el owner, un área por commit
+(`chore(k8s): enable valkey <area> area`, el flag en `"true"` en `k8s/prod-configMap.yaml`). Después de `Presence` y
+`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
+`Valkey__Areas__ApiKeyTouch`. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
+(`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
+
+**El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
+producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
+el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiqueta `area`). En Grafana, durante el día
+que pasa entre un área y la siguiente:
+
+```promql
+increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h])
+```
+
+tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
+secretos; nunca `get secret -o yaml` ni `-o json`):
+
+```powershell
+kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-config -o jsonpath='{.data}' | Select-String -Pattern "Valkey__"
+```
+
+| Área          | Etiqueta `area` | Contador                         | Comportamiento que se verifica                                                                          |
+| ------------- | --------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Sessions`    | `sessions`      | `increase(...[1h])` = 0          | Cierra sesión y repite un request con la cookie vieja: 401 al instante (prueba que el `DEL` corre)      |
+| `Permissions` | `permissions`   | `increase(...[1h])` = 0          | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente     |
+| `Doorbells`   | `doorbells`     | `increase(...[1h])` = 0          | La edad de la cola `automation` baja en el dashboard. Con dos pods, sólo uno publica las métricas de colas por vuelta: el que tiene `qep:leader:queue-sampler`, que también gobierna esta área (plan P14) |
+| `ApiKeyTouch` | `api_key_touch` | `increase(...[1h])` = 0          | Sin comportamiento visible: el contador es la verificación                                               |
+
+Si el contador sube sin que Valkey esté caído (`qep_valkey_connected` en 1), revisa primero la ACL del usuario `qep`:
+el gateway convierte un `NOPERM` en respaldo. `ValkeyAclCompatibilityTests` dice qué comandos usa cada área.
+
+**Flota mezclada (I-3).** Mientras un despliegue prende `Sessions` o `Permissions` (o tras un rollback seguido de volver a
+prenderlas dentro del TTL), los pods con el área apagada no invalidan: usan `NullSessionCache` y `NullTenantAccessVersion`.
+Un cierre de sesión o una suspensión que atendió un pod viejo puede seguir sirviéndose desde caché en un pod nuevo hasta
+~5 min en sesiones (un acierto exige `LastSeenAt` dentro del `TouchThreshold` de 5 min) y hasta 60 s en permisos
+(`EntryTtl`). El cambio no es instantáneo: espera a que termine el rollout y, si en esa ventana una revocación tiene que
+ser inmediata, hazla cuando el rollout ya terminó.
+
+**Antes de prender `Doorbells`** (decisiones del owner, no se resuelven en el código):
+
+- **I-1, carga de despertares.** Cada insert confirmado en el outbox despierta a todos los oyentes del outbox de cada pod
+  (13 definiciones de correo en un solo bucle más 8 consumidores: ~21 consultas de candidatos o reclamo por pod y por
+  commit). Con tráfico sostenido puede superar la carga fija de polling de hoy. Mide primero la tasa de inserts del
+  outbox o agrega un espaciado mínimo entre ticks disparados por timbre.
+- **I-2, filas que vencen por tiempo.** Las filas que se vuelven reclamables por reloj (backoff de reintento, leases
+  vencidos, filas escritas bajo la transacción de otro contexto) no timbran: esperan la red de seguridad en vez del poll
+  de hoy (`automation` 1 s → 15 s, `webhook` 3 s → 15 s, `shopify_webhook` 15 s → 30 s, `media` 5 s → 30 s, `export`
+  5 s → 30 s, `outbox` 15 s → 30 s; `DoorbellQueues.SafetyNet`). Caso concreto: con dos réplicas, un mensaje del bot
+  reprogramado +5 s porque otro pod tiene el candado de la conversación responde entre 5 y 15 s más tarde.
+- **I-4, líder del muestreador.** Sólo el pod que tiene `qep:leader:queue-sampler` publica los gauges de colas; las
+  lecturas de los demás expiran a ~60 s y el liderazgo puede alternar porque su TTL (15 s) es igual al intervalo.
+  Confirma que alertas como `QepQueueMetricsMissing` agregan entre pods (viven en el repo de plataforma) antes de
+  prender `Doorbells` con dos réplicas.
+- **Notifications.** Con `Doorbells` prendido, el drenado hasta vaciar quita el freno de hoy (~20 filas por definición
+  cada 15 s). `SendAsync` marca un envío fallido como `Failed` sin reintento, así que una caída del proveedor quema todo
+  el backlog de correos en segundos. Decide si agregas reintento o backoff antes de prender.
+
 ### Infraestructura local
 
-`compose.yaml` solo levanta PostgreSQL 18 y el `otel-collector`. No hay Redis
-ni broker de mensajería: el patrón Outbox cumple ese rol dentro del monolito.
+`compose.yaml` levanta PostgreSQL 18, Valkey (`valkey/valkey:9.1.3-alpine`, en `6379`) y el `otel-collector`. No hay
+broker de mensajería: el patrón Outbox cumple ese rol dentro del monolito. Si ya tienes otro Valkey en `6379`, no levantes
+el del compose: chocan el puerto.
 
 ### Biblioteca de archivos (Cloudflare R2)
 
@@ -2685,6 +2872,12 @@ siempre borra primero los objetos (clave del archivo, copia pública y cada vari
 el `FileResource` como `Purged`, auditado como `storage.file.purged` / `product_image_released`. Para
 la copia pública reutiliza la despublicación, así que una foto publicada pierde `PublicStorageKey` y
 `PublishedAt`; es a propósito.
+
+**Archivos de dueño de sistema.** Los tipos de `SystemOwnedFiles` (Storage.Domain; hoy `SupportTicket`, los adjuntos del formulario
+público de Soporte) no existen para la consola: `GET /files` no los lista ni filtrando por ese dueño, toda ruta por id responde `404
+storage.file.not_found` (el mismo de otro tenant) y `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`. Se crean,
+completan y bajan sólo por `IStorageSystemUploads`, desde el módulo dueño. Ver [Formulario público de
+Soporte](#formulario-público-de-soporte-fase-3).
 
 ### Reportes exportados (`exports/`)
 
@@ -2999,6 +3192,13 @@ cuerpo de cada request. `QCodePdfRenderer` es su único cliente.
 | --- | --- | --- |
 | `Quotations__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
 | `Quotations__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
+| `Support__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `SUPPORT_PDF_BASE_URL` |
+| `Support__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `SUPPORT_PDF_API_KEY` |
+
+La respuesta formal de Soporte (fase 4b) usa el mismo servicio con **su propia clave** (`Support:Pdf`, `SupportPdfRenderer`), nunca
+la de cotizaciones: `qcode-pdf` identifica al cliente por el hash de la clave. `SupportPdfOptionsValidator` la exige en producción
+igual que la de cotizaciones, y un token del pipeline sin resolver (`#{…}#`) cuenta como ausente: **sin `SUPPORT_PDF_API_KEY` en
+`Backend-prod` el pod no arranca.**
 
 **Sin la API key el pod no arranca en producción.** A diferencia de WhatsApp, acá no hay
 fallback: `qcode-pdf` respondería 401 y todo envío moriría con `quotation.pdf.render_failed`.
@@ -3008,6 +3208,40 @@ clave es opcional.
 
 `BaseUrl` debe ser HTTPS absoluta **en todo ambiente**, incluido local: la cotización completa
 —precios, cliente, totales— viaja en el cuerpo del POST.
+
+### Contenido configurable del PDF
+
+Spec `docs/superpowers/specs/2026-11-16-pdf-content-design.md`. El PDF de cotizaciones y pedidos tiene tres secciones que cada
+tenant configura en `GET`/`PUT /api/v1/tenants/{tenantId}/quotations/settings/pdf-content` (`tenancy.settings.read` / `.update`):
+
+| Sección | Dónde sale |
+| --- | --- |
+| `paymentNotice` | Debajo del recuadro de condiciones de pago, en rojo; sólo si el documento tiene cuenta para el pago |
+| `terms` | Después de los totales |
+| `deliveryProcess` | En página aparte, al final |
+
+Cada una se prende, se marca para cotización y/o pedido, y lleva título (texto plano, ≤ 120) y texto enriquecido (HTML saneado
+con el saneador compartido de `BuildingBlocks`, ≤ 20 000). Los dos aceptan variables `{{nombre}}` (`QuotationPdfVariables.All`:
+`empresa`, `nit_empresa`, `cliente`, `numero`, `fecha`, `vigencia`, `asesor`, `total`); un token que no está en la lista es
+`422 quotation.pdf_content.unknown_variable` al guardar, y una variable sin dato sale vacía en el PDF. Un tenant sin filas no
+imprime ninguna sección.
+
+- **La plantilla no lee HTML.** `RichTextHtmlReader` convierte el HTML guardado en un árbol de bloques, las variables se resuelven
+  sobre sus textos, y `quotation.typ` lo pinta como cadenas: un texto con `#`, `$` o `[` sale literal.
+- **El caché del PDF de la cotización se vence por contenido**: `quotation_pdfs.content_fingerprint` guarda el hash de las secciones
+  que salieron; cambiarlas regenera el PDF en el siguiente export. Una fila sin fingerprint (anterior a la columna) se regenera.
+- **Origen Botánico** (`slug = 'origen-botanico'`) conserva por la migración `AddPdfSections` el aviso de pago y el proceso de
+  entrega que antes estaban fijos en la plantilla para todos los tenants; los demás tenants dejaron de imprimirlos.
+- **Despliegue: al terminar el rollout se vence el caché una vez.** Un pod viejo no conoce `content_fingerprint`: si regenera el PDF
+  de una cotización durante el rollout, lo imprime con la plantilla vieja (el aviso de pago y el proceso de entrega de Origen
+  Botánico para todos los tenants) y deja en la fila el fingerprint que había escrito un pod nuevo, así que los pods nuevos siguen
+  sirviendo ese PDF después del rollout. Cuando ya no quede ningún pod viejo, corre una vez:
+
+  ```sql
+  UPDATE quotations.quotation_pdfs SET content_fingerprint = NULL WHERE generated_at < '<fin del rollout>';
+  ```
+
+  La alternativa es desplegar esta versión con `Recreate` (sin pods viejos y nuevos a la vez).
 
 ### Integraciones (conexiones del tenant)
 
@@ -3611,7 +3845,7 @@ avisa, no transporta: la autorización sigue en los `GET`.
 | Hub | `/api/v1/hubs/messaging`, política `messaging.conversation.read`; al conectar revalida módulo `messaging` y membresía activa (`MessagingHub`). |
 | Tenant | `X-Tenant-Id` o, **sólo bajo `/api/v1/hubs/`**, el query `tenantId`: el handshake WebSocket del navegador no lleva headers (`TenantRequestResolver`). |
 | Eventos | `conversationChanged { conversationId }` y `inboundMessage { conversationId, messageId }` al grupo del tenant; `notify { conversationId, reason }` al miembro asignado, o al tenant si nadie la tiene. |
-| Fanout | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Con dos réplicas no hace falta sticky session ni Redis. |
+| Fanout | `pg_notify('messaging_events', …)` después del commit (`PgMessagingNotifier`); cada pod tiene un `MessagingEventsListener` en `LISTEN` que reparte a sus conexiones. Para el reparto de eventos, con dos réplicas no hace falta sticky session ni Valkey. El handshake del hub sí lo necesitaría: `negotiate` crea la conexión en la memoria del pod que lo atiende, así que con más de una réplica el frontend tiene que saltarlo y conectar sólo por WebSocket (`skipNegotiation: true`, spec `2026-10-29-replicas-multiples-design.md`, D-1). |
 | Fallos | Un aviso que falla no reintenta la entrega ni deshace el envío: se registra y el polling relajado del frontend (60/30 s) lo recoge. |
 
 Lo que se publica: asignar, transferir, liberar, resolver, reabrir, leído, no leído, saliente consolidado
@@ -3623,6 +3857,9 @@ avisan `conversationChanged` como un acuse de WhatsApp.
 **Runtime ≥ 10.0.13.** CVE-2026-70159 (DoS en SignalR, `SignalR.Common` ≤ 10.0.12) afecta al servidor, que
 sale del runtime del `Dockerfile`, no de NuGet. Por eso la imagen se clava en `aspnet:10.0.13` y no en el flotante
 `10.0`, y los paquetes `Microsoft.*` de `Directory.Packages.props` van en la misma línea 10.0.13.
+
+**El hub global `/api/v1/hubs/app` es otro.** Mensajería sigue en su propio hub; el global (spec 2026-11-15) no es de ningún módulo,
+lo usa hoy Soporte y se describe en [Tiempo real y notas internas de Soporte](#tiempo-real-y-notas-internas-de-soporte).
 
 La preferencia de sonido viaja en `GET/PUT /api/v1/auth/preferences` como `messageSound` (default `true`). El
 `PUT` acepta cada campo por separado y conserva el que no viene; un cuerpo vacío es 422
@@ -3819,7 +4056,9 @@ corto, lo cambia por el largo (60 días), lee `/me` (tiene que ser cuenta `BUSIN
 cuenta al webhook (`POST /{igUserId}/subscribed_apps`) y guarda la conexión `Active` con `igUserId`, `username`,
 `accountName` y `tokenExpiresAt`, más la ruta `(instagram, igUserId)` que usa el webhook. El `redirectUri` tiene que
 ser de un origen de `Meta:Instagram:AllowedRedirectOrigins`. Un worker diario (`Integrations:Instagram`) refresca el
-token cuando le quedan menos de 15 días; un `190` lo pasa a `NeedsAttention` (`token_expired`).
+token cuando le quedan menos de 15 días; un `190` lo pasa a `NeedsAttention` (`token_expired`). Cada conexión se refresca
+bajo un candado de base por conexión (`InstagramTokenLock`, owner 2026-11-14), así que con varias réplicas un solo pod llama
+a Meta por token; el que no lo consigue la difiere a la siguiente corrida.
 
 **Webhook.** `GET /api/webhooks/instagram` responde el `hub.challenge` con el mismo `Meta:App:WebhookVerifyToken`.
 `POST` valida `X-Hub-Signature-256` con `Meta:Instagram:AppSecret` (y acepta también `Meta:App:AppSecret`, por si Meta
@@ -4514,7 +4753,8 @@ prendido, al importador:
   (`store_not_configured`, `advisor_inactive`, `billing_account_missing`, `currency_mismatch`, `customer_inactive`,
   `product_unmatched`, `freight_tax_rate_missing`, `order_rejected`). La tienda se configura con
   `PUT /tenants/{tenantId}/shopify/stores/{connectionId}` (`If-Match`): asesor, cuenta de cobro, clasificación por
-  defecto y de dónde sale el documento: `documentAttributeKey` es una ruta, `shipping_address.company` (el campo
+  defecto, `historyDays` (ver «Sincronizar ahora» más abajo) y de dónde sale el documento: `documentAttributeKey` es
+  una ruta, `shipping_address.company` (el campo
   «Empresa» de la dirección de envío) o el nombre de un atributo del checkout. Las opciones del select las da
   `GET /tenants/{tenantId}/shopify/stores/{connectionId}/document-sources` (`integrations.connection.read`):
   `{ "sources": ["shipping_address.company", …] }`, con los nombres de atributo de los 500 pedidos más recientes de esa
@@ -4527,17 +4767,127 @@ prendido, al importador:
   cae entre crear el pedido y guardar la fila) deje un solo pedido. Lo que entra con algo que revisar lleva `warnings`
   (`customer_incomplete`, `shipping_address_unresolved`, `total_difference`, `carrier_unrecognized`,
   `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
-- Después de importado, sólo se sincronizan el pago (un pedido sin comprobantes, también preparado o archivado: un
+- Después de importado, el resto de las ediciones de Shopify (líneas, envío, dirección, nota, atributos) llegan como
+  **cambios** (ver «Ediciones del pedido» abajo), y además se sincronizan el pago (un pedido sin comprobantes, también preparado o archivado: un
   contraentrega se prepara y se cobra después; con comprobantes, o anulado o facturado, el rechazo queda en `last_error`;
   con `autoArchive`, un pedido que queda pagado y ya estaba preparado se archiva) y la cancelación (se anula en QEP a
   nombre del asesor, aunque esté preparado o archivado, y el historial avisa que hay un paquete que recuperar; uno ya
   facturado queda `Cancelled` con `invoiced_before_cancel` para anularlo a mano). Un pedido cancelado que llega sin fila del espejo
   pero con su pedido en QEP también se anula.
 - `ShopifyReconcileWorker` corre cada `Shopify:Reconcile:IntervalMinutes` por tienda operativa: trae por GraphQL lo
-  actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: no se importa historial) y
+  actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: el cron no importa historial) y
   reintenta hasta 200 `Waiting`. Así, crear el producto que faltaba o prender el módulo otra vez surte efecto sin tocar
   nada más. `POST …/shopify/stores/{connectionId}/sync` hace lo mismo en el request; `POST …/shopify/orders/{id}/retry`,
   una sola fila.
+- **Días de historial de «Sincronizar ahora»** (spec `2026-10-21-shopify-historial-dias-design.md`). Un pedido creado en
+  Shopify **antes** de enlazar la tienda no entra nunca por la ventana normal, y el sync responde `fetched = 0` sin error.
+  Para traerlo, la tienda guarda `historyDays` (columna `shopify.stores.history_days`, `null` o de 1 a 30, con `CHECK`):
+  viaja siempre en `GET|PUT …/shopify/stores/{connectionId}` (`null` = sin historial) y el `PUT` lo reemplaza como al
+  resto, así que un cuerpo sin `historyDays` lo apaga. Fuera de rango responde 422 `validation.failed` con
+  `errors.historyDays`, y su cambio queda en `shopify.store.updated` por nombre. Con valor, **sólo** el `POST …/sync` trae
+  desde `min(ventana normal, enlace − historyDays)` (`ReconcileStore.ComputeSince`): cuenta desde el enlace (la creación
+  de la conexión), no desde hoy, y nunca acorta la ventana. Se aplica en **cada** pulsación, para importar lo que quedó
+  `Waiting` o falló después de corregir su causa; releer lo ya importado no duplica ni cambia nada (el espejo acepta el
+  snapshot igual y `IX_orders_tenant_external_key` deja un solo pedido). El cron no lo usa, y `last_reconciled_at` se
+  mueve igual que siempre. Sin fecha de enlace, el historial se ignora.
+
+**Ediciones del pedido** (spec `2026-11-14-shopify-sincronizar-ediciones-design.md`, plan
+`2026-11-14-shopify-sincronizar-ediciones-backend.md`, decisiones D1–D22). Lo que se edita en Shopify sobre un pedido ya
+importado llega a QEP como un **cambio**, y lo que el asesor corrige en QEP (dirección de envío, ciudad, nota del cliente y
+atributos) viaja a Shopify.
+
+- **Qué se lee.** La cantidad **vigente** de cada línea (`current_quantity` en REST, `currentQuantity` en GraphQL; si la llave
+  falta, `quantity`, D2). Una línea con vigente 0 es una línea quitada y la importación la salta; el descuento en porcentaje
+  se calcula sobre la cantidad **original**, porque `discount_allocations` reparte el de la línea original. También
+  `billing_address`, cuya `company` es una fuente más del documento.
+- **Versión aplicada y proyección.** `shopify.orders` guarda `applied_payload` (el snapshot con el que QEP creó o actualizó el
+  pedido por última vez, o el que adoptó) y `applied_projection` (lo que QEP escribió en el pedido a partir de él, **leído del
+  pedido después de escribir**, D4). Un snapshot nuevo se compara grupo por grupo contra la versión aplicada (Líneas, Envío,
+  Dirección, Comprador, Nota, Atributos); para cada grupo que cambió en Shopify:
+  - si el valor nuevo ya es el del pedido, es **eco** (típicamente la corrección que QEP mandó) y no es cambio;
+  - si el pedido ya no es la proyección, lo tocó QEP: **conflicto** `qep_changed`, gana QEP;
+  - si no, se aplica.
+
+  Otros motivos de conflicto: `customer_changed` (el documento nuevo es de otro cliente; el pedido no cambia de cliente),
+  `city_unresolved` (la ciudad va a la bandeja de ciudades, como al importar), `party_incomplete`, `store_pickup` y
+  `store_pickup_changed` (D8: un pedido no cambia de recogida), y los motivos de envío del importador
+  (`freight_tax_rate_missing`, …). El grupo Comprador es **informativo**: nunca toca el pedido ni el cliente (D17). Una fila
+  importada antes de este cambio, sin versión aplicada, toma como base el `payload` que tenía y la proyección del pedido de
+  ahora (D6): para esos pedidos nada cuenta como «lo tocó QEP», y una nota nueva de Shopify se aplica sin conflicto.
+- **El cambio** (`shopify.order_edits`; el spec dice `order_changes` y la API, «changes», D1) se crea en
+  `ShopifyOrderIngestion.ApplyAsync`, después del espejo y antes de la reacción de pago y cancelación (§6.3), y un snapshot con
+  `cancelled_at` no calcula cambio: manda la cancelación (D7). Un pedido tiene a lo sumo un cambio abierto; el siguiente
+  snapshot lo reemplaza (`Superseded`). Estados:
+
+  | Estado | Cuándo |
+  | --- | --- |
+  | `Blocked` | el pedido no es editable (`order_not_editable`), su estado de pago no está en `editPaymentStatuses` (`payment_status_not_allowed`) o una línea no empareja con una variante (`product_unmatched`, D5: nunca se aplica a medias) |
+  | `Pending` | se puede aplicar y la tienda está en `editSync = Manual`; o la tienda es `Automatic` y el cambio tiene algún grupo en conflicto (spec §3: el conflicto se ve en la bandeja y lo decide una persona); o Quotations rechazó la aplicación automática con otra regla, que queda en `statusReason` (por ejemplo `order.order.store_pickup`) |
+  | `Applied` | se aplicó: solo (`Automatic`, sólo si todos sus grupos son `Apply` o `Informative`) o porque alguien lo aceptó |
+  | `Rejected` / `Reviewed` | alguien lo rechazó, o marcó como revisado uno bloqueado; los dos adoptan el snapshot como versión aplicada sin tocar el pedido (D9), así que el siguiente diff no vuelve a proponerlo |
+  | `Superseded` | llegó otro snapshot del mismo pedido |
+
+  Aplicar baja por `IShopifyOrderWriter.ApplyEditAsync` → `IExternalOrderWriter.ApplyEditAsync` → `Order.ApplyExternalEdit`, con
+  los precios de Shopify (`ShopifyPricing`, sin descuentos de catálogo), historial sin autor (una entrada por grupo) y auditoría
+  `quotation.order.external_edit_applied` firmada por la integración; no recalcula el estado de pago (D18). En `Automatic`, el
+  cambio se aplica en el mismo procesamiento, **después** del guardado de la ingesta, siempre que no tenga ningún grupo en
+  conflicto: uno con conflicto queda `Pending` entero (tampoco se aplican sus grupos `Apply`) para que aparezca en «Cambios por
+  revisar», porque es justo donde Shopify y el asesor no están de acuerdo. Si Quotations rechaza la aplicación automática, «no
+  editable» lo deja `Blocked` y otra regla lo deja `Pending` con el código en `statusReason`. Un `Pending` que quedó de `Manual`
+  (o de un 412) se aplica sólo cuando ese mismo snapshot vuelve a llegar (webhook o conciliación): pasar la tienda a
+  `Automatic` no aplica los pendientes que ya había.
+- **Lo que corrige el asesor viaja a Shopify.** `PUT …/shopify/orders/{id}/corrections` escribe el pedido de QEP con el
+  `QuotationsDbContext` **enrolado en la transacción de Shopify** (`ShopifyOrderCorrectionWriter`) y, en la misma transacción,
+  encola el envío en `shopify.order_pushes` con sólo los grupos que cambiaron (`ShippingAddress`, `Note`, `Attributes`). Un
+  pedido tiene un solo envío `Pending` (`IX_order_pushes_mirror_pending`); encolar otro grupo mientras espera lo suma al mismo.
+  La corrección **no** mueve la proyección (D3): el pedido queda distinto de ella, así que una edición posterior de Shopify sobre
+  ese grupo es conflicto también después del eco, y gana lo del asesor. Los atributos viven en la fila del espejo
+  (`qep_attributes`), no en el pedido. La nota del cliente es `Order.BuyerNotes` (`Notes` sigue con «Shopify #N» y la
+  dirección cruda, y no viaja); `""` o sólo espacios es `null` (D22). La parte de envío sólo se corrige en Colombia (D21).
+- **Las correcciones de ciudad del sistema también viajan.** Cuando un sinónimo corrige la ciudad de un pedido
+  (`ShopifyCityCorrectionProcessor`, `Applied` o `AlreadyApplied`), la parte escrita pasa a la proyección (no la tocó el
+  asesor) y se encola `[ShippingAddress]` en el mismo guardado de la huella. Si el asesor ya había editado la parte, el trabajo
+  sale `Skipped` con `shipping_changed` y nada viaja: gana el asesor.
+- **El envío.** `ShopifyOrderPushWorker` corre cada 10 s, en lotes de 50, y manda `orderUpdate` (GraphQL, `shopify.admin`) con
+  los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
+  (`lastName` y `address2` vacíos, D12), la ciudad y el departamento con sus nombres de QEP y el `provinceCode` de
+  `ColombiaProvinceCodes`, y la `company` y el `countryCode` del **último** snapshot, porque `orderUpdate` reemplaza la
+  dirección entera; la nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
+  del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
+  mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
+  `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro
+  4xx) o `retries_exhausted`.
+- **Una corrección no se pierde por la conexión** (owner, 2026-11-14). El envío queda **retenido** (`Held`, el motivo en
+  `failure_code`) en tres casos: la corrección se guardó con la conexión no operativa (no `Active` o el módulo apagado, la misma
+  regla del worker) → `connection_inactive`; la conexión cayó después de encolar → `connection_missing`; Shopify respondió
+  `access_denied` (403 o `ACCESS_DENIED`, por ejemplo sin `write_orders`) → `access_denied`, que también se arregla del lado de la
+  conexión (el comercio vuelve a abrir la app). La corrección se guarda en QEP igual, y la respuesta del `PUT …/corrections` trae
+  `shopifySync`: `Queued`, `Held` o `NothingToSend`; con `Held` la pantalla avisa que el cambio queda marcado para sincronizar
+  cuando se active la conexión. Un retenido se comporta como un pendiente al fusionar (`IX_order_pushes_mirror_pending` cubre
+  `Pending` y `Held`: un solo envío abierto por pedido) y sigue retenido. **El worker nunca reclama uno retenido**: lo sueltan sólo
+  `POST …/orders/{id}/push` (un pedido) y `POST …/stores/{connectionId}/pushes/release` (todos los de la tienda, una sentencia por
+  tenant y conexión), que exigen la conexión operativa y lo dejan `Pending` sin intentos ni lease. `GET …/stores` trae
+  `heldPushCount` por tienda para el aviso «N pedidos pendientes de sincronizar».
+  Shopify devuelve el `orders/updated` con el valor de QEP: es eco y se adopta sin crear cambio. Mientras manda, el envío queda
+  tomado 2 minutos (holgado frente a los 10 s del timeout más las lecturas), para que otra réplica no lo mande dos veces. Toda
+  corrección que se encola mientras el envío está pendiente le sube la versión, también con los mismos grupos: si el worker
+  ya leyó el valor viejo, su `Sent` choca y el envío vuelve a salir con el último. Por la misma carrera, una corrección puede
+  recibir un 412 si el worker cerró el envío entre la lectura y el guardado; reintentar funciona.
+
+| Ruta (`/api/v1/tenants/{tenantId}/shopify`) | Permiso | Qué |
+| --- | --- | --- |
+| `GET /changes?status=&connectionId=&page=&pageSize=` | `quotations.order.read` | «Cambios por revisar», más nuevos primero; sin `status`, `Pending` y `Blocked`; `pageSize` ≤ 50 |
+| `GET /orders/{id}/changes` | `quotations.order.read` | los cambios de una fila del espejo, todos los estados (404 `shopify.order.not_found`) |
+| `POST /changes/{changeId}/accept` \| `/reject` \| `/review` | `quotations.order.manage` | 404 `shopify.edit.not_found`; 409 `shopify.edit.not_open`; `review` de un `Pending` 422 `shopify.edit.not_blocked`; `accept` que ya no se puede aplicar deja el cambio `Blocked` y responde 422 `shopify.edit.order_not_editable` \| `payment_status_not_allowed` \| `product_unmatched` (D16); otra regla del pedido responde 422 con el código de Quotations y el cambio sigue abierto; pedido inexistente 404 `shopify.order.not_found`; tienda borrada 422 `shopify.store.not_operational`; el pedido cambió entre el cálculo y la escritura, 412 `concurrency.conflict`. Un 409 sobre un cambio que un webhook acaba de reemplazar es «recarga el cambio» |
+| `GET /qep-orders/{qepOrderId}` | `quotations.order.read` | el panel de Shopify del detalle del pedido: `canEdit`, `editBlockedReason` (`NotImported`, `Cancelled`, `Archived`, `Invoiced`, `Prepared`, D20), `shippingAddressSupported`, los atributos, el último envío y el cambio abierto (404 `shopify.order.not_found` si el pedido no vino de Shopify) |
+| `PUT /orders/{id}/corrections` | `quotations.order.manage` | `If-Match` con la versión del **pedido de QEP**; sin él 428 `precondition.if_match_required`, versión vieja 412, fila no importada 422 `shopify.order.not_imported`, pedido no editable 422 `order.order.not_editable`, recogida con dirección 422 `order.order.store_pickup`, dirección fuera de Colombia 422 `shopify.order.address_not_supported`, cuerpo inválido 422 `validation.failed` con `errors`; la respuesta trae `shopifySync` (`Queued` \| `Held` \| `NothingToSend`) |
+| `POST /orders/{id}/push` | `quotations.order.manage` | suelta el envío retenido del pedido (`Held` → `Pending`) y responde el panel; conexión aún no operativa 422 `shopify.store.not_operational`; sin envío retenido 409 `shopify.push.nothing_held`; fila o pedido inexistente 404 `shopify.order.not_found`; una corrección a la vez 412 |
+| `POST /stores/{connectionId}/pushes/release` | `quotations.order.manage` | suelta todos los envíos retenidos de la tienda y responde `{ "released": n }`; conexión de otro tenant o inexistente 403 `authorization.denied`; no operativa 422 `shopify.store.not_operational`. Mismo permiso que «Sincronizar ahora» de la tienda: lo hace quien corrige pedidos |
+
+**Límite conocido** (sin resolver a propósito). Dos snapshots del mismo pedido que tocan el mismo grupo y llegan intercalados
+por milisegundos —B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A falla—
+pueden dejar la proyección vieja, y la edición siguiente de ese grupo sale como un `qep_changed` falso que el asesor resuelve a
+mano. La alternativa es un candado advisory por fila del espejo alrededor de la detección y la aplicación.
 
 **La bandeja.** `GET /tenants/{tenantId}/shopify/orders` pagina el espejo (tope 50, más recientes primero) con
 `state` (repetible o separado por comas; sin él, `Waiting`), `connectionId`, `withWarnings=true` (avisos sin revisar;
@@ -4548,6 +4898,9 @@ sin `state` no filtra por estado) y `cancelledAfterInvoice=true`: sólo las `Can
 en el servidor y nunca filtra en el navegador. `cancelledAfterInvoice=true` junto con `withWarnings=true` suma los dos
 filtros (AND): los cancelados después de facturar que todavía tienen avisos sin revisar.
 
+La sección **«Cambios por revisar»** es `GET …/shopify/changes` (ver «Ediciones del pedido»): los cambios `Pending` y
+`Blocked`, y `GET …/shopify/orders/summary` trae `changesToReview` (los mismos, siempre presente) para su contador.
+
 Cada fila trae `lastError` —texto libre para soporte y logs, que la pantalla no muestra— y `lastErrorCodes`, siempre
 presente (`[]` sin error): los códigos de `lastError` partidos por `"; "`, en orden y sin repetir. Un código de
 Quotations viaja tal cual; `invalid_payload: …` se vuelve `shopify.order.invalid_payload`; cualquier otra cosa (un
@@ -4557,6 +4910,25 @@ nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibl
 (`features/shopify`), y uno que no conozca se muestra con un mensaje genérico. La normalización está en
 `ShopifyLastErrorCodes`.
 
+**Líneas personalizadas** (spec `2026-11-13-shopify-lineas-personalizadas-design.md`). Una línea personalizada es la que el
+comercio escribe a mano en el pedido de Shopify, sin producto: llega con `product_id` y `variant_id` en `null` y sólo trae su
+`title` (Shopify lo limita a 255 caracteres). El importador la marca `isCustom` sólo si esas dos llaves vienen presentes y en
+`null` (una llave ausente no cuenta) y la línea no trae SKU (una variante borrada también deja los ids en `null`, pero
+conserva el SKU: es de producto) y la resuelve por **nombre exacto** —recortado, ordinal, sensible a mayúsculas y
+emojis— contra las asociaciones de su tienda (`shopify.custom_line_mappings`: `connection_id + title → variant_id`); una
+línea de producto real nunca casa por nombre, y una asociación nunca aplica fuera de su tienda. Sin asociación (o con una
+variante inexistente o inactiva) el pedido queda `Waiting` con `product_unmatched` y su `wait_detail` es
+`{"skus":[…],"customTitles":[…]}`, siempre con las dos llaves: `skus` lleva los SKU sin resolver (`null` para una línea sin
+SKU) y `customTitles` los nombres que faltan por asociar. Los pedidos que ya estaban en espera antes del despliegue no traen
+el nombre hasta que Shopify los vuelva a mandar (webhook `orders/updated` o conciliación).
+
+Desde la bandeja, «Asociar a un producto» hace `POST /tenants/{tenantId}/shopify/stores/{connectionId}/custom-line-mappings
+{ title, variantId }` (`quotations.order.manage`; 201 con la fila, 409 `shopify.custom_line.already_mapped` si el nombre ya
+está asociado, 422 `shopify.custom_line.variant_not_found` o `variant_inactive`) y luego `POST …/shopify/orders/{id}/retry`.
+`GET` de la misma ruta (`quotations.order.read`) lista las asociaciones por título con el nombre y el código de la variante,
+y `DELETE …/custom-line-mappings/{id}` (204, también si ya no existe) la quita. Si Catalog borró la variante, el `GET` la
+sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`, para poder quitarla.
+
 **Configuración.**
 
 | Clave | Dónde vive en prod | Qué |
@@ -4564,7 +4936,7 @@ nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibl
 | `Shopify:App:ClientId` | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID` | Client ID de la app en el Dev Dashboard |
 | `Shopify:App:ClientSecret` | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET` | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code` |
 | `Shopify:App:ApiVersion` | ConfigMap, `2026-10` | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`) |
-| `Shopify:App:Scopes` | ConfigMap, `read_orders,read_customers` | Lo que pide la autorización |
+| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers` | Lo que pide la autorización (`write_orders` desde el 2026-11-14) |
 | `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
 | `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
 | `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
@@ -4574,6 +4946,18 @@ En `Production`, `ShopifyAppOptionsValidator` exige con `ValidateOnStart` `Clien
 `WebhookCallbackUrl` (https) y al menos un origen; un `ClientId` o `ClientSecret` que llega como `#{…}#` (la variable
 no está en `Backend-prod`) cuenta como ausente. Sin ellas el pod entra en crash-loop, a propósito. Fuera de
 `Production`, sin `ClientId` y `ClientSecret` el proveedor sale del catálogo y el módulo arranca igual.
+
+**`write_orders` (spec 2026-11-14).** La corrección del asesor (dirección de envío, nota del cliente y atributos) viaja a
+Shopify con `orderUpdate`, que exige `write_orders`. Según el owner, los comercios ya enlazados lo tienen concedido; sumarlo a
+`Shopify:App:Scopes` es para que una instalación nueva lo pida, y un canje nuevo sin él falla con `scopes_missing`. Falta
+verificarlo (V-13): si una tienda no lo tuviera, sus envíos quedan retenidos (`Held`) con `access_denied`; el comercio tiene que
+volver a abrir la app desde su Shopify para concederlo, y después alguien los suelta con `POST …/stores/{connectionId}/pushes/release`.
+
+**Ediciones en la tienda.** `GET|PUT …/shopify/stores/{connectionId}` llevan además `editSync` (`Manual`, por defecto, o
+`Automatic`) y `editPaymentStatuses` (los estados de pago de QEP en que un cambio de Shopify se aplica; por defecto los cuatro:
+`FullPaymentReceived`, `PartialPaymentReceived`, `PaymentPending`, `PendingVerification`). En el `PUT` los dos son opcionales y
+`null` conserva lo guardado (D15), para que un frontend viejo no borre la configuración; `editPaymentStatuses` no puede venir
+vacío ni repetido. Errores: `errors.editSync`, `errors.editPaymentStatuses` y `errors.editPaymentStatuses[i]`.
 
 En local, los dos van por user-secrets. `set` imprime el valor, así que va con `| Out-Null`; el secreto se pide con
 `Read-Host -MaskInput` para que no quede en el historial de PSReadLine, y la verificación cuenta. `-MaskInput` exige
@@ -4621,6 +5005,23 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 3. La app en el Dev Dashboard de Shopify, la verificación con una tienda de desarrollo y el primer tenant piloto: los
    pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
    `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.
+4. **Ediciones del pedido (spec 2026-11-14).** Las migraciones `AddStoreEditSync`, `AddOrderEdits` y `AddOrderPushes`
+   (Shopify) corren con el backend, sin backfill: las filas importadas antes toman su base en la primera edición (D6). El
+   worker de envíos (`ShopifyOrderPushWorker`) entra con el backend, y `Shopify:App:Scopes` pasa a
+   `read_orders,write_orders,read_customers` en el ConfigMap.
+
+   **Antes del ConfigMap, la app.** En el Dev Dashboard de Shopify, publica (*release*) una versión de la app cuyos scopes
+   pidan `write_orders`. `CompleteShopifyInstall` exige ahora `write_orders` en lo que Shopify concede: si la versión
+   publicada de la app no lo pide, toda instalación nueva o reenlace falla con `integrations.shopify.scopes_missing` en
+   cuanto el ConfigMap llega a producción. El orden es: versión de la app con `write_orders`, después el ConfigMap.
+
+   Quedan por verificar contra Shopify real:
+
+   | # | Qué | Cómo se cierra |
+   | --- | --- | --- |
+   | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada, y que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo y mirar `shopify.orders.payload` y `shopify.order_edits` |
+   | V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes`, y que el `orders/updated` de vuelta salga como eco. Además: (a) el teléfono de ida y vuelta: si Shopify guarda en E.164 el teléfono nacional que QEP mandó, el eco tiene que salir igual (QEP compara sin el indicativo de país, `ShopifyOrderProjection.SamePhone`); (b) que `note: null` borre la nota en Shopify y no se ignore (si la ignora, mandar `""`) | Corregir una ciudad en QEP, ver el envío `Sent` y la dirección en Shopify, y que no aparezca un cambio; mirar el teléfono que quedó en Shopify; borrar la nota del cliente en QEP y verla vacía en Shopify |
+   | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` de cada tienda; un envío `Held` con `access_denied` también lo delata |
 
 ### Contratos de servicio (cobros recurrentes)
 
@@ -4741,6 +5142,819 @@ importadas conservan el monto que trae el Excel: no se recalculan con la tasa ni
   cada préstamo (o a `principal_amount` si no tiene abonos); si no coinciden, el saldo que ve la pantalla y el interés que cobra el
   worker divergen.
 
+### Soporte
+
+Módulo `Modules.Support.{Domain,Application,Infrastructure,Api}`, esquema `support`, clave de módulo `support` (sin dependencias,
+fuera de `DefaultForNewTenants`: nace apagado y se prende por tenant). Es la fase 1 («núcleo») del spec
+`docs/superpowers/specs/2026-11-14-support-tickets-pqrs-design.md`: tickets creados a mano, bandeja con plazos en días hábiles,
+estados, responsable, tipo y cliente con traza y auditoría, y los tipos de ticket del tenant. La fase 2 («Mensajería», ver
+[Soporte y Mensajería](#soporte-y-mensajería-fase-2)) suma tickets desde una conversación, el seguimiento del hilo y las respuestas por
+el hilo, la plantilla «Aviso de respuesta» y el correo. La fase 3 suma el formulario público ([Formulario público de
+Soporte](#formulario-público-de-soporte-fase-3)); la encuesta llega después. Soporte no referencia Mensajería ni Customers: el calendario, los clientes y los miembros
+entran por puertos con adaptador en Bootstrapper (`SupportBusinessCalendarSource`, `SupportCustomerLookup`, `SupportMemberDirectory`).
+
+**Permisos y roles.** `support.ticket.read`, `support.ticket.manage` y `support.settings.manage` (`SupportPermissions`, categoría
+«Soporte», los tres exigen el módulo `support`). `admin` tiene los tres; `advisor`, `read` y `manage`; `billing` y `cashier`, ninguno.
+Las lecturas usan dos políticas que aceptan más de un permiso (`SupportPolicies`): `support.ticket.view` (`read` o `manage`) y
+`support.settings.view` (`read`, `manage` o `settings.manage`). Quien ve tickets ve **todos** los del tenant: no hay «sólo los míos».
+Con el módulo apagado, toda ruta responde 403.
+
+**Rutas**, bajo `/api/v1/tenants/{tenantId}/support`. Un id de otro tenant en la ruta da `403 authorization.denied`; un ticket o tipo
+que no es del tenant, 404. Todo `PUT` de un ticket, de un tipo o de los ajustes exige `If-Match` con la `version` (sin él, `428
+precondition.if_match_required`; vieja, `412 concurrency.conflict`).
+
+| Método y ruta | Política | Qué hace |
+| --- | --- | --- |
+| `GET /tickets` | `support.ticket.view` | Bandeja paginada con el resumen del tenant (`SupportTicketPageDto`) |
+| `POST /tickets` | `support.ticket.manage` | Alta manual (`201` + `Location`, `SupportTicketDetailDto`) |
+| `GET /tickets/{ticketId}` | `support.ticket.view` | Detalle con la traza y las transiciones permitidas |
+| `PUT /tickets/{ticketId}/status` · `/assignee` · `/type` · `/customer` | `support.ticket.manage` | Cambia estado, responsable, tipo o cliente |
+| `POST /tickets/{ticketId}/take` · `/extension` | `support.ticket.manage` | «Asignármelo» y la prórroga del plazo (fase 4a, `If-Match`) |
+| `GET /assignees` | `support.ticket.view` | Miembros activos que pueden ser responsables (tienen `manage`) |
+| `GET /ticket-types` | `support.ticket.view` | Todos los tipos, también los inactivos (el selector los marca), para el ticket |
+| `GET` · `POST /settings/ticket-types` | `support.settings.manage` | Los mismos tipos para la tabla de ajustes, y alta de uno |
+| `PUT /settings/ticket-types/{typeId}` | `support.settings.manage` | Edita un tipo (`If-Match`) |
+| `DELETE /settings/ticket-types/{typeId}` | `support.settings.manage` | Borra un tipo que ningún ticket usa (fase 4a, `If-Match`, `204`) |
+| `PUT /settings/ticket-types/order` | `support.settings.manage` | Reordena todos los tipos |
+| `GET /settings` · `PUT /settings` | `support.settings.view` · `support.settings.manage` | Umbral de «por vencer» (con `ETag`) |
+
+**Siembra perezosa.** Tenancy no avisa cuando se prende un módulo, así que la fila `support.tenant_settings` del tenant nace en su
+primer acceso (`SupportProvisioner`, `INSERT … ON CONFLICT (tenant_id) DO NOTHING RETURNING`): sólo quien la inserta siembra los
+ocho tipos, en este orden y todos activos y publicados: Petición general (15 días hábiles), Petición de documentos o información (10),
+Consulta (30), Queja (15), Reclamo (15), Sugerencia (15), Felicitación (15) y Soporte técnico (sin término). Los siete primeros son
+«legales»; los cinco primeros piden respuesta formal. Una consulta directa a `support.ticket_types` de un tenant que nunca abrió
+Soporte devuelve cero filas: no es un error. Un tipo con tickets no se borra, se desactiva; uno sin tickets sí se borra desde la fase 4a
+(ver [Gestión y plazos de Soporte](#gestión-y-plazos-de-soporte-fase-4a)). Un tipo sin término no vence y no
+puede ser legal; el nombre es único por tenant sin distinguir mayúsculas (`409 support.ticket_type.name_taken`).
+
+**Radicado.** `SOP-` más seis dígitos, por tenant (`SOP-000001` el primero). El contador es `next_ticket_number` de
+`support.tenant_settings` y avanza en la misma transacción del alta: un alta que falla no gasta número.
+
+**Estados.** `New`, `Open` («En gestión»), `WaitingOnCustomer`, `WaitingInternal`, `Resolved` y `Closed`, persistidos y enviados por
+nombre. Las transiciones salen de la tabla del dominio (`SupportTicketStatuses`) y el detalle las manda en `AllowedTransitions`; una
+fuera de la tabla es `422 support.ticket.transition_invalid`. Ningún estado vuelve a `New`, `Closed` es final y `Resolved` puede
+reabrirse a `Open` (`ResolutionCount` cuenta las resoluciones). **Un ticket `Resolved` o `Closed` no se edita** (owner, 2026-11-15):
+`PUT …/assignee`, `…/type` y `…/customer` responden `422 support.ticket.not_editable`, aunque el valor sea el mismo. Lo guarda el
+agregado (`SupportTicket.Assign`, `ChangeType`, `LinkCustomer`), así que vale para cualquier camino nuevo; para editarlo hay que
+reabrirlo (`Resolved` → `Open`). La fusión de clientes no pasa por ahí: mueve tickets en cualquier estado. **El expediente se cura
+hasta resolver:** fijar o soltar un mensaje (`POST …/messages/{messageId}/pin` · `/release`) y «Seguir el hilo» (`PUT …/follow-thread`)
+se permiten en `Resolved` y responden el mismo `422 support.ticket.not_editable` en `Closed`, también apagar un hilo que ya estaba
+apagado, fijar uno ya fijado o soltar uno ya suelto (antes era `support.ticket.follow_closed`, que ya no existe). En fijar y soltar la
+guarda va antes que cualquier otra regla: en un cerrado, el 422 sale aunque el ticket no tenga conversación o el mensaje no esté vinculado. Responder se permite en cualquier estado, y el worker del hilo, la
+fusión y el borrado de clientes no pasan por esa guarda.
+
+**Reloj de resolución.** Los términos cuentan **de lunes a viernes** (owner, 2026-11-15, spec §13.4): en un tenant cuyo país (ajustes
+regionales) es `CO` se descuentan además los festivos nacionales de Colombia; en cualquier otro país, sólo lunes a viernes. **No usa
+el horario de atención** de Mensajería: ni sus días, ni sus excepciones de fecha, ni su país de festivos (`SupportBusinessCalendar`, en
+Bootstrapper). El plazo corre desde el día hábil **siguiente** a la radicación, en la zona horaria del tenant, y vence al
+final del día hábil (`due_on`). Se detiene en `WaitingOnCustomer`, `Resolved` y `Closed` (no en `WaitingInternal`); al reanudar, el
+vencimiento se corre por los días hábiles detenidos estrictamente entre la pausa y la reanudación (pausar y reanudar el mismo día
+suma cero; no hay pausa parcial). Cambiar el tipo recalcula desde la radicación con el término nuevo más las pausas; editar un tipo no
+mueve vencimientos ya calculados. El estado del plazo (`DueState`) es `NoTerm`, `OnTrack`, `DueSoon`, `Overdue`, `Paused` o `Finished`.
+
+**Umbral de «por vencer».** `due_soon_business_days` en `support.tenant_settings`, 3 días hábiles por defecto, de 0 a 30; con 0 no
+hay «por vencer» (un ticket pasa de `OnTrack` a `Overdue`). Lo usan el filtro `due=dueSoon`, el resumen de la bandeja y el
+`DueState` del ticket. Guardarlo audita `support.settings.updated`.
+
+**Bandeja** (`GET /tickets`). Filtros: `status` (uno o varios nombres separados por coma), `typeId`, `assignee` (`me`, `unassigned`
+o el id de una membresía), `due` (`overdue`: reloj corriendo y vencido antes de hoy; `dueSoon`: reloj corriendo y vence entre hoy y
+el umbral), `search`, `page` y `pageSize` (25 por defecto, hasta 100). **Un `search` que es un radicado se busca como radicado y
+nada más**: no busca ese texto en el asunto ni en los nombres. Es radicado (`SupportTicketNumber.TryParse`) si, sin espacios a los
+lados y quitando un `SOP-` inicial sin distinguir mayúsculas, queda sólo de dígitos ASCII que caben en un `long` y valen más de 0
+(`SOP-000127`, `sop-127`, `127`). Un `0`, un `SOP-` sin dígitos o un número que no cabe en un `long` no es radicado y busca como
+texto. Cualquier otro término busca en el asunto, en los nombres del solicitante (nombres, apellidos, razón social) y en el nombre de los clientes vinculados.
+La búsqueda por cliente toma como mucho 200 clientes cuyo nombre contiene el término (`ISupportCustomerLookup.SearchLimit`, los
+primeros por nombre y luego id): con un término muy amplio puede quedar fuera el ticket de algún cliente; el asunto y los nombres
+del solicitante se buscan igual. El resumen (`Summary`) es del
+tenant entero, no del filtro: los seis estados siempre, en el orden de arriba e incluso en cero, más los vencidos y los por vencer.
+
+**Alta manual** (`POST /tickets`). Exige un cliente (`customerId`) **o** un solicitante con nombre (`FirstNames`, o `BusinessName`
+con documento `NIT`); si no, `422 support.ticket.requester_required`. El celular del solicitante va en E.164 y el tipo de documento
+tiene que valer para su país (por defecto, el del tenant). Vincular un cliente, al crear o con `PUT …/customer`, exige el módulo
+`customers` prendido (`403 tenancy.module_not_enabled`) y un cliente activo del tenant (`422 support.ticket.customer_not_found` o
+`support.ticket.customer_inactive`; un fusionado está inactivo). El canal de respuesta `Thread` no está disponible en un alta manual
+(`422 support.ticket.reply_channel_unavailable`), `Email` exige correo y `WhatsAppTemplate` exige celular. **Con un cliente
+vinculado, su contacto es el respaldo** (owner, 2026-11-14): el alta copia en la foto del solicitante el `email` del cliente en el
+correo y su `phone_e164` (nunca el `phone` crudo) en el **fijo** (`landlinePhone`), sólo en los campos que `requester` dejó vacíos, y
+después valida el canal contra esa foto. **El teléfono del cliente nunca va al celular** (owner, 2026-11-15): puede ser fijo, y una
+plantilla de WhatsApp a un fijo la rechaza Meta y la respuesta queda `Failed`. Por eso `WhatsAppTemplate` sale sólo con el
+`mobilePhone` que trae `requester` (o, en un ticket desde una conversación, el `wa_id`); sin él, `reply-options` dice `no_mobile` y el
+asesor elige otro canal. Lo que trae `requester` siempre gana. Sin `requester`, la foto queda con sólo ese contacto y el país del
+tenant; un valor del cliente que no cabe en la foto (correo de más de 254 o que no cumple el formato de correo que se le exige al de
+`requester`, teléfono que no es E.164) no se copia. Sin correo en ninguno de los dos, `Email` responde ese 422; sin celular del
+solicitante, `WhatsAppTemplate` también (`TicketRequesterNormalizer.WithCustomerContact`, amarrado por
+`ALinkedCustomerEmailIsCopiedIntoAnEmptyRequesterForEmail`, `ALinkedCustomerWithoutContactAndNoRequesterContactIs422ForEmail` y
+`ALinkedCustomerPhoneGoesToTheLandlineAndNeverToTheMobile`).
+Vincular el cliente después, con `PUT …/customer`, no toca la foto ni el canal.
+
+**Traza y auditoría.** La traza del ticket son sus eventos (`Created`, `StatusChanged`, `AssigneeChanged`, `TypeChanged`,
+`CustomerChanged`), ordenados por un ordinal que asigna el agregado, no por hora. Cada cambio audita en la misma transacción:
+`support.ticket.created`, `.status_changed`, `.assigned`, `.type_changed` y `.customer_changed`; en los tipos,
+`support.ticket_type.created`, `.updated` y `.reordered`. Un cambio que no cambia nada no sube `version` ni audita. En esta fase no hay
+notas internas.
+
+**Clientes.** Cualquier ticket del cliente, en cualquier estado, bloquea su borrado (motivo `supportTickets`), y la fusión mueve
+`support.tickets.customer_id` al cliente que queda, sin subir la `version` del ticket. La vista previa de la fusión no cuenta tickets.
+Escribir `customer_id` toma el candado compartido del cliente (`CustomerReferenceLock`): un alta que llega mientras se borra su
+cliente espera al borrado y falla con 422. Ese candado se toma antes del radicado, así la espera no frena las demás altas del tenant.
+
+**Migraciones:** `Tenancy` `AddSupportModuleKey` (el CHECK de `tenant_modules` admite `support`; su `Down` borra las filas `support`
+antes de volver al CHECK anterior), `Support` `InitialSupport` (esquema `support`: `tenant_settings`, `ticket_types`, `tickets` y
+`ticket_events`) y `Support` `AddSupportProbeIndexesAndChecks` (los índices `IX_tickets_assignee` e `IX_ticket_events_actor` de la
+sonda de usuarios, y los CHECK `CK_tickets_manual_medium` y `CK_ticket_events_kind`, armados con los nombres de sus enums).
+
+**Avisos para quien opera:**
+
+- **Orden de despliegue: primero backend y migración, después frontend.** El frontend consume estas rutas y el motivo de bloqueo
+  `supportTickets` en el borrado de clientes.
+- **Un `INSERT` a mano en `support.tickets` tiene que llenar todas las columnas `NOT NULL`** (el tipo va copiado en `type_name`,
+  `term_is_legal` y `requires_formal_response`; `received_on`, `last_event_ordinal`, `version`) y un `number` libre del tenant: el
+  índice único es `(tenant_id, number)` y el contador de `tenant_settings` no se entera.
+- **Slugs reservados (fase 3).** Las rutas fijas del host del formulario público (`soporte.lulocrm.com/{tenantSlug}`, spec §9.2) no
+  pueden ser slug de un tenant nuevo: `TenantSlugReservations.Reserved` (Tenancy.Domain) y `422 tenancy.slug.reserved` al registrar
+  o crear. Un tenant que ya existía con uno de ellos sigue cargando, pero su formulario taparía una ruta del host: **antes de desplegar**
+  se consulta producción y lo que salga se corrige a mano con el tenant:
+
+  ```sql
+  SELECT id, slug FROM tenancy.tenants
+  WHERE slug IN ('api', 'app', 'assets', 'static', 'public', 'consultar', 'calificar', 'admin', 'www', 'soporte',
+                 'support', 'pqrsf', 'qep', 'login', 'cuenta', 'health', 'status', 'robots', 'sitemap');
+  ```
+
+**Retención** (owner, 2026-11-15, spec §13.10; el abogado confirma): los tickets se conservan 10 años desde el cierre (Código de
+Comercio art. 60; Ley 962 de 2005 art. 28); después se anonimizan los datos personales del solicitante y el ticket queda para
+estadística. Los consentimientos se conservan mientras dure el tratamiento más ese mismo término. Todavía no hay purga: en esta fase
+ningún ticket se borra.
+
+#### Soporte y Mensajería (fase 2)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-2-messaging-backend.md` (spec §8.1 a §8.3 y §8.5). Soporte sigue sin referenciar
+Mensajería ni Customers: los puertos de `Modules.Support.Application` (`ISupportConversationDirectory`, `ISupportThreadFeed`,
+`ISupportConversationEvents`, `ISupportReplyChannels`, `ISupportReplyEmail`) tienen adaptador en Bootstrapper. Mensajería gana los
+eventos del hilo `TicketOpened` y `TicketClosed` (con `TicketId`; el número se resuelve al leer), el emisor `ISupportReplyOutbound` y la
+plantilla del sistema `SupportReply`.
+
+**Rutas nuevas**, bajo `/api/v1/tenants/{tenantId}/support`. Toda acción que cambia el ticket exige `If-Match`.
+
+| Método y ruta | Política | Qué hace |
+| --- | --- | --- |
+| `GET /conversations/{conversationId}/tickets` | `support.ticket.view` | Los tickets de la conversación y los del mismo cliente por otros canales, con `CanCreate` y su motivo |
+| `POST /conversations/{conversationId}/tickets` | `support.ticket.manage` | Abre un ticket desde la conversación (exige `messaging`; `201`) |
+| `GET /conversations/{conversationId}/unclassified` | `support.ticket.view` | Entrantes sin clasificar con sus tickets candidatos |
+| `POST /conversations/{conversationId}/unclassified/{messageId}/assign` | `support.ticket.manage` | Lo asigna a uno (`{ ticketId, version }`) |
+| `POST /conversations/{conversationId}/unclassified/{messageId}/dismiss` | `support.ticket.manage` | «De ninguno» |
+| `GET /tickets/{ticketId}/messages?before=&take=` | `support.ticket.view` | Mensajes vinculados, del más nuevo al más viejo (50, hasta 100) |
+| `POST /tickets/{ticketId}/messages/{messageId}/pin` · `/release` | `support.ticket.manage` | Fija o suelta un mensaje (`If-Match`) |
+| `PUT /tickets/{ticketId}/follow-thread` | `support.ticket.manage` | Prende o apaga «Seguir el hilo» (`{ follow }`, `If-Match`) |
+| `GET /tickets/{ticketId}/reply-options` | `support.ticket.view` | Qué canal puede usar el asesor y qué va a pasar (texto o plantilla) |
+| `POST /tickets/{ticketId}/replies` | `support.ticket.manage` | Responde (`If-Match`; `201` con la fila, también si quedó `Failed`) |
+
+**Seguimiento del hilo.** Los entrantes no se empujan desde la ingesta: `SupportThreadFollowWorker` lee por sondeo, con
+`Support:Workers` en `appsettings.json` y defaults en código: `Enabled` (verdadero si falta: el worker se registra o no al arrancar),
+`FollowIntervalSeconds` (5), `BatchSize` (200 entrantes por pasada) y `FeedLookbackHours` (24: cada pasada mira sólo los entrantes y
+las filas sin clasificar que llegaron en esas horas, por `created_at`). Un entrante cuenta para un ticket no cerrado si cae en su ventana
+`[follow_since, follow_off_at)`: con un candidato se vincula (`Linked`), con dos o más queda «sin clasificar», y una fila sin clasificar
+pasa sola cuando le queda un único candidato. Un vínculo automático no sube la versión del ticket ni escribe evento; reabre a `Open` un
+ticket `WaitingOnCustomer`. Lo que el worker acepta y no corrige:
+
+- **Un entrante que siempre falla** se registra (sólo ids) y se salta en cada pasada; no frena el resto del lote.
+- **Un ticket que apagó el seguimiento hace más de una hora** (`SupportThreadFeed.FollowOffGrace`) ya no hace recorrer su
+  conversación: un entrante de antes del apagado que el worker no alcanzó a ver en esa hora queda sin vincular.
+- **Un worker caído más de `FeedLookbackHours`** deja sin vincular los entrantes que llegaron mientras tanto (el asesor los fija a
+  mano desde el hilo) y sin pasar solas las filas sin clasificar más viejas que eso (el asesor las asigna o las descarta).
+- **Prender el seguimiento otra vez** abre una ventana nueva desde ese momento: lo que llegó con el interruptor apagado no se vincula,
+  y un entrante de la ventana anterior que el worker todavía no procesaba (unos segundos de retraso) puede quedar fuera.
+- **Una fila sin clasificar cuyos candidatos se cerraron todos** queda pendiente hasta que el asesor la descarte; no ocupa el lote.
+- **Asignar desde «sin clasificar» mientras el worker la reasigna** puede responder `409 support.message.already_linked` al
+  asesor: el mensaje ya quedó en el ticket.
+
+Las pruebas de integración que necesitan controlar el worker lo sacan del host por tipo (`ImplementationType`), además de apagar la bandera.
+
+**Respuestas.** Por el hilo dentro de la ventana de 24 h sale texto (o un adjunto, abajo); fuera, en WhatsApp sale la plantilla «Aviso
+de respuesta» a la misma conversación y en Instagram es `422 support.reply.window_closed`. `WhatsAppTemplate` en un ticket sin
+conversación manda la plantilla al celular de la foto por la conexión elegida, crea la conversación y el ticket empieza a seguirla.
+`Email` va al correo de la foto. Responder no toma la conversación, no cambia su estado ni su asignación y no resta no leídos. Cada
+respuesta es una fila de `support.ticket_replies` que se confirma `Pending` **antes** de llamar afuera; su `id` es el `clientId` que viaja
+a Mensajería, idempotente por él. Un reintento con el mismo `clientId` devuelve la fila guardada sin mirar el `If-Match`; una `Pending` de
+menos de 60 s se devuelve sin enviar (la está mandando otro request) y una más vieja se retoma con exactamente lo que guardó su fila: el
+canal, la entrega, la conexión, el texto, el adjunto (`upload_id`, `file_name`; el del reintento se ignora) y, en una plantilla al
+celular, el `target_wa_id` que se tomó de la foto al crearla (sin volver a revisar el celular, la conexión ni la aprobación de la
+plantilla: Mensajería devuelve primero lo que ya salió con ese `clientId`). Si el canal la rechaza o ya no tiene ruta, queda `Failed`
+con el motivo. La fila trae su `clientId` en el detalle y en el resultado, para que la pantalla retome una que quedó `Pending`, y
+`hasAttachment` (`true` si se mandó o se intentó con archivo, leído del `upload_id` guardado), para que «Reintentar» de una fallida no la
+reenvíe como texto solo, también después de recargar. Una
+`Failed` trae `messageId` si Mensajería registró el mensaje (no se fija en el expediente), y un mensaje se fija sólo si salió por la
+conversación del ticket. **El correo no es idempotente**: una `Pending` de correo de más de 60 s se
+vuelve a mandar al retomarla, y el solicitante puede recibirlo dos veces.
+
+**`failureCode` de una respuesta `Failed`** tiene dos orígenes, y la pantalla tiene que traducir los dos: un motivo de Mensajería o del
+correo cuando el canal la rechazó o falló (`send_failed`, `window_closed`, `contact_blocked`, `connection_unavailable`,
+`attachment_unavailable`…), o un código de error de Soporte cuando un retomado ya no tenía ruta (`support.ticket.no_conversation`,
+`support.ticket.reply_channel_unavailable`).
+
+**Códigos de falla.** Todo código que la pantalla lee de Soporte —el `failureCode` de una respuesta, el `ConsultAccess.FailureCode` de la
+información con el PIN, el `reason` de `reply-options` y el `cannotCreateReason` de la pestaña de Soporte de una conversación— sale de
+una sola lista, `SupportChannelReasons`
+(`Modules.Support.Application/ISupportReplyChannels.cs`). Los que vienen de Mensajería son copia de `SupportReplyReasons`, amarrada por
+`SupportFailureCodeParityTests`. El frontend traduce por esta lista.
+
+| Código | Cuándo | Dónde se ve |
+| --- | --- | --- |
+| `window_closed` | La ventana de 24 h está cerrada | Respuesta, PIN, `reply-options` |
+| `contact_blocked` | El contacto está bloqueado | Respuesta, `reply-options` |
+| `template_not_approved` | La conexión no tiene aprobada «Aviso de respuesta» | Respuesta, `reply-options` |
+| `template_text_invalid` | El texto no cabe en un parámetro de Meta | Respuesta |
+| `recipient_invalid` | El nombre o el radicado no caben en la plantilla | Respuesta |
+| `text_invalid` | El texto no cumple la regla del canal (tope de Instagram) | Respuesta, PIN |
+| `connection_unavailable` | La conexión está pausada, borrada o pide atención | Respuesta, PIN, `reply-options` |
+| `conversation_not_found` | La conversación ya no existe | Respuesta, PIN |
+| `attachment_unavailable` | El adjunto no está disponible para esa conversación | Respuesta |
+| `channel_unsupported` | Instagram no tiene plantillas | Respuesta |
+| `customer_not_found` | Abrir la conversación chocó con un cliente borrado | Respuesta |
+| `send_failed` | El canal intentó y no salió | Respuesta, PIN |
+| `no_conversation` | El ticket no tiene conversación | `reply-options` |
+| `messaging_disabled` | Mensajería está apagada en el tenant | `reply-options`, ficha de la conversación |
+| `no_mobile` | La foto no tiene celular para la plantilla | `reply-options` |
+| `no_email` | La foto no tiene correo | `reply-options` |
+| `no_author` | Ningún miembro activo puede firmar el envío por Mensajería (plan F11) | PIN |
+| `portal_only` | Un anónimo sólo se responde por la página de consulta | `reply-options` |
+| `portal_unavailable` | La página de consulta sólo responde a anónimos | `reply-options` |
+| `no_permission` | Quien mira no tiene `support.ticket.manage` (ya existía como literal; ahora vive en la lista) | Ficha de la conversación |
+| `send_pending` | «Reenviar PIN» reclamó el envío y todavía no sabe cómo terminó; si el proceso muere en el medio, queda así | PIN |
+
+**Adjuntos (sólo WhatsApp).** Una respuesta por el hilo de una conversación de WhatsApp, dentro de la ventana, puede llevar un archivo:
+la pantalla lo sube con la sesión de subida de Mensajería
+(`POST /api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}/messages/media/upload-session`, que exige
+`messaging.conversation.manage`) y manda `uploadId` y `fileName` en la respuesta. En WhatsApp el texto de la respuesta va como pie (hasta
+1024). Instagram no lleva pie en un adjunto y el texto se perdería, así que ahí no se adjunta: `canAttach = false` y un `uploadId` es
+`422 support.reply.attachment_unavailable`. Sin el permiso de Mensajería, `reply-options` también responde `canAttach = false`. Un
+`uploadId` de otra conversación o que subió otro asesor, vencido o ya usado, sin `fileName`, un tipo que el canal no acepta o un audio
+(no lleva pie) es `422 support.reply.attachment_unavailable`.
+
+**Plantilla «Aviso de respuesta».** `MessageTemplateKind.SupportReply`, nombre `qep_soporte_respuesta` (versiones `_v2`…, prefijo
+reservado), idioma `es`, `UTILITY`, sólo cuerpo, con las variables fijas más `radicado` y `respuesta`. Se aprovisiona **por conexión**:
+`POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/support-reply` (cuerpo opcional `{ body }`) y
+su borrador en `GET …/support-reply/draft`. Hasta que Meta la apruebe en una conexión, fuera de la ventana no sale nada por ella
+(`template_not_approved`). El texto base termina en una frase fija y no en `{{respuesta}}`: Meta rechaza cuerpos que empiezan o terminan
+con una variable.
+
+**Migraciones:** `Support` `AddSupportMessaging` (conversación y ventana de seguimiento en `tickets`, `ticket_messages`,
+`unclassified_messages`, `ticket_replies`) y `Messaging` `AddSupportReplyTemplateKind` (el CHECK de `message_templates.kind` e
+`UX_message_templates_support_reply`).
+
+#### Formulario público de Soporte (fase 3)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-3-public-form-backend.md` (spec §9); los documentos legales, plan
+`docs/superpowers/plans/2026-11-15-support-portal-legal-documents-backend.md` (spec `2026-11-15-support-portal-legal-documents-design.md`).
+La página es el portal `qep-frontend-support` (`soporte.lulocrm.com/{tenantSlug}`) y
+llama directo desde el navegador, sin BFF, a un grupo **anónimo**: `/api/v1/public/support/{tenantSlug}`. Ningún handler del grupo lee el
+contexto de ejecución ni la cookie de sesión, no hay CSRF (exención por prefijo, `SupportPublicPaths`), toda respuesta —también 404, 413
+y 429— lleva `Cache-Control: no-store` y ningún cuerpo pasa de 64 KB (`413 support.public.body_too_large`; un JSON ilegible es `400
+support.public.body_invalid`). Un slug que no es de nadie, un tenant inactivo y el módulo `support` apagado responden el mismo `404
+support.public.not_found`, con el mismo cuerpo, en todas las rutas. **La página de consulta y la información con el PIN funcionan sin
+publicar el formulario** (owner, 2026-11-15): `GET /consult`, `POST /tickets/lookup` y `POST /tickets/resend-pin` sólo exigen tenant
+activo y módulo prendido (`SupportPublicResolver.ResolveForConsultAsync`), así todo solicitante tiene desde el primer día un enlace de
+consulta que sirve. Publicar sólo abre el formulario: `GET /form`, la geografía, radicar y los adjuntos responden ese mismo 404 mientras
+la versión vigente no esté publicada (`ResolveAsync`).
+
+**Rutas públicas** (relativas al grupo). Los limitadores son por IP del visitante (`RemoteIpAddress`, ya corregida por `X-Real-IP` detrás
+del ingress) y cada uno tiene su propia cubeta.
+
+| Método y ruta | Cuerpo | Éxito | Turnstile | Límite por IP |
+| --- | --- | --- | --- | --- |
+| `GET /form` | — | Configuración, tipos publicados, campos por variante, tipos de documento por país, `legal`: los tres documentos vigentes y el texto de caracterización (abajo), y `organization`, la empresa que responde | No | 60 / min |
+| `GET /consult` | — | `{ tenantName, logoUrl, accentColor, organization }` para dibujar la página de consulta; `accentColor` y `organization` son los de la versión vigente del formulario, publicada o no, y `null` sin ninguna | No | 60 / min |
+| `GET /geography/departments` · `/departments/{id}/cities` | — | Departamentos y ciudades de Colombia | No | 60 / min |
+| `POST /attachments` | `{ name, mimeType, sizeBytes }` | `201` `{ fileId, uploadKey, uploadUrl, headers }` | No | 20 / 10 min |
+| `POST /attachments/{fileId}/complete` | `{ uploadKey }` | `200` `{ status }`: `available` o `rejected` | No | 20 / 10 min |
+| `POST /tickets` | El radicado, con `attachments: [{ fileId, uploadKey }]` y `clientRequestId` opcionales | `201` `{ number, pin, receivedAt, dueOn, termBusinessDays, termExtended, termIsLegal, successMessage, pinEmailed, consultUrl }` | Sí (no en un reintento, abajo) | 5 / 10 min |
+| `POST /tickets/lookup` | `{ number, pin, turnstileToken }` | `200` radicado, tipo, estado, radicación, plazo (`termIsLegal`, `termBusinessDays`, `termExtended`) y respuestas | Sí | 10 / min |
+| `POST /tickets/resend-pin` | `{ number, turnstileToken }` | `202` vacío, siempre | Sí | 5 / 10 min |
+
+**Documentos legales del portal** (spec 2026-11-15). `GET /form` trae en `legal` los tres documentos vigentes del tenant, cada uno
+**saneado otra vez al servirlo** (`ISupportHtmlSanitizer`, lista blanca `p br strong em u s h2 h3 h4 ul ol li blockquote hr` y `a` con
+`https`/`mailto`/`tel`): `privacyNotice` `{ version, contentHtml, authorizationQuestion, policyUrl }`, `anonymousNotice` y `terms` `{ version,
+contentHtml }`, y `characterizationNotice`, un texto plano fijo e igual para todos los tenants que va al pie del paso de datos.
+`authorizationQuestion` llega resuelta: la del tenant o «¿Autorizas a {nombre del tenant} para el tratamiento de los datos personales
+suministrados en este formulario?». `policyUrl` `null` es que el paso no muestra el enlace a la política. Si al tenant le falta cualquiera
+de los tres, o si uno guardado ya no pasa el saneador (sin texto visible, demasiado grande, demasiado anidado o inestable: sólo una fila
+escrita a mano), `GET /form` responde el mismo `404 support.public.not_found` que con el formulario sin publicar. La página pinta
+`contentHtml` como HTML y no lo vuelve a sanear. La salida del saneador se guarda en una caché acotada por pod, con clave SHA-256 del
+contenido guardado: una fila cambiada a mano tiene otra clave y se vuelve a sanear.
+
+**Variables de los documentos legales** (spec `2026-11-16-support-legal-document-variables-design.md`). Los tres documentos y la
+pregunta de autorización del tenant aceptan `{{empresa}}`, `{{tipo_documento}}`, `{{documento_identificacion}}` (la empresa que
+responde: `name`, `documentTypeCode` y `documentNumber` de `organization`) y `{{nombre_comercial}}` (el nombre del tenant), con espacios
+opcionales adentro (`{{ empresa }}`). La lista vive en `SupportLegalVariables.All` y la consola la recibe en `variables` de
+`GET …/settings/legal-documents`. Al publicar, todo `{{…}}` que no sea uno de esos nombres, en el HTML saneado o en la pregunta, es
+`422 support.legal_document.unknown_variable` (`{{Empresa}}` y `{{}}` incluidos); lo guardado y lo que lee la consola conserva los
+tokens. **Se resuelven en un solo lugar, `SupportServedLegal.ReadAsync`**, con la empresa de la versión publicada del formulario: en
+`GET /form` y en la foto de cada aceptación, que guarda lo resuelto. En el HTML los valores van codificados (`&` → `&amp;`, `<` →
+`&lt;`…); en la pregunta, tal cual, porque el portal la pinta como texto. La pregunta por defecto no tiene variables. Un token de la
+empresa en un formulario sin empresa (`organization: null`), o un texto que resuelto pasa de 60 000 caracteres (HTML) o de 500
+(pregunta), da el mismo `404 support.public.not_found`. Un token desconocido en una fila escrita a mano se sirve literal.
+
+**La empresa que responde** (NIT del portal, spec 2026-11-15 §9.3, D-6 y D-8). El tenant elige en Ajustes › Formulario público una de sus
+empresas de Companies (`organizationCompanyId` en `PUT /settings/public-form`), y el portal muestra `organization: { name,
+documentTypeCode, documentNumber }` (`Company.Name`, `Company.DocumentType.ToWire()` y `Company.TaxId`) en `GET /form` (versión publicada)
+y en `GET /consult` (versión vigente, publicada o no). **Es obligatoria para publicar y mientras está publicado** (`organization_required`: tampoco se puede guardar un formulario publicado sin empresa, porque las variables de los documentos la usan; despublicarlo sin empresa sí). Cambiarla a una que no
+existe, es de otro tenant o está inactiva es `422 support.form.organization_unavailable`; una elegida que después se desactiva **se sigue
+mostrando** y no frena editar el formulario (sólo aparece `organization_inactive` en `publishBlockers`, que impide volver a publicar uno
+sin publicar). **Una empresa que alguna versión del formulario eligió no se puede borrar**: `support.form_versions.organization_company_id`
+tiene FK real a `companies.companies` con `ON DELETE RESTRICT`, y `DELETE …/companies/{id}` responde `422 companies.company.in_use` (sí se
+puede desactivar). Soporte la lee por el puerto `ISupportOrganizationDirectory`, cuyo adaptador vive en Bootstrapper; no referencia
+Companies. `organization: null` = formulario publicado antes de este cambio o tenant que nunca eligió: el portal no pinta la línea.
+
+**Radicar.** Con solicitante o anónimo. Los campos que se piden y cuáles son obligatorios los dice la versión vigente del formulario
+(`SupportFormFields`); el tipo de documento sale de `DocumentTypesByCountry`; el celular se guarda en E.164; en Colombia la ciudad es de
+Geography (`cityId`) y fuera, texto libre (`cityName`). Cada camino manda las versiones de sus documentos, las que la página cargó: con
+solicitante `privacyNoticeVersion` y `termsVersion` (`anonymousNoticeVersion` en `null`, `acceptsDataPolicy: true`); anónimo
+`anonymousNoticeVersion` y `termsVersion` (`privacyNoticeVersion` en `null`; `acceptsDataPolicy` se ignora). Los dos mandan
+`acceptsTerms: true`. Si `formVersion` o alguna versión que aplica ya no es la vigente, `422 support.public.form_outdated` o
+`support.public.legal_texts_outdated` y la página recarga. `acceptsDataPolicy` o `acceptsTerms` en falso, una versión que falta o una que
+no aplica salen como **`422 validation.failed`** con el campo en `errors` (`AcceptsDataPolicy`, `AcceptsTerms`, `PrivacyNoticeVersion`,
+`AnonymousNoticeVersion`, `TermsVersion`), no con un código propio: `ApiExceptionHandler` no publica el `ErrorCode` del validador. Todo lo
+que puede responder 422 va antes de la transacción, así un rechazo no gasta radicado. En la misma transacción que el ticket se guarda
+una fila de `support.legal_acceptances` por documento aceptado, con el HTML **tal como lo sirvió** `GET /form`: con solicitante, el aviso de
+privacidad (IP, pregunta mostrada, URL y caracterización) y los términos con la IP; anónimo, el aviso anónimo y los términos, **los dos sin
+IP**. Con solicitante y `customers` prendido y un único cliente con ese documento, el ticket queda vinculado; con cero o varios, el
+detalle los ofrece como candidatos. **Un anónimo** no guarda cliente —tampoco se lo vincula la consola: `PUT …/tickets/{id}/customer`
+responde `422 support.ticket.anonymous_has_no_customer` y el detalle no ofrece candidatos—, foto del solicitante, documento ni IP, y sólo
+se responde por la página de consulta (canal `Portal`). La base lo respalda con `CK_tickets_anonymous` (migración
+`AddSupportAnonymousTicketCheck`): un anónimo no puede tener `customer_id` ni ninguna columna `requester_*`, tampoco por SQL crudo, y con
+`CK_legal_acceptances_ip`: el aviso anónimo nunca lleva IP y el de privacidad siempre. Una aceptación por ticket y tipo
+(`IX_legal_acceptances_ticket_kind`, `409 support.public.legal_acceptance_duplicate`, que hoy ningún camino alcanza).
+
+**Fecha de radicación y término** (spec 2026-11-15 §9.1, D-6). La respuesta del radicado trae `receivedAt` (la radicación),
+`termBusinessDays` (`null` = el tipo no tiene término) y `termIsLegal` («plazo legal» u «objetivo»); la de `POST /tickets/lookup` suma
+`termBusinessDays`. Los dos salen de la **foto del tipo en el ticket**, nunca del tipo vivo: editar el tipo después no cambia lo que ve el
+solicitante. **Con prórroga** (D-11, owner 2026-11-16): `termBusinessDays` es el término vigente, la foto más los días hábiles de la
+prórroga (`ExtensionBusinessDays`), y las dos respuestas traen `termExtended` (`true` si el plazo se prorrogó), así cuadran con `dueOn`, que
+ya la incluye.
+
+**Radicado idempotente** (`clientRequestId`, spec 2026-11-15 §9.2, D-7). El portal genera un UUID al empezar a radicar y lo manda en cada
+reintento de ese mismo radicado (timeout, red caída, 5xx). Un reintento con la misma clave en el mismo tenant responde `201` con el mismo
+`number`, `receivedAt`, `termIsLegal`, `successMessage` (el de la versión del formulario con que se radicó) y `consultUrl`, y con `dueOn`,
+`termBusinessDays` y `termExtended` de ahora (con la prórroga, si la hubo entre los dos intentos): no crea otro ticket, no gasta número y no vuelve a mandar el correo de apertura. **La clave se mira antes de Turnstile**, del
+validador y de las versiones, **y el cuerpo no se compara** (como el checkout de la tienda). Eso salta Turnstile **sólo cuando el primer
+intento ya confirmó**: mientras el original sigue corriendo, la clave todavía no existe, y un reintento con el token ya gastado responde
+`422 support.public.captcha_invalid`. El portal entonces vuelve a correr Turnstile y reenvía con el **mismo** `clientRequestId`.
+Dos `POST` simultáneos con la misma clave dan un solo ticket: dentro de la transacción, después de tomar el número (el `UPDATE … RETURNING`
+del contador serializa las altas del tenant), la clave se vuelve a buscar; si otro la confirmó, la transacción se deshace (el número
+vuelve) y se responde el ganador. El índice único parcial `IX_tickets_tenant_client_request` es el respaldo. Sin clave, cada `POST` es
+un radicado nuevo; la clave no se audita ni va a la traza, y el reintento cuenta para el limitador. **`clientRequestId` es un UUID v4**
+(decisión del owner D-10, 2026-11-15; lo que da `crypto.randomUUID()`, como las claves de subida): vacío (`00000000-…`) u otra versión (un
+v7, por ejemplo) es `422 validation.failed` con `errors.ClientRequestId`. **El portal nunca tiene dos radicados en vuelo** y pinta sólo la
+última respuesta: un reintento de un anónimo rota el PIN, así que el PIN de una respuesta anterior ya no sirve.
+
+| El PIN del primer intento | `pin` del reintento | `pinEmailed` |
+| --- | --- | --- |
+| Salió por correo (`last_sent_channel = Email`, sin fallo) | `null`: no se vuelve a mostrar ni a mandar | `true` |
+| El correo del primer intento todavía no se anotó, y el PIN se emitió hace 10 minutos o menos (en vuelo) | `null`: un PIN nuevo invalidaría el que va en el correo | `true` |
+| No salió por ningún canal (anónimo, `send_failed`, `send_pending`), o el correo sigue sin anotarse más de 10 minutos después del PIN (el proceso murió entre confirmar y anotar) | Uno **nuevo**; el anterior deja de servir. Sólo en la respuesta, sin correo | `false` |
+
+**Turnstile se gasta antes de validar los adjuntos.** El token es de un solo uso y radicar lo verifica primero (anti-abuso: nada más
+corre sin él). Por eso **la página reinicia el widget después de cualquier `422` de `POST /tickets`** —un adjunto inválido, un campo, la
+versión del formulario—, no sólo después de `support.public.captcha_invalid`: reintentar con el mismo token responde
+`captcha_invalid` aunque el resto ya esté bien.
+
+**PIN.** Seis dígitos aleatorios. Todo ticket nace con uno, también el manual y el que se abre desde una conversación, y **sólo se guarda
+su hash** (PBKDF2, `support.ticket_access.pin_hash`). La clave vive en `ticket_access` y no en el ticket, para que un
+intento fallido no le suba la versión. Consultar con radicado y PIN: un radicado que no existe, un PIN errado y un radicado bloqueado
+responden lo mismo, `422 support.public.lookup_failed`, y los tres pagan el mismo PBKDF2 y hacen las mismas lecturas (el contexto de
+plazos y la búsqueda de la clave; un radicado mal escrito busca el 0, que no existe). **Cinco fallos seguidos bloquean ese radicado
+15 minutos**, también para el PIN correcto; un acierto pone el contador en cero. Mirar el bloqueo y anotar el intento ocurren con la fila
+de `ticket_access` tomada (`SELECT … FOR UPDATE`), así N intentos a la vez cuentan N. «Reenviar PIN» responde siempre `202`: si el ticket
+tiene a dónde (ver abajo) y pasaron 10 minutos desde el último envío, genera un PIN nuevo y lo manda **al destino registrado, nunca a uno
+del visitante**; el nuevo reemplaza al viejo sólo si salió, y reenviar no desbloquea. El reenvío reclama el envío antes de mandar
+(enfriamiento y `send_pending`, confirmados) y anota el resultado real después: si el proceso muere entre los dos, la consola ve
+`send_pending`, nunca un envío exitoso que no ocurrió. La consola ve en el detalle (`ConsultAccess`) cuándo y por qué canal salió la
+información y por qué no, nunca el PIN.
+
+**A dónde va la información con el PIN** (`SupportOpeningSender`, plan F10, F11 y F23 a F26). La misma regla al crear el ticket y al
+reenviar el PIN; al crear, sale **después** de confirmar el ticket y anota su resultado en un segundo guardado que toca sólo
+`ticket_access`: el ticket queda creado pase lo que pase con el envío, y la `version` del `201` sigue valiendo para el siguiente
+`If-Match`. Sale aunque el formulario del tenant no esté publicado: la página de consulta no depende de él (owner, 2026-11-15).
+
+| Ticket | Canal (`last_sent_channel`) | Qué sale |
+| --- | --- | --- |
+| Del formulario, con solicitante | `Email` | El correo de apertura al correo de la foto. El PIN además viaja en la respuesta del radicado |
+| Del formulario, anónimo | — | Nada: el PIN sólo se ve en la respuesta del radicado |
+| Manual con canal `Email` | `Email` | El correo de apertura al correo de la foto |
+| Manual con canal `WhatsAppTemplate` o `Thread`, sin conversación | — | **Nada** (owner, 2026-11-15): mandar a un celular nuevo pide elegir conexión y no cabe en el alta. El PIN se emite igual |
+| Desde una conversación, o manual que ya vinculó una (si su canal no es `Email`) | `Thread` | Texto por el hilo, sólo con la ventana de 24 h abierta; cerrada, nada (`window_closed`). No hay plantilla de apertura (F24) |
+
+El texto por el hilo, tuteando: `Registramos tu caso {radicado} ({tipo}). Fecha límite de respuesta: {fecha}. Consulta su estado en
+{enlace} con la clave {pin}.` La fecha va en el formato regional del tenant y, si el tipo no tiene término, dice `sin fecha límite`. El
+enlace de consulta nunca lleva el PIN. Mensajería exige un autor para la fila del mensaje: firma quien creó el ticket si sigue activo; si
+no, su responsable; si tampoco, el primer gestor en el orden de `GET /assignees`. Sin ninguno no sale (`no_author`). El `clientId` del
+mensaje sale del ticket y de la emisión del PIN (`pin_issued_at`): un reintento de la misma emisión no manda dos veces, y un reenvío es
+otro mensaje. El texto queda en el hilo de Mensajería como cualquier mensaje saliente, con el PIN: es el canal que lo entrega.
+
+**Adjuntos** (plan F30 a F37). Pasan por el pipeline de Storage —staging, magic bytes, antivirus, cuarentena, promoción a `files/` y
+barrido— con el dueño `FileOwnerType.SupportTicket`, por la subida sin miembro `IStorageSystemUploads` (Storage.Application, sin endpoint
+propio) y el adaptador `SupportAttachmentStorage` de Bootstrapper. El flujo de la página: abrir (`POST /attachments`), `PUT` del archivo
+directo al bucket privado de R2 con `uploadUrl` y los `headers` tal cual (`Content-Type` e `If-None-Match: *` van firmados), completar y,
+si sale `available`, mandar el par al radicar.
+
+- **El tenant los permite o no** (spec §9.3). `allow_attachments` es de cada versión del formulario (`PUT /settings/public-form`,
+  `allowAttachments`, obligatorio como los demás interruptores) y arranca **prendido** (owner, 2026-11-15; también el default de la
+  columna): el tenant los apaga si no los quiere. `GET /form` lo trae en `attachments` (`{ allowed, maxFiles, maxSizeBytes, mimeTypes }`):
+  la página esconde el control con `allowed` y arma su `accept` y sus avisos con el resto, sin una lista propia. Apagado, abrir,
+  completar y radicar con una lista de adjuntos no vacía responden `422 support.public.attachments_disabled`, antes de tocar Storage;
+  radicar sin adjuntos sigue igual.
+
+- **Límites** (`SupportPublicAttachmentRules`): hasta **3** archivos por ticket, **10 MB** cada uno, nombre simple de hasta 260 y sólo
+  **PDF, JPEG, PNG y WebP** (`.pdf`, `.jpg`, `.jpeg`, `.png`, `.webp`; `application/pdf`, `image/jpeg`, `image/png`, `image/webp`).
+  `image/jpg`, que no es un tipo registrado pero algunos navegadores mandan, se toma como `image/jpeg`. Abrir fuera de eso es `422
+  validation.failed` con el campo (`Name`, `MimeType`, `SizeBytes`); cuatro o un par repetido al radicar, con `Attachments`. La lista es
+  un subconjunto de la de Storage (`SupportAttachmentParityTests`).
+- **Sin Word ni Excel mientras `Storage:ClamAv:Enabled` esté apagado en producción** (owner, 2026-11-15): un adjunto anónimo con macros
+  lo abre un asesor. Sumar un tipo de Office exige prender ClamAV primero.
+- **Tope por tenant** (owner, 2026-11-15): el limitador por IP no frena a muchas IPs a la vez llenando el bucket. Un tenant tiene a lo
+  sumo **200** subidas abiertas en las últimas 24 h que ningún ticket reclamó (`MaxPendingPerTenantPerDay`; las reclamadas no cuentan);
+  pasado eso, abrir responde `422 support.public.attachments_busy`, sin tocar Storage, y la página dice «Estamos recibiendo muchos
+  archivos. Intenta más tarde.». Es un tope blando a propósito: cuenta y después abre, así que entran
+  unas pocas de más bajo ráfaga simultánea; un candado por tenant en un endpoint anónimo expondría el pool de conexiones de toda la API
+  (quien espera retiene una conexión y quien lo tiene necesita otra para Storage). El conteo es SQL crudo en `SupportAttachmentStorage` (Bootstrapper) sobre `storage.file_resources` (servido por
+  `IX_file_resources_tenant_owner_created`) y `support.ticket_attachments`.
+- **`uploadKey`** es un GUID aleatorio (v4) que sólo recibe quien abrió la sesión y que Storage guarda como `OwnerId` del archivo. Completar
+  y radicar exigen el par `(fileId, uploadKey)` del mismo tenant: otra clave, un id que no existe, un archivo sin subir o en cuarentena
+  responden lo mismo, `422 support.public.attachment_invalid`. Completar antes de que termine el `PUT` es `428
+  support.public.attachment_not_uploaded`. Un archivo `rejected` no es un error de la llamada: la página avisa antes de radicar.
+- Los adjuntos se insertan en `support.ticket_attachments` en la misma transacción del ticket. El único `IX_ticket_attachments_file`
+  impide que dos radicaciones reclamen el mismo archivo y se traduce por nombre al mismo 422; la radicación entera se deshace.
+- **Lo que nadie reclama se purga.** El barrido de staging de Storage borra, pasada la retención (`Storage:StagingRetentionHours`, 24
+  h), el adjunto `Available` que ninguna sonda retiene; la de Soporte (`SupportAttachmentReferenceProbe`) retiene los reclamados. Mira
+  sólo los de la última semana pasada la retención: un adjunto sin reclamar más viejo (el worker caído más de siete días) queda sin purgar.
+  La fila se guarda (`Purged`) antes de borrar los objetos: si borrar falla, queda un objeto huérfano en el bucket y un log de error,
+  nunca una fila `Available` que apunta a un objeto borrado. Queda abierta una carrera en el borde de las 24 h: un radicado que reclama
+  el archivo justo después de que la sonda dijo «nadie lo retiene» y antes de que la purga se guarde. Exige que la página espere 24 h
+  entre subir y radicar.
+- **Consola:** el detalle del ticket trae `attachments` (`id`, `fileName`, `mimeType`, `sizeBytes`) y
+  `GET /api/v1/tenants/{tenantId}/support/tickets/{ticketId}/attachments/{attachmentId}/download` (`support.ticket.view`) responde `{ url }`
+  firmada de 5 minutos, sin pedir `storage.file.read`; audita `support.ticket.attachment_downloaded`. Otro tenant es 403; un adjunto que
+  no es del ticket, `404 support.attachment.not_found`.
+- **Los archivos `SupportTicket` no se ven desde la consola de Storage.** Son dueño de sistema (`SystemOwnedFiles`): `GET /files` no
+  los lista, cada ruta por id de `/files/{fileId}` (descarga, publicación, metadatos, completar, cancelar, borrar) responde `404
+  storage.file.not_found` aunque el miembro tenga todo `storage.file.*`, y `POST /files` con `ownerType: SupportTicket` es `422
+  storage.file.owner_type_invalid`. Tampoco los ven Catalog (foto de producto) ni Quotations (adjunto de pedido). Sólo llegan por las
+  rutas de Soporte.
+
+**Rutas de la consola** (fase 3), bajo `/api/v1/tenants/{tenantId}/support`:
+
+| Método y ruta | Política | Qué hace |
+| --- | --- | --- |
+| `GET` · `PUT /settings/public-form` | `support.settings.view` · `support.settings.manage` | Configuración del formulario; cada guardado crea una versión. Publicar exige los tres documentos (`privacy_notice_required`, `anonymous_notice_required`, `terms_required` → `422 support.form.legal_texts_required`) y la empresa que responde (`organization_required`, `organization_inactive` → `422 support.form.organization_required` / `organization_inactive`). La respuesta trae `organization` (la elegida, con `isActive`) y `organizationOptions` (las activas del tenant, por nombre: el selector no necesita `companies.company.read`); el cuerpo del `PUT` suma `organizationCompanyId` (`null` = sin empresa) |
+| `GET /settings/legal-documents` | `support.settings.view` | Los tres documentos vigentes; el que no tiene versión trae su ejemplo (`version: 0`, `isExample: true`). Al final, `variables: [{ name, label, example }]`, las que el editor puede insertar |
+| `GET /settings/legal-documents/{kind}/versions` · `…/versions/{version}` | `support.settings.view` | Historial de un tipo, de la más nueva a la más vieja, y una versión vieja |
+| `POST /settings/legal-documents/{kind}` (`If-Match`, `0` sin versión) | `support.settings.manage` | Publica la versión `n+1` del tipo, saneada y con sus variables sin resolver; la respuesta es lo guardado. Una variable que no está en la lista es `422 support.legal_document.unknown_variable` |
+| `GET /tickets/{ticketId}/legal-acceptances/{kind}` | `support.ticket.view` | La foto de lo que el solicitante aceptó: HTML servido, pregunta, URL, caracterización e IP. Sin fila, `404 support.legal_acceptance.not_found` |
+| `GET /tickets/{ticketId}/attachments/{attachmentId}/download` | `support.ticket.view` | URL firmada del adjunto (arriba) |
+
+`{kind}` ∈ `privacy-notice`, `anonymous-notice`, `terms` (otro es `404 support.legal_documents.kind_not_found`); en los cuerpos viaja como
+`PrivacyNotice`, `AnonymousNotice`, `Terms`. El detalle del ticket trae `legalAcceptances` (`kind`, `version`, `acceptedAt`, `visitorIp`, sin el
+contenido), en ese orden y `[]` en un ticket manual. Las rutas `…/settings/legal-texts` de la fase 3 ya no existen. **`contentHtml` llega
+saneado en toda lectura** de la consola (documento vigente, versión vieja, respuesta del `POST` y foto de una aceptación): lo guardado ya es
+punto fijo del saneador, así que los bytes no cambian y la prueba guardada no se toca. `authorizationQuestion`, `organization.*`,
+`tenantName` y `successMessage` son texto plano: nunca van a `innerHTML`. El autor (`createdBy`) trae `isMe` contra quien lee.
+
+**Configuración** `Support:PublicForm` (`appsettings.json`, defaults en código):
+
+| Clave | Default | Para qué |
+| --- | --- | --- |
+| `BaseUrl` | `https://soporte.lulocrm.com` | Arma el enlace de consulta (`{BaseUrl}/{slug}/consultar?radicado=SOP-…`, sin PIN) |
+| `Hostname` | `soporte.lulocrm.com` | El hostname que Turnstile tiene que reportar; se exige sólo en `Production` |
+| `AllowedOrigins` | vacía | Orígenes exactos de la página para la política CORS `support-public` (sin credenciales, `GET` y `POST`, sólo `Content-Type`) |
+
+`AllowedOrigins` sigue las reglas de `Cors:AllowedOrigins`: https exacto, sin comodín, ruta ni barra final; `http://localhost[:puerto]`
+sólo en `Development` (`appsettings.Development.json` trae `http://localhost:4322`, el puerto fijo del portal `qep-frontend-support` en
+local; `3002` es la consola, que no llama al grupo público). En `Production` es
+obligatoria y no puede traer un `#{…}#` sin resolver: el pod no arranca (`SupportPublicFormOptionsValidator`). Turnstile es el de la tienda
+(`Store:Turnstile:*`, ver [Tienda pública](#secretos)). **El bucket privado de R2 necesita CORS para el origen de la página**, porque el
+`PUT` del adjunto sale del navegador: `PUT` con los headers `Content-Type` e `If-None-Match` desde `https://soporte.lulocrm.com` (y
+`http://localhost:4322` para probar en local).
+
+**El alias estable de `develop` del portal en Vercel** todavía no existe (el proyecto de Vercel no se ha creado). Cuando exista, se agrega
+como `Support__PublicForm__AllowedOrigins__N` del backend de desarrollo y en el CORS del bucket de desarrollo; no va en `appsettings*.json`.
+
+**Slugs reservados.** Las rutas fijas del host (`consultar`, `calificar`, `api`…) no pueden ser slug de un tenant nuevo (`422
+tenancy.slug.reserved`). Antes de desplegar se corre la consulta de los avisos de [Soporte](#soporte) contra producción.
+
+**Prueba legal.** `support.legal_document_versions` y `support.legal_acceptances` son insert-only: ningún método edita ni borra,
+`legal_acceptances` no tiene FK (ni al ticket ni a la versión: guarda su propia foto del HTML servido) y el `Down` de
+`AddSupportLegalDocuments` no las borra. **Todo HTML de un documento pasa por `ISupportHtmlSanitizer`**: al publicar (se guarda la salida),
+al servir `GET /form` y al escribir la foto. El saneador corre hasta que la salida no cambia y rechaza (`422 validation.failed` en
+`ContentHtml`) un HTML de más de 10 000 elementos o más de 100 niveles de anidamiento. Las tablas de la fase 3,
+`support.legal_text_versions` y `support.consents`, se quedan con sus filas y **sin escritor ni lector**: siguen mapeadas en
+`SupportDbContext` sólo para que EF no las borre, y el `Down` de `AddSupportPublicForm` tampoco las borra.
+
+**Migraciones:** `Support` `AddSupportPublicForm` (`form_versions`, `legal_text_versions`, `consents`, `ticket_access` y las columnas del
+formulario en `tickets`), `Support` `AddSupportTicketAttachments` (`ticket_attachments`), `Support` `AddSupportFormAllowAttachments`
+(`form_versions.allow_attachments`, `true` por defecto), `Support` `AddSupportAnonymousTicketCheck` (`CK_tickets_anonymous`) y `Storage`
+`AddFileResourceTenantOwnerCreatedIndex` (`IX_file_resources_tenant_owner_created`, para el tope de subidas). `SupportTicket` se guarda
+por nombre en `owner_type`, sin migración. `Support` `AddSupportLegalDocuments` (`legal_document_versions` y `legal_acceptances`) es
+aditiva y **rellena**: la versión vigente de los textos de la fase 3 de cada tenant pasa a `PrivacyNotice` versión 1 (autorización más
+política, como HTML canónico: escapa `&`, `<`, `>`, un párrafo por línea en blanco, `<br>` por salto) y, si tenía términos, a `Terms`
+versión 1, con el autor y la fecha de origen; ningún `AnonymousNotice`, y un texto sólo de espacios no se copia. Si un texto convertido
+pasa de 60 000 caracteres la migración **se detiene** con el id del tenant (`tenant … legal text exceeds 60000 characters after
+escaping`) en vez de recortar un texto legal: se acorta a mano y se vuelve a desplegar. `Support` `AddSupportTicketClientRequestId`
+(`tickets.client_request_id` y el índice único parcial `IX_tickets_tenant_client_request`) es aditiva y sin relleno; su `Down` quita
+índice y columna. `Support` `AddSupportFormOrganization` (`form_versions.organization_company_id`, `IX_form_versions_organization_company`
+y la FK `FK_form_versions_companies_organization_company_id` a `companies.companies` con `ON DELETE RESTRICT`, escrita a mano porque EF no
+modela relaciones entre contextos, como `pos.cash_sessions`) es aditiva; su `Down` quita FK, índice y columna. Companies migra antes que
+Support.
+
+#### Tiempo real y notas internas de Soporte
+
+Spec `docs/superpowers/specs/2026-11-15-support-realtime-and-notes-design.md`, plan
+`docs/superpowers/plans/2026-11-15-support-realtime-and-notes-backend.md`. La consola sabe al instante que un ticket cambió y quién más
+está respondiendo, por un hub de SignalR **global** que no es de ningún módulo; y el asesor deja notas internas con texto y archivos que
+nunca salen al solicitante.
+
+**El hub.** Vive en `src/Bootstrapper/Realtime/` (`AppHub`), mapeado en `/api/v1/hubs/app` (no en `/hubs/app`: el query `tenantId` sólo
+se acepta bajo `/api/v1/hubs/`, plan N1). Mismo transporte que el de Mensajería: sólo WebSocket con `skipNegotiation: true` y sesión por
+cookie. Al conectar, sin claim de tenant o sin membresía activa la conexión se aborta; el endpoint no exige módulo (lo exige cada tópico).
+
+| Qué | Valor |
+| --- | --- |
+| Métodos | `Subscribe(topic)` (no devuelve nada; repetirlo no duplica), `Unsubscribe(topic)` (nunca falla), `SetPresence(topic, state)` con `state` ∈ `composing`, `none` |
+| Tópicos de Soporte | `support` (la bandeja) y `support:ticket:{ticketId}` (un detalle, el id en minúsculas, formato `D`). Exigen el módulo `support` y `support.ticket.read` o `support.ticket.manage`; un ticket, además, del tenant. `SetPresence` sólo en un ticket al que **esa conexión** ya se suscribió y con `manage`. Lo demás —tópico mal formado, sin autorizador, más de 50 por conexión, estado desconocido— es `HubException` con `support.realtime.topic_forbidden` (owner O3) |
+| Eventos | `supportTicketChanged { ticketId }` a los suscritos al ticket y a la bandeja; `presenceChanged { topic, members: [{ memberId, name, state }] }` a cada conexión del ticket **sin su propio miembro** (lista vacía: nadie más escribe). Suscribirse a un ticket manda enseguida la foto de la presencia sólo a esa conexión |
+| Grupo | `{tenantId}:{topic}`: el tenant es siempre el de la conexión, nunca uno que mande el cliente |
+| Fanout | `pg_notify('qep_realtime', …)` después del commit (`PgRealtimePublisher`, conexión con pool); cada pod tiene un `RealtimeEventsListener` en `LISTEN qep_realtime` con conexión propia sin pool (la misma regla de `ConnectionStrings:QepDatabaseListener`) que entrega los avisos **en orden** a sus conexiones. Dos `LISTEN` por pod mientras Mensajería no se mude |
+| Presencia | Valkey, clave `qep:rt:presence:{tenantId}:{topic}` (área `Valkey:Areas:Presence`), una entrada por **conexión** (`{memberId}:{connectionId}`) que vale 45 s; la clave expira a los 60 s y la pantalla renueva cada 20 s. Sin Valkey, memoria del pod. `RealtimePresenceSweeper` relee cada 5 s lo que el pod entregó no vacío, así una entrada de un pod caído desaparece a los ≤ 50 s |
+
+Avisan crear (consola, conversación y formulario público), estado, responsable, tipo, cliente, fijar, soltar, seguir el hilo, responder,
+nota, clasificar y «De ninguno», y el worker del hilo. Un aviso que falla se registra y no deshace la escritura. La fusión y el borrado de
+clientes **no** avisan (owner O5): la pantalla los ve al releer.
+
+**Notas internas.** Dos tablas insert-only, `support.ticket_notes` y `support.ticket_note_files`. Una nota no pasa por el agregado del
+ticket: no sube `version` ni cambia el `ETag`, no escribe `ticket_events`, no sale en eventos de integración y **nunca** aparece en
+`public/support`. Rutas, bajo `/api/v1/tenants/{tenantId}/support`:
+
+| Ruta | Permiso | Qué hace |
+| --- | --- | --- |
+| `GET /tickets/{ticketId}/notes?before=&take=` | `support.ticket.view` | Página del más nuevo al más viejo (`SupportTicketNotesDto`); `take` 1–100, 50 por defecto; `before` es el cursor de `next` |
+| `POST /tickets/{ticketId}/notes` | `support.ticket.manage` | `{ clientId, text, fileIds }` sin `If-Match` → `201 SupportTicketNoteDto`. Texto de 1 a 4 096 recortado, sin caracteres de control salvo salto de línea y tabulador; hasta 5 archivos |
+| `POST /tickets/{ticketId}/notes/attachments` | `support.ticket.manage` | `{ name, mimeType, sizeBytes }` → `201 { fileId, uploadUrl, headers }`; mismos límites que el formulario público (10 MB, PDF/JPEG/PNG/WebP) |
+| `POST /tickets/{ticketId}/notes/attachments/{fileId}/complete` | `support.ticket.manage` | `{ status }` (`available` o `rejected`) |
+| `GET /tickets/{ticketId}/notes/{noteId}/files/{fileId}/download` | `support.ticket.view` | `{ url }` firmada 5 minutos; audita `support.ticket.attachment_downloaded` |
+
+El `clientId` es el id de la nota: el reintento del mismo autor en el mismo ticket recibe la nota guardada (aun con el ticket ya cerrado);
+el mismo `clientId` en otro ticket o de otro autor, o la carrera que pierde, es `409 concurrency.conflict`. Errores: `422 validation.failed`
+(`errors.ClientId`, `Text`, `Take`, `Before`, `Name`, `MimeType`, `SizeBytes`), `422 support.note.too_many_files` (más de 5 o repetidos),
+`422 support.note.file_invalid` (no existe, es de otro ticket u otro miembro, no está `Available` o ya está en otra nota),
+`422 support.note.ticket_closed` (crear o abrir una subida en un ticket cerrado), `428 support.public.attachment_not_uploaded` (completar
+antes del `PUT`) y `404 support.attachment.not_found` (la nota no es del ticket o el archivo no es de la nota). Crear una nota audita
+`support.ticket.note_added` y avisa por el hub.
+
+Los archivos usan la subida sin miembro de Storage con dueño `SupportTicket` y clave `SupportNoteUploads.OwnerKey(ticket, miembro)`
+(SHA-256 de `support-note|{ticketId}|{memberId}` marcado como UUID v8, plan N18): sólo quien abrió la subida la usa, y sólo en una nota
+de ese ticket; una subida del formulario público no sirve en una nota ni al revés. `ticket_note_files` guarda la foto del archivo
+(nombre, tipo y tamaño) y la retiene `SupportAttachmentReferenceProbe` frente al barrido de staging. El tope `attachments_busy` del
+formulario cuenta sólo claves v4 (las suyas), así que una subida de nota, adjunta o abandonada, nunca cuenta; y completar o radicar
+con un `uploadKey` que no es v4 responde `422 support.public.attachment_invalid` (`SupportPublicUploads`).
+
+**Migración:** `Support` `AddSupportTicketNotes` (`ticket_notes`, `ticket_note_files`), aditiva.
+
+#### Gestión y plazos de Soporte (fase 4a)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-4a-management-and-deadlines-backend.md` (spec §7.2, §7.5, §9.4 y §12). Cuatro
+ajustes de gestión y la prórroga del plazo. Todas las escrituras de ticket auditan en la misma transacción y avisan por el hub después
+de confirmar; un cambio que no cambia nada no sube `version`, no audita y no avisa.
+
+| Método y ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `POST /tickets` (cambia) | `support.ticket.manage` | `CreateTicketRequest` + `anonymous` (`bool?`, null = `false`) | `201 SupportTicketDetailDto`; `issuedPin` sólo si es anónimo |
+| `DELETE /settings/ticket-types/{typeId}` (`If-Match`) | `support.settings.manage` | — | `204`; 404, 412, `422 support.ticket_type.in_use`, 428 |
+| `POST /tickets/{ticketId}/take` (`If-Match`) | `support.ticket.manage` | — | `SupportTicketDetailDto`; 404, 412, 422, 428 |
+| `POST /tickets/{ticketId}/extension` (`If-Match`) | `support.ticket.manage` | `{ businessDays, reason }` | `SupportTicketDetailDto`; 404, 412, 422, 428 |
+
+**Alta manual anónima.** Con `anonymous: true`, `customerId` y `requester` tienen que venir `null` y `replyChannel` tiene que ser
+`Portal`; si no, `422 validation.failed` en `CustomerId`, `Requester` o `ReplyChannel`. Sin anónimo, `Portal` también es
+`422 validation.failed` en `ReplyChannel`. `manualMedium` sigue obligatorio. El ticket nace con `isAnonymous: true`, sin cliente ni foto
+del solicitante, y con PIN como cualquier otro: **el PIN viaja una sola vez**, en `issuedPin` del `201` del alta, para que el asesor se
+lo dicte a quien llamó o vino en persona (es su única forma de consultar el radicado). En el `GET` del detalle, en la respuesta de cualquier
+acción y en la auditoría es `null` o no está. No se manda nada al abrir (no hay a dónde): `consultAccess.channel` queda `null`.
+
+**Borrar un tipo de ticket.** Sólo uno que ningún ticket usa, en cualquier estado (si no, `422 support.ticket_type.in_use`: se
+desactiva). La regla la cierra la base con la FK `FK_tickets_ticket_types_ticket_type_id` (`ON DELETE RESTRICT`), que
+`SupportUnitOfWork` traduce por nombre: un borrado que choca con un ticket (`23001`) es `in_use`, y un alta o cambio de tipo contra un
+tipo recién borrado (`23503`) es `422 support.ticket_type.unavailable`. El handler pregunta antes solo para responder rápido. Los tipos
+sembrados también se borran y no se vuelven a sembrar. `SupportTicketTypeDto` trae `inUse` para que la tabla de ajustes ofrezca
+«Eliminar» o sólo «Desactivar». Audita `support.ticket_type.deleted`.
+
+**«Asignármelo».** Asigna el ticket a la membresía de quien llama, con la misma regla del responsable (membresía activa con
+`support.ticket.manage`). Ya suyo: `200` sin cambio de versión. Resuelto o cerrado: `422 support.ticket.not_editable`. Audita
+`support.ticket.assigned`. Todo `SupportMemberDto` trae `isMe`, falso fuera de una sesión (consulta pública, worker del hilo).
+
+**Prórroga del plazo** (spec §7.2). Una sola por ticket, con motivo, antes de que venza, y nunca mayor que el término inicial (el plazo
+total no pasa del doble). Se guarda en **días hábiles** (`extension_business_days`) y no como fecha: el vencimiento es siempre
+término + prórroga + pausas desde la radicación, así una pausa posterior o un cambio de tipo la siguen contando (cambiar de tipo conserva
+los días de prórroga y recalcula con el término nuevo). `businessDays` va de 1 a 365 y `reason` de 1 a 1 000 caracteres recortado
+(si no, `422 validation.failed` en `BusinessDays` o `Reason`). Las reglas del dominio, en este orden:
+
+| Código (422) | Cuándo |
+| --- | --- |
+| `support.ticket.not_editable` | El ticket está `Resolved` o `Closed` |
+| `support.ticket.extension_already_used` | Ya se prorrogó |
+| `support.ticket.extension_no_term` | El tipo no tiene término |
+| `support.ticket.extension_clock_stopped` | El reloj está detenido (`WaitingOnCustomer`) |
+| `support.ticket.extension_overdue` | Hoy (fecha local del tenant) es posterior al vencimiento; el mismo día del vencimiento todavía se puede |
+| `support.ticket.extension_too_long` | `businessDays` es mayor que el término del ticket |
+
+El detalle trae en `clock` la prórroga hecha (`extension: { businessDays, reason, extendedAt }`) y `maxExtensionBusinessDays`: el
+término si hoy se puede prorrogar, `null` si no; con eso la pantalla muestra u oculta «Prorrogar» sin repetir las reglas. La traza
+suma el evento `Extended` con `extensionBusinessDays`, `fromDueOn`, `toDueOn` y `reason`. Audita `support.ticket.extended` con los
+campos `dueOn` y `extension`, **nunca el motivo**. El backend no le avisa al solicitante: el asesor manda el aviso como una respuesta
+normal (`POST …/replies`), por el canal del ticket.
+
+**Migraciones:** `Support` `AddTicketTypeForeignKey` (la FK) y `Support` `AddTicketExtension` (`extension_business_days int not null
+default 0`, `extension_reason varchar(1000)`, `extended_at timestamptz`, el CHECK `CK_tickets_extension` y `Extended` en
+`CK_ticket_events_kind`). Las dos son aditivas.
+
+**Avisos para quien opera:**
+
+- **Antes de desplegar `AddTicketTypeForeignKey`**, en producción esta consulta tiene que dar `0`; si no, la FK no se crea y la
+  migración falla (un ticket apunta a un tipo que ya no existe, cosa que hasta hoy ningún camino del código hacía):
+
+  ```sql
+  SELECT count(*) FROM support.tickets t WHERE NOT EXISTS (SELECT 1 FROM support.ticket_types y WHERE y.id = t.ticket_type_id);
+  ```
+
+- **Durante el rollout**, un pod viejo no conoce el valor `Extended` de `ticket_events.kind`: EF lo lee con `Enum.Parse`, así que el
+  detalle de un ticket ya prorrogado responde `500` en ese pod (los demás tickets, no). Es el mismo caso que los eventos nuevos de la
+  fase 2 y se arregla solo al terminar el rollout; para evitarlo, nadie prorroga hasta que no quede un pod viejo.
+- **Un pod viejo también recalcula `due_on` sin la prórroga.** Al reanudar un ticket que esperaba al cliente (lo hace solo
+  `SupportThreadFollower` cuando el cliente escribe) o al cambiarle el tipo, el código viejo escribe término + pausas y pierde los
+  días prorrogados; nada lo corrige hasta otra reanudación o cambio de tipo en un pod nuevo. Por eso la regla de no prorrogar vale
+  hasta que no quede un pod viejo.
+- **Rollback del código:** con tickets ya prorrogados, el código viejo da `500` en el detalle de cada uno, en todos los pods y para
+  siempre (no lee `Extended`), y les recalcula el vencimiento sin la prórroga. Un rollback después de la primera prórroga exige
+  volver a desplegar el código nuevo; no lo hagas sin revisar `SELECT count(*) FROM support.tickets WHERE extended_at IS NOT NULL;`.
+- **«El doble del término» se mide contra el término vigente al prorrogar** (P-3 y P-5). Si después le cambias el tipo a uno de
+  término menor, la prórroga se conserva y el total puede pasar del doble del término nuevo. Es lo decidido: no lo «arregles»
+  recortando la prórroga.
+
+#### PIN nuevo de un ticket anónimo
+
+Spec `docs/superpowers/specs/2026-11-16-support-anonymous-pin-reissue-design.md`. Un anónimo no tiene correo ni hilo, así que
+«Reenviar PIN» del portal nunca le manda nada; si perdió el PIN o quedó bloqueado, el asesor le genera uno nuevo desde la consola.
+
+| Método y ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `POST /tickets/{ticketId}/pin` (`If-Match`) | `support.ticket.manage` | — | `SupportTicketDetailDto` con `issuedPin` y `consultUrl`; 403, 404, 412, `422 support.ticket.pin_not_anonymous`, 428 |
+
+- Sólo anónimos: un ticket con solicitante o cliente usa el reenvío público. Vale en cualquier estado, cerrado incluido.
+- **Desbloquea** la consulta: pone en cero los fallos y quita el bloqueo (el reenvío público sigue sin desbloquear). El PIN viejo deja
+  de servir.
+- Sube la `version`, suma el evento `PinReissued` (sólo el actor) y audita `support.ticket.pin_reissued` con el campo `pinIssuedAt`.
+  El PIN nunca va a la traza, a la auditoría ni a un log.
+- `consultUrl` (`string?`, último campo del detalle) es el enlace de la página de consulta del radicado. Viaja **sólo** junto con
+  `issuedPin`: en este `200` y en el `201` del alta manual anónima. En toda otra lectura los dos son `null`.
+- **Migración:** `Support` `AddSupportPinReissuedEventKind`, que sólo agrega `PinReissued` a `CK_ticket_events_kind`. Durante el
+  rollout un pod viejo no lee `PinReissued` (EF hace `Enum.Parse`) y el detalle de ese ticket le da `500`, como con `Extended`: nadie
+  genera un PIN nuevo hasta que no quede un pod viejo.
+
+#### Respuesta formal, encuesta, cierre automático y reportes de Soporte (fase 4b)
+
+Plan `docs/superpowers/plans/2026-11-15-support-phase-4b-formal-reply-survey-reports-backend.md` (spec §7.5, §8.3, §8.4, §8.5, §9.4 y
+§10). Cuatro piezas: la respuesta formal en PDF, la encuesta de satisfacción de cada resolución, el cierre automático de los tickets
+resueltos y el reporte de Soporte.
+
+| Método y ruta | Permiso | Cuerpo | Respuesta |
+| --- | --- | --- | --- |
+| `POST /tickets/{ticketId}/replies` (cambia) | `support.ticket.manage` | + `formal: { decision, signerTitle, annexes[] }` | `201`; 422 `support.reply.formal_organization_required`, `formal_signer_required`, `document_render_failed` |
+| `GET /tickets/{ticketId}/reply-options` (cambia) | `support.ticket.view` | — | + `formal` (sugerida, motivo de bloqueo, motivo del hilo, conexiones con la plantilla) |
+| `GET /tickets/{ticketId}/replies/{replyId}/document` | `support.ticket.view` | — | URL firmada de 5 minutos; 404 `support.reply.document_not_found` |
+| `GET` / `PUT /settings` (cambia) | `support.settings.view` / `support.settings.manage` | + `formalNextStep`, `surveyEnabled`, `autoCloseBusinessDays` | + los mismos y el rango del cierre |
+| `POST` / `PUT /settings/ticket-types…` (cambia) | `support.settings.manage` | + `formalNextStep` | + `formalNextStep` |
+| `GET /reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | `support.ticket.view` | — | `SupportReportDto` |
+
+Todas bajo `/api/v1/tenants/{tenantId}/support`. Las públicas, bajo `/api/v1/public/support/{tenantSlug}` (CORS `support-public`, sin
+credenciales, `no-store`, exentas de CSRF por el prefijo, todas con el limitador de la consulta):
+
+| Método y ruta | Cuerpo | Respuesta |
+| --- | --- | --- |
+| `POST /tickets/lookup` (cambia) | como antes | + `survey: { canRate, rating, options }` (null sin resolución); cada respuesta formal trae `documentUrl` (10 minutos) y `documentFileName` |
+| `POST /tickets/rating` | `{ number, pin, turnstileToken, rating, comment }` | lo mismo que la consulta; 422 `support.public.lookup_failed`, `support.survey.closed`, `support.survey.already_answered` |
+| `POST /surveys/lookup` | `{ token }` | `SupportPublicSurveyDto`; 404 `support.survey.not_found` |
+| `POST /surveys/answer` | `{ token, rating, comment }` | `SupportPublicSurveyDto`; 404, 422 `closed` / `already_answered` / `validation.failed` |
+
+**Los ajustes del `PUT /settings` son opcionales, salvo el umbral.** El frontend publicado manda sólo `{ dueSoonBusinessDays }`, así que
+`formalNextStep`, `surveyEnabled` y `autoCloseBusinessDays` ausentes (o `null`) conservan lo guardado; el rango 1–30 del cierre se valida
+sólo si llega. Para borrar el «siguiente paso» se manda vacío (`""`). La misma regla vale para `formalNextStep` en el
+`PUT /settings/ticket-types/{id}`, aunque el resto de ese cuerpo reemplace el tipo entero: el frontend publicado no manda el campo, y
+editar un tipo no le borra su siguiente paso.
+
+**Respuesta formal.** Una respuesta normal con `formal` en el cuerpo, en cualquier tipo y estado (el tipo sólo la *sugiere*, con
+`requiresFormalResponse`). `text` es el mensaje del canal; `formal.decision` (1 a 20 000 caracteres, con saltos de línea) es el análisis y
+la decisión del PDF; `formal.signerTitle` (1 a 120) es el cargo; `formal.annexes`, de 0 a 10 textos de hasta 200, se imprimen como lista.
+`formal` y `uploadId` no van juntos. **Firma el responsable del ticket**, no quien envía: sin responsable, `422
+support.reply.formal_signer_required`. El membrete es la empresa del formulario del ticket o, sin ella, la del formulario vigente; sin
+ninguna, `422 support.reply.formal_organization_required`. El «siguiente paso» (sección 7) es el del tipo o, si no tiene, el del tenant;
+sin los dos, el PDF omite la sección. El PDF se genera (Typst en `qcode-pdf`, `formal-reply.typ`) y se guarda **antes** de la fila de la
+respuesta, en el bucket privado (`support/tenants/{tenantId}/replies/{yyyy}/{MM}/{guid}.pdf`); `support.ticket_reply_documents` guarda
+la foto de lo que salió. Un reintento de una respuesta `Pending` manda el **PDF guardado**, nunca lo vuelve a generar. Por canal: en el
+hilo de WhatsApp, un documento con `text` de pie; en Instagram, el texto y después el archivo; fuera de la ventana de WhatsApp, la
+plantilla «Respuesta formal» con el PDF de encabezado; por correo, adjunto; por la página de consulta, publicado y descargable.
+
+**Plantillas.** Dos tipos nuevos de `MessageTemplateKind`, aprovisionados **por conexión** como «Aviso de respuesta»:
+
+| Plantilla | Tipo y nombre | Aprovisionar | Borrador |
+| --- | --- | --- | --- |
+| Respuesta formal | `SupportFormalReply`, `qep_soporte_formal` (`UTILITY`, encabezado de documento) | `POST …/template-management/support-formal-reply` | `GET …/support-formal-reply/draft` |
+| Encuesta | `SupportSurvey`, `qep_soporte_encuesta` (`UTILITY`, tres botones fijos `Buena`, `Regular`, `Mala`) | `POST …/template-management/support-survey` | `GET …/support-survey/draft` |
+
+Las rutas cuelgan de `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}` y piden `messaging.template.manage`. El tenant
+edita el texto (cuerpo opcional `{ body }`), no los botones: Soporte lee el toque por su texto. Una plantilla aprobada no se edita:
+cambiarla es una versión nueva (`_v2`…) y otra aprobación.
+
+**Encuesta.** Toda transición a Resuelto pide una encuesta de ese ciclo, en el dominio (`ChangeStatus`), aunque el tenant la tenga
+apagada (`surveyEnabled`, apagada por defecto): el worker la salta con `survey_disabled`. Una por `(ticket, número de resolución)`. El
+worker la manda por el canal del ticket: anónimo o por la página de consulta, publicada ahí; conversación de WhatsApp, la plantilla de
+la encuesta (sin plantilla aprobada, sin Mensajería, sin autor o con el contacto bloqueado: «sin encuesta» con el motivo); por correo,
+o un ticket de Instagram con correo, un correo con el enlace de calificación; **nunca por Instagram**. Si el ticket se reabrió antes del
+envío, «sin encuesta» con `ticket_reopened`. `send_failed` y `connection_unavailable` se reintentan a 1, 5 y 15 minutos y después quedan
+`Failed`; una excepción inesperada sigue el mismo camino. El toque de WhatsApp que cita la encuesta la califica; después sale **un**
+mensaje libre que pide el comentario («Gracias. Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.»), sin reintento ni
+recordatorio, y el siguiente texto del cliente **escrito** dentro de las 24 horas del toque es el comentario (la ventana se mide con la
+hora del mensaje, no con la del worker). Por el correo, el enlace es
+`{Support:PublicForm:BaseUrl}/{slug}/calificar?token=…`: el token viaja en el cuerpo de la API, nunca en una ruta, y sólo se guarda su
+SHA-256. La página de consulta califica con radicado y PIN, con la misma verificación (y el mismo conteo de intentos) que consultar; un
+anónimo sólo califica por ahí. La encuesta se responde una vez, hasta que el ticket se reabre (también después del cierre automático).
+Un cambio de la encuesta no sube la versión del ticket, pero avisa por el hub.
+
+**La encuesta y el asistente.** El toque de un botón de la encuesta entra al hilo como cualquier entrante, pero **no se encola para el
+asistente** (owner, 2026-11-16): Mensajería lo reconoce porque cita un saliente cuya plantilla (nombre e idioma del `details`) es la fila
+`SupportSurvey` de esa conexión (`InboundIngestion.IsSupportSurveyTapAsync`). **Efecto conocido y aceptado:** el comentario libre que el
+cliente escribe después sí despierta al asistente, si la conversación lo tiene activo y sin asesor, porque no cita nada que lo distinga
+de un texto cualquiera. Tampoco se filtra el toque de una encuesta cuya fila de plantilla se borró.
+
+**Cierre automático.** Un ticket Resuelto se cierra el día después del N-ésimo día hábil (calendario de Soporte) contado desde la
+resolución o desde la última respuesta del cliente que sigue en el expediente (vínculo `Linked` o `Pinned`), lo que sea más tarde.
+`autoCloseBusinessDays` va de 1 a 30, 5 por defecto, y no se apaga. Soltar la respuesta devuelve la fecha; el toque y el comentario de
+ninguna encuesta del tenant cuentan (el seguimiento vincula cada entrante a todos los tickets abiertos de la conversación, así que el
+toque de la encuesta de un ticket también queda en el otro). Cierra el sistema: traza sin actor, auditoría de sistema `support.ticket.status_changed` y `TicketClosed` en el
+hilo. El detalle trae `clock.autoCloseOn` mientras está Resuelto, recalculado en cada lectura.
+
+**Reporte.** La población son los tickets cuya **fecha local de radicación** cae en `[from, to]` (las dos obligatorias, hasta 366 días).
+Trae los seis estados, todos los tipos del tenant (activos o no, en su orden) y las tres calificaciones, también en cero. Los totales
+cierran: `onTime + late + withoutTerm = resolved` y `pending + sent + withoutSurvey + failed + disabled = requested`. Resuelto es un
+ticket Resuelto o cerrado **desde** Resuelto: uno reabierto y cerrado desde «Esperando al cliente» conserva el `resolved_at` del ciclo
+anterior y no cuenta. El tiempo de
+resolución son los días hábiles después de la radicación hasta la última resolución, en bruto (sin descontar pausas).
+
+**Workers** (sección `Support:Workers`, defaults en código; `Support:Workers:Enabled` en `false` los apaga):
+
+| Worker | Clave | Default | Qué hace |
+| --- | --- | --- | --- |
+| `SupportSurveyWorker` | `SurveyIntervalSeconds` | 30 | Sin timbres, cada cuánto mira la cola `support_survey` |
+| | `SurveyBatchSize` | 5 | Encuestas por reclamo; cada una renueva su reclamo de 2 minutos antes de mandarse |
+| | `SurveyCommentWindowHours` | 24 | La ventana del comentario, desde el toque |
+| | `SurveyAnswerLookbackDays` | 14 | Hasta cuándo se buscan toques de una encuesta mandada |
+| `SupportAutoCloseWorker` | `AutoCloseIntervalMinutes` | 15 | Cada cuánto revisa los tickets Resueltos |
+
+**Migraciones:** `Support` `AddSupportFormalNextStep`, `Support` `AddSupportReplyDocuments`, `Messaging`
+`AddSupportFormalAndSurveyTemplateKinds`, `Support` `AddSupportSurveys` y `Support` `AddSupportAutoCloseAndSurveyIndexes` (los índices
+parciales de los recorridos del cierre automático y de la encuesta). Las cinco son aditivas.
+
+##### Despliegue (fase 4b)
+
+| Migración | Pods viejos durante el rollout |
+| --- | --- |
+| `AddSupportFormalNextStep` | Ignoran las columnas. |
+| `AddSupportReplyDocuments` | Una respuesta que borra un pod viejo se lleva su documento por la cascada. |
+| `AddSupportFormalAndSurveyTemplateKinds` | Ver abajo: no aprovisionar las plantillas nuevas mientras quede un pod viejo. |
+| `AddSupportSurveys` | Una resolución que hace un pod viejo no pide encuesta (aceptado: no hay relleno al arrancar). |
+| `AddSupportAutoCloseAndSurveyIndexes` | Ignoran los índices: son parciales sobre `support.tickets` (`IX_tickets_resolved_auto_close`) y `support.ticket_surveys` (`IX_ticket_surveys_awaiting_comment`, `…_awaiting_rating`, `…_comment_message`, `…_rating_message`), con `CREATE INDEX` simple (no `CONCURRENTLY`): bloquean las escrituras de esas tablas mientras se construyen, que en tablas de este tamaño es un instante. Aditiva. |
+
+- **Los tipos nuevos de plantilla se guardan por nombre.** Un pod viejo (o el código de antes, tras un rollback) no conoce
+  `SupportFormalReply` ni `SupportSurvey` en `message_templates.kind`: EF los lee con `Enum.Parse` y falla. En una conexión que ya tenga
+  una de esas plantillas, la gestión de plantillas y el refresco del espejo responden `500` en ese pod. Aprovisiona las plantillas nuevas
+  sólo cuando no quede un pod viejo, y no hagas rollback después de aprovisionarlas: el `Down` de
+  `AddSupportFormalAndSurveyTemplateKinds` **borra esas filas**, y con ellas plantillas ya aprobadas por Meta. Lo mismo vale para
+  cualquier valor nuevo de los enums de Soporte que se guardan por nombre (`SupportTicketEventKind` y los de la encuesta).
+- **`SUPPORT_PDF_API_KEY` y `SUPPORT_PDF_BASE_URL` tienen que existir en `Backend-prod` antes de que esto llegue a `main`.** Sin la
+  clave, `SupportPdfOptionsValidator` (`ValidateOnStart`) no deja arrancar el pod en producción; un `#{…}#` sin resolver cuenta como
+  ausente. Es una clave propia de `qcode-pdf`, nunca la de cotizaciones.
+- **Frontend: la página `/calificar?token=…` tiene que responder con `Referrer-Policy: no-referrer`.** El token va en la query de la
+  URL de la página (sólo la API lo recibe en el cuerpo); sin esa cabecera, cualquier recurso de terceros que la página cargue (una
+  fuente, una analítica, el logo del tenant) recibe la URL completa con el token en el `Referer`, y con él se califica la encuesta.
+- **La plantilla del PDF nunca se generó contra el `qcode-pdf` real.** Antes del primer envío en producción, genera a mano y revisa:
+  una decisión larga con saltos de línea; con logo y sin logo; un ticket anónimo («Solicitante anónimo», sin documento ni correo); diez
+  anexos; y textos con `#`, `[`, `*` y `$` (tienen que salir como texto, nunca como marcado de Typst).
+- **El prefijo `support/` del bucket privado de R2 no lleva regla de ciclo de vida:** la respuesta formal es prueba legal y se guarda
+  diez años (spec §13.10). Nunca la pongas bajo `quotations/`, que sí tiene ciclo de vida.
+- **La cola nueva `support_survey`** (pendientes y edad de la más vieja con `attempts = 0`) la publica el muestreador de colas, pero el
+  dashboard y las reglas de alerta viven en `migracion-k8s`: hay que sumarla allá.
+- **Los campos nuevos del `PUT /settings` son opcionales** (ausentes conservan lo guardado): el frontend publicado sigue funcionando
+  sin cambios.
+- **Verificar contra Meta real:** que la plantilla con tres botones de respuesta rápida se acepte sin parámetros de botón y que el
+  toque llegue con `button.text` y `context.id` (V-1); la categoría con que Meta aprueba `qep_soporte_encuesta` (V-2, puede ser
+  `MARKETING`); y que Instagram acepte el PDF como archivo desde la URL firmada de 10 minutos (V-3).
+
 ### API externa
 
 Un sistema del tenant (un ERP, una tienda) envía plantillas de WhatsApp con una **clave de API** en lugar de una sesión. Las claves las crea
@@ -4762,7 +5976,7 @@ misma respuesta: `401 external.auth.invalid_key`.
 | Método y ruta | Devuelve |
 | --- | --- |
 | `GET /connections` | Los números que la clave puede usar: `id`, nombre y teléfono |
-| `GET /connections/{connectionId}/templates` | Las plantillas enviables: nombre, idioma, categoría y parámetros |
+| `GET /connections/{connectionId}/templates` | Las plantillas enviables: nombre, idioma, categoría, `header` (`null` o `{ "type": "image" \| "video" \| "document" }`) y parámetros |
 | `POST /messages` | `201` al enviar, `200` si es un reintento de un envío ya hecho |
 
 Cuerpo de `POST /messages`, en un archivo, porque PowerShell rompe las comillas dobles al pasarlas a un `.exe`:
@@ -4783,9 +5997,44 @@ curl.exe -s https://<host>/api/v1/external/whatsapp/connections/<connectionId>/t
 curl.exe -s -X POST https://<host>/api/v1/external/whatsapp/messages -H "X-Api-Key: $env:QEP_API_KEY" -H "Content-Type: application/json" -d "@cuerpo.json"
 ```
 
+**Encabezado multimedia.** Una plantilla aprobada con encabezado de imagen, video o documento (`header` distinto de `null` en el listado)
+exige que el envío lo lleve, por enlace: QEP **no descarga** el archivo, le entrega el enlace a Meta tal cual.
+
+```powershell
+@'
+{
+  "idempotencyKey": "0192f3a4-7b1c-7e2a-9d4f-3a5b6c7d8e9f",
+  "connectionId": "0192f3a4-7b1c-7e2a-9d4f-000000000001",
+  "to": "573001234567",
+  "template": {
+    "name": "aviso_logo",
+    "language": "es_CO",
+    "header": { "type": "image", "link": "https://cdn.example.com/logo.png" },
+    "parameters": { "1": "1014853", "2": "Pendiente" }
+  }
+}
+'@ | Set-Content -Encoding utf8 cuerpo-imagen.json
+```
+
+Reglas de `template.header` (el `422 validation.failed` marca `template.header.type`, `.link` o `.filename`):
+
+- `type`: `image`, `video` o `document` (en minúsculas; al leer no distingue mayúsculas).
+- `link`: obligatorio. URL absoluta `https`, de máximo 2048 caracteres, sin espacios ni caracteres de control y sin credenciales
+  (`https://usuario:clave@host` se rechaza). `http` se rechaza. Si el enlace lleva un token en la query, QEP no lo escribe en logs ni en el
+  registro de llamadas; sí queda en el mensaje y el hilo lo muestra.
+- `filename`: opcional y solo con `document`; es el nombre que ve quien recibe el archivo. Máximo 240 caracteres, no puede ser solo
+  espacios ni llevar `/`, `\` ni caracteres de control. Con `image` o `video` es error.
+- El `header` debe coincidir con la plantilla: si la plantilla lo pide y falta, si sobra, o si es de otro tipo (un `video` para una
+  plantilla de imagen), responde `422 messaging.template.header_mismatch` y el `detail` dice qué pide la plantilla.
+
+Un enlace que Meta no puede bajar (404, un tipo o tamaño que no acepta) **no** da error en el `POST`: Meta acepta el envío y el mensaje
+queda `Failed` después, por webhook. Se ve en `GET /messages/{id}` con `failureCode` y `failureReason`.
+
 Respuesta de envío: `{ "messageId": "…", "conversationId": "…", "status": "Sent" }`; en un reintento, `status` trae el estado actual del mensaje, que puede ser posterior a `Sent` (por ejemplo `Read`). El `idempotencyKey` es obligatorio, lo genera el sistema
-externo y es la llave de idempotencia **por tenant**: repetirlo con el mismo destino, plantilla, idioma y parámetros devuelve `200` con lo
-guardado, sin volver a enviar; con otra cosa, `409`. `to` lleva indicativo de país (se aceptan `+`, espacios y guiones); sin él responde
+externo y es la llave de idempotencia **por tenant**: repetirlo con el mismo destino, plantilla, idioma, parámetros y `header` (tipo, enlace
+y `filename`) devuelve `200` con lo guardado, sin volver a enviar; con otra cosa, `409`, y mandar un `header` donde el primer envío no lo
+llevaba (o al revés) también es otra cosa. La excepción es un mensaje que quedó `Failed`: repetir su `idempotencyKey` lo reenvía con el cuerpo
+nuevo, así que si Meta no pudo bajar el enlace, corrígelo y reintenta con la misma clave. Esa excepción no cubre al `Failed` cuyo fallo es `Unconfirmed` (el `502 external.send_unconfirmed`): ahí Meta pudo haber aceptado el mensaje, así que repetir la clave devuelve el estado guardado y no reenvía. `to` lleva indicativo de país (se aceptan `+`, espacios y guiones); sin él responde
 `422`, porque no se adivina el país. Solo las plantillas `MARKETING` heredan las reglas de campañas (opt-out del cliente, cliente inactivo);
 una conversación bloqueada rechaza cualquier categoría.
 
@@ -4799,10 +6048,11 @@ viene por campo en `errors`.
 | 403 | `external.auth.scope_missing` | La clave no tiene el scope |
 | 403 | `external.connection_not_allowed` | Número fuera de la clave o de otro tenant |
 | 403 | `tenancy.module_not_enabled` | `developer` o `messaging` apagados |
-| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro destino o plantilla |
+| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro cuerpo (destino, plantilla, idioma, parámetros o `header`) |
 | 422 | `validation.failed` | Con el mapa `errors` |
 | 422 | `messaging.template.not_available` | Plantilla inexistente, no aprobada o no enviable |
 | 422 | `messaging.template.parameters_mismatch` | Parámetros que no coinciden |
+| 422 | `messaging.template.header_mismatch` | Falta el encabezado, sobra o es de otro tipo; `detail` dice cuál pide la plantilla |
 | 422 | `messaging.connection_unavailable` | La conexión está pausada, necesita atención o Meta rechazó sus credenciales |
 | 422 | `messaging.templates.unavailable` | Meta no contestó la lista de plantillas; reintentar es seguro |
 | 422 | `messaging.channel_unsupported` | La conexión es de Instagram: no tiene plantillas |
@@ -4817,8 +6067,9 @@ viene por campo en `errors`.
 `idempotencyKey` repite el `502` y **no** reenvía; decidir si se manda otro exige un `idempotencyKey` nuevo, y esa decisión es del sistema externo.
 
 **Límites.** Dos, porque el rate limiter corre antes de autenticar: 600 por minuto por IP (frena a quien prueba claves inventadas,
-`ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Los dos
-viven en memoria:** hoy hay una réplica, y con más el límite efectivo se multiplica por el número de réplicas. Ambos deben ser mayores que 0: un 0 o un negativo tumba el arranque (`ValidateOnStart`), no se interpreta como «sin límite».
+`ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Con
+`Valkey:Areas:RateLimiting` prendido los dos se cuentan en Valkey** y valen para todas las réplicas. Apagado, o con Valkey caído, cada
+réplica lleva su propia cuenta en memoria y el límite efectivo se multiplica por el número de réplicas. Ambos deben ser mayores que 0: un 0 o un negativo tumba el arranque (`ValidateOnStart`), no se interpreta como «sin límite».
 
 **Autoría.** El mensaje queda firmado con la clave (`sent_by_kind = 4`, `sent_by_api_key_id`, `sent_by_api_key_name`) y el hilo lo muestra como
 `sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí

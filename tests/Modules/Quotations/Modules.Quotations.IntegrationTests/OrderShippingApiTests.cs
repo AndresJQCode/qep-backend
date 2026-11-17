@@ -13,7 +13,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// La entrega por envío en el pedido (spec 2026-10-17 §5.4 y §6): el pedido manual y su cálculo previo, la
 /// conversión que copia el envío de la cotización y la edición del pedido pendiente, contra Postgres real.
 /// </summary>
-public sealed class OrderShippingApiTests
+public sealed class OrderShippingApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsRead = "tenancy.settings.read";
     private const string SettingsUpdate = "tenancy.settings.update";
@@ -33,8 +33,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task TheOrderCreatedEventTotalIncludesTheChargedFreight()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -53,8 +52,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task CreatesAManualOrderWithFreight()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -97,8 +95,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task ManualOrderWithCashOnDeliveryMustBePending()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -126,8 +123,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task ConvertingCopiesTheShippingAndTheTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -158,8 +154,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task ConvertingACashOnDeliveryQuotationWithAProofIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -179,8 +174,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task EditsTheShippingOfAPendingOrderAndRecalculatesThePayment()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -217,8 +211,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task EditingTheShippingWritesOrderHistory()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -248,8 +241,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task ManualOrderWithoutShippingStillWorks()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var request = await ManualRequestAsync(client, tenantId, shipping: null);
@@ -270,8 +262,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task AManualOrderCannotChooseADisabledFreightChargeMode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -291,8 +282,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task ConvertingAndEditingKeepADisabledFreightChargeMode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -325,8 +315,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task CarrierRecognitionRememberNextLookupMatches()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -359,8 +348,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task CarrierRecognitionNameOwnedByOtherCarrierReturns422NameTaken()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
@@ -387,8 +375,7 @@ public sealed class OrderShippingApiTests
     [Fact]
     public async Task CarrierRecognitionOtherTenantReturns403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (_, _, ownerA) = await RegisterTenantAsync(factory, Permissions);
         using var _ = ownerA;
         var (tenantB, ownerUserB, ownerB) = await RegisterTenantAsync(factory, Permissions);

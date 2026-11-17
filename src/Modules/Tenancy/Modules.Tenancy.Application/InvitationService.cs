@@ -43,7 +43,8 @@ public sealed class InvitationService(
     ITenancyUnitOfWork unitOfWork,
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
-    IClock clock) : IInvitationService
+    IClock clock,
+    ITenantAccessVersion tenantAccessVersion) : IInvitationService
 {
     public async Task<InvitationDto> FindByTokenAsync(
         string token,
@@ -113,7 +114,11 @@ public sealed class InvitationService(
             outboxWriter.Add(domainEvent, correlationId);
         }
 
+        // Spec 2026-11-13, D-5: el «sin membresía» cacheado se descarta, antes del guardado y otra vez después. El camino de la
+        // invitación vencida, arriba, no sube: no concede nada.
+        await tenantAccessVersion.BumpAsync(membership.TenantId.Value, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await tenantAccessVersion.BumpAsync(membership.TenantId.Value, cancellationToken);
     }
 
     private async Task<Membership> FindMembershipAsync(

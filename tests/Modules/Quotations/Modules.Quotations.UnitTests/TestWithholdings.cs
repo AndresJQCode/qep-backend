@@ -11,4 +11,8 @@ internal static class TestWithholdings
 
     /// <summary>La foto de un cliente que retiene (Retefuente 2,5 %) o que no retiene.</summary>
     public static IReadOnlyList<WithholdingRate> Customer(bool withRetention) => withRetention ? [RetefuenteCo] : [];
+
+    /// <summary>Una tasa de Colombia sin base mínima; las municipales llevan su municipio.</summary>
+    public static WithholdingRate Rate(string name, string type, decimal percentage, Guid? cityId = null) =>
+        new(Guid.CreateVersion7(), name, type, "CO", percentage, null, null, null, cityId);
 }

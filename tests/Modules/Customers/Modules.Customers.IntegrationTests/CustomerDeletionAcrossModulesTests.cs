@@ -7,7 +7,6 @@ using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
@@ -19,7 +18,7 @@ namespace Modules.Customers.IntegrationTests;
 /// </summary>
 public sealed class CustomerDeletionDatabase : IAsyncLifetime
 {
-    private PostgreSqlContainer? _database;
+    private TestDatabase? _database;
 
     public CommandCounter Counter { get; } = new();
 
@@ -167,6 +166,92 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
             deletion.Outcome.StorageKeys[footprint.Customer]);
     }
 
+    // Soporte fase 2 (plan E18): un ticket sin ese cliente (cambió de cliente o nunca lo tuvo) que nació de una de sus conversaciones
+    // sobrevive al borrado, pero deja de apuntar a la conversación que se va: sin conversación, sin seguir el hilo, sin vínculos ni
+    // entrantes sin clasificar, y la respuesta que salió por esa conversación conserva su fila sin el mensaje.
+    [Fact]
+    public async Task DeletingACustomerUnlinksTheTicketsOfItsConversations()
+    {
+        var tenant = Guid.CreateVersion7();
+        var customer = await InsertCustomerAsync(tenant, Name, Phone);
+        var conversation = await InsertConversationAsync(tenant, customer, blocked: false);
+        var now = DateTimeOffset.UtcNow;
+        var message = Guid.CreateVersion7();
+        Modules.Support.Domain.SupportTicketId ticketId;
+        Guid replyId;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var services = scope.ServiceProvider;
+            await services.GetRequiredService<Modules.Support.Application.ISupportProvisioner>().EnsureAsync(tenant, Ct);
+            var type = (await services.GetRequiredService<Modules.Support.Application.ISupportTicketTypeRepository>().ListAsync(tenant, Ct))[0];
+            var calendar = new Modules.Support.Domain.SupportClockContext(
+                new AllDaysCalendar(), TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
+            var ticket = Modules.Support.Domain.SupportTicket.CreateFromConversation(
+                Modules.Support.Domain.SupportTicketId.New(), tenant, 1, type, "Pedido sin llegar", "No ha llegado.",
+                Modules.Support.Domain.SupportTicketPriority.Medium,
+                new Modules.Support.Domain.SupportConversationRef(conversation, "WhatsApp"), null,
+                new Modules.Support.Domain.TicketRequester("Beto", null, null, null, null, null, null, null, "CO", null),
+                null, Guid.CreateVersion7(), now, calendar);
+            ticketId = ticket.Id;
+            services.GetRequiredService<Modules.Support.Application.ISupportTicketRepository>().Add(ticket);
+            services.GetRequiredService<Modules.Support.Application.ISupportTicketMessageRepository>().Add(
+                Modules.Support.Domain.SupportTicketMessage.Link(
+                    tenant, ticket.Id, conversation, message, now, Modules.Support.Domain.SupportTicketMessageState.Linked, now));
+            services.GetRequiredService<Modules.Support.Application.ISupportUnclassifiedRepository>().Add(
+                Modules.Support.Domain.SupportUnclassifiedMessage.Create(tenant, conversation, Guid.CreateVersion7(), now, now));
+            var reply = Modules.Support.Domain.SupportTicketReply.Start(
+                tenant, ticket.Id, Guid.CreateVersion7(), Modules.Support.Domain.SupportReplyChannel.Thread,
+                Modules.Support.Domain.SupportReplyDelivery.Text, "Ya lo revisamos.", null, Guid.CreateVersion7(), now);
+            reply.MarkSent(message, now);
+            replyId = reply.Id;
+            services.GetRequiredService<Modules.Support.Application.ISupportReplyRepository>().Add(reply);
+            await services.GetRequiredService<Modules.Support.Application.ISupportUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        // Fase 4b, Tarea 12: la encuesta de ese ticket guarda ids de mensajes de la conversación que se va (la plantilla, el toque, el
+        // comentario y el mensaje que lo pidió). Se sueltan: los mensajes se borran con la conversación.
+        var surveyId = Guid.CreateVersion7();
+        await ExecuteAsync(
+            """
+            INSERT INTO support.ticket_surveys (id, tenant_id, ticket_id, resolution_number, status, channel, message_id, rating,
+                answered_at, answered_via, rating_message_id, comment, comment_message_id, prompt_message_id, prompt_sent_at, attempts,
+                next_attempt_at, created_at, updated_at)
+            VALUES (@id, @tenant, @ticket, 1, 'Sent', 'WhatsApp', gen_random_uuid(), 'Good', now(), 'WhatsApp', gen_random_uuid(),
+                'Muy amables.', gen_random_uuid(), gen_random_uuid(), now(), 0, now(), now(), now())
+            """,
+            ("id", surveyId), ("tenant", tenant), ("ticket", ticketId.Value));
+
+        var deletion = await DeleteAsync(tenant, [customer]);
+
+        Assert.Empty(deletion.Blockers);
+        Assert.Equal(
+            "conversation=|channel=|follow=False|off=True|version=2",
+            await TextAsync(
+                """
+                SELECT 'conversation=' || coalesce(conversation_id::text, '') || '|channel=' || coalesce(conversation_channel, '')
+                    || '|follow=' || CASE WHEN follow_thread THEN 'True' ELSE 'False' END
+                    || '|off=' || CASE WHEN follow_off_at IS NOT NULL THEN 'True' ELSE 'False' END || '|version=' || version
+                FROM support.tickets WHERE id = @id
+                """,
+                ("id", ticketId.Value)));
+        Assert.Equal(0, await ScalarAsync("SELECT count(*) FROM support.ticket_messages WHERE ticket_id = @id", ("id", ticketId.Value)));
+        Assert.Equal(
+            0, await ScalarAsync("SELECT count(*) FROM support.unclassified_messages WHERE conversation_id = @id", ("id", conversation)));
+        Assert.Equal(
+            "Sent|",
+            await TextAsync(
+                "SELECT status || '|' || coalesce(message_id::text, '') FROM support.ticket_replies WHERE id = @id", ("id", replyId)));
+        Assert.Equal(
+            "Good|Muy amables.|true",
+            await TextAsync(
+                """
+                SELECT rating || '|' || comment || '|'
+                    || (message_id IS NULL AND rating_message_id IS NULL AND comment_message_id IS NULL AND prompt_message_id IS NULL)::text
+                FROM support.ticket_surveys WHERE id = @id
+                """,
+                ("id", surveyId)));
+    }
+
     // P11: la audiencia nunca queda vacía (CK_campaigns_audience). Si el cliente era lo único, el id se queda.
     [Fact]
     public async Task ADraftCampaignWhoseOnlyAudienceIsTheCustomerKeepsTheId()
@@ -199,6 +284,8 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         { "charge", [CustomerDeletionBlockReasons.ServiceContracts] },
         { "blockedConversation", [CustomerDeletionBlockReasons.BlockedContact] },
         { "quotation+order", [CustomerDeletionBlockReasons.Quotations, CustomerDeletionBlockReasons.Orders] },
+        { "supportTicket", [CustomerDeletionBlockReasons.SupportTickets] },
+        { "loan+supportTicket", [CustomerDeletionBlockReasons.Loans, CustomerDeletionBlockReasons.SupportTickets] },
     };
 
     // §4.2: cada motivo, con el orden del contrato. El otro cliente del lote, con una conversación sin bloquear, no aparece.
@@ -932,9 +1019,9 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                     """
                     INSERT INTO quotations.orders (id, tenant_id, order_number, status, payment_status, converted_at, converted_by, created_at,
                         updated_at, version, client_id, advisor_id, currency, billing_company_id, billing_bank_name, billing_account_number,
-                        billing_account_currency, source)
+                        billing_account_currency, source, order_date)
                     VALUES (gen_random_uuid(), @tenant, 'PED-' || @suffix, 'Cancelled', 'PaymentPending', now(), @member, now(), now(), 1,
-                        @customer, @member, 'COP', @member, 'Banco', '123', 'COP', 'Manual');
+                        @customer, @member, 'COP', @member, 'Banco', '123', 'COP', 'Manual', current_date);
                     """,
                     ("tenant", tenant), ("customer", customer), ("member", member), ("suffix", suffix));
                 break;
@@ -963,6 +1050,25 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
                     """
                     INSERT INTO billing.charges (id, tenant_id, service_id, customer_id, amount, currency, due_date, status, version, created_at)
                     VALUES (gen_random_uuid(), @tenant, gen_random_uuid(), @customer, 100, 'COP', DATE '2026-12-01', 'Paid', 1, now());
+                    """,
+                    ("tenant", tenant), ("customer", customer));
+                break;
+            case "supportTicket":
+                // D4 (spec de soporte 2026-11-14): cualquier estado bloquea, también un ticket cerrado. El tipo va primero: desde la
+                // fase 4a support.tickets tiene FK a support.ticket_types.
+                await SeedAsync(
+                    """
+                    WITH type AS (
+                        INSERT INTO support.ticket_types (id, tenant_id, name, term_business_days, term_is_legal, requires_formal_response,
+                            is_published, is_active, position, created_at, updated_at, version)
+                        VALUES (gen_random_uuid(), @tenant, 'Queja ' || gen_random_uuid(), 15, true, true, true, true, 1, now(), now(), 1)
+                        RETURNING id)
+                    INSERT INTO support.tickets (id, tenant_id, number, ticket_type_id, type_name, term_is_legal, requires_formal_response,
+                        subject, description, intake, reply_channel, status, customer_id, received_at, received_on, last_event_ordinal,
+                        created_at, updated_at, version)
+                    SELECT gen_random_uuid(), @tenant, 1, type.id, 'Queja', true, true, 'Pedido incompleto', 'Faltó una caja.',
+                        'Manual', 'Email', 'Closed', @customer, now(), CURRENT_DATE, 1, now(), now(), 1
+                    FROM type;
                     """,
                     ("tenant", tenant), ("customer", customer));
                 break;
@@ -1051,5 +1157,11 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         }
 
         return command;
+    }
+
+    // El plazo del ticket no importa acá: todos los días son hábiles.
+    private sealed class AllDaysCalendar : Modules.Support.Domain.ISupportBusinessCalendar
+    {
+        public bool IsBusinessDay(DateOnly day) => true;
     }
 }

@@ -228,7 +228,8 @@ internal static class MessageMapping
     public static MessageDto ToDto(
         MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets,
         IReadOnlyDictionary<Guid, string>? reasonNames = null, IReadOnlyDictionary<Guid, string>? chatbotNames = null,
-        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones = null)
+        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones = null,
+        IReadOnlyDictionary<Guid, string>? ticketNumbers = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(memberNames);
@@ -264,7 +265,9 @@ internal static class MessageMapping
                     EventCustomer(conversationEvent.CustomerId, customerRefs),
                     EventCustomer(conversationEvent.PreviousCustomerId, customerRefs),
                     ToDto(conversationEvent.Handoff, memberNames),
-                    Chatbot(conversationEvent.ChatbotId, chatbotNames)),
+                    Chatbot(conversationEvent.ChatbotId, chatbotNames),
+                    conversationEvent.TicketId,
+                    conversationEvent.TicketId is { } ticketId ? ticketNumbers?.GetValueOrDefault(ticketId) : null),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson), row.Imported) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
@@ -354,6 +357,17 @@ internal static class MessageMapping
             .Select(row => ConversationEventJson.Parse(row.DetailsJson))
             .OfType<ConversationEvent>()
             .SelectMany(value => new[] { value.CustomerId, value.PreviousCustomerId })
+            .OfType<Guid>()
+            .Distinct()
+            .ToArray();
+    }
+
+    /// <summary>Soporte fase 2: los tickets que nombran los eventos de la página, para una sola consulta de números.</summary>
+    public static IReadOnlyCollection<Guid> TicketIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.Where(row => row.Kind == MessageKind.Event)
+            .Select(row => ConversationEventJson.Parse(row.DetailsJson)?.TicketId)
             .OfType<Guid>()
             .Distinct()
             .ToArray();

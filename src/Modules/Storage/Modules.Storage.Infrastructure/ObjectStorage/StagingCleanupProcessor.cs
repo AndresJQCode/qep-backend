@@ -55,11 +55,136 @@ internal sealed partial class StagingCleanupProcessor(
         Message = "No file reference probe is registered: unattached payment proofs are not purged.")]
     private static partial void LogNoProbes(ILogger logger);
 
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Support attachment {FileId} purged: no ticket claimed it.")]
+    private static partial void LogSupportAttachmentPurged(ILogger logger, Guid fileId);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Support attachment {FileId} could not be purged; the next tick retries it.")]
+    private static partial void LogSupportAttachmentFailed(ILogger logger, Guid fileId, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Support attachment {FileId} was purged but one of its objects could not be deleted; it stays orphaned in the bucket.")]
+    private static partial void LogSupportAttachmentObjectLeft(ILogger logger, Guid fileId, Exception exception);
+
+    /// <summary>
+    /// Soporte fase 3 (plan F36): hasta dónde mira atrás el barrido de adjuntos sin reclamar. Un adjunto reclamado sigue
+    /// <c>Available</c> para siempre y nada en Storage lo marca, así que sin este tope cada tick le preguntaría a las sondas por todos
+    /// los adjuntos de la historia. Con él pregunta sólo por los de la última semana pasada la retención; uno sin reclamar que quede
+    /// fuera (el worker caído más de siete días) no se purga solo.
+    /// </summary>
+    private static readonly TimeSpan SupportAttachmentLookback = TimeSpan.FromDays(7);
+
     public async Task CleanupAsync(CancellationToken cancellationToken)
     {
         var cutoff = clock.UtcNow.AddHours(-options.Value.StagingRetentionHours);
         await PurgeAbandonedUploadsAsync(cutoff, cancellationToken);
         await PurgeUnattachedPaymentProofsAsync(cutoff, cancellationToken);
+        await PurgeUnclaimedSupportAttachmentsAsync(cutoff, cancellationToken);
+    }
+
+    // Plan F36: el adjunto del formulario público de Soporte ya está promovido a files/ cuando se completa, pero hasta que un radicado
+    // lo reclama (support.ticket_attachments) no es de nadie. Pasada la retención y sin sonda que lo retenga, se borra con sus variantes.
+    // Mismo cuidado que los comprobantes: sin sondas no se purga nada, uno por vez con su propio guardado, y se saltan los ya vistos.
+    private async Task PurgeUnclaimedSupportAttachmentsAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+    {
+        if (_probes.Count == 0)
+        {
+            return;
+        }
+
+        var oldest = cutoff - SupportAttachmentLookback;
+        var skipped = 0;
+        while (true)
+        {
+            var batch = await dbContext.FileResources
+                .Include(file => file.Variants)
+                .Where(file => file.OwnerType == FileOwnerType.SupportTicket)
+                .Where(file => file.Status == FileResourceStatus.Available)
+                .Where(file => file.CreatedAt < cutoff && file.CreatedAt >= oldest)
+                .OrderBy(file => file.CreatedAt)
+                .ThenBy(file => file.Id)
+                .Skip(skipped)
+                .Take(BatchSize)
+                .ToArrayAsync(cancellationToken);
+
+            foreach (var file in batch)
+            {
+                if (!await TryPurgeUnclaimedSupportAttachmentAsync(file, cancellationToken))
+                {
+                    skipped++;
+                }
+            }
+
+            if (batch.Length < BatchSize)
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task<bool> TryPurgeUnclaimedSupportAttachmentAsync(FileResource file, CancellationToken cancellationToken)
+    {
+        var fileId = file.Id.Value;
+        try
+        {
+            if (await FindRetainingSourceAsync(fileId, cancellationToken) is not null)
+            {
+                return false;
+            }
+
+            // Triage #14 (Bloque F): la fila se guarda antes de borrar los objetos, al revés que los comprobantes. Si guardar falla, no
+            // se borró nada y el tick siguiente lo intenta otra vez; si un borrado falla después, el archivo ya está Purged y lo que
+            // queda es un objeto huérfano en el bucket (se loguea), nunca una fila Available que apunta a un objeto que no existe y que
+            // un radicado podría reclamar.
+            var now = clock.UtcNow;
+            file.PurgeUnclaimedSupportAttachment(now);
+            auditPublisher.PublishSystem(
+                file.TenantId,
+                "storage.file.purged",
+                "file",
+                file.Id.ToString(),
+                "support_attachment_not_claimed",
+                now);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogSupportAttachmentFailed(logger, fileId, exception);
+            DiscardPendingChanges();
+            return false;
+        }
+
+        await DeletePurgedObjectsAsync(file, cancellationToken);
+        LogSupportAttachmentPurged(logger, fileId);
+        return true;
+    }
+
+    // Después del guardado: cada clave por separado, para que una que falla no deje las demás en el bucket.
+    private async Task DeletePurgedObjectsAsync(FileResource file, CancellationToken cancellationToken)
+    {
+        foreach (var key in file.Variants.Select(variant => variant.StorageKey).Prepend(file.StorageKey))
+        {
+            try
+            {
+                await objectStorage.DeleteAsync(key, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                LogSupportAttachmentObjectLeft(logger, file.Id.Value, exception);
+            }
+        }
     }
 
     private async Task PurgeAbandonedUploadsAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)

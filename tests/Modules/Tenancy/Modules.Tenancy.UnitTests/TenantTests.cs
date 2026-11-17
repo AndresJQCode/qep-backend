@@ -413,4 +413,32 @@ public sealed class TenantTests
     public void EnsureValidRegistrationThrowsTheSameCodesAsCreate(string slug, string name, string code)
         => Assert.Equal(code, Assert.Throws<TenantDomainException>(() =>
             Tenant.EnsureValidRegistration(slug, name, "es-CO", "America/Bogota", "dd/MM/yyyy")).Code);
+
+    [Theory]
+    [InlineData("consultar")]
+    [InlineData("Consultar ")]
+    public void CreateRejectsAReservedSlug(string slug)
+    {
+        var exception = Assert.Throws<TenantDomainException>(() => Tenant.Create(
+            TenantId.New(),
+            slug,
+            "QCode Demo",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            CreatedAt));
+
+        Assert.Equal(TenantSlugReservations.ReservedCode, exception.Code);
+        Assert.Equal("tenancy.slug.reserved", exception.Code);
+    }
+
+    [Fact]
+    public void EnsureValidRegistrationRejectsAReservedSlug()
+    {
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            Tenant.EnsureValidRegistration(" API", "Acme", "es-CO", "America/Bogota", "dd/MM/yyyy"));
+
+        Assert.Equal("tenancy.slug.reserved", exception.Code);
+    }
 }

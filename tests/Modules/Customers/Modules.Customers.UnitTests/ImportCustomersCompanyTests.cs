@@ -94,11 +94,19 @@ public sealed class ImportCustomersCompanyTests
 
         public TrackedUnitOfWork Work { get; } = new();
 
+        public RecordingAudit Audit { get; } = new();
+
+        public IEnumerable<string> CompanyChanges =>
+            Audit.Human.Where(entry => entry.Action == CustomerAuditActions.CompanyChanged).Select(entry => entry.ResourceId);
+
+        public string ImportedResource =>
+            Assert.Single(Audit.Human, entry => entry.Action == "customers.customer.imported").ResourceId;
+
         public async Task<ImportCustomersResponse> ImportAsync(params ExcelCustomerRow[] rows)
         {
             var handler = new ImportCustomersHandler(
                 Repository, Directory, new Classifications([]), new ColombiaGeography(), new CustomerWriteDoubles.TaxRates(), new SequentialCucs(), new StubImporter(rows),
-                Work, new RecordingAudit(), Importer, new FixedClock(), new TenantDirectory(), new PlusNormalizer());
+                Work, Audit, Importer, new FixedClock(), new TenantDirectory(), new PlusNormalizer());
             return await handler.HandleAsync(
                 new ImportCustomersCommand(CustomerWriteDoubles.Tenant, "clientes.xlsx", 10, new MemoryStream([1])), CancellationToken.None);
         }
@@ -113,7 +121,7 @@ public sealed class ImportCustomersCompanyTests
 
     private static ExcelCustomerRow Row(
         int rowNumber, string name, string number, string? company = null, string? cuc = null, string type = "NIT") =>
-        new(rowNumber, cuc, name, null, type, number, "3001112233", null, "Calle 2", "Atlantico", "Barranquilla", null, Retefuente: null, ReteIca: null, VatSurplus: "No", company);
+        new(rowNumber, cuc, name, null, type, number, "3001112233", null, "Calle 2", "Atlantico", "Barranquilla", null, Retefuente: null, VatSurplus: "No", company);
 
     private static ImportRowError ErrorOf(ImportCustomersResponse response, int rowNumber) =>
         Assert.Single(response.Errors, error => error.RowNumber == rowNumber);
@@ -151,6 +159,35 @@ public sealed class ImportCustomersCompanyTests
         Assert.Equal(2, response.ImportedCount);
         Assert.Equal(Created(bed, "Verde SAS").Id, Created(bed, "Ana").CompanyId);
         Assert.Null(Created(bed, "Verde SAS").CompanyId);
+    }
+
+    // Decisión del owner 2026-11-16: los vínculos que la importación cambia se cuentan en el único evento del archivo
+    // (companyChanged=N en el resourceId), nunca un company_changed por contacto.
+    [Fact]
+    public async Task TheLinksTheImportChangesAreCountedInItsSingleEvent()
+    {
+        var company = Existing("CLI08000001", "Verde SAS", "900111111");
+        var bed = new Bed(company);
+
+        await bed.ImportAsync(Row(2, "Ana", "1010", "900111111", type: "CC"), Row(3, "Luis", "2020", "900111111", type: "CC"));
+
+        Assert.Empty(bed.CompanyChanges);
+        Assert.Equal("clientes.xlsx (imported=2, errors=0, companyChanged=2)", bed.ImportedResource);
+    }
+
+    [Fact]
+    public async Task ALinkThatDoesNotChangeIsNotCounted()
+    {
+        var company = Existing("CLI08000001", "Verde SAS", "900111111");
+        var contact = Existing("CLI08000002", "Ana", "1010", IdentificationType.Cc);
+        contact.LinkToCompany(company, false, CustomerWriteDoubles.Now);
+        var bed = new Bed(company, contact);
+
+        var response = await bed.ImportAsync(Row(2, "Ana", "1010", "900111111", cuc: "CLI08000002", type: "CC"));
+
+        Assert.Empty(response.Errors);
+        Assert.Empty(bed.CompanyChanges);
+        Assert.Equal("clientes.xlsx (imported=1, errors=0, companyChanged=0)", bed.ImportedResource);
     }
 
     [Fact]

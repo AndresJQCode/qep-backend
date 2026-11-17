@@ -18,6 +18,28 @@ public sealed record CompanyCityDto(Guid Id, string DivipolaCode, string Name);
 
 public sealed record CompanyDepartmentDto(Guid Id, string DivipolaCode, string Name);
 
+/// <summary>
+/// La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y documentos.
+/// No reusa <see cref="CompanyCityDto"/>, que trae el código DIVIPOLA y no el departamento.
+/// </summary>
+public sealed record CompanyMunicipalityDto(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
+
+/// <summary>
+/// Una tasa municipal (ReteICA) asignada a la empresa, con su municipio resuelto (backend for frontend): la ficha pinta
+/// «ReteICA Bogotá · Bogotá, D.C. · 0,966 %» sin pedirle nada a Catalog ni a Geography. <c>City</c> es null sólo si la
+/// ciudad ya no se encontró.
+/// </summary>
+public sealed record CompanyWithholdingTaxRateDto(
+    Guid Id,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    bool IsActive,
+    CompanyMunicipalityDto? City);
+
+/// <param name="WithholdingTaxRates">Las tasas municipales de la empresa, ordenadas por departamento, municipio y tipo
+/// (spec ReteICA por empresa §9.2). Nunca null.</param>
 public sealed record CompanyDto(
     Guid Id,
     string Name,
@@ -33,7 +55,8 @@ public sealed record CompanyDto(
     CompanyDepartmentDto? Department,
     string? CityName,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates);
 
 public sealed record CompanyResponse(
     Guid Id,
@@ -50,7 +73,8 @@ public sealed record CompanyResponse(
     CompanyDepartmentDto? Department,
     string? CityName,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito: <c>email</c> y <c>address</c> no se pintan
@@ -107,6 +131,9 @@ public sealed record CompaniesResponse(IReadOnlyCollection<CompanyListItemRespon
 // campo ausente tiene que llegar al validador como null y salir como 422 con el mapa errors
 // (Country, DocumentType), no morir antes en el binding. La ciudad depende del carril: en
 // Colombia es CityId (obligatorio) y fuera de ella es CityName (texto libre, obligatorio).
+//
+// WithholdingTaxRateIds (spec ReteICA por empresa §9.2) es la excepción al «el PUT reemplaza todo»: ausente o null conserva
+// las tasas guardadas (en el alta, ninguna) para que el frontend viejo, que no lo manda, no las borre; [] las quita todas.
 public sealed record CreateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
@@ -117,7 +144,8 @@ public sealed record CreateCompanyRequest(
     string? CityName,
     string? Phone,
     string? Email,
-    string? Address);
+    string? Address,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null);
 
 public sealed record UpdateCompanyRequest(
     string Name,
@@ -129,4 +157,5 @@ public sealed record UpdateCompanyRequest(
     string? CityName,
     string? Phone,
     string? Email,
-    string? Address);
+    string? Address,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null);

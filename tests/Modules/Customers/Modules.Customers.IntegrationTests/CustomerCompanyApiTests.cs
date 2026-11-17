@@ -217,26 +217,6 @@ public sealed class CustomerCompanyApiTests
     }
 
     [Fact]
-    public async Task TheRegularPostIgnoresACompanyIdInTheBody()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
-        using var client = arranged.Client;
-        var company = await CreateAsync(arranged, "Verde Esencial", 2);
-        var body = System.Text.Json.JsonSerializer.SerializeToNode(
-            NewCustomerBody(arranged.CityId, arranged.ClassificationId, "Laura Pérez", "CC", "1020304001"))!.AsObject();
-        body["companyId"] = company;
-
-        var response = await client.PostAsJsonAsync(CustomersUrl(), body, TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var created = await BodyAsync(response);
-        Assert.Equal(JsonValueKind.Null, created.GetProperty("company").ValueKind);
-        Assert.Null(await StoredCompanyAsync(arranged.ConnectionString, created.GetProperty("id").GetGuid()));
-    }
-
-    [Fact]
     public async Task LinkingTwiceKeepsTheVersionAndWritesOneAuditRow()
     {
         await using var database = await StartDatabaseAsync();

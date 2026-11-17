@@ -8,7 +8,7 @@ using Modules.Messaging.Domain;
 namespace Bootstrapper;
 
 /// <summary>
-/// Adapta Quotations, Loans, ServiceContracts, Messaging, Automations, Ai, Pipeline, Pos, Geography y Shopify al puerto
+/// Adapta Quotations, Loans, ServiceContracts, Support, Messaging, Automations, Ai, Pipeline, Pos, Geography y Shopify al puerto
 /// <see cref="ICustomerDeletionReferences"/> de Customers (spec 2026-11-10, borrar clientes, §4.2, §4.3 y §5). Vive en el
 /// composition root por la misma razón que <see cref="CustomerMergeReferences"/>: Customers no referencia los otros módulos
 /// (<c>CustomersLayerTests</c>) y el acoplamiento entre esquemas se cablea acá.
@@ -24,7 +24,12 @@ namespace Bootstrapper;
 ///
 /// **Lo que lee por nombre.** <c>quotations.quotations.client_id</c>, <c>quotations.orders.client_id</c>,
 /// <c>loans.loans.customer_id</c>, <c>billing.services.customer_id</c>, <c>billing.charges.customer_id</c>,
-/// <c>billing.customer_profiles.customer_id</c>; en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
+/// <c>billing.customer_profiles.customer_id</c>, <c>support.tickets.customer_id</c>; en <c>support</c>, por las conversaciones que se
+/// borran (plan E18 de la fase 2): <c>tickets</c> (<c>conversation_id</c>, <c>conversation_channel</c>, <c>follow_thread</c>,
+/// <c>follow_off_at</c>, <c>updated_at</c>, <c>version</c>), <c>ticket_messages.conversation_id</c>,
+/// <c>unclassified_messages.conversation_id</c>, <c>ticket_replies</c> (<c>ticket_id</c>, <c>message_id</c>) y <c>ticket_surveys</c>
+/// (<c>ticket_id</c>, <c>message_id</c>, <c>rating_message_id</c>, <c>comment_message_id</c>, <c>prompt_message_id</c>,
+/// <c>updated_at</c>); en <c>messaging</c>: <c>conversations</c> (<c>id</c>, <c>customer_id</c>,
 /// <c>blocked_at</c>), <c>messages</c> (<c>conversation_id</c>, <c>direction</c>), <c>message_media.storage_key</c>,
 /// <c>scheduled_messages.media_storage_key</c>, <c>automation_inbox.conversation_id</c>, <c>campaign_recipients</c>
 /// (<c>customer_id</c>, <c>conversation_id</c>, <c>message_id</c>, <c>status</c>, <c>failure_code</c>, <c>failure_reason</c>) y
@@ -104,6 +109,10 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
                 SELECT customer_id AS "Value" FROM billing.services WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
                 UNION
                 SELECT customer_id AS "Value" FROM billing.charges WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+                """).ToListAsync(cancellationToken)],
+            // D4 (spec de soporte 2026-11-14): cualquier ticket, abierto o cerrado, bloquea, como cotizaciones y pedidos.
+            [CustomerDeletionBlockReasons.SupportTickets] = [.. await database.SqlQuery<Guid>($"""
+                SELECT DISTINCT customer_id AS "Value" FROM support.tickets WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
                 """).ToListAsync(cancellationToken)],
         };
 
@@ -318,6 +327,38 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
             """, cancellationToken);
         await database.ExecuteSqlAsync($"""
             DELETE FROM pipeline.deals WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
+        // Soporte fase 2 (plan E18): un ticket que no es de estos clientes (los suyos bloquean el borrado) y nació de una de estas
+        // conversaciones, o la vinculó por plantilla, sobrevive sin ella: deja de seguir el hilo desde ahora, pierde los vínculos de
+        // mensajes y los entrantes sin clasificar de esas conversaciones, y la respuesta que salió por ahí conserva su fila sin el
+        // mensaje. Sube la versión: la pantalla que lo tenía abierto vuelve a cargarlo en vez de pisarlo.
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM support.ticket_messages WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM support.unclassified_messages WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            UPDATE support.ticket_replies SET message_id = NULL
+            WHERE tenant_id = {tenantId} AND message_id IS NOT NULL
+              AND ticket_id IN (SELECT id FROM support.tickets WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv}))
+            """, cancellationToken);
+        // Fase 4b, Tarea 12: la encuesta conserva su calificación y su comentario, pero suelta los mensajes de esa conversación (la
+        // plantilla, el toque, el comentario y el mensaje que lo pidió): se van con ella. No sube la versión del ticket (la encuesta nunca
+        // lo hace); la de abajo ya la sube.
+        await database.ExecuteSqlAsync($"""
+            UPDATE support.ticket_surveys
+            SET message_id = NULL, rating_message_id = NULL, comment_message_id = NULL, prompt_message_id = NULL, updated_at = now()
+            WHERE tenant_id = {tenantId}
+              AND (message_id IS NOT NULL OR rating_message_id IS NOT NULL OR comment_message_id IS NOT NULL OR prompt_message_id IS NOT NULL)
+              AND ticket_id IN (SELECT id FROM support.tickets WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv}))
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            UPDATE support.tickets
+            SET conversation_id = NULL, conversation_channel = NULL, follow_thread = false,
+                follow_off_at = coalesce(follow_off_at, now()), updated_at = now(), version = version + 1
+            WHERE tenant_id = {tenantId} AND conversation_id = ANY({conv})
             """, cancellationToken);
 
         // D-5: los CASCADE se llevan messages, message_media y scheduled_messages.

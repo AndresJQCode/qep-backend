@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Modules.Storage.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -79,7 +79,7 @@ public sealed class ProductImageReleaseApiTests
 
     private static async Task<(Guid A, Guid B)> TwoImagesAsync(
         HttpClient client,
-        PostgreSqlContainer database) =>
+        TestDatabase database) =>
         (await UploadImageAsync(client, database, "una.png"),
             await UploadImageAsync(client, database, "otra.png"));
 
@@ -131,7 +131,7 @@ public sealed class ProductImageReleaseApiTests
         return product;
     }
 
-    private static async Task<IReadOnlyList<string>> ReadEventPayloadsAsync(PostgreSqlContainer database)
+    private static async Task<IReadOnlyList<string>> ReadEventPayloadsAsync(TestDatabase database)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -154,7 +154,7 @@ public sealed class ProductImageReleaseApiTests
     // existen en una prueba (ver ProductImageApiTests.UploadFileAsync).
     private static async Task<Guid> UploadImageAsync(
         HttpClient client,
-        PostgreSqlContainer database,
+        TestDatabase database,
         string name)
     {
         var response = await client.PostAsJsonAsync(
@@ -177,17 +177,6 @@ public sealed class ProductImageReleaseApiTests
         return fileId;
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private static HttpClient CreateClient(QepApiFactory factory)
     {
         var client = factory.CreateClient();
@@ -204,6 +193,8 @@ public sealed class ProductImageReleaseApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

@@ -47,6 +47,53 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<Carrier> Carriers => Set<Carrier>();
 
+    internal DbSet<PdfSectionRow> PdfSections => Set<PdfSectionRow>();
+
+    internal DbSet<PdfPaymentAccountRow> PdfPaymentAccounts => Set<PdfPaymentAccountRow>();
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        RefusePendingBillingAccounts();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        RefusePendingBillingAccounts();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    // A pending billing account (spec 2026-11-16 withholdings by company) is the company without its bank account, built
+    // only by the previews. IsPending has no column, so one that reached a save would be written as a real account with
+    // an empty bank and number and read back as complete. The guard is here and not in the domain because the previews run
+    // the same domain operations (Create, ApplyEdits) on in-memory or untracked aggregates: only saving tells a preview
+    // from a write. And here rather than in QuotationsUnitOfWork because a few writers save this context directly (the
+    // seeder, the expiration processor); the other SaveChanges overloads all end in these two. Today no write command
+    // carries a company without an account; this keeps a future one from persisting the placeholder silently. A bug, not
+    // a request error, so it surfaces as a 500 and never as a 422.
+    private void RefusePendingBillingAccounts()
+    {
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            if (entry.State is EntityState.Deleted or EntityState.Detached)
+            {
+                continue;
+            }
+
+            var account = entry.Entity switch
+            {
+                Quotation quotation => quotation.BillingAccount,
+                Order order => order.BillingAccount,
+                _ => null,
+            };
+            if (account is { IsPending: true })
+            {
+                throw new InvalidOperationException(
+                    $"A pending billing account cannot be persisted ({entry.Entity.GetType().Name}); only previews build one.");
+            }
+        }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureQuotation(modelBuilder);
@@ -67,6 +114,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureQuotationSettings(modelBuilder);
         ConfigureTenantWhatsAppChannel(modelBuilder);
         ConfigureCarrier(modelBuilder);
+        ConfigurePdfSections(modelBuilder);
+        ConfigurePdfPaymentAccount(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -188,8 +237,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasColumnName("billing_company_country")
                 .HasColumnType("char(2)")
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
+            // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
+            billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
+            // Spec 2026-11-16 withholdings by company: a pending account is preview-only and has no column; a save that carries
+            // one is refused by RefusePendingBillingAccounts, so the flag is never silently dropped on the way to the database.
+            billing.Ignore(value => value.IsPending);
         });
         quotation.Navigation(value => value.BillingAccount).IsRequired(false);
+        // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
+        // relleno (A8).
+        quotation.Property(value => value.OperationCityId).HasColumnName("operation_city_id");
 
         quotation.Navigation(value => value.Items)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
@@ -202,6 +259,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.Ignore(value => value.BillingWithholdings);
         quotation.Ignore(value => value.ActiveWithholdings);
         quotation.Ignore(value => value.AppliedWithholdings);
+        quotation.Ignore(value => value.WithholdingVerdicts);
         quotation.OwnsMany(value => value.Withholdings, withholding =>
         {
             withholding.ToTable("quotation_withholdings", "quotations", table =>
@@ -268,10 +326,17 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         withholding.Property(value => value.MinimumBase).HasColumnName("minimum_base").HasPrecision(14, 2);
         withholding.Property(value => value.MinimumBaseUnit).HasColumnName("minimum_base_unit").HasMaxLength(8);
         withholding.Property(value => value.TaxUnitValue).HasColumnName("tax_unit_value").HasPrecision(14, 2);
+        // Spec retenciones por UVT §5.2: el año de la UVT congelada, para mostrarlo y avisar si quedó vieja.
+        withholding.Property(value => value.TaxUnitYear).HasColumnName("tax_unit_year").HasColumnType("smallint");
         withholding.Property(value => value.BaseAmount).HasColumnName("base_amount").HasPrecision(14, 2);
         withholding.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
         // Plan P3: distingue «no aplica» de una tasa al 0 % que sí aplicó.
         withholding.Property(value => value.Applied).HasColumnName("applied");
+        // Spec ReteICA por empresa §7.5: el municipio de una tasa municipal (null en las nacionales) y el porcentaje del
+        // catálogo al congelar; `percentage` es el efectivo. Las filas anteriores se rellenan con su `percentage`.
+        withholding.Property(value => value.CityId).HasColumnName("city_id");
+        withholding.Property(value => value.CatalogPercentage).HasColumnName("catalog_percentage").HasPrecision(6, 3);
+        withholding.Ignore(value => value.Overridden);
         withholding.Ignore(value => value.Rate);
     }
 
@@ -499,6 +564,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         pdf.Property(value => value.QuotationVersion).HasColumnName("quotation_version");
         pdf.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
         pdf.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(16);
+        // Sin largo máximo: es un SHA-256 en hex (64), y una fila vieja la deja en NULL, que es lo que la vence (spec 2026-11-16 §5.4).
+        pdf.Property(value => value.ContentFingerprint).HasColumnName("content_fingerprint");
         pdf.Property(value => value.GeneratedAt).HasColumnName("generated_at");
 
         // El tenant no es parte de la clave --la cotizacion ya es unica-- pero toda consulta de
@@ -584,6 +651,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new QuotationId(value.Value) : null);
         order.Property(value => value.BuyerAccountId).HasColumnName("buyer_account_id");
+        // Spec 2026-11-15 §3.3: el enlace por correo al iniciar sesión la lee por nombre en SQL crudo.
+        order.Property(value => value.BuyerAccountSetByMember).HasColumnName("buyer_account_set_by_member");
         order.Property(value => value.Source)
             .HasColumnName("source")
             .HasConversion<string>()
@@ -653,14 +722,23 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasColumnName("billing_company_country")
                 .HasColumnType("char(2)")
                 .HasMaxLength(QuotationBillingAccount.CountryLength);
+            // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
+            billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
+            // Spec 2026-11-16 withholdings by company: a pending account is preview-only and has no column; a save that carries
+            // one is refused by RefusePendingBillingAccounts, so the flag is never silently dropped on the way to the database.
+            billing.Ignore(value => value.IsPending);
         });
         order.Navigation(value => value.BillingAccount).IsRequired();
+        // El municipio de la operación (spec ReteICA por empresa §7.5). Sin FK, como el municipio de las partes; sin
+        // relleno (A8).
+        order.Property(value => value.OperationCityId).HasColumnName("operation_city_id");
         order.Navigation(value => value.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
         order.Navigation(value => value.Parties).UsePropertyAccessMode(PropertyAccessMode.Field);
 
         // La foto de las tasas de retención del pedido (spec impuestos por tipo §7.5): misma forma que la de la
         // cotización, con una sola fuente ('Document').
         order.Ignore(value => value.AppliedWithholdings);
+        order.Ignore(value => value.WithholdingVerdicts);
         order.OwnsMany(value => value.Withholdings, withholding =>
         {
             withholding.ToTable("order_withholdings", "quotations", table =>
@@ -712,6 +790,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // D9 (spec 2026-11-10): la nota que escribió el comprador en el checkout; Notes es la del asesor.
         order.Property(value => value.BuyerNotes).HasColumnName("buyer_notes").HasColumnType("text");
         order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
+        // Spec 2026-11-16 §6: «Fecha del pedido», un día sin hora (date) del calendario del tenant.
+        order.Property(value => value.OrderDate).HasColumnName("order_date");
         order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
@@ -779,6 +859,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // tenant.
         order.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.OrderNumber })
             .HasDatabaseName("IX_orders_tenant_converted_at_number");
+        // Spec 2026-11-16 §5 y §6: el orden nuevo de la lista y del cursor de la exportación (fecha del pedido, después
+        // la conversión y el número como desempate). El índice de arriba se queda: lo usa la ventana de sincronización.
+        order.HasIndex(value => new { value.TenantId, value.OrderDate, value.ConvertedAt, value.OrderNumber })
+            .HasDatabaseName("IX_orders_tenant_order_date_converted_at_number");
         // El período del reporte de margen (spec costo de producto §6.3) filtra por paid_at detrás del tenant.
         order.HasIndex(value => new { value.TenantId, value.PaidAt }).HasDatabaseName("IX_orders_tenant_paid_at");
 
@@ -1095,6 +1179,42 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 .HasDatabaseName("IX_carrier_names_tenant_name");
         });
         carrier.Navigation(value => value.Names).UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    // El contenido configurable del PDF (spec 2026-11-16 §5.1): una fila por sección escrita; sin fila, la sección está apagada y
+    // vacía. La sección va por nombre, con un CHECK de los tres de PdfSectionKey. Sin FK al tenant, que es de Tenancy.
+    private static void ConfigurePdfSections(ModelBuilder modelBuilder)
+    {
+        var section = modelBuilder.Entity<PdfSectionRow>();
+        section.ToTable("pdf_sections", "quotations", table =>
+            table.HasCheckConstraint(
+                "CK_pdf_sections_section", "section IN ('PaymentNotice', 'Terms', 'DeliveryProcess')"));
+        section.HasKey(value => new { value.TenantId, value.Section });
+        section.Property(value => value.TenantId).HasColumnName("tenant_id");
+        section.Property(value => value.Section).HasColumnName("section").HasColumnType("text");
+        section.Property(value => value.Enabled).HasColumnName("enabled");
+        section.Property(value => value.InQuotation).HasColumnName("in_quotation");
+        section.Property(value => value.InOrder).HasColumnName("in_order");
+        // El mismo límite que valida el PUT: cambiarlo ahí cambia el varchar, y eso es una migración.
+        section.Property(value => value.Title).HasColumnName("title")
+            .HasMaxLength(Modules.Quotations.Application.PdfContentRules.MaxTitleLength).IsRequired();
+        section.Property(value => value.ContentHtml).HasColumnName("content_html").HasColumnType("text").IsRequired();
+        section.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+    }
+
+    // Si el PDF imprime la cuenta para el pago (spec 2026-11-16 pdf-payment-account, decisión 3): una fila por tenant que la guardó;
+    // sin fila está apagada. Tabla propia y no una cuarta clave de pdf_sections, que exige texto a una sección prendida. Sin FK al
+    // tenant, que es de Tenancy.
+    private static void ConfigurePdfPaymentAccount(ModelBuilder modelBuilder)
+    {
+        var account = modelBuilder.Entity<PdfPaymentAccountRow>();
+        account.ToTable("pdf_payment_account", "quotations");
+        account.HasKey(value => value.TenantId);
+        account.Property(value => value.TenantId).HasColumnName("tenant_id");
+        account.Property(value => value.Enabled).HasColumnName("enabled");
+        account.Property(value => value.InQuotation).HasColumnName("in_quotation");
+        account.Property(value => value.InOrder).HasColumnName("in_order");
+        account.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)

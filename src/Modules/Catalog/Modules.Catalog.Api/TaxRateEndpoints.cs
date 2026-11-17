@@ -133,7 +133,8 @@ public static class TaxRateEndpoints
                 request.Type ?? TaxCountries.IvaType,
                 request.Country ?? TaxCountries.Colombia.Country,
                 CountryExplicit: request.Country is not null,
-                request.MinimumBase),
+                request.MinimumBase,
+                request.CityId),
             cancellationToken);
 
         return Results.Created(
@@ -206,5 +207,8 @@ public static class TaxRateEndpoints
         taxRate.Country,
         taxRate.Behavior,
         taxRate.MinimumBase,
-        taxRate.MinimumBaseUnit);
+        taxRate.MinimumBaseUnit,
+        taxRate.Scope,
+        taxRate.CityId,
+        taxRate.City);
 }

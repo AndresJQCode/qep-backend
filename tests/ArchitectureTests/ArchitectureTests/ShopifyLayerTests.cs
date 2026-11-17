@@ -58,7 +58,8 @@ public sealed class ShopifyLayerTests
         Assert.DoesNotContain(references, name =>
             name is not null &&
             (name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal) ||
-             name.StartsWith("Npgsql", StringComparison.Ordinal)));
+             name.StartsWith("Npgsql", StringComparison.Ordinal) ||
+             name.StartsWith("StackExchange.Redis", StringComparison.Ordinal)));
     }
 
     [Fact]

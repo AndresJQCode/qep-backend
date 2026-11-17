@@ -72,7 +72,8 @@ public sealed class BuyerOrderGatewayTests
         var at = createdAt ?? Now.AddDays(-1);
         var order = Order.CreateFromStore(
             id ?? OrderId.New(), tenantId ?? TenantId, number, Header(), parties ?? Parties(), Account,
-            [Line("Aceite"), Line("Banano")], notes, Advisor, at, $"store-checkout:{number}",
+            [Line("Aceite"), Line("Banano")], notes, Advisor, at,
+            orderDate: DateOnly.FromDateTime(at.UtcDateTime), $"store-checkout:{number}",
             buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
@@ -90,12 +91,26 @@ public sealed class BuyerOrderGatewayTests
     private BuyerOrderGateway Gateway(
         StubOrderListRepository orders,
         IQuotationsUnitOfWork? unitOfWork = null,
-        IQuotationGeographyLookup? geography = null) =>
+        IQuotationGeographyLookup? geography = null,
+        IQuotationProductLookup? products = null) =>
         new(
             orders, unitOfWork ?? new NoOpQuotationsUnitOfWork(), _audit, _lifecycle, new FixedClock(Now),
             geography ?? new StubQuotationGeographyLookup(
                 new Dictionary<Guid, string> { [City] = "Cali" },
-                departmentNames: new Dictionary<Guid, string> { [Department] = "Valle del Cauca" }));
+                departmentNames: new Dictionary<Guid, string> { [Department] = "Valle del Cauca" }),
+            products ?? new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()));
+
+    private const string AceitePhoto = "https://cdn.test/aceite.webp";
+
+    /// <summary>El catálogo conoce la variante de «Aceite», con foto; la de «Banano» ya no está.</summary>
+    private static StubQuotationProductLookup CatalogWithAceitePhoto(Order order)
+    {
+        var aceite = order.Items.Single(item => item.ProductName == "Aceite");
+        return new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [aceite.VariantId] = new(aceite.VariantId, aceite.ProductId, "Aceite", "ABC", AceitePhoto, []),
+        });
+    }
 
     /// <summary>Lo que hace el ChangeTracker real al descartar: el historial, la auditoría y el evento viven en el
     /// mismo DbContext que el pedido y se van con él.</summary>
@@ -151,7 +166,8 @@ public sealed class BuyerOrderGatewayTests
             OrderId.New(), TenantId, "PED-2026-0009", Header(),
             new QuotationParties(
                 billing, ShippingOf(billing), IsStorePickup: true, BillingVatSurplus: false),
-            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         pickup.LinkBuyerAccount(Buyer);
         var shipped = StoreOrder(Buyer, "PED-2026-0010", Now.AddDays(-1));
         var orders = new StubOrderListRepository(pickup, shipped);
@@ -537,6 +553,103 @@ public sealed class BuyerOrderGatewayTests
         Assert.Equal(order.Items.OrderBy(item => item.Position).First().Subtotal, detail.Lines[0].LineTotal);
     }
 
+    [Fact]
+    public async Task EachLineCarriesThePhotoOfItsVariantAndAnUnknownVariantHasNone()
+    {
+        var order = StoreOrder(Buyer);
+        var gateway = Gateway(new StubOrderListRepository(order), products: CatalogWithAceitePhoto(order));
+
+        var detail = await DetailOf(gateway, order);
+
+        Assert.Equal(["Aceite", "Banano"], detail.Lines.Select(line => line.Name));
+        Assert.Equal([AceitePhoto, null], detail.Lines.Select(line => line.ImageUrl));
+    }
+
+    [Fact]
+    public async Task ThePhotosComeFromOneLookupWithDistinctVariantIds()
+    {
+        var order = StoreOrder(Buyer);
+        var catalog = CatalogWithAceitePhoto(order);
+
+        await DetailOf(Gateway(new StubOrderListRepository(order), products: catalog), order);
+
+        Assert.Equal(1, catalog.FindManyCalls);
+        Assert.Equal(TenantId, catalog.LastTenantId);
+        Assert.Equal(
+            order.Items.Select(item => item.VariantId).Distinct().Order(),
+            catalog.LastRequestedIds.Order());
+    }
+
+    [Fact]
+    public async Task APhotoLookupFailureIsNotDisguisedAsAMissingPhoto()
+    {
+        var order = StoreOrder(Buyer);
+        var gateway = Gateway(new StubOrderListRepository(order), products: new ThrowingProductLookup());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            gateway.FindAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal("catalog down", error.Message);
+    }
+
+    [Fact]
+    public async Task APhotoLookupFailureLeavesTheOrderUncancelled()
+    {
+        var order = StoreOrder(Buyer);
+        var orders = new StubOrderListRepository(order);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 0);
+        var gateway = Gateway(orders, unitOfWork, products: new ThrowingProductLookup());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal("catalog down", error.Message);
+        Assert.Equal(OrderStatus.Open, order.Status);
+        Assert.Equal(0, unitOfWork.SaveCalls);
+        Assert.Empty(orders.History);
+        Assert.Empty(_audit.Actions);
+        Assert.Empty(_lifecycle.Published);
+    }
+
+    [Fact]
+    public async Task ANonCancellableOrderMakesNoPhotoLookup()
+    {
+        var order = StoreOrder(Buyer, paidMarked: true);
+        var catalog = new ThrowingProductLookup();
+        var gateway = Gateway(new StubOrderListRepository(order), products: catalog);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal(BuyerOrderErrors.NotCancellableByBuyer, error.Code);
+        Assert.Equal(0, catalog.Calls);
+    }
+
+    [Fact]
+    public async Task CancelCarriesTheSamePhotosAsTheDetail()
+    {
+        var order = StoreOrder(Buyer);
+        var gateway = Gateway(new StubOrderListRepository(order), products: CatalogWithAceitePhoto(order));
+
+        var detail = await gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None);
+
+        Assert.NotNull(detail);
+        Assert.Equal("Cancelled", detail.Status);
+        Assert.Equal([AceitePhoto, null], detail.Lines.Select(line => line.ImageUrl));
+    }
+
+    private sealed class ThrowingProductLookup : IQuotationProductLookup
+    {
+        public int Calls { get; private set; }
+
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantRef>> FindManyAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+        {
+            Calls++;
+            throw new InvalidOperationException("catalog down");
+        }
+    }
+
     [Theory]
     [InlineData(PartyIdentificationType.Cc, null, "CC", "CO")]
     [InlineData(PartyIdentificationType.Nit, null, "NIT", "CO")]
@@ -653,7 +766,8 @@ public sealed class BuyerOrderGatewayTests
             OrderId.New(), TenantId, "PED-2026-0009", Header(),
             new QuotationParties(
                 billing, ShippingOf(billing), IsStorePickup: true, BillingVatSurplus: false),
-            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
         order.LinkBuyerAccount(Buyer);
 
         var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
@@ -776,6 +890,13 @@ public sealed class BuyerOrderGatewayTests
 
         public Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
             IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken) => Call();
+
+        public async Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
+            IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
+        {
+            await Call();
+            return new Dictionary<Guid, QuotationCityRef>();
+        }
 
         private Task<IReadOnlyDictionary<Guid, string>> Call() =>
             ++_calls > allowedCalls

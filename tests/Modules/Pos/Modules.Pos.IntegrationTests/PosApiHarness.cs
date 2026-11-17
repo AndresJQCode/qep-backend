@@ -321,10 +321,13 @@ internal static class PosApiHarness
 
     internal sealed record InvitedCashier(Guid MembershipId, Guid UserId, HttpClient Client);
 
-    /// <summary>Copia de ReportingApiHarness.InviteActiveAdvisorAsync con el rol `cashier`.</summary>
+    /// <summary>Copia de ReportingApiHarness.InviteActiveAdvisorAsync con el rol `cashier`. Prende `pos`
+    /// antes de invitar: sin él Cajero no concede nada y la invitación responde 422
+    /// `tenancy.membership.role_unavailable` (spec 2026-11-15).</summary>
     public static async Task<InvitedCashier> InviteCashierAsync(
         QepApiFactory factory, PostgreSqlContainer database, PosTenant tenant, params string[] permissions)
     {
+        await EnablePosAsync(database, tenant.TenantId);
         // Sin X-Permissions el stub concede los de tenancy, que traen advisorship.invite.
         using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId);
         var email = $"cashier-{Guid.CreateVersion7():N}@example.com";
@@ -386,6 +389,8 @@ internal static class PosApiHarness
 
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

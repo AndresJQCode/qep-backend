@@ -68,6 +68,10 @@ public static class MessagingErrorCodes
     /// <summary>§5.2: las claves de <c>parameters</c> no son exactamente las de la plantilla.</summary>
     public const string TemplateParametersMismatch = "messaging.template.parameters_mismatch";
 
+    /// <summary>Spec 2026-11-13 §4.2: la API externa mandó un encabezado multimedia que la plantilla no pide, o no lo mandó y la plantilla lo
+    /// pide, o es de otro tipo.</summary>
+    public const string TemplateHeaderMismatch = "messaging.template.header_mismatch";
+
     /// <summary>§5.2: <c>POST /conversations</c> con un cliente que no existe en el tenant o está inactivo (404).</summary>
     public const string CustomerNotFound = "messaging.customer.not_found";
 
@@ -161,6 +165,27 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-11-09 D3: existe una <c>qep_pedido</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
     public const string TemplateOrderConflict = "messaging.template.order_conflict";
+
+    /// <summary>Soporte fase 2: la conexión ya tiene su plantilla «Aviso de respuesta» viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_reply</c>.</summary>
+    public const string TemplateSupportReplyExists = "messaging.template.support_reply_exists";
+
+    /// <summary>Soporte fase 2: existe una <c>qep_soporte_respuesta</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateSupportReplyConflict = "messaging.template.support_reply_conflict";
+
+    /// <summary>Soporte fase 4b: la conexión ya tiene su plantilla «Respuesta formal» viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_formal_reply</c>.</summary>
+    public const string TemplateSupportFormalReplyExists = "messaging.template.support_formal_reply_exists";
+
+    /// <summary>Soporte fase 4b: existe una <c>qep_soporte_formal</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateSupportFormalReplyConflict = "messaging.template.support_formal_reply_conflict";
+
+    /// <summary>Soporte fase 4b: la conexión ya tiene su plantilla de encuesta viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_support_survey</c>.</summary>
+    public const string TemplateSupportSurveyExists = "messaging.template.support_survey_exists";
+
+    /// <summary>Soporte fase 4b: existe una <c>qep_soporte_encuesta</c> creada fuera de QEP con otro cuerpo o unos botones distintos.</summary>
+    public const string TemplateSupportSurveyConflict = "messaging.template.support_survey_conflict";
 
     /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
     public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";

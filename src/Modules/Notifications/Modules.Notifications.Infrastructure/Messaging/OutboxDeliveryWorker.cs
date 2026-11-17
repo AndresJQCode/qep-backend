@@ -1,7 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Modules.Identity.Application;
 using Modules.Notifications.Application;
@@ -18,6 +17,9 @@ namespace Modules.Notifications.Infrastructure.Messaging;
 /// cancelación. Cada worker concreto declara su consumidor, su evento y su plantilla, y arma su
 /// notificación en <see cref="DeliverAsync"/>.
 ///
+/// No es un hosted service (spec 2026-11-13, D-7): los trece consumidores son definiciones singleton que drena en
+/// secuencia un solo bucle, <see cref="NotificationsDeliveryWorker"/>. Antes cada uno sondeaba la base por su cuenta.
+///
 /// Garantía: dos réplicas nunca envían el mismo mensaje a la vez. Cada mensaje se reclama en el inbox
 /// propio con un lease (<see cref="InboxClaims"/>) antes de enviar. Queda un residual, el mismo de
 /// antes: si el proceso muere entre el envío y el guardado, el correo sale de nuevo cuando vence el
@@ -25,7 +27,7 @@ namespace Modules.Notifications.Infrastructure.Messaging;
 /// </summary>
 internal abstract partial class OutboxDeliveryWorker(
     IServiceScopeFactory scopeFactory,
-    ILogger logger) : BackgroundService
+    ILogger logger)
 {
     internal const int BatchSize = 20;
 
@@ -49,8 +51,8 @@ internal abstract partial class OutboxDeliveryWorker(
 
     protected abstract string TemplateRef { get; }
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Delivery tick of {Consumer} failed.")]
-    private static partial void LogTickFailed(ILogger logger, string consumer, Exception exception);
+    /// <summary>El consumidor, para el log del bucle cuando un drenado entero falla.</summary>
+    internal string ConsumerName => Consumer;
 
     [LoggerMessage(Level = LogLevel.Error,
         Message = "Outbox message {MessageId} failed in {Consumer}; it is retried when its lease expires.")]
@@ -68,33 +70,10 @@ internal abstract partial class OutboxDeliveryWorker(
     protected abstract Task<Notification> DeliverAsync(
         OutboxRecord record, DeliveryContext context, CancellationToken stoppingToken);
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(PollInterval);
-        do
-        {
-            try
-            {
-                await DrainAsync(stoppingToken);
-            }
-            // Sólo el apagado sale del loop (A4). Un timeout del proveedor ya no llega hasta acá
-            // (ver SendAsync), y cualquier otra cancelación se loguea como un tick fallido.
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                LogTickFailed(logger, Consumer, exception);
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
-
-    // `internal` y no `private`: es el punto de entrada que deja probar el reclamo y el aislamiento sin
-    // el PeriodicTimer de por medio (OutboxDeliveryWorkerTests, vía InternalsVisibleTo). Mismo
-    // precedente que ExportJobWorker.DrainAsync.
-    internal async Task DrainAsync(CancellationToken stoppingToken)
+    // Lo llama el bucle de NotificationsDeliveryWorker, y las pruebas directo (OutboxDeliveryWorkerTests, vía
+    // InternalsVisibleTo). Mismo precedente que ExportJobWorker.DrainAsync. Virtual sólo para que las pruebas del
+    // bucle cuenten drenados sin base. Devuelve true si el lote vino lleno: puede haber más (spec 2026-11-13, D-7).
+    internal virtual async Task<bool> DrainAsync(CancellationToken stoppingToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -143,6 +122,8 @@ internal abstract partial class OutboxDeliveryWorker(
                 dbContext.ChangeTracker.Clear();
             }
         }
+
+        return candidates.Count == BatchSize;
     }
 
     /// <summary>

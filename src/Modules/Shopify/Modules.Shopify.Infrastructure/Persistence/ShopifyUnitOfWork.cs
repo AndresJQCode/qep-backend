@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Shopify.Application;
+using Modules.Shopify.Domain;
 using Npgsql;
 
 namespace Modules.Shopify.Infrastructure.Persistence;
@@ -26,6 +27,20 @@ internal sealed class ShopifyUnitOfWork(ShopifyDbContext dbContext) : IShopifyUn
         {
             throw new RequestConcurrencyException(
                 "concurrency.conflict", "The Shopify store changed while the operation was being committed.", exception);
+        }
+        // Spec 2026-11-14 §5: dos correcciones del mismo pedido encolaron a la vez su envío y ninguna vio el pendiente de la otra. Ganó
+        // la otra: la perdedora recibe 412 y su pedido vuelve a leerse (el envío que quedó manda lo último del pedido igual).
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception, ShopifyDbContext.OrderPushMirrorPendingIndex))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict", "Another correction of this Shopify order was saved meanwhile; reload it.", exception);
+        }
+        // Spec 2026-11-13: el mismo nombre de línea personalizada ya está asociado en esa tienda. No es una carrera que se
+        // reintente sino un 409 al asesor, con su propio código.
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception, ShopifyDbContext.CustomLineMappingConnectionTitleIndex))
+        {
+            throw new ResourceConflictException(
+                ShopifyErrorCodes.CustomLineAlreadyMapped, "That custom line title is already mapped in this store.", exception);
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception, ShopifyDbContext.OrderConnectionIndex))
         {

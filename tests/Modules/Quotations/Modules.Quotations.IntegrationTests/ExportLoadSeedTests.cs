@@ -358,7 +358,8 @@ public sealed class ExportLoadSeedTests
             """));
     }
 
-    // Después del arranque, nunca dentro: el startupProbe le da al pod 60 s como máximo.
+    // Después del arranque, nunca dentro: el startupProbe le da al pod 180 s como máximo, y un segundo pod gasta parte
+    // de eso esperando el candado de arranque.
     [Fact]
     public async Task WithTheSwitchOnTheHostSeedsOnItsOwnAfterStartup()
     {

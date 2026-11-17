@@ -15,7 +15,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// Catalog a traves de HTTP real, y que <c>QuotationRepository</c> traiga/reemplace las lineas
 /// contra Postgres.
 /// </summary>
-public sealed class QuotationItemApiTests
+public sealed class QuotationItemApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     // Los empaques son del producto desde el 2026-10-01: viajan en su precio, no en la escala.
     private static readonly int[] TwelvePack = [12];
@@ -24,8 +24,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemAppliesTheScaleDiscountAndRecalculatesTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -61,8 +60,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddingAProductWithoutAnEurPriceToAnEurQuotationIs422()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -90,8 +88,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemsWithDifferentTaxRatesSumTheirTaxIntoTheHeader()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -135,8 +132,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemWithQuantityOutsideAnyScaleAppliesZeroDiscount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -161,8 +157,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemForAnUnknownProductIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -179,8 +174,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemWithZeroQuantityIsUnprocessable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -200,8 +194,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task UpdateItemQuantityReResolvesTheDiscountAndRecalculatesTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -235,8 +228,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task RemoveItemDropsTheLineAndRecalculatesTotals()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -273,8 +265,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemOffTheScaleMultipleIsAcceptedWithoutDiscount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -299,8 +290,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemOnTheScaleMultipleIsAccepted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -327,8 +317,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemBelowEveryScaleIsNotRestricted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -354,8 +343,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task UpdateItemOffTheScaleMultipleIsAcceptedWithoutDiscount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -389,8 +377,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task UpdateItemWithAPartialPackageIsAcceptedWithoutDiscount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -425,8 +412,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task ItemPriceScalesCarryTheirRestrictionToTheClient()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -451,8 +437,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AddItemRejectsAProductWithIncompleteScales()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -478,8 +463,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AQuotationWhoseProductLaterGotIncompleteScalesStaysReadable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -525,8 +509,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task TheBatchResponseCarriesTheMinimumPurchaseToTheClient()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -588,8 +571,7 @@ public sealed class QuotationItemApiTests
     [Fact]
     public async Task AQuantityBuiltFromSeveralPackagingUnitsKeepsTheDiscount()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

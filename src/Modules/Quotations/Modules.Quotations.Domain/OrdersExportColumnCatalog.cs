@@ -176,6 +176,16 @@ public static class OrdersExportColumnCatalog
         // Excel que ya existe gana una columna visible. Sus encabezados no chocan con la hoja sembrada.
         new("withholding_retefuente", "Retefuente", 16, DefaultVisible: false),
         new("withholding_reteica", "ReteICA", 16, DefaultVisible: false),
+        // Spec 2026-11-14: la nota que el comprador escribió en la tienda pública o en Shopify (Order.BuyerNotes).
+        // «Observaciones» (notes) sigue siendo la del asesor. Oculta también sin layout guardado (D13): un tenant sin
+        // layout puede tener un ERP leyendo la hoja por defecto. Su encabezado no choca con la hoja sembrada.
+        new("buyer_notes", "Notas del cliente", 40, DefaultVisible: false),
+        // Spec 2026-11-16 (tarifa de retención): la tarifa, no el monto, porque el import del sistema de facturación busca
+        // el impuesto por ella y calcula el monto él mismo. Las dos en porcentaje, tal como están guardadas (2.5;
+        // 1.104 la ReteICA de Bogotá): la ReteICA ya no sale por mil (owner, 2026-11-16). Ocultas y al final; el tenant las prende y les pone el encabezado que su
+        // import lee. «Tarifa …» no choca con «Retefuente» ni «ReteICA», que la regla de choque escondería.
+        new("withholding_retefuente_rate", "Tarifa Retefuente", 16, DefaultVisible: false),
+        new("withholding_reteica_rate", "Tarifa ReteICA", 16, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

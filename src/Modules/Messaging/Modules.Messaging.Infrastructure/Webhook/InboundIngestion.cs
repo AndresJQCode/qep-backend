@@ -176,6 +176,7 @@ internal static class InboundIngestion
         // creada: nace Open, así que su estado «de antes» no la delata.
         var opened = conversation.Created || before.OldStatus == nameof(ConversationStatus.Resolved);
         if (enqueueAutomation && ShouldEnqueue(message, before)
+            && !await IsSupportSurveyTapAsync(dbContext, tenantId, connectionId, message, cancellationToken)
             && await BotKindForAsync(dbContext, connectionId, before, cancellationToken) is { } botKind
             && (onlyBotKind is null || botKind == onlyBotKind))
         {
@@ -257,6 +258,42 @@ internal static class InboundIngestion
             $"""SELECT bot_kind AS "Value" FROM messaging.connection_bots WHERE connection_id = {connectionId}""")
             .ToListAsync(cancellationToken);
         return occupant.Count == 1 ? (BotKind)occupant[0] : null;
+    }
+
+    /// <summary>
+    /// Owner, 2026-11-16: el toque de un botón de la encuesta de Soporte no despierta al bot. Es un <c>Interactive</c> que cita un saliente
+    /// mandado con una plantilla de tipo <c>SupportSurvey</c>: el mensaje no guarda el tipo, así que se une su <c>details.template</c>
+    /// (nombre e idioma, <see cref="Modules.Messaging.Application.TemplateDetailsJson"/>) con la fila de <c>message_templates</c> de la misma
+    /// conexión. El toque entra, cita y suma no leídos como cualquier entrante (Soporte lo lee del hilo); sólo no se encola. Va aparte de
+    /// <see cref="ShouldEnqueue"/> y después de él, para que la consulta corra sólo cuando el resto ya encolaría. Límites aceptados: el
+    /// comentario libre que sigue al toque sí despierta al bot, y si la fila de la plantilla se borró, el toque de una encuesta vieja se
+    /// encola como cualquier otro.
+    /// </summary>
+    private static async Task<bool> IsSupportSurveyTapAsync(
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, CancellationToken cancellationToken)
+    {
+        if (message.Kind is not MessageKind.Interactive || message.QuotedWamid is null)
+        {
+            return false;
+        }
+
+        var survey = nameof(MessageTemplateKind.SupportSurvey);
+        return await dbContext.Database.SqlQuery<bool>(
+            $"""
+            SELECT EXISTS (
+                SELECT 1
+                  FROM messaging.messages AS quoted
+                  JOIN messaging.message_templates AS template
+                    ON template.tenant_id = quoted.tenant_id
+                   AND template.connection_id = quoted.connection_id
+                   AND template.name = quoted.details -> 'template' ->> 'name'
+                   AND template.language = quoted.details -> 'template' ->> 'language'
+                 WHERE quoted.connection_id = {connectionId}
+                   AND quoted.tenant_id = {tenantId}
+                   AND quoted.wamid = {message.QuotedWamid}
+                   AND quoted.direction = 2
+                   AND template.kind = {survey}) AS "Value"
+            """).SingleAsync(cancellationToken);
     }
 
     /// <summary>§8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El mensaje entra; el medio

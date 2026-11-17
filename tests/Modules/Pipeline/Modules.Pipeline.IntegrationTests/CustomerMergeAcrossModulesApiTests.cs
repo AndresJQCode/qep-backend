@@ -118,9 +118,9 @@ public sealed class CustomerMergeAcrossModulesApiTests
             VALUES (@quotation, @tenant, 'COT-' || @suffix, @customer, @advisor, 'Draft', now(), 0, 0, 0, 0, 0, @advisor, now(), 1);
             INSERT INTO quotations.orders (id, tenant_id, order_number, status, payment_status, converted_at, converted_by, created_at,
                 updated_at, version, client_id, advisor_id, currency, billing_company_id, billing_bank_name, billing_account_number,
-                billing_account_currency, source)
+                billing_account_currency, source, order_date)
             VALUES (@order, @tenant, 'PED-' || @suffix, 'Open', 'PaymentPending', now(), @advisor, now(), now(), 1, @customer,
-                @advisor, 'COP', @advisor, 'Banco', '123', 'COP', 'Manual');
+                @advisor, 'COP', @advisor, 'Banco', '123', 'COP', 'Manual', current_date);
             INSERT INTO pos.cash_sessions (id, tenant_id, cashier_id, cashier_name, company_id, company_name, company_tax_id, company_document_type, status,
                 opening_float, opened_at, sales_count, voided_count, sales_total, cash_total, card_total, transfer_total, version,
                 created_at, updated_at)
@@ -215,6 +215,32 @@ public sealed class CustomerMergeAcrossModulesApiTests
     private static Task<Guid> AgentTestCustomerAsync(string connectionString, Guid testId) =>
         ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM ai.tests WHERE id = @id", ("id", testId));
 
+    // Soporte: el número sigue al último del tenant para no chocar con el índice único (tenant_id, number). Desde la fase 4a
+    // support.tickets tiene FK a support.ticket_types, así que el tipo se siembra primero (con nombre único por el índice del tenant).
+    private static Task<int> InsertSupportTicketAsync(string connectionString, Guid ticketId, Guid tenantId, Guid customerId) =>
+        ExecuteAsync(connectionString,
+            """
+            WITH type AS (
+                INSERT INTO support.ticket_types (id, tenant_id, name, term_business_days, term_is_legal, requires_formal_response,
+                    is_published, is_active, position, created_at, updated_at, version)
+                VALUES (gen_random_uuid(), @tenant, 'Queja ' || gen_random_uuid(), 15, true, true, true, true, 1, now(), now(), 1)
+                RETURNING id)
+            INSERT INTO support.tickets (id, tenant_id, number, ticket_type_id, type_name, term_is_legal, requires_formal_response,
+                subject, description, intake, reply_channel, status, customer_id, received_at, received_on, last_event_ordinal,
+                created_at, updated_at, version)
+            SELECT @id, @tenant, (SELECT coalesce(max(number), 0) + 1 FROM support.tickets WHERE tenant_id = @tenant), type.id,
+                'Queja', true, true, 'Pedido incompleto', 'Faltó una caja.', 'Manual', 'Email', 'Open', @customer, now(), CURRENT_DATE, 1,
+                now(), now(), 1
+            FROM type
+            """,
+            ("id", ticketId), ("tenant", tenantId), ("customer", customerId));
+
+    private static Task<Guid> SupportTicketCustomerAsync(string connectionString, Guid ticketId) =>
+        ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM support.tickets WHERE id = @id", ("id", ticketId));
+
+    private static Task<long> SupportTicketVersionAsync(string connectionString, Guid ticketId) =>
+        ScalarAsync<long>(connectionString, "SELECT version FROM support.tickets WHERE id = @id", ("id", ticketId));
+
     private static string[] All(Guid customerId) => [.. Tables.Select(table => $"{table}={customerId}")];
 
     // §4: el negocio que abrió el sent del fusionado, su foto y la conversación pasan al que queda, y el tablero lo dibuja a su
@@ -290,6 +316,14 @@ public sealed class CustomerMergeAcrossModulesApiTests
         await InsertAgentTestAsync(connectionString, testOfMerged, tenantId, arranged.Merged);
         await InsertAgentTestAsync(connectionString, testOfOtherTenant, other.TenantId, arranged.Merged);
 
+        // Soporte (D4 del spec 2026-11-14): el ticket se mueve sin subir version (F15), como el préstamo.
+        var ticketOfMerged = Guid.CreateVersion7();
+        var ticketOfBystander = Guid.CreateVersion7();
+        var foreignTicket = Guid.CreateVersion7();
+        await InsertSupportTicketAsync(connectionString, ticketOfMerged, tenantId, arranged.Merged);
+        await InsertSupportTicketAsync(connectionString, ticketOfBystander, tenantId, arranged.Bystander);
+        await InsertSupportTicketAsync(connectionString, foreignTicket, other.TenantId, arranged.Merged);
+
         using var scope = factory.Services.CreateScope();
         var references = scope.ServiceProvider.GetRequiredService<ICustomerMergeReferences>();
 
@@ -309,8 +343,31 @@ public sealed class CustomerMergeAcrossModulesApiTests
         Assert.Equal(1, await ScalarAsync<long>(connectionString,
             "SELECT count(*) FROM loans.loans WHERE tenant_id = @tenant AND customer_id = @customer",
             ("tenant", other.TenantId), ("customer", arranged.Merged)));
+        Assert.Equal(arranged.Survivor, await SupportTicketCustomerAsync(connectionString, ticketOfMerged));
+        Assert.Equal(1, await SupportTicketVersionAsync(connectionString, ticketOfMerged));
+        Assert.Equal(arranged.Bystander, await SupportTicketCustomerAsync(connectionString, ticketOfBystander));
+        Assert.Equal(arranged.Merged, await SupportTicketCustomerAsync(connectionString, foreignTicket));
         Assert.Equal(new CustomerMergeReferenceCounts(0, 0, 0, 0, 0), await references.CountAsync(tenantId, [arranged.Merged], Ct));
         Assert.Equal(new CustomerMergeReferenceCounts(1, 1, 1, 1, 1), await references.CountAsync(tenantId, [arranged.Survivor], Ct));
+    }
+
+    // Soporte, revisión final C3: la vista previa de la fusión no cuenta tickets (sus ocho conteos son fijos, README «Clientes:
+    // fusión»), aunque la fusión sí los mueve. Un cliente con sólo un ticket cuenta cero en todo. Llama al adaptador porque es lo
+    // que lee la vista previa: sus conteos salen de ICustomerMergeReferences.CountAsync (CustomerMerge.cs:97).
+    [Fact]
+    public async Task TheMergePreviewDoesNotCountSupportTickets()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var arranged = await ArrangeAsync(factory, connectionString);
+        await InsertSupportTicketAsync(connectionString, Guid.CreateVersion7(), arranged.Tenant.TenantId, arranged.Merged);
+        using var scope = factory.Services.CreateScope();
+        var references = scope.ServiceProvider.GetRequiredService<ICustomerMergeReferences>();
+
+        var counts = await references.CountAsync(arranged.Tenant.TenantId, [arranged.Merged], Ct);
+
+        Assert.Equal(new CustomerMergeReferenceCounts(0, 0, 0, 0, 0), counts);
     }
 
     // §4: la fusión no se puede deshacer, así que queda completa o no pasa. Un trigger por sentencia rompe el último UPDATE

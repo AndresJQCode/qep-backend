@@ -167,7 +167,8 @@ public sealed class CustomerMergeApiTests
         using var client = arranged.Client;
         var survivorRate = Guid.CreateVersion7();
         var mergedRate = Guid.CreateVersion7();
-        foreach (var (id, name, type) in new[] { (survivorRate, "Retefuente servicios", "Retefuente"), (mergedRate, "ReteICA Bogota", "ReteICA") })
+        // Dos nacionales: desde el spec ReteICA por empresa (A15) un cliente no puede tener una tasa municipal.
+        foreach (var (id, name, type) in new[] { (survivorRate, "Retefuente servicios", "Retefuente"), (mergedRate, "Retefuente compras", "Retefuente") })
         {
             await ExecuteAsync(
                 arranged.ConnectionString,
@@ -194,6 +195,38 @@ public sealed class CustomerMergeApiTests
             await ScalarAsync(
                 arranged.ConnectionString,
                 $"SELECT count(*) FROM customers.customer_tax_rates WHERE customer_id = '{arranged.Survivor}'"));
+    }
+
+    // Spec ReteICA por empresa §7.4: la fusión conserva la lista de municipios donde el que queda es agente retenedor; la del
+    // absorbido no se copia, mismo criterio que sus tasas.
+    [Fact]
+    public async Task MergeKeepsTheSurvivorsList()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var other = (await EnsureCitiesAsync(client, 2))[1];
+        await ExecuteAsync(
+            arranged.ConnectionString,
+            "INSERT INTO customers.customer_withholding_agent_cities (customer_id, tenant_id, country, type, city_id) "
+            + $"VALUES ('{arranged.Survivor}', '{TenantId}', 'CO', 'ReteICA', '{arranged.CityId}')");
+        await ExecuteAsync(
+            arranged.ConnectionString,
+            "INSERT INTO customers.customer_withholding_agent_cities (customer_id, tenant_id, country, type, city_id) "
+            + $"VALUES ('{arranged.Merged}', '{TenantId}', 'CO', 'ReteICA', '{other.CityId}')");
+
+        var body = await MergeAsync(client, arranged.Survivor, arranged.Merged);
+
+        var cities = body.GetProperty("withholdingAgentCities").EnumerateArray()
+            .Select(city => city.GetProperty("city").GetProperty("id").GetGuid())
+            .ToArray();
+        Assert.Equal([arranged.CityId], cities);
+        Assert.Equal(
+            1L,
+            await ScalarAsync(
+                arranged.ConnectionString,
+                $"SELECT count(*) FROM customers.customer_withholding_agent_cities WHERE customer_id = '{arranged.Survivor}'"));
     }
 
     // Review Focus 3 (spec 2026-10-26 D-7): la fusión sólo cambia de dueño las filas; el vigente sigue siendo la más nueva por
@@ -753,6 +786,16 @@ public sealed class CustomerMergeApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    // Decisión del owner 2026-11-16: cada vínculo que la fusión cambia deja su company_changed, como PUT …/company. Cuenta todos,
+    // los del vínculo de la preparación incluidos.
+    private static async Task<long> CompanyChangesAsync(string connectionString, Guid customer) =>
+        long.Parse(
+            (await TextAsync(
+                connectionString,
+                "SELECT count(*) FROM platform.outbox_messages "
+                + $"WHERE payload->>'action' = '{CustomerAuditActions.CompanyChanged}' AND payload->>'resourceId' = '{customer}'"))!,
+            CultureInfo.InvariantCulture);
+
     private static Task<string?> CompanyOfAsync(string connectionString, Guid customer) =>
         TextAsync(connectionString, $"SELECT company_id FROM customers.customers WHERE id = '{customer}'");
 
@@ -804,6 +847,10 @@ public sealed class CustomerMergeApiTests
         Assert.Null(await CompanyOfAsync(arranged.ConnectionString, company));
         Assert.Null(await CompanyOfAsync(arranged.ConnectionString, survivor));
         await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+        Assert.Equal(
+            (2L, 2L, 0L, 0L),
+            (await CompanyChangesAsync(arranged.ConnectionString, first), await CompanyChangesAsync(arranged.ConnectionString, second),
+             await CompanyChangesAsync(arranged.ConnectionString, company), await CompanyChangesAsync(arranged.ConnectionString, survivor)));
     }
 
     [Fact]
@@ -823,6 +870,9 @@ public sealed class CustomerMergeApiTests
         Assert.Null(await CompanyOfAsync(arranged.ConnectionString, contact));
         Assert.Equal(company.ToString(), await MergedIntoAsync(arranged.ConnectionString, contact));
         await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+        Assert.Equal(
+            (2L, 0L),
+            (await CompanyChangesAsync(arranged.ConnectionString, contact), await CompanyChangesAsync(arranged.ConnectionString, company)));
     }
 
     [Fact]
@@ -845,6 +895,10 @@ public sealed class CustomerMergeApiTests
         Assert.Equal(JsonValueKind.Null, body.GetProperty("company").ValueKind);
         Assert.Equal(1, body.GetProperty("contactCount").GetInt32());
         await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+        Assert.Equal(
+            (2L, 2L, 0L),
+            (await CompanyChangesAsync(arranged.ConnectionString, survivor), await CompanyChangesAsync(arranged.ConnectionString, other),
+             await CompanyChangesAsync(arranged.ConnectionString, company)));
     }
 
     [Fact]
@@ -1009,7 +1063,7 @@ public sealed class CustomerMergeApiTests
 
             if (await ScalarAsync(
                 connectionString,
-                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%customers.customers%FOR UPDATE%'") == expected)
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%customers.customers%FOR UPDATE%'") == expected)
             {
                 return;
             }

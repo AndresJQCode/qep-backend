@@ -37,7 +37,7 @@ public sealed class BillingPersonTypeRequirementTests
         return Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(),
             new MemberId(Guid.CreateVersion7()), null, null, null, parties,
-            null, "COP", false, [], new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
+            null, "COP", false, [], MunicipalContext.None, new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public sealed class BillingPersonTypeRequirementTests
             },
             new ShippingDetails(null, null, null, 0m, 0, false),
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
-            null, advisor, [], DateTimeOffset.UtcNow);
+            null, advisor, [], DateTimeOffset.UtcNow, orderDate: DateOnly.FromDateTime(DateTimeOffset.UtcNow.UtcDateTime));
         order.SetBilling(
             new QuotationPartyDetails
             {

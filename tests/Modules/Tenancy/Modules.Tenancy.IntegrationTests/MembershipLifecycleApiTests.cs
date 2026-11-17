@@ -7,11 +7,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
 
-public sealed class MembershipLifecycleApiTests
+public sealed class MembershipLifecycleApiTests(SharedTenancyHost host) : IClassFixture<SharedTenancyHost>
 {
     private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
@@ -19,8 +18,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task SuspendActiveMembershipTransitionsToSuspended()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
         // Se invita como advisor y se promueve después por el mismo camino que
@@ -48,8 +46,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task SuspendOwnerMembershipIsRejectedEvenWithAnotherActiveAdmin()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
         await AddActiveAdminAsync(factory, ownerClient, tenantId);
@@ -65,8 +62,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task RemoveOwnerMembershipIsRejectedEvenWithAnotherActiveAdmin()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
         await AddActiveAdminAsync(factory, ownerClient, tenantId);
@@ -82,8 +78,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task UpdateRolesCannotStripAdminFromOwnerMembership()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
         await AddActiveAdminAsync(factory, ownerClient, tenantId);
@@ -100,8 +95,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task UpdateRolesOnOwnerKeepingAdminIsAllowed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
 
@@ -118,8 +112,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ListMarksOnlyTheOwnerMembership()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
         var invitedId = await InviteAsync(ownerClient, tenantId, NewEmail());
@@ -140,8 +133,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task SuspendNonActiveMembershipIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var invitedId = await InviteAsync(ownerClient, tenantId, NewEmail());
 
@@ -153,8 +145,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task RemoveInvitedMembershipTransitionsToRemoved()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var invitedId = await InviteAsync(ownerClient, tenantId, NewEmail());
 
@@ -172,8 +163,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task RemoveAlreadyRemovedMembershipIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var (otherTenantId, _, _, otherOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
         var email = NewEmail();
@@ -202,8 +192,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ReinvitingARemovedMemberRenewsTheSameMembership()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var (otherTenantId, _, _, otherOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
         var email = NewEmail();
@@ -251,8 +240,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task SuspendOwnMembershipIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, ownerUserId, _) =
             await RegisterTenantWithOwnerAsync(factory);
         using var selfClient = CreateClient(factory, ownerUserId.ToString(), tenantId);
@@ -265,8 +253,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task RemoveOwnMembershipIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, ownerUserId, _) =
             await RegisterTenantWithOwnerAsync(factory);
         using var selfClient = CreateClient(factory, ownerUserId.ToString(), tenantId);
@@ -279,8 +266,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task SuspendLastActiveManagerIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, _) =
             await RegisterTenantWithOwnerAsync(factory);
         using var sameTenantOtherSubject = CreateClient(
@@ -295,8 +281,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task RemoveLastActiveManagerIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, _) =
             await RegisterTenantWithOwnerAsync(factory);
         using var sameTenantOtherSubject = CreateClient(
@@ -314,8 +299,7 @@ public sealed class MembershipLifecycleApiTests
         // Prueba que la guarda es precisa a nivel manager, y no un chequeo genérico de "última
         // membresía activa": el owner (manager) sigue activo, así que quitar al único miembro
         // común tiene que funcionar aunque deje vacío el pool de activos no-manager.
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
         await ActivateMembershipAsync(factory.ConnectionString, memberId);
@@ -328,8 +312,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task UpdateRolesChangesMembershipRoles()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -345,8 +328,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task UpdateRolesForUnknownRoleIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -358,8 +340,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task UpdateRolesCannotRemoveLastActiveManager()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, ownerClient) =
             await RegisterTenantWithOwnerAsync(factory);
 
@@ -372,8 +353,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task UpdateRolesRequiresIfMatch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -386,8 +366,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task UpdateRolesWithStaleVersionIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -400,8 +379,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ManageFromAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, _) = await RegisterTenantWithOwnerAsync(factory);
         using var otherClient = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
@@ -413,8 +391,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ManageOfUnknownMembershipIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
 
         var response = await SendActionAsync(
@@ -428,8 +405,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateReturnsTheRowWithANewEtagAndIsAudited()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -456,8 +432,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateWithoutChangesKeepsTheVersionAndRecordsNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(
             ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 12);
@@ -474,8 +449,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateRequiresIfMatch()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -491,8 +465,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateWithAStaleVersionIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -505,8 +478,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateWithAZeroCodeMarksTheField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -524,8 +496,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateWithADecimalCodeMarksTheField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -543,8 +514,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateWithACodeTakenInTheTenantIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 7);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
@@ -562,8 +532,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task TheSameCodeInAnotherTenantIsAccepted()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var (otherTenantId, _, _, otherOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
         await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 7);
@@ -583,8 +552,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ClearingTheCodeWithNullFreesItForAnotherMember()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var holder = await InviteAsync(
             ownerClient, tenantId, NewEmail(), AdvisorRoles, advisorCode: 7);
@@ -608,8 +576,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateFromAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, _) = await RegisterTenantWithOwnerAsync(factory);
         using var otherClient = CreateClient(factory, OtherSubjectId, OtherTenantId);
 
@@ -622,8 +589,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ProfileUpdateRequiresTheManagePermission()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
         using var readerOnly = CreateClient(factory, Guid.CreateVersion7().ToString(), tenantId);
@@ -640,8 +606,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task TheRetiredDisplayNameEndpointIsGone()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
 
@@ -656,8 +621,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task TheAdvisorCodeIndexIsUniquePerTenantAndSkipsMembersWithoutCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         // Registrar arranca la API, y arrancarla aplica las migraciones.
         await RegisterTenantWithOwnerAsync(factory);
 
@@ -686,8 +650,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ADuplicateCodeThatReachesTheDatabaseIsTheDomainCodeAndNotAServerError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var first = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
         var second = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
@@ -707,8 +670,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task IsAdvisorCodeTakenSeesRemovedMembersSkipsTheExcludedOneAndIgnoresOtherTenants()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var (otherTenantId, _, _, otherOwnerClient) = await RegisterTenantWithOwnerAsync(factory);
         var email = NewEmail();
@@ -737,8 +699,7 @@ public sealed class MembershipLifecycleApiTests
     [Fact]
     public async Task ListByIdsReturnsOnlyTheRequestedMembershipsOfTheTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
         var (tenantId, ownerMembershipId, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
         var (_, otherOwnerMembershipId, _, _) = await RegisterTenantWithOwnerAsync(factory);
         var requested = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
@@ -1031,6 +992,125 @@ public sealed class MembershipLifecycleApiTests
         return (Guid)result!;
     }
 
+    // Spec 2026-11-15 (roles asignables): el signup no concede pos, así que Cajero no concede nada
+    // en un tenant recién registrado y no se puede agregar.
+    [Fact]
+    public async Task AddingTheCashierRoleWithoutPosIs422()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, ["advisor", "cashier"]);
+
+        await AssertRoleUnavailableAsync(response);
+    }
+
+    // Quien ya lo tiene lo conserva: la pantalla reenvía todos los roles al guardar.
+    [Fact]
+    public async Task ARoleTheMemberAlreadyHoldsIsKeptWithoutItsModule()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), ["advisor", "cashier"]);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: false);
+
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, ["cashier", "billing"]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemovingAnUnavailableRoleIsAllowed()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), ["advisor", "cashier"]);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: false);
+
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, AdvisorRoles);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task InvitingWithAnUnavailableRoleIs422()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+
+        var response = await SendInviteAsync(
+            ownerClient, tenantId, NewEmail(), ["cashier"], DefaultDisplayName);
+
+        await AssertRoleUnavailableAsync(response);
+    }
+
+    // Revisión final: si otro admin ya quitó Cajero, reenviarlo con la versión vieja es un 412 (la
+    // pantalla se desactualizó), no un role_unavailable por un estado que el cliente nunca vio.
+    [Fact]
+    public async Task AStaleEditThatResendsAHeldRoleIs412NotUnavailable()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), ["advisor", "cashier"]);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: false);
+        var removed = await SendRolesAsync(ownerClient, tenantId, memberId, AdvisorRoles);
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+
+        var stale = await SendRolesAsync(
+            ownerClient, tenantId, memberId, ["advisor", "cashier"], expectedVersion: 1);
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddingTheCashierRoleWithPosIsAllowed()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        var (tenantId, _, _, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        await SetModuleAsync(factory.ConnectionString, tenantId, "pos", active: true);
+        var memberId = await InviteAsync(ownerClient, tenantId, NewEmail(), AdvisorRoles);
+
+        var response = await SendRolesAsync(ownerClient, tenantId, memberId, ["advisor", "cashier"]);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static async Task AssertRoleUnavailableAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.membership.role_unavailable", problem!.Code);
+    }
+
+    // Prende o apaga un módulo con el mismo SQL que PosApiHarness.EnablePosAsync / DisablePosAsync:
+    // pos no viene con el signup, y apagar deja la fila inactiva (spec 2026-10-08 §3).
+    private static async Task SetModuleAsync(
+        string connectionString, string tenantId, string moduleKey, bool active)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            active
+                ? """
+                  INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+                  VALUES (@tenantId, @moduleKey, now(), 'manual')
+                  ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
+                  """
+                : """
+                  UPDATE tenancy.tenant_modules SET status = 'inactive', status_changed_at = now()
+                  WHERE tenant_id = @tenantId AND module_key = @moduleKey
+                  """,
+            connection);
+        command.Parameters.AddWithValue("tenantId", Guid.Parse(tenantId));
+        command.Parameters.AddWithValue("moduleKey", moduleKey);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     // Saltea la vuelta de invitar-aceptar (que requiere un login real de Google) para que
     // las pruebas puedan poner una segunda membresía en estado Active directamente.
     private static async Task ActivateMembershipAsync(string connectionString, Guid membershipId)
@@ -1042,17 +1122,6 @@ public sealed class MembershipLifecycleApiTests
             connection);
         command.Parameters.AddWithValue("id", membershipId);
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(
@@ -1096,6 +1165,8 @@ public sealed class MembershipLifecycleApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

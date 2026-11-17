@@ -67,10 +67,24 @@ public sealed class RoleCommandsTests
     {
         public int Saves { get; private set; }
 
+        /// <summary>El guardado y las subidas de versión del tenant, en el orden en que pasan.</summary>
+        public List<string> Steps { get; } = [];
+
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
         {
             Saves++;
+            Steps.Add("save");
             return Task.FromResult(1);
+        }
+    }
+
+    /// <summary>Anota cada subida en la lista de la unidad de trabajo (spec 2026-11-13, D-5).</summary>
+    private sealed class RecordingVersion(List<string> steps) : ITenantAccessVersion
+    {
+        public Task BumpAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            steps.Add($"bump:{tenantId}");
+            return Task.CompletedTask;
         }
     }
 
@@ -103,7 +117,39 @@ public sealed class RoleCommandsTests
             uow,
             SystemCatalog(),
             context ?? new Context(Tenant, "advisorship.roles.manage"),
-            new StubClock());
+            new StubClock(),
+            new RecordingVersion(uow.Steps));
+
+    // ---- Versión de acceso del tenant (spec 2026-11-13, D-5) ----
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    [InlineData("delete")]
+    public async Task CreateUpdateAndDeleteRoleBumpTheTenantVersionBeforeAndAfterSaving(string operation)
+    {
+        var role = CustomRole("ventas-junior", "catalog.product.read");
+        var uow = new Uow();
+        var ct = TestContext.Current.CancellationToken;
+
+        switch (operation)
+        {
+            case "create":
+                await CreateHandler(new Repo(), uow).HandleAsync(
+                    new CreateRoleCommand(Tenant, "ventas-senior", "Ventas senior", "", ["catalog.product.read"]), ct);
+                break;
+            case "update":
+                await UpdateHandler(new Repo(role), uow, new Usage([SystemRoleKeys.Admin])).HandleAsync(
+                    new UpdateRoleCommand(Tenant, role.Id, "Ventas", "", ["catalog.product.read"], role.Version), ct);
+                break;
+            default:
+                await DeleteHandler(new Repo(role), uow, new Usage([SystemRoleKeys.Admin])).HandleAsync(
+                    new DeleteRoleCommand(Tenant, role.Id), ct);
+                break;
+        }
+
+        Assert.Equal([$"bump:{Tenant.Value}", "save", $"bump:{Tenant.Value}"], uow.Steps);
+    }
 
     // ---- Crear ----
 
@@ -173,7 +219,7 @@ public sealed class RoleCommandsTests
     // ---- Borrar ----
 
     private static DeleteRoleHandler DeleteHandler(Repo repo, Uow uow, Usage usage) =>
-        new(repo, uow, usage, new Context(Tenant, "advisorship.roles.manage"));
+        new(repo, uow, usage, new Context(Tenant, "advisorship.roles.manage"), new RecordingVersion(uow.Steps));
 
     [Fact]
     public async Task DeleteRemovesARoleNobodyHas()
@@ -228,7 +274,8 @@ public sealed class RoleCommandsTests
             SystemCatalog(),
             usage,
             new Context(Tenant, "advisorship.roles.manage"),
-            new StubClock());
+            new StubClock(),
+            new RecordingVersion(uow.Steps));
 
     [Fact]
     public async Task UpdateReplacesPermissionsAndName()

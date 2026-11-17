@@ -6,7 +6,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -281,17 +281,6 @@ public sealed class WebTelemetryApiTests
         Assert.Equal(HttpStatusCode.TooManyRequests, last);
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     private static HttpClient CreateClient(QepApiFactory factory, string subjectId, string tenantId)
     {
         var client = factory.CreateClient();
@@ -308,6 +297,8 @@ public sealed class WebTelemetryApiTests
             // "IntegrationTests" deja la autenticación real (ver RealAuthenticationApiTests); "Development" trae el stub.
             builder.UseEnvironment(realAuthentication ? "IntegrationTests" : "Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

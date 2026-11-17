@@ -401,7 +401,11 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.Property(value => value.MinimumBase)
             .HasColumnName("minimum_base")
             .HasPrecision(14, 2);
+        // Sin FK a geography.cities a propósito: Catalog migra antes que Geography (spec ReteICA por empresa, A9). Que la
+        // ciudad exista lo revisa CreateTaxRateHandler.
+        taxRate.Property(value => value.CityId).HasColumnName("city_id");
         taxRate.Ignore(value => value.Behavior);
+        taxRate.Ignore(value => value.Scope);
         taxRate.Ignore(value => value.Withholds);
         taxRate.Ignore(value => value.VatPercentage);
         taxRate.Property(value => value.IsActive).HasColumnName("is_active");
@@ -415,9 +419,16 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // de la violación de unicidad discrimina por nombre de índice, no sólo por SqlState.
         // Con dos índices únicos en el mismo esquema, confundirlos manda al llamador a corregir
         // el campo equivocado — la lección de SDD-CT-06.
-        taxRate.HasIndex(value => new { value.TenantId, value.Name })
+        //
+        // Owner, 2026-11-15: el nombre se puede repetir; lo que no se repite es nombre + porcentaje + base mínima.
+        // NULLS NOT DISTINCT porque minimum_base es nullable: sin él, dos tasas iguales sin base no chocarían.
+        taxRate.HasIndex(value => new { value.TenantId, value.Name, value.Percentage, value.MinimumBase })
             .IsUnique()
-            .HasDatabaseName("IX_tax_rates_tenant_name");
+            .AreNullsDistinct(false)
+            .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");
+        // No único: un municipio puede tener varias tarifas (una por actividad CIIU) y la empresa elige una.
+        taxRate.HasIndex(value => new { value.TenantId, value.Type, value.CityId })
+            .HasDatabaseName("IX_tax_rates_tenant_type_city");
     }
 
     // Sin tenant_id a propósito: la UVT es un dato de la plataforma, como las ciudades de Geography.

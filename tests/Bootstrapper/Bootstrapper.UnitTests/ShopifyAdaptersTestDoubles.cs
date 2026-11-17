@@ -170,6 +170,40 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
             ?? new ExternalShippingOutcome(
                 ExternalShippingOutcomeKind.Applied, expected with { DepartmentId = departmentId, CityId = cityId }, null));
     }
+
+    /// <summary>Lo que lee el detector de ediciones de Shopify, por pedido; el que no está no existe (<c>null</c>).</summary>
+    public Dictionary<(Guid TenantId, Guid OrderId), ExternalOrderEditState> EditStates { get; } = [];
+
+    public Func<ExternalOrderEditDraft, ExternalOrderEditState>? OnApplyEdit { get; init; }
+
+    public List<ExternalOrderEditDraft> Edits { get; } = [];
+
+    public Task<ExternalOrderEditState?> FindEditStateAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(EditStates.TryGetValue((tenantId, orderId), out var state) ? state : null);
+    }
+
+    public Task<ExternalOrderEditState> ApplyEditAsync(ExternalOrderEditDraft draft, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Edits.Add(draft);
+        return Task.FromResult(
+            OnApplyEdit?.Invoke(draft)
+            ?? EditStates.GetValueOrDefault((draft.TenantId, draft.OrderId))
+            ?? throw new InvalidOperationException("No edit state seeded for the order."));
+    }
+
+    public List<ExternalOrderCorrection> Corrections { get; } = [];
+
+    public Task<ExternalOrderEditState> CorrectByMemberAsync(ExternalOrderCorrection correction, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Corrections.Add(correction);
+        return Task.FromResult(
+            EditStates.GetValueOrDefault((correction.TenantId, correction.OrderId))
+            ?? throw new InvalidOperationException("No edit state seeded for the order."));
+    }
 }
 
 internal sealed class PassThroughPhones : IPhoneNumberNormalizer
@@ -329,7 +363,7 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task RepointContactsAsync(
+    public Task<IReadOnlyList<Guid>> RepointContactsAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
@@ -612,7 +646,8 @@ internal sealed class NamedDepartments(params Department[] departments) : IDepar
 
     public Task<IReadOnlyList<Department>> ListAllAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
 
-    public Task<Department?> FindAsync(DepartmentId departmentId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<Department?> FindAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
+        Task.FromResult(departments.FirstOrDefault(department => department.Id == departmentId));
 
     public Task<IReadOnlyList<Department>> ListByIdsAsync(
         IReadOnlyCollection<DepartmentId> departmentIds, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -636,7 +671,8 @@ internal sealed class NamedCities(params City[] cities) : ICityRepository
     public Task<IReadOnlyList<City>> ListByDepartmentAsync(DepartmentId departmentId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task<City?> FindAsync(CityId cityId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<City?> FindAsync(CityId cityId, CancellationToken cancellationToken) =>
+        Task.FromResult(cities.FirstOrDefault(city => city.Id == cityId));
 
     public Task<IReadOnlyList<City>> ListByIdsAsync(IReadOnlyCollection<CityId> cityIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -670,6 +706,9 @@ internal sealed class FakeCompanyRepository(params Company[] companies) : ICompa
         throw new NotSupportedException();
 
     public Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public void Add(Company company) => throw new NotSupportedException();

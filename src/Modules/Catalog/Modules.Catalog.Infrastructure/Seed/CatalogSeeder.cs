@@ -44,7 +44,7 @@ public static class CatalogSeeder
         if (taxRate is null)
         {
             taxRate = TaxRate.Create(
-                TaxRateId.New(), tenantId, seed.TaxRate.Name, seed.TaxRate.Percentage, TaxCountries.IvaType, "CO", null, now);
+                TaxRateId.New(), tenantId, seed.TaxRate.Name, seed.TaxRate.Percentage, TaxCountries.IvaType, "CO", null, cityId: null, now);
             dbContext.TaxRates.Add(taxRate);
             await dbContext.SaveChangesAsync(cancellationToken);
         }

@@ -11,19 +11,19 @@ namespace Modules.Shopify.UnitTests;
 public sealed class ShopifyDocumentSourcesTests
 {
     [Fact]
-    public void WithoutAttributesOnlyTheAddressPathIsOffered() =>
-        Assert.Equal([ShopifyDocumentSources.ShippingAddressCompany], ShopifyDocumentSources.Options([]));
+    public void OptionsStartWithBothAddressPaths() =>
+        Assert.Equal(["shipping_address.company", "billing_address.company"], ShopifyDocumentSources.Options([]));
 
     [Fact]
     public void TheAddressPathGoesFirstAndTheAttributesAreSorted() =>
         Assert.Equal(
-            [ShopifyDocumentSources.ShippingAddressCompany, "cedula", "Documento", "tipo_documento"],
+            [ShopifyDocumentSources.ShippingAddressCompany, ShopifyDocumentSources.BillingAddressCompany, "cedula", "Documento", "tipo_documento"],
             ShopifyDocumentSources.Options(["tipo_documento", "Documento", "cedula"]));
 
     [Fact]
     public void BlankKeysAreSkippedAndKeysAreTrimmed() =>
         Assert.Equal(
-            [ShopifyDocumentSources.ShippingAddressCompany, "Documento"],
+            [ShopifyDocumentSources.ShippingAddressCompany, ShopifyDocumentSources.BillingAddressCompany, "Documento"],
             ShopifyDocumentSources.Options(["", "   ", "  Documento  "]));
 
     // Read compara el nombre del atributo recortado y sin distinguir mayúsculas: «Cédula» y «cédula» resuelven igual, así que
@@ -32,14 +32,14 @@ public sealed class ShopifyDocumentSourcesTests
     [Fact]
     public void KeysThatResolveTheSameAreOfferedOnce() =>
         Assert.Equal(
-            [ShopifyDocumentSources.ShippingAddressCompany, "Cédula"],
+            [ShopifyDocumentSources.ShippingAddressCompany, ShopifyDocumentSources.BillingAddressCompany, "Cédula"],
             ShopifyDocumentSources.Options(["cédula", " Cédula", "Cédula "]));
 
     // Un atributo llamado como la ruta de la dirección nunca se lee como atributo: Read la toma por la dirección.
     [Fact]
     public void AnAttributeNamedLikeTheAddressPathIsNotRepeated() =>
         Assert.Equal(
-            [ShopifyDocumentSources.ShippingAddressCompany, "Documento"],
+            [ShopifyDocumentSources.ShippingAddressCompany, ShopifyDocumentSources.BillingAddressCompany, "Documento"],
             ShopifyDocumentSources.Options([" shipping_address.company ", "Documento"]));
 
     // El PUT de la tienda rechaza una clave más larga que AttributeKeyMaxLength: ofrecerla dejaría elegir algo que no se guarda.
@@ -50,7 +50,7 @@ public sealed class ShopifyDocumentSourcesTests
         var tooLong = new string('b', ShopifyStore.AttributeKeyMaxLength + 1);
 
         Assert.Equal(
-            [ShopifyDocumentSources.ShippingAddressCompany, longest],
+            [ShopifyDocumentSources.ShippingAddressCompany, ShopifyDocumentSources.BillingAddressCompany, longest],
             ShopifyDocumentSources.Options([tooLong, longest]));
     }
 
@@ -60,6 +60,7 @@ public sealed class ShopifyDocumentSourcesTests
         var order = ImporterWorld.Order() with
         {
             ShippingAddress = new ShopifyAddress("Ana", "Calle 1", null, "Medellín", "Antioquia", "ANT", "CO", null, "900123456"),
+            BillingAddress = new ShopifyAddress("Ana", "Calle 1", null, "Medellín", "Antioquia", "ANT", "CO", null, "800999111"),
             Attributes = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [" Cédula "] = "1036000111",
@@ -71,6 +72,24 @@ public sealed class ShopifyDocumentSourcesTests
             .Select(key => ShopifyDocumentSources.Read(order, key) ?? "<nada>")
             .ToArray();
 
-        Assert.Equal(["900123456", "1036000111", "CC"], resolved);
+        Assert.Equal(["900123456", "800999111", "1036000111", "CC"], resolved);
     }
+
+    [Fact]
+    public void ReadBillingCompany()
+    {
+        var order = ImporterWorld.Order() with
+        {
+            BillingAddress = new ShopifyAddress(null, null, null, null, null, null, "CO", null, "1036000111"),
+        };
+
+        Assert.Equal("1036000111", ShopifyDocumentSources.Read(order, " billing_address.company "));
+        Assert.Null(ShopifyDocumentSources.Read(order with { BillingAddress = null }, ShopifyDocumentSources.BillingAddressCompany));
+    }
+
+    [Fact]
+    public void AnAttributeNamedLikeTheBillingPathIsNotRepeated() =>
+        Assert.Equal(
+            [ShopifyDocumentSources.ShippingAddressCompany, ShopifyDocumentSources.BillingAddressCompany],
+            ShopifyDocumentSources.Options(["billing_address.company"]));
 }

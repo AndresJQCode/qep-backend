@@ -565,7 +565,8 @@ internal static class PasswordAuthApiHarness
 internal sealed class PasswordAuthApiFactory(
     string connectionString,
     IEmailChannel? emailChannel = null,
-    bool signupEnabled = true) : WebApplicationFactory<Program>
+    bool signupEnabled = true,
+    Action<IWebHostBuilder>? configure = null) : WebApplicationFactory<Program>
 {
     public const string Audience = "test-audience";
 
@@ -579,6 +580,8 @@ internal sealed class PasswordAuthApiFactory(
     {
         builder.UseEnvironment("IntegrationTests");
         builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+        // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+        builder.UseSetting("Seed:Enabled", "false");
         builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
         builder.UseSetting("Storage:R2:AccountId", "test-account");
         builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -606,6 +609,9 @@ internal sealed class PasswordAuthApiFactory(
                 services.AddSingleton(emailChannel);
             });
         }
+
+        // Lo propio de una prueba (Valkey, un interceptor, un reloj), después de lo común para poder pisarlo.
+        configure?.Invoke(builder);
     }
 }
 

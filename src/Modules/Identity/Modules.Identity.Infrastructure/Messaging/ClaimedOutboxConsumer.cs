@@ -49,7 +49,7 @@ internal sealed class ClaimedOutboxConsumer(
     /// contando el que falló, o <c>null</c> si lo que falló fue el reclamo mismo y no se contó
     /// nada.
     /// </summary>
-    public async Task ProcessBatchAsync(
+    public async Task<bool> ProcessBatchAsync(
         Func<ClaimedMessage, CancellationToken, Task> process,
         Action<Exception, OutboxRecord, int?> onFailure,
         CancellationToken cancellationToken)
@@ -102,6 +102,8 @@ internal sealed class ClaimedOutboxConsumer(
                 onFailure(exception, record, attempts);
             }
         }
+
+        return pending.Count == BatchSize;
     }
 
     /// <summary>

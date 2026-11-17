@@ -36,6 +36,7 @@ public sealed class ChangeQuotationClientHandler(
     IQuotationWithholdingLookup withholdingLookup,
     ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<ChangeQuotationClientCommand> validator)
@@ -70,18 +71,25 @@ public sealed class ChangeQuotationClientHandler(
         // Las tasas del cliente nuevo, de todos sus países, con la UVT de la fecha de la cotización (su CreatedAt en
         // la zona del tenant), no la de hoy: el documento es el mismo (spec impuestos por tipo §7.3, §7.6).
         var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var documentDate = DocumentDates.LocalDate(calendar, quotation.CreatedAt);
         var customerWithholdings = await withholdingLookup.ForCustomerAsync(
             command.TenantId,
             command.ClientId,
             country: null,
-            DocumentDates.LocalDate(calendar, quotation.CreatedAt),
+            documentDate,
             cancellationToken);
+        // Tercer disparador de la re-resolución (spec ReteICA por empresa §7.6): la misma empresa y el mismo municipio,
+        // con la lista de agentes del cliente nuevo. El municipio guardado ya existe: no hay nada que comprobar.
+        var municipal = await MunicipalContexts.ForCityAsync(
+            withholdingLookup, command.TenantId, command.ClientId, quotation.BillingAccount, quotation.OperationCityId,
+            documentDate, cancellationToken);
 
         var now = clock.UtcNow;
-        quotation.ChangeClient(
+        var reResolution = quotation.ChangeClient(
             command.ClientId,
             customer.VatSurplus,
             customerWithholdings,
+            municipal,
             updatedBy,
             now);
 
@@ -99,6 +107,15 @@ public sealed class ChangeQuotationClientHandler(
             quotation.Id.ToString(),
             "success",
             now);
+        // Los porcentajes editados que se pierden con el cliente nuevo se anotan como en la re-resolución (§7.8).
+        if (reResolution.DiscardedOverrides.Count > 0)
+        {
+            QuotationMunicipalHistory.RecordRateEdits(
+                repository, auditPublisher, executionContext.SubjectId, command.TenantId, quotation,
+                reResolution.DiscardedOverrides, [],
+                await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken), updatedBy, now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();

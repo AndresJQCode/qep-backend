@@ -28,15 +28,18 @@ public sealed class QuotationWithholdingsTests
     private static readonly WithholdingRate RetefuenteServicios =
         new(Guid.CreateVersion7(), "Retefuente servicios 4 %", "Retefuente", "CO", 4m, null, null, null);
 
+    // El municipio de la operación de las cotizaciones de Colombia de esta clase (spec ReteICA por empresa §7.5).
+    private static readonly Guid Bogota = Guid.CreateVersion7();
+
     private static readonly WithholdingRate ReteIca =
-        new(Guid.CreateVersion7(), "ReteICA Bogotá 0,966 %", "ReteICA", "CO", 0.966m, null, null, null);
+        new(Guid.CreateVersion7(), "ReteICA Bogotá 0,966 %", "ReteICA", "CO", 0.966m, null, null, null, Bogota);
 
     private static readonly WithholdingRate RetefuenteSpain =
         new(Guid.CreateVersion7(), "Retención IRPF 15 %", "Retefuente", "ES", 15m, null, null, null);
 
     // 4 UVT x 50.000 = 200.000: con 100.000 de base no aplica.
     private static readonly WithholdingRate ReteIcaWithMinimumBase =
-        new(Guid.CreateVersion7(), "ReteICA con base", "ReteICA", "CO", 0.966m, 4m, "UVT", 50_000m);
+        new(Guid.CreateVersion7(), "ReteICA con base", "ReteICA", "CO", 0.966m, 4m, "UVT", 50_000m, Bogota);
 
     private static readonly QuotationPartyDetails OwnBilling = new()
     {
@@ -50,12 +53,16 @@ public sealed class QuotationWithholdingsTests
         CityId = Guid.CreateVersion7(),
     };
 
+    // Una ReteICA «del cliente» ya no viene en su foto: es la tasa de la empresa en Bogotá con el cliente agente ahí.
     private static Quotation NewQuotation(
         IReadOnlyList<WithholdingRate>? customerWithholdings = null,
         QuotationBillingAccount? billingAccount = null,
         QuotationParties? parties = null,
-        bool customerVatSurplus = false) =>
-        Quotation.Create(
+        bool customerVatSurplus = false)
+    {
+        var rates = customerWithholdings ?? [];
+        var reteIca = rates.FirstOrDefault(rate => rate.Type == "ReteICA");
+        return Quotation.Create(
             QuotationId.New(),
             TenantId,
             "COT-2026-0001",
@@ -68,9 +75,17 @@ public sealed class QuotationWithholdingsTests
             billingAccount,
             "COP",
             customerVatSurplus,
-            customerWithholdings ?? [],
+            [.. rates.Where(rate => rate.Type != "ReteICA")],
+            Municipal(billingAccount, reteIca ?? ReteIca, agent: reteIca is not null),
             AdvisorId,
             Now);
+    }
+
+    private static MunicipalContext Municipal(
+        QuotationBillingAccount? account, WithholdingRate? companyRate = null, bool agent = false) =>
+        account?.Country == "CO"
+            ? new MunicipalContext(Bogota, [new MunicipalOffer("ReteICA", companyRate ?? ReteIca, agent)])
+            : MunicipalContext.None;
 
     // 119.000 con el IVA del 19 % adentro: base sin IVA 100.000.
     private static void AddLine(Quotation quotation, decimal unitPrice = 119_000m) =>
@@ -81,12 +96,12 @@ public sealed class QuotationWithholdingsTests
     private static void UseOwnBilling(Quotation quotation, QuotationBillingAccount? account, bool? vatSurplus = false) =>
         quotation.UpdateDetails(
             ValidUntil, null, null, new QuotationParties(OwnBilling, null, BillingVatSurplus: vatSurplus),
-            account, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
+            account, null, isRetail: false, globalScaleFloor: null, Municipal(account), AdvisorId, Now);
 
     private static void UseClientData(Quotation quotation, QuotationBillingAccount? account) =>
         quotation.UpdateDetails(
             ValidUntil, null, null, QuotationParties.Empty, account, null, isRetail: false, globalScaleFloor: null,
-            AdvisorId, Now);
+            Municipal(account), AdvisorId, Now);
 
     [Fact]
     public void FinalConsumerAppliesNone()
@@ -210,10 +225,13 @@ public sealed class QuotationWithholdingsTests
     [Fact]
     public void RowsArePairedWithTheirResultByTaxRateNotByPosition()
     {
-        var quotation = NewQuotation([ReteIcaWithMinimumBase, Retefuente], ColombianAccount);
+        // Por los selectores, que guardan el orden en que llegan: la municipal ya no puede ir primero en la del cliente.
+        var quotation = NewQuotation([], ColombianAccount);
         AddLine(quotation);
+        UseOwnBilling(quotation, ColombianAccount);
+        quotation.SetBillingWithholdings([ReteIcaWithMinimumBase, Retefuente], AdvisorId, Now);
 
-        var rows = quotation.CustomerWithholdings.ToArray();
+        var rows = quotation.BillingWithholdings.ToArray();
         Assert.False(rows[0].Applied);
         Assert.Equal(0m, rows[0].Amount);
         Assert.True(rows[1].Applied);
@@ -229,7 +247,9 @@ public sealed class QuotationWithholdingsTests
         UseOwnBilling(quotation, ColombianAccount);
         quotation.SetBillingWithholdings([RetefuenteServicios], AdvisorId, Now);
 
-        quotation.ChangeClient(Guid.CreateVersion7(), customerVatSurplus: true, [ReteIca], AdvisorId, Now);
+        // El cliente nuevo no tiene tasas nacionales y es agente de ReteICA en el municipio de la operación.
+        quotation.ChangeClient(
+            Guid.CreateVersion7(), customerVatSurplus: true, [], Municipal(ColombianAccount, agent: true), AdvisorId, Now);
 
         Assert.Equal([ReteIca], quotation.CustomerWithholdings.Select(w => w.Rate));
         Assert.Empty(quotation.BillingWithholdings);

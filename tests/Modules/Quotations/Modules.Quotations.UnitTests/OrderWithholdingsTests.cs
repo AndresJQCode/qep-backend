@@ -63,12 +63,12 @@ public sealed class OrderWithholdingsTests
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", header ?? Header(Retefuente), parties ?? QuotationParties.Empty,
             account ?? ColombianAccount, ShippingDetails.None, [Line()], null,
-            AdvisorId, [], Now);
+            AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static Order PreviewWithoutAccount(params WithholdingRate[] withholdings) =>
         Order.Preview(
             OrderId.New(), TenantId, "PED-2026-0001", Header(withholdings), QuotationParties.Empty, null,
-            ShippingDetails.None, [Line()], null, AdvisorId, [], Now);
+            ShippingDetails.None, [Line()], null, AdvisorId, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static (string Name, decimal Base, decimal Amount)[] Applied(Order order) =>
         [.. order.AppliedWithholdings.Select(withholding => (withholding.Name, withholding.BaseAmount, withholding.Amount))];
@@ -79,7 +79,7 @@ public sealed class OrderWithholdingsTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 12, 31), null, null,
             new QuotationParties(OwnBilling, null, BillingVatSurplus: false), ColombianAccount, "COP",
-            customerVatSurplus: false, customerWithholdings: [Retefuente], AdvisorId, Now);
+            customerVatSurplus: false, customerWithholdings: [Retefuente], MunicipalContext.None, AdvisorId, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19, AdvisorId, Now);
         quotation.SetBillingWithholdings([ReteIca], AdvisorId, Now);
         quotation.ConvertToOrder(AdvisorId, Now, new Dictionary<Guid, QuotationProductSnapshot>
@@ -88,7 +88,8 @@ public sealed class OrderWithholdingsTests
         });
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         // Con parte propia la fuente vigente son los selectores; la foto del cliente no viaja.
         var withholding = Assert.Single(order.Withholdings);
@@ -102,16 +103,23 @@ public sealed class OrderWithholdingsTests
     [Fact]
     public void FromQuotationWithClientDataInheritsTheCustomerPhoto()
     {
+        // La ReteICA ya no viene del cliente sino de la empresa en el municipio de la operación (spec ReteICA por empresa).
+        var bogota = Guid.CreateVersion7();
+        var reteIcaBogota = ReteIca with { CityId = bogota };
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 12, 31), null, null,
             QuotationParties.Empty, ColombianAccount, "COP", customerVatSurplus: false,
-            customerWithholdings: [Retefuente, ReteIca], AdvisorId, Now);
+            customerWithholdings: [Retefuente],
+            new MunicipalContext(bogota, [new MunicipalOffer("ReteICA", reteIcaBogota, CustomerIsAgent: true)]),
+            AdvisorId, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19, AdvisorId, Now);
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
-        Assert.Equal([Retefuente, ReteIca], order.Withholdings.OrderBy(row => row.Position).Select(row => row.Rate));
+        Assert.Equal(bogota, order.OperationCityId);
+        Assert.Equal([Retefuente, reteIcaBogota], order.Withholdings.OrderBy(row => row.Position).Select(row => row.Rate));
         Assert.Equal([("Retefuente 2,5 %", 100_000m, 2_500m), ("ReteICA Bogotá 0,966 %", 100_000m, 966m)], Applied(order));
         Assert.Equal(quotation.RetentionAmount, order.RetentionAmount);
     }
@@ -254,7 +262,7 @@ public sealed class OrderWithholdingsTests
         Assert.Equal(0m, order.RetentionAmount);
         var version = order.Version;
 
-        var changed = order.SetBillingAccount(ColombianAccount, AdvisorId, Now);
+        var changed = order.ApplyBillingContext(ColombianAccount, MunicipalContext.None, AdvisorId, Now).AccountChanged;
 
         Assert.True(changed);
         Assert.Equal(ColombianAccount, order.BillingAccount);
@@ -268,7 +276,7 @@ public sealed class OrderWithholdingsTests
         var order = NewOrder();
         var version = order.Version;
 
-        Assert.False(order.SetBillingAccount(ColombianAccount, AdvisorId, Now));
+        Assert.False(order.ApplyBillingContext(ColombianAccount, MunicipalContext.None, AdvisorId, Now).AccountChanged);
 
         Assert.Equal(version, order.Version);
     }
@@ -281,7 +289,8 @@ public sealed class OrderWithholdingsTests
         var order = NewOrder(Header(Retefuente));
         Assert.Equal(2_500m, order.RetentionAmount);
 
-        order.SetBillingAccount(ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, AdvisorId, Now);
+        order.ApplyBillingContext(
+            ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, MunicipalContext.None, AdvisorId, Now);
 
         Assert.Empty(order.AppliedWithholdings);
         Assert.Equal((0m, order.Total), (order.RetentionAmount, order.NetTotal));
@@ -297,7 +306,7 @@ public sealed class OrderWithholdingsTests
         var version = order.Version;
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.SetBillingAccount(ColombianAccount with { Currency = "USD" }, AdvisorId, Now));
+            order.ApplyBillingContext(ColombianAccount with { Currency = "USD" }, MunicipalContext.None, AdvisorId, Now));
 
         Assert.Equal("order.billing.currency_change_not_allowed", error.Code);
         Assert.Equal(("COP", ColombianAccount, version), (order.Currency, order.BillingAccount, order.Version));
@@ -311,7 +320,8 @@ public sealed class OrderWithholdingsTests
         var (version, account) = (order.Version, order.BillingAccount);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.SetBillingAccount(ColombianAccount with { CompanyId = Guid.CreateVersion7() }, AdvisorId, Now));
+            order.ApplyBillingContext(
+                ColombianAccount with { CompanyId = Guid.CreateVersion7() }, MunicipalContext.None, AdvisorId, Now));
 
         Assert.Equal("order.order.not_editable", error.Code);
         Assert.Equal((version, account), (order.Version, order.BillingAccount));
@@ -324,7 +334,7 @@ public sealed class OrderWithholdingsTests
         var version = order.Version;
         var other = ColombianAccount with { CompanyId = Guid.CreateVersion7() };
 
-        Assert.True(order.SetBillingAccount(other, AdvisorId, Now));
+        Assert.True(order.ApplyBillingContext(other, MunicipalContext.None, AdvisorId, Now).AccountChanged);
 
         Assert.Equal((other, version + 1), (order.BillingAccount, order.Version));
     }

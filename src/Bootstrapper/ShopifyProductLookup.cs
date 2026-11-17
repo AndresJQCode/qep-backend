@@ -26,16 +26,7 @@ internal sealed class ShopifyProductLookup(IProductRepository products, ITaxRate
                 continue;
             }
 
-            var percentage = 0;
-            if (product.TaxRateId is { } rateId)
-            {
-                if (!percentages.TryGetValue(rateId, out percentage))
-                {
-                    // Sin tasa, o con una inexistente, cotiza con 0 % (QuotationProductPricingResolver).
-                    percentage = (await taxRates.FindAsync(tenantId, rateId, cancellationToken))?.VatPercentage ?? 0;
-                    percentages[rateId] = percentage;
-                }
-            }
+            var percentage = await PercentageOfAsync(tenantId, product, percentages, cancellationToken);
 
             found[sku] = new ShopifyProductRef(
                 variant.Id.Value,
@@ -46,5 +37,49 @@ internal sealed class ShopifyProductLookup(IProductRepository products, ITaxRate
         }
 
         return found;
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, ShopifyProductRef>> FindByVariantIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        var found = new Dictionary<Guid, ShopifyProductRef>();
+        if (variantIds.Count == 0)
+        {
+            return found;
+        }
+
+        var wanted = variantIds.ToHashSet();
+        var loaded = await products.FindVariantsByIdsAsync(
+            tenantId, wanted.Select(id => new VariantId(id)).ToArray(), cancellationToken);
+        var percentages = new Dictionary<TaxRateId, int>();
+        foreach (var (product, variant) in CatalogVariantReads.Select(loaded, wanted))
+        {
+            found[variant.Id.Value] = new ShopifyProductRef(
+                variant.Id.Value,
+                product.Id.Value,
+                variant.Code,
+                CatalogVariantReads.IsSellable(product, variant),
+                await PercentageOfAsync(tenantId, product, percentages, cancellationToken));
+        }
+
+        return found;
+    }
+
+    // Sin tasa, o con una inexistente, cotiza con 0 % (QuotationProductPricingResolver); una lectura por tasa distinta.
+    private async Task<int> PercentageOfAsync(
+        Guid tenantId, Product product, Dictionary<TaxRateId, int> cache, CancellationToken cancellationToken)
+    {
+        if (product.TaxRateId is not { } rateId)
+        {
+            return 0;
+        }
+
+        if (!cache.TryGetValue(rateId, out var percentage))
+        {
+            percentage = (await taxRates.FindAsync(tenantId, rateId, cancellationToken))?.VatPercentage ?? 0;
+            cache[rateId] = percentage;
+        }
+
+        return percentage;
     }
 }

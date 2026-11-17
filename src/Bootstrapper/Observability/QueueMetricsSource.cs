@@ -8,7 +8,8 @@ namespace Bootstrapper.Observability;
 /// Observabilidad fase 2: lee la profundidad y la edad de las colas con SQL crudo sobre la conexión de
 /// <see cref="MessagingDbContext"/> (precedente <c>PipelineConversationDirectory</c>). Conoce por nombre <c>messaging.webhook_deliveries</c>,
 /// <c>automation_inbox</c>, <c>message_media</c>, <c>messages</c>, <c>campaign_recipients</c> y <c>campaigns</c>, <c>platform.outbox_messages</c>,
-/// <c>shopify.webhook_deliveries</c> y <c>ai.model_jobs</c>: renombrar una columna compila y deja esa cola sin dato. Lo amarra
+/// <c>shopify.webhook_deliveries</c>, <c>support.ticket_surveys</c> y <c>ai.model_jobs</c>: renombrar una columna compila y deja esa cola sin
+/// dato. Lo amarra
 /// <c>QueueMetricsSourceTests</c>.
 ///
 /// La edad mira sólo filas con <c>attempts = 0</c>: una sana en reintento largo o un outbox envenenado no son atraso. En <c>automation</c>
@@ -59,6 +60,12 @@ internal sealed class QueueMetricsSource(MessagingDbContext messaging) : IQueueM
             SELECT count(*), count(*) FILTER (WHERE attempts > 0),
                    COALESCE(EXTRACT(EPOCH FROM now() - min(received_at) FILTER (WHERE attempts = 0))::float8, 0)
               FROM shopify.webhook_deliveries WHERE processed_at IS NULL
+            """,
+        // Soporte fase 4b: la encuesta Pending es la cola; la edad, la de la más vieja que nadie intentó (nace con next_attempt_at = created_at).
+        [QueueNames.SupportSurvey] = """
+            SELECT count(*), count(*) FILTER (WHERE attempts > 0),
+                   COALESCE(EXTRACT(EPOCH FROM now() - min(created_at) FILTER (WHERE attempts = 0))::float8, 0)
+              FROM support.ticket_surveys WHERE status = 'Pending'
             """,
         // Spec 2026-10-29 §6.3: pendientes y en curso (un Running con el lease acortado espera su reintento). La edad cuenta desde que el
         // trabajo venció (next_attempt_at, que ya incluye el debounce de D-A14), sólo de los que nadie ha intentado.

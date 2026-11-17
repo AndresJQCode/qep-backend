@@ -29,4 +29,17 @@ public static class RateLimiterPolicies
 
     /// <summary>Tienda pública, credenciales de compradores: 10 por minuto, por ruta y por IP del visitante.</summary>
     public const string StorefrontCredentials = "storefront-credentials";
+
+    /// <summary>Formulario público de Soporte, configuración y geografía: 60 por minuto por IP del visitante (plan F6).</summary>
+    public const string SupportPublicRead = "support-public-read";
+
+    /// <summary>Formulario público de Soporte, radicar y reenviar el PIN: 5 cada 10 minutos por IP del visitante (plan F6).</summary>
+    public const string SupportPublicSubmit = "support-public-submit";
+
+    /// <summary>Formulario público de Soporte, consultar un ticket: 10 por minuto por IP del visitante (plan F6).</summary>
+    public const string SupportPublicLookup = "support-public-lookup";
+
+    /// <summary>Formulario público de Soporte, abrir y completar la subida de un adjunto: 20 cada 10 minutos por IP del visitante
+    /// (plan F33). Cinco adjuntos por radicado, cada uno con dos llamadas, más los reintentos.</summary>
+    public const string SupportPublicUpload = "support-public-upload";
 }

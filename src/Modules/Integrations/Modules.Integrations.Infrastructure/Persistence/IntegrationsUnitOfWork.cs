@@ -21,16 +21,26 @@ internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : 
     // abierta no serializaría nada.
     public async Task LockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken)
     {
-        EnsureTransaction();
+        EnsureTransaction("Shopify");
         await dbContext.Database.ExecuteSqlAsync(
             $"SELECT pg_advisory_xact_lock({ShopifyTokenLock.Namespace}, hashtext({ownerId.ToString()}))", cancellationToken);
     }
 
     public async Task<bool> TryLockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken)
     {
-        EnsureTransaction();
+        EnsureTransaction("Shopify");
         var taken = await dbContext.Database.SqlQuery<bool>(
                 $"SELECT pg_try_advisory_xact_lock({ShopifyTokenLock.Namespace}, hashtext({ownerId.ToString()})) AS \"Value\"")
+            .ToListAsync(cancellationToken);
+        return taken.Single();
+    }
+
+    // Owner, 2026-11-14: la misma forma que el de Shopify, en su propio espacio.
+    public async Task<bool> TryLockInstagramTokenAsync(Guid connectionId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction("Instagram");
+        var taken = await dbContext.Database.SqlQuery<bool>(
+                $"SELECT pg_try_advisory_xact_lock({InstagramTokenLock.Namespace}, hashtext({connectionId.ToString()})) AS \"Value\"")
             .ToListAsync(cancellationToken);
         return taken.Single();
     }
@@ -108,11 +118,11 @@ internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : 
         }
     }
 
-    private void EnsureTransaction()
+    private void EnsureTransaction(string provider)
     {
         if (dbContext.Database.CurrentTransaction is null)
         {
-            throw new InvalidOperationException("The Shopify token lock requires the transaction of BeginTransactionAsync.");
+            throw new InvalidOperationException($"The {provider} token lock requires the transaction of BeginTransactionAsync.");
         }
     }
 

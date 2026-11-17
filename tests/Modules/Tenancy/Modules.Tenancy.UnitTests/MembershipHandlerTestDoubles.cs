@@ -92,3 +92,16 @@ internal sealed class RosterReadExecutionContext(TenantId tenantId) : IExecution
 
     public bool HasPermission(string permission) => permission == TenancyPermissions.AdvisorshipRead;
 }
+
+/// <summary>
+/// Anota cada subida de la versión de acceso del tenant (spec 2026-11-13, D-5) en la misma lista que la unidad de trabajo,
+/// para afirmar el orden: antes del guardado y otra vez después.
+/// </summary>
+internal sealed class RecordingTenantAccessVersion(List<string> steps) : ITenantAccessVersion
+{
+    public Task BumpAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        steps.Add($"bump:{tenantId}");
+        return Task.CompletedTask;
+    }
+}

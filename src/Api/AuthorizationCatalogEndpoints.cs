@@ -87,6 +87,7 @@ public static class AuthorizationCatalogEndpoints
         Guid tenantId,
         IExecutionContext executionContext,
         IRoleCatalog roleCatalog,
+        ITenantRoleCatalog tenantRoleCatalog,
         ITenantModules tenantModules,
         ModuleEntitlementMask entitlementMask,
         IOperatorTenant operatorTenant,
@@ -103,42 +104,67 @@ public static class AuthorizationCatalogEndpoints
         var isOperator = operatorTenant.IsOperator(tenantId);
         bool Offered(string permission) => modules is null || entitlementMask.Allows(permission, modules);
         // Spec 2026-10-08 §2 y D11: operator.* nunca es una casilla (ningún rol personalizado puede
-        // llevarlo), y en roles[] sólo lo ve el tenant operador.
-        bool OfferedInRole(string permission) =>
-            Offered(permission) && (isOperator || !OperatorPermissionFilter.IsOperatorPermission(permission));
+        // llevarlo), y en roles[] sólo lo ve el tenant operador (lo resuelve RoleAssignability).
         bool OfferedAsCheckbox(string permission) =>
             Offered(permission) && !OperatorPermissionFilter.IsOperatorPermission(permission);
 
         return Results.Ok(new AuthorizationCatalogResponse(
             roleCatalog.CatalogVersion,
-            roleCatalog.ListRoles()
-                .Select(role => new RoleCatalogItemResponse(
-                    role.Role,
-                    role.DisplayName,
-                    role.Description,
-                    role.Category,
-                    role.RiskLevel,
-                    role.Permissions
-                        .Where(OfferedInRole)
-                        .OrderBy(permission => permission, StringComparer.Ordinal)
-                        .ToArray()))
+            // Spec 2026-11-16: los roles del tenant (sistema y custom), no sólo los del build. La pantalla
+            // de miembros ofrece lo que viene acá; sin los custom no se podían asignar aunque la API los aceptara.
+            (await tenantRoleCatalog.ListRolesAsync(tenantId, cancellationToken))
+                .Select(role =>
+                {
+                    // Spec 2026-11-15: el mismo cálculo que RoleReferenceValidator, para que la pantalla
+                    // no ofrezca un rol que la API rechaza con role_unavailable.
+                    var offered = RoleAssignability.OfferedPermissions(
+                        role.Permissions, modules, isOperator, entitlementMask);
+                    return new RoleCatalogItemResponse(
+                        role.Role,
+                        role.DisplayName,
+                        role.Description,
+                        role.Category,
+                        role.RiskLevel,
+                        offered.OrderBy(permission => permission, StringComparer.Ordinal).ToArray(),
+                        offered.Count > 0);
+                })
                 .ToArray(),
             roleCatalog.ListPermissions()
                 .Where(permission => OfferedAsCheckbox(permission.Permission))
-                .Select(permission => new PermissionCatalogItemResponse(
-                    permission.Permission,
-                    permission.DisplayName,
-                    permission.Description,
-                    permission.Category,
-                    permission.RiskLevel))
+                .Select(ToResponse)
+                .ToArray(),
+            // Spec 2026-11-16: las columnas de la matriz, en orden y con su nombre en pantalla.
+            PermissionVocabulary.ColumnActions
+                .Select(action => new CatalogActionResponse(action, PermissionVocabulary.LabelOfAction(action)))
                 .ToArray()));
+    }
+
+    private static PermissionCatalogItemResponse ToResponse(PermissionDefinition permission)
+    {
+        var placement = PermissionVocabulary.PlacementOf(permission);
+        return new PermissionCatalogItemResponse(
+            permission.Permission,
+            permission.DisplayName,
+            permission.Description,
+            permission.Category,
+            permission.RiskLevel,
+            PermissionVocabulary.LabelOfCategory(permission.Category),
+            placement.Entity,
+            placement.EntityLabel,
+            placement.Action,
+            placement.ActionLabel);
     }
 }
 
 public sealed record AuthorizationCatalogResponse(
     string CatalogVersion,
     IReadOnlyCollection<RoleCatalogItemResponse> Roles,
-    IReadOnlyCollection<PermissionCatalogItemResponse> Permissions);
+    IReadOnlyCollection<PermissionCatalogItemResponse> Permissions,
+    // Spec 2026-11-16: las columnas de la matriz de roles. Una acción de permiso fuera de esta lista
+    // va a «Otros» de su fila.
+    IReadOnlyCollection<CatalogActionResponse> Actions);
+
+public sealed record CatalogActionResponse(string Key, string Label);
 
 public sealed record RoleCatalogItemResponse(
     string Role,
@@ -146,14 +172,25 @@ public sealed record RoleCatalogItemResponse(
     string Description,
     string Category,
     string RiskLevel,
-    IReadOnlyCollection<string> Permissions);
+    IReadOnlyCollection<string> Permissions,
+    // Spec 2026-11-15: false si el rol no concede ningún permiso que el tenant ofrece (Cajero sin pos).
+    // La pantalla no lo ofrece al invitar y sólo deja quitarlo a quien ya lo tiene; la API rechaza
+    // agregarlo con 422 tenancy.membership.role_unavailable.
+    bool Assignable);
 
 public sealed record PermissionCatalogItemResponse(
     string Permission,
     string DisplayName,
     string Description,
     string Category,
-    string RiskLevel);
+    string RiskLevel,
+    // Spec 2026-11-16: fila (Entity) y columna (Action) del permiso en la matriz de roles, con los
+    // nombres en pantalla. Sin metadata, Action es "other" y la fila es el propio permiso.
+    string CategoryLabel,
+    string Entity,
+    string EntityLabel,
+    string Action,
+    string ActionLabel);
 
 /// <summary>
 /// Lo que el llamador realmente puede hacer en este tenant, a diferencia de qué roles existen.

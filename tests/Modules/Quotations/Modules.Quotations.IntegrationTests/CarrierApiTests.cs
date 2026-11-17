@@ -7,7 +7,7 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>La API de transportadoras y del IVA del envío (spec 2026-10-17 §4.3).</summary>
-public sealed class CarrierApiTests
+public sealed class CarrierApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsRead = "tenancy.settings.read";
     private const string SettingsUpdate = "tenancy.settings.update";
@@ -21,8 +21,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task CreatesListsAndOrdersCarriers()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -44,8 +43,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task AnotherTenantGets403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (_, _, ownerA) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = ownerA;
         var (tenantB, _, ownerB) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
@@ -64,8 +62,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task ARepeatedNameIsTaken()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
@@ -79,8 +76,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task AnExternalNameEqualToAnotherCarriersNameIsTaken()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         await CreateCarrierAsync(client, tenantId, "Servientrega", [], true);
@@ -95,8 +91,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task AnInactiveCarrierStillHoldsItsName()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var carrier = await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
@@ -120,8 +115,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task ACarrierOfAnotherTenantIsNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantA, _, ownerA) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = ownerA;
         var (tenantB, _, ownerB) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
@@ -137,8 +131,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task UpdateRequiresIfMatchAndRejectsAStaleVersion()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var carrier = await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
@@ -163,8 +156,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task InvalidTextIs422OnItsField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var ownedClient = client;
 
@@ -181,8 +173,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task ReorderWithMissingOrExtraIdsIsRejected()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
         var a = await CreateCarrierAsync(client, tenantId, "A", [], true);
@@ -206,8 +197,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task SetsAndClearsTheFreightTaxRate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
         using var _ = client;
@@ -241,8 +231,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task FreightWithRetefuenteRateIs422()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
         using var _ = client;
@@ -263,8 +252,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task ShippingOptionsReturnOnlyActiveCarriersInOrder()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerId, admin) = await RegisterTenantAsync(
             factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
         using var _ = admin;
@@ -294,8 +282,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task FreightChargeModesStartEnabledAndCanBeTurnedOff()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerId, admin) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = admin;
         using var advisor = CreateClient(factory, ownerId.ToString(), tenantId.ToString(), QuotationRead);
@@ -333,8 +320,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task AnUnknownFreightChargeModeIsAFieldError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -350,8 +336,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task FreightChargeModesOfAnotherTenantAre403()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (_, _, ownerA) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = ownerA;
         var (tenantB, _, ownerB) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
@@ -367,8 +352,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task FreightChargeModesAreAuditedOnlyWhenTheyChange()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -390,8 +374,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task TheDefaultFreightChargeModeIsSetKeptAndCleared()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerId, admin) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = admin;
         using var advisor = CreateClient(factory, ownerId.ToString(), tenantId.ToString(), QuotationRead);
@@ -434,8 +417,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task ADefaultFreightChargeModeThatIsNotEnabledIsAFieldError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -454,8 +436,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task SavingMinimumPurchaseKeepsTheFreightTaxRate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
         using var _ = client;
@@ -477,8 +458,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task CarrierMutationsAreAudited()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
         using var _ = client;
 
@@ -505,8 +485,7 @@ public sealed class CarrierApiTests
     [Fact]
     public async Task ReorderAndFreightTaxRateAreAudited()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
         using var _ = client;

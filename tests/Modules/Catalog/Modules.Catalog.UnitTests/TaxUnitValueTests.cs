@@ -85,6 +85,17 @@ public sealed class TaxUnitValueTests
         Assert.Null(TaxUnitValues.ValueFor(values, "CO", 2026));
     }
 
+    // Spec retenciones por UVT §5.2: el año viaja con el valor, para mostrarlo y detectar la UVT desactualizada.
+    [Fact]
+    public void ResolveReturnsTheYearUsed()
+    {
+        var values = new[] { Unit(2025, 100m), Unit(2026, 200m) };
+
+        Assert.Equal(new TaxUnitResolution(200m, 2026), TaxUnitValues.Resolve(values, "CO", 2026));
+        Assert.Equal(new TaxUnitResolution(200m, 2026), TaxUnitValues.Resolve(values, "CO", 2028));
+        Assert.Null(TaxUnitValues.Resolve([], "CO", 2026));
+    }
+
     [Fact]
     public void DecemberTwentyThirdIsFalse() =>
         Assert.False(TaxUnitValues.NextYearMissing([Unit(2026)], "CO", new DateOnly(2026, 12, 23)));

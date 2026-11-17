@@ -11,15 +11,15 @@ using Modules.Catalog.Domain;
 using Modules.Companies.Application;
 using Modules.Companies.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
-public sealed class TaxRateApiTests
+public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixture<SharedCatalogHost>
 {
-    private const string TenantId = "01900000-0000-7000-8000-000000000001";
+    private string TenantId { get; } = Guid.CreateVersion7().ToString();
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
-    private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
+    private string OtherTenantId { get; } = Guid.CreateVersion7().ToString();
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
     private static readonly string[] ManagePermissions =
@@ -29,8 +29,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task ListReturnsAnEmptyCatalogForANewTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory, SubjectId, TenantId, CatalogPermissions.TaxRateRead);
 
@@ -44,8 +43,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task ListReturnsOnlyTheTaxRatesOfTheAuthenticatedTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -67,8 +65,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task GetForAnotherTenantIsForbiddenAndNotNotFound()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var intruder = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -87,8 +84,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task CreateWithOnlyTheReadPermissionIsForbiddenAndPersistsNothing()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var reader = CreateClient(
             factory, SubjectId, TenantId, CatalogPermissions.TaxRateRead);
 
@@ -102,8 +98,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task CreateReturnsCreatedAndTheTaxRateIsReadableAfterwards()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
@@ -150,8 +145,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task CreateWithABlankNameReturnsUnprocessableWithTheFieldMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "   ", 19);
@@ -171,8 +165,7 @@ public sealed class TaxRateApiTests
     [InlineData(101)]
     public async Task CreateWithAPercentageOutOfRangeIsUnprocessable(int percentage)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "IVA raro", percentage);
@@ -191,8 +184,7 @@ public sealed class TaxRateApiTests
     [InlineData(100)]
     public async Task CreateAcceptsTheBoundaryPercentages(int percentage)
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, $"Tasa {percentage}", percentage);
@@ -205,8 +197,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task GetUpdateAndDeactivateReturnNotFoundForAnUnknownId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var missing = Guid.CreateVersion7();
 
@@ -267,8 +258,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task DeactivateRejectsATaxRateInUseByAProductAndLeavesItActive()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         // Unica prueba del archivo que ademas crea un producto —es como se pone la tasa "en uso"—,
         // asi que suma ProductManage a los permisos de tasas. Sin el, el POST de producto responde
         // 403 y el 422 que se esta buscando nunca llega a evaluarse.
@@ -338,8 +328,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task TaxRatePermissionsArePublishedAndTheirPoliciesResolve()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         // El catálogo de autorización está protegido por advisorship.read: tener los
         // permisos de catalog no alcanza para leer el catálogo que los publica.
         using var client = CreateClient(
@@ -368,19 +357,19 @@ public sealed class TaxRateApiTests
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
     }
 
-    // CA-CAT-03-11: la violación de IX_tax_rates_tenant_name sale como 422 con su código de
-    // dominio. Sin la traducción por nombre de índice es un 500 — la forma de SDD-CT-06.
+    // CA-CAT-03-11: la violación de IX_tax_rates_tenant_name_percentage_base sale como 422 con su
+    // código de dominio. Sin la traducción por nombre de índice es un 500 — la forma de SDD-CT-06.
+    // Desde 2026-11-15 lo que no se repite es nombre + porcentaje + base mínima, no el nombre solo.
     [Fact]
-    public async Task CreatingTheSameNameTwiceInATenantReturnsNameTaken()
+    public async Task CreatingTheSameNameAndPercentageTwiceInATenantReturnsNameTaken()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var first = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
 
-        var second = await CreateTaxRateAsync(client, TenantId, "IVA general", 5);
+        var second = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
         var body = await second.Content.ReadAsStringAsync(
@@ -388,12 +377,61 @@ public sealed class TaxRateApiTests
         Assert.Contains("catalog.tax_rate.name_taken", body, StringComparison.Ordinal);
     }
 
+    // Owner, 2026-11-15: el nombre se puede repetir con otro porcentaje.
+    [Fact]
+    public async Task TheSameNameWithAnotherPercentageIsAccepted()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var first = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+
+        var second = await CreateTaxRateAsync(client, TenantId, "IVA general", 5);
+
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+    }
+
+    // Owner, 2026-11-15: la base mínima también distingue, y sin base cuenta como un valor (el índice
+    // es NULLS NOT DISTINCT): dos «sin base» con el mismo nombre y porcentaje chocan.
+    [Fact]
+    public async Task TheMinimumBaseDistinguishesTwoRatesWithTheSameNameAndPercentage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+        await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var cityId = await FindSeededCityIdAsync(factory);
+
+        var withBase = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId });
+        var withoutBase = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId });
+        var repeatedBase = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId });
+        var repeatedWithoutBase = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId });
+
+        Assert.Equal(HttpStatusCode.Created, withBase.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, withoutBase.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, repeatedBase.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.name_taken",
+            await repeatedBase.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, repeatedWithoutBase.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.name_taken",
+            await repeatedWithoutBase.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+    }
+
     // CA-CAT-03-11, segunda mitad: la unicidad es por tenant, no global.
     [Fact]
     public async Task TheSameNameIsAcceptedInADifferentTenant()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var owner = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         using var other = CreateClient(
             factory, OtherSubjectId, OtherTenantId, ManagePermissions);
@@ -420,8 +458,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task TheTwoUniqueIndexesOfTheSchemaReturnTheirOwnDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(
             factory,
             SubjectId,
@@ -429,7 +466,7 @@ public sealed class TaxRateApiTests
             [.. ManagePermissions, CatalogPermissions.ProductManage]);
 
         await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
-        var taxRateClash = await CreateTaxRateAsync(client, TenantId, "IVA general", 5);
+        var taxRateClash = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
         var taxRateBody = await taxRateClash.Content.ReadAsStringAsync(
             TestContext.Current.CancellationToken);
 
@@ -519,8 +556,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task LegacyCreateWithoutTypeOrCountryIsIvaColombia()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
@@ -542,9 +578,10 @@ public sealed class TaxRateApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         await AddCompanyAsync(factory, TenantId, "CO");
         await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var cityId = await FindSeededCityIdAsync(factory);
 
         var response = await PostTaxRateAsync(
-            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4 });
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadTaxRateAsync(response);
@@ -562,9 +599,10 @@ public sealed class TaxRateApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         await AddCompanyAsync(factory, TenantId, "CO");
+        var cityId = await FindSeededCityIdAsync(factory);
 
         var response = await PostTaxRateAsync(
-            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4 });
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId });
 
         await AssertProblemCodeAsync(response, "catalog.tax_rate.tax_unit_value_missing");
     }
@@ -592,7 +630,8 @@ public sealed class TaxRateApiTests
         await AddCompanyAsync(factory, TenantId, "CO");
         await PostTaxRateAsync(client, new { name = "IVA general", percentage = 19 });
         await PostTaxRateAsync(client, new { name = "Retefuente 2,5", percentage = 2.5m, type = "Retefuente", country = "CO" });
-        await PostTaxRateAsync(client, new { name = "ReteICA 0,966", percentage = 0.966m, type = "ReteICA", country = "CO" });
+        var cityId = await FindSeededCityIdAsync(factory);
+        await PostTaxRateAsync(client, new { name = "ReteICA 0,966", percentage = 0.966m, type = "ReteICA", country = "CO", cityId });
 
         var filtered = await ListAsync(client, TenantId, "?type=Retefuente&type=ReteICA");
         var all = await ListAsync(client, TenantId);
@@ -609,8 +648,9 @@ public sealed class TaxRateApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         await AddCompanyAsync(factory, TenantId, "CO");
         await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var cityId = await FindSeededCityIdAsync(factory);
         var created = await ReadTaxRateAsync(await PostTaxRateAsync(
-            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4 }));
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId }));
 
         var response = await PutTaxRateAsync(
             client, created.Id, new { name = "ReteICA renombrada", percentage = 1m, type = "IVA", country = "ES" });
@@ -632,8 +672,9 @@ public sealed class TaxRateApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         await AddCompanyAsync(factory, TenantId, "CO");
         await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var cityId = await FindSeededCityIdAsync(factory);
         var created = await ReadTaxRateAsync(await PostTaxRateAsync(
-            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4 }));
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId }));
 
         var response = await PutTaxRateAsync(
             client, created.Id, new { name = "ReteICA Bogotá", percentage = 0.966m, minimumBase = (decimal?)null });
@@ -647,8 +688,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task UpdateWithANonNumericMinimumBaseIsValidationFailed()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
         var created = await ReadTaxRateAsync(await CreateTaxRateAsync(client, TenantId, "IVA general", 19));
 
@@ -692,8 +732,7 @@ public sealed class TaxRateApiTests
     [Fact]
     public async Task ValidationErrorsCarryTheField()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
         var response = await CreateTaxRateAsync(client, TenantId, "IVA general", 101);
@@ -702,11 +741,140 @@ public sealed class TaxRateApiTests
         Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Percentage", out _));
     }
 
-    private static Task<HttpResponseMessage> PostTaxRateAsync(HttpClient client, object body) =>
+    // Spec ReteICA por empresa §9.1: la tasa municipal lleva su municipio, y la respuesta lo trae resuelto para que la lista
+    // pinte «Bogotá, D.C.» sin preguntarle a Geography.
+    [Fact]
+    public async Task CreatingAMunicipalRateReturnsItsCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+        await AddTaxUnitValueAsync(factory, "CO", 2026, 49799m);
+        var city = (await FindSeededCitiesAsync(factory, 1))[0];
+
+        var response = await PostTaxRateAsync(client, new
+        {
+            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId = city.Id,
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await ReadTaxRateAsync(response);
+        Assert.Equal("Municipal", created.Scope);
+        Assert.Equal(city.Id, created.CityId);
+        Assert.NotNull(created.City);
+        Assert.Equal(city.Id, created.City.Id);
+        Assert.Equal(city.Name, created.City.Name);
+        Assert.Equal(city.DepartmentId, created.City.DepartmentId);
+        Assert.Equal(city.DepartmentName, created.City.DepartmentName);
+
+        var read = await ReadTaxRateAsync(await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{created.Id}", TestContext.Current.CancellationToken));
+        Assert.Equal(city.Name, read.City?.Name);
+        Assert.Equal(city.Name, Assert.Single(await ListAsync(client, TenantId)).City?.Name);
+    }
+
+    [Fact]
+    public async Task MunicipalRateWithoutCityIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+
+        var response = await PostTaxRateAsync(
+            client, new { name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO" });
+
+        await AssertProblemCodeAsync(response, "catalog.tax_rate.city_required");
+    }
+
+    [Fact]
+    public async Task NationalRateWithCityIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+        var cityId = await FindSeededCityIdAsync(factory);
+
+        var response = await PostTaxRateAsync(
+            client, new { name = "Retefuente 2,5", percentage = 2.5m, type = "Retefuente", country = "CO", cityId });
+
+        await AssertProblemCodeAsync(response, "catalog.tax_rate.city_not_allowed");
+    }
+
+    [Fact]
+    public async Task UnknownCityIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+
+        var response = await PostTaxRateAsync(client, new
+        {
+            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId = Guid.NewGuid(),
+        });
+
+        await AssertProblemCodeAsync(response, "catalog.tax_rate.city_invalid");
+    }
+
+    // A1: el municipio no se edita, como el tipo y el país; si el cuerpo lo trae, se ignora.
+    [Fact]
+    public async Task UpdateIgnoresCityId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+        var cities = await FindSeededCitiesAsync(factory, 2);
+        var created = await ReadTaxRateAsync(await PostTaxRateAsync(client, new
+        {
+            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId = cities[0].Id,
+        }));
+
+        var response = await PutTaxRateAsync(
+            client, created.Id, new { name = "ReteICA Bogotá", percentage = 0.8m, cityId = cities[1].Id });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await ReadTaxRateAsync(response);
+        Assert.Equal(cities[0].Id, updated.CityId);
+        Assert.Equal(cities[0].Name, updated.City?.Name);
+    }
+
+    [Fact]
+    public async Task OptionsCarryTheScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await AddCompanyAsync(factory, TenantId, "CO");
+
+        var colombia = Assert.Single((await ReadOptionsAsync(client, TenantId)).Countries);
+
+        Assert.Equal(
+            [("IVA", "National"), ("Retefuente", "National"), ("ReteICA", "Municipal")],
+            colombia.Types.Select(type => (type.Type, type.Scope)).ToArray());
+    }
+
+    [Fact]
+    public async Task NationalRatesHaveNullCity()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var created = await ReadTaxRateAsync(await CreateTaxRateAsync(client, TenantId, "IVA general", 19));
+
+        Assert.Equal("National", created.Scope);
+        Assert.Null(created.CityId);
+        Assert.Null(created.City);
+    }
+
+    private Task<HttpResponseMessage> PostTaxRateAsync(HttpClient client, object body) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates", body, TestContext.Current.CancellationToken);
 
-    private static Task<HttpResponseMessage> PutTaxRateAsync(HttpClient client, Guid id, object body) =>
+    private Task<HttpResponseMessage> PutTaxRateAsync(HttpClient client, Guid id, object body) =>
         client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{id}", body, TestContext.Current.CancellationToken);
 
@@ -759,6 +927,34 @@ public sealed class TaxRateApiTests
         await using var command = new NpgsqlCommand("SELECT id FROM geography.cities LIMIT 1", connection);
         var id = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         return id is Guid cityId ? cityId : throw new InvalidOperationException("No seeded city.");
+    }
+
+    private sealed record SeededCity(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
+
+    // Los valores salen de Geography (el arranque siembra la DIVIPOLA): la respuesta tiene que traer esos mismos.
+    private static async Task<IReadOnlyList<SeededCity>> FindSeededCitiesAsync(QepApiFactory factory, int count)
+    {
+        var connectionString = factory.Services.GetRequiredService<IConfiguration>()["ConnectionStrings:QepDatabase"];
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT c.id, c.name, d.id, d.name
+            FROM geography.cities c
+            JOIN geography.departments d ON d.id = c.department_id
+            ORDER BY c.divipola_code
+            LIMIT @count
+            """,
+            connection);
+        command.Parameters.AddWithValue("count", count);
+        var cities = new List<SeededCity>();
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            cities.Add(new SeededCity(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetString(3)));
+        }
+
+        return cities.Count == count ? cities : throw new InvalidOperationException("Not enough seeded cities.");
     }
 
     private static async Task AddTaxUnitValueAsync(QepApiFactory factory, string country, int year, decimal value)
@@ -836,17 +1032,6 @@ public sealed class TaxRateApiTests
         return payloads;
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
-
     // El stub de desarrollo concede sólo los defaults de tenancy cuando X-Permissions no está,
     // así que un permiso de catalog hay que pedirlo explícitamente. Sin esto, una prueba
     // cross-tenant pasaría simplemente porque el llamador no tenía ningún permiso de catalog, y
@@ -875,6 +1060,8 @@ public sealed class TaxRateApiTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

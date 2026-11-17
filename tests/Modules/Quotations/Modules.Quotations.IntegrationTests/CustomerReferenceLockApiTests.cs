@@ -13,7 +13,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// cliente exista dentro de su transacción. Aquí el borrado se simula con el candado exclusivo tomado a mano: la
 /// escritura tiene que esperar, y al despertar ver el cliente ya borrado.
 /// </summary>
-public sealed class CustomerReferenceLockApiTests
+public sealed class CustomerReferenceLockApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static readonly TimeSpan NoAnswerWindow = TimeSpan.FromMilliseconds(500);
 
@@ -159,8 +159,7 @@ public sealed class CustomerReferenceLockApiTests
     [Fact]
     public async Task WithoutADeletionNothingChanges()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);

@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza y crea el pedido
 /// de una solicitud contra Postgres, con catálogo, cliente y empresa sembrados.</summary>
-public sealed class StoreOrderGatewayTests
+public sealed class StoreOrderGatewayTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
@@ -76,8 +76,8 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreateMakesAPendingDeliveredStoreOrderForAnIncompleteCustomer()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var database = sharedHost.Database;
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -108,8 +108,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreateKeepsTheBuyerAccountOfTheDraft()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -133,8 +132,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreateStoresTheBillingAndShippingParties()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -167,8 +165,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreateStoresAForeignShippingParty()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -190,8 +187,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task ABillingPartyWithRetentionAppliesRetention()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         // El cliente practica retención: tiene una Retefuente asignada (spec impuestos por tipo §7.4).
@@ -228,8 +224,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task StoreOrderTakesCustomerRatesDespiteOwnBilling()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
@@ -261,6 +256,65 @@ public sealed class StoreOrderGatewayTests
         Assert.Equal(foreign.Total, foreign.NetTotal);
     }
 
+    // Spec ReteICA por empresa §7.5 (R5, R6, A10): el pedido de la tienda nace en el municipio de la empresa, con la ReteICA
+    // de la empresa ahí si el cliente es agente en ese municipio.
+    [Fact]
+    public async Task StoreOrderStartsWithTheCompanysCityAndCustomerRule()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId, cityId: city.CityId);
+        var reteIca = await InsertWithholdingRateAsync(factory, tenantId, "ReteICA Bogotá", "ReteICA", 0.966m, cityId: city.CityId);
+        await AssignCompanyWithholdingRateAsync(factory, tenantId, account.CompanyId, reteIca);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        await SetWithholdingAgentAsync(factory, tenantId, customerId, city.CityId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+
+        var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050"), quantity: 1m),
+            TestContext.Current.CancellationToken));
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(tenantId)}/{result.OrderId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Equal(city.CityId, detail.OperationCity?.Id);
+        var row = Assert.Single(detail.Order.Withholdings);
+        Assert.Equal((reteIca, (Guid?)city.CityId), (row.TaxRateId, row.CityId));
+        Assert.Equal(("Resolved", (bool?)true), (detail.MunicipalWithholdings[0].Status, detail.MunicipalWithholdings[0].CustomerIsAgent));
+    }
+
+    // Review Focus 3 (baseline D22): una empresa con su ReteICA en otro municipio, o con la de su municipio inactiva, no tumba
+    // el checkout: el pedido entra sin fila municipal.
+    [Fact]
+    public async Task StoreOrderNeverFailsOnMunicipalResolution()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (city, other) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId, cityId: city.CityId);
+        var elsewhere = await InsertWithholdingRateAsync(factory, tenantId, "ReteICA otra", "ReteICA", 1m, cityId: other.CityId);
+        var inactive = await InsertWithholdingRateAsync(factory, tenantId, "ReteICA vieja", "ReteICA", 0.5m, cityId: city.CityId);
+        await ChangeTaxRateAsync(factory, inactive, isActive: false);
+        await AssignCompanyWithholdingRateAsync(factory, tenantId, account.CompanyId, elsewhere);
+        await AssignCompanyWithholdingRateAsync(factory, tenantId, account.CompanyId, inactive);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        await SetWithholdingAgentAsync(factory, tenantId, customerId, city.CityId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+
+        var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050"), quantity: 1m),
+            TestContext.Current.CancellationToken));
+
+        var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
+        Assert.Empty(order.Withholdings);
+        Assert.Equal(city.CityId, order.OperationCityId);
+    }
+
     // Una empresa de afuera con cuenta en pesos: otro país sin cambiar la moneda del pedido.
     private static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)> CreateSpanishCompanyAsync(
         HttpClient client, Guid tenantId)
@@ -287,8 +341,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task AForeignTaxIdBillingPartyRoundTrips()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -406,8 +459,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task TheCreatedOrderTotalEqualsTheQuote()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -433,8 +485,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CreatePublishesOrderCreatedAndAudits()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -462,8 +513,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task TheExternalKeyCarriesTheClientRequestId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -488,8 +538,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task FindExistingFindsByClientRequestId()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
@@ -518,8 +567,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task CountBySourceSinceCountsCancelledStoreOrders()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
         using var _ = client;
@@ -558,8 +606,7 @@ public sealed class StoreOrderGatewayTests
     [Fact]
     public async Task TheCreatedOrderIsInItsAccountsCurrency()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);

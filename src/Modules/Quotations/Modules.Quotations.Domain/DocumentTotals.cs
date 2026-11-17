@@ -60,12 +60,28 @@ public readonly record struct DocumentTotals(
             subtotal, discount, tax, taxPercentage, total, retention, total - retention, freight.Subtotal, freightTax, applied);
     }
 
-    // El umbral se compara sin redondear y es inclusivo; sólo el monto va a dos decimales (spec §7.5).
+    /// <summary>
+    /// Si una tasa que ya entró al cálculo aplica por su umbral: <see cref="WithholdingReason.NoTaxUnitValue"/> sin
+    /// umbral (base en unidades sin valor), <see cref="WithholdingReason.Applied"/> si el subtotal lo alcanza y
+    /// <see cref="WithholdingReason.BelowMinimumBase"/> si no. El umbral se compara sin redondear y es inclusivo
+    /// (spec §7.5). La usan el cálculo y el veredicto (spec retenciones por UVT §5.3).
+    /// </summary>
+    public static WithholdingReason ThresholdReason(WithholdingRate rate, decimal productsSubtotal) => rate.Threshold switch
+    {
+        null => WithholdingReason.NoTaxUnitValue,
+        { } threshold when productsSubtotal >= threshold => WithholdingReason.Applied,
+        _ => WithholdingReason.BelowMinimumBase,
+    };
+
+    /// <summary>El monto de una tasa que aplicó: sólo él va a dos decimales (spec §7.5).</summary>
+    internal static decimal WithholdingAmount(WithholdingRate rate, decimal productsSubtotal) =>
+        Round(productsSubtotal * rate.Percentage / 100m);
+
     private static AppliedWithholding[] Withhold(decimal productsSubtotal, IReadOnlyList<WithholdingRate> rates)
     {
         var applied = rates
-            .Where(rate => rate.Threshold is { } threshold && productsSubtotal >= threshold)
-            .Select(rate => new AppliedWithholding(rate, productsSubtotal, Round(productsSubtotal * rate.Percentage / 100m)))
+            .Where(rate => ThresholdReason(rate, productsSubtotal) == WithholdingReason.Applied)
+            .Select(rate => new AppliedWithholding(rate, productsSubtotal, WithholdingAmount(rate, productsSubtotal)))
             .ToArray();
         return applied.Length == 0 ? [] : applied;
     }

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Modules.Shopify.Domain;
 
 namespace Modules.Shopify.Application;
@@ -7,6 +8,8 @@ namespace Modules.Shopify.Application;
 /// (GraphQL). Los montos están en la moneda de la tienda (<c>shop_money</c>/<c>shopMoney</c>), no en la del comprador. Los
 /// enums de Shopify viajan en minúsculas con guion bajo, como los da REST (<c>paid</c>, <c>partially_paid</c>, <c>customer</c>).
 /// <see cref="FinancialStatus"/> vacío significa que Shopify no lo mandó.
+/// <para><see cref="BillingAddress"/> es la dirección de facturación (spec 2026-11-14): de ella sale la ruta de documento
+/// <c>billing_address.company</c>. Tiene default para que los payloads guardados antes sigan deserializando.</para>
 /// <para>El parser sólo garantiza forma: <see cref="OrderId"/>, <see cref="Name"/>, <see cref="CreatedAt"/>,
 /// <see cref="UpdatedAt"/>, <see cref="Currency"/> y <see cref="TotalPrice"/> presentes y bien tipados. Los anchos (nombre,
 /// estado, moneda) los valida el dominio al recibir <see cref="ToHeader"/>; el parser no recorta nada.</para>
@@ -30,7 +33,8 @@ public sealed record ShopifyOrderSnapshot(
     ShopifyAddress? ShippingAddress,
     IReadOnlyDictionary<string, string> Attributes,
     IReadOnlyList<ShopifyLine> Lines,
-    IReadOnlyList<ShopifyShippingLine> ShippingLines)
+    IReadOnlyList<ShopifyShippingLine> ShippingLines,
+    ShopifyAddress? BillingAddress = null)
 {
     /// <summary>El único lugar donde el snapshot se vuelve la cabecera del espejo (§5.4). No valida: si un valor no cabe,
     /// <c>ShopifyOrderMirror.Create</c>/<c>ApplySnapshot</c> lanza <see cref="ArgumentException"/>, que es el fallo
@@ -48,8 +52,34 @@ public sealed record ShopifyOrderSnapshot(
 
 /// <summary>Una línea del pedido. <see cref="Sku"/> nulo cuando Shopify no lo trae o viene vacío (el importador responde
 /// <c>product_unmatched</c>); <see cref="DiscountAmount"/> es la suma de las asignaciones de descuento de la línea, sobre
-/// <c>OriginalUnitPrice × Quantity</c>.</summary>
-public sealed record ShopifyLine(string? Sku, decimal Quantity, decimal OriginalUnitPrice, decimal DiscountAmount);
+/// <c>OriginalUnitPrice × Quantity</c>.
+/// <para><see cref="IsCustom"/> marca una línea personalizada: la que el comercio escribió a mano, sin producto ni variante en
+/// Shopify. Sólo lo es si la línea trae <b>explícitamente</b> los dos ids en <c>null</c> (REST <c>product_id</c> y
+/// <c>variant_id</c>; GraphQL <c>variant</c> y <c>product</c>): una llave ausente no cuenta, porque Shopify real siempre las manda
+/// y una fixture sin ellas dejaría todas las líneas como personalizadas. Una línea de un producto borrado conserva uno de los dos
+/// ids y no es personalizada. <see cref="Title"/> es el nombre de la línea, con el que el comercio la asocia a una variante.</para>
+/// <para><see cref="Title"/> e <see cref="IsCustom"/> tienen default para que los snapshots guardados antes de este cambio
+/// (sin esas llaves) sigan deserializando.</para>
+/// <para>Spec 2026-11-14 (D2): <see cref="Quantity"/> es la cantidad <b>vigente</b> (REST <c>current_quantity</c>, GraphQL
+/// <c>currentQuantity</c>), la que queda después de las ediciones de Shopify; si la llave falta, es <c>quantity</c>.
+/// <see cref="OriginalQuantity"/> es siempre <c>quantity</c>, la de cuando se creó la línea: sobre ella reparte Shopify el
+/// descuento (<see cref="DiscountAmount"/>), así que el porcentaje se calcula con ella. <see cref="Id"/> es el id de la línea en
+/// Shopify (el número del GID en GraphQL). Los dos son nulos en un payload guardado antes de este cambio.</para></summary>
+public sealed record ShopifyLine(
+    string? Sku,
+    decimal Quantity,
+    decimal OriginalUnitPrice,
+    decimal DiscountAmount,
+    string? Title = null,
+    bool IsCustom = false,
+    long? Id = null,
+    decimal? OriginalQuantity = null)
+{
+    /// <summary>Quitada en una edición de Shopify: vigente 0 con original &gt; 0. Un payload viejo (<see cref="OriginalQuantity"/>
+    /// nulo) nunca lo es. Derivado: no se guarda en el payload.</summary>
+    [JsonIgnore]
+    public bool IsRemoved => Quantity == 0m && OriginalQuantity is > 0m;
+}
 
 /// <summary>Una línea de envío, retiradas incluidas: descartarlas es del importador (§6.2.2). <see cref="TaxAmount"/> es la suma
 /// de sus <c>tax_lines</c>/<c>taxLines</c>.</summary>
@@ -59,7 +89,7 @@ public sealed record ShopifyShippingLine(string? Code, string? Title, decimal Di
 /// Todo nulo en un pedido sin cliente.</summary>
 public sealed record ShopifyBuyer(string? FirstName, string? LastName, string? Email, string? Phone);
 
-/// <summary>La dirección de envío. <see cref="ProvinceCode"/> es ISO 3166-2 sin el prefijo del país (V-4). <see cref="Company"/> es el
+/// <summary>Una dirección del pedido, de envío o de facturación. <see cref="ProvinceCode"/> es ISO 3166-2 sin el prefijo del país (V-4). <see cref="Company"/> es el
 /// campo «Empresa» del checkout, que muchas tiendas reusan para pedir el documento (<see cref="ShopifyDocumentSources"/>).</summary>
 public sealed record ShopifyAddress(
     string? Name,

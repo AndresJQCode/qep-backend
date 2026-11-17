@@ -38,7 +38,7 @@ public sealed class OrderWithholdingsPersistenceTests
     [Fact]
     public async Task PhotoRoundTrips()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 
@@ -62,7 +62,7 @@ public sealed class OrderWithholdingsPersistenceTests
     [Fact]
     public async Task WithholdingsCanBeAddedChangedAndRemovedOnAnExistingOrder()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 
@@ -109,7 +109,7 @@ public sealed class OrderWithholdingsPersistenceTests
     [Fact]
     public async Task ChangingTheBillingAccountPersistsItsCountry()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateAsync(connectionString);
 
@@ -119,8 +119,9 @@ public sealed class OrderWithholdingsPersistenceTests
         await using (var edit = NewContext(connectionString))
         {
             var tracked = await FindAsync(edit, order.Id);
-            Assert.True(tracked.SetBillingAccount(
-                ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, Advisor, Now));
+            Assert.True(tracked.ApplyBillingContext(
+                ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, MunicipalContext.None, Advisor, Now)
+                .AccountChanged);
             await CustomerReferenceReplica.SaveAsync(edit);
         }
 
@@ -147,7 +148,8 @@ public sealed class OrderWithholdingsPersistenceTests
             null,
             Advisor,
             [],
-            Now);
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     private static async Task SaveNewAsync(string connectionString, Order order)
     {

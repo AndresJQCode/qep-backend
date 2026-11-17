@@ -1,3 +1,4 @@
+using System.Globalization;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -13,6 +14,17 @@ public static class OrderChangeSummary
 
     public static string CreatedFromExternal(OrderSource source, string reference) =>
         Trim($"Creado desde {source} ({reference}).");
+
+    /// <summary>Spec 2026-11-14 §4: una edición que llegó de la plataforma, una entrada por grupo aplicado. Sin autor: la hizo
+    /// la plataforma, no una persona de QEP.</summary>
+    public static string EditedFromExternal(OrderSource source, ExternalOrderEditGroup group) => group switch
+    {
+        ExternalOrderEditGroup.Lines => Trim($"{source} editó los productos."),
+        ExternalOrderEditGroup.Shipping => Trim($"{source} editó el envío."),
+        ExternalOrderEditGroup.Party => Trim($"{source} editó la dirección de envío."),
+        ExternalOrderEditGroup.BuyerNotes => Trim($"{source} editó la nota del cliente."),
+        _ => throw new ArgumentOutOfRangeException(nameof(group), group, "Unknown external edit group."),
+    };
 
     // El pedido de la tienda sale directo del checkout: no hay solicitud que nombrar.
     public static string CreatedFromStore() => "Creado desde la tienda.";
@@ -33,6 +45,17 @@ public static class OrderChangeSummary
         QuotationChangeSummary.GlobalScaleFloorChanged(floor, format);
 
     public static string NotesChanged() => "Editó las notas.";
+
+    /// <summary>Spec 2026-11-16 §3 (F-6): las dos fechas en ISO, con cultura invariante para que el texto no dependa del
+    /// servidor.</summary>
+    public static string OrderDateChanged(DateOnly from, DateOnly to) => string.Create(
+        CultureInfo.InvariantCulture, $"Cambió la fecha del pedido de {from:yyyy-MM-dd} a {to:yyyy-MM-dd}.");
+
+    /// <summary>Spec 2026-11-14 §5: el asesor corrigió la parte de envío de un pedido de Shopify (viaja a Shopify).</summary>
+    public static string ShippingPartyEdited() => "Editó la dirección de envío.";
+
+    /// <summary>Spec 2026-11-14 §5: el asesor corrigió la nota del cliente de un pedido de Shopify (viaja a Shopify).</summary>
+    public static string BuyerNotesEdited() => "Editó la nota del cliente.";
 
     /// <summary>El cambio de envío de un pedido pendiente (spec 2026-10-17 §5.4), con los textos de la
     /// cotización. <c>null</c> si nada de lo que se cuenta cambió.</summary>
@@ -91,9 +114,19 @@ public static class OrderChangeSummary
         return names.Length == 0 ? "ninguna" : string.Join(", ", names);
     }
 
-    /// <summary>Los selectores de retención de un pedido pendiente (spec impuestos por tipo D21).</summary>
-    public static string WithholdingsChanged(string before, string after) =>
-        Trim($"Cambió las retenciones de {before} a {after}.");
+    /// <summary>Los selectores de retención de un pedido pendiente (spec impuestos por tipo D21). Con
+    /// <paramref name="notAgent"/>, la tasa municipal elegida es para un municipio donde el cliente no es agente (aplicación
+    /// a mano, spec ReteICA por empresa R11) y el texto lo dice; el punto doble con un municipio que termina en punto
+    /// («Bogotá, D.C.») es lo que da el literal del spec.</summary>
+    public static string WithholdingsChanged(string before, string after, (string Type, string City)? notAgent = null) =>
+        Trim(notAgent is { } manual
+            ? $"Cambió las retenciones de {before} a {after}; el cliente no está registrado como agente retenedor de {manual.Type} en {manual.City}."
+            : $"Cambió las retenciones de {before} a {after}.");
+
+    /// <summary>La re-resolución quitó una tasa municipal porque el cliente no es agente en el municipio. No dice «a mano»:
+    /// no se guarda si la fila salió de la regla o del selector (owner 2026-11-14; spec §7.8, R11).</summary>
+    public static string WithholdingRemovedNotAgent(string type) =>
+        Trim($"Se quitó la {type} al cambiar la empresa o el municipio: el cliente no es agente retenedor ahí.");
 
     /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
     public static string Sent(QuotationRecipient recipient, string? contactName = null) => recipient switch
@@ -158,6 +191,23 @@ public static class OrderChangeSummary
         return Trim(
             $"El pago pasó de {ExportStatusLabels.For(change.From)} a {ExportStatusLabels.For(change.To)}: " +
             $"el neto pasó de {format.Number(change.PreviousNetTotal)} a {format.Number(change.NetTotal)}.");
+    }
+
+    /// <summary>Spec 2026-11-15 §4: la decisión del asesor sobre la cuenta de comprador. Lleva los correos (lo que ya ve en el
+    /// detalle) para que la entrada se siga entendiendo si la cuenta se borra después; los ids van en la auditoría. Una cuenta
+    /// anterior que ya no existe se nombra como eliminada.</summary>
+    public static string BuyerAccountChanged(OrderBuyerAccountSnapshot? previous, OrderBuyerAccountSnapshot? current)
+    {
+        var before = previous is null ? null : previous.Email ?? "una cuenta ya eliminada";
+        return (before, current?.Email) switch
+        {
+            (null, null) => "Quitó la cuenta de comprador: el pedido no tenía y ya no se enlazará solo.",
+            (null, { } email) => Trim($"Enlazó el pedido a la cuenta de comprador {email}."),
+            ({ } old, null) => Trim($"Quitó la cuenta de comprador {old}: el pedido ya no se enlazará solo."),
+            ({ } old, { } email) when previous!.Id == current!.Id =>
+                Trim($"Confirmó la cuenta de comprador {email}: el pedido ya no se enlazará solo a otra."),
+            ({ } old, { } email) => Trim($"Cambió la cuenta de comprador de {old} a {email}."),
+        };
     }
 
     private static string Trim(string summary) =>

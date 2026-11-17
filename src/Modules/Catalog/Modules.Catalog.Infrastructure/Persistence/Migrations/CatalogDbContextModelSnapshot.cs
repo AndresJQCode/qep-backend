@@ -446,6 +446,10 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<Guid?>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
                     b.Property<string>("Country")
                         .IsRequired()
                         .HasMaxLength(2)
@@ -501,9 +505,14 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_tax_rates_tenant");
 
-                    b.HasIndex("TenantId", "Name")
+                    b.HasIndex("TenantId", "Type", "CityId")
+                        .HasDatabaseName("IX_tax_rates_tenant_type_city");
+
+                    b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase")
                         .IsUnique()
-                        .HasDatabaseName("IX_tax_rates_tenant_name");
+                        .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase"), false);
 
                     b.ToTable("tax_rates", "catalog");
                 });

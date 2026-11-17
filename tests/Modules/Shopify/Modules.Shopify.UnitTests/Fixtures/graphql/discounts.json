@@ -60,6 +60,7 @@
   "lineItems": {
     "nodes": [
       {
+        "id": "gid://shopify/LineItem/9000",
         "sku": "CAM-001",
         "quantity": 2,
         "originalUnitPriceSet": {
@@ -88,6 +89,7 @@
         ]
       },
       {
+        "id": "gid://shopify/LineItem/9001",
         "sku": "GOR-002",
         "quantity": 1,
         "originalUnitPriceSet": {

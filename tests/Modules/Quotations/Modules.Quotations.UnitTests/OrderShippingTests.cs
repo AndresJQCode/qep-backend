@@ -31,21 +31,22 @@ public sealed class OrderShippingTests
         bool isStorePickup = false) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
-            Account, shipping, [Line], null, Advisor, proofs ?? [], Now);
+            Account, shipping, [Line], null, Advisor, proofs ?? [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
     [Fact]
     public void FromQuotationCopiesTheShippingAndTheTotals()
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
-            QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], Advisor, Now);
+            QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], MunicipalContext.None, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         var shipping = new ShippingDetails(CarrierId, "Coordinadora", FreightChargeMode.Charged, 15_000m, 19, true);
         quotation.SetShipping(shipping, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(shipping, order.ShippingDetails);
         Assert.Equal(
@@ -81,14 +82,15 @@ public sealed class OrderShippingTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
-            QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
+            QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [], MunicipalContext.None, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         quotation.SetShipping(new ShippingDetails(null, null, null, 0m, 0, true), Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
 
         var error = Assert.Throws<QuotationsDomainException>(() => Order.FromQuotation(
             OrderId.New(), TenantId, "PED-2026-0001", quotation, null, Advisor,
-            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)], Now));
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime)));
 
         Assert.Equal("order.order.cash_on_delivery_pending_only", error.Code);
     }
@@ -171,7 +173,8 @@ public sealed class OrderShippingTests
         var line = Line;
         return Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
-            Account, [line], paymentStatus, null, Advisor, [], Now, OrderSource.Shopify, "#1001", shipping, externalKey,
+            Account, [line], paymentStatus, null, Advisor, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Shopify, "#1001", shipping, externalKey,
             externalShippingTitle, OrderCostFixtures.WithoutCosts([line]));
     }
 

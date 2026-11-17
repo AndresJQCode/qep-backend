@@ -25,19 +25,20 @@ public sealed class OrderWithholdingsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var setup = await SetUpAsync(factory);
         var retefuente = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
-        var reteIca = await InsertWithholdingRateAsync(factory, setup.TenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m);
+        // Spec ReteICA por empresa (A15): el cliente ya no puede tener una ReteICA; la del pedido sale de la empresa y del
+        // municipio (Bloque C).
         var clientId = await CreateActiveCustomerAsync(
-            setup.Client, setup.TenantId, withholdingTaxRateIds: [retefuente, reteIca]);
+            setup.Client, setup.TenantId, withholdingTaxRateIds: [retefuente]);
         var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
 
         var order = await ConvertAsync(setup, quotation.Id);
 
-        // La misma foto, también la que no aplica (100.000 no llega a 4 UVT): la edición la prellena (D21).
+        // La misma foto: la edición la prellena (D21).
         Assert.Equal(
             quotation.Withholdings.Select(row => (row.TaxRateId, row.Base, row.Amount, row.TaxUnitValue)).ToArray(),
             order.Withholdings.Select(row => (row.TaxRateId, row.Base, row.Amount, row.TaxUnitValue)).ToArray());
         Assert.Equal((retefuente, 2_500m), (Assert.Single(order.Withholdings).TaxRateId, order.RetentionAmount));
-        Assert.Equal(new[] { retefuente, reteIca }, order.BillingWithholdingTaxRates.Select(rate => rate.Id).ToArray());
+        Assert.Equal(new[] { retefuente }, order.BillingWithholdingTaxRates.Select(rate => rate.Id).ToArray());
         Assert.Empty(order.CustomerWithholdingTaxRates);
         Assert.Equal(quotation.NetTotal, order.NetTotal);
         // Con los datos del cliente no hay parte propia.
@@ -209,7 +210,12 @@ public sealed class OrderWithholdingsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var setup = await SetUpAsync(factory);
         var retefuente = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
-        var reteIca = await InsertWithholdingRateAsync(factory, setup.TenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m);
+        // Spec ReteICA por empresa §7.5: la ReteICA es la de la empresa colombiana en su municipio. La edición cambia de
+        // empresa, así que el selector la acepta aunque el cliente no sea agente ahí (R11, A11).
+        var reteIca = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "ReteICA Bogotá", "ReteICA", 0.966m, minimumBase: 4m,
+            cityId: await EnsureCityIdAsync(setup.Client));
+        await AssignCompanyWithholdingRateAsync(factory, setup.TenantId, setup.Account.CompanyId, reteIca);
         var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId);
         var spanish = await CreateSpanishCompanyAsync(setup.Client, setup.TenantId);
         var created = await CreateManualAsync(setup, clientId, spanish, quantity: 3m);
@@ -259,6 +265,247 @@ public sealed class OrderWithholdingsApiTests
         Assert.Empty((await GetDetailAsync(setup, created.Id)).Order.BillingWithholdingTaxRates);
     }
 
+    // Spec retenciones por UVT §6: el pedido convertido hereda la foto, así que su desglose es el de la cotización.
+    [Fact]
+    public async Task ConvertedOrderCarriesTheBreakdown()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 4m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+
+        var order = await ConvertAsync(setup, quotation.Id);
+
+        // Base 100.000 < 4 × 50.000.
+        var entry = Assert.Single(order.WithholdingBreakdown);
+        Assert.Equal(
+            (servicios, false, "BelowMinimumBase", 100_000m, (decimal?)200_000m, (int?)TodayInBogota().Year, false, 0m),
+            (entry.TaxRateId, entry.Applies, entry.Reason, entry.Base, entry.MinimumBaseAmount, entry.TaxUnitYear,
+                entry.TaxUnitOutdated, entry.Amount));
+        Assert.Equal(quotation.WithholdingBreakdown, order.WithholdingBreakdown);
+        Assert.Empty(order.Withholdings);
+    }
+
+    // Spec retenciones por UVT §5.4 (owner P1): un pedido editable que se guarda, aunque sea sin cambios, toma la UVT del
+    // año cargada después y recalcula. Base 100.000: con 2 × 50.000 aplica; con 2 × 60.000 ya no.
+    [Fact]
+    public async Task SavingAnEditableOrderRefreshesTheTaxUnit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(factory, taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        var order = await ConvertAsync(setup, quotation.Id);
+        Assert.Equal((4_000m, (int?)(thisYear - 1)), (order.RetentionAmount, Assert.Single(order.WithholdingBreakdown).TaxUnitYear));
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var saved = await ReadDetailAsync(await PutEditsAsync(setup, order, Edits(setup)));
+
+        var entry = Assert.Single(saved.Order.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)thisYear, (decimal?)60_000m, false, "BelowMinimumBase", (decimal?)120_000m),
+            (entry.TaxUnitYear, entry.TaxUnitValue, entry.TaxUnitOutdated, entry.Reason, entry.MinimumBaseAmount));
+        Assert.Equal((0m, saved.Order.Total), (saved.Order.RetentionAmount, saved.Order.NetTotal));
+        Assert.Empty(saved.Order.Withholdings);
+        var fetched = await GetDetailAsync(setup, order.Id);
+        Assert.Equal((int?)thisYear, Assert.Single(fetched.Order.WithholdingBreakdown).TaxUnitYear);
+        Assert.Equal(0m, fetched.Order.RetentionAmount);
+    }
+
+    // Spec alerta UVT §5.2 (owner A): la conversión refresca la UVT al año del pedido. La cotización se envió con la del año
+    // anterior (2 × 50.000 = 100.000, aplica: 4.000); con la del año cargada antes de convertir (2 × 60.000) ya no aplica.
+    [Fact]
+    public async Task ConvertingRefreshesTheTaxUnitToTheOrderYear()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(factory, taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        Assert.Equal(4_000m, quotation.RetentionAmount);
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var order = await ConvertAsync(setup, quotation.Id);
+
+        var entry = Assert.Single(order.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)thisYear, (decimal?)60_000m, false, "BelowMinimumBase", (decimal?)120_000m),
+            (entry.TaxUnitYear, entry.TaxUnitValue, entry.TaxUnitOutdated, entry.Reason, entry.MinimumBaseAmount));
+        Assert.Equal((0m, order.Total), (order.RetentionAmount, order.NetTotal));
+    }
+
+    // Spec alerta UVT §5.4: el pedido se convirtió con la UVT del año anterior (la única cargada); cargada la del año, el
+    // detalle dice que está desactualizada y cuál tomaría al guardarse, sin que el frontend la deduzca.
+    [Fact]
+    public async Task DetailCarriesTheLatestTaxUnitYear()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(factory, taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        var order = await ConvertAsync(setup, quotation.Id);
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var detail = await GetDetailAsync(setup, order.Id);
+
+        var entry = Assert.Single(detail.Order.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)(thisYear - 1), true, (int?)thisYear),
+            (entry.TaxUnitYear, entry.TaxUnitOutdated, entry.TaxUnitLatestYear));
+    }
+
+    // Spec alerta UVT §5.3: la cotización se envió con la UVT del año anterior (2 × 50.000 = 100.000, aplica: 4.000); cargada
+    // la del año (2 × 60.000), la vista previa dice qué cambia al convertir, con los dos lados calculados en el backend.
+    [Fact]
+    public async Task ConversionPreviewShowsTheTaxUnitChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(factory, taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var preview = await GetConversionPreviewAsync(setup, quotation.Id);
+
+        Assert.NotNull(preview.TaxUnitChange);
+        Assert.Equal(
+            [new TaxUnitShiftDto("CO", thisYear - 1, Uvt, thisYear, 60_000m)], preview.TaxUnitChange.TaxUnits);
+        var row = Assert.Single(preview.TaxUnitChange.Withholdings);
+        Assert.Equal(
+            (servicios, true, false, 4_000m, 0m, (decimal?)100_000m, (decimal?)120_000m),
+            (row.TaxRateId, row.FromApplies, row.ToApplies, row.FromAmount, row.ToAmount, row.FromMinimumBaseAmount,
+                row.ToMinimumBaseAmount));
+        Assert.Equal(
+            (quotation.NetTotal, quotation.Total, quotation.Total, 0m),
+            (preview.TaxUnitChange.FromNetTotal, preview.TaxUnitChange.ToNetTotal, preview.NetTotal, preview.RetentionAmount));
+        var entry = Assert.Single(preview.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)thisYear, false, (int?)thisYear, "BelowMinimumBase"),
+            (entry.TaxUnitYear, entry.TaxUnitOutdated, entry.TaxUnitLatestYear, entry.Reason));
+    }
+
+    // Con la UVT del año ya cargada al cotizar, convertir no cambia nada: no hay alerta.
+    [Fact]
+    public async Task ConversionPreviewWithoutChangeHasNoTaxUnitChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+
+        var preview = await GetConversionPreviewAsync(setup, quotation.Id);
+
+        Assert.Null(preview.TaxUnitChange);
+        Assert.Equal((quotation.NetTotal, quotation.RetentionAmount), (preview.NetTotal, preview.RetentionAmount));
+    }
+
+    // Los números de pedido no tienen huecos: la vista previa no toma el contador, así que el primer pedido del tenant sigue
+    // siendo el 0001 (el formato por defecto de DocumentNumberingApiTests).
+    [Fact]
+    public async Task ConversionPreviewDoesNotSpendTheOrderNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+
+        await GetConversionPreviewAsync(setup, quotation.Id);
+        await GetConversionPreviewAsync(setup, quotation.Id);
+        var order = await ConvertAsync(setup, quotation.Id);
+
+        Assert.Equal($"PED-{TodayInBogota().Year}-0001", order.OrderNumber);
+    }
+
+    // Las mismas precondiciones que la conversión antes de pedir el número: una cotización convertida no se convierte otra vez.
+    [Fact]
+    public async Task ConversionPreviewOfAConvertedQuotationIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        await ConvertAsync(setup, quotation.Id);
+
+        var response = await setup.Client.GetAsync(ConversionPreviewUrl(setup, quotation.Id), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("quotation.quotation.status_not_convertible", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task ConversionPreviewRequiresOrderManage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, OrdersPermissions.OrderRead);
+        using var _ = client;
+
+        var response = await client.GetAsync(
+            $"{QuotationsUrl(tenantId)}/{Guid.CreateVersion7()}/order/preview", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // Review Focus 3: un pedido facturado ya no es editable; cargar la UVT del año no lo mueve, ni al leerlo ni al
+    // intentar editarlo.
+    [Fact]
+    public async Task InvoicedOrderKeepsItsTaxUnit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var thisYear = TodayInBogota().Year;
+        var setup = await SetUpAsync(
+            factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice], taxUnitYear: thisYear - 1);
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m, minimumBase: 2m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [servicios]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        var order = await ConvertAsync(setup, quotation.Id);
+        (await setup.Client.PostAsync(
+            $"{OrdersUrl(setup.TenantId)}/{order.Id}/mark-paid", null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        (await setup.Client.PostAsync(
+            $"{OrdersUrl(setup.TenantId)}/{order.Id}/invoice", null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        await InsertTaxUnitValueAsync(factory, "CO", thisYear, 60_000m);
+
+        var invoiced = await GetDetailAsync(setup, order.Id);
+        var rejected = await PutEditsAsync(setup, invoiced.Order, Edits(setup));
+
+        Assert.Equal("order.order.not_editable", await CodeOfAsync(rejected));
+        var fetched = await GetDetailAsync(setup, order.Id);
+        var entry = Assert.Single(fetched.Order.WithholdingBreakdown);
+        Assert.Equal(
+            ((int?)(thisYear - 1), (decimal?)Uvt, true, "Applied"),
+            (entry.TaxUnitYear, entry.TaxUnitValue, entry.TaxUnitOutdated, entry.Reason));
+        Assert.Equal(4_000m, fetched.Order.RetentionAmount);
+    }
+
     private sealed record Setup(
         HttpClient Client,
         Guid TenantId,
@@ -267,10 +514,10 @@ public sealed class OrderWithholdingsApiTests
 
     // Tenant, empresa colombiana con cuenta en COP, UVT del año del documento y un producto de 119.000 con IVA del 19 %
     // adentro (base 100.000 por unidad).
-    private static async Task<Setup> SetUpAsync(QepApiFactory factory, string[]? permissions = null)
+    private static async Task<Setup> SetUpAsync(QepApiFactory factory, string[]? permissions = null, int? taxUnitYear = null)
     {
         var (tenantId, _, client) = await RegisterTenantAsync(factory, permissions ?? ManagerPermissions);
-        await InsertTaxUnitValueAsync(factory, "CO", TodayInBogota().Year, Uvt);
+        await InsertTaxUnitValueAsync(factory, "CO", taxUnitYear ?? TodayInBogota().Year, Uvt);
         var company = await CreateCompanyWithBankAccountAsync(client, tenantId);
         var vat = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
         var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 119_000m, taxRateId: vat);
@@ -313,6 +560,19 @@ public sealed class OrderWithholdingsApiTests
         var converted = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(converted);
         return (await GetDetailAsync(setup, converted.Id)).Order;
+    }
+
+    private static string ConversionPreviewUrl(Setup setup, Guid quotationId) =>
+        $"{QuotationsUrl(setup.TenantId)}/{quotationId}/order/preview";
+
+    private static async Task<QuotationConversionPreviewResponse> GetConversionPreviewAsync(Setup setup, Guid quotationId)
+    {
+        var response = await setup.Client.GetAsync(ConversionPreviewUrl(setup, quotationId), TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.IsSuccessStatusCode, $"{(int)response.StatusCode} {text}");
+        var preview = JsonSerializer.Deserialize<QuotationConversionPreviewResponse>(text, JsonSerializerOptions.Web);
+        Assert.NotNull(preview);
+        return preview;
     }
 
     private static async Task<OrderResponse> CreateManualAsync(

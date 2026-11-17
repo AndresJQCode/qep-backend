@@ -204,7 +204,7 @@ internal sealed class DocumentTemplateOutbound(
         {
             var result = await meta.SendTemplateAsync(
                 sender, SendTarget.ForTemplate(conversation.UserId, conversation.WaId),
-                built.Send with { HeaderDocument = new TemplateHeaderDocument(mediaId, send.DocumentFileName) },
+                built.Send with { Header = TemplateHeader.DocumentById(mediaId, send.DocumentFileName) },
                 SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
                 CancellationToken.None);
             await new OutboundSettlement(repository, connections, notifier, receipts, clock)

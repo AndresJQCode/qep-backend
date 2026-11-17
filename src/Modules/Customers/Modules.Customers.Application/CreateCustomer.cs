@@ -21,7 +21,11 @@ public sealed record CreateCustomerCommand(
     bool VatSurplus,
     string? PersonType = null,
     // Spec impuestos por tipo §9.2: null no asigna ninguna. El WithRetention del cuerpo viejo ya no entra al comando.
-    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    // Spec ReteICA por empresa §9.3: null no registra ningún municipio.
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
+    // Spec 2026-11-15: null crea el cliente sin empresa, como siempre.
+    Guid? CompanyId = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
@@ -60,6 +64,8 @@ public sealed class CreateCustomerHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         await CustomerWithholdingRules.ValidateAsync(
             taxRateLookup, command.TenantId, command.WithholdingTaxRateIds ?? [], cancellationToken);
+        var agentCities = await CustomerWithholdingAgentRules.ValidateAsync(
+            geographyLookup, command.WithholdingAgentCities ?? [], cancellationToken);
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
         await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
@@ -86,6 +92,25 @@ public sealed class CreateCustomerHandler(
                     "customers.customer.city_not_found",
                     "The city was not found.")
             : null;
+
+        // Spec 2026-11-15: con empresa, el alta corre en una transacción para bloquear la fila de la empresa, igual que
+        // SetCustomerCompanyHandler: así no se vuelve contacto de otra entre esta lectura y el commit. Desactivarla no toma
+        // este bloqueo (tampoco frente al vínculo de un cliente existente): sólo espera a que el alta confirme.
+        // Se resuelve antes del CUC, como la clasificación y la ciudad, para no quemar un número con una empresa que no existe.
+        // Sin empresa no se abre transacción (`await using` sobre null no hace nada): el alta sigue exactamente como antes.
+        // Cada salida sin CommitAsync la deshace al liberarla.
+        await using var transaction = command.CompanyId is null
+            ? null
+            : await unitOfWork.BeginTransactionAsync(cancellationToken);
+        Customer? company = null;
+        if (command.CompanyId is { } companyId)
+        {
+            await repository.LockForCompanyLinkAsync(command.TenantId, [companyId], cancellationToken);
+            // Un id de otro tenant no aparece: es «no existe», igual que uno inexistente.
+            company = await repository.FindAsync(command.TenantId, new CustomerId(companyId), cancellationToken)
+                ?? throw new CustomersDomainException(
+                    CustomersErrorCodes.CompanyNotFound, "The company does not exist.");
+        }
 
         // El CUC se pide **despues** de resolver clasificacion y ciudad: cada llamada consume un
         // numero del consecutivo del tenant, y pedirlo antes quemaria uno por cada referencia mal
@@ -135,6 +160,18 @@ public sealed class CreateCustomerHandler(
             customer.SetWithholdingTaxRates(taxRateIds, now);
         }
 
+        if (agentCities.Count > 0)
+        {
+            customer.SetWithholdingAgentCities(agentCities, now);
+        }
+
+        // Las mismas reglas que el vínculo de un cliente existente (activa, no fusionada, no es contacto de otra). Un cliente
+        // nuevo no tiene contactos ni puede ser la empresa elegida. Una sola auditoría: el cliente nació así, no cambió.
+        if (company is not null)
+        {
+            customer.LinkToCompany(company, hasContacts: false, now);
+        }
+
         repository.Add(customer);
         auditPublisher.Publish(
             command.TenantId,
@@ -156,8 +193,21 @@ public sealed class CreateCustomerHandler(
         }
         catch (CustomersDomainException e) when (e.Code == CustomerIdentificationTaken.Code)
         {
+            // Defensivo: EF Core guarda dentro de un savepoint y, al fallar, vuelve a él, así que la transacción sigue usable y
+            // ResolveAsync podría releer al dueño dentro de ella. Deshacerla antes suelta el bloqueo de la empresa y deja esa
+            // lectura en autocommit, sin depender de que los savepoints automáticos sigan prendidos.
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync();
+            }
+
             throw await CustomerIdentificationTaken.ResolveAsync(
                 repository, command.TenantId, customer, e, cancellationToken);
+        }
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
         }
 
         return await customer.ToDtoAsync(

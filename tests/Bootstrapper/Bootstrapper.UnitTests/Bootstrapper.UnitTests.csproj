@@ -3,8 +3,9 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <!-- CatalogVariantUsageCheckerTests: el SQL entre esquemas del adaptador sólo se prueba contra
-         PostgreSQL. Es la única prueba de este proyecto que necesita Docker. -->
+    <!-- Lo que sólo se prueba contra PostgreSQL necesita Docker: el SQL entre esquemas de los adaptadores
+         (CatalogVariantUsageCheckerTests, CustomerMergeReferencesTests, CustomerReferenceWritesTests) y los
+         advisory locks (CustomerReferenceLockTests y StartupLockTests, el candado de arranque). -->
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />
@@ -19,5 +20,7 @@
     <ProjectReference Include="..\..\..\src\Bootstrapper\Bootstrapper.csproj" />
     <!-- BuyerParityTests ata el header de sesión de Store.Api al de Buyers.Api (que trae Store.Api transitivo). -->
     <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Api\Modules.Buyers.Api.csproj" />
+    <!-- SupportPublicPathsTests ata el prefijo y la política CORS de Bootstrapper al grupo público de Support.Api. -->
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Api\Modules.Support.Api.csproj" />
   </ItemGroup>
 </Project>

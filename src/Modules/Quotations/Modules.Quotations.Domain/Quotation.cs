@@ -62,10 +62,12 @@ public sealed class Quotation
         string defaultCurrency,
         bool customerVatSurplus,
         IReadOnlyList<WithholdingRate> customerWithholdings,
+        MunicipalContext municipal,
         MemberId createdBy,
         DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(customerWithholdings);
+        ArgumentNullException.ThrowIfNull(municipal);
         Id = id;
         TenantId = tenantId;
         QuotationNumber = NormalizeQuotationNumber(quotationNumber);
@@ -86,11 +88,18 @@ public sealed class Quotation
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
         // The billing account rules when there is one; otherwise the tenant default, read and
-        // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it).
-        Currency = BillingAccount?.Currency ?? defaultCurrency;
+        // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it). A pending account
+        // (company without account, previews only) is no account here: it never sets the currency.
+        Currency = HasBillingAccount ? BillingAccount!.Currency : defaultCurrency;
         CustomerVatSurplus = customerVatSurplus;
-        // La foto del cliente, de todos sus países (D16); los selectores de facturación propia nacen vacíos.
-        ReplaceWithholdings(WithholdingSource.Customer, customerWithholdings);
+        // Spec ReteICA por empresa §7.6, «En la creación»: el municipio sale del mismo cuerpo (P13); en un país sin tipos
+        // municipales no hay (A7).
+        OperationCityId = MunicipalReResolver.HasMunicipalTypes(BillingAccount?.Country) ? municipal.OperationCityId : null;
+        // La foto del cliente: sus tasas nacionales, de todos sus países (D16), más la municipal por la regla del cliente.
+        // Los selectores de facturación propia nacen vacíos.
+        ReplaceWithholdings(
+            WithholdingSource.Customer,
+            MunicipalReResolver.ByCustomerRule(customerWithholdings, municipal, OperationCityId));
         CreatedBy = createdBy;
         UpdatedAt = occurredAt;
         Version = 1;
@@ -266,6 +275,13 @@ public sealed class Quotation
     public QuotationBillingAccount? BillingAccount { get; private set; }
 
     /// <summary>
+    /// El municipio de la operación (spec ReteICA por empresa §7.5): decide qué tasa municipal aplica. Arranca en el de la
+    /// empresa (A6) y el asesor lo puede cambiar; null sin empresa, en un país sin tipos municipales (A7) y en un documento
+    /// anterior a este trabajo hasta que alguien lo fije (A8). Sin FK, como el municipio de las partes.
+    /// </summary>
+    public Guid? OperationCityId { get; private set; }
+
+    /// <summary>
     /// ISO 4217 code from the catalogue (Modules.Tenancy.Application.Currencies) of the **whole**
     /// quotation: unit prices, discounts, taxes and totals.
     ///
@@ -384,6 +400,12 @@ public sealed class Quotation
     public IEnumerable<DocumentWithholding> AppliedWithholdings =>
         ActiveWithholdings.Where(withholding => withholding.Applied);
 
+    /// <summary>Por qué cada tasa de la fuente vigente aplica o no, en su orden (spec retenciones por UVT §5.1); las de
+    /// otro país no salen.</summary>
+    public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
+        DocumentWithholding.Explain(
+            [.. ActiveWithholdings], BillsToFinalConsumer, BillingAccount, Currency, OperationCityId, Subtotal);
+
     private WithholdingSource ActiveWithholdingSource =>
         Billing is not null ? WithholdingSource.Billing : WithholdingSource.Customer;
 
@@ -431,6 +453,7 @@ public sealed class Quotation
         string defaultCurrency,
         bool customerVatSurplus,
         IReadOnlyList<WithholdingRate> customerWithholdings,
+        MunicipalContext municipal,
         MemberId createdBy,
         DateTimeOffset occurredAt) =>
         new(
@@ -447,8 +470,26 @@ public sealed class Quotation
             defaultCurrency,
             customerVatSurplus,
             customerWithholdings,
+            municipal,
             createdBy,
             occurredAt);
+
+    /// <summary>
+    /// El municipio de la operación de una cotización que se crea (owner 2026-11-14, plan P13): no hay municipio guardado
+    /// que conservar, así que ausente y <c>null</c> son el de la empresa; explícito, el elegido; sin empresa o en un país
+    /// sin tipos municipales, ninguno (A7). La aplicación lo calcula antes de consultar las ofertas.
+    /// </summary>
+    public static Guid? OperationCityAtCreation(QuotationBillingAccount? billingAccount, OperationCityChoice choice) =>
+        choice.ForNewCompany(billingAccount);
+
+    /// <summary>
+    /// El municipio de la operación que quedaría con esa cuenta y esa elección (spec §7.5, A6): si cambia la empresa, el
+    /// de la empresa nueva salvo que venga uno explícito; con la misma empresa, ausente conserva el guardado, <c>null</c>
+    /// es el de la empresa y explícito el elegido. Sin empresa o en un país sin tipos municipales, ninguno (A7). La
+    /// aplicación lo calcula antes de consultar las ofertas (plan P4).
+    /// </summary>
+    public Guid? OperationCityFor(QuotationBillingAccount? billingAccount, OperationCityChoice choice) =>
+        choice.For(billingAccount, BillingAccount?.CompanyId, OperationCityId);
 
     /// <summary>
     /// Agrega una línea (US-3). <paramref name="discountPercentage"/> ya viene resuelto por la
@@ -656,8 +697,14 @@ public sealed class Quotation
     /// <summary>Edita el encabezado (US-6, US-10): forma de pago, vigencia, notas y los datos de
     /// facturación/entrega. La tasa de impuesto no se edita acá — la trae
     /// cada línea desde su producto (RN-013). Reemplaza el recurso entero, mismo criterio que
-    /// <c>Product.Update</c>: lo que no viene se limpia.</summary>
-    public void UpdateDetails(
+    /// <c>Product.Update</c>: lo que no viene se limpia.
+    ///
+    /// <paramref name="municipal"/> trae el municipio de la operación resultante (<see cref="OperationCityFor"/>) y lo que
+    /// se ofrece ahí (spec ReteICA por empresa §7.6). Cambiar la empresa o el municipio re-resuelve las filas municipales
+    /// de las dos fuentes: la del cliente con la regla del cliente, la de facturación propia moviendo lo elegido (plan
+    /// P5). Reenviar la misma empresa completa su municipio en la cuenta sin re-resolver. Devuelve lo que pasó, para el
+    /// historial.</summary>
+    public MunicipalReResolution UpdateDetails(
         DateOnly? validUntil,
         string? paymentMethod,
         string? notes,
@@ -666,9 +713,11 @@ public sealed class Quotation
         IReadOnlyDictionary<Guid, QuotationItemPricing>? repricing,
         bool isRetail,
         int? globalScaleFloor,
+        MunicipalContext municipal,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
+        ArgumentNullException.ThrowIfNull(municipal);
         EnsureEditable();
         // Detal antes que el piso, y contra el detal del cuerpo: así apagar el detal y elegir un
         // piso en el mismo guardado funciona, y prenderlo con un piso no nulo es un cuerpo
@@ -692,10 +741,35 @@ public sealed class Quotation
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
-        // Las retenciones no se tocan acá: volver a los datos del cliente deja guardados los selectores
+        // Las retenciones nacionales no se tocan acá: volver a los datos del cliente deja guardados los selectores
         // (spec §7.5, «no borra la foto del otro modo»), y los selectores los fija SetBillingWithholdings.
+        var previousCompanyId = BillingAccount?.CompanyId;
         ApplyBillingAccount(billingAccount, repricing, occurredAt);
+        var result = ReResolveMunicipal(previousCompanyId, municipal);
         Touch(updatedBy, occurredAt);
+        return result;
+    }
+
+    // Spec §7.6, disparadores 1 y 2: otra empresa (no otra cuenta de la misma) u otro municipio, incluido de null a uno.
+    private MunicipalReResolution ReResolveMunicipal(Guid? previousCompanyId, MunicipalContext municipal)
+    {
+        var cityAfter = MunicipalReResolver.HasMunicipalTypes(BillingAccount?.Country) ? municipal.OperationCityId : null;
+        if (BillingAccount?.CompanyId == previousCompanyId && cityAfter == OperationCityId)
+        {
+            return MunicipalReResolution.None;
+        }
+
+        var cityBefore = OperationCityId;
+        OperationCityId = cityAfter;
+        var customer = MunicipalReResolver.ReResolve(
+            [.. CustomerWithholdings.Select(row => row.Rate)], municipal, cityAfter, customerRule: true);
+        var billing = MunicipalReResolver.ReResolve(
+            [.. BillingWithholdings.Select(row => row.Rate)], municipal, cityAfter, customerRule: false);
+        ReplaceWithholdings(WithholdingSource.Customer, customer.Rates);
+        ReplaceWithholdings(WithholdingSource.Billing, billing.Rates);
+        // En la cotización la fuente del cliente no tiene aplicaciones a mano: sólo el pedido las informa (plan P5).
+        return new MunicipalReResolution(
+            true, cityBefore, cityAfter, [.. customer.Discarded, .. billing.Discarded], []);
     }
 
     /// <summary>
@@ -734,7 +808,8 @@ public sealed class Quotation
     // Sin parte propia no hay selectores; lo demás (país de la empresa, uno por tipo) es la regla compartida con el
     // pedido.
     private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates) =>
-        WithholdingSelectorRules.Ensure(rates, Billing is null ? null : BillingAccount?.Country, "quotation.billing");
+        WithholdingSelectorRules.Ensure(
+            rates, Billing is null ? null : BillingAccount?.Country, OperationCityId, "quotation.billing");
 
     /// <summary>
     /// Cuál sería la moneda de esta cotización con esa cuenta de cobro. La aplicación la consulta
@@ -743,7 +818,11 @@ public sealed class Quotation
     /// haya preguntado.
     /// </summary>
     public string CurrencyFor(QuotationBillingAccount? billingAccount) =>
-        billingAccount?.Currency ?? Currency;
+        billingAccount is { IsPending: false } ? billingAccount.Currency : Currency;
+
+    // A pending account (spec 2026-11-16 withholdings by company) only feeds the withholdings of a preview: every rule
+    // that asks «is there an account?» answers what it answers with none.
+    private bool HasBillingAccount => BillingAccount is { IsPending: false };
 
     // Cambiar de cuenta puede cambiar la moneda, y con ella el precio de cada línea: los importes
     // guardados son el precio del producto en la moneda vieja, no una cifra convertible. Por eso
@@ -801,16 +880,30 @@ public sealed class Quotation
     ///
     /// Lo que **no** cambia: el número de cotización y sus líneas de producto. El número ya se
     /// emitió una vez y las líneas no dependen del cliente.
+    ///
+    /// Es el tercer disparador de la re-resolución (spec ReteICA por empresa §7.6): la fuente del cliente vuelve a armarse
+    /// con sus tasas nacionales y la regla del cliente en el municipio de la operación, que no cambia. Los porcentajes
+    /// editados que se pierden (de las dos fuentes) vuelven en el resultado, para el historial.
     /// </summary>
-    public void ChangeClient(
+    public MunicipalReResolution ChangeClient(
         Guid clientId,
         bool customerVatSurplus,
         IReadOnlyList<WithholdingRate> customerWithholdings,
+        MunicipalContext municipal,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(customerWithholdings);
+        ArgumentNullException.ThrowIfNull(municipal);
         EnsureEditable();
+        IReadOnlyList<WithholdingRate> discarded =
+        [
+            .. _withholdings
+                .Where(row => row.Overridden && MunicipalReResolver.IsMunicipal(row.Rate))
+                .OrderBy(row => row.Source)
+                .ThenBy(row => row.Position)
+                .Select(row => row.Rate),
+        ];
 
         ClientId = EnsureValidClientId(clientId);
         Assign(QuotationParties.Empty);
@@ -823,9 +916,74 @@ public sealed class Quotation
         // "sin contestar" — lo que responda el cliente nuevo lo trae CustomerVatSurplus.
         PartyVatSurplus = null;
         CustomerVatSurplus = customerVatSurplus;
-        ReplaceWithholdings(WithholdingSource.Customer, customerWithholdings);
+        ReplaceWithholdings(
+            WithholdingSource.Customer,
+            MunicipalReResolver.ByCustomerRule(customerWithholdings, municipal, OperationCityId));
         ReplaceWithholdings(WithholdingSource.Billing, []);
         Touch(updatedBy, occurredAt);
+        return new MunicipalReResolution(true, OperationCityId, OperationCityId, discarded, []);
+    }
+
+    /// <summary>
+    /// Cambia el porcentaje efectivo de la retención municipal de <paramref name="type"/> en la fuente vigente (spec
+    /// ReteICA por empresa §7.7, owner R7); <c>null</c> vuelve al del catálogo. El del catálogo no se mueve. Devuelve el
+    /// cambio para el historial, o null si el porcentaje ya era ese.
+    /// </summary>
+    public WithholdingPercentageChange? SetWithholdingPercentage(
+        string type,
+        decimal? percentage,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        EnsureEditable();
+        var row = ActiveWithholdings.FirstOrDefault(candidate =>
+            string.Equals(candidate.Type, type, StringComparison.Ordinal));
+        var target = MunicipalReResolver.EnsureEditablePercentage(row, percentage, "quotation.billing");
+        if (target == row!.Percentage)
+        {
+            return null;
+        }
+
+        var change = new WithholdingPercentageChange(row.Name, row.Percentage, target, target == row.CatalogPercentage);
+        row.SetPercentage(target);
+        Touch(updatedBy, occurredAt);
+        return change;
+    }
+
+    /// <summary>
+    /// Pone en cada tasa con base mínima en unidades la UVT vigente de su país y recalcula (spec retenciones por UVT §5.4,
+    /// owner P1): la de un documento editable sigue a la que hoy daría la foto. La clave es el país canónico. No es una
+    /// edición del asesor: no sube la versión ni cambia el autor; el handler que guarda o previsualiza ya lo hace.
+    /// </summary>
+    public void RefreshTaxUnits(IReadOnlyDictionary<string, TaxUnitPhoto> byCountry)
+    {
+        EnsureEditable();
+        DocumentWithholding.RefreshTaxUnits(_withholdings, byCountry);
+        RecalculateTotals();
+    }
+
+    /// <summary>
+    /// «Sin retención» (owner 2026-11-13, plan P12): quita de los selectores de facturación propia la fila de cada tipo
+    /// marcado, sea o no la fuente vigente; la del cliente no se toca. Sin fila no hace nada. Que los tipos sean
+    /// municipales lo valida la aplicación. Devuelve las filas quitadas que tenían porcentaje editado, para el historial.
+    /// </summary>
+    public IReadOnlyList<WithholdingRate> ClearMunicipalWithholdings(
+        IReadOnlyCollection<string> types,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(types);
+        EnsureEditable();
+        var current = BillingWithholdings.Select(row => row.Rate).ToList();
+        var removed = current.Where(rate => types.Contains(rate.Type, StringComparer.Ordinal)).ToList();
+        if (removed.Count == 0)
+        {
+            return [];
+        }
+
+        ReplaceWithholdings(WithholdingSource.Billing, [.. current.Except(removed)]);
+        Touch(updatedBy, occurredAt);
+        return [.. removed.Where(rate => rate.Overridden)];
     }
 
     /// <summary>US-12: marca la cotización como enviada. El PDF lo genera el backend y vive en
@@ -918,7 +1076,7 @@ public sealed class Quotation
         // Sin empresa facturadora no hay país, y sin país no se sabe qué retenciones aplican (spec impuestos
         // por tipo §7.7): la cotización que le llega al cliente tiene que decir lo que va a cobrar. Guardar un
         // borrador sin ella sigue permitido.
-        if (BillingAccount is null)
+        if (!HasBillingAccount)
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
@@ -999,7 +1157,7 @@ public sealed class Quotation
 
         // Sin cuenta de cobro el pedido no sabe a donde se paga, que es justo lo que un pedido
         // tiene que decir.
-        if (BillingAccount is null)
+        if (!HasBillingAccount)
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
@@ -1051,7 +1209,7 @@ public sealed class Quotation
         Status is QuotationStatus.Draft or QuotationStatus.Sent
         && _items.Count > 0
         && ValidUntil is not null
-        && BillingAccount is not null
+        && HasBillingAccount
         && (Billing is not { } billing || billing.IsComplete)
         && (Shipping is not { } shipping || shipping.IsComplete)
         && !BillingLacksIdentification
@@ -1252,7 +1410,8 @@ public sealed class Quotation
                 WithholdingsOf(activeSource).Select(withholding => withholding.Rate),
                 BillsToFinalConsumer,
                 BillingAccount,
-                Currency));
+                Currency,
+                OperationCityId));
         DocumentWithholding.SettleAll(_withholdings, activeSource, totals.Withholdings);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;

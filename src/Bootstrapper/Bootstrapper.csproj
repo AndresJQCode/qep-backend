@@ -19,6 +19,10 @@
     <ProjectReference Include="..\Modules\ServiceContracts\Modules.ServiceContracts.Infrastructure\Modules.ServiceContracts.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Application\Modules.Loans.Application.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Support\Modules.Support.Application\Modules.Support.Application.csproj" />
+    <ProjectReference Include="..\Modules\Support\Modules.Support.Infrastructure\Modules.Support.Infrastructure.csproj" />
+    <!-- The app hub registers Support's topic authorizer from AddQepPlatform (plan N24). -->
+    <ProjectReference Include="..\Modules\Support\Modules.Support.Api\Modules.Support.Api.csproj" />
     <ProjectReference Include="..\Modules\Store\Modules.Store.Application\Modules.Store.Application.csproj" />
     <ProjectReference Include="..\Modules\Store\Modules.Store.Infrastructure\Modules.Store.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Buyers\Modules.Buyers.Application\Modules.Buyers.Application.csproj" />
@@ -65,5 +69,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <!-- El compresor de imágenes del asesor (messaging-media-reply) decodifica acá, no en Storage. -->
     <PackageReference Include="SixLabors.ImageSharp" />
+    <!-- Cliente de Valkey (spec 2026-11-13, D-1): sólo acá, nunca en Modules.* ni BuildingBlocks.* (EphemeralStoreLayerTests). -->
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 </Project>

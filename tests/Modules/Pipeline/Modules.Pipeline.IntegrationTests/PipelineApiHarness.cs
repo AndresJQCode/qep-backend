@@ -112,6 +112,8 @@ internal static class PipelineApiHarness
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
@@ -245,6 +247,10 @@ internal static class PipelineApiHarness
         Assert.Equal(1, await ExecuteAsync(connectionString,
             "UPDATE customers.customers SET company_id = @company WHERE id = @contact",
             ("company", companyId), ("contact", contactId)));
+
+    public static async Task DeactivateCustomerAsync(string connectionString, Guid customerId) =>
+        Assert.Equal(1, await ExecuteAsync(connectionString,
+            "UPDATE customers.customers SET is_active = false, version = version + 1 WHERE id = @id", ("id", customerId)));
 
     /// <summary>Deja la fila como la deja la fusión (spec 2026-10-24 §3.2), copia de <c>CustomersApiHarness.MarkMergedAsync</c>:
     /// apunta al que queda, inactiva y con la versión subida. Para las pruebas que sólo necesitan leer un fusionado.</summary>

@@ -52,7 +52,30 @@ internal static class QuotationMapping
         [.. quotation.CustomerWithholdings.Select(ToRateDto)],
         [.. quotation.BillingWithholdings.Select(ToRateDto)],
         quotation.GlobalScaleFloor,
-        quotation.IsRetail);
+        quotation.IsRetail,
+        quotation.OperationCityId,
+        [.. quotation.WithholdingVerdicts.Select(ToDto)]);
+
+    /// <summary>El veredicto de una tasa tal como viaja (spec retenciones por UVT §6); el motivo, con el nombre del enum. La
+    /// usa también el pedido.</summary>
+    internal static WithholdingVerdictDto ToDto(WithholdingVerdict verdict) => new(
+        verdict.Rate.TaxRateId,
+        verdict.Rate.Name,
+        verdict.Rate.Type,
+        verdict.Rate.Country,
+        verdict.Rate.Percentage,
+        verdict.Rate.CatalogPercentage,
+        verdict.Rate.Overridden,
+        verdict.Rate.CityId,
+        verdict.Applies,
+        verdict.Reason.ToString(),
+        verdict.Base,
+        verdict.Rate.MinimumBase,
+        verdict.Rate.MinimumBaseUnit,
+        verdict.MinimumBaseAmount,
+        verdict.Rate.TaxUnitValue,
+        verdict.Rate.TaxUnitYear,
+        verdict.Amount);
 
     /// <summary>Una retención aplicada tal como viaja (spec impuestos por tipo §9.3). La usa también el pedido.</summary>
     internal static WithholdingDto ToDto(DocumentWithholding withholding) => new(
@@ -65,11 +88,21 @@ internal static class QuotationMapping
         withholding.MinimumBaseUnit,
         withholding.TaxUnitValue,
         withholding.BaseAmount,
-        withholding.Amount);
+        withholding.Amount,
+        withholding.CatalogPercentage,
+        withholding.Overridden,
+        withholding.CityId);
 
     /// <summary>Una tasa congelada, aplique o no: lo que prellena un selector.</summary>
     internal static WithholdingTaxRateDto ToRateDto(DocumentWithholding withholding) => new(
-        withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Country, withholding.Percentage);
+        withholding.TaxRateId,
+        withholding.Name,
+        withholding.Type,
+        withholding.Country,
+        withholding.Percentage,
+        withholding.CatalogPercentage,
+        withholding.Overridden,
+        withholding.CityId);
 
     /// <summary>La entrega por envío con forma fija, también en recogida (spec 2026-10-17 §7).</summary>
     public static ShippingDto ShippingDtoOf(this Quotation quotation) => new(
@@ -88,7 +121,8 @@ internal static class QuotationMapping
         account is null
             ? null
             : new QuotationBillingAccountDto(
-                account.CompanyId, account.BankName, account.AccountNumber, account.Currency);
+                account.CompanyId, account.BankName, account.AccountNumber, account.Currency, account.Country,
+                account.CityId, account.IsPending);
 
     private static QuotationPartyDto ToDto(QuotationParty party) => new(
         party.Id.Value,

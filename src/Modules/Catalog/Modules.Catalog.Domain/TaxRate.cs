@@ -41,6 +41,7 @@ public sealed class TaxRate
         string type,
         string country,
         decimal? minimumBase,
+        Guid? cityId,
         DateTimeOffset occurredAt)
     {
         Id = id;
@@ -50,6 +51,7 @@ public sealed class TaxRate
         Type = type;
         Country = country;
         MinimumBase = minimumBase;
+        CityId = cityId;
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -60,7 +62,10 @@ public sealed class TaxRate
 
     public Guid TenantId { get; private set; }
 
-    /// <summary>Único por tenant; la unicidad vive en IX_tax_rates_tenant_name.</summary>
+    /// <summary>
+    /// Se puede repetir en el tenant con otro porcentaje u otra base mínima (owner, 2026-11-15); la unicidad
+    /// de los tres vive en IX_tax_rates_tenant_name_percentage_base.
+    /// </summary>
     public string Name { get; private set; }
 
     /// <summary>
@@ -81,8 +86,18 @@ public sealed class TaxRate
     /// </summary>
     public decimal? MinimumBase { get; private set; }
 
+    /// <summary>
+    /// El municipio donde se causa la tasa: obligatorio en un tipo municipal (ReteICA) y prohibido en uno nacional. Que
+    /// exista en Geography lo revisa Application; acá sólo «no vacío». Sin FK: Catalog migra antes que Geography. No
+    /// cambia tras crear, como el tipo y el país.
+    /// </summary>
+    public Guid? CityId { get; private set; }
+
     /// <summary>Lo calcula el tipo, no se guarda: EF lo ignora.</summary>
     public TaxBehavior Behavior => Definition.Behavior;
+
+    /// <summary>Lo calcula el tipo, no se guarda: EF lo ignora.</summary>
+    public TaxScope Scope => Definition.Scope;
 
     public bool Withholds => Behavior == TaxBehavior.Withholds;
 
@@ -126,6 +141,7 @@ public sealed class TaxRate
         string type,
         string country,
         decimal? minimumBase,
+        Guid? cityId,
         DateTimeOffset occurredAt)
     {
         // El país sólo se normaliza; si no existe, FindType no halla el tipo y sale type_invalid.
@@ -144,6 +160,7 @@ public sealed class TaxRate
             definition.Type,
             normalizedCountry,
             EnsureValidMinimumBase(minimumBase, definition),
+            EnsureValidCity(cityId, definition),
             occurredAt);
     }
 
@@ -178,8 +195,8 @@ public sealed class TaxRate
     // producto usa quedaba atrapada: el PUT la rechaza por EnsureActive(), el DELETE de CAT-06 la
     // rechaza por la FK RESTRICT, y no habia forma de sacarla de ahi salvo un UPDATE por SQL.
     //
-    // No revalida la unicidad del nombre a proposito. IX_tax_rates_tenant_name es unico **sin
-    // filtro parcial**, asi que desactivar nunca libero el nombre y reactivar no puede colisionar
+    // No revalida la unicidad a proposito. IX_tax_rates_tenant_name_percentage_base es unico **sin
+    // filtro parcial**, asi que desactivar nunca libero la combinacion y reactivar no puede colisionar
     // con nadie. Si alguien le agrega un filtro parcial al indice, CA-CAT-08-09 se cae y avisa.
     public void Activate(DateTimeOffset occurredAt)
     {
@@ -253,6 +270,26 @@ public sealed class TaxRate
                 "catalog.tax_rate.minimum_base_invalid",
                 "The minimum base cannot be negative.")
             : minimumBase;
+    }
+
+    // El tipo ya se validó, y su alcance decide: municipal exige municipio, nacional lo prohíbe. Mismo criterio de «no
+    // vacío» que Company.EnsureValidLocation; que la ciudad exista lo revisa CreateTaxRateHandler por su puerto.
+    private static Guid? EnsureValidCity(Guid? cityId, TaxTypeDefinition definition)
+    {
+        if (definition.Scope == TaxScope.Municipal)
+        {
+            return cityId is { } city && city != Guid.Empty
+                ? city
+                : throw new CatalogDomainException(
+                    "catalog.tax_rate.city_required",
+                    $"A {definition.Type} tax rate requires a city.");
+        }
+
+        return cityId is null
+            ? null
+            : throw new CatalogDomainException(
+                "catalog.tax_rate.city_not_allowed",
+                $"A {definition.Type} tax rate does not admit a city.");
     }
 
     // Recortar espacios es parte del invariante, no higiene del llamador: el índice único trata

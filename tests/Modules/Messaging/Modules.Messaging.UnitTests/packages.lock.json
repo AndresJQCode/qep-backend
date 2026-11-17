@@ -33,6 +33,19 @@
           "xunit.v3.mtp-v1": "[3.2.2]"
         }
       },
+      "AngleSharp": {
+        "type": "Transitive",
+        "resolved": "1.10.0",
+        "contentHash": "jibGB16fKOT+p0T7/eMzsiHj/V43QXg/wGQot4VWHF3zEdH+RGco8rHFNeAbf526CrSOkA8WwILz3DDus+cUUA=="
+      },
+      "AngleSharp.Css": {
+        "type": "Transitive",
+        "resolved": "1.4.0",
+        "contentHash": "AAy28SOmB5EOdXqJC9dVBCKKeoQHyU2EKVMGpy/PT0jJpFvLd4bd5TyufwN09/piQmh0DBtkEn0X/F0SYuF9xQ==",
+        "dependencies": {
+          "AngleSharp": "[1.10.0, 2.0.0)"
+        }
+      },
       "Microsoft.ApplicationInsights": {
         "type": "Transitive",
         "resolved": "2.23.0",
@@ -279,6 +292,8 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "BuildingBlocks.Domain": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "HtmlSanitizer": "[11.0.26, )",
           "Microsoft.EntityFrameworkCore.Relational": "[10.0.13, )"
         }
       },
@@ -391,6 +406,16 @@
         "requested": "[12.1.1, )",
         "resolved": "12.1.1",
         "contentHash": "EPpkIe1yh1a0OXyC100oOA8WMbZvqUu5plwhvYcb7oSELfyUZzfxV48BLhvs3kKo4NwG7MGLNgy1RJiYtT8Dpw=="
+      },
+      "HtmlSanitizer": {
+        "type": "CentralTransitive",
+        "requested": "[11.0.26, )",
+        "resolved": "11.0.26",
+        "contentHash": "ZGjvcmVumFkxxT1JSvENjoTscgJPgpEMMxSdgdfEzWo7HgbYdxohxWtLB0v9+vXb9kTi++ZQok/AvJo6W1otXw==",
+        "dependencies": {
+          "AngleSharp": "1.10.0",
+          "AngleSharp.Css": "1.4.0"
+        }
       },
       "Microsoft.EntityFrameworkCore": {
         "type": "CentralTransitive",

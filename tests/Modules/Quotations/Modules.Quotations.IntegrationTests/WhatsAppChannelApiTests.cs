@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Quotations.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -13,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// Sin canal, o con varios y sin elección guardada, el envío responde 422 sin tocar la cotización ni anotar una falla.
 /// La elección se guarda con el primer envío o con el PUT de Configuración, y el GET lista los canales disponibles.
 /// </summary>
-public sealed class WhatsAppChannelApiTests
+public sealed class WhatsAppChannelApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Fact]
     public async Task SendUsesTheTenantChannel()
@@ -308,8 +307,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task OneChannelNeverNeedsChoice()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
 
@@ -364,8 +362,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task ChannelsRequireManageOrSettingsUpdate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, QuotationsPermissions.QuotationRead);
         using var _ = client;
 
@@ -409,8 +406,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task ChannelsAreReadableWithOnlySettingsUpdate()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsUpdate);
         using var _ = client;
 
@@ -445,8 +441,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task PutWithAnUnavailableConnectionIs422ChannelUnavailable()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
         using var _ = client;
 
@@ -459,8 +454,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task PutWithoutConnectionIdIs422WithTheFieldError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
         using var owned = client;
 
@@ -477,8 +471,7 @@ public sealed class WhatsAppChannelApiTests
     [Fact]
     public async Task PutWithoutABodyIs422WithTheFieldError()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
         using var owned = client;
 
@@ -547,7 +540,7 @@ public sealed class WhatsAppChannelApiTests
     // Otro miembro activo del mismo tenant: se invita con el set por defecto del stub (que trae los permisos de Tenancy)
     // y se activa por SQL, que se salta el login de Google que pide aceptar la invitación.
     private static async Task<HttpClient> AddMemberClientAsync(
-        QepApiFactory factory, PostgreSqlContainer database, Guid tenantId, Guid ownerUserId)
+        QepApiFactory factory, TestDatabase database, Guid tenantId, Guid ownerUserId)
     {
         using var admin = CreateClient(factory, ownerUserId.ToString(), tenantId.ToString());
         using var invited = await admin.PostAsJsonAsync(

@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace Modules.Quotations.Application;
 
 public sealed record QuotationItemDto(
@@ -125,7 +128,13 @@ public sealed record QuotationDto(
     /// <summary>Cotización detal: ninguna línea recibe descuento, cualesquiera sean las escalas
     /// de su producto. Ver <c>Quotation.IsRetail</c>. Con default por el mismo motivo que
     /// <see cref="GlobalScaleFloor"/>.</summary>
-    bool IsRetail = false);
+    bool IsRetail = false,
+    /// <summary>El municipio de la operación (spec ReteICA por empresa §7.5); null sin empresa, fuera de un país con tipos
+    /// municipales o en un documento anterior. El compositor lo resuelve a nombre y departamento.</summary>
+    Guid? OperationCityId = null,
+    /// <summary>El veredicto de cada tasa de la fuente vigente, aplique o no, en su orden (spec retenciones por UVT §6).
+    /// QuotationMapping.ToDto la llena siempre; null sólo en un DTO armado a mano, y el compositor lo lee como vacío.</summary>
+    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null);
 
 /// <summary>Una retención que aplicó (spec impuestos por tipo §9.3): la tasa congelada, la base sobre la que se
 /// calculó y su monto. <c>Type</c> viaja como texto ("Retefuente", "ReteICA").</summary>
@@ -142,10 +151,86 @@ public sealed record WithholdingDto(
     string? MinimumBaseUnit,
     decimal? TaxUnitValue,
     decimal Base,
+    decimal Amount,
+    /// <summary>El porcentaje del catálogo al congelar; <c>Percentage</c> es el efectivo (spec ReteICA por empresa §9.4).
+    /// Viajan los dos para que la pantalla muestre «editado» sin guardar el original por su cuenta.</summary>
+    decimal CatalogPercentage,
+    bool PercentageOverridden,
+    /// <summary>El municipio de una municipal; null en las nacionales.</summary>
+    Guid? CityId);
+
+/// <summary>Una tasa de retención congelada en el documento, aplique o no: lo que prellena un selector. Con el porcentaje
+/// del catálogo y el municipio, porque el editor de porcentaje lee la fila aunque no haya aplicado (spec §9.4).</summary>
+public sealed record WithholdingTaxRateDto(
+    Guid Id,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    decimal CatalogPercentage,
+    bool PercentageOverridden,
+    Guid? CityId);
+
+/// <summary>
+/// Por qué una tasa de la fuente vigente aplica o no (spec retenciones por UVT §5.1, §6): la tasa congelada, el motivo, la
+/// base que se comparó (el subtotal sin IVA, aunque no aplique), el umbral en dinero y la UVT con su año. Lo decide el
+/// dominio (<c>WithholdingVerdict</c>); el frontend sólo pinta.
+/// </summary>
+/// <param name="Reason">El nombre de <c>WithholdingReason</c>: <c>Applied</c>, <c>BelowMinimumBase</c>,
+/// <c>NoTaxUnitValue</c>, <c>FinalConsumer</c>, <c>NoBillingCompany</c>, <c>CurrencyWithoutTax</c> u
+/// <c>OtherMunicipality</c>.</param>
+/// <param name="MinimumBaseAmount">El umbral en dinero; null sin base mínima o con base en UVT y sin valor cargado.</param>
+/// <param name="TaxUnitYear">El año de la UVT congelada; null sin unidad o en una fila anterior que no casó (§8.2).</param>
+/// <param name="Amount">Lo que guardó el último recálculo; 0 si no aplicó.</param>
+public sealed record WithholdingVerdictDto(
+    Guid TaxRateId,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    decimal CatalogPercentage,
+    bool PercentageOverridden,
+    Guid? CityId,
+    bool Applies,
+    string Reason,
+    decimal Base,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit,
+    decimal? MinimumBaseAmount,
+    decimal? TaxUnitValue,
+    int? TaxUnitYear,
     decimal Amount);
 
-/// <summary>Una tasa de retención congelada en el documento, aplique o no: lo que prellena un selector.</summary>
-public sealed record WithholdingTaxRateDto(Guid Id, string Name, string Type, string Country, decimal Percentage);
+/// <summary>
+/// Gemelo HTTP de <see cref="WithholdingVerdictDto"/> más <see cref="TaxUnitOutdated"/>, que sale del calendario del
+/// tenant y por eso lo calcula el compositor, no el mapeo estático.
+/// </summary>
+/// <param name="TaxUnitOutdated">Si la UVT congelada es de un año anterior al del documento (su <c>CreatedAt</c> en la
+/// zona del tenant). False con <c>TaxUnitYear</c> null.</param>
+/// <param name="TaxUnitLatestYear">El año de la UVT que hoy tomaría la fila si se refrescara: la que Catalog da para su país
+/// con la fecha del documento (spec alerta UVT §5.4). Null sin base en unidades o sin ningún valor cargado para el país. Va
+/// aparte de <c>TaxUnitOutdated</c> para que la pantalla distinga «falta cargar la UVT» de «ya está cargada y se aplicará
+/// al guardar» sin calcular nada.</param>
+public sealed record WithholdingBreakdownResponse(
+    Guid TaxRateId,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    decimal CatalogPercentage,
+    bool PercentageOverridden,
+    Guid? CityId,
+    bool Applies,
+    string Reason,
+    decimal Base,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit,
+    decimal? MinimumBaseAmount,
+    decimal? TaxUnitValue,
+    int? TaxUnitYear,
+    bool TaxUnitOutdated,
+    int? TaxUnitLatestYear,
+    decimal Amount);
 
 /// <summary>
 /// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
@@ -218,7 +303,17 @@ public sealed record QuotationBillingAccountDto(
     Guid CompanyId,
     string BankName,
     string AccountNumber,
-    string Currency);
+    string Currency,
+    /// <summary>El país de la empresa congelado con la cuenta: decide qué tipos municipales se explican (spec ReteICA por
+    /// empresa §9.4) sin volver a Companies.</summary>
+    string? Country = null,
+    /// <summary>El municipio de la empresa congelado con la cuenta (<c>billing_company_city_id</c>, A12); null en un
+    /// documento anterior que todavía no reenvió la cuenta.</summary>
+    Guid? CityId = null,
+    /// <summary>The company of a preview without its bank account yet (spec 2026-11-16 withholdings by company): it feeds
+    /// the withholding explanation and the composers answer no billing account for it. Never serialised: the HTTP
+    /// contract only ever sees a real account or null.</summary>
+    [property: JsonIgnore] bool IsPending = false);
 
 /// <summary>
 /// La cuenta elegida, tal como viaja en el request. Llegan los cuatro campos y no sólo el id de
@@ -301,7 +396,8 @@ public sealed record QuotationPartiesRequest(
 /// cantidad; precio, escala, descuentos y tasa los resuelve el backend. Ausentes, los tres campos dan lo de antes:
 /// sin líneas, sin piso, no detal.
 /// </summary>
-public sealed record CreateQuotationRequest(
+// Not sealed: PreviewNewQuotationRequest extends it with the preview-only billingCompanyId.
+public record CreateQuotationRequest(
     Guid ClientId,
     DateOnly? ValidUntil,
     string? PaymentMethod,
@@ -316,7 +412,48 @@ public sealed record CreateQuotationRequest(
     int? GlobalScaleFloor = null,
     /// <summary>Cotización detal: ninguna línea recibe descuento. Con un piso no nulo es 422
     /// <c>quotation.retail.floor_not_allowed</c>.</summary>
-    bool IsRetail = false);
+    bool IsRetail = false,
+    /// <summary>El porcentaje de la retención municipal de cada tipo (spec ReteICA por empresa §7.7); ausente = el del
+    /// catálogo. En la creación se valida contra la empresa y el municipio de este mismo cuerpo (§7.6, «En la creación»).</summary>
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    /// <summary>Los tipos municipales con «Sin retención» elegido (owner 2026-11-13); ausente, null o vacío = sin marca.</summary>
+    IReadOnlyList<string>? ClearedWithholdingTypes = null)
+{
+    /// <summary>
+    /// El municipio de la operación (plan P1): ausente = el de la empresa, <c>null</c> = el de la empresa, un id = ése. Un
+    /// <see cref="JsonElement"/> porque el contrato distingue ausente de null (spec §9.4), y propiedad y no parámetro del
+    /// constructor porque el exportador de OpenAPI responde 500 con un <c>JsonElement</c> por defecto (precedente
+    /// <c>UpdateTaxRateRequest.MinimumBase</c>). No se escribe cuando es el por defecto, así un cliente .NET que serializa
+    /// el record sin tocarlo no revienta.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public JsonElement OperationCityId { get; init; }
+}
+
+/// <summary>
+/// The body of <c>POST /quotations/preview</c>: the creation body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
+/// withholdings by company). Its own type so <c>POST /quotations</c> never learns the field: creating keeps requiring
+/// the full account to have one.
+/// </summary>
+public sealed record PreviewNewQuotationRequest(
+    Guid ClientId,
+    DateOnly? ValidUntil,
+    string? PaymentMethod,
+    string? Notes,
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount,
+    ShippingRequest? Shipping = null,
+    IReadOnlyList<QuotationEditItemRequest>? Items = null,
+    int? GlobalScaleFloor = null,
+    bool IsRetail = false,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    /// <summary>The billing company chosen before its bank account: the preview paints its withholdings and answers
+    /// <c>billingAccount: null</c>. Ignored when <c>billingAccount</c> is present.</summary>
+    Guid? BillingCompanyId = null)
+    : CreateQuotationRequest(
+        ClientId, ValidUntil, PaymentMethod, Notes, Parties, BillingAccount, Shipping, Items, GlobalScaleFloor, IsRetail,
+        WithholdingPercentages, ClearedWithholdingTypes);
 
 /// <summary>
 /// La entrega por envío de una cotización tal como la pide el editor (spec 2026-10-17 §5.1). Viaja aparte de
@@ -429,7 +566,8 @@ public sealed record QuotationEditItemRequest(Guid VariantId, decimal Quantity);
 /// viene se limpia. <c>Items</c> es la lista **completa** de líneas deseadas, no un delta —
 /// ausente o null equivale a vacía, o sea "sin productos".
 /// </summary>
-public sealed record SaveQuotationRequest(
+// Not sealed: PreviewQuotationRequest extends it with the preview-only billingCompanyId.
+public record SaveQuotationRequest(
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
@@ -445,7 +583,46 @@ public sealed record SaveQuotationRequest(
     bool IsRetail = false,
     /// <summary>La entrega por envío. <b>Ausente deja la guardada</b> (un frontend viejo no la borra), salvo
     /// que la entrega pase a recoger en tienda: entonces se limpia. Ver <see cref="ShippingRequest"/>.</summary>
-    ShippingRequest? Shipping = null);
+    ShippingRequest? Shipping = null,
+    /// <summary>El porcentaje de la retención municipal de cada tipo (spec ReteICA por empresa §7.7). Ausente conserva
+    /// todos; una entrada con <c>percentage: null</c> vuelve al del catálogo.</summary>
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    /// <summary>Los tipos municipales con «Sin retención» elegido (owner 2026-11-13): quitan la fila de ese tipo de los
+    /// selectores de facturación propia. Ausente, null o vacío = sin marca.</summary>
+    IReadOnlyList<string>? ClearedWithholdingTypes = null)
+{
+    /// <summary>
+    /// El municipio de la operación (plan P1): ausente conserva el guardado (o el de la empresa si cambia, A6),
+    /// <c>null</c> = el de la empresa, un id = ése. Ver <see cref="CreateQuotationRequest.OperationCityId"/> por qué es
+    /// un <see cref="JsonElement"/> y una propiedad.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public JsonElement OperationCityId { get; init; }
+}
+
+/// <summary>
+/// The body of <c>POST /quotations/{quotationId}/preview</c>: the save body plus <see cref="BillingCompanyId"/> (spec
+/// 2026-11-16 withholdings by company). Its own type so <c>PUT /quotations/{quotationId}</c> never learns the field: the
+/// save keeps requiring the full account.
+/// </summary>
+public sealed record PreviewQuotationRequest(
+    DateOnly? ValidUntil,
+    string? PaymentMethod,
+    string? Notes,
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount,
+    IReadOnlyList<QuotationEditItemRequest>? Items,
+    int? GlobalScaleFloor = null,
+    bool IsRetail = false,
+    ShippingRequest? Shipping = null,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    /// <summary>The billing company chosen before its bank account: the preview paints its withholdings and answers
+    /// <c>billingAccount: null</c>. Ignored when <c>billingAccount</c> is present.</summary>
+    Guid? BillingCompanyId = null)
+    : SaveQuotationRequest(
+        ValidUntil, PaymentMethod, Notes, Parties, BillingAccount, Items, GlobalScaleFloor, IsRetail, Shipping,
+        WithholdingPercentages, ClearedWithholdingTypes);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
@@ -643,7 +820,44 @@ public sealed record QuotationResponse(
     IReadOnlyList<WithholdingTaxRateResponse> BillingWithholdingTaxRates,
     /// <summary>Spec 2026-11-10 §4.6: los contactos sin fusionar de la empresa del cliente, para elegir a quién se envía el
     /// documento. Siempre presente: vacío si el cliente no tiene o si él mismo es un contacto. Lo llena el compositor.</summary>
-    IReadOnlyList<ClientContactDto> ClientContacts);
+    IReadOnlyList<ClientContactDto> ClientContacts,
+    /// <summary>El municipio de la operación con nombre y departamento (spec ReteICA por empresa §9.4); null sin empresa,
+    /// con una de un país sin tipos municipales o en un documento anterior (A8).</summary>
+    QuotationCityResponse? OperationCity,
+    /// <summary>El municipio de la empresa congelado con la cuenta (A12): es lo que «Usar el de la empresa» compara con
+    /// <see cref="OperationCity"/>. Null sin empresa, fuera de CO o en un documento que todavía no reenvió la cuenta.</summary>
+    QuotationCityResponse? BillingCompanyCity,
+    /// <summary>Una entrada por tipo municipal del país de la empresa, con la tasa que la empresa tiene hoy ahí y por qué
+    /// quedó o no una fila (A14). BFF: la pantalla no puede saber las asignaciones de la empresa ni la lista de agentes del
+    /// cliente, así que el porqué se calcula acá y no en el navegador. Vacía sin empresa o sin tipos municipales.</summary>
+    IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings,
+    /// <summary>Todas las tasas de la fuente vigente con su veredicto, apliquen o no, en su orden (spec retenciones por UVT
+    /// §6). Aditivo: <see cref="Withholdings"/> sigue trayendo sólo las aplicadas.</summary>
+    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown);
+
+/// <summary>Una referencia de municipio (spec ReteICA por empresa §9.1): la misma forma en tasas, empresas, clientes y
+/// documentos.</summary>
+public sealed record QuotationCityResponse(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
+
+/// <summary>La tasa municipal que la empresa tiene hoy para un tipo en el municipio de la operación: lo único que el
+/// selector municipal acepta (A4).</summary>
+public sealed record MunicipalCompanyRateResponse(Guid TaxRateId, string Name, decimal Percentage);
+
+/// <summary>
+/// El porqué de un tipo municipal en un documento (spec ReteICA por empresa §9.4). Se deriva al leer, con las asignaciones
+/// de la empresa y los agentes del cliente de hoy (A14): cambiarlos cambia esto, nunca la foto ni los totales.
+/// </summary>
+/// <param name="Status">El nombre de <c>MunicipalWithholdingStatus</c>: <c>Resolved</c>, <c>NoOperationCity</c>,
+/// <c>NoCompanyRate</c>, <c>CustomerNotAgent</c> o <c>NotSelected</c>.</param>
+/// <param name="CustomerIsAgent">Si el cliente está hoy registrado como agente de ese tipo en el municipio; null con
+/// facturación propia (el tercero no tiene lista) o sin municipio. <c>Resolved</c> con false es una tasa aplicada a mano
+/// (R11), y el frontend lo explica así.</param>
+public sealed record MunicipalWithholdingResponse(
+    string Type,
+    string Country,
+    MunicipalCompanyRateResponse? CompanyRate,
+    string Status,
+    bool? CustomerIsAgent);
 
 /// <summary>Un contacto de la empresa del cliente tal como lo ve el diálogo de envío (spec 2026-11-10 §4.6). El teléfono es el de su
 /// ficha y puede faltar: ese contacto se muestra pero no se puede elegir.</summary>
@@ -661,10 +875,21 @@ public sealed record WithholdingResponse(
     string? MinimumBaseUnit,
     decimal? TaxUnitValue,
     decimal Base,
-    decimal Amount);
+    decimal Amount,
+    decimal CatalogPercentage,
+    bool PercentageOverridden,
+    Guid? CityId);
 
 /// <summary>Gemelo HTTP de <see cref="WithholdingTaxRateDto"/>.</summary>
-public sealed record WithholdingTaxRateResponse(Guid Id, string Name, string Type, string Country, decimal Percentage);
+public sealed record WithholdingTaxRateResponse(
+    Guid Id,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    decimal CatalogPercentage,
+    bool PercentageOverridden,
+    Guid? CityId);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de

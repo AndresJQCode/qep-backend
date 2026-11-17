@@ -121,6 +121,72 @@ public sealed class ShopifySecretLeakTests
         // La auditoría que se revisa incluye la de Shopify: el PUT de la tienda de arriba la escribió.
         Assert.Equal(1L, await ScalarAsync<long>(
             connectionString, "SELECT count(*) FROM audit.entries WHERE action = 'shopify.store.updated' AND tenant_id = @t", ("t", world.TenantId)));
+        AssertNoSecret(bodies, logs, audit);
+    }
+
+    // Spec 2026-11-14 §5: el envío a Shopify lleva el token en un header y Shopify puede devolver en userErrors un mensaje con datos
+    // del comprador. Ni uno ni otro salen a los logs, a la auditoría ni a la fila del envío.
+    [Fact]
+    public async Task ThePushNeverLogsTheTokenOrTheUserErrorMessage()
+    {
+        const string UserErrorMessage = "Laura Gomez at Calle 10 has an invalid zip SENTINEL-USER-ERROR";
+        var logs = new RecordingLoggerProvider();
+        var shopify = new FakeShopifyHandlerForPush(UserErrorMessage);
+        await using var flow = await ShopifyEditSyncFlowTests.Flow.StartAsync(services =>
+        {
+            services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(logs);
+            services.AddHttpClient(Modules.Shopify.Infrastructure.Admin.ShopifyGraphQlClient.HttpClientName)
+                .ConfigurePrimaryHttpMessageHandler(() => shopify);
+        });
+        await flow.DeliverAsync("orders/create", "wh-1", (JsonObject)JsonNode.Parse(OrderFixture("taxes-included"))!);
+        await ShopifyOrderPushWorkerTests.CorrectTheCityToEnvigadoAsync(flow);
+
+        await ActivatorUtilities.CreateInstance<ShopifyOrderPushWorker>(flow.Factory.Services).DrainAsync(Ct);
+
+        Assert.Equal("Failed|user_error", await flow.ScalarAsync("SELECT status || '|' || failure_code FROM shopify.order_pushes"));
+        Assert.Contains(shopify.Tokens, token => token == Sentinel);
+        var audit = await ScalarAsync<string>(flow.ConnectionString, "SELECT coalesce(string_agg(e::text, E'\\n'), '') FROM audit.entries e");
+        var pushes = await ScalarAsync<string>(flow.ConnectionString, "SELECT coalesce(string_agg(p::text, E'\\n'), '') FROM shopify.order_pushes p");
+        foreach (var secret in new[] { Sentinel, WebhookSecret, UserErrorMessage })
+        {
+            Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(secret, StringComparison.Ordinal));
+            Assert.DoesNotContain(secret, audit, StringComparison.Ordinal);
+            Assert.DoesNotContain(secret, pushes, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>Shopify que rechaza todo <c>orderUpdate</c> con un userError cuyo mensaje trae datos del comprador.</summary>
+    private sealed class FakeShopifyHandlerForPush(string message) : HttpMessageHandler
+    {
+        public List<string?> Tokens { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            lock (Tokens)
+            {
+                Tokens.Add(request.Headers.TryGetValues("X-Shopify-Access-Token", out var values) ? values.Single() : null);
+            }
+
+            var body = new JsonObject
+            {
+                ["data"] = new JsonObject
+                {
+                    ["orderUpdate"] = new JsonObject
+                    {
+                        ["order"] = null,
+                        ["userErrors"] = new JsonArray(new JsonObject { ["field"] = new JsonArray("shippingAddress", "zip"), ["message"] = message }),
+                    },
+                },
+            };
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+            });
+        }
+    }
+
+    private static void AssertNoSecret(List<(string Call, string Body)> bodies, RecordingLoggerProvider logs, string audit)
+    {
         foreach (var secret in new[] { Sentinel, WebhookSecret })
         {
             Assert.DoesNotContain(bodies, entry => entry.Body.Contains(secret, StringComparison.Ordinal));

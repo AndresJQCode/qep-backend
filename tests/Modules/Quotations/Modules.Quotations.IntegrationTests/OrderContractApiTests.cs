@@ -13,13 +13,12 @@ namespace Modules.Quotations.IntegrationTests;
 /// records de producción, así que renombrar una propiedad las deja en verde aunque el frontend deje
 /// de encontrar el campo.
 /// </summary>
-public sealed class OrderContractApiTests
+public sealed class OrderContractApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     [Fact]
     public async Task TheOrderTravelsWithItsNewRoutesAndFieldNames()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(
             factory, [.. ManagerPermissions, ReportingPermissions.OrdersRead]);
         using var _ = client;
@@ -102,8 +101,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task ProofsAndMarkPaidHangFromTheOrderItself()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -142,8 +140,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task TheQuotationScopedOrderActionsNoLongerExist()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotationId = Guid.CreateVersion7();
@@ -168,14 +165,16 @@ public sealed class OrderContractApiTests
 
         // Estas dos son del primer commit (mover el listado), no del segundo: la ruta
         // `/quotations/{id}/order` sigue viva para GET (leer) y POST (convertir), así que el PUT
-        // que se mudó a `/orders/{orderId}` responde 405 y no 404. `/preview` en cambio nunca
-        // existió colgado de la cotización: ese segmento propio sí da 404, igual que los de arriba.
+        // que se mudó a `/orders/{orderId}` responde 405 y no 404.
+        // The order edit preview (POST) lives at `/orders/{orderId}/preview`. Since the UVT alert
+        // (spec 2026-11-16-alerta-uvt-conversion-design.md §5.3) `/quotations/{id}/order/preview`
+        // exists again, but only as GET (the conversion preview), so the old POST answers 405, not 404.
         var putEdit = await client.PutAsJsonAsync(orderUrl, new { }, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, putEdit.StatusCode);
 
         var preview = await client.PostAsync(
             $"{orderUrl}/preview", content: null, TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.NotFound, preview.StatusCode);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, preview.StatusCode);
     }
 
     // El export recibe el mismo filtro que el listado: con orderNumber sin coincidencias no hay
@@ -183,8 +182,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task ExportFiltersByOrderNumberAndAnswersWithTheOrderCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
@@ -213,8 +211,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task TheSalesRoutesNoLongerExist()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var quotationId = Guid.CreateVersion7();
@@ -253,8 +250,7 @@ public sealed class OrderContractApiTests
     [Fact]
     public async Task TheDetailCarriesTheNewAxesAndTheBalance()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);

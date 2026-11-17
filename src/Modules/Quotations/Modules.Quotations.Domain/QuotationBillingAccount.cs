@@ -36,6 +36,21 @@ public sealed record QuotationBillingAccount
     /// </summary>
     public string? Country { get; init; }
 
+    /// <summary>
+    /// El municipio de la empresa (spec ReteICA por empresa §7.5), congelado con la cuenta: es el municipio de la
+    /// operación por defecto (A6). Null en un documento anterior a este trabajo, hasta que el cuerpo vuelva a traer la
+    /// cuenta, y en una empresa sin municipio.
+    /// </summary>
+    public Guid? CityId { get; init; }
+
+    /// <summary>
+    /// The company was chosen but the bank account is still pending (spec 2026-11-16 withholdings by company): only a
+    /// preview builds it, so withholdings follow the company before an account is picked. It has no column, and the
+    /// Quotations DbContext refuses to save a quotation or order that carries one (a bug if it ever happens, since only
+    /// previews build it). Never answered either: readiness and the response treat it as no account at all.
+    /// </summary>
+    public bool IsPending { get; init; }
+
     // Espejan los anchos de companies.company_bank_accounts: esto es una copia de esa fila y no
     // puede aceptar más de lo que el original acepta.
     public const int BankNameMaxLength = 120;
@@ -53,14 +68,15 @@ public sealed record QuotationBillingAccount
                 "quotation.billing.company_required",
                 "The billing company is required.")
             : CompanyId,
-        BankName = NormalizeRequired(
+        // A pending account has no bank data on purpose; requiring it would make the company-only preview impossible.
+        BankName = IsPending ? string.Empty : NormalizeRequired(
             BankName,
             BankNameMaxLength,
             "quotation.billing.bank_name_required",
             "The billing bank name is required.",
             "quotation.billing.bank_name_too_long",
             $"The billing bank name cannot exceed {BankNameMaxLength} characters."),
-        AccountNumber = NormalizeRequired(
+        AccountNumber = IsPending ? string.Empty : NormalizeRequired(
             AccountNumber,
             AccountNumberMaxLength,
             "quotation.billing.account_number_required",
@@ -68,7 +84,9 @@ public sealed record QuotationBillingAccount
             "quotation.billing.account_number_too_long",
             $"The billing account number cannot exceed {AccountNumberMaxLength} characters."),
         Currency = NormalizeCurrency(Currency),
-        Country = string.IsNullOrWhiteSpace(Country) ? null : Country.Trim().ToUpperInvariant()
+        Country = string.IsNullOrWhiteSpace(Country) ? null : Country.Trim().ToUpperInvariant(),
+        CityId = CityId,
+        IsPending = IsPending,
     };
 
     private static string NormalizeRequired(

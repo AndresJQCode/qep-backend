@@ -15,7 +15,9 @@ public sealed class BuyerNoStoreMiddleware(RequestDelegate next)
 
     public Task InvokeAsync(HttpContext context)
     {
-        if (IsBuyerPath(context.Request.Path))
+        // El formulario público de Soporte también (plan fase 3, Global Constraints): sus respuestas llevan el radicado, el PIN recién
+        // emitido y el estado de un trámite. Mismo motivo para ir antes del limitador: el 429, el 413 y el 404 también.
+        if (IsBuyerPath(context.Request.Path) || SupportPublicPaths.IsSupportPublic(context.Request.Path))
         {
             context.Response.OnStarting(
                 static state =>

@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Taxes;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -11,8 +13,11 @@ internal static class WithholdingSelectorRules
     /// <param name="rates">Los selectores, no vacíos.</param>
     /// <param name="companyCountry">El país de la empresa facturadora; null si no hay empresa, y entonces no hay
     /// selectores posibles.</param>
+    /// <param name="operationCityId">El municipio de la operación: una tasa municipal tiene que ser de ese municipio
+    /// (spec ReteICA por empresa §7.5).</param>
     /// <param name="codePrefix"><c>quotation.billing</c> u <c>order.billing</c>.</param>
-    public static void Ensure(IReadOnlyList<WithholdingRate> rates, string? companyCountry, string codePrefix)
+    public static void Ensure(
+        IReadOnlyList<WithholdingRate> rates, string? companyCountry, Guid? operationCityId, string codePrefix)
     {
         if (companyCountry is null
             || rates.Any(rate => !string.Equals(rate.Country, companyCountry, StringComparison.OrdinalIgnoreCase)))
@@ -20,6 +25,13 @@ internal static class WithholdingSelectorRules
             throw new QuotationsDomainException(
                 $"{codePrefix}.withholding_tax_rate_invalid",
                 "Every selected withholding tax rate must belong to the billing company's country.");
+        }
+
+        if (rates.Any(rate => TaxCountries.IsMunicipal(companyCountry, rate.Type) && rate.CityId != operationCityId))
+        {
+            throw new QuotationsDomainException(
+                $"{codePrefix}.withholding_tax_rate_invalid",
+                "A selected municipal withholding tax rate must belong to the operation city.");
         }
 
         if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal).Any(group => group.Count() > 1))

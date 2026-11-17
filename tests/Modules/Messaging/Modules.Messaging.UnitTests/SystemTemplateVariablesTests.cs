@@ -20,6 +20,19 @@ public sealed class SystemTemplateVariablesTests
         Assert.All(SystemTemplateVariables.LegacyKeys.Values, key => Assert.Contains(key, SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation)));
     }
 
+    /// <summary>Soporte fase 4b: la respuesta formal usa la misma lista que «Aviso de respuesta»; la encuesta, las fijas más el radicado.</summary>
+    [Fact]
+    public void SupportListsStartWithTheFixedOnes()
+    {
+        string[] fixedKeys = ["nombre_contacto", "asesor", "empresa", "saludo"];
+        Assert.Equal([.. fixedKeys, "radicado", "respuesta"], SystemTemplateVariables.SupportReply.Select(v => v.Key));
+        Assert.Equal(SystemTemplateVariables.SupportReply, SystemTemplateVariables.SupportFormalReply);
+        Assert.Equal([.. fixedKeys, "radicado"], SystemTemplateVariables.SupportSurvey.Select(v => v.Key));
+        Assert.Equal(
+            SystemTemplateVariables.SupportReply.Single(v => v.Key == "radicado"),
+            SystemTemplateVariables.SupportSurvey.Single(v => v.Key == "radicado"));
+    }
+
     [Theory]
     [InlineData("Hola {{nombre_contacto}}, gracias.", null)]
     [InlineData("Hola {{otra}}, gracias.", TemplateMessages.BodyVariableNotAllowed)]

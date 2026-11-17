@@ -18,7 +18,12 @@ public sealed record PreviewOrderEditsQuery(
     ShippingRequest? Shipping = null,
     OrderBillingEditRequest? Billing = null,
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
-    QuotationBillingAccountRequest? BillingAccount = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    QuotationBillingAccountRequest? BillingAccount = null,
+    OperationCityChoice OperationCity = default,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    DateOnly? OrderDate = null,
+    Guid? BillingCompanyId = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -42,7 +47,8 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationCompanyLookup companyLookup,
     IQuotationWithholdingLookup withholdingLookup,
     ITenantClock tenantClock,
-    IOrderVariantCostLookup costLookup)
+    IOrderVariantCostLookup costLookup,
+    IQuotationGeographyLookup geographyLookup)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -92,6 +98,12 @@ public sealed class PreviewOrderEditsHandler(
             updatedBy,
             now);
         order.UpdateNotes(query.Notes, now);
+        // Las mismas reglas que el guardado (spec 2026-11-16 §4): una fecha futura es 422 también acá.
+        if (query.OrderDate is { } orderDate)
+        {
+            order.ChangeOrderDate(orderDate, (await tenantClock.GetAsync(query.TenantId, cancellationToken)).Today, now);
+        }
+
         if (order.IsRetail != query.IsRetail)
         {
             order.SetIsRetail(query.IsRetail, updatedBy, now);
@@ -111,7 +123,7 @@ public sealed class PreviewOrderEditsHandler(
         // no muestre una retención que el guardado rechazaría.
         await OrderWithholdingEdits.ApplyAsync(
             order, query,
-            new OrderWithholdingEditsContext(companyLookup, withholdingLookup, tenantClock, query.TenantId),
+            new OrderWithholdingEditsContext(companyLookup, withholdingLookup, geographyLookup, tenantClock, query.TenantId),
             updatedBy, now, cancellationToken);
 
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
@@ -123,16 +135,22 @@ public sealed class PreviewOrderEditsHandler(
             order.SetShipping(shipping, updatedBy, now);
         }
 
+        // Mismo lugar que el guardado (spec retenciones por UVT §5.4): la vista previa muestra la UVT que el guardado dejaría.
+        await TaxUnitRefresh.RefreshAsync(
+            order, withholdingLookup, TaxUnitRefresh.DocumentDate(tenantClock, query.TenantId, order.CreatedAt),
+            cancellationToken);
+
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, query.TenantId, order, now, cancellationToken);
         // Sin historial: el preview no guarda nada.
         order.RecalculatePaymentStatus(previousNetTotal, now);
 
-        var quotationNumber = order.QuotationId is { } quotationId
-            ? (await quotationRepository.FindUntrackedAsync(query.TenantId, quotationId, cancellationToken))?.QuotationNumber
+        var quotation = order.QuotationId is { } quotationId
+            ? await quotationRepository.FindUntrackedAsync(query.TenantId, quotationId, cancellationToken)
             : null;
         // La versión que viaja es la guardada: el preview no es una edición y el If-Match del
         // guardado tiene que seguir valiendo.
-        return new OrderDetailDto(order.ToDto() with { Version = storedVersion }, quotationNumber, []);
+        return new OrderDetailDto(
+            order.ToDto() with { Version = storedVersion }, quotation?.QuotationNumber, [], quotation?.CreatedAt);
     }
 }

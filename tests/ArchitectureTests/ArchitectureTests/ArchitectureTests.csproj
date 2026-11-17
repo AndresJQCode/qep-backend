@@ -14,6 +14,9 @@
          registro vive acá. Los LayerTests siguen comparando ensamblados de módulo entre sí: esta
          referencia no los afecta. -->
     <ProjectReference Include="..\..\..\src\Bootstrapper\Bootstrapper.csproj" />
+    <!-- MultiReplicaInventoryTests repite los registros que Program.cs hace fuera de AddQepPlatform (AddWebTelemetry,
+         AddMessagingRealtime…): sin el ensamblado Api, un singleton con estado registrado ahí quedaría sin clasificar. -->
+    <ProjectReference Include="..\..\..\src\Api\Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Application\Modules.Audit.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
@@ -47,6 +50,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Application\Modules.Loans.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Domain\Modules.Loans.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Api\Modules.Support.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Application\Modules.Support.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Domain\Modules.Support.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Infrastructure\Modules.Support.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Api\Modules.Store.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Application\Modules.Store.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Domain\Modules.Store.Domain.csproj" />

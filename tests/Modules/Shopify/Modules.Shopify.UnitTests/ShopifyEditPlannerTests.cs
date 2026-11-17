@@ -1,0 +1,235 @@
+using Modules.Shopify.Application;
+using Modules.Shopify.Domain;
+using static Modules.Shopify.UnitTests.ShopifyEditTestWorld;
+
+namespace Modules.Shopify.UnitTests;
+
+/// <summary>Spec 2026-11-14 §3 y §4: por grupo, aplicar, conflicto (el pedido ya no es la proyección) o eco (el valor nuevo ya es
+/// el del pedido); y el cambio entero bloqueado por pedido no editable, pago no permitido o producto sin emparejar.</summary>
+public sealed class ShopifyEditPlannerTests
+{
+    private static ShopifyShippingLine Freight(decimal amount = 15_000m) => new("standard", "Envío estándar", amount, 0m, false);
+
+    [Fact]
+    public async Task NoGroupChangedIsAnEmptyPlan()
+    {
+        var world = new ShopifyEditTestWorld();
+
+        var plan = await world.PlanAsync(world.Applied);
+
+        Assert.True(plan.IsEmpty);
+        Assert.Empty(plan.Echoes);
+        Assert.Null(plan.Draft);
+        Assert.Null(plan.BlockReason);
+    }
+
+    [Theory]
+    [InlineData(ShopifyEditGroupKind.Lines)]
+    [InlineData(ShopifyEditGroupKind.Shipping)]
+    [InlineData(ShopifyEditGroupKind.ShippingAddress)]
+    [InlineData(ShopifyEditGroupKind.Note)]
+    [InlineData(ShopifyEditGroupKind.Attributes)]
+    public async Task EachGroupAloneIsApplied(ShopifyEditGroupKind kind)
+    {
+        var world = new ShopifyEditTestWorld();
+        var incoming = kind switch
+        {
+            ShopifyEditGroupKind.Lines => Snapshot(lines: [Line(quantity: 1m)]),
+            ShopifyEditGroupKind.Shipping => Snapshot(shippingLines: [Freight()]),
+            ShopifyEditGroupKind.ShippingAddress => Snapshot(address: Address with { City = "Envigado" }),
+            ShopifyEditGroupKind.Note => Snapshot(note: "B"),
+            _ => Snapshot(attributes: new Dictionary<string, string> { ["Regalo"] = "Sí" }),
+        };
+
+        var plan = await world.PlanAsync(incoming);
+
+        var group = Assert.Single(plan.Groups);
+        Assert.Equal((kind, ShopifyEditGroupOutcome.Apply, (string?)null), (group.Kind, group.Outcome, group.Reason));
+        Assert.Null(plan.BlockReason);
+        if (kind == ShopifyEditGroupKind.Attributes)
+        {
+            // Los atributos no viven en el pedido: aplicarlos no lo toca.
+            Assert.Null(plan.Draft);
+            return;
+        }
+
+        Assert.NotNull(plan.Draft);
+        Assert.Equal((world.Order.OrderId, world.Order.Version), (plan.Draft.OrderId, plan.Draft.ExpectedVersion));
+        Assert.Equal(kind == ShopifyEditGroupKind.Lines, plan.Draft.Lines is not null);
+        Assert.Equal(kind == ShopifyEditGroupKind.Shipping, plan.Draft.Shipping is not null);
+        Assert.Equal(kind == ShopifyEditGroupKind.ShippingAddress, plan.Draft.ShippingParty is not null);
+        Assert.Equal(kind == ShopifyEditGroupKind.Note, plan.Draft.ReplaceBuyerNotes);
+    }
+
+    [Fact]
+    public async Task AGroupTheAdvisorChangedIsAConflictAndTheRestApplies()
+    {
+        var world = new ShopifyEditTestWorld();
+        var projection = world.Projection;
+        world.Order = world.Order with { BuyerNotes = "Nota del asesor" };
+
+        var plan = await world.Planner.PlanAsync(
+            world.World.Store, world.ImportedRow(), world.Applied, projection, Snapshot(lines: [Line(quantity: 1m)], note: "B"),
+            world.Order, null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            [(ShopifyEditGroupKind.Lines, ShopifyEditGroupOutcome.Apply, null), (ShopifyEditGroupKind.Note, ShopifyEditGroupOutcome.Conflict, "qep_changed")],
+            plan.Groups.Select(group => (group.Kind, group.Outcome, group.Reason)).ToArray());
+        Assert.NotNull(plan.Draft);
+        Assert.False(plan.Draft.ReplaceBuyerNotes);
+        Assert.Equal(1m, Assert.Single(plan.Draft.Lines!).Quantity);
+    }
+
+    [Fact]
+    public async Task TheEchoOfTheQepValueIsNotAGroup()
+    {
+        var world = new ShopifyEditTestWorld();
+        var projection = world.Projection;
+        world.Order = world.Order with { ShippingParty = Party(EnvigadoId) };
+
+        var plan = await world.Planner.PlanAsync(
+            world.World.Store, world.ImportedRow(), world.Applied, projection, Snapshot(address: Address with { City = "Envigado" }),
+            world.Order, null, TestContext.Current.CancellationToken);
+
+        Assert.Equal([ShopifyEditGroupKind.ShippingAddress], plan.Echoes);
+        Assert.Empty(plan.Groups);
+        Assert.True(plan.IsEmpty);
+    }
+
+    [Fact]
+    public async Task ACustomLineEditMatchesThroughItsMapping()
+    {
+        var world = new ShopifyEditTestWorld();
+        var variant = Guid.CreateVersion7();
+        world.World.Products.WithVariant(variant);
+        world.World.CustomLines.Map(ImporterWorld.ConnectionId, "Garantía", variant);
+        var custom = new ShopifyLine(null, 1m, 5_000m, 0m, "Garantía", true, 9003, 1m);
+
+        var plan = await world.PlanAsync(Snapshot(lines: [Line(), custom]));
+
+        Assert.Equal(ShopifyEditGroupOutcome.Apply, Assert.Single(plan.Groups).Outcome);
+        Assert.Contains(plan.Draft!.Lines!, line => line.VariantId == variant && line.Quantity == 1m);
+    }
+
+    [Fact]
+    public async Task AnUnmatchedLineBlocksTheWholeChange()
+    {
+        var world = new ShopifyEditTestWorld();
+
+        var plan = await world.PlanAsync(Snapshot(lines: [Line(), new ShopifyLine("NO-EXISTE", 1m, 1_000m, 0m, "Otra", false, 9004, 1m)], note: "B"));
+
+        Assert.Equal("product_unmatched", plan.BlockReason);
+        Assert.Null(plan.Draft);
+        Assert.False(plan.IsEmpty);
+    }
+
+    [Fact]
+    public async Task ADocumentOfAnotherCustomerIsCustomerChanged()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.World.Customers.ByDocument[(ShopifyStore.DefaultIdentificationTypeCode, "1036000111")] =
+            new ShopifyCustomerRef(Guid.CreateVersion7(), true, true);
+
+        var plan = await world.PlanAsync(
+            Snapshot(attributes: new Dictionary<string, string> { [ShopifyStore.DefaultDocumentAttributeKey] = "1036000111" }));
+
+        var buyer = plan.Groups.Single(group => group.Kind == ShopifyEditGroupKind.Buyer);
+        Assert.Equal((ShopifyEditGroupOutcome.Conflict, "customer_changed"), (buyer.Outcome, buyer.Reason));
+    }
+
+    [Fact]
+    public async Task ABuyerChangeIsInformative()
+    {
+        var world = new ShopifyEditTestWorld();
+
+        var plan = await world.PlanAsync(
+            Snapshot() with { Buyer = new ShopifyBuyer("Laura", "Gómez", "nuevo@verde.co", "+573001234567") });
+
+        var buyer = Assert.Single(plan.Groups);
+        Assert.Equal((ShopifyEditGroupKind.Buyer, ShopifyEditGroupOutcome.Informative), (buyer.Kind, buyer.Outcome));
+        Assert.Null(plan.Draft);
+    }
+
+    [Fact]
+    public async Task AnUnresolvedCityIsAConflictAndIsReported()
+    {
+        var world = new ShopifyEditTestWorld();
+
+        var plan = await world.PlanAsync(Snapshot(address: Address with { City = "Bello" }));
+
+        var group = Assert.Single(plan.Groups);
+        Assert.Equal((ShopifyEditGroupKind.ShippingAddress, ShopifyEditGroupOutcome.Conflict, "city_unresolved"), (group.Kind, group.Outcome, group.Reason));
+        var report = Assert.Single(world.World.UnresolvedCities.Reports);
+        Assert.Equal((DepartmentId, "Bello", true, false, OrderId), (report.DepartmentId, report.CityText, report.PartyCityOnly, report.CustomerCityOnly, report.OrderId));
+        Assert.Null(plan.Draft);
+    }
+
+    [Fact]
+    public async Task ACityThroughASynonymApplies()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.World.Geography.Cities[("ANTIOQUIA", "Envigao")] = new ShopifyCityRef(DepartmentId, EnvigadoId, Guid.CreateVersion7());
+
+        var plan = await world.PlanAsync(Snapshot(address: Address with { City = "Envigao" }));
+
+        Assert.Equal(ShopifyEditGroupOutcome.Apply, Assert.Single(plan.Groups).Outcome);
+        Assert.Equal((DepartmentId, EnvigadoId), (plan.Draft!.ShippingParty!.DepartmentId, plan.Draft.ShippingParty.CityId));
+    }
+
+    [Fact]
+    public async Task ThePricesAreShopifysWithoutCatalogDiscounts()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.Applied = Snapshot(taxesIncluded: false);
+
+        var plan = await world.PlanAsync(Snapshot(lines: [Line(quantity: 2m, price: 47_619.05m, discount: 9_523.81m)], taxesIncluded: false));
+
+        var line = Assert.Single(plan.Draft!.Lines!);
+        Assert.Equal(ShopifyPricing.UnitPriceWithVat(47_619.05m, false, 19, "COP"), line.UnitPrice);
+        Assert.Equal(ShopifyPricing.DiscountPercentage(9_523.81m, 47_619.05m, 2m), line.DiscountPercentage);
+        Assert.Equal(10m, line.DiscountPercentage);
+    }
+
+    [Fact]
+    public async Task AnAddressOnAPickupOrderIsStorePickup()
+    {
+        var world = new ShopifyEditTestWorld();
+        var pickup = new ShopifyShippingLine("pickup-store", "Recoger en tienda", 0m, 0m, false);
+        world.Applied = Snapshot(shippingLines: [pickup]);
+        world.Order = world.Order with
+        {
+            IsStorePickup = true,
+            ShippingParty = null,
+            Shipping = new ShopifyShippingDraft(true, null, null, null, 0m, 0, false),
+        };
+
+        var plan = await world.PlanAsync(Snapshot(shippingLines: [pickup], address: Address with { City = "Envigado" }));
+
+        var group = Assert.Single(plan.Groups);
+        Assert.Equal((ShopifyEditGroupKind.ShippingAddress, ShopifyEditGroupOutcome.Conflict, "store_pickup"), (group.Kind, group.Outcome, group.Reason));
+    }
+
+    [Fact]
+    public async Task APickupThatBecomesShippingIsStorePickupChanged()
+    {
+        var world = new ShopifyEditTestWorld();
+
+        var plan = await world.PlanAsync(Snapshot(shippingLines: [new ShopifyShippingLine("pickup-store", "Recoger en tienda", 0m, 0m, false)]));
+
+        var group = Assert.Single(plan.Groups);
+        Assert.Equal((ShopifyEditGroupKind.Shipping, ShopifyEditGroupOutcome.Conflict, "store_pickup_changed"), (group.Kind, group.Outcome, group.Reason));
+    }
+
+    [Fact]
+    public async Task ANotEditableOrderBlocksBeforeThePaymentStatus()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.Configure(ShopifyEditSync.Manual, ["FullPaymentReceived"]);
+        world.Order = world.Order with { IsEditable = false, IsPrepared = true };
+
+        var plan = await world.PlanAsync(Snapshot(note: "B"));
+
+        Assert.Equal("order_not_editable", plan.BlockReason);
+        Assert.Null(plan.Draft);
+    }
+}

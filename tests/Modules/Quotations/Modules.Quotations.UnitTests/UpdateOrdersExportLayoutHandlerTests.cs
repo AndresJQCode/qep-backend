@@ -37,8 +37,8 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
         var dto = await handler.HandleAsync(NewCommand(columns, expectedVersion: 1), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dto.Version);
-        // 83 del catálogo (retenciones por tipo, P12) + 1 fija.
-        Assert.Equal(84, dto.Columns.Count);
+        // 86 del catálogo (tarifas de retención, spec 2026-11-16) + 1 fija.
+        Assert.Equal(87, dto.Columns.Count);
         Assert.Equal("Fixed", dto.Columns[0].Kind);
         Assert.Equal("Correo", dto.Columns[19].Header);
         var stored = Assert.Single(repository.Layouts);

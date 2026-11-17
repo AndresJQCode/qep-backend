@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
@@ -19,7 +20,11 @@ public sealed record PreviewNewQuotationQuery(
     IReadOnlyList<QuotationItemAddition> Items,
     int? GlobalScaleFloor,
     bool IsRetail,
-    ShippingRequest? Shipping = null) : IQuery<QuotationDto>, IQuotationEdits;
+    ShippingRequest? Shipping = null,
+    OperationCityChoice OperationCity = default,
+    IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
+    IReadOnlyList<string>? ClearedWithholdingTypes = null,
+    Guid? BillingCompanyId = null) : IQuery<QuotationDto>, IQuotationEdits;
 
 /// <summary>Las reglas de la creación salvo el documento de la facturación, que el cálculo previo no exige: corre
 /// mientras la persona escribe, igual que <see cref="PreviewQuotationValidator"/>.</summary>

@@ -42,6 +42,7 @@ public sealed class QuotationRetailTests
             "COP",
             customerVatSurplus: false,
             customerWithholdings: [],
+            MunicipalContext.None,
             AdvisorId,
             Now);
 
@@ -155,6 +156,7 @@ public sealed class QuotationRetailTests
             repricing: null,
             isRetail,
             globalScaleFloor,
+            MunicipalContext.None,
             AdvisorId,
             Now.AddHours(3));
 

@@ -30,5 +30,5 @@ internal sealed class PipelineCustomerDirectory(ICustomerWhatsAppDirectory whats
         customerIds.Count == 0
             ? new Dictionary<Guid, PipelineCustomerRef>()
             : (await whatsApp.FindRefsAsync(tenantId, customerIds, cancellationToken))
-                .ToDictionary(pair => pair.Key, pair => new PipelineCustomerRef(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete));
+                .ToDictionary(pair => pair.Key, pair => new PipelineCustomerRef(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete, pair.Value.IsActive));
 }

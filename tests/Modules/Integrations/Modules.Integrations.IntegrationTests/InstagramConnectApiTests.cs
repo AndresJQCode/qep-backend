@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using BuildingBlocks.Application;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Modules.Integrations.Application;
@@ -319,5 +322,106 @@ public sealed class InstagramConnectApiTests
         var back = await client.GetFromJsonAsync<ConnectionResponse>(ConnectionUrl(tenant.TenantId, created.Id), Ct);
         Assert.Equal("NeedsAttention", back!.Status);
         Assert.Equal("token_expired", back.LastFailureCode);
+    }
+
+    // Owner, 2026-11-14 (réplicas múltiples): un solo refresco por conexión. Con el candado del token de Instagram tomado
+    // por otra réplica, el worker no llama a Meta y la difiere; suelto, la refresca. El candado no es el de Shopify.
+    [Fact]
+    public async Task TheWorkerDefersAConnectionWhoseInstagramTokenLockIsHeld()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ScriptHappyConnect(factory.InstagramHandler);
+        var (tenant, client) = await TenantWithMessagingAsync(factory, connectionString);
+        using var _ = client;
+        var created = await (await SendAsync(client, HttpMethod.Post, InstagramConnectUrl(tenant.TenantId), ConnectBody())).Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+        var worker = factory.Services.GetServices<IHostedService>().OfType<InstagramTokenRefreshWorker>().Single();
+        await worker.FirstRunCompletion;
+        await ExecuteAsync(connectionString,
+            "UPDATE integrations.connections SET fields = jsonb_set(fields, '{tokenExpiresAt}', to_jsonb((now() + interval '10 days')::text)) WHERE id = @id",
+            ("id", created!.Id));
+        await ExecuteAsync(connectionString, "UPDATE integrations.connection_secrets SET updated_at = now() - interval '2 days' WHERE connection_id = @id", ("id", created.Id));
+        factory.InstagramHandler.Requests.Clear();
+
+        using (var otherReplica = factory.Services.CreateScope())
+        {
+            var theirs = otherReplica.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+            await using (await theirs.BeginTransactionAsync(Ct))
+            {
+                Assert.True(await theirs.TryLockInstagramTokenAsync(created.Id, Ct));
+                // Otro espacio: tomar el de Instagram no toma el de Shopify del mismo id.
+                Assert.True(await theirs.TryLockShopifyTokenAsync(created.Id, Ct));
+
+                var locked = await worker.RunOnceAsync(Ct);
+                Assert.Equal((0, 0, 1), (locked.Refreshed, locked.Rejected, locked.Deferred));
+                Assert.Empty(factory.InstagramHandler.Requests);
+            }
+        }
+
+        var released = await worker.RunOnceAsync(Ct);
+        Assert.Equal((1, 0, 0), (released.Refreshed, released.Rejected, released.Deferred));
+        Assert.Equal("/refresh_access_token", Assert.Single(factory.InstagramHandler.Requests).Uri!.AbsolutePath);
+    }
+
+    // Owner, 2026-11-14: un conflicto de concurrencia al reportar el rechazo de una conexión no corta la corrida. Esa
+    // conexión cuenta como diferida y vuelve en la próxima; la otra conexión vencida se refresca en la misma corrida.
+    [Fact]
+    public async Task ARejectConflictDefersThatConnectionAndTheRunStillRefreshesTheNext()
+    {
+        const string SecondIgUserId = "17841400000000002";
+        const string SecondLongToken = "ig-long-token-SENTINEL-second-4d";
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var baseFactory = new QepApiFactory(connectionString);
+        using var factory = baseFactory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+            services.AddScoped<IConnectionHealthReporter, ConflictingHealthReporter>()));
+        ScriptHappyConnect(baseFactory.InstagramHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var rejectedOne = await (await SendAsync(client, HttpMethod.Post, InstagramConnectUrl(tenant.TenantId), ConnectBody("Instagram A"))).Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+
+        // La segunda cuenta: otro id y otro token largo, para que Meta responda distinto a cada una.
+        baseFactory.InstagramHandler.Reset();
+        baseFactory.InstagramHandler.Respond("^/oauth/access_token", HttpStatusCode.OK,
+            $$$"""{"data":[{"access_token":"{{{SentinelShortToken}}}","user_id":{{{SecondIgUserId}}},"permissions":"instagram_business_basic,instagram_business_manage_messages"}]}""");
+        baseFactory.InstagramHandler.Respond(@"^/access_token\?grant_type=ig_exchange_token", HttpStatusCode.OK,
+            $$$"""{"access_token":"{{{SecondLongToken}}}","token_type":"bearer","expires_in":5184000}""");
+        baseFactory.InstagramHandler.Respond(@"^/v24\.0/me\?", HttpStatusCode.OK,
+            $$$"""{"id":"{{{SecondIgUserId}}}","username":"segundacuenta","name":"Segunda","account_type":"BUSINESS"}""");
+        baseFactory.InstagramHandler.Respond($@"^/v24\.0/{SecondIgUserId}/subscribed_apps", HttpStatusCode.OK, """{"success":true}""");
+        var refreshedOne = await (await SendAsync(client, HttpMethod.Post, InstagramConnectUrl(tenant.TenantId), ConnectBody("Instagram B"))).Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+
+        var worker = factory.Services.GetServices<IHostedService>().OfType<InstagramTokenRefreshWorker>().Single();
+        await worker.FirstRunCompletion;
+        foreach (var id in new[] { rejectedOne!.Id, refreshedOne!.Id })
+        {
+            await ExecuteAsync(connectionString,
+                "UPDATE integrations.connections SET fields = jsonb_set(fields, '{tokenExpiresAt}', to_jsonb((now() + interval '10 days')::text)) WHERE id = @id",
+                ("id", id));
+            await ExecuteAsync(connectionString, "UPDATE integrations.connection_secrets SET updated_at = now() - interval '2 days' WHERE connection_id = @id", ("id", id));
+        }
+
+        baseFactory.InstagramHandler.Reset();
+        baseFactory.InstagramHandler.Respond($@"^/refresh_access_token\?.*access_token={SentinelLongToken}", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(190));
+        baseFactory.InstagramHandler.Respond($@"^/refresh_access_token\?.*access_token={SecondLongToken}", HttpStatusCode.OK,
+            $$$"""{"access_token":"{{{SentinelRefreshedToken}}}","token_type":"bearer","expires_in":5184000}""");
+
+        // Refrescada 1, rechazada 0 (su reporte chocó), diferida 1.
+        var run = await worker.RunOnceAsync(Ct);
+        Assert.Equal((1, 0, 1), (run.Refreshed, run.Rejected, run.Deferred));
+        var back = await client.GetFromJsonAsync<ConnectionResponse>(ConnectionUrl(tenant.TenantId, rejectedOne.Id), Ct);
+        Assert.Equal("Active", back!.Status);
+    }
+
+    /// <summary>Como si otro guardado hubiera cambiado la conexión entre la lectura y el reporte.</summary>
+    private sealed class ConflictingHealthReporter : IConnectionHealthReporter
+    {
+        public Task ReportCredentialsRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken) =>
+            throw new RequestConcurrencyException("concurrency.conflict", "The connection changed while the operation was being committed.");
+
+        public Task ReportTokenExpiredAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new RequestConcurrencyException("concurrency.conflict", "The connection changed while the operation was being committed.");
     }
 }

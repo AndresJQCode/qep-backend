@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- Las candidatas y los selectores de retención son internal: reglas del agregado que se prueban
+         unitariamente sin armar un documento entero. -->
+    <InternalsVisibleTo Include="Modules.Quotations.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
   </ItemGroup>
 </Project>

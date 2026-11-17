@@ -9,7 +9,8 @@ public sealed record SendGrant(int Granted, TimeSpan RetryAfter, double Rate);
 
 /// <summary>
 /// Decisión del owner 2026-10-12 (P3 y P5): el límite de envío de las campañas es de la <b>conexión</b> (el número de Meta), no del proceso.
-/// Es un token bucket en Postgres —no hay Redis en el stack— que comparten todas las réplicas, y se adapta a lo que Meta contesta: un
+/// Es un token bucket en Postgres —nació cuando no había Redis en el stack; desde el spec 2026-11-13 de Valkey
+/// (docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md, D-6) queda como respaldo— que comparten todas las réplicas, y se adapta a lo que Meta contesta: un
 /// 130429 baja el ritmo a la mitad y pausa la conexión 30 s; sin nuevos 130429 el ritmo vuelve a subir de a 1 mps cada 30 s hasta el objetivo
 /// (<c>Messaging:Campaigns:MessagesPerSecond</c>). El 131056 no pasa por acá: es un freno del par, no de la conexión.
 /// El <c>now</c> entra por parámetro para que las pruebas lo controlen.

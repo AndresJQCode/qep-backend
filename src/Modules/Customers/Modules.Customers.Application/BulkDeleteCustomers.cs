@@ -34,10 +34,13 @@ public static class CustomerDeletionBlockReasons
     public const string Orders = "orders";
     public const string Loans = "loans";
     public const string ServiceContracts = "serviceContracts";
+
+    /// <summary>D4 del spec de soporte (2026-11-14): cualquier ticket del cliente, en cualquier estado.</summary>
+    public const string SupportTickets = "supportTickets";
     public const string BlockedContact = "blockedContact";
 
     /// <summary>El orden del contrato: así salen los motivos en la respuesta, venga como venga del adaptador.</summary>
-    public static IReadOnlyList<string> Ordered { get; } = [Quotations, Orders, Loans, ServiceContracts, BlockedContact];
+    public static IReadOnlyList<string> Ordered { get; } = [Quotations, Orders, Loans, ServiceContracts, SupportTickets, BlockedContact];
 }
 
 public sealed class BulkDeleteCustomersValidator : AbstractValidator<BulkDeleteCustomersCommand>

@@ -40,7 +40,7 @@ internal sealed partial class ShopifyGraphQlClient(
 
     // Sin fragmentos ni alias a propósito: la prueba de contrato lee la consulta con un analizador mínimo.
     private const string LineFields =
-        "sku quantity originalUnitPriceSet { shopMoney { amount } } discountAllocations { allocatedAmountSet { shopMoney { amount } } }";
+        "id sku title quantity currentQuantity variant { id } product { id } originalUnitPriceSet { shopMoney { amount } } discountAllocations { allocatedAmountSet { shopMoney { amount } } }";
 
     private const string ShippingLineFields =
         "code title discountedPriceSet { shopMoney { amount } } taxLines { priceSet { shopMoney { amount } } } isRemoved";
@@ -57,6 +57,7 @@ internal sealed partial class ShopifyGraphQlClient(
         + "totalPriceSet { shopMoney { amount } } taxesIncluded test note paymentGatewayNames "
         + "customer { id firstName lastName defaultEmailAddress { emailAddress } defaultPhoneNumber { phoneNumber } } "
         + "shippingAddress { name address1 address2 city province provinceCode countryCodeV2 phone company } "
+        + "billingAddress { name address1 address2 city province provinceCode countryCodeV2 phone company } "
         + "customAttributes { key value } "
         + "lineItems(first: 50) { " + PageInfo + " nodes { " + LineFields + " } } "
         + "shippingLines(first: 10, includeRemovals: true) { " + PageInfo + " nodes { " + ShippingLineFields + " } } "

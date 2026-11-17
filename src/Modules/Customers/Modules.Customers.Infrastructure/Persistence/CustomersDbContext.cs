@@ -264,6 +264,40 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
                 .HasDatabaseName("IX_customer_tax_rates_tenant_tax_rate");
         });
 
+        // Los municipios donde el cliente es agente retenedor (spec ReteICA por empresa §7.4). La FK city_id →
+        // geography.cities va escrita a mano en la migración AddCustomerWithholdingAgentCities, como la de la ciudad del
+        // cliente: Customers no referencia Geography en el modelo. Customers migra después de Geography, así que sí puede.
+        customer.OwnsMany(value => value.WithholdingAgentCities, city =>
+        {
+            city.ToTable("customer_withholding_agent_cities", "customers");
+            city.WithOwner().HasForeignKey("CustomerId");
+            city.Property<CustomerId>("CustomerId")
+                .HasColumnName("customer_id")
+                .HasConversion(id => id.Value, value => new CustomerId(value))
+                .ValueGeneratedNever();
+            city.Property(value => value.TenantId).HasColumnName("tenant_id");
+            city.Property(value => value.Country)
+                .HasColumnName("country")
+                .HasMaxLength(2)
+                .IsFixedLength()
+                .ValueGeneratedNever();
+            city.Property(value => value.Type)
+                .HasColumnName("type")
+                .HasMaxLength(32)
+                .ValueGeneratedNever();
+            // Clave asignada por el cliente, por el mismo motivo que tax_rate_id arriba.
+            city.Property(value => value.CityId).HasColumnName("city_id").ValueGeneratedNever();
+            city.HasKey(
+                    "CustomerId",
+                    nameof(CustomerWithholdingAgentCity.Country),
+                    nameof(CustomerWithholdingAgentCity.Type),
+                    nameof(CustomerWithholdingAgentCity.CityId))
+                .HasName("PK_customer_withholding_agent_cities");
+            city.HasIndex(value => value.CityId).HasDatabaseName("IX_customer_withholding_agent_cities_city");
+        });
+        customer.Navigation(value => value.WithholdingAgentCities)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
         // Con nombre: sin él, EF funde este índice con IX_customers_tenant_incomplete (misma columna) y
         // el segundo pisa el filtro del primero.
         customer.HasIndex(value => value.TenantId, "IX_customers_tenant");

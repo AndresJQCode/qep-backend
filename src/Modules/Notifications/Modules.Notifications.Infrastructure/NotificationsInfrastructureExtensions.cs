@@ -39,27 +39,29 @@ public static class NotificationsInfrastructureExtensions
             ?? NotificationsOptions.LogProvider;
         AddEmailChannel(services, provider);
 
-        // Por tipo y no por factoría: así el descriptor lleva ImplementationType y el harness de
-        // pruebas puede sacarlos (spec 2026-09-13). Mismo registro que ExportJobWorker. El de
-        // invitaciones recibe IOptions<NotificationsOptions> por constructor, porque arma el enlace
-        // con InvitationUrl; los de exportación no, porque su enlace ya viene prefirmado en el evento.
-        services.AddHostedService<InvitationDeliveryWorker>();
+        // Los consumidores de correo son definiciones singleton, no hosted services: los drena en secuencia un solo
+        // bucle, NotificationsDeliveryWorker (spec 2026-11-13, D-7). Ese hosted va por tipo y no por factoría, así el
+        // descriptor lleva ImplementationType y el harness de pruebas puede sacarlo (spec 2026-09-13). El de
+        // invitaciones recibe IOptions<NotificationsOptions> por constructor, porque arma el enlace con InvitationUrl;
+        // los de exportación no, porque su enlace ya viene prefirmado en el evento.
+        services.AddSingleton<OutboxDeliveryWorker, InvitationDeliveryWorker>();
         // Correos de cuenta con contraseña: reciben IOptions por constructor porque arman el enlace con
         // AppBaseUrl.
-        services.AddHostedService<EmailVerificationDeliveryWorker>();
-        services.AddHostedService<PasswordResetDeliveryWorker>();
-        services.AddHostedService<ExistingAccountDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, EmailVerificationDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, PasswordResetDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, ExistingAccountDeliveryWorker>();
         // Correos de la cuenta de comprador: el destinatario viene en el payload del evento.
-        services.AddHostedService<BuyerVerificationDeliveryWorker>();
-        services.AddHostedService<BuyerExistingAccountDeliveryWorker>();
-        services.AddHostedService<BuyerPasswordResetDeliveryWorker>();
-        services.AddHostedService<BuyerAccountDeletedDeliveryWorker>();
-        services.AddHostedService<CustomerExportDeliveryWorker>();
-        services.AddHostedService<ProductExportDeliveryWorker>();
-        services.AddHostedService<SupplierExportDeliveryWorker>();
-        // La exportación asíncrona de Quotations (spec 2026-09-12, D12): un worker por evento.
-        services.AddHostedService<QuotationsExportReadyDeliveryWorker>();
-        services.AddHostedService<QuotationsExportFailedDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, BuyerVerificationDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, BuyerExistingAccountDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, BuyerPasswordResetDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, BuyerAccountDeletedDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, CustomerExportDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, ProductExportDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, SupplierExportDeliveryWorker>();
+        // La exportación asíncrona de Quotations (spec 2026-09-12, D12): una definición por evento.
+        services.AddSingleton<OutboxDeliveryWorker, QuotationsExportReadyDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, QuotationsExportFailedDeliveryWorker>();
+        services.AddHostedService<NotificationsDeliveryWorker>();
 
         return services;
     }

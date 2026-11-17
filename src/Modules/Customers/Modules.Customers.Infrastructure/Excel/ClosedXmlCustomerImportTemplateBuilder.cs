@@ -136,7 +136,6 @@ internal sealed class ClosedXmlCustomerImportTemplateBuilder : ICustomerImportTe
         Write(CustomerImportColumns.City, row.City);
         Write(CustomerImportColumns.Classification, row.Classification);
         Write(CustomerImportColumns.Retefuente, row.Retefuente);
-        Write(CustomerImportColumns.ReteIca, row.ReteIca);
         Write(CustomerImportColumns.VatSurplus, row.VatSurplus);
         Write(CustomerImportColumns.Company, row.CompanyIdentificationNumber);
     }

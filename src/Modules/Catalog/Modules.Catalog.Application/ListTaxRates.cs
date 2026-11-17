@@ -9,6 +9,7 @@ public sealed record ListTaxRatesQuery(Guid TenantId, IReadOnlyCollection<string
 
 public sealed class ListTaxRatesHandler(
     ITaxRateRepository repository,
+    ITaxRateGeographyLookup geography,
     IExecutionContext executionContext)
     : IQueryHandler<ListTaxRatesQuery, IReadOnlyList<TaxRateDto>>
 {
@@ -27,6 +28,7 @@ public sealed class ListTaxRatesHandler(
             ? taxRates.Where(taxRate => types.Contains(taxRate.Type, StringComparer.Ordinal))
             : taxRates;
 
-        return filtered.Select(taxRate => taxRate.ToDto()).ToArray();
+        // Los municipios de toda la lista en una sola consulta a Geography (P8).
+        return await TaxRateMapping.ToDtosAsync(filtered.ToArray(), geography, cancellationToken);
     }
 }

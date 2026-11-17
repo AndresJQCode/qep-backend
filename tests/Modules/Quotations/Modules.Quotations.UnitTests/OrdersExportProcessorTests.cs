@@ -24,10 +24,6 @@ public sealed class OrdersExportProcessorTests
     private static readonly DateOnly From = new(2026, 9, 1);
     private static readonly DateOnly To = new(2026, 9, 12);
 
-    // El rango guardado en el job, cortado en el día de Bogotá al procesar (spec 2026-09-17, punto 3).
-    private static readonly DateTimeOffset FromUtc = new(2026, 9, 1, 5, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset BeforeUtc = new(2026, 9, 13, 5, 0, 0, TimeSpan.Zero);
-
     private static readonly QuotationCustomerRef DefaultCustomer = new(
         ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
         "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
@@ -156,16 +152,18 @@ public sealed class OrdersExportProcessorTests
 
     private const int DocumentoIdentidadIndex = 42;
 
-    // Ajuste 2026-09-25: "Fecha Pedido" es el día en que nació el pedido (Order.CreatedAt), en el
-    // día del tenant y no en UTC — 22:00 de Bogotá ya es el día siguiente en UTC. Texto, como
-    // "Fecha Pago N", porque el ERP lo importa tal cual.
+    // Ajuste 2026-09-25: "Fecha Pedido" es texto, como "Fecha Pago N", porque el ERP lo importa tal cual. Desde el spec
+    // 2026-11-16 §5 es Order.OrderDate, que ya es un día del tenant: creado a las 22:00 del 11 en Bogotá (12 en UTC), el
+    // pedido nace con fecha 11 y el archivo dice 11, sin pasar por el calendario.
     [Fact]
-    public async Task FechaPedidoIsTheOrdersCreationDayInTheTenantsLocalTime()
+    public async Task FechaPedidoIsTheOrderDate()
     {
         var writer = new RecordingExportWorkbookWriter();
         var createdAt = new DateTimeOffset(2026, 9, 12, 3, 0, 0, TimeSpan.Zero); // 22:00 del 11 en Bogotá.
 
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", at: createdAt)), writer)
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", at: createdAt, orderDate: new DateOnly(2026, 9, 11))),
+                writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(new ExportColumn("Fecha Pedido", 14), writer.Columns[FechaPedidoIndex]);
@@ -546,6 +544,32 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
+    }
+
+    // Spec 2026-11-14: «Notas del cliente» es la nota del comprador (Order.BuyerNotes); «Observaciones» sigue con Order.Notes.
+    [Fact]
+    public async Task BuyerNotesColumnReadsBuyerNotesAndObservacionesKeepsNotes()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(ClientId, AdvisorId, "COP", null, IsRetail: false, null, false, TestWithholdings.Customer(false)),
+            QuotationParties.Empty, DefaultBillingAccount,
+            [.. DefaultItems.Select(item => new OrderLineInput(
+                item.ProductId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))],
+            OrderPaymentStatus.PaymentPending, "Shopify #1001", AdvisorId, [], Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime), OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null, OrderLineCosts.None, buyerNotes: "Sin cebolla");
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("notes", "Observaciones", visible: true),
+            OrdersExportColumnSetting.Catalog("buyer_notes", "Notas del cliente", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Observaciones", "Notas del cliente"], writer.Columns.Take(2).Select(column => column.Header));
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal(("Shopify #1001", "Sin cebolla"), (row[0].Text, row[1].Text));
     }
 
     [Fact]
@@ -1570,7 +1594,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(repository).ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new OrderExportCursor?[] { null, new OrderExportCursor(Now, "PED-2026-0002") },
+            new OrderExportCursor?[] { null, new OrderExportCursor(DateOnly.FromDateTime(Now.UtcDateTime), Now, "PED-2026-0002") },
             repository.ExportCursors);
     }
 
@@ -1614,34 +1638,26 @@ public sealed class OrdersExportProcessorTests
 
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.FullPaymentReceived, FromUtc, BeforeUtc, "PED",
+                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.FullPaymentReceived, From, To, "PED",
                 FulfillmentStatus: OrderFulfillmentStatus.NotPrepared, Invoiced: true),
             repository.LastExportSearch);
     }
 
-    [Fact]
-    public async Task CutsTheRangeInTheStoredTimeZone()
+    // Spec 2026-11-16 §4: el rango corta por la fecha del pedido, que ya es un día del tenant; la zona guardada en el
+    // trabajo (o su ausencia, en uno viejo) no lo mueve.
+    [Theory]
+    [InlineData("Europe/Madrid")]
+    [InlineData(null)]
+    public async Task FiltersByTheStoredDaysWhateverTheStoredTimeZone(string? timeZone)
     {
         var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
-        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null, TimeZone: "Europe/Madrid"));
+        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null, TimeZone: timeZone));
 
         await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch!.ConvertedFrom);
-        Assert.Equal(new DateTimeOffset(2026, 9, 12, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch.ConvertedBefore);
-    }
-
-    // Un job encolado antes de este cambio no trae zona: corta en el día del tenant, como siempre.
-    [Fact]
-    public async Task AJobWithoutATimeZoneCutsTheDayOfTheTenant()
-    {
-        var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
-        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null));
-
-        await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
-
-        Assert.Equal(FromUtc, repository.LastExportSearch!.ConvertedFrom);
-        Assert.Equal(BeforeUtc, repository.LastExportSearch.ConvertedBefore);
+        Assert.Equal(
+            ((DateOnly?)From, (DateOnly?)To),
+            (repository.LastExportSearch!.OrderDateFrom, repository.LastExportSearch.OrderDateTo));
     }
 
     [Fact]
@@ -1909,6 +1925,76 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][2]);
         Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][1]);
         Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
+    }
+
+    // Spec 2026-11-16 (tarifa de retención): el import de facturación busca el impuesto por su tarifa. Las dos en
+    // porcentaje tal cual, sin escala (owner, 2026-11-16: la ReteICA ya no sale por mil). Sin retención aplicada del
+    // tipo, 0.
+    [Fact]
+    public async Task ExportHasRatePerWithholdingType()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var bogota = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000027"), "ReteICA Bogotá 11,04 ‰", "ReteICA", "CO", 1.104m, null, null, null);
+        // Base mínima en UVT sin valor de UVT congelado: nunca aplica.
+        var notApplied = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000028"), "ReteICA con base", "ReteICA", "CO", 0.966m, 100m, "UVT", null);
+        var both = NewRow("PED-2026-0001", withholdings: [TestWithholdings.RetefuenteCo, bogota]);
+        var none = NewRow("PED-2026-0002");
+        var belowBase = NewRow("PED-2026-0003", withholdings: [notApplied]);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente_rate", "Retefuente", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_reteica_rate", "ReteICA", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(both, none, belowBase), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Pedido", "Retefuente", "ReteICA"], writer.Columns.Take(3).Select(c => c.Header));
+        var rows = writer.Rows.ToDictionary(cells => cells[0].Text!);
+        Assert.Equal(ExportCell.OfNumber(2.5m), rows["PED-2026-0001"][1]);
+        Assert.Equal(ExportCell.OfNumber(1.104m), rows["PED-2026-0001"][2]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][1]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][2]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
+    }
+
+    // Límite conocido del spec 2026-11-16: con dos aplicadas del mismo tipo sale la primera por orden del pedido.
+    [Fact]
+    public async Task RateUsesTheFirstAppliedWithholdingOfTheType()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var first = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000029"), "ReteICA Bogotá", "ReteICA", "CO", 1.104m, null, null, null);
+        var second = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000030"), "ReteICA Medellín", "ReteICA", "CO", 0.966m, null, null, null);
+        var order = NewRow("PED-2026-0001", withholdings: [first, second]);
+        Assert.Equal(2, order.AppliedWithholdings.Count());
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_reteica_rate", "ReteICA", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(1.104m), cells[1]));
+    }
+
+    // La tarifa es la efectiva, la que dio el monto: si el asesor la editó, sale la editada y no la del catálogo.
+    [Fact]
+    public async Task RateUsesTheOverriddenPercentage()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var order = NewRow("PED-2026-0001", withholdings: [TestWithholdings.RetefuenteCo with { Percentage = 3.5m }]);
+        Assert.True(order.AppliedWithholdings.Single().Overridden);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente_rate", "Retefuente", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(3.5m), cells[1]));
     }
 
     // Con retención en la fuente el cliente paga NetTotal, pero lo facturado sigue siendo Total: la
@@ -2500,6 +2586,21 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(["2026-09-12", "PED-2026-0001", "2026-09-12", "2026-09-12"], cells.Take(4).Select(cell => cell.Text));
     }
 
+    // Spec 2026-11-16 §5: la celda de fecha es la fecha del pedido, no el día en que se creó.
+    [Fact]
+    public async Task TheExportDateColumnIsTheOrderDate()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(OrdersExportColumnSetting.Catalog("order_date", "FECHA", visible: true));
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", orderDate: new DateOnly(2026, 8, 31))), writer,
+                layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("2026-08-31", Assert.Single(writer.Rows)[0].Text);
+    }
+
     // El layout se resuelve una vez por job: no por lote ni por fila.
     [Fact]
     public async Task TheLayoutIsReadOnceForTheWholeJob()
@@ -2769,7 +2870,9 @@ public sealed class OrdersExportProcessorTests
         ShippingDetails? shipping = null,
         // Spec 2026-10-20 variantes: el producto dueño de las variantes de `items`. Ausente, cada línea se
         // arma como una variante por defecto (variante y producto con el mismo id), como hasta ahora.
-        Guid? ownerProductId = null)
+        Guid? ownerProductId = null,
+        // Spec 2026-11-16: la fecha del pedido, si no es el día de `at`.
+        DateOnly? orderDate = null)
     {
         var occurredAt = at ?? Now;
         var proofInputs = (proofs ?? [.. (publicKeys ?? []).Select(publicKey => (10_000m, publicKey))])
@@ -2791,7 +2894,8 @@ public sealed class OrdersExportProcessorTests
             orderNotes,
             AdvisorId,
             proofInputs,
-            occurredAt);
+            occurredAt,
+            orderDate: orderDate ?? DateOnly.FromDateTime(occurredAt.UtcDateTime));
     }
 
     private static OrdersExportProcessor NewProcessor(

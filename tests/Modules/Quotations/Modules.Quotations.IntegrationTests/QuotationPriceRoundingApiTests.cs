@@ -11,7 +11,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// la aplican cuando se recalculan, la guardan, y leerlos no la mueve. El caso de aceptación: USD con (2, Up),
 /// 13,19 con 15 % da un unitario de 11,22 y, por 10 unidades, una línea de 112,20 con 19,70 de descuento.
 /// </summary>
-public sealed class QuotationPriceRoundingApiTests
+public sealed class QuotationPriceRoundingApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private static readonly string[] Permissions = [.. ManagerPermissions, TenancyPermissions.SettingsUpdate];
 
@@ -53,8 +53,7 @@ public sealed class QuotationPriceRoundingApiTests
     [Fact]
     public async Task GettingASentQuotationAfterARuleChangeDoesNotMoveIt()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await SetUpAsync(factory);
         var sent = await CreateSentUsdQuotationAsync(setup, factory, 10m);
         Assert.Equal((11.21m, 112.10m), (sent.Items.Single().DiscountedUnitPrice, sent.Items.Single().Subtotal));
@@ -71,8 +70,7 @@ public sealed class QuotationPriceRoundingApiTests
     [Fact]
     public async Task EditingASentQuotationRecalculatesWithTheNewRule()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await SetUpAsync(factory);
         var sent = await CreateSentUsdQuotationAsync(setup, factory, 10m);
         await PutRuleAsync(setup, "Up");
@@ -92,8 +90,7 @@ public sealed class QuotationPriceRoundingApiTests
     [Fact]
     public async Task ConvertingKeepsTheQuotationRule()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await SetUpAsync(factory);
         var sent = await CreateSentUsdQuotationAsync(setup, factory, 10m);
         await PutRuleAsync(setup, "Up");
@@ -115,8 +112,7 @@ public sealed class QuotationPriceRoundingApiTests
     [Fact]
     public async Task QuotationAndOrderGiveTheSameUnitAndLine()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var setup = await SetUpAsync(factory);
         await PutRuleAsync(setup, "Up");
         var quotation = await AddItemAsync(setup, (await CreateUsdQuotationAsync(setup)).Id, 10m);

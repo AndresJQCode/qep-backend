@@ -5,7 +5,7 @@ using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
 
-public sealed class CustomerWriteApiTests
+public sealed class CustomerWriteApiTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     [Fact]
     public async Task CreateReturnsCreatedWithTheLocationOfTheNewCustomer()
@@ -220,8 +220,7 @@ public sealed class CustomerWriteApiTests
     [Fact]
     public async Task CreateWithAnUnknownClassificationIsRejectedWithItsDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
         var city = await EnsureCityAsync(client);
 
@@ -358,8 +357,7 @@ public sealed class CustomerWriteApiTests
     [Fact]
     public async Task CreateWithInvalidFieldsReturnsThePerFieldErrorMap()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var response = await client.PostAsJsonAsync(
@@ -512,8 +510,7 @@ public sealed class CustomerWriteApiTests
     [Fact]
     public async Task CreateForAnotherTenantIsForbiddenBeforeTheBodyIsValidated()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateClient(
             factory, OtherSubjectId, OtherTenantId, CustomersPermissions.CustomerManage);
 

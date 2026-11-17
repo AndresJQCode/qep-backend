@@ -140,6 +140,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
             new Dictionary<Guid, QuotationItemPricing> { [productId] = pricing },
             isRetail: false,
             globalScaleFloor: null,
+            MunicipalContext.None,
             AdvisorId,
             Now);
 
@@ -158,6 +159,7 @@ public sealed class QuotationUsdTaxNotItemizedTests
             currency,
             customerVatSurplus: false,
             customerWithholdings: TestWithholdings.Customer(customerWithRetention),
+            MunicipalContext.None,
             AdvisorId,
             Now);
 

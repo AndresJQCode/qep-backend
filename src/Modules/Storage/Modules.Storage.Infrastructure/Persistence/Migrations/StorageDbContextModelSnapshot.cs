@@ -17,7 +17,7 @@ namespace Modules.Storage.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -115,6 +115,9 @@ namespace Modules.Storage.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "Category");
 
                     b.HasIndex("TenantId", "Status");
+
+                    b.HasIndex("TenantId", "OwnerType", "CreatedAt")
+                        .HasDatabaseName("IX_file_resources_tenant_owner_created");
 
                     b.HasIndex("TenantId", "OwnerType", "OwnerId")
                         .HasDatabaseName("IX_file_resources_tenant_owner");

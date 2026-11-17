@@ -179,6 +179,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("buyer_account_id");
 
+                    b.Property<bool>("BuyerAccountSetByMember")
+                        .HasColumnType("boolean")
+                        .HasColumnName("buyer_account_set_by_member");
+
                     b.Property<string>("BuyerNotes")
                         .HasColumnType("text")
                         .HasColumnName("buyer_notes");
@@ -325,6 +329,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text")
                         .HasColumnName("notes");
+
+                    b.Property<Guid?>("OperationCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("operation_city_id");
+
+                    b.Property<DateOnly>("OrderDate")
+                        .HasColumnType("date")
+                        .HasColumnName("order_date");
 
                     b.Property<string>("OrderNumber")
                         .IsRequired()
@@ -482,6 +494,9 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_orders_tenant_external_key")
                         .HasFilter("external_key IS NOT NULL");
+
+                    b.HasIndex("TenantId", "OrderDate", "ConvertedAt", "OrderNumber")
+                        .HasDatabaseName("IX_orders_tenant_order_date_converted_at_number");
 
                     b.ToTable("orders", "quotations", t =>
                         {
@@ -912,6 +927,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("notes");
 
+                    b.Property<Guid?>("OperationCityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("operation_city_id");
+
                     b.Property<bool?>("PartyVatSurplus")
                         .HasColumnType("boolean")
                         .HasColumnName("party_vat_surplus");
@@ -1257,6 +1276,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("quotation_id");
 
+                    b.Property<string>("ContentFingerprint")
+                        .HasColumnType("text")
+                        .HasColumnName("content_fingerprint");
+
                     b.Property<DateTimeOffset>("GeneratedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("generated_at");
@@ -1354,6 +1377,79 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId", "Year");
 
                     b.ToTable("order_number_counters", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.PdfPaymentAccountRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<bool>("InOrder")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_order");
+
+                    b.Property<bool>("InQuotation")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_quotation");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("pdf_payment_account", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.PdfSectionRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Section")
+                        .HasColumnType("text")
+                        .HasColumnName("section");
+
+                    b.Property<string>("ContentHtml")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("content_html");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<bool>("InOrder")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_order");
+
+                    b.Property<bool>("InQuotation")
+                        .HasColumnType("boolean")
+                        .HasColumnName("in_quotation");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Section");
+
+                    b.ToTable("pdf_sections", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_pdf_sections_section", "section IN ('PaymentNotice', 'Terms', 'DeliveryProcess')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.QuotationNumberCounter", b =>
@@ -1603,6 +1699,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("base_amount");
 
+                            b1.Property<decimal>("CatalogPercentage")
+                                .HasPrecision(6, 3)
+                                .HasColumnType("numeric(6,3)")
+                                .HasColumnName("catalog_percentage");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("city_id");
+
                             b1.Property<string>("Country")
                                 .IsRequired()
                                 .HasMaxLength(2)
@@ -1639,6 +1744,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("tax_unit_value");
 
+                            b1.Property<short?>("TaxUnitYear")
+                                .HasColumnType("smallint")
+                                .HasColumnName("tax_unit_year");
+
                             b1.Property<string>("Type")
                                 .IsRequired()
                                 .HasMaxLength(32)
@@ -1673,6 +1782,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_city_id");
 
                             b1.Property<Guid>("CompanyId")
                                 .HasColumnType("uuid")
@@ -1811,6 +1924,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("base_amount");
 
+                            b1.Property<decimal>("CatalogPercentage")
+                                .HasPrecision(6, 3)
+                                .HasColumnType("numeric(6,3)")
+                                .HasColumnName("catalog_percentage");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("city_id");
+
                             b1.Property<string>("Country")
                                 .IsRequired()
                                 .HasMaxLength(2)
@@ -1847,6 +1969,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("numeric(14,2)")
                                 .HasColumnName("tax_unit_value");
 
+                            b1.Property<short?>("TaxUnitYear")
+                                .HasColumnType("smallint")
+                                .HasColumnName("tax_unit_year");
+
                             b1.Property<string>("Type")
                                 .IsRequired()
                                 .HasMaxLength(32)
@@ -1881,6 +2007,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
+
+                            b1.Property<Guid?>("CityId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_city_id");
 
                             b1.Property<Guid>("CompanyId")
                                 .HasColumnType("uuid")

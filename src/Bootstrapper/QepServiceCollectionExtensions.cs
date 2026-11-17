@@ -1,7 +1,9 @@
 using Bootstrapper.Authentication;
 using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
+using Bootstrapper.Realtime;
 using Bootstrapper.Seeding;
+using Bootstrapper.Valkey;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
@@ -59,6 +61,7 @@ using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Loans.Infrastructure;
+using Modules.Support.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Store.Infrastructure;
@@ -67,6 +70,8 @@ using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
+using SupportPermissions = Modules.Support.Application.SupportPermissions;
+using SupportPolicies = Modules.Support.Application.SupportPolicies;
 using StorePermissions = Modules.Store.Application.StorePermissions;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
@@ -93,7 +98,11 @@ public static class QepServiceCollectionExtensions
             .Bind(configuration.GetSection(ApiAccessOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<ApiAccessOptions>, ApiAccessOptionsValidator>();
+        // Sus particiones salen de SharedRateLimitPartitions, que registra AddQepValkey: en memoria o en Valkey según
+        // Valkey:Areas:RateLimiting (spec 2026-11-13, D-3).
         services.AddSingleton<ApiKeyRateLimiter>();
+        // Valkey (spec 2026-11-13, D-1): cliente, opciones, métricas, gateway, presencia y fábrica de limitadores.
+        services.AddQepValkey(configuration);
         services.AddScoped<IRequestDispatcher, RequestDispatcher>();
         services.AddScoped<
             IQueryHandler<GetTenantSettingsQuery, TenantSettingsDto>,
@@ -173,6 +182,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<CompleteUploadCommand, FileResourceDto>,
             CompleteUploadHandler>();
+        // Soporte fase 3 (plan F31): la subida sin miembro. No es un handler ni tiene endpoint en Storage: la usa sólo el adaptador de
+        // Soporte en Bootstrapper (SupportAttachmentStorage).
+        services.AddScoped<IStorageSystemUploads, StorageSystemUploads>();
         services.AddScoped<
             ICommandHandler<CancelUploadCommand, CancelUploadResult>,
             CancelUploadHandler>();
@@ -461,6 +473,154 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
+
+        // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
+        // responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketTypesQuery, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
+            Modules.Support.Application.ListTicketTypesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
+            Modules.Support.Application.CreateTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateTicketTypeCommand, Modules.Support.Application.SupportTicketTypeDto>,
+            Modules.Support.Application.UpdateTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.DeleteTicketTypeCommand, Modules.Support.Application.DeleteTicketTypeResult>,
+            Modules.Support.Application.DeleteTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ReorderTicketTypesCommand, IReadOnlyList<Modules.Support.Application.SupportTicketTypeDto>>,
+            Modules.Support.Application.ReorderTicketTypesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetSupportSettingsQuery, Modules.Support.Application.SupportSettingsDto>,
+            Modules.Support.Application.GetSupportSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateSupportSettingsCommand, Modules.Support.Application.SupportSettingsDto>,
+            Modules.Support.Application.UpdateSupportSettingsHandler>();
+        // Fase 3: el formulario público, versionado (plan F14); los documentos legales del portal, versionados por tipo (spec
+        // 2026-11-15 §7).
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetFormSettingsQuery, Modules.Support.Application.SupportFormSettingsDto>,
+            Modules.Support.Application.GetFormSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.UpdateFormSettingsCommand, Modules.Support.Application.SupportFormSettingsDto>,
+            Modules.Support.Application.UpdateFormSettingsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetLegalDocumentsQuery, Modules.Support.Application.SupportLegalDocumentsDto>,
+            Modules.Support.Application.GetLegalDocumentsHandler>();
+        services.AddScoped<
+            IQueryHandler<
+                Modules.Support.Application.GetLegalDocumentHistoryQuery, Modules.Support.Application.SupportLegalDocumentHistoryDto>,
+            Modules.Support.Application.GetLegalDocumentHistoryHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetLegalDocumentVersionQuery, Modules.Support.Application.SupportLegalDocumentDto>,
+            Modules.Support.Application.GetLegalDocumentVersionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PublishLegalDocumentCommand, Modules.Support.Application.SupportLegalDocumentDto>,
+            Modules.Support.Application.PublishLegalDocumentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.CreateTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetTicketQuery, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.GetTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<
+                Modules.Support.Application.GetLegalAcceptanceSnapshotQuery,
+                Modules.Support.Application.SupportLegalAcceptanceSnapshotDto>,
+            Modules.Support.Application.GetLegalAcceptanceSnapshotHandler>();
+        services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.GetTicketAttachmentDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
+            Modules.Support.Application.GetTicketAttachmentDownloadHandler>();
+        // Fase 4b (H13): el PDF de una respuesta formal desde la consola.
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.GetReplyDocumentDownloadCommand, Modules.Support.Application.SupportDocumentLinkDto>,
+            Modules.Support.Application.GetReplyDocumentDownloadHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListSupportAssigneesQuery, Modules.Support.Application.SupportAssigneesDto>,
+            Modules.Support.Application.ListSupportAssigneesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketStatusCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketStatusHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AssignTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.AssignTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.TakeTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.TakeTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ExtendTicketCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ExtendTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ReissueTicketPinCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ReissueTicketPinHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketTypeCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.LinkTicketCustomerCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.LinkTicketCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketPriorityCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketPriorityHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
+            Modules.Support.Application.ListTicketsHandler>();
+        // Fase 4b (H24): el reporte de Soporte.
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetSupportReportQuery, Modules.Support.Application.SupportReportDto>,
+            Modules.Support.Application.GetSupportReportHandler>();
+        // Fase 2 (Mensajería).
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTicketFromConversationCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.CreateTicketFromConversationHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListConversationTicketsQuery, Modules.Support.Application.SupportConversationTicketsDto>,
+            Modules.Support.Application.ListConversationTicketsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketMessagesQuery, Modules.Support.Application.SupportTicketMessagesDto>,
+            Modules.Support.Application.ListTicketMessagesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.PinTicketMessageCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.PinTicketMessageHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ReleaseTicketMessageCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ReleaseTicketMessageHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.SetTicketFollowThreadCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.SetTicketFollowThreadHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListUnclassifiedQuery, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.ListUnclassifiedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AssignUnclassifiedCommand, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.AssignUnclassifiedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.DismissUnclassifiedCommand, Modules.Support.Application.SupportUnclassifiedDto>,
+            Modules.Support.Application.DismissUnclassifiedHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetReplyOptionsQuery, Modules.Support.Application.SupportReplyOptionsDto>,
+            Modules.Support.Application.GetReplyOptionsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.SendTicketReplyCommand, Modules.Support.Application.SupportReplyResultDto>,
+            Modules.Support.Application.SendTicketReplyHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AddTicketNoteCommand, Modules.Support.Application.SupportTicketNoteDto>,
+            Modules.Support.Application.AddTicketNoteHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTicketNotesQuery, Modules.Support.Application.SupportTicketNotesDto>,
+            Modules.Support.Application.ListTicketNotesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.OpenNoteAttachmentCommand, Modules.Support.Application.SupportNoteAttachmentSessionDto>,
+            Modules.Support.Application.OpenNoteAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CompleteNoteAttachmentCommand, Modules.Support.Application.SupportNoteAttachmentStatusDto>,
+            Modules.Support.Application.CompleteNoteAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.GetNoteFileDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
+            Modules.Support.Application.GetNoteFileDownloadHandler>();
+        services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -747,6 +907,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetOrderQuery, OrderDetailDto>,
             GetOrderHandler>();
         services.AddScoped<
+            IQueryHandler<PreviewQuotationConversionQuery, QuotationConversionPreviewDto>,
+            PreviewQuotationConversionHandler>();
+        services.AddScoped<
             IQueryHandler<ListOrdersQuery, OrderPage>,
             ListOrdersHandler>();
         services.AddScoped<
@@ -771,10 +934,22 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
         services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
         services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
+        // Spec 2026-11-15 §4: el asesor cambia o quita la cuenta de comprador del pedido de la tienda. El validador entra con
+        // AddValidatorsFromAssemblyContaining del módulo.
+        services.AddScoped<
+            ICommandHandler<SetOrderBuyerAccountCommand, OrderDetailDto>,
+            SetOrderBuyerAccountHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveOrderBuyerAccountCommand, OrderDetailDto>,
+            RemoveOrderBuyerAccountHandler>();
         // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
         services.AddScoped<
             ICommandHandler<SendOrderCommand, OrderDetailDto>,
             SendOrderHandler>();
+        // «Descargar PDF» del pedido: el mismo documento del envío, como enlace firmado.
+        services.AddScoped<
+            ICommandHandler<ExportOrderPdfCommand, OrderPdfExportDto>,
+            ExportOrderPdfHandler>();
         services.AddScoped<
             ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>,
             ConvertQuotationToOrderHandler>();
@@ -835,6 +1010,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
             UpdateQuotationSettingsHandler>();
+        // El contenido configurable del PDF (spec 2026-11-16 §4.2); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<IQueryHandler<GetPdfContentQuery, PdfContentDto>, GetPdfContentHandler>();
+        services.AddScoped<ICommandHandler<UpdatePdfContentCommand, PdfContentDto>, UpdatePdfContentHandler>();
         // Los ajustes del pedido por tenant (spec 2026-11-10 §6); el validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<
             IQueryHandler<GetOrderSettingsQuery, OrderSettingsDto>,
@@ -1036,6 +1214,15 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-11-09 D3): la plantilla de pedido, calcada de la de cotización; el validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<ICommandHandler<ProvisionOrderTemplateCommand, ManagedTemplateDto>, ProvisionOrderTemplateHandler>();
         services.AddScoped<IQueryHandler<GetOrderTemplateDraftQuery, SystemTemplateDraftDto>, GetOrderTemplateDraftHandler>();
+        // Soporte fase 2: la plantilla «Aviso de respuesta», calcada de la de pedido sin encabezado.
+        services.AddScoped<ICommandHandler<ProvisionSupportReplyTemplateCommand, ManagedTemplateDto>, ProvisionSupportReplyTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetSupportReplyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportReplyTemplateDraftHandler>();
+        // Soporte fase 4b: la plantilla «Respuesta formal», calcada de la de pedido con el PDF de encabezado.
+        services.AddScoped<ICommandHandler<ProvisionSupportFormalReplyTemplateCommand, ManagedTemplateDto>, ProvisionSupportFormalReplyTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetSupportFormalReplyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportFormalReplyTemplateDraftHandler>();
+        // Soporte fase 4b: la plantilla de la encuesta, con los tres botones fijos.
+        services.AddScoped<ICommandHandler<ProvisionSupportSurveyTemplateCommand, ManagedTemplateDto>, ProvisionSupportSurveyTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetSupportSurveyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportSurveyTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -1128,6 +1315,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
@@ -1146,6 +1334,7 @@ public static class QepServiceCollectionExtensions
         services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
+        services.AddSupportInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
         services.AddBuyersInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
@@ -1169,9 +1358,8 @@ public static class QepServiceCollectionExtensions
         // clientes y almacenamiento entran por adaptadores que se registran más abajo.
         services.AddMessagingInfrastructure(configuration);
 
-        // Presencia de la bandeja: quién tiene una conexión abierta. Es por proceso, en memoria, y sólo vale con `replicas: 1`;
-        // con más réplicas cada una vería sólo a sus conectados.
-        services.AddSingleton<IMessagingPresence, MessagingPresence>();
+        // La presencia de la bandeja (IMessagingPresence, IMessagingPresenceReader) la registra AddQepValkey: con
+        // Valkey:Areas:Presence es compartida entre pods, y apagada es el registro local de siempre.
 
         // Pipeline (spec 2026-10-13): el embudo de ventas. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones,
         // clientes y nombres de miembros entran por adaptadores que se registran más abajo.
@@ -1279,6 +1467,13 @@ public static class QepServiceCollectionExtensions
         // §6.3: pago y cancelación de los pedidos ya importados. Va antes de AddShopifyWebhookProcessing, que sólo
         // registra la reacción vacía si nadie registró otra (TryAdd).
         services.AddScoped<IShopifyOrderChangeReaction, ShopifyOrderChanges>();
+        // Spec 2026-11-14 §3: las ediciones de Shopify sobre pedidos importados, con el mismo patrón (TryAdd en
+        // AddShopifyWebhookProcessing). Los resolvedores de líneas y envío son los de la importación.
+        services.AddScoped<ShopifyLineResolver>();
+        services.AddScoped<ShopifyShippingResolver>();
+        services.AddScoped<ShopifyEditPlanner>();
+        services.AddScoped<ShopifyOrderEdits>();
+        services.AddScoped<IShopifyOrderEditDetector>(provider => provider.GetRequiredService<ShopifyOrderEdits>());
         services.AddShopifyWebhookProcessing();
         services.AddShopifyWebhookWorker();
         // Spec 2026-10-26 D-C6: el consumidor de los eventos de sinónimos de Geography, que siembra los trabajos de corrección, y
@@ -1297,6 +1492,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IHistoricalCityBackfill, HistoricalCityBackfillAdapter>();
         // §5.3: el cron de la conciliación, cada Shopify:Reconcile:IntervalMinutes.
         services.AddShopifyReconcileWorker();
+        // Spec 2026-11-13: las asociaciones de líneas personalizadas (nombres de variantes de Catalog).
+        services.AddShopifyCustomLineMappings();
+        // Spec 2026-11-14 §6: la bandeja de cambios de Shopify (consultas, aceptar, rechazar y revisar).
+        services.AddShopifyOrderEditDecisions();
+        // Spec 2026-11-14 §5: el worker que manda a Shopify las correcciones (orderUpdate).
+        services.AddShopifyOrderPushes();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
@@ -1343,6 +1544,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
+        // Soporte fase 2: el número de los tickets que nombran los eventos del hilo, leído de Soporte.
+        services.AddScoped<IMessagingTicketNames, MessagingTicketNames>();
         // Spec 2026-10-31: iniciar el asistente desde el hilo; la decisión es de Automations (ManualRunStarter).
         services.AddScoped<IAutomationManualStart, AutomationManualStart>();
         // Spec 2026-10-21 §5.5: «Datos capturados» del asesor, leído de la corrida más reciente de Automations.
@@ -1413,6 +1616,10 @@ public static class QepServiceCollectionExtensions
         // no guarda estado) y el IMeterFactory es el del host, el mismo que lee el exportador.
         services.AddSingleton(provider => new Observability.QueueGauges(
             provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
+        // Spec 2026-11-16: la hora del último webhook de Meta, en la misma vuelta del muestreador.
+        services.AddScoped<Observability.IWebhookArrivalSource, Observability.WebhookArrivalSource>();
+        services.AddSingleton(provider => new Observability.WebhookArrivalGauge(
+            provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
         services.AddHostedService<Observability.QueueSamplerWorker>();
 
         // Registro de llamadas a la API externa: el middleware encola y el escritor inserta, para que la base no demore una respuesta.
@@ -1470,11 +1677,107 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
         services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, LoansUserReferenceProbe>();
+        services.AddScoped<IUserReferenceProbe, SupportUserReferenceProbe>();
 
         // Mismo patrón para `loans` (spec de préstamos 2026-10-31): clientes y encargados son ids sueltos y el composition root cablea sus
         // puertos contra Customers, Tenancy y Authorization. Con ruta completa por el mismo choque de nombres.
         services.AddScoped<Modules.Loans.Application.ILoansCustomerLookup, LoansCustomerLookup>();
         services.AddScoped<Modules.Loans.Application.ILoansMemberDirectory, LoansMemberDirectory>();
+
+        // `support` (spec 2026-11-14): clientes, responsables y el calendario son de otros módulos y Soporte sólo declara puertos. El
+        // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
+        services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
+        services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the public portal is a Companies company, like IPosCompanyLookup.
+        services.AddScoped<Modules.Support.Application.ISupportOrganizationDirectory, SupportOrganizationDirectory>();
+        // Fase 4a (plan G8): el «quién soy» de IsMe; null fuera de una sesión.
+        services.AddScoped<Modules.Support.Application.ISupportViewer, SupportViewer>();
+        // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.
+        services.AddScoped<Modules.Support.Application.ISupportMemberPermissions, SupportMemberPermissions>();
+        Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);
+        services.AddAppRealtime();
+        services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
+        // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
+        // Notifications; Soporte sólo declara los puertos.
+        services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();
+        services.AddScoped<Modules.Support.Application.ISupportThreadFeed, SupportThreadFeed>();
+        services.AddScoped<Modules.Support.Application.ISupportSurveyFeed, SupportSurveyFeed>();
+        services.AddScoped<Modules.Support.Application.ISupportAutoCloseFeed, SupportAutoCloseFeed>();
+        services.AddScoped<Modules.Support.Application.ISupportConversationEvents, SupportConversationEvents>();
+        services.AddScoped<Modules.Support.Application.ISupportReplyChannels, SupportReplyChannels>();
+        services.AddScoped<Modules.Support.Application.ISupportReplyEmail, SupportReplyEmailSender>();
+        // Soporte fase 4b (H5 y H8): el membrete de la respuesta formal (Companies, Tenancy y Storage) y el PDF en el bucket privado,
+        // bajo support/ y sin regla de ciclo de vida.
+        services.AddScoped<Modules.Support.Application.ISupportLetterhead, SupportLetterhead>();
+        services.AddScoped<Modules.Support.Application.ISupportDocumentStorage, SupportDocumentStorage>();
+        // Tarea 8: arma el PDF de la respuesta formal (firma, membrete, «siguiente paso», generación y bucket) antes de crear la fila.
+        services.AddScoped<Modules.Support.Application.SupportFormalReplies>();
+        // Tarea 11 (H16): el correo de la encuesta con el enlace de calificación (Notifications).
+        services.AddScoped<Modules.Support.Application.ISupportSurveyEmail, SupportSurveyEmailSender>();
+        // Soporte fase 3: el host del formulario público (plan F28 y F29).
+        // Los orígenes del grupo público se validan al arrancar, como Cors:AllowedOrigins (plan F4).
+        services.AddOptions<SupportPublicFormOptions>()
+            .Bind(configuration.GetSection(SupportPublicFormOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<SupportPublicFormOptions>, SupportPublicFormOptionsValidator>();
+        services.AddSingleton<Modules.Support.Application.ISupportPublicOptions, SupportPublicOptions>();
+        // El grupo anónimo: Turnstile de la tienda (F28), países y celular (F19, F20) y la geografía de Colombia (F19).
+        services.AddScoped<Modules.Support.Application.ISupportCaptcha, SupportCaptcha>();
+        services.AddScoped<SupportPhoneNormalizer>();
+        services.AddScoped<Modules.Support.Application.ISupportCountries>(provider => provider.GetRequiredService<SupportPhoneNormalizer>());
+        services.AddScoped<Modules.Support.Application.ISupportPhoneNormalizer>(
+            provider => provider.GetRequiredService<SupportPhoneNormalizer>());
+        services.AddScoped<Modules.Support.Application.ISupportGeography, SupportGeography>();
+        services.AddScoped<Modules.Support.Application.SupportPublicResolver>();
+        services.AddScoped<Modules.Support.Application.ISupportTenantBranding, SupportTenantBranding>();
+        services.AddScoped<Modules.Support.Application.ISupportOpeningEmail, SupportOpeningEmailSender>();
+        services.AddScoped<Modules.Support.Application.SupportOpeningSender>();
+        services.AddScoped<Modules.Support.Application.SupportOpeningDelivery>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.FilePublicTicketCommand, Modules.Support.Application.SupportPublicFiledDto>,
+            Modules.Support.Application.FilePublicTicketHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.LookupPublicTicketCommand, Modules.Support.Application.SupportPublicTicketDto>,
+            Modules.Support.Application.LookupPublicTicketHandler>();
+        // Fase 4b (H19, H20): la verificación de la consulta, extraída para calificar por la consulta, y la encuesta por el enlace.
+        services.AddScoped<Modules.Support.Application.SupportPublicAccess>();
+        services.AddScoped<Modules.Support.Application.SupportPublicTicketView>();
+        services.AddScoped<Modules.Support.Application.SupportPublicSurveys>();
+        services.AddScoped<Modules.Support.Application.SupportSurveyAnswering>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.RatePublicTicketCommand, Modules.Support.Application.SupportPublicTicketDto>,
+            Modules.Support.Application.RatePublicTicketHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.LookupPublicSurveyQuery, Modules.Support.Application.SupportPublicSurveyDto>,
+            Modules.Support.Application.LookupPublicSurveyHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.AnswerPublicSurveyCommand, Modules.Support.Application.SupportPublicSurveyDto>,
+            Modules.Support.Application.AnswerPublicSurveyHandler>();
+        // Los adjuntos del formulario (plan F30 a F37): el archivo va por la subida sin miembro de Storage.
+        services.AddScoped<Modules.Support.Application.ISupportAttachmentStorage, SupportAttachmentStorage>();
+        services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.OpenPublicAttachmentCommand, Modules.Support.Application.SupportPublicAttachmentSessionDto>,
+            Modules.Support.Application.OpenPublicAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<
+                Modules.Support.Application.CompletePublicAttachmentCommand, Modules.Support.Application.SupportPublicAttachmentStatusDto>,
+            Modules.Support.Application.CompletePublicAttachmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ResendPublicPinCommand, bool>,
+            Modules.Support.Application.ResendPublicPinHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetPublicFormQuery, Modules.Support.Application.SupportPublicFormDto>,
+            Modules.Support.Application.GetPublicFormHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.GetPublicConsultQuery, Modules.Support.Application.SupportPublicConsultDto>,
+            Modules.Support.Application.GetPublicConsultHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListPublicSupportDepartmentsQuery, Modules.Support.Application.SupportPublicGeoListDto>,
+            Modules.Support.Application.ListPublicSupportDepartmentsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListPublicSupportCitiesQuery, Modules.Support.Application.SupportPublicGeoListDto>,
+            Modules.Support.Application.ListPublicSupportCitiesHandler>();
 
         // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
         // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno
@@ -1602,6 +1905,8 @@ public static class QepServiceCollectionExtensions
         // Mismo patron (CAT-05) entre `quotations` y `geography`: resuelve la ciudad de una parte
         // con datos propios para el Excel de pedidos.
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();
+        // Spec 2026-11-15 §4: el correo de la cuenta de comprador del pedido, sobre el repositorio de Buyers.
+        services.AddScoped<IQuotationBuyerAccountLookup, QuotationBuyerAccountLookup>();
         // Plan 2026-10-21: la cotización y el pedido salen por la conexión de Zenvia del tenant, que vive en Integrations.
         services.AddScoped<IWhatsAppChannelDirectory, QuotationsWhatsAppChannelDirectory>();
         // Spec 2026-10-21 D16/D17: la cotización por la conexión de Meta cruza a Mensajería; scoped por su DbContext.
@@ -1622,6 +1927,12 @@ public static class QepServiceCollectionExtensions
         // catálogo, y Catalog sabe si una tasa está asignada a algún cliente. Dos puertos, un adaptador por lado.
         services.AddScoped<ICustomerTaxRateLookup, CustomerTaxRateLookup>();
         services.AddScoped<ITaxRateCustomerUsage, TaxRateCustomerUsage>();
+        // ReteICA por empresa (spec 2026-11-12 §7.2): Catalog valida y pinta el municipio de una tasa municipal.
+        services.AddScoped<ITaxRateGeographyLookup, TaxRateGeographyLookup>();
+        // ReteICA por empresa (spec 2026-11-12 §7.3): Companies valida y pinta las tasas municipales de una empresa contra el
+        // catálogo, y Catalog sabe si una tasa está asignada a alguna empresa. Dos puertos, un adaptador por lado.
+        services.AddScoped<ICompanyTaxRateLookup, CompanyTaxRateLookup>();
+        services.AddScoped<ITaxRateCompanyUsage, TaxRateCompanyUsage>();
         // Lo que el dominio no puede saber del envío (transportadora activa, recaudo, tasa del tenant):
         // lo usan crear, guardar y previsualizar la cotización y el pedido.
         services.AddScoped<ShippingResolver>();
@@ -1688,6 +1999,8 @@ public static class QepServiceCollectionExtensions
         services.AddQepObservability(configuration, environment, deployment.BuildNumber);
         AddAuthentication(services, configuration, environment);
         AddAuthorization(services);
+        // Último a propósito (spec 2026-11-13, D-7): agrega el interceptor de timbres a cada DbContext ya registrado.
+        Valkey.QueueDoorbellRegistration.AddQueueDoorbellInterceptor(services);
         return services;
     }
 
@@ -1708,9 +2021,8 @@ public static class QepServiceCollectionExtensions
         // por request sea correcto — el scope dura lo que el request.
         services.AddScoped<ITenantRoleCatalog, TenantRoleCatalog>();
         services.AddAuthorizationInfrastructure(configuration);
-        services.AddScoped<
-            Modules.Authorization.Application.IAuthorizationService,
-            AuthorizationService>();
+        // IAuthorizationService lo registra AddQepValkey (spec 2026-11-13, D-5): AuthorizationService tal cual con
+        // Valkey:Areas:Permissions apagado, o decorado por la caché de permisos con el área prendida.
         services.AddScoped<IRolePermissionChecker, RolePermissionChecker>();
         services.AddScoped<IRoleReferenceValidator, RoleReferenceValidator>();
         // Las claves de rol van en inglés y sin prefijo de módulo: a diferencia de un permiso,
@@ -1844,6 +2156,10 @@ public static class QepServiceCollectionExtensions
                 // Spec de préstamos (2026-10-31): los préstamos que la empresa otorga los administra quien administra la empresa.
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
+                // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
+                SupportPermissions.Read,
+                SupportPermissions.Manage,
+                SupportPermissions.SettingsManage,
                 // Spec de la tienda en línea (owner, 2026-11-03): publicar la tienda y fijar sus cuentas de cobro es de admin y de nadie más.
                 // La bandeja de solicitudes ya la tiene: es quotations.order.manage, el permiso de Pedidos.
                 StorePermissions.SettingsManage,
@@ -1911,7 +2227,10 @@ public static class QepServiceCollectionExtensions
                 MessagingPermissions.ResolutionReasonManage,
                 // Spec 2026-10-13 D32: la asesora trabaja sus negocios; los ajustes del embudo los decide quien administra.
                 PipelinePermissions.DealRead,
-                PipelinePermissions.DealManage
+                PipelinePermissions.DealManage,
+                // Spec 2026-11-14 (soporte, C1): el asesor atiende los tickets; configurar los tipos y el umbral es de admin.
+                SupportPermissions.Read,
+                SupportPermissions.Manage
             ]));
         services.AddSingleton(new RoleDefinition(
             "billing",
@@ -1972,140 +2291,200 @@ public static class QepServiceCollectionExtensions
             "Permite consultar la configuración del tenant.",
             "Tenancy",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.settings", "Configuración", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsUpdate,
             "Actualizar configuración",
             "Permite modificar la configuración del tenant.",
             "Tenancy",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.settings", "Configuración", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipInvite,
             "Invitar miembros",
             "Permite invitar usuarios al tenant.",
             "Tenancy",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.members", "Miembros", "invite"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipRead,
             "Leer miembros",
             "Permite consultar membresías y catálogo de roles/permisos.",
             "Tenancy",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.members", "Miembros", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipManage,
             "Gestionar miembros",
             "Permite suspender, remover y cambiar los roles que tiene un miembro.",
             "Tenancy",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.members", "Miembros", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipRolesManage,
             "Definir roles",
             "Permite crear roles propios y elegir que permisos concede cada uno.",
             "Tenancy",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("tenancy.roles", "Roles", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileUpload,
             "Subir archivos",
             "Permite crear sesiones de carga y completar uploads.",
             "Storage",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("storage.file", "Archivos", "upload"),
+        });
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileRead,
             "Leer archivos",
             "Permite solicitar URLs de descarga.",
             "Storage",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("storage.file", "Archivos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileDelete,
             "Eliminar archivos",
             "Permite marcar archivos como eliminados.",
             "Storage",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("storage.file", "Archivos", "delete"),
+        });
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FilePublish,
             "Publicar imágenes",
             "Permite publicar y despublicar imágenes y sus variantes.",
             "Storage",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("storage.file", "Archivos", "publish"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductRead,
             "Leer productos",
             "Permite consultar el catálogo de productos del tenant.",
             "Catalog",
             "low",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.product", "Productos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductManage,
             "Gestionar productos",
             "Permite crear, editar e inactivar productos.",
             "Catalog",
             "medium",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.product", "Productos", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.TaxRateRead,
             "Leer tasas de impuesto",
             "Permite consultar las tasas de impuesto del tenant.",
             "Catalog",
             "low",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.tax_rate", "Tasas de impuesto", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.TaxRateManage,
             "Gestionar tasas de impuesto",
             "Permite crear, editar e inactivar tasas de impuesto.",
             "Catalog",
             "high",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.tax_rate", "Tasas de impuesto", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductCostRead,
             "Ver costos de productos",
             "Permite ver el costo unitario de las variantes.",
             "Catalog",
             "medium",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.product_cost", "Costos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductCostManage,
             "Gestionar costos de productos",
             "Permite escribir y borrar el costo unitario de las variantes.",
             "Catalog",
             "medium",
-            RequiredModules: [ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.product_cost", "Costos", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyRead,
             "Leer empresas",
             "Permite consultar las empresas del tenant.",
             "Companies",
             "low",
-            RequiredModules: [ModuleKeys.Companies]));
+            RequiredModules: [ModuleKeys.Companies])
+        {
+            Shape = new("companies.company", "Empresas", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyManage,
             "Gestionar empresas",
             "Permite crear, editar, inactivar y reactivar empresas.",
             "Companies",
             "medium",
-            RequiredModules: [ModuleKeys.Companies]));
+            RequiredModules: [ModuleKeys.Companies])
+        {
+            Shape = new("companies.company", "Empresas", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerRead,
             "Leer clientes",
             "Permite consultar el listado y el detalle de los clientes del tenant.",
             "Customers",
             "low",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerManage,
             "Gestionar clientes",
             "Permite crear, editar, inactivar y reactivar clientes.",
             "Customers",
             "medium",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerImport,
             "Importar clientes",
@@ -2115,84 +2494,120 @@ public static class QepServiceCollectionExtensions
             // de una sola vez, y el gate CLI-00 todavia tiene abierta la politica de retencion de
             // PII. Separado de manage justamente para poder darlo a menos gente.
             "high",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "import"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerMerge,
             "Fusionar clientes",
             "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
             "Customers",
             "high",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "merge"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerDelete,
             "Borrar clientes",
             "Permite borrar clientes de forma definitiva. No se puede deshacer.",
             "Customers",
             "high",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.customer", "Clientes", "delete"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.DataConsentRevoke,
             "Revocar autorización de datos",
             "Permite registrar que un cliente revocó su autorización de tratamiento de datos personales.",
             "Customers",
             "high",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.data_consent", "Autorización de datos", "revoke"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.ClassificationRead,
             "Leer clasificaciones de clientes",
             "Permite consultar el catalogo de clasificaciones de clientes del tenant.",
             "Customers",
             "low",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.classification", "Clasificaciones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.ClassificationManage,
             "Gestionar clasificaciones de clientes",
             "Permite crear, editar, inactivar, reactivar y eliminar clasificaciones de clientes.",
             "Customers",
             "medium",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.classification", "Clasificaciones", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.TagManage,
             "Gestionar etiquetas de clientes",
             "Permite renombrar, cambiar de color y eliminar etiquetas de clientes. Crearlas y asignarlas es de quien gestiona clientes.",
             "Customers",
             "medium",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.tag", "Etiquetas", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.NoteModerate,
             "Moderar notas de clientes",
             "Permite eliminar las notas internas que escribió otra persona.",
             "Customers",
             "medium",
-            RequiredModules: [ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Customers])
+        {
+            Shape = new("customers.note", "Notas", "moderate"),
+        });
         services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationRead,
             "Leer cotizaciones",
             "Permite consultar el listado y el detalle de las cotizaciones del tenant.",
             "Quotations",
             "low",
-            RequiredModules: [ModuleKeys.Quotations]));
+            RequiredModules: [ModuleKeys.Quotations])
+        {
+            Shape = new("quotations.quotation", "Cotizaciones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationManage,
             "Gestionar cotizaciones",
             "Permite crear y editar cotizaciones en borrador, incluidas sus lineas de producto.",
             "Quotations",
             "medium",
-            RequiredModules: [ModuleKeys.Quotations]));
+            RequiredModules: [ModuleKeys.Quotations])
+        {
+            Shape = new("quotations.quotation", "Cotizaciones", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderRead,
             "Leer pedidos",
             "Permite consultar el pedido convertido de una cotización.",
             "Quotations",
             "low",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderManage,
             "Gestionar pedidos",
             "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
             "Quotations",
             "medium",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "manage"),
+        });
         // Aparte de OrderManage: quien carga los comprobantes (el asesor) no es quien verifica la plata.
         // Spec 2026-11-10 §7: la constante y el valor siguen; cambia lo que significa y su nombre visible.
         services.AddSingleton(new PermissionDefinition(
@@ -2201,7 +2616,10 @@ public static class QepServiceCollectionExtensions
             "Permite marcar un pedido como pagado, deshacerlo y quitar comprobantes de un pedido pagado.",
             "Quotations",
             "medium",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "mark_paid"),
+        });
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
         // persona ya registró (spec 2026-11-10: abierto, sin preparar ni facturar).
         services.AddSingleton(new PermissionDefinition(
@@ -2210,7 +2628,10 @@ public static class QepServiceCollectionExtensions
             "Permite anular un pedido abierto que no esté preparado ni facturado, con un motivo obligatorio.",
             "Quotations",
             "high",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "void"),
+        });
         // Medium, igual que marcar pagado: sólo cambia la marca del pedido, no emite ni anula nada fuera
         // de QEP (spec 2026-10-05). Exigir el pago antes es el ajuste RequireFullPaymentToInvoice (spec 2026-11-10).
         services.AddSingleton(new PermissionDefinition(
@@ -2219,21 +2640,30 @@ public static class QepServiceCollectionExtensions
             "Permite marcar un pedido como facturado y revertir esa marca. Si antes debe estar pagado lo decide el ajuste del pedido de cada tenant.",
             "Quotations",
             "medium",
-            RequiredModules: [ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Orders])
+        {
+            Shape = new("quotations.order", "Pedidos", "invoice"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.OrdersRead,
             "Reporte de pedidos",
             "Permite consultar y exportar el reporte de pedidos convertidos del tenant.",
             "Reporting",
             "low",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Orders]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Orders])
+        {
+            Shape = new("reporting.order", "Pedidos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.QuotationRead,
             "Reporte de cotizaciones",
             "Permite consultar y exportar el reporte de cotizaciones del tenant.",
             "Reporting",
             "low",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Quotations]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Quotations])
+        {
+            Shape = new("reporting.quotation", "Cotizaciones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.PriceChangeRead,
             "Reporte de cambios de precio",
@@ -2242,14 +2672,20 @@ public static class QepServiceCollectionExtensions
             // Medio y no bajo: el historico completo de precios de un catalogo es el margen del
             // negocio visto de costado, y por eso queda solo en admin.
             "medium",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog])
+        {
+            Shape = new("reporting.price_change", "Cambios de precio", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.CustomerRead,
             "Reporte de clientes",
             "Permite consultar y exportar el padron de clientes (Clientes CUC) del tenant.",
             "Reporting",
             "low",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Customers])
+        {
+            Shape = new("reporting.customer", "Clientes", "read"),
+        });
         // Medio y no bajo, mismo criterio que PriceChangeRead: es la venta de cada asesor vista
         // por otro. No abre ningún reporte por sí solo; amplía el alcance de los de pedidos y
         // cotizaciones, que sin él muestran sólo lo de quien consulta. Spec 2026-10-07: exige sólo
@@ -2260,14 +2696,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver en los reportes de pedidos y cotizaciones los datos de todos los asesores, no sólo los propios.",
             "Reporting",
             "medium",
-            RequiredModules: [ModuleKeys.Reporting]));
+            RequiredModules: [ModuleKeys.Reporting])
+        {
+            Shape = new("reporting.all_advisors", "Datos de todos los asesores", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.MarginRead,
             "Reporte de margen",
             "Permite consultar ventas netas, costo y margen bruto por producto.",
             "Reporting",
             "medium",
-            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog]));
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog])
+        {
+            Shape = new("reporting.margin", "Margen", "read"),
+        });
         // "high" las dos: el log arrastra la traza y el mensaje crudo de cualquier modulo --lo
         // que un 500 lleve adentro-- y el purgado borra en lote y no se deshace.
         services.AddSingleton(new PermissionDefinition(
@@ -2276,63 +2718,90 @@ public static class QepServiceCollectionExtensions
             "Permite consultar los POST, PUT, PATCH y DELETE que fallaron, con su error completo.",
             "Platform",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("platform.request_log", "Log de la aplicación", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PlatformPermissions.RequestLogPurge,
             "Purgar el log de la aplicacion",
             "Permite borrar del log lo anterior a la ultima semana.",
             "Platform",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("platform.request_log", "Log de la aplicación", "purge"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleRead,
             "Ver ventas y cierres de caja",
             "Permite consultar las ventas del punto de venta y los cierres de caja propios.",
             "Pos",
             "low",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.sale", "Ventas", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleCreate,
             "Vender en caja",
             "Permite registrar ventas en el punto de venta con la caja propia abierta.",
             "Pos",
             "medium",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.sale", "Ventas", "create"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleCustomer,
             "Elegir o crear el cliente de una venta",
             "Permite buscar el cliente de una venta del punto de venta o darlo de alta rápida.",
             "Pos",
             "medium",
-            RequiredModules: [ModuleKeys.Pos, ModuleKeys.Customers]));
+            RequiredModules: [ModuleKeys.Pos, ModuleKeys.Customers])
+        {
+            Shape = new("pos.sale", "Ventas", "customer"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleDiscount,
             "Dar descuentos en caja",
             "Permite dar descuentos por línea y cobrar ventas en $0 en el punto de venta.",
             "Pos",
             "high",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.sale", "Ventas", "discount"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.SaleVoid,
             "Anular ventas de caja",
             "Permite anular, con un motivo, una venta cuya caja sigue abierta.",
             "Pos",
             "high",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.sale", "Ventas", "void"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.RegisterOperate,
             "Abrir y cerrar su caja",
             "Permite abrir y cerrar la caja propia del punto de venta.",
             "Pos",
             "medium",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.register", "Cajas", "operate"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PosPermissions.RegisterRead,
             "Ver todas las cajas y ventas",
             "Permite consultar las cajas y las ventas de todos los cajeros del tenant.",
             "Pos",
             "medium",
-            RequiredModules: [ModuleKeys.Pos]));
+            RequiredModules: [ModuleKeys.Pos])
+        {
+            Shape = new("pos.register", "Cajas", "read"),
+        });
         // Spec 2026-10-08 §2: categoría "Operator" (no "Platform", que es la del log de fallas) y
         // núcleo, para que el enmascarado por módulos no las toque.
         services.AddSingleton(new PermissionDefinition(
@@ -2341,21 +2810,30 @@ public static class QepServiceCollectionExtensions
             "Permite listar los tenants, ver sus módulos y su historial.",
             "Operator",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.tenants", "Tenants", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             OperatorPermissions.ModulesManage,
             "Gestionar módulos de los tenants",
             "Permite activar o desactivar los módulos de cualquier tenant.",
             "Operator",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.modules", "Módulos de los tenants", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             OperatorPermissions.TenantsManage,
             "Activar o inactivar tenants",
             "Permite inactivar un tenant, lo que corta el acceso de toda la empresa, o reactivarlo.",
             "Operator",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.tenants", "Tenants", "manage"),
+        });
         // Spec 2026-10-26 §6: misma categoría y núcleo. Gestionar es "high": un sinónimo corrige pedidos y clientes de todos los
         // tenants.
         services.AddSingleton(new PermissionDefinition(
@@ -2364,14 +2842,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver la bandeja de ciudades sin resolver, los sinónimos y lo que cambiaría al confirmarlos.",
             "Operator",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.cities", "Ciudades", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             GeographyOperatorPermissions.CitiesManage,
             "Gestionar sinónimos de ciudades",
             "Permite confirmar, descartar, corregir y borrar sinónimos de ciudades, que corrigen pedidos y clientes de todos los tenants.",
             "Operator",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.cities", "Ciudades", "manage"),
+        });
         // Spec 2026-11-10: la unidad tributaria. Cargar un valor mueve el umbral de las retenciones de todos los tenants: "high".
         services.AddSingleton(new PermissionDefinition(
             CatalogOperatorPermissions.TaxUnitsRead,
@@ -2379,14 +2863,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver el valor de la unidad tributaria (UVT) cargado por país y año.",
             "Operator",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.tax_units", "Unidad tributaria", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             CatalogOperatorPermissions.TaxUnitsManage,
             "Gestionar la unidad tributaria",
             "Permite cargar y corregir el valor de la unidad tributaria de un año, que fija desde qué base se retiene en todos los tenants.",
             "Operator",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.tax_units", "Unidad tributaria", "manage"),
+        });
         // Reporte de uso: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
         services.AddSingleton(new PermissionDefinition(
             OperatorPermissions.UsageRead,
@@ -2394,7 +2884,10 @@ public static class QepServiceCollectionExtensions
             "Permite ver cuántas conversaciones tiene cada tenant, los registros nuevos y quién está conectado.",
             "Operator",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("operator.usage", "Uso de la plataforma", "read"),
+        });
 
         // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
         // las toque. Gestionar es "high": cambia las credenciales con las que la empresa le habla a sus
@@ -2405,14 +2898,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver las conexiones del tenant con plataformas externas, sin sus credenciales.",
             "Integrations",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("integrations.connection", "Conexiones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             IntegrationsPermissions.ConnectionManage,
             "Gestionar integraciones",
             "Permite conectar, probar, pausar, reanudar y eliminar conexiones con plataformas externas y cambiar sus credenciales.",
             "Integrations",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("integrations.connection", "Conexiones", "manage"),
+        });
         // Spec 2026-10-09 §6.3: categoría "Messaging" y núcleo (RequiredModules vacío), para que el
         // enmascarado por módulos no las toque y el 403 con módulo apagado salga con su código.
         services.AddSingleton(new PermissionDefinition(
@@ -2421,14 +2920,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver las conversaciones de WhatsApp del tenant, su hilo y sus archivos.",
             "Messaging",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.conversation", "Conversaciones", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.ConversationManage,
             "Responder en la bandeja de WhatsApp",
             "Permite responder mensajes, marcarlos como leídos y resolver o reabrir conversaciones.",
             "Messaging",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.conversation", "Conversaciones", "manage"),
+        });
         // Spec 2026-10-11 §6.4: núcleo como las otras dos de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.CampaignManage,
@@ -2436,7 +2941,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, programar, lanzar y cancelar campañas de plantillas de WhatsApp a etiquetas o clientes; cada mensaje tiene costo.",
             "Messaging",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.campaign", "Campañas", "manage"),
+        });
         // Spec 2026-10-12 §3.5: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.QuickReplyManage,
@@ -2444,7 +2952,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar y borrar los textos guardados que los asesores insertan en la bandeja de WhatsApp.",
             "Messaging",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.quick_reply", "Respuestas rápidas", "manage"),
+        });
         // Spec 2026-10-15 §3.7: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.ResolutionReasonManage,
@@ -2452,7 +2963,10 @@ public static class QepServiceCollectionExtensions
             "Permite renombrar y archivar los motivos con los que se resuelven las conversaciones de la bandeja.",
             "Messaging",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.resolution_reason", "Motivos de resolución", "manage"),
+        });
         // Spec 2026-10-21 D-H8: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.BusinessHoursManage,
@@ -2460,7 +2974,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, editar, duplicar y asignar los horarios de atención de los números de la bandeja.",
             "Messaging",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.business_hours", "Horarios de atención", "manage"),
+        });
         // Spec 2026-10-14 §4.6: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
         services.AddSingleton(new PermissionDefinition(
             MessagingPermissions.TemplateManage,
@@ -2468,7 +2985,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, sincronizar y borrar las plantillas de WhatsApp de una conexión y aprovisionar la plantilla de cotización; cada plantilla pasa por la revisión de Meta.",
             "Messaging",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("messaging.template", "Plantillas", "manage"),
+        });
         // Spec 2026-10-13 D23 y P1 del plan: categoría "Pipeline" y núcleo (RequiredModules vacío), para que el enmascarado por
         // módulos no las toque y el 403 con la capacidad apagada salga con su código.
         services.AddSingleton(new PermissionDefinition(
@@ -2477,21 +2997,30 @@ public static class QepServiceCollectionExtensions
             "Permite ver el tablero, los negocios del tenant, el triage de conversaciones y los ajustes del embudo.",
             "Pipeline",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("pipeline.deal", "Negocios", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PipelinePermissions.DealManage,
             "Gestionar negocios",
             "Permite crear, editar, mover, ganar, perder y reabrir negocios, enlazar cotizaciones y decidir el triage.",
             "Pipeline",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("pipeline.deal", "Negocios", "manage"),
+        });
         services.AddSingleton(new PermissionDefinition(
             PipelinePermissions.SettingsManage,
             "Configurar el embudo",
             "Permite cambiar las etapas del embudo y los motivos de pérdida y de descarte.",
             "Pipeline",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("pipeline.settings", "Configuración del embudo", "manage"),
+        });
         // Spec 2026-10-21 D-C10: categoría "Automations" y núcleo (RequiredModules vacío), como Pipeline: con [automations] el 403
         // con la capacidad apagada saldría authorization.denied en vez de tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -2500,14 +3029,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver los chatbots, sus plantillas y las conexiones que atienden.",
             "Automations",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("automations.chatbot", "Chatbots", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             AutomationsPermissions.ChatbotManage,
             "Gestionar chatbots",
             "Permite crear, editar, publicar, pausar y borrar chatbots y sus plantillas.",
             "Automations",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("automations.chatbot", "Chatbots", "manage"),
+        });
         // Spec 2026-10-29 §1: categoría "Ai" y núcleo (RequiredModules vacío), como Automations: con [ai] el 403 con la capacidad
         // apagada saldría authorization.denied en vez de tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -2516,14 +3051,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver los agentes IA, los modelos disponibles, su consumo y el estado de las claves de los proveedores.",
             "Ai",
             "low",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("ai.agent", "Agentes IA", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             AiPermissions.AgentManage,
             "Gestionar agentes IA",
             "Permite crear, editar, probar, publicar, pausar y borrar agentes IA.",
             "Ai",
             "high",
-            RequiredModules: []));
+            RequiredModules: [])
+        {
+            Shape = new("ai.agent", "Agentes IA", "manage"),
+        });
         // Spec 2026-10-23 D-14: proveedores exige el módulo suppliers.
         services.AddSingleton(new PermissionDefinition(
             SuppliersPermissions.Read,
@@ -2531,14 +3072,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver el directorio de proveedores y exportarlo.",
             "Suppliers",
             "low",
-            RequiredModules: [ModuleKeys.Suppliers]));
+            RequiredModules: [ModuleKeys.Suppliers])
+        {
+            Shape = new("suppliers.supplier", "Proveedores", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             SuppliersPermissions.Manage,
             "Gestionar proveedores",
             "Permite crear, editar, activar y desactivar proveedores.",
             "Suppliers",
             "medium",
-            RequiredModules: [ModuleKeys.Suppliers]));
+            RequiredModules: [ModuleKeys.Suppliers])
+        {
+            Shape = new("suppliers.supplier", "Proveedores", "manage"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -2546,7 +3093,10 @@ public static class QepServiceCollectionExtensions
             "Permite crear, ver y revocar las claves con las que tus sistemas se conectan a QEP.",
             "Developer",
             "high",
-            RequiredModules: [ModuleKeys.Developer]));
+            RequiredModules: [ModuleKeys.Developer])
+        {
+            Shape = new("developer.api_key", "Claves de API", "manage"),
+        });
         // Spec cobros-recurrentes (owner, 2026-10-29): nunca se muestran opciones ni permisos que el tenant no tiene. Con
         // [billing], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo ofrece; la API
         // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de ServiceContractsAuthorization queda de respaldo).
@@ -2556,14 +3106,20 @@ public static class QepServiceCollectionExtensions
             "Permite ver los contratos de servicio, los cobros por cobrar y los encargados.",
             "Contratos de servicio",
             "low",
-            RequiredModules: [ModuleKeys.ServiceContracts]));
+            RequiredModules: [ModuleKeys.ServiceContracts])
+        {
+            Shape = new("billing.service", "Contratos de servicio", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             ServiceContractsPermissions.Manage,
             "Gestionar contratos de servicio",
             "Permite crear y editar contratos, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
             "Contratos de servicio",
             "medium",
-            RequiredModules: [ModuleKeys.ServiceContracts]));
+            RequiredModules: [ModuleKeys.ServiceContracts])
+        {
+            Shape = new("billing.service", "Contratos de servicio", "manage"),
+        });
         // Spec de préstamos (2026-10-31): nunca se muestran permisos que el tenant no tiene. Con [loans], ModuleEntitlementMask quita el
         // permiso al apagar el módulo y el editor de roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -2572,14 +3128,52 @@ public static class QepServiceCollectionExtensions
             "Permite ver los préstamos, las cuotas por cobrar y los abonos.",
             "Préstamos",
             "low",
-            RequiredModules: [ModuleKeys.Loans]));
+            RequiredModules: [ModuleKeys.Loans])
+        {
+            Shape = new("loans.loan", "Préstamos", "read"),
+        });
         services.AddSingleton(new PermissionDefinition(
             LoansPermissions.Manage,
             "Gestionar préstamos",
             "Permite crear y editar préstamos, marcar cuotas como pagadas y registrar abonos a capital.",
             "Préstamos",
             "medium",
-            RequiredModules: [ModuleKeys.Loans]));
+            RequiredModules: [ModuleKeys.Loans])
+        {
+            Shape = new("loans.loan", "Préstamos", "manage"),
+        });
+        // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
+        // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.Read,
+            "Ver tickets de soporte",
+            "Permite ver todos los tickets de soporte del tenant, su detalle y su trazabilidad.",
+            "Soporte",
+            "low",
+            RequiredModules: [ModuleKeys.Support])
+        {
+            Shape = new("support.ticket", "Tickets", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.Manage,
+            "Gestionar tickets de soporte",
+            "Permite crear tickets y cambiar su estado, su responsable, su tipo y su cliente.",
+            "Soporte",
+            "medium",
+            RequiredModules: [ModuleKeys.Support])
+        {
+            Shape = new("support.ticket", "Tickets", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.SettingsManage,
+            "Configurar soporte",
+            "Permite crear, editar y ordenar los tipos de ticket y fijar cuántos días hábiles antes un ticket está por vencer.",
+            "Soporte",
+            "medium",
+            RequiredModules: [ModuleKeys.Support])
+        {
+            Shape = new("support.settings", "Configuración de soporte", "manage"),
+        });
         // Spec de la tienda en línea (2026-11-03): con [store], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece. La bandeja no declara permiso nuevo: usa quotations.order.manage.
         services.AddSingleton(new PermissionDefinition(
@@ -2588,7 +3182,10 @@ public static class QepServiceCollectionExtensions
             "Permite publicar la tienda, cambiar su marca, contacto, monedas con sus cuentas y modo de precios.",
             "Tienda",
             "medium",
-            RequiredModules: [ModuleKeys.Store]));
+            RequiredModules: [ModuleKeys.Store])
+        {
+            Shape = new("store.settings", "Configuración de la tienda", "manage"),
+        });
     }
 
     private static void AddAuthentication(
@@ -3009,6 +3606,25 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 LoansPermissions.Manage,
                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
+            // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                SupportPermissions.Read,
+                policy => AddPermissionRequirement(policy, SupportPermissions.Read))
+            .AddPolicy(
+                SupportPermissions.Manage,
+                policy => AddPermissionRequirement(policy, SupportPermissions.Manage))
+            .AddPolicy(
+                SupportPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, SupportPermissions.SettingsManage))
+            // Plan D5: ver tickets acepta leer o gestionar, y D15: leer los ajustes acepta además configurar. Un solo claim con
+            // varios valores permitidos; no son permisos, así que no se asignan a roles.
+            .AddPolicy(
+                SupportPolicies.TicketView,
+                policy => AddAnyPermissionRequirement(policy, SupportPermissions.Read, SupportPermissions.Manage))
+            .AddPolicy(
+                SupportPolicies.SettingsView,
+                policy => AddAnyPermissionRequirement(
+                    policy, SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage))
             // Spec de la tienda en línea: sin esta política, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 StorePermissions.SettingsManage,
@@ -3025,5 +3641,13 @@ public static class QepServiceCollectionExtensions
     {
         policy.RequireAuthenticatedUser();
         policy.RequireClaim(QepClaimTypes.Permission, permission);
+    }
+
+    private static void AddAnyPermissionRequirement(
+        AuthorizationPolicyBuilder policy,
+        params string[] permissions)
+    {
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(QepClaimTypes.Permission, permissions);
     }
 }

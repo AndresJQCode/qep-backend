@@ -141,7 +141,7 @@ public sealed class ShopifyInboxApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
         Assert.Equal(
-            """{"cancelledAfterInvoice":0,"importedToday":0,"waiting":0,"withWarnings":0}""",
+            """{"cancelledAfterInvoice":0,"changesToReview":0,"importedToday":0,"waiting":0,"withWarnings":0}""",
             new JsonObject(body!.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => KeyValuePair.Create(pair.Key, pair.Value?.DeepClone()))).ToJsonString());
     }
 
@@ -383,6 +383,22 @@ public sealed class ShopifyInboxApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.NotNull((await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["errors"]!["page"]);
+    }
+
+    // Spec 2026-11-14 §6 (BFF): el contador de «Cambios por revisar» viaja siempre, también en cero.
+    [Fact]
+    public async Task SummaryAlwaysCarriesChangesToReview()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableShopifyAsync(connectionString, tenant.TenantId);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, OrdersPermissions.OrderRead);
+
+        var summary = await client.GetFromJsonAsync<JsonObject>($"{OrdersRoute(tenant.TenantId)}/summary", Ct);
+
+        Assert.Equal(0, summary!["changesToReview"]!.GetValue<int>());
     }
 
     private static string OrdersRoute(Guid tenantId) => $"/api/v1/tenants/{tenantId}/shopify/orders";

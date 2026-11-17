@@ -38,7 +38,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task PendingApprovedAndInvoicedBecomeOpenAndKeepTheInvoicing()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateSeededAsync(connectionString);
 
@@ -62,7 +62,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task UpKeepsTheApprovalAndBacksUpTheOldStatuses()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();
@@ -94,7 +94,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task ApprovedPaidOrdersTakeTheirPaidMarkFromTheApproval()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateSeededAsync(connectionString);
 
@@ -115,7 +115,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task AnUnapprovedFullPaymentIsRecalculatedFromItsProofs()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateSeededAsync(connectionString);
 
@@ -139,7 +139,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task AShopifyOrderWithQepProofsIsRecalculatedFromThem()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateSeededAsync(connectionString);
 
@@ -153,7 +153,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task AShopifyPaymentSyncedAsFullKeepsItsValue()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateSeededAsync(connectionString);
 
@@ -168,7 +168,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task AnApprovedOrderWithoutFullPaymentReopens()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateSeededAsync(connectionString);
 
@@ -181,7 +181,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task TheTenantSettingsGetTheOwnersDefaults()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateSeededAsync(connectionString);
 
@@ -196,7 +196,7 @@ public sealed class OrderStatusAxesMigrationTests
     [Fact]
     public async Task DownRestoresEveryRowExactly()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using var context = NewContext(connectionString);
         var migrator = context.GetService<IMigrator>();

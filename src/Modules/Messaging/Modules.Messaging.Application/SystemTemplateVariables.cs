@@ -38,6 +38,26 @@ public static class SystemTemplateVariables
         new("valor_total", "Valor total", "2.450.000 COP"),
     ];
 
+    /// <summary>Soporte fase 2: la plantilla «Aviso de respuesta». <c>respuesta</c> es el texto del asesor, así que al enviar tiene que
+    /// cumplir <c>TemplateParameterRules</c> (sin saltos de línea).</summary>
+    public static IReadOnlyList<SystemTemplateVariable> SupportReply { get; } =
+    [
+        .. Fixed,
+        new("radicado", "Radicado del caso", "SOP-000127"),
+        new("respuesta", "Respuesta del asesor", "Revisamos tu solicitud y ya quedó resuelta."),
+    ];
+
+    /// <summary>Soporte fase 4b (H10): la plantilla «Respuesta formal» lleva las mismas variables que «Aviso de respuesta»; el PDF va en el
+    /// encabezado, no en una variable.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> SupportFormalReply => SupportReply;
+
+    /// <summary>Soporte fase 4b (H16): la encuesta de satisfacción. Los botones son fijos y no son variables.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> SupportSurvey { get; } =
+    [
+        .. Fixed,
+        new("radicado", "Radicado del caso", "SOP-000127"),
+    ];
+
     public static IReadOnlyList<SystemTemplateVariable> BillingReminder { get; } =
     [
         .. Fixed,

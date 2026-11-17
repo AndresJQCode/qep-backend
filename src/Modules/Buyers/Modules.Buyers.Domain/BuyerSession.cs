@@ -48,6 +48,30 @@ public sealed class BuyerSession
             IpAddress = ipAddress is { Length: > MaxIpLength } ? ipAddress[..MaxIpLength] : ipAddress,
         };
 
+    /// <summary>
+    /// Reconstruye una sesión sin revocar desde la caché (spec 2026-11-13, D-4), sólo para leer <see cref="Id"/> y
+    /// <see cref="AccountId"/> y exigir <see cref="IsValidFor"/>. Nunca se guarda: no está en el seguimiento de EF, así que un
+    /// <c>Revoke</c> o un <c>Touch</c> sobre ella no llegaría a la base. Revocar lee la fila (<c>BuyerSessions.RevokeCurrentAsync</c>).
+    /// </summary>
+    public static BuyerSession Restore(
+        Guid id,
+        Guid accountId,
+        string storeHost,
+        string tokenHash,
+        DateTimeOffset createdAt,
+        DateTimeOffset lastSeenAt,
+        DateTimeOffset expiresAt) =>
+        new()
+        {
+            Id = id,
+            AccountId = accountId,
+            StoreHost = storeHost,
+            TokenHash = tokenHash,
+            CreatedAt = createdAt,
+            LastSeenAt = lastSeenAt,
+            ExpiresAt = expiresAt,
+        };
+
     public bool IsValidFor(string storeHost, DateTimeOffset now) =>
         RevokedAt is null
         && string.Equals(StoreHost, storeHost, StringComparison.Ordinal)

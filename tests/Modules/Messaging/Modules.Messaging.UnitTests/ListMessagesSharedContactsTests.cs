@@ -37,8 +37,15 @@ public sealed class ListMessagesSharedContactsTests
             customers,
             new FakeTenantModules(),
             new FakeExecutionContext(Tenant, Guid.CreateVersion7(), MessagingPermissions.ConversationRead),
-            new ListMessagesValidator());
+            new ListMessagesValidator(),
+            new NoTicketNames());
         return (handler, customers);
+    }
+
+    private sealed class NoTicketNames : IMessagingTicketNames
+    {
+        public Task<IReadOnlyDictionary<Guid, string>> FindNumbersAsync(Guid tenantId, IReadOnlyCollection<Guid> ticketIds, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
     }
 
     [Fact]

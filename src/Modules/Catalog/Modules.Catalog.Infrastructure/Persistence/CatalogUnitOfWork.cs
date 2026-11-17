@@ -17,7 +17,7 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
     // cambia, porque para quien llena el formulario es el mismo error.
     private const string ProductCodeIndex = "IX_product_variants_tenant_code";
     private const string VariantBarcodeIndex = "IX_product_variants_tenant_barcode";
-    private const string TaxRateNameIndex = "IX_tax_rates_tenant_name";
+    private const string TaxRateNameIndex = "IX_tax_rates_tenant_name_percentage_base";
     private const string ProductTaxRateForeignKey = "FK_products_tax_rates_tax_rate_id";
     private const string CategoryNameIndex = "IX_product_categories_tenant_parent_name";
     private const string ProductCategoryForeignKey = "FK_products_product_categories_category_id";
@@ -86,9 +86,11 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
                       TaxRateNameIndex,
                       StringComparison.Ordinal))
         {
+            // El código no cambia (el frontend lo mapea al campo nombre); desde 2026-11-15 sólo choca
+            // con el mismo porcentaje y la misma base mínima.
             throw new CatalogDomainException(
                 "catalog.tax_rate.name_taken",
-                "Another tax rate in this tenant already uses that name.");
+                "Another tax rate in this tenant already uses that name with the same percentage and minimum base.");
         }
         // El nombre de una categoría choca con una hermana (sin mayúsculas, y raíces entre sí: el
         // índice es NULLS NOT DISTINCT). Rama propia, como cada índice único del módulo.

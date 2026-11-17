@@ -298,6 +298,13 @@ public sealed class MergeCustomersHandler(
         var now = clock.UtcNow;
         var actor = executionContext.SubjectId;
 
+        // Decisión del owner 2026-11-16: cada vínculo de empresa que la fusión cambia deja su company_changed, con la forma del de
+        // SetCustomerCompanyHandler (el cliente como recurso). Cambian tres: el fusionado que era contacto deja de serlo
+        // (MarkMerged), el que queda pierde la empresa que se fusionó en él (FillSurvivor) y los contactos de los fusionados pasan
+        // al que queda (RepointContactsAsync).
+        var mergedContacts = plan.Merged.Where(customer => customer.CompanyId is not null).ToArray();
+        var survivorCompany = survivor.CompanyId;
+
         // Primer SaveChanges: los fusionados, que sueltan BSUID, IGSID y documento.
         plan.MarkMerged(now);
         foreach (var customer in plan.Merged)
@@ -305,10 +312,19 @@ public sealed class MergeCustomersHandler(
             auditPublisher.Publish(command.TenantId, actor, CustomerAuditActions.Merged, customer.Id.ToString(), "success", now);
         }
 
+        foreach (var customer in mergedContacts.Where(customer => customer.CompanyId is null))
+        {
+            auditPublisher.Publish(command.TenantId, actor, CustomerAuditActions.CompanyChanged, customer.Id.ToString(), "success", now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         await mergeStore.RepointMergedIntoAsync(command.TenantId, chain, survivor.Id.Value, cancellationToken);
-        await mergeStore.RepointContactsAsync(command.TenantId, survivor.Id.Value, mergedIds.ToArray(), cancellationToken);
+        var repointed = await mergeStore.RepointContactsAsync(command.TenantId, survivor.Id.Value, mergedIds.ToArray(), cancellationToken);
+        foreach (var contactId in repointed)
+        {
+            auditPublisher.Publish(command.TenantId, actor, CustomerAuditActions.CompanyChanged, contactId.ToString(), "success", now);
+        }
 
         // Segundo SaveChanges: el que queda los toma, y las etiquetas cambian de dueño. Las de los fusionados se borran todas:
         // un fusionado no conserva etiquetas, y las que no cupieron vuelven en DroppedTags.
@@ -324,6 +340,11 @@ public sealed class MergeCustomersHandler(
         }
 
         auditPublisher.Publish(command.TenantId, actor, CustomerAuditActions.Merged, survivor.Id.ToString(), "success", now);
+        if (survivor.CompanyId != survivorCompany)
+        {
+            auditPublisher.Publish(command.TenantId, actor, CustomerAuditActions.CompanyChanged, survivor.Id.ToString(), "success", now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         await mergeStore.MoveOwnedAsync(command.TenantId, survivor.Id.Value, moved, cancellationToken);

@@ -44,10 +44,24 @@ public sealed class ProductImageLookupTests
         Assert.Equal(0, repository.GetCalls);
     }
 
-    private static FileResource AvailableImage()
+    // Fix round 1 del Bloque D: un adjunto del formulario público de Soporte no puede ser foto de un producto.
+    [Fact]
+    public async Task ASupportAttachmentIsNotAProductImage()
+    {
+        var attachment = AvailableImage(FileOwnerType.SupportTicket);
+        var image = AvailableImage();
+        var lookup = new ProductImageLookup(
+            new InMemoryFileResourceRepository(attachment, image), new RecordingPublicObjectStorage());
+
+        Assert.Null(await lookup.FindAsync(attachment.Id.Value, TestContext.Current.CancellationToken));
+        var found = await lookup.FindManyAsync([attachment.Id.Value, image.Id.Value], TestContext.Current.CancellationToken);
+        Assert.Equal([image.Id.Value], found.Keys);
+    }
+
+    private static FileResource AvailableImage(FileOwnerType ownerType = FileOwnerType.User)
     {
         var image = FileResource.CreatePendingUpload(
-            FileResourceId.New(), TenantId, Guid.CreateVersion7(), FileOwnerType.User, "portada.png",
+            FileResourceId.New(), TenantId, Guid.CreateVersion7(), ownerType, "portada.png",
             "image/png", 1024, $"staging/{Guid.CreateVersion7():N}", Now);
         image.CompleteUpload("checksum", 1024, Now);
         image.MarkClean(Now);

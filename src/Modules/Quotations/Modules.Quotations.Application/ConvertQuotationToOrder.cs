@@ -56,6 +56,7 @@ public sealed class ConvertQuotationToOrderHandler(
     IExecutionContext executionContext,
     ITenantClock tenantClock,
     ITenantDirectory tenantDirectory,
+    IQuotationWithholdingLookup withholdingLookup,
     IValidator<ConvertQuotationToOrderCommand> validator)
     : ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>
 {
@@ -105,6 +106,12 @@ public sealed class ConvertQuotationToOrderHandler(
         await BillingPersonTypeRequirement.EnsureForQuotationAsync(
             tenantDirectory, command.TenantId, quotation, cancellationToken);
 
+        // Spec alerta UVT §5.2: el pedido nace con la UVT del día del tenant, no con la foto congelada de la cotización.
+        // Antes de la transacción, como las demás lecturas a otro módulo: no tiene por qué hacerse con el lock del
+        // contador tomado. Sin filas con base en unidades no se consulta Catalog.
+        var taxUnits = await TaxUnitRefresh.UnitsForAsync(
+            quotation.ActiveWithholdings, withholdingLookup, DocumentDates.LocalDate(calendar, now), cancellationToken);
+
         // Convertir también saca del borrador: las líneas que todavía no congelaron su producto
         // (un borrador convertido sin enviarse, o una enviada antes del snapshot) lo congelan acá.
         // Antes de la transacción, igual que las copias: es una lectura a otro módulo y no tiene
@@ -150,7 +157,10 @@ public sealed class ConvertQuotationToOrderHandler(
                 command.Notes,
                 convertedBy,
                 proofs,
-                now);
+                now,
+                // Spec 2026-11-16 §3: el día local de la conversión en el calendario del tenant; el dominio no conoce el huso.
+                DocumentDates.LocalDate(calendar, now),
+                taxUnits);
 
             orderRepository.Add(order);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(

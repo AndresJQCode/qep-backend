@@ -11,7 +11,7 @@ using Modules.Identity.Infrastructure.Persistence;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Modules.Tenancy.Infrastructure.Seed;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -156,17 +156,6 @@ public sealed class CatalogSeedTests
         return document.RootElement.GetProperty("products").EnumerateArray()
             .Select(product => product.GetProperty("sku").GetString()!)
             .ToList();
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private sealed class QepApiFactory(

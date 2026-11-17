@@ -12,7 +12,7 @@ namespace Modules.Quotations.IntegrationTests;
 /// deshacer el preparado, archivar y desarchivar (<c>manage</c>), facturar con el ajuste del tenant, el
 /// archivado automático y el 403 de quitar un comprobante de un pedido pagado por las dos rutas.
 /// </summary>
-public sealed class OrderStatusActionsApiTests
+public sealed class OrderStatusActionsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
     private const string SettingsRead = "tenancy.settings.read";
     private const string SettingsUpdate = "tenancy.settings.update";
@@ -30,8 +30,7 @@ public sealed class OrderStatusActionsApiTests
     [Fact]
     public async Task TheFullFlowPaysPreparesInvoicesAndArchives()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, AllPermissions);
         using var _ = client;
         var (order, _) = await CreateOrderCoveredByAProofAsync(client, factory, tenantId);
@@ -58,8 +57,7 @@ public sealed class OrderStatusActionsApiTests
     [Fact]
     public async Task ApproveIsGone()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, AllPermissions);
         using var _ = client;
         var (order, _) = await CreateOrderCoveredByAProofAsync(client, factory, tenantId);
@@ -73,8 +71,7 @@ public sealed class OrderStatusActionsApiTests
     [Fact]
     public async Task AutoArchiveHappensWhenTheSecondConditionArrives()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, AllPermissions);
         using var _ = client;
         (await client.PutAsJsonAsync(
@@ -100,8 +97,7 @@ public sealed class OrderStatusActionsApiTests
     [Fact]
     public async Task AManageOnlyMemberCannotRemoveAProofFromAPaidOrderByEitherRoute()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, AllPermissions);
         using var _ = client;
         var (order, variantId) = await CreateOrderCoveredByAProofAsync(client, factory, tenantId);
@@ -131,8 +127,7 @@ public sealed class OrderStatusActionsApiTests
     [Fact]
     public async Task APreparedOrderCannotBeEditedNorCancelledByTheConsole()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, AllPermissions);
         using var _ = client;
         var (order, variantId) = await CreateOrderCoveredByAProofAsync(client, factory, tenantId);
@@ -156,8 +151,7 @@ public sealed class OrderStatusActionsApiTests
     [Fact]
     public async Task EveryActionLeavesHistoryAndAudit()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, AllPermissions);
         using var _ = client;
         var (order, _) = await CreateOrderCoveredByAProofAsync(client, factory, tenantId);

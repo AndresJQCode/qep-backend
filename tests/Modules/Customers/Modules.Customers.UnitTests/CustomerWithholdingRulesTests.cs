@@ -18,12 +18,29 @@ public sealed class CustomerWithholdingRulesTests
         await Validate(new ThrowingLookup());
 
     [Fact]
-    public async Task OneRatePerTypeIsAccepted()
+    public async Task ANationalRateIsAccepted()
     {
         var retefuente = Rate("Retefuente");
-        var reteIca = Rate("ReteICA");
 
-        await Validate(new TaxRates(retefuente, reteIca), retefuente.Id, reteIca.Id);
+        await Validate(new TaxRates(retefuente), retefuente.Id);
+    }
+
+    // Spec ReteICA por empresa §7.4 (A15): la ReteICA es de la empresa y del municipio, no del cliente. Se revisa antes que
+    // los repetidos, así una ReteICA con dos Retefuente dice lo que de verdad está mal.
+    [Fact]
+    public async Task MunicipalRateIsRejectedBeforeRepeated()
+    {
+        var reteIca = Rate("ReteICA");
+        var first = Rate("Retefuente");
+        var second = Rate("Retefuente");
+
+        var alone = await Assert.ThrowsAsync<CustomersDomainException>(
+            () => Validate(new TaxRates(reteIca), reteIca.Id));
+        var withRepeated = await Assert.ThrowsAsync<CustomersDomainException>(
+            () => Validate(new TaxRates(reteIca, first, second), first.Id, second.Id, reteIca.Id));
+
+        Assert.Equal("customers.customer.withholding_tax_rate_municipal", alone.Code);
+        Assert.Equal("customers.customer.withholding_tax_rate_municipal", withRepeated.Code);
     }
 
     [Fact]

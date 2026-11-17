@@ -8,6 +8,7 @@ namespace Modules.Catalog.Application;
 
 /// <param name="CountryExplicit">El cuerpo trajo <c>country</c>. Sólo entonces se verifica que el tenant
 /// tenga una empresa en ese país; el CO implícito de un cuerpo viejo no se verifica (spec §9.2).</param>
+/// <param name="CityId">El municipio de una tasa municipal (spec ReteICA por empresa §7.2).</param>
 public sealed record CreateTaxRateCommand(
     Guid TenantId,
     string Name,
@@ -15,7 +16,8 @@ public sealed record CreateTaxRateCommand(
     string Type,
     string Country,
     bool CountryExplicit,
-    decimal? MinimumBase)
+    decimal? MinimumBase,
+    Guid? CityId = null)
     : ICommand<TaxRateDto>;
 
 // El dominio hace cumplir las mismas reglas y tiraría un 422 con un solo código. El validador
@@ -47,7 +49,8 @@ public sealed class CreateTaxRateHandler(
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<CreateTaxRateCommand> validator)
+    IValidator<CreateTaxRateCommand> validator,
+    ITaxRateGeographyLookup geography)
     : ICommandHandler<CreateTaxRateCommand, TaxRateDto>
 {
     public async Task<TaxRateDto> HandleAsync(
@@ -77,7 +80,19 @@ public sealed class CreateTaxRateHandler(
             command.Type,
             command.Country,
             command.MinimumBase,
+            command.CityId,
             now);
+
+        // Después del dominio, que ya dijo city_required o city_not_allowed según el alcance del tipo: acá sólo falta que
+        // el municipio exista en Geography (que sólo tiene la DIVIPOLA, así que «existe» es «es de Colombia»).
+        TaxRateCityRef? city = null;
+        if (taxRate.CityId is { } cityId
+            && !(await geography.FindCitiesAsync([cityId], cancellationToken)).TryGetValue(cityId, out city))
+        {
+            throw new CatalogDomainException(
+                "catalog.tax_rate.city_invalid",
+                $"The city '{cityId}' does not exist.");
+        }
 
         // Después del dominio, para que un tipo que no admite base diga minimum_base_not_allowed
         // antes que tax_unit_value_missing. Una base en unidades sin ningún valor cargado no se
@@ -101,7 +116,7 @@ public sealed class CreateTaxRateHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return taxRate.ToDto();
+        return taxRate.ToDto(city);
     }
 
     private async Task EnsureCountryAvailableAsync(

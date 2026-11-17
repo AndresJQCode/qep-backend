@@ -9,7 +9,8 @@ public sealed class MembershipActivationService(
     ITenancyUnitOfWork unitOfWork,
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
-    IClock clock)
+    IClock clock,
+    ITenantAccessVersion tenantAccessVersion)
     : IMembershipActivation
 {
     public async Task<IReadOnlyCollection<Guid>> AcceptInvitedMembershipsAsync(
@@ -19,6 +20,7 @@ public sealed class MembershipActivationService(
     {
         var invited = await membershipRepository.ListInvitedByUserAsync(userId, cancellationToken);
         var now = clock.UtcNow;
+        var accepted = new List<Guid>();
 
         foreach (var membership in invited)
         {
@@ -32,6 +34,8 @@ public sealed class MembershipActivationService(
                 // simplemente no tiene membresía activa para ese tenant.
                 continue;
             }
+
+            accepted.Add(membership.TenantId.Value);
 
             // El usuario que hace login es el actor de su propia aceptación.
             auditRecorder.Record(
@@ -50,11 +54,23 @@ public sealed class MembershipActivationService(
             }
         }
 
+        // Spec 2026-11-13, D-5: el «sin membresía» cacheado de cada tenant aceptado se descarta, antes del guardado y otra vez
+        // después. Una invitación vencida no concede nada: no sube.
+        await BumpAsync(accepted, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await BumpAsync(accepted, cancellationToken);
 
         var activeTenants = await membershipRepository.ListActiveTenantsByUserAsync(
             userId,
             cancellationToken);
         return activeTenants.Select(tenant => tenant.Value).ToArray();
+    }
+
+    private async Task BumpAsync(IEnumerable<Guid> tenantIds, CancellationToken cancellationToken)
+    {
+        foreach (var tenantId in tenantIds.Distinct())
+        {
+            await tenantAccessVersion.BumpAsync(tenantId, cancellationToken);
+        }
     }
 }
