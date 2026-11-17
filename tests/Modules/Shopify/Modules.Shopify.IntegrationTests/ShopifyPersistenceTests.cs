@@ -749,4 +749,58 @@ public sealed class ShopifyPersistenceTests
 
         Assert.Equal([KeyValuePair.Create("Garantía🚛", variantId)], found.ToArray());
     }
+
+    // Spec 2026-11-17 (onboarding) §5 y §7 H7: el estado del asistente (cobertura con su hora, la aceptación y el resumen del
+    // historial) vuelve como se guardó, y guardarlo no sube la versión.
+    [Fact]
+    public async Task TheSetupStateRoundTrips()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var coverage = new ShopifyProductsCoverage(
+            12, 9, false, [new ShopifyCoverageSample("SKU-1", "Camiseta azul"), new ShopifyCoverageSample(null, "Gorra")], Now.AddMinutes(3));
+        var summary = new ShopifySetupHistorySummary(
+            Now.AddMinutes(10), 7, 40, 31,
+            [new ShopifyWaitingCount("product_unmatched", 6), new ShopifyWaitingCount("advisor_inactive", 3)]);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ShopifyDbContext>();
+            var store = ShopifyStore.Create(connectionId, tenantId, Now);
+            store.RecordProductsCoverage(coverage);
+            store.AcceptProductsCoverage(Now.AddMinutes(5));
+            store.RecordSetupHistory(summary);
+            db.Stores.Add(store);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ShopifyDbContext>();
+            var store = await db.Stores.AsNoTracking().SingleAsync(value => value.ConnectionId == connectionId, Ct);
+
+            Assert.NotNull(store.ProductsCoverage);
+            Assert.Equal(
+                (coverage.ShopifyVariants, coverage.Matched, coverage.CatalogEmpty, coverage.MeasuredAt),
+                (store.ProductsCoverage.ShopifyVariants, store.ProductsCoverage.Matched, store.ProductsCoverage.CatalogEmpty, store.ProductsCoverage.MeasuredAt));
+            Assert.Equal(coverage.MissingSample, store.ProductsCoverage.MissingSample);
+            Assert.Equal(Now.AddMinutes(5), store.ProductsCoverageAcceptedAt);
+            Assert.Equal(Now.AddMinutes(10), store.SetupHistoryRanAt);
+            Assert.NotNull(store.SetupHistorySummary);
+            Assert.Equal(
+                (summary.RanAt, summary.Days, summary.Fetched, summary.Imported),
+                (store.SetupHistorySummary.RanAt, store.SetupHistorySummary.Days, store.SetupHistorySummary.Fetched, store.SetupHistorySummary.Imported));
+            Assert.Equal(summary.Waiting, store.SetupHistorySummary.Waiting);
+            Assert.Equal(1L, store.Version);
+        }
+
+        // El jsonb lleva la hora de la medición, en camelCase.
+        Assert.NotNull(await ScalarAsync<string>(
+            connectionString,
+            "SELECT products_coverage->>'measuredAt' FROM shopify.stores WHERE connection_id = @id",
+            ("id", connectionId)));
+    }
 }

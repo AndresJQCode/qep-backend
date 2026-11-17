@@ -939,6 +939,14 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_reconciled_at");
 
+                    b.Property<string>("ProductsCoverage")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("products_coverage");
+
+                    b.Property<DateTimeOffset?>("ProductsCoverageAcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("products_coverage_accepted_at");
+
                     b.Property<DateTimeOffset?>("ProductsSyncedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("products_synced_at");
@@ -946,6 +954,14 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ReconcileLeaseUntil")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("reconcile_lease_until");
+
+                    b.Property<DateTimeOffset?>("SetupHistoryRanAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("setup_history_ran_at");
+
+                    b.Property<string>("SetupHistorySummary")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("setup_history_summary");
 
                     b.Property<string>("ShopDomain")
                         .HasMaxLength(255)

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -111,6 +112,22 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal static string ImportStateCheck() => NamesCheck<ShopifyImportState>("import_state");
+
+    private static readonly JsonSerializerOptions SetupJson = new(JsonSerializerDefaults.Web);
+
+    // Un record del asistente como jsonb. Nulo en la base es nulo en el modelo; EF no llama al conversor con null.
+    private static ValueConverter<T?, string?> JsonConverterFor<T>()
+        where T : class =>
+        new(
+            value => value == null ? null : JsonSerializer.Serialize(value, SetupJson),
+            json => json == null ? null : JsonSerializer.Deserialize<T>(json, SetupJson));
+
+    private static ValueComparer<T?> JsonComparerFor<T>()
+        where T : class =>
+        new(
+            (left, right) => JsonSerializer.Serialize(left, SetupJson) == JsonSerializer.Serialize(right, SetupJson),
+            value => value == null ? 0 : JsonSerializer.Serialize(value, SetupJson).GetHashCode(StringComparison.Ordinal),
+            value => value == null ? null : JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value, SetupJson), SetupJson));
 
     private static string NamesCheck<TEnum>(string column)
         where TEnum : struct, Enum =>
@@ -402,6 +419,18 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         store.Property(value => value.ReconcileLeaseUntil).HasColumnName("reconcile_lease_until");
         // Spec 2026-11-17 §5.2: nula en las tiendas de antes; los webhooks de productos se ignoran hasta la primera importación.
         store.Property(value => value.ProductsSyncedAt).HasColumnName("products_synced_at");
+        // Spec 2026-11-17 (onboarding) §5 y §7 H7: el estado del asistente, nulo en las tiendas de antes. Los dos jsonb van en
+        // camelCase (JsonSerializerDefaults.Web) y se comparan por su serialización: son records con listas adentro.
+        store.Property(value => value.ProductsCoverage)
+            .HasColumnName("products_coverage")
+            .HasColumnType("jsonb")
+            .HasConversion(JsonConverterFor<ShopifyProductsCoverage>(), JsonComparerFor<ShopifyProductsCoverage>());
+        store.Property(value => value.ProductsCoverageAcceptedAt).HasColumnName("products_coverage_accepted_at");
+        store.Property(value => value.SetupHistoryRanAt).HasColumnName("setup_history_ran_at");
+        store.Property(value => value.SetupHistorySummary)
+            .HasColumnName("setup_history_summary")
+            .HasColumnType("jsonb")
+            .HasConversion(JsonConverterFor<ShopifySetupHistorySummary>(), JsonComparerFor<ShopifySetupHistorySummary>());
         store.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
         store.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         store.Property(value => value.UpdatedBy).HasColumnName("updated_by");
