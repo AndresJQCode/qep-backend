@@ -146,6 +146,49 @@ public sealed class SupportTenantSettingsTests
             (true, 30, 2L, Now.AddHours(2)), (settings.SurveyEnabled, settings.AutoCloseBusinessDays, settings.Version, settings.UpdatedAt));
     }
 
+    // Owner 2026-11-16: one PUT of /support/settings is one version, however many groups it changes. The If-Match the screen
+    // holds is "the version I loaded", not a count of the fields that moved.
+    [Fact]
+    public void ChangingEveryGroupAtOnceBumpsTheVersionOnce()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+
+        var changes = settings.Update(6, "  Puedes acudir a la SIC.  ", surveyEnabled: true, autoCloseBusinessDays: 9, Now.AddHours(1));
+
+        Assert.Equal(new SupportTenantSettingsChanges(true, true, true, true), changes);
+        Assert.Equal(
+            (6, "Puedes acudir a la SIC.", true, 9, 2L, Now.AddHours(1)),
+            (settings.DueSoonBusinessDays, settings.FormalNextStep, settings.SurveyEnabled, settings.AutoCloseBusinessDays,
+                settings.Version, settings.UpdatedAt));
+    }
+
+    [Fact]
+    public void AnUpdateWithTheSameValuesIsANoOp()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        settings.Update(6, "Texto", surveyEnabled: true, autoCloseBusinessDays: 9, Now.AddHours(1));
+
+        var changes = settings.Update(6, " Texto ", surveyEnabled: true, autoCloseBusinessDays: 9, Now.AddHours(2));
+
+        Assert.False(changes.Any);
+        Assert.Equal((2L, Now.AddHours(1)), (settings.Version, settings.UpdatedAt));
+    }
+
+    // Everything is checked before anything changes: a rejected auto-close leaves the threshold as it was.
+    [Fact]
+    public void ARejectedUpdateChangesNothing()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => settings.Update(6, "Texto", surveyEnabled: true, autoCloseBusinessDays: 31, Now.AddHours(1)));
+
+        Assert.Equal(
+            (3, (string?)null, false, 5, 1L),
+            (settings.DueSoonBusinessDays, settings.FormalNextStep, settings.SurveyEnabled, settings.AutoCloseBusinessDays,
+                settings.Version));
+    }
+
     // Fase 4b, revisión del bloque C (2026-11-16): el frontend publicado manda sólo el umbral. La encuesta y el cierre automático son
     // opcionales en el PUT: ausentes conservan el valor guardado, y el rango 1–30 se valida sólo si llegan.
     [Fact]

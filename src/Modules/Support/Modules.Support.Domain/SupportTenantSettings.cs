@@ -60,29 +60,23 @@ public sealed class SupportTenantSettings
             Version = 1,
         };
 
-    public void ChangeDueSoon(int businessDays, DateTimeOffset now)
+    /// <summary>
+    /// The whole row at once, as one PUT of the settings screen sends it (owner 2026-11-16): the version goes up once if anything
+    /// changed, however many groups moved, and not at all otherwise. Every value is checked before any is written, so a rejected
+    /// one leaves the row as it was. <paramref name="formalNextStep"/> is trimmed and an empty one is null; to keep the stored one,
+    /// pass it back.
+    /// </summary>
+    public SupportTenantSettingsChanges Update(
+        int dueSoonBusinessDays, string? formalNextStep, bool surveyEnabled, int autoCloseBusinessDays, DateTimeOffset now)
     {
-        if (businessDays is < MinDueSoonBusinessDays or > MaxDueSoonBusinessDays)
+        if (dueSoonBusinessDays is < MinDueSoonBusinessDays or > MaxDueSoonBusinessDays)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(businessDays),
-                businessDays,
+                nameof(dueSoonBusinessDays),
+                dueSoonBusinessDays,
                 $"The due-soon threshold is between {MinDueSoonBusinessDays} and {MaxDueSoonBusinessDays} business days.");
         }
 
-        if (businessDays == DueSoonBusinessDays)
-        {
-            return;
-        }
-
-        DueSoonBusinessDays = businessDays;
-        UpdatedAt = now;
-        Version++;
-    }
-
-    /// <summary>Fase 4b (H14): la encuesta y el cierre automático. Con los mismos valores no cambia nada ni sube la versión.</summary>
-    public void ChangeSurvey(bool enabled, int autoCloseBusinessDays, DateTimeOffset now)
-    {
         if (autoCloseBusinessDays is < MinAutoCloseBusinessDays or > MaxAutoCloseBusinessDays)
         {
             throw new ArgumentOutOfRangeException(
@@ -91,28 +85,42 @@ public sealed class SupportTenantSettings
                 $"The auto-close is between {MinAutoCloseBusinessDays} and {MaxAutoCloseBusinessDays} business days.");
         }
 
-        if (enabled == SurveyEnabled && autoCloseBusinessDays == AutoCloseBusinessDays)
+        var normalizedNextStep = SupportFormalNextStep.Normalize(formalNextStep);
+        var changes = new SupportTenantSettingsChanges(
+            dueSoonBusinessDays != DueSoonBusinessDays,
+            normalizedNextStep != FormalNextStep,
+            surveyEnabled != SurveyEnabled,
+            autoCloseBusinessDays != AutoCloseBusinessDays);
+        if (!changes.Any)
         {
-            return;
+            return changes;
         }
 
-        SurveyEnabled = enabled;
+        DueSoonBusinessDays = dueSoonBusinessDays;
+        FormalNextStep = normalizedNextStep;
+        SurveyEnabled = surveyEnabled;
         AutoCloseBusinessDays = autoCloseBusinessDays;
         UpdatedAt = now;
         Version++;
+        return changes;
     }
+
+    public void ChangeDueSoon(int businessDays, DateTimeOffset now) =>
+        Update(businessDays, FormalNextStep, SurveyEnabled, AutoCloseBusinessDays, now);
+
+    /// <summary>Fase 4b (H14): la encuesta y el cierre automático. Con los mismos valores no cambia nada ni sube la versión.</summary>
+    public void ChangeSurvey(bool enabled, int autoCloseBusinessDays, DateTimeOffset now) =>
+        Update(DueSoonBusinessDays, FormalNextStep, enabled, autoCloseBusinessDays, now);
 
     /// <summary>Recortado; vacío es null. Con el mismo valor no cambia nada ni sube la versión.</summary>
-    public void ChangeFormalNextStep(string? text, DateTimeOffset now)
-    {
-        var normalized = SupportFormalNextStep.Normalize(text);
-        if (normalized == FormalNextStep)
-        {
-            return;
-        }
+    public void ChangeFormalNextStep(string? text, DateTimeOffset now) =>
+        Update(DueSoonBusinessDays, text, SurveyEnabled, AutoCloseBusinessDays, now);
+}
 
-        FormalNextStep = normalized;
-        UpdatedAt = now;
-        Version++;
-    }
+/// <summary>Which groups of <see cref="SupportTenantSettings"/> an <see cref="SupportTenantSettings.Update"/> changed; the handler
+/// names them in the audit row.</summary>
+public readonly record struct SupportTenantSettingsChanges(
+    bool DueSoonBusinessDays, bool FormalNextStep, bool SurveyEnabled, bool AutoCloseBusinessDays)
+{
+    public bool Any => DueSoonBusinessDays || FormalNextStep || SurveyEnabled || AutoCloseBusinessDays;
 }
