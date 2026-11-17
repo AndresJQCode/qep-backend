@@ -41,7 +41,8 @@ y no tiene relación entre tenants.
 - **Que se actualice el costo de un producto que ya existe.** Sólo se crean los que faltan.
 - Que un tenant lea datos de otro fuera de los puertos de este diseño.
 - Que un distribuidor bloqueado o con la relación terminada pueda enviar una orden.
-- Que el precio de una orden enviada cambie porque el mayorista editó su lista o su precio base.
+- Que el precio de una orden enviada cambie porque el mayorista editó su lista o su precio base. Sólo
+  cambia si el mayorista edita ese pedido, y el distribuidor lo ve marcado.
 
 ## Enfoques
 
@@ -89,8 +90,10 @@ puede borrar mientras tenga órdenes abiertas.
 - `Status`: `Draft → Sent → Confirmed → Received`, más `Cancelled`. `Confirmed` lleva
   `ConfirmedWithChanges: bool`.
 - `LinkedOrderId: Guid?`: el `Order` del mayorista, sólo con proveedor vinculado.
-- Líneas: `VariantId?`, `Code`, `Name`, `RequestedQuantity`, `ConfirmedQuantity?`, `UnitCost`,
-  `TaxRate`, `LineStatus` (`Unchanged`, `QuantityChanged`, `Rejected`), `CreatedInCatalog: bool`.
+- Líneas: `VariantId?`, `Code`, `Name`, `RequestedQuantity?` (nulo en una línea que agregó el
+  mayorista), `ConfirmedQuantity?`, `UnitCost`, `ConfirmedUnitCost?`, `TaxRate`, `LineStatus`
+  (`Unchanged`, `Changed`, `Rejected`, `Added`), `CreatedInCatalog: bool`. `Changed` cubre cantidad,
+  precio o las dos; la respuesta dice cuál cambió comparando pedido y confirmado.
 - Historial: cada transición con fecha y autor (miembro o «el mayorista»).
 
 **Proveedor externo:**
@@ -153,8 +156,11 @@ horas (igual que las invitaciones de miembros), reenviable. Evento
 
 **El pedido en el mayorista:** `Order` con `Source = Wholesale` (valor nuevo de `OrderSource`),
 `BuyerTenantId` y `PurchaseOrderId`. Entra «Por aprobar». Aprobar tal cual es `/approve`. Aprobar con
-cambios es el «Editar pedido como borrador» que ya existe, más `/approve`; las líneas con cantidad cero
-quedan como rechazadas. Anular es `/cancel`. Reportes ganan `Wholesale` en `OrderSourceFilter`.
+cambios es el «Editar pedido como borrador» que ya existe, más `/approve`, **sin restricciones nuevas**
+(decisión del owner, 2026-11-17: el distribuidor puede llamar a pedir más cosas o cambiar). El mayorista
+agrega, quita y cambia líneas, cantidades y precios. Una línea quitada vuelve como `Rejected`; una
+agregada, como `Added`. Las líneas agregadas se precian por defecto con la lista del distribuidor y el
+mayorista puede cambiarlo, como en cualquier pedido. Anular es `/cancel`. Reportes ganan `Wholesale` en `OrderSourceFilter`.
 
 ### Permisos
 
@@ -204,18 +210,19 @@ Códigos nuevos, mapeados en `ApiExceptionHandler.cs`:
 - **P-4.** ¿Se le avisa al mayorista de un pedido nuevo por correo, o sólo en la bandeja?
 - **P-5.** ¿Un `Code` del mayorista que choca con un `Barcode` del distribuidor se trata como el mismo
   producto? Propuesta: no; sólo `Code`.
-- **P-6.** Al aprobar con cambios, ¿el mayorista sólo cambia cantidades, o también puede cambiar precios
-  o agregar líneas?
+- **P-6 (resuelta 2026-11-17).** Al aprobar con cambios el mayorista puede editar el pedido entero:
+  agregar, quitar y cambiar líneas, cantidades y precios.
 
 ## Respuestas al builder check (propuestas mías, salvo donde se indica)
 
 - **Contrato HTTP:** lo fija el plan del backend, en una sección «Contrato HTTP» que el plan del frontend
   cita, como en préstamos. El PDF de la orden lo genera el backend. Un `Draft` se edita y se borra; desde
   `Sent` no.
-- **Aprobar con cambios:** sólo cantidades, y cero es rechazada. El mayorista no agrega líneas ni cambia
-  precios en un pedido `Wholesale`; el backend lo valida en la edición del borrador. Cada línea del
-  `Order` guarda el id de la línea de la orden de compra, y el evento la devuelve por ese id. **Pendiente
-  de confirmar con el owner (P-6).**
+- **Aprobar con cambios (P-6, resuelta por el owner):** el mayorista edita el pedido entero. Cada línea
+  del `Order` guarda el id de la línea de la orden de compra que la originó (nulo si la agregó el
+  mayorista). El evento de aprobación lleva **todas** las líneas finales del pedido con ese id, y
+  `purchases` reconcilia: con id, actualiza la línea; sin id, la agrega como `Added`; una línea de la
+  orden que no vuelve queda `Rejected`. Los productos faltantes se crean igual para las líneas agregadas.
 - **Precio base e impuestos:** el precio base es el precio por defecto de la variante en la moneda del
   mayorista; sin precio en esa moneda, la variante no se ofrece. Precios con IVA incluido, como en
   cotizaciones. La empresa facturadora es la por defecto del mayorista. El producto creado en el comprador
