@@ -14,11 +14,13 @@ public sealed record FlowIssue(FlowIssueSeverity Severity, string Code, string? 
 /// Lo que el validador necesita saber de fuera del flujo: los canales de las conexiones del chatbot (los nombres de
 /// <c>ConversationChannel</c>, Modules.Messaging.Domain/MessageEnums.cs), las conexiones «API externa» del tenant según su estado
 /// y si todas las conexiones del chatbot tienen horario asignado. <see cref="HandoffMembers"/> son los miembros que hoy pueden responder
-/// conversaciones del tenant (spec 2026-10-25 D-5): el destino de un traspaso fuera de ese conjunto es un error.
+/// conversaciones del tenant (spec 2026-10-25 D-5): el destino de un traspaso fuera de ese conjunto es un error. Spec 2026-11-17 §5.2:
+/// <see cref="AiEnabled"/> dice si el tenant tiene el módulo <c>ai</c> y <see cref="Agents"/> son sus agentes con su estado; sin ellos, un
+/// bloque «Agente IA» no se puede publicar.
 /// </summary>
 public sealed record FlowValidationContext(
     IReadOnlySet<string> Channels, IReadOnlySet<Guid> ActiveExternalApis, IReadOnlySet<Guid> PausedExternalApis,
-    bool AllConnectionsHaveBusinessHours, IReadOnlySet<Guid> HandoffMembers);
+    bool AllConnectionsHaveBusinessHours, IReadOnlySet<Guid> HandoffMembers, bool AiEnabled = false, IReadOnlyList<FlowAgentRef>? Agents = null);
 
 /// <summary>Los códigos de §4.3, más <c>node.output_unconnected_optional</c>, <c>list.channel_not_supported</c>, <c>buttons.id_invalid</c> y
 /// <c>list.row_id_invalid</c> del brief de la tarea 11 y su revisión.</summary>
@@ -86,4 +88,26 @@ public static class FlowIssueCodes
 
     /// <summary>Es del chatbot y no de un bloque: lo agrega el handler de publicar (<c>NodeId</c> nulo).</summary>
     public const string TriggerKeywordsEmpty = "trigger.keywords_empty";
+
+    // Spec 2026-11-17 (agente IA en chatbots) §5.2. ai_agent.not_first no existe: ningún disparador llega sin entrante y D-B7 cubre el
+    // arranque manual en ejecución (plan 2026-11-17, «Discrepancias» #1).
+
+    /// <summary>Error: el bloque no tiene agente, o el agente ya no existe en el tenant.</summary>
+    public const string AiAgentMissing = "ai_agent.agent_missing";
+
+    /// <summary>Error: el agente está en borrador.</summary>
+    public const string AiAgentNotPublished = "ai_agent.agent_not_published";
+
+    /// <summary>Aviso: el agente está pausado; el bloque saldrá por <c>error</c> mientras siga así (D-B18).</summary>
+    public const string AiAgentPaused = "ai_agent.agent_paused";
+
+    public const string AiAgentObjectiveMissing = "ai_agent.objective_missing";
+
+    public const string AiAgentIdleOutOfRange = "ai_agent.idle_out_of_range";
+
+    /// <summary>Error: el tenant no tiene el módulo <c>ai</c> (D-B16).</summary>
+    public const string AiAgentModuleDisabled = "ai_agent.module_disabled";
+
+    /// <summary>Error: una conexión del chatbot es de un canal donde el motor no corre (hoy Instagram, OB-2).</summary>
+    public const string AiAgentChannelNotSupported = "ai_agent.channel_not_supported";
 }

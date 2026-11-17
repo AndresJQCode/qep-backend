@@ -93,6 +93,51 @@ public sealed record HttpNode(
     public const int DefaultTimeoutSeconds = 8;
 }
 
+/// <summary>
+/// Spec 2026-11-17 (agente IA en chatbots) §5.1: el flujo le pasa la conversación a un agente publicado del tenant y la recupera por una de
+/// sus cinco salidas. <see cref="AgentId"/> es <c>null</c> en un bloque recién creado; <see cref="Objective"/> es el objetivo del paso (no se
+/// interpola); <see cref="Context"/> es un <c>TemplateText</c> que se interpola al entrar y se corta a <see cref="AiAgentLimits.TextMaxLength"/>;
+/// <see cref="FirstTurn"/> es uno de <see cref="AiAgentFirstTurns"/> (D-B7); <see cref="IdleMinutes"/> es la inactividad del bloque (D-B11);
+/// <see cref="SaveTo"/> es la variable objeto donde el bloque deja <c>summary</c>, <c>reason</c> y <c>quotationNumber</c>.
+/// </summary>
+public sealed record AiAgentNode(
+    string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, Guid? AgentId, string Objective, string Context, string FirstTurn,
+    int IdleMinutes, string SaveTo)
+    : FlowNode(Id, FlowNodeKinds.AiAgent, Title, Outputs);
+
+/// <summary>Spec 2026-11-17 D-B7: con <c>lastMessage</c> el agente responde el entrante que llevó la corrida hasta el bloque; con
+/// <c>nextMessage</c> calla hasta el próximo.</summary>
+public static class AiAgentFirstTurns
+{
+    public const string LastMessage = "lastMessage";
+    public const string NextMessage = "nextMessage";
+
+    public static readonly IReadOnlySet<string> All = new[] { LastMessage, NextMessage }.ToFrozenSet(StringComparer.Ordinal);
+}
+
+/// <summary>Spec 2026-11-17 §5.1 y D-B11: los topes del bloque «Agente IA».</summary>
+public static class AiAgentLimits
+{
+    /// <summary>El objetivo y el contexto (este, después de interpolar, se corta acá).</summary>
+    public const int TextMaxLength = 2000;
+
+    public const int MinIdleMinutes = 5;
+
+    /// <summary>23 h: deja una hora de la ventana de 24 h para que el flujo mande algo por <c>idle</c>.</summary>
+    public const int MaxIdleMinutes = 1380;
+
+    public const int DefaultIdleMinutes = 60;
+}
+
+/// <summary>Spec 2026-11-17 §5.2: un agente del tenant como lo ve el validador. <see cref="Status"/> es el nombre del <c>AgentStatus</c> de Ai
+/// (<c>Draft</c>, <c>Active</c>, <c>Paused</c>), que Automations no referencia.</summary>
+public sealed record FlowAgentRef(Guid Id, string Name, string Status)
+{
+    public const string Draft = "Draft";
+    public const string Active = "Active";
+    public const string Paused = "Paused";
+}
+
 public sealed record KeyValue(string Key, string Value);
 
 /// <summary>

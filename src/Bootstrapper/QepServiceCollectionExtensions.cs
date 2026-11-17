@@ -1562,6 +1562,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
         // Spec 2026-10-25 D-5: los miembros que pueden responder, los mismos que ofrece «Transferir».
         services.AddScoped<IAutomationMembers, AutomationMembers>();
+        // Spec 2026-11-17 §5.2: los agentes de IA del tenant para el bloque «Agente IA», leídos de Ai.
+        services.AddScoped<IAutomationsAgentDirectory, AutomationsAgentDirectory>();
         // Spec 2026-10-26 D-5, D-7 y D-10: la autorización de datos del cliente de la conversación, en Customers.
         services.AddScoped<IAutomationDataConsents, AutomationDataConsents>();
         services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();

@@ -175,6 +175,18 @@ public interface IAutomationDataConsents
     Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.2 y §7: un agente de IA del tenant. <see cref="Status"/> es el nombre del
+/// <c>AgentStatus</c> de Ai (<c>Draft</c>, <c>Active</c>, <c>Paused</c>); <see cref="Provider"/> y <see cref="Model"/> son los de la versión
+/// publicada, o los del borrador si todavía no tiene.</summary>
+public sealed record AutomationAgentRef(Guid Id, string Name, string Status, string Provider, string Model);
+
+/// <summary>Spec 2026-11-17 §5.2: los agentes de IA del tenant (adaptador en Bootstrapper sobre Ai): Automations no referencia Ai (D-A3).</summary>
+public interface IAutomationsAgentDirectory
+{
+    /// <summary>Todos los agentes del tenant, en cualquier estado, ordenados por nombre.</summary>
+    Task<IReadOnlyList<AutomationAgentRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
 /// <summary>Una conexión «API externa» del tenant (D-H4); <see cref="Status"/> es el nombre del estado de Integrations.</summary>
 public sealed record ExternalApiRef(Guid Id, string Name, string Status);
 
