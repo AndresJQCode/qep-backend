@@ -62,13 +62,13 @@ to land in. This spec adds an endpoint that **finds or creates** the customer's 
    `404 messaging.customer.not_found` (missing or inactive), `422 messaging.customer.unreachable`
    (neither phone nor WhatsApp user id).
 3. **Without `connectionId`** — the tenant's `Active` WhatsApp connections: exactly one → use it
-   (go to 4); none → `422 messaging.connection.unavailable` (existing code); several →
+   (go to 4); none → `422 messaging.connection_unavailable` (existing code); several →
    `422 messaging.conversation.connection_required` (**new code**), **even if the customer already
    has a thread on one of them**: owner decision 2026-11-17, a tenant with several numbers always
    chooses the number, the endpoint never picks "the most recent thread". The 422 carries no list:
    the SPA already reads the connections.
 4. **With `connectionId`:** Instagram → `422 messaging.channel_unsupported` (existing);
-   not `Active` → `422 messaging.connection.unavailable`; otherwise `opener.OpenAsync` (finds the
+   not `Active` → `422 messaging.connection_unavailable`; otherwise `opener.OpenAsync` (finds the
    customer's conversation on that connection or creates it).
 5. **Status (owner decision 2026-11-17):** a `Resolved` conversation is **reopened**, with the same
    domain transition, event and audit as `POST …/reopen`. Reason: the thread locks the composer of a
