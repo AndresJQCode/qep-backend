@@ -37,6 +37,10 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-10-14 §5.2: plantillas, campañas e inicio de conversación no existen en Instagram (§3).</summary>
     public const string ChannelUnsupported = "messaging.channel_unsupported";
 
+    /// <summary>Spec 2026-11-17 (abrir la conversación del cliente): sin <c>connectionId</c> y con varias conexiones de WhatsApp activas,
+    /// el asesor elige el número; el endpoint nunca lo deduce (422, sin la lista: el SPA ya la tiene).</summary>
+    public const string ConnectionRequired = "messaging.conversation.connection_required";
+
     /// <summary>Spec 2026-10-10 §10: enviar a una conversación asignada a otra membresía.</summary>
     public const string AssignedToOther = "messaging.conversation.assigned_to_other";
 

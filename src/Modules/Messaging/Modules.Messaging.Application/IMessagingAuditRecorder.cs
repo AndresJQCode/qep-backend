@@ -96,6 +96,8 @@ public static class MessagingAuditActions
         ConversationEventType.AutomationReturned => AutomationReturned,
         ConversationEventType.ContactBlocked => ContactBlocked,
         ConversationEventType.ContactUnblocked => ContactUnblocked,
+        // Spec 2026-11-17: abrir la conversación del cliente reabre una resuelta en el mismo cambio que la toma.
+        ConversationEventType.Reopened => Reopened,
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, "That event type has no assignment audit action."),
     };
 
