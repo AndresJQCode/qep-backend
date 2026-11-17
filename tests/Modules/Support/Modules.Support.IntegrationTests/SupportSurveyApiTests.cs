@@ -84,8 +84,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
     public async Task ProcessingAnnouncesTheTicket()
     {
         var scenario = await StartAsync(Factory);
-        await ExecuteAsync(
-            Factory, "UPDATE support.tenant_settings SET survey_enabled = true WHERE tenant_id = @tenant", ("tenant", scenario.TenantId));
+        await EnableSurveyAsync(scenario);
         var resolved = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
 
         await ProcessClaimedAsync();
@@ -496,9 +495,18 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
     private sealed record SentSurvey(
         SupportTicketScenario Scenario, Guid TenantId, Guid TicketId, Guid Conversation, Guid SurveyId, Guid SurveyMessage);
 
-    private Task EnableSurveyAsync(SupportTicketScenario scenario) =>
-        ExecuteAsync(
+    // The tenant's settings row is created on first access (SupportProvisioner), and StartAsync touches no Support endpoint: without
+    // provisioning first, the UPDATE matches no row and every survey is skipped as survey_disabled.
+    private async Task EnableSurveyAsync(SupportTicketScenario scenario)
+    {
+        await using (var scope = Factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(scenario.TenantId, Ct);
+        }
+
+        await ExecuteAsync(
             Factory, "UPDATE support.tenant_settings SET survey_enabled = true WHERE tenant_id = @tenant", ("tenant", scenario.TenantId));
+    }
 
     private async Task<SupportSurveyBatch> ClaimAsync(int take)
     {
