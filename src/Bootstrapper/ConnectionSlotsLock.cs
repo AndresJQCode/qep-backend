@@ -12,12 +12,13 @@ namespace Bootstrapper;
 /// Es <c>pg_advisory_xact_lock</c> en la forma de dos claves, <c>(Namespace, hashtext(tenant_id::text))</c>, y se suelta con el commit o el
 /// rollback de la transacción del unit of work: por eso exige una transacción abierta (sin ella se soltaría al terminar la sentencia).
 /// </summary>
-internal static class ConnectionSlotsLock
+public static class ConnectionSlotsLock
 {
     /// <summary>Primera clave de la forma de dos. Cualquier constante sirve mientras ningún otro candado de dos claves la use (hoy están
-    /// <c>TenantChangeLock.Namespace</c> = 20261008, <c>AutomationsConversationLock.Namespace</c> = 20261022 y
-    /// <c>ShopifyTokenLock.Namespace</c> = 20261112; por eso esta no es la fecha del plan sino el día siguiente).</summary>
-    public const int Namespace = 20261113;
+    /// <c>TenantChangeLock.Namespace</c> = 20261008, <c>ConversationBotLock.Namespace</c> = 20261022, <c>ShopifyTokenLock.Namespace</c> =
+    /// 20261112, <c>StartupLock.Namespace</c> = 20261113 e <c>InstagramTokenLock.Namespace</c> = 20261114; por eso no es la fecha del plan).
+    /// Público para las pruebas de integración que toman el candado desde otra conexión. Lo amarra <c>ConnectionSlotsLockTests</c>.</summary>
+    public const int Namespace = 20261115;
 
     public static Task AcquireAsync(DbContext dbContext, Guid tenantId, CancellationToken cancellationToken) =>
         dbContext.Database.ExecuteSqlAsync(

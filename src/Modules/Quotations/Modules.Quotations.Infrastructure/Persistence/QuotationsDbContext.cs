@@ -285,6 +285,15 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.HasIndex(value => new { value.TenantId, value.QuotationNumber })
             .IsUnique()
             .HasDatabaseName("IX_quotations_tenant_number");
+        // Spec 2026-10-29 §8.3 (agentes IA): la idempotencia del borrador que crea una integración. Parcial, para que las
+        // cotizaciones de las personas (sin clave) no compitan entre sí; QuotationsUnitOfWork lo traduce por nombre.
+        quotation.Property(value => value.ExternalKey)
+            .HasColumnName("external_key")
+            .HasMaxLength(Quotation.ExternalKeyMaxLength);
+        quotation.HasIndex(value => new { value.TenantId, value.ExternalKey })
+            .IsUnique()
+            .HasFilter("external_key IS NOT NULL")
+            .HasDatabaseName("IX_quotations_tenant_external_key");
     }
 
     /// <summary>

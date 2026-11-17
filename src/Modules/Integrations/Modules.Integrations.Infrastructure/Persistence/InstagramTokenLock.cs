@@ -6,7 +6,7 @@ namespace Modules.Integrations.Infrastructure.Persistence;
 /// el perdedor guardaría uno muerto o recibiría un 4xx y marcaría la conexión <c>token_expired</c> sin motivo, y ese camino
 /// no pasa por el <c>Version</c> optimista. Va en la forma de dos claves, <c>(Namespace, hashtext(id))</c>; el número no lo
 /// usa ningún otro candado de dos claves (<c>TenantChangeLock</c> = 20261008, <c>AutomationsConversationLock</c> = 20261022,
-/// <c>ShopifyTokenLock</c> = 20261112, <c>StartupLock</c> = 20261113 de Bootstrapper). Lo toma sólo
+/// <c>ShopifyTokenLock</c> = 20261112, <c>StartupLock</c> = 20261113 y <c>ConnectionSlotsLock</c> = 20261115 de Bootstrapper). Lo toma sólo
 /// <c>InstagramTokenRefreshWorker</c>, con <c>pg_try_advisory_xact_lock</c>.
 /// </summary>
 internal static class InstagramTokenLock

@@ -296,6 +296,14 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 writer.WriteString("text", resolve.Text);
                 WriteGuid(writer, "reasonId", resolve.ReasonId);
                 break;
+            case AiAgentNode agent:
+                WriteGuid(writer, "agentId", agent.AgentId);
+                writer.WriteString("objective", agent.Objective);
+                writer.WriteString("context", agent.Context);
+                writer.WriteString("firstTurn", agent.FirstTurn);
+                writer.WriteNumber("idleMinutes", agent.IdleMinutes);
+                writer.WriteString("saveTo", agent.SaveTo);
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(value), value.Kind, "Bloque sin escritura definida.");
         }
@@ -364,6 +372,13 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 JsonFields.OptionalGuid(element, "onRejectMemberId", where)),
             FlowNodeKinds.Resolve => new ResolveNode(
                 id, title, outputs, JsonFields.OptionalString(element, "text", where), JsonFields.OptionalGuid(element, "reasonId", where)),
+            // Spec 2026-11-17 §5.1: firstTurn es de lista cerrada (lo arma el editor); sin él, o sin idleMinutes, rigen los valores por defecto.
+            // Un idleMinutes fuera de rango se lee tal cual: lo marca el validador (D-C3).
+            FlowNodeKinds.AiAgent => new AiAgentNode(
+                id, title, outputs, JsonFields.OptionalGuid(element, "agentId", where), JsonFields.Text(element, "objective", where),
+                JsonFields.Text(element, "context", where),
+                JsonFields.OptionalOneOf(element, "firstTurn", where, AiAgentFirstTurns.All) ?? AiAgentFirstTurns.LastMessage,
+                JsonFields.OptionalInt(element, "idleMinutes", where) ?? AiAgentLimits.DefaultIdleMinutes, JsonFields.Text(element, "saveTo", where)),
             _ => throw new ArgumentOutOfRangeException(nameof(element), kind, "Tipo de bloque sin lectura definida."),
         };
     }

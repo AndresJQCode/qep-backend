@@ -55,6 +55,13 @@ public static class AutomationsErrorCodes
 
     public const string SimulationExpired = "automations.simulation.expired";
 
+    /// <summary>Spec 2026-11-17 adenda D-4: un <c>agentResult</c> con la simulación fuera de un bloque «Agente IA» (422).</summary>
+    public const string SimulationNotWaitingAtAgent = "automations.simulation.not_waiting_at_agent";
+
+    /// <summary>Spec 2026-11-17 D-B17: un mensaje del tester con la simulación parada en un bloque «Agente IA», que sólo sale con
+    /// <c>agentResult</c> (422). No está en la adenda: es el espejo de <see cref="SimulationNotWaitingAtAgent"/>.</summary>
+    public const string SimulationWaitingAtAgent = "automations.simulation.waiting_at_agent";
+
     public const string ExternalApiNotFound = "automations.external_api.not_found";
 
     /// <summary>Crear o editar un chatbot con una conexión que no es del tenant (o que Integrations ya borró). No está en §4.3: lo

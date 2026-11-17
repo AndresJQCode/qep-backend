@@ -13,7 +13,8 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// <item>El entrante de arranque es el primer <c>direction = 1</c> de la sesión; sin él no hay reloj (S3).</item>
 /// <item>Cuenta como respuesta un saliente (<c>direction = 2</c>) que no falló (<c>status &lt;&gt; 4</c>, D-6) y que no es de campaña
 /// (<c>campaign_recipients.message_id</c>, D-12) ni de una clave de API (<c>sent_by_kind = 4</c>, spec 2026-10-30 D13: es automatización, no atención;
-/// su conversación sí cuenta como sesión). La del asesor exige <c>sent_by_kind = 1</c> y autor: el eco de Instagram queda fuera (S6).</item>
+/// su conversación sí cuenta como sesión). La del asesor exige <c>sent_by_kind = 1</c> y autor: el eco de Instagram queda fuera (S6). Un
+/// agente de IA (<c>sent_by_kind = 3</c>, spec 2026-10-29 §4.4) responde como un chatbot: cuenta en «primera respuesta» y nunca como asesor.</item>
 /// <item>El historial importado por coexistencia (<c>imported</c>, decisión del owner del 2026-10-30) no es actividad del periodo: su
 /// <c>created_at</c> es la hora de la importación. Una conversación importada no arranca sesión al crearse: la arranca su primer entrante
 /// en vivo, salvo que ya la haya arrancado un <c>Reopened</c>. Un mensaje importado nunca es el entrante de arranque ni una respuesta.

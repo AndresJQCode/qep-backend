@@ -21,8 +21,8 @@ public static partial class StartupLock
     /// <summary>
     /// Primera clave de la forma de dos: la fecha del spec revisado. Cualquier constante sirve mientras ningún otro
     /// candado de dos claves la use: hoy están <c>TenantChangeLock.Namespace</c> = 20261008,
-    /// <c>AutomationsConversationLock.Namespace</c> = 20261022, <c>ShopifyTokenLock.Namespace</c> = 20261112 e
-    /// <c>InstagramTokenLock.Namespace</c> = 20261114.
+    /// <c>AutomationsConversationLock.Namespace</c> = 20261022, <c>ShopifyTokenLock.Namespace</c> = 20261112,
+    /// <c>InstagramTokenLock.Namespace</c> = 20261114 y <c>ConnectionSlotsLock.Namespace</c> = 20261115.
     /// </summary>
     public const int Namespace = 20261113;
 

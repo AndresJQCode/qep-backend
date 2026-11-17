@@ -26,12 +26,22 @@ public enum AgentModelAvailability
 /// el handler.</summary>
 /// <param name="HandoffMemberCanReply"><c>null</c> si el traspaso no es a un miembro o no tiene miembro.</param>
 /// <param name="Publishing">Publicar endurece: un modelo fuera de la lista pasa de aviso a error (plan 2026-11-12 C-16).</param>
-public sealed record AgentValidationContext(int ConnectionCount, AgentModelAvailability Model, bool? HandoffMemberCanReply, bool Publishing);
+/// <param name="QuotationAdvisorCanQuote"><c>null</c> si la herramienta de cotización está apagada o no tiene asesora.</param>
+/// <param name="QuotationBillingAccountEligible">Si la cuenta guardada sigue entre las que el editor ofrece (plan 2026-11-17 A3); <c>null</c>
+/// si la herramienta de cotización está apagada o no tiene cuenta.</param>
+public sealed record AgentValidationContext(
+    int ConnectionCount,
+    AgentModelAvailability Model,
+    bool? HandoffMemberCanReply,
+    bool Publishing,
+    bool? QuotationAdvisorCanQuote = null,
+    bool? QuotationBillingAccountEligible = null);
 
 /// <summary>
 /// Spec 2026-10-29 D-A7: los problemas que impiden publicar. Guardar nunca falla por ellos: el borrador puede quedar a medias y la
 /// respuesta los lista. Los topes y los valores cerrados no están acá: los rechaza el endpoint con su campo antes de guardar.
-/// <c>tools.quotationDraft</c> sin asesor queda fuera hasta que el owner resuelva P-8 del spec.
+/// <c>tools.quotationDraft</c> exige asesora y cuenta de cobro (P-4); una asesora que ya no puede cotizar es aviso, no error: la herramienta
+/// queda bloqueada al correr (responde <c>quotation_advisor_unavailable</c>) hasta que se elija otra.
 /// </summary>
 public static class AgentConfigValidator
 {
@@ -46,9 +56,14 @@ public static class AgentConfigValidator
             issues.Add(Error("instructions_missing", "instructions", "Escribe las instrucciones del agente."));
         }
 
+        // Spec 2026-11-17 D-B6: un agente sólo para bloques de chatbots no ocupa conexión propia; sin conexiones se publica y sólo se avisa.
         if (context.ConnectionCount == 0)
         {
-            issues.Add(Error("connections_missing", "connections", "Elige al menos una conexión para que el agente atienda."));
+            issues.Add(new AgentIssue(
+                AgentIssueSeverity.Warning,
+                "connections_missing",
+                "connections",
+                "El agente no tiene conexiones: sólo atenderá cuando un chatbot lo llame desde un bloque «Agente IA»."));
         }
 
         switch (context.Model)
@@ -75,6 +90,41 @@ public static class AgentConfigValidator
             {
                 issues.Add(Error(
                     "handoff_member_cannot_reply", "handoff.memberId", "Esa persona ya no puede responder conversaciones: elige otra."));
+            }
+        }
+
+        if (config.Tools.QuotationDraft)
+        {
+            if (config.QuotationDraft?.AdvisorMemberId is null)
+            {
+                issues.Add(Error(
+                    "quotation_advisor_missing", "quotationDraft.advisorMemberId",
+                    "Elige quién queda como asesor de los borradores de cotización."));
+            }
+            else if (context.QuotationAdvisorCanQuote == false)
+            {
+                issues.Add(new AgentIssue(
+                    AgentIssueSeverity.Warning,
+                    "quotation_advisor_cannot_quote",
+                    "quotationDraft.advisorMemberId",
+                    "Esa persona ya no puede cotizar: el agente no creará borradores hasta que elijas a otra."));
+            }
+
+            if (config.QuotationDraft?.BillingAccount is null)
+            {
+                issues.Add(Error(
+                    "quotation_billing_account_missing", "quotationDraft.billingAccount",
+                    "Elige la cuenta de cobro de los borradores de cotización."));
+            }
+            else if (context.QuotationBillingAccountEligible == false)
+            {
+                // Plan 2026-11-17 A3: mismo criterio que la asesora. Al correr, Quotations la rechaza con
+                // quotation.billing.account_not_found y la herramienta vuelve al modelo con el código.
+                issues.Add(new AgentIssue(
+                    AgentIssueSeverity.Warning,
+                    "quotation_billing_account_unavailable",
+                    "quotationDraft.billingAccount",
+                    "Esa cuenta de cobro ya no está disponible: el agente no creará borradores hasta que elijas otra."));
             }
         }
 

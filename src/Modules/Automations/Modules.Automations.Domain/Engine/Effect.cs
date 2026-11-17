@@ -21,8 +21,16 @@ public abstract record Effect(string NodeId)
 
     /// <summary>Spec 2026-10-24 D-T9: <see cref="Reason"/> es uno de <see cref="HandoffReasons"/>; lo dice el motor, que es quien sabe por
     /// qué camino llegó, en vez de que el procesador lo deduzca por el tipo de bloque. <see cref="MemberId"/> (spec 2026-10-25 D-1) es a quién
-    /// se asigna; <c>null</c> deja la conversación sin asignar.</summary>
-    public sealed record Handoff(string NodeId, string Reason = HandoffReasons.Block, Guid? MemberId = null) : Effect(NodeId);
+    /// se asigna; <c>null</c> deja la conversación sin asignar.
+    /// <see cref="Code"/> (spec 2026-11-17 adenda D-6) sólo con <see cref="HandoffReasons.AgentBlockOutputUnhandled"/>: la salida del bloque
+    /// «Agente IA» que no estaba conectada.</summary>
+    public sealed record Handoff(string NodeId, string Reason = HandoffReasons.Block, Guid? MemberId = null, string? Code = null) : Effect(NodeId);
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §6.1 y D-B4: el flujo le pasa la conversación al agente. <see cref="Context"/> ya viene
+    /// interpolado y cortado; el resto es el bloque tal cual. No vuelve en la misma unidad: el agente devuelve con
+    /// <see cref="EngineInput.AgentResult"/> minutos u horas después.</summary>
+    public sealed record DelegateToAgent(string NodeId, Guid AgentId, string Objective, string Context, string FirstTurn, int IdleMinutes)
+        : Effect(NodeId);
 
     public sealed record Resolve(string NodeId, Guid? ReasonId) : Effect(NodeId);
 
@@ -72,6 +80,25 @@ public static class HandoffReasons
     /// <summary>Spec 2026-10-26 repetir R-4b: Política de datos en <c>repeat</c> o <c>handoff</c> sin cliente al que registrarle la
     /// respuesta.</summary>
     public const string DataConsentUnavailable = "data_consent_unavailable";
+
+    /// <summary>Spec 2026-11-17 D-B12 y D-B13: el bloque «Agente IA» volvió por <c>human</c>, <c>noAnswer</c> o <c>error</c> y esa salida no
+    /// está conectada; la conversación no puede quedar sin nadie.</summary>
+    public const string AgentBlockOutputUnhandled = "agent_block_output_unhandled";
+}
+
+/// <summary>Spec 2026-11-17 §6.3: los <c>reason</c> del bloque «Agente IA» que decide Automations (el resto los escribe Ai al devolver). Cumplen
+/// la regla de códigos del hilo (<c>^[a-z0-9_.]{1,64}$</c>).</summary>
+public static class AgentBlockReasons
+{
+    /// <summary>El bloque no tiene agente: sale por <c>error</c> sin delegar.</summary>
+    public const string AgentMissing = "agent_missing";
+
+    /// <summary>D-B16: el tenant apagó <c>ai</c>; el bloque sale por <c>error</c> sin delegar.</summary>
+    public const string ModuleDisabled = "module_disabled";
+
+    public const string WindowClosed = "window_closed";
+
+    public const string Blocked = "blocked";
 }
 
 public static class EndReasons
@@ -84,6 +111,12 @@ public static class EndReasons
 
     /// <summary>Ruling P2-R14: una salida (o el Inicio) apunta a un bloque que no existe en la versión; la corrida termina <c>Failed</c>.</summary>
     public const string TargetMissing = "target_missing";
+
+    /// <summary>Spec 2026-11-17 §6.4: el agente volvió sin salida porque la ventana del canal se cerró; la corrida termina <c>WindowClosed</c>.</summary>
+    public const string WindowClosed = "window_closed";
+
+    /// <summary>Spec 2026-11-17 §6.4: el agente volvió sin salida porque el contacto está bloqueado; la corrida termina <c>Interrupted</c>.</summary>
+    public const string Interrupted = "interrupted";
 }
 
 public sealed record StepResult(RunState State, IReadOnlyList<Effect> Effects)

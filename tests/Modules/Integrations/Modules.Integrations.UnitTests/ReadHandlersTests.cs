@@ -41,9 +41,9 @@ public sealed class ReadHandlersTests
     public async Task TheCatalogIsEmptyButPresentWhenNoConsumingModuleIsOn()
     {
         var bed = new IntegrationsTestBed();
-        // Ni quotations (Zenvia) ni messaging (whatsapp-cloud).
+        // Ni quotations (Zenvia) ni messaging (whatsapp-cloud) ni copilot, que sin dependencias deja ver anthropic y openai (spec 2026-11-17).
         bed.Modules.Sets[bed.TenantId] = TenantModuleSet.FromStored(
-            TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Messaging]));
+            TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Messaging, TenantModuleKeys.Copilot]));
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
@@ -57,7 +57,7 @@ public sealed class ReadHandlersTests
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
-        Assert.Equal(["zenvia", "whatsapp-cloud", "instagram", "shopify", "external-api", "anthropic"], catalog.Providers.Select(provider => provider.Key));
+        Assert.Equal(["zenvia", "whatsapp-cloud", "instagram", "shopify", "external-api", "anthropic", "openai"], catalog.Providers.Select(provider => provider.Key));
     }
 
     // Spec §5.2: cada proveedor trae onboarding; los campos internos no salen del catálogo.

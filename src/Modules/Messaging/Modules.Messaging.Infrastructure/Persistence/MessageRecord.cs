@@ -33,6 +33,10 @@ internal sealed class MessageRecord
 
     public string? SentByApiKeyName { get; set; }
 
+    /// <summary>Spec 2026-10-29 §4.4: el agente de IA que lo redactó (referencia blanda a Ai, sin FK); presente si y sólo si
+    /// <see cref="SentByKind"/> es Agent.</summary>
+    public Guid? SentByAgentId { get; set; }
+
     /// <summary>Spec 2026-10-10 §7.1: el mensaje citado, si QEP lo tiene. Sin FK (§7.1).</summary>
     public Guid? ReplyToMessageId { get; set; }
 

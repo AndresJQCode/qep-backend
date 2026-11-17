@@ -332,6 +332,12 @@ public sealed class RunsPersistenceTests
     /// <summary>Las conversaciones de Mensajería en memoria, todas con el bot atendiendo; <see cref="EndAsync"/> falla para una.</summary>
     private sealed class FailingEndConversations : IAutomationConversations
     {
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         private readonly List<Guid> ended = [];
 
         public Guid FailFor { get; set; }

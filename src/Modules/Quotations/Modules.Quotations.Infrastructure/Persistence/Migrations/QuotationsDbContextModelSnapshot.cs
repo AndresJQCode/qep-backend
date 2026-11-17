@@ -869,6 +869,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("discount_amount");
 
+                    b.Property<string>("ExternalKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("external_key");
+
                     b.Property<decimal>("FreightAmount")
                         .ValueGeneratedOnAdd()
                         .HasPrecision(14, 2)
@@ -1036,6 +1041,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_quotations_tenant");
+
+                    b.HasIndex("TenantId", "ExternalKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_quotations_tenant_external_key")
+                        .HasFilter("external_key IS NOT NULL");
 
                     b.HasIndex("TenantId", "QuotationNumber")
                         .IsUnique()

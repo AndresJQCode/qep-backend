@@ -8,6 +8,13 @@ public sealed record ChatbotConnectionDto(Guid Id, string Name, string Channel, 
 
 public sealed record ChatbotTodayDto(int Handled, int HandedOff);
 
+/// <summary>Spec 2026-11-17 D-B15 (BFF): los tokens que gastaron este mes, en el reloj del tenant, las sesiones de los bloques «Agente IA» de
+/// este chatbot. Lo suma el backend: la lista no puede pedir el consumo de Ai por chatbot (quien la ve no tiene por qué tener
+/// <c>ai.agent.read</c>) ni sumar filas en el navegador.</summary>
+public sealed record ChatbotAiUsageDto(long InputTokens, long OutputTokens);
+
+/// <param name="AiUsageThisMonth">Spec 2026-11-17 §7: <c>null</c> si ninguna sesión de un bloque «Agente IA» de este chatbot gastó tokens este
+/// mes (la columna dice «—»).</param>
 public sealed record ChatbotSummaryDto(
     Guid Id,
     string Name,
@@ -19,7 +26,8 @@ public sealed record ChatbotSummaryDto(
     DateTimeOffset? PublishedAt,
     bool HasDraftChanges,
     ChatbotTodayDto Today,
-    long Version);
+    long Version,
+    ChatbotAiUsageDto? AiUsageThisMonth = null);
 
 public sealed record ChatbotListResponse(IReadOnlyList<ChatbotSummaryDto> Items);
 
@@ -44,6 +52,14 @@ public sealed record ExternalApiRefDto(Guid Id, string Name, string Status);
 /// <summary>Spec 2026-10-25 D-5: un miembro al que el chatbot puede asignar la conversación.</summary>
 public sealed record ChatbotMemberDto(Guid Id, string Name);
 
+/// <summary>Spec 2026-11-17 §7: un agente de IA del tenant para el selector del bloque «Agente IA». <c>Status</c> viaja por nombre
+/// (<c>Draft</c>, <c>Active</c>, <c>Paused</c>); <c>Provider</c> y <c>Model</c>, los de la versión publicada (o los del borrador).</summary>
+public sealed record ChatbotEditorAgentDto(Guid Id, string Name, string Status, string Provider, string Model);
+
+/// <param name="Agents">Spec 2026-11-17 §7 (BFF): todos los agentes del tenant, en cualquier estado, para el selector del bloque «Agente IA»
+/// y para pintar «agente pausado». Viaja acá y no en una ruta de Ai porque quien edita un chatbot tiene <c>automations.chatbot.manage</c> y
+/// no necesariamente <c>ai.agent.read</c>. Sin el módulo <c>ai</c> llega vacío.</param>
+/// <param name="AiEnabled">D-B16: el tenant tiene el módulo <c>ai</c>; sin él el editor no ofrece el bloque.</param>
 public sealed record ChatbotEditorDto(
     ChatbotSummaryDto Chatbot,
     IReadOnlyList<string> Keywords,
@@ -57,7 +73,9 @@ public sealed record ChatbotEditorDto(
     IReadOnlyList<string> Variables,
     string ExhaustedAction,
     Guid? ExhaustedMemberId,
-    IReadOnlyList<ChatbotMemberDto> Members);
+    IReadOnlyList<ChatbotMemberDto> Members,
+    IReadOnlyList<ChatbotEditorAgentDto> Agents,
+    bool AiEnabled);
 
 public sealed record DraftSavedDto(long Version, DateTimeOffset UpdatedAt, IReadOnlyList<FlowIssueDto> Issues);
 

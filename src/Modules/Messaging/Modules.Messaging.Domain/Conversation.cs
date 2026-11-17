@@ -102,6 +102,14 @@ public sealed partial class Conversation
     /// <see cref="AutomationStatus"/> no sea <c>None</c> (<c>CK_conversations_automation_chatbot</c>).</summary>
     public Guid? AutomationChatbotId { get; private set; }
 
+    /// <summary>Spec 2026-10-29 §4.4: qué tipo de bot atiende; <c>null</c> en <c>None</c>. Una conversación termina con el bot con que empezó,
+    /// así que la cola rutea sus entrantes por este valor mientras el bot esté <c>Active</c>.</summary>
+    public BotKind? AutomationBotKind { get; private set; }
+
+    /// <summary>Spec 2026-10-29 §4.4: el agente de IA que atiende (referencia blanda a Ai). Con <see cref="BotKind.Agent"/> reemplaza a
+    /// <see cref="AutomationChatbotId"/>, que queda <c>null</c> (<c>CK_conversations_automation_bot</c>).</summary>
+    public Guid? AutomationAgentId { get; private set; }
+
     /// <summary>El paso del flujo donde va la conversación; lo escribe el motor.</summary>
     public string? AutomationStep { get; private set; }
 
@@ -113,6 +121,12 @@ public sealed partial class Conversation
     /// quiere que esa corrida siga, y este sello la mataría.
     /// </summary>
     public DateTimeOffset? AutomationResumedAt { get; private set; }
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: la delegación viva (<c>messaging.bot_delegations</c>) cuando el chatbot le pasó
+    /// la conversación a un agente. Sólo existe con el asistente <c>Active</c> y <see cref="BotKind.Agent"/> (<c>CK_conversations_delegation</c>),
+    /// así que toda transición que saca la conversación de ahí la limpia (<see cref="LeaveDelegation"/>). El chatbot que delegó no está en
+    /// <see cref="AutomationChatbotId"/> (que con un agente es <c>null</c>): vive en la fila de la delegación.</summary>
+    public Guid? AutomationDelegationId { get; private set; }
 
     /// <summary>Spec 2026-10-26 §3.1: cuándo un asesor bloqueó al contacto en WhatsApp. No toca estado, asignación ni asistente.</summary>
     public DateTimeOffset? BlockedAt { get; private set; }
@@ -367,8 +381,13 @@ public sealed partial class Conversation
     /// Spec 2026-10-26 D-3b: una pausa automática (<c>AdvisorTook</c>, <c>AdvisorReplied</c>, <c>AdvisorTransferred</c>) sin asesor, que
     /// es lo que deja un asesor que la tomó y la liberó, sí se puede arrancar: la pausa se borra. No toca <c>AutomationResumedAt</c>:
     /// el motor lo compara con el arranque de la corrida (P2-R25) y una hora posterior mataría la corrida nueva.</summary>
-    public void StartAutomation(Guid chatbotId, DateTimeOffset now)
+    public void StartAutomation(Guid chatbotId, DateTimeOffset now) => StartAutomation(BotRef.Chatbot(chatbotId), now);
+
+    /// <summary>Spec 2026-10-29 §4.4: lo mismo para cualquier bot. Con un agente la conversación guarda <see cref="AutomationAgentId"/> y no
+    /// un chatbot, y no tiene paso de flujo: el que quedara de una pausa anterior se borra.</summary>
+    public void StartAutomation(BotRef bot, DateTimeOffset now)
     {
+        ArgumentNullException.ThrowIfNull(bot);
         EnsureOpenForAutomation();
         if (AssignedMemberId is not null)
         {
@@ -387,11 +406,83 @@ public sealed partial class Conversation
 
         AutomationStatus = ConversationAutomationStatus.Active;
         AutomationStartedAt = now;
-        AutomationChatbotId = chatbotId;
+        SetBot(bot);
         AutomationPausedAt = null;
         AutomationPausedByMemberId = null;
         AutomationPauseReason = null;
         Touch(now);
+    }
+
+    /// <summary>Spec 2026-11-17 §5.3: el chatbot le pasa la conversación a un agente sin pasar por <c>None</c>. Exige, en este orden,
+    /// conversación abierta, asistente <c>Active</c> de un chatbot y sin delegación viva (con el asistente activo no hay asesor: tomarla
+    /// lo pausa). No toca <see cref="AutomationStartedAt"/> ni <see cref="AutomationResumedAt"/>: con el sello,
+    /// <c>BotAttendance.HumanTookOver</c> daría la corrida del chatbot por interrumpida (el mismo gotcha que
+    /// <see cref="ContinueAutomation"/>). El evento lleva el chatbot que delegó y el agente, con la foto de sus nombres (adenda D-5); el bot
+    /// no es una membresía, así que va sin actor.</summary>
+    public ConversationEvent DelegateToAgent(
+        Guid delegationId, Guid agentId, DateTimeOffset now, string? chatbotName = null, string? agentName = null)
+    {
+        EnsureOpenForAutomation();
+        if (AutomationStatus != ConversationAutomationStatus.Active || AutomationBotKind is BotKind.Agent
+            || AutomationChatbotId is not { } chatbotId || AssignedMemberId is not null)
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.AutomationNotAvailable, "Only a conversation attended by a chatbot can be delegated to an agent.");
+        }
+
+        SetBot(BotRef.Agent(agentId));
+        AutomationDelegationId = delegationId;
+        Touch(now);
+        return new ConversationEvent(
+            ConversationEventType.AutomationDelegated, ChatbotId: chatbotId, ChatbotName: FitBotName(chatbotName), AgentId: agentId,
+            AgentName: FitBotName(agentName));
+    }
+
+    /// <summary>Spec 2026-11-17 §5.3 y §6.3: el agente devuelve la conversación al chatbot que la delegó. Sólo la delegación viva: otra
+    /// (o ninguna) es <see cref="MessagingErrorCodes.DelegationNotLive"/>. Igual que al delegar, no toca el arranque ni la reanudación.
+    /// El paso del flujo queda vacío hasta que el motor lo reescriba al seguir. <paramref name="output"/> es una de
+    /// <see cref="BotDelegationOutputs"/>, o <c>null</c> si volvió sin salida (ventana cerrada o contacto bloqueado, §6.4); otra cosa es un
+    /// error de programación.</summary>
+    public ConversationEvent ReturnFromAgent(
+        Guid delegationId, Guid chatbotId, string? output, DateTimeOffset now, string? chatbotName = null, string? agentName = null)
+    {
+        if (output is not null && !BotDelegationOutputs.IsValid(output))
+        {
+            throw new ArgumentException($"'{output}' is not an output of the agent block.", nameof(output));
+        }
+
+        if (AutomationDelegationId != delegationId)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.DelegationNotLive, "That delegation is not the live one of the conversation.");
+        }
+
+        var agentId = AutomationAgentId;
+        SetBot(BotRef.Chatbot(chatbotId));
+        AutomationDelegationId = null;
+        Touch(now);
+        return new ConversationEvent(
+            ConversationEventType.AutomationReturned, ChatbotId: chatbotId, ChatbotName: FitBotName(chatbotName), AgentId: agentId,
+            AgentName: FitBotName(agentName), Output: output);
+    }
+
+    /// <summary>La foto del nombre de un bot en un evento mide como los títulos de un traspaso; en blanco, <c>null</c> (el hilo cae a
+    /// «Chatbot» o «Agente IA»).</summary>
+    private static string? FitBotName(string? name) => Truncate(name, AutomationHandoff.TextMaxLength);
+
+    /// <summary>La única limpieza de la delegación: la llaman todas las transiciones que sacan la conversación de <c>Active</c> o le cambian
+    /// el bot sin devolver (pausar, tomar, transferir, traspasar, resolver, terminar, arrancar a mano). Quien llama marca la delegación
+    /// <c>Interrupted</c> leyendo <see cref="AutomationDelegationId"/> antes del cambio.</summary>
+    private void LeaveDelegation() => AutomationDelegationId = null;
+
+    private void SetBot(BotRef bot)
+    {
+        AutomationBotKind = bot.Kind;
+        AutomationChatbotId = bot.Kind == BotKind.Chatbot ? bot.Id : null;
+        AutomationAgentId = bot.Kind == BotKind.Agent ? bot.Id : null;
+        if (bot.Kind == BotKind.Agent)
+        {
+            AutomationStep = null;
+        }
     }
 
     /// <summary>Spec 2026-10-21 D-M14: el paso del flujo donde va la conversación. No hace <c>Touch</c>: lo escribe el motor en cada
@@ -543,7 +634,9 @@ public sealed partial class Conversation
 
         AutomationStatus = ConversationAutomationStatus.Active;
         AutomationStartedAt = now;
-        AutomationChatbotId = chatbotId;
+        SetBot(BotRef.Chatbot(chatbotId));
+        // Desde Active puede venir delegada: el chatbot nuevo no es una delegación.
+        LeaveDelegation();
         AutomationPausedAt = null;
         AutomationPausedByMemberId = null;
         AutomationPauseReason = null;
@@ -603,6 +696,7 @@ public sealed partial class Conversation
     private void MarkPaused(Guid? actorMemberId, AutomationPauseReason reason, DateTimeOffset now)
     {
         AutomationStatus = ConversationAutomationStatus.Paused;
+        LeaveDelegation();
         AutomationPausedAt = now;
         AutomationPausedByMemberId = actorMemberId;
         AutomationPauseReason = reason;
@@ -666,8 +760,11 @@ public sealed partial class Conversation
         AutomationPausedByMemberId = null;
         AutomationPauseReason = null;
         AutomationChatbotId = null;
+        AutomationBotKind = null;
+        AutomationAgentId = null;
         AutomationStep = null;
         AutomationResumedAt = null;
+        LeaveDelegation();
     }
 
     private void EnsureOpenForAutomation()

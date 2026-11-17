@@ -212,6 +212,14 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-10-21 §4.2: el asistente ya está atendiendo la conversación.</summary>
     public const string AutomationAlreadyActive = "messaging.automation.already_active";
 
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: el agente quiere devolver una delegación que ya no es la viva de la
+    /// conversación (una persona la tomó, o la devolvió otro intento). Interno: lo atrapan Ai y Automations, no llega a un endpoint.</summary>
+    public const string DelegationNotLive = "messaging.automation.delegation_not_live";
+
+    /// <summary>Revisión de la rama, hallazgo 3: la conversación ya tiene una delegación viva (<c>IX_bot_delegations_live</c>); dos bloques
+    /// «Agente IA» que delegan a la vez. Interno como <see cref="DelegationNotLive"/>: el motor cierra la corrida que perdió.</summary>
+    public const string DelegationLiveExists = "messaging.automation.delegation_live_exists";
+
     /// <summary>Spec 2026-10-28 D-9: el rango del reporte supera el tope de su agrupación (92 días, 53 semanas o 24 meses).</summary>
     public const string ReportRangeTooLarge = "messaging.report.range_too_large";
 

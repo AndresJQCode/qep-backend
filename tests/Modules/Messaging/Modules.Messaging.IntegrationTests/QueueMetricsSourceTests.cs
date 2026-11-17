@@ -100,6 +100,7 @@ public sealed class QueueMetricsSourceTests
     [InlineData(QueueNames.Outbox)]
     [InlineData(QueueNames.ShopifyWebhook)]
     [InlineData(QueueNames.SupportSurvey)]
+    [InlineData(QueueNames.AiModel)]
     public async Task AnEmptyQueueReadsZero(string queue)
     {
         await using var database = await StartDatabaseAsync();
@@ -112,6 +113,27 @@ public sealed class QueueMetricsSourceTests
         Assert.Equal(0, reading.Retrying);
         // La campaña no tiene columna de edad: no publica, no dice cero.
         Assert.Equal(queue == QueueNames.Campaign ? null : 0d, reading.OldestAgeSeconds);
+    }
+
+    // Plan 2026-11-12, Tarea 7: los trabajos de modelo de los agentes. Un Pending vencido cuenta su edad desde que venció; un Running en
+    // reintento es backlog y reintentando, sin edad; un Done no cuenta.
+    [Fact]
+    public async Task TheAiModelQueueCountsPendingAndRunningJobs()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        await ExecuteAsync(f.ConnectionString, """
+            INSERT INTO ai.model_jobs (id, tenant_id, session_id, up_to_seq, status, attempts, next_attempt_at, created_at)
+            VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'Pending', 0, now() - interval '30 seconds', now() - interval '32 seconds'),
+                   (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'Running', 2, now() - interval '10 minutes', now() - interval '10 minutes'),
+                   (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'Done', 1, now() - interval '1 hour', now() - interval '1 hour')
+            """);
+
+        var reading = await ReadAsync(f, QueueNames.AiModel);
+
+        Assert.Equal(2, reading.Backlog);
+        Assert.Equal(1, reading.Retrying);
+        Assert.InRange(reading.OldestAgeSeconds!.Value, 29, 120);
     }
 
     [Fact]

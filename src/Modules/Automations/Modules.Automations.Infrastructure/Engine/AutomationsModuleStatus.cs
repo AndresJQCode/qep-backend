@@ -16,12 +16,21 @@ internal sealed class AutomationsModuleStatus(ITenantModules tenantModules, IMem
     /// <summary>Internal para las pruebas que apagan el módulo con el host ya en marcha.</summary>
     internal static string CacheKey(Guid tenantId) => $"automations:module:{tenantId}";
 
+    /// <summary>Spec 2026-11-17 D-B16: la del módulo <c>ai</c>, aparte.</summary>
+    internal static string AiCacheKey(Guid tenantId) => $"automations:ai-module:{tenantId}";
+
     public Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        cache.GetOrCreateAsync(CacheKey(tenantId), async entry =>
+        IsEnabledAsync(CacheKey(tenantId), tenantId, TenantModuleKeys.Automations, cancellationToken);
+
+    public Task<bool> IsAiEnabledAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        IsEnabledAsync(AiCacheKey(tenantId), tenantId, TenantModuleKeys.Ai, cancellationToken);
+
+    private Task<bool> IsEnabledAsync(string key, Guid tenantId, TenantModuleKey module, CancellationToken cancellationToken) =>
+        cache.GetOrCreateAsync(key, async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = Ttl;
             var set = await tenantModules.FindAsync(tenantId, cancellationToken);
             // null = el stub de desarrollo: no bloquea, como TenantModuleGuard y la ingesta de Mensajería.
-            return set is null || set.IsEnabled(TenantModuleKeys.Automations);
+            return set is null || set.IsEnabled(module);
         });
 }

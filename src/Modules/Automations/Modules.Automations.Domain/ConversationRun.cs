@@ -43,6 +43,11 @@ public sealed class ConversationRun
     /// <see cref="ConsentPromptJson"/>, que se borra al responder: el contador tiene que vivir entre una pregunta y la siguiente.</summary>
     public int ConsentRejections { get; private set; }
 
+    /// <summary>Revisión de la rama, hallazgo 5 (spec 2026-11-17 §6.6): cuántas veces seguidas la corrida delegó en un bloque «Agente IA» sin
+    /// que el cliente le respondiera al chatbot. Es de la corrida y no del tope por unidad: cada vuelta del agente es otra unidad, así que un
+    /// bucle <c>aiAgent → idle → aiAgent</c> nunca llegaba a <c>EngineReentries.Max</c>.</summary>
+    public int ConsecutiveDelegations { get; private set; }
+
     public string VariablesJson { get; private set; }
 
     /// <summary><c>[{at, nodeId, kind, outcome}]</c>, tope <see cref="RunState.TraceMax"/> entradas.</summary>
@@ -163,6 +168,12 @@ public sealed class ConversationRun
     /// <summary>P2-R24: también sobre una corrida ya terminada en esta unidad (resuelta, interrumpida): el reintento la encuentra por
     /// <c>FindLatestAsync</c>.</summary>
     public void MarkInbound(Guid messageId) => LastInboundMessageId = messageId;
+
+    /// <summary>Hallazgo 5: la corrida delegó una vez más sin respuesta del cliente al chatbot.</summary>
+    public void RecordDelegation() => ConsecutiveDelegations++;
+
+    /// <summary>Hallazgo 5: el cliente le respondió al chatbot; la racha de delegaciones vuelve a cero.</summary>
+    public void RecordCustomerReply() => ConsecutiveDelegations = 0;
 
     public RunState ToState()
     {
