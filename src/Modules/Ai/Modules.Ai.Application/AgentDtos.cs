@@ -56,6 +56,10 @@ public sealed record AiMemberDto(Guid Id, string Name);
 /// <param name="Members">Los destinos posibles del traspaso a un miembro (pueden responder conversaciones).</param>
 /// <param name="QuotationAdvisors">P-4: quién puede quedar como asesor de los borradores de cotización (pueden cotizar). Es otra lista que
 /// <paramref name="Members"/>: responder conversaciones y cotizar son permisos distintos, y la pantalla no puede cruzarlos.</param>
+/// <param name="QuotationBillingAccounts">Backend for frontend (plan 2026-11-17 A3, F-2): las cuentas de cobro que se pueden elegir para los
+/// borradores, las de las empresas activas, en orden. Viajan acá y no por <c>GET /companies</c> porque quien edita un agente tiene
+/// <c>ai.agent.manage</c> y no necesariamente <c>companies.company.read</c>, igual que <paramref name="QuotationAdvisors"/>; sin esta lista
+/// el agente con <c>create_quotation_draft</c> no se podría publicar desde la pantalla.</param>
 public sealed record AgentEditorDto(
     Guid Id,
     string Name,
@@ -70,7 +74,8 @@ public sealed record AgentEditorDto(
     IReadOnlyList<AiConnectionDto> Connections,
     IReadOnlyList<AiMemberDto> Members,
     AiModelCatalogDto Models,
-    IReadOnlyList<AiMemberDto> QuotationAdvisors);
+    IReadOnlyList<AiMemberDto> QuotationAdvisors,
+    IReadOnlyList<AiBillingAccountOption> QuotationBillingAccounts);
 
 /// <summary>D-A7: guardar responde la versión nueva (para el siguiente <c>If-Match</c>) y los problemas, sin el editor entero: el
 /// borrador lo tiene la pantalla.</summary>

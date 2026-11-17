@@ -141,6 +141,28 @@ public sealed class AgentConfigValidatorTests
             ("quotation_advisor_cannot_quote", "quotationDraft.advisorMemberId", AgentIssueSeverity.Warning), (issue.Code, issue.Path, issue.Severity));
     }
 
+    // Plan 2026-11-17 A3: la cuenta guardada que ya no está entre las elegibles (empresa desactivada o cuenta borrada) es aviso, como la
+    // asesora que ya no cotiza: al correr, Quotations la rechaza con quotation.billing.account_not_found.
+    [Fact]
+    public void ASavedBillingAccountThatIsNoLongerEligibleIsAWarning()
+    {
+        var config = Valid() with
+        {
+            Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: true),
+            QuotationDraft = new AgentQuotationDraft(Guid.NewGuid(), new AgentBillingAccount(Guid.NewGuid(), "Banco", "123", "COP")),
+        };
+
+        var issue = Assert.Single(AgentConfigValidator.Validate(
+            config,
+            new AgentValidationContext(
+                1, AgentModelAvailability.Available, null, Publishing: true, QuotationAdvisorCanQuote: true,
+                QuotationBillingAccountEligible: false)));
+
+        Assert.Equal(
+            ("quotation_billing_account_unavailable", "quotationDraft.billingAccount", AgentIssueSeverity.Warning),
+            (issue.Code, issue.Path, issue.Severity));
+    }
+
     [Fact]
     public void WithTheQuotationToolOffItsSettingsAreNotRequired() =>
         Assert.Empty(AgentConfigValidator.Validate(Valid() with { QuotationDraft = null }, Context()));

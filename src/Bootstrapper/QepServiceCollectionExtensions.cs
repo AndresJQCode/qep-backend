@@ -1407,6 +1407,8 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-29 §8.3 y P-4: create_quotation_draft escribe en Quotations y valida la asesora del agente, por adaptadores.
         services.AddScoped<IAiQuotationDrafts, AiQuotationDrafts>();
         services.AddScoped<IAiQuotationAdvisors, AiQuotationAdvisors>();
+        // Plan 2026-11-17 A3: las cuentas de cobro del editor del agente, con la regla de la tienda (ActiveBillingAccountOptions).
+        services.AddScoped<IAiQuotationBillingAccounts, AiQuotationBillingAccounts>();
         // Spec 2026-10-29 D-A3 y §4.3: conexiones, miembros y la ocupación neutral, por adaptadores (Ai no ve Mensajería).
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();

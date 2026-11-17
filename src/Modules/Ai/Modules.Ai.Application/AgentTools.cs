@@ -355,6 +355,28 @@ public interface IAiQuotationAdvisors
     Task<bool> CanQuoteAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);
 }
 
+/// <summary>Una cuenta de cobro que el editor del agente puede ofrecer, con su empresa (plan 2026-11-17 A3).</summary>
+public sealed record AiBillingAccountOption(Guid CompanyId, string CompanyName, string BankName, string AccountNumber, string Currency)
+{
+    /// <summary>Si la cuenta guardada es esta, con la comparación de <c>QuotationBillingAccountVerifier</c>: banco sin mayúsculas, número
+    /// exacto y moneda sin mayúsculas, los tres recortados.</summary>
+    public bool Matches(AgentBillingAccount account)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        return CompanyId == account.CompanyId
+            && string.Equals(BankName, account.BankName?.Trim(), StringComparison.OrdinalIgnoreCase)
+            && AccountNumber == account.AccountNumber?.Trim()
+            && string.Equals(Currency, account.Currency?.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>P-4 y plan 2026-11-17 A3 (F-2): las cuentas de cobro que el agente puede usar en sus borradores. Son las de las empresas activas,
+/// con la regla de la tienda (adaptador en Bootstrapper, sobre Companies), para no copiarla.</summary>
+public interface IAiQuotationBillingAccounts
+{
+    Task<IReadOnlyList<AiBillingAccountOption>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// §8.2, P-4 y P-4b: <c>create_quotation_draft</c> en un canal real. Escribe un borrador en Quotations con el cliente de la conversación (nunca
 /// uno de un argumento), la asesora y la cuenta del agente y la clave <c>ai:{jobId}</c> (D-A16), y termina el turno con un

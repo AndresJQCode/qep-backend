@@ -563,4 +563,98 @@ public sealed class AgentsApiTests
         Assert.Equal(HttpStatusCode.Forbidden, disabled.StatusCode);
         Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(disabled)).Code);
     }
+
+    // Plan 2026-11-17 A3 (F-2): el editor lista las cuentas de las empresas activas (la regla de la tienda), sin companies.company.read, y la
+    // cuenta guardada de una empresa que se desactivó es un aviso, no un error.
+    [Fact]
+    public async Task TheEditorListsTheActiveCompaniesBillingAccounts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        using var companies = CreateClient(factory, permissions: ["companies.company.read", "companies.company.manage"]);
+        var active = await CreateCompanyAsync(companies, "Verde S.A.S.", ("Davivienda", "VERDE-2", "USD"), ("Bancolombia", "VERDE-1", "COP"));
+        var closed = await CreateCompanyAsync(companies, "Cerrada S.A.S.", ("Bancolombia", "CERRADA-1", "COP"));
+        var deactivated = await SendAsync(companies, HttpMethod.Post, $"/api/v1/tenants/{TenantId}/companies/{closed}/deactivate");
+        Assert.True(deactivated.IsSuccessStatusCode, await BodyAsync(deactivated));
+
+        var created = await CreateAsync(setup.Client);
+        var id = created.GetProperty("id").GetGuid();
+        var draft = await SendAsync(
+            setup.Client,
+            HttpMethod.Put,
+            $"{Agents}/{id}/draft",
+            new
+            {
+                instructions = "Atiende las dudas de los clientes de la tienda.",
+                tone = "friendly",
+                greeting = "¡Hola! Soy el asistente.",
+                faq = Array.Empty<object>(),
+                useQuickReplies = false,
+                answerOnlyFromSources = true,
+                tools = new { catalog = false, orderStatus = false, quotationDraft = true },
+                quotationDraft = new
+                {
+                    advisorMemberId = Guid.CreateVersion7(),
+                    billingAccount = new { companyId = closed, bankName = "Bancolombia", accountNumber = "CERRADA-1", currency = "COP" },
+                },
+                handoff = new { destination = "unassigned", memberId = (Guid?)null, message = (string?)null, maxRepliesWithoutHuman = 20, maxConsecutiveFailures = 2 },
+                trigger = "NewConversation",
+                model = new { provider = "anthropic", id = "claude-sonnet-5-5" },
+            },
+            ifMatch: created.GetProperty("version").GetInt64());
+        Assert.Equal(HttpStatusCode.OK, draft.StatusCode);
+        var editor = await JsonAsync(await setup.Client.GetAsync($"{Agents}/{id}", Ct));
+
+        Assert.Equal(
+            [(active, "Verde S.A.S.", "Bancolombia", "VERDE-1", "COP"), (active, "Verde S.A.S.", "Davivienda", "VERDE-2", "USD")],
+            editor.GetProperty("quotationBillingAccounts").EnumerateArray().Select(account => (
+                account.GetProperty("companyId").GetGuid(),
+                account.GetProperty("companyName").GetString(),
+                account.GetProperty("bankName").GetString(),
+                account.GetProperty("accountNumber").GetString(),
+                account.GetProperty("currency").GetString())));
+        var issue = Assert.Single(
+            editor.GetProperty("issues").EnumerateArray(),
+            candidate => candidate.GetProperty("code").GetString() == "quotation_billing_account_unavailable");
+        Assert.Equal(("Warning", "quotationDraft.billingAccount"), (issue.GetProperty("severity").GetString(), issue.GetProperty("path").GetString()));
+    }
+
+    /// <summary>Una empresa con las cuentas que se pidan, por la API de Companies (como la crea la pantalla).</summary>
+    private static async Task<Guid> CreateCompanyAsync(HttpClient client, string name, params (string Bank, string Number, string Currency)[] accounts)
+    {
+        var response = await SendAsync(
+            client,
+            HttpMethod.Post,
+            $"/api/v1/tenants/{TenantId}/companies",
+            new
+            {
+                name,
+                bankAccounts = accounts.Select(account => new { bankName = account.Bank, accountNumber = account.Number, currency = account.Currency }),
+                taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
+                cityId = await AnyCityIdAsync(client),
+                phone = "6045551234",
+                email = "ventas@verde.example.co",
+                address = "Cra 50 # 10-20, Rionegro",
+            });
+        Assert.True(response.IsSuccessStatusCode, await BodyAsync(response));
+        return (await JsonAsync(response)).GetProperty("id").GetGuid();
+    }
+
+    private static async Task<Guid> AnyCityIdAsync(HttpClient client)
+    {
+        foreach (var department in (await JsonAsync(await client.GetAsync("/api/v1/departments", Ct))).EnumerateArray())
+        {
+            var cities = await JsonAsync(await client.GetAsync($"/api/v1/cities?departmentId={department.GetProperty("id").GetGuid()}", Ct));
+            if (cities.GetArrayLength() > 0)
+            {
+                return cities[0].GetProperty("id").GetGuid();
+            }
+        }
+
+        throw new InvalidOperationException("No hay ciudades sembradas.");
+    }
 }

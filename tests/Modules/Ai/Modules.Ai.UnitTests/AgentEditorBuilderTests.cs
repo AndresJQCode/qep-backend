@@ -98,18 +98,65 @@ public sealed class AgentEditorBuilderTests
         Assert.Equal(1, credentials.DescribeCalls);
     }
 
+    // Plan 2026-11-17 A3 (F-2): el editor ofrece las cuentas elegibles (el adaptador aplica la regla de la tienda) y avisa si la guardada ya
+    // no está entre ellas. La comparación es la de Quotations: banco sin mayúsculas, número exacto y moneda, recortados.
+    [Fact]
+    public async Task TheEditorOffersTheEligibleBillingAccounts()
+    {
+        var company = Guid.CreateVersion7();
+        var eligible = new AiBillingAccountOption(company, "Verde S.A.S.", "Bancolombia", "CTA-1", "COP");
+        var billing = new FakeBillingAccounts(eligible);
+
+        var matching = await Builder(new FakeConnections(), billing: billing)
+            .BuildAsync(QuotingAgent(new AgentBillingAccount(company, " bancolombia ", "CTA-1", "cop")), Ct);
+        var gone = await Builder(new FakeConnections(), billing: billing)
+            .BuildAsync(QuotingAgent(new AgentBillingAccount(company, "Bancolombia", "CTA-2", "COP")), Ct);
+
+        Assert.Equal([eligible], matching.QuotationBillingAccounts);
+        Assert.DoesNotContain(matching.Issues, issue => issue.Code == "quotation_billing_account_unavailable");
+        Assert.Contains(gone.Issues, issue => issue is { Code: "quotation_billing_account_unavailable", Severity: "Warning" });
+        Assert.Equal(2, billing.ListCalls);
+    }
+
+    private static Agent QuotingAgent(AgentBillingAccount account) =>
+        Agent.Create(
+            Tenant,
+            "Asesor virtual",
+            AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")) with
+            {
+                Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: true),
+                QuotationDraft = new AgentQuotationDraft(Guid.CreateVersion7(), account),
+            },
+            By,
+            Now);
+
     private static Agent NewAgent() =>
         Agent.Create(Tenant, "Asesor virtual", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now);
 
     private static AgentEditorBuilder Builder(
-        IAiConnections connections, FakeAdvisors? advisors = null, FakeAiProviderCredentials? credentials = null) =>
+        IAiConnections connections,
+        FakeAdvisors? advisors = null,
+        FakeAiProviderCredentials? credentials = null,
+        FakeBillingAccounts? billing = null) =>
         new(
             connections,
             new FakeSlots(),
             new FakeMembers(),
             new FakeModelCatalog(),
             advisors ?? new FakeAdvisors(canQuote: true),
-            credentials ?? new FakeAiProviderCredentials([]));
+            credentials ?? new FakeAiProviderCredentials([]),
+            billing ?? new FakeBillingAccounts());
+
+    private sealed class FakeBillingAccounts(params AiBillingAccountOption[] options) : IAiQuotationBillingAccounts
+    {
+        public int ListCalls { get; private set; }
+
+        public Task<IReadOnlyList<AiBillingAccountOption>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            ListCalls++;
+            return Task.FromResult<IReadOnlyList<AiBillingAccountOption>>(options);
+        }
+    }
 
     private sealed class FakeAdvisors(bool canQuote, params AiMemberRef[] members) : IAiQuotationAdvisors
     {

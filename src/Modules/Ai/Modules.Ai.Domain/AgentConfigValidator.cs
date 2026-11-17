@@ -27,8 +27,15 @@ public enum AgentModelAvailability
 /// <param name="HandoffMemberCanReply"><c>null</c> si el traspaso no es a un miembro o no tiene miembro.</param>
 /// <param name="Publishing">Publicar endurece: un modelo fuera de la lista pasa de aviso a error (plan 2026-11-12 C-16).</param>
 /// <param name="QuotationAdvisorCanQuote"><c>null</c> si la herramienta de cotización está apagada o no tiene asesora.</param>
+/// <param name="QuotationBillingAccountEligible">Si la cuenta guardada sigue entre las que el editor ofrece (plan 2026-11-17 A3); <c>null</c>
+/// si la herramienta de cotización está apagada o no tiene cuenta.</param>
 public sealed record AgentValidationContext(
-    int ConnectionCount, AgentModelAvailability Model, bool? HandoffMemberCanReply, bool Publishing, bool? QuotationAdvisorCanQuote = null);
+    int ConnectionCount,
+    AgentModelAvailability Model,
+    bool? HandoffMemberCanReply,
+    bool Publishing,
+    bool? QuotationAdvisorCanQuote = null,
+    bool? QuotationBillingAccountEligible = null);
 
 /// <summary>
 /// Spec 2026-10-29 D-A7: los problemas que impiden publicar. Guardar nunca falla por ellos: el borrador puede quedar a medias y la
@@ -103,6 +110,16 @@ public static class AgentConfigValidator
                 issues.Add(Error(
                     "quotation_billing_account_missing", "quotationDraft.billingAccount",
                     "Elige la cuenta de cobro de los borradores de cotización."));
+            }
+            else if (context.QuotationBillingAccountEligible == false)
+            {
+                // Plan 2026-11-17 A3: mismo criterio que la asesora. Al correr, Quotations la rechaza con
+                // quotation.billing.account_not_found y la herramienta vuelve al modelo con el código.
+                issues.Add(new AgentIssue(
+                    AgentIssueSeverity.Warning,
+                    "quotation_billing_account_unavailable",
+                    "quotationDraft.billingAccount",
+                    "Esa cuenta de cobro ya no está disponible: el agente no creará borradores hasta que elijas otra."));
             }
         }
 

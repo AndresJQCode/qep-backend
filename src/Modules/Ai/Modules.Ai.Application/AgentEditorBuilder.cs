@@ -10,7 +10,8 @@ public sealed class AgentEditorBuilder(
     IAiMembers members,
     IAiModelCatalog catalog,
     IAiQuotationAdvisors advisors,
-    IAiProviderCredentials credentials)
+    IAiProviderCredentials credentials,
+    IAiQuotationBillingAccounts billingAccountOptions)
 {
     private const string WhatsApp = "WhatsApp";
 
@@ -36,14 +37,21 @@ public sealed class AgentEditorBuilder(
     {
         ArgumentNullException.ThrowIfNull(agent);
         // Sólo los ids: esto corre en cada autoguardado del borrador, y la lectura completa resuelve cada conexión activa.
-        return await ValidateAsync(agent, publishing, await connections.ListIdsAsync(agent.TenantId, cancellationToken), cancellationToken);
+        return await ValidateAsync(
+            agent, publishing, await connections.ListIdsAsync(agent.TenantId, cancellationToken), billingAccounts: null, cancellationToken);
     }
 
     /// <summary>Sólo cuentan las conexiones que siguen existiendo en Integrations: Integrations borra la conexión sin avisar (nadie
     /// consume <c>integrations.connection.deleted</c>) y la referencia de <c>ai.agent_connections</c> es blanda. Sin el filtro, un agente
     /// cuya única conexión se borró pasaría la validación y se publicaría sin atender nada.</summary>
+    /// <param name="billingAccounts">Las cuentas elegibles si ya se leyeron (el editor las lista igual); <c>null</c> las lee sólo si hacen
+    /// falta.</param>
     private async Task<IReadOnlyList<AgentIssue>> ValidateAsync(
-        Agent agent, bool publishing, IReadOnlySet<Guid> live, CancellationToken cancellationToken)
+        Agent agent,
+        bool publishing,
+        IReadOnlySet<Guid> live,
+        IReadOnlyList<AiBillingAccountOption>? billingAccounts,
+        CancellationToken cancellationToken)
     {
         var config = agent.DraftConfig;
         bool? memberCanReply = null;
@@ -58,10 +66,23 @@ public sealed class AgentEditorBuilder(
             advisorCanQuote = await advisors.CanQuoteAsync(agent.TenantId, advisorId, cancellationToken);
         }
 
+        // Plan 2026-11-17 A3: la cuenta guardada se compara con las que el editor ofrece, no con una regla propia.
+        bool? billingAccountEligible = null;
+        if (config.Tools.QuotationDraft && config.QuotationDraft?.BillingAccount is { } account)
+        {
+            billingAccounts ??= await billingAccountOptions.ListAsync(agent.TenantId, cancellationToken);
+            billingAccountEligible = billingAccounts.Any(option => option.Matches(account));
+        }
+
         return AgentConfigValidator.Validate(
             config,
             new AgentValidationContext(
-                LiveConnectionIds(agent, live).Count, AvailabilityOf(config.Model), memberCanReply, publishing, advisorCanQuote));
+                LiveConnectionIds(agent, live).Count,
+                AvailabilityOf(config.Model),
+                memberCanReply,
+                publishing,
+                advisorCanQuote,
+                billingAccountEligible));
     }
 
     private static List<Guid> LiveConnectionIds(Agent agent, IReadOnlySet<Guid> live) =>
@@ -73,7 +94,9 @@ public sealed class AgentEditorBuilder(
         // Una sola lectura de las conexiones del tenant para la validación, las elegidas y las elegibles.
         var live = await connections.ListAsync(agent.TenantId, cancellationToken);
         var liveIds = live.Select(connection => connection.Id).ToHashSet();
-        var issues = await ValidateAsync(agent, publishing: false, liveIds, cancellationToken);
+        // Una sola lectura de las cuentas de cobro para la validación y la lista que se ofrece.
+        var billingAccounts = await billingAccountOptions.ListAsync(agent.TenantId, cancellationToken);
+        var issues = await ValidateAsync(agent, publishing: false, liveIds, billingAccounts, cancellationToken);
         var selectable = await ListSelectableAsync(agent.TenantId, live, cancellationToken);
         var assignable = await members.ListAsync(agent.TenantId, cancellationToken);
         var quoting = await advisors.ListAsync(agent.TenantId, cancellationToken);
@@ -92,7 +115,8 @@ public sealed class AgentEditorBuilder(
             selectable,
             [.. assignable.Select(member => new AiMemberDto(member.Id, member.Name))],
             ModelCatalog.ToDto(catalog, await credentials.DescribeAsync(agent.TenantId, cancellationToken)),
-            [.. quoting.Select(member => new AiMemberDto(member.Id, member.Name))]);
+            [.. quoting.Select(member => new AiMemberDto(member.Id, member.Name))],
+            billingAccounts);
     }
 
     public async Task<AgentListResponse> BuildListAsync(
