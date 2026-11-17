@@ -121,7 +121,8 @@ public sealed class ShopifyProductSyncFlowTests
             Product(UpdatedAt, new ShopifyProductImage(9L, new Uri("https://cdn.shopify.com/s/files/camiseta.png"))));
 
         Assert.Equal(ShopifyProductOutcomeKind.Created, outcome.Kind);
-        Assert.Empty(outcome.IssueCodes);
+        // El tenant de la prueba no tiene tasas de IVA (tax_rate_missing es esperado); lo que importa es la imagen.
+        Assert.DoesNotContain(Modules.Shopify.Domain.ShopifyProductCodes.ImageFailed, outcome.IssueCodes);
         var productId = await ScalarAsync<Guid>(
             connectionString, "SELECT product_id FROM shopify.product_links WHERE connection_id = @c LIMIT 1", ("c", connectionId));
         var fileId = await ScalarAsync<Guid>(
