@@ -1283,6 +1283,28 @@ public sealed class CompositionRootTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICopilotToolExecutor>());
     }
 
+    /// <summary>Plan fase 2, C2.5: cada adaptador del copiloto registrado una vez, con nombre único (el ejecutor los indexa por nombre). Los
+    /// de reportes, siete.</summary>
+    [Fact]
+    public void EveryCopilotToolIsRegisteredOnceWithAUniqueName()
+    {
+        var services = BuildPlatformServices();
+        using var provider = services.BuildServiceProvider();
+        var contract = typeof(QepServiceCollectionExtensions).Assembly.GetType("Bootstrapper.Copilot.ICopilotTool", throwOnError: true)!;
+
+        var names = provider.GetServices(contract)
+            .Select(tool => ((CopilotToolContract)contract.GetProperty("Contract")!.GetValue(tool)!).Name)
+            .ToList();
+
+        Assert.Equal(names.Count, names.Distinct(StringComparer.Ordinal).Count());
+        Assert.Superset(
+            new HashSet<string>(
+                ["get_orders_summary", "list_orders_report", "get_quotations_summary", "list_quotations_report", "get_customers_summary",
+                 "get_margin_summary", "get_price_changes_summary"],
+                StringComparer.Ordinal),
+            names.ToHashSet(StringComparer.Ordinal));
+    }
+
     /// <summary>Spec 2026-10-29 §12: el worker de modelo y el procesador de las pruebas se arman con todos sus puertos (las fuentes de las
     /// herramientas son adaptadores de Bootstrapper: sin su registro, el primer trabajo daría 500 en vez de una respuesta).</summary>
     [Fact]

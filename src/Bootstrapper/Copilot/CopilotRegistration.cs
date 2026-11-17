@@ -10,6 +10,12 @@ public static class CopilotRegistration
     public static IServiceCollection AddCopilotTools(this IServiceCollection services)
     {
         services.AddScoped<ICopilotToolExecutor, CopilotToolExecutor>();
+        // Plan fase 2, C2.5: los reportes (CP-3). Sin estado: un singleton por herramienta.
+        foreach (var tool in CopilotReportTools.All())
+        {
+            services.AddSingleton(tool);
+        }
+
         return services;
     }
 }
