@@ -84,7 +84,13 @@ internal static class AiRunModel
     /// <summary>§4.2: una sola sesión viva por conversación.</summary>
     public const string LiveSessionIndex = "IX_sessions_live";
 
-    public const string SessionStatusCheck = "status IN ('Live','HandedOff','WindowClosed','Interrupted','Failed','Abandoned')";
+    public const string SessionStatusCheck = "status IN ('Live','HandedOff','WindowClosed','Interrupted','Failed','Abandoned','Returned')";
+
+    /// <summary>Spec 2026-11-17 §5.4: sólo la sesión de un bloque de chatbot tiene delegación, y siempre la tiene.</summary>
+    public const string SessionOriginCheck = "(origin = 'ChatbotBlock') = (delegation_id IS NOT NULL)";
+
+    /// <summary>§5.4: una delegación abre a lo sumo una sesión (el id determinista ya lo evita; el índice cierra la carrera).</summary>
+    public const string DelegationSessionIndex = "IX_sessions_delegation";
 
     public const string TurnRoleCheck = "role IN ('Customer','Agent','Greeting')";
 
@@ -110,6 +116,8 @@ internal static class AiRunModel
         test.Property(value => value.CustomerId).HasColumnName("customer_id");
         test.Property(value => value.ConfigJson).HasColumnName("config").HasColumnType("jsonb");
         test.Property(value => value.TranscriptJson).HasColumnName("transcript").HasColumnType("jsonb");
+        test.Property(value => value.BlockJson).HasColumnName("block").HasColumnType("jsonb");
+        test.Ignore(value => value.Block);
         test.Property(value => value.PendingJobId).HasColumnName("pending_job_id");
         test.Property(value => value.HandedOff).HasColumnName("handed_off");
         test.Property(value => value.CreatedAt).HasColumnName("created_at");
@@ -153,7 +161,11 @@ internal static class AiRunModel
     private static void ConfigureSession(ModelBuilder modelBuilder)
     {
         var session = modelBuilder.Entity<AgentSession>();
-        session.ToTable("sessions", AiDbContext.Schema, table => table.HasCheckConstraint("CK_sessions_status", SessionStatusCheck));
+        session.ToTable("sessions", AiDbContext.Schema, table =>
+        {
+            table.HasCheckConstraint("CK_sessions_status", SessionStatusCheck);
+            table.HasCheckConstraint("CK_sessions_origin", SessionOriginCheck);
+        });
         session.HasKey(value => value.Id);
         session.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         session.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -173,8 +185,18 @@ internal static class AiRunModel
         session.Property(value => value.EndedAt).HasColumnName("ended_at");
         session.Property(value => value.EndReason).HasColumnName("end_reason").HasMaxLength(AgentSession.ReasonMaxLength);
         session.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(AgentSession.FailureCodeMaxLength);
+        // Spec 2026-11-17 §5.4. Referencias blandas a Messaging y Automations, sin FK. El default cubre las filas de antes y las de un pod viejo.
+        session.Property(value => value.Origin).HasColumnName("origin").HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(AgentSessionOrigin.Connection);
+        session.Property(value => value.DelegationId).HasColumnName("delegation_id");
+        session.Property(value => value.ChatbotId).HasColumnName("chatbot_id");
+        session.Property(value => value.RunId).HasColumnName("run_id");
+        session.Property(value => value.IdleMinutes).HasColumnName("idle_minutes");
+        session.Property(value => value.ObjectiveSummary).HasColumnName("objective_summary").HasMaxLength(AgentSession.ObjectiveSummaryMaxLength);
         session.Ignore(value => value.IsLive);
+        session.Ignore(value => value.IsBlock);
         session.Ignore(value => value.CanSupersede);
+        session.HasIndex(value => value.DelegationId, DelegationSessionIndex).IsUnique().HasFilter("delegation_id IS NOT NULL");
         session.HasIndex(value => value.ConversationId, LiveSessionIndex).IsUnique().HasFilter("status = 'Live'");
         session.HasIndex(value => new { value.TenantId, value.AgentId, value.StartedAt }, "IX_sessions_tenant_agent_started")
             .IsDescending(false, false, true);

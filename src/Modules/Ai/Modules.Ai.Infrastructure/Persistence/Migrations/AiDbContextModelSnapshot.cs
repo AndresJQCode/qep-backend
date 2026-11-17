@@ -127,6 +127,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("agent_version_id");
 
+                    b.Property<Guid?>("ChatbotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chatbot_id");
+
                     b.Property<Guid>("ConnectionId")
                         .HasColumnType("uuid")
                         .HasColumnName("connection_id");
@@ -140,6 +144,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("uuid")
                         .HasColumnName("conversation_id");
+
+                    b.Property<Guid?>("DelegationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("delegation_id");
 
                     b.Property<string>("EndReason")
                         .HasMaxLength(32)
@@ -155,6 +163,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(64)")
                         .HasColumnName("failure_code");
 
+                    b.Property<int?>("IdleMinutes")
+                        .HasColumnType("integer")
+                        .HasColumnName("idle_minutes");
+
                     b.Property<Guid?>("LastInboundMessageId")
                         .HasColumnType("uuid")
                         .HasColumnName("last_inbound_message_id");
@@ -165,11 +177,28 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(1)
                         .HasColumnName("next_seq");
 
+                    b.Property<string>("ObjectiveSummary")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("objective_summary");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Connection")
+                        .HasColumnName("origin");
+
                     b.Property<int>("RepliesWithoutHuman")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
                         .HasDefaultValue(0)
                         .HasColumnName("replies_without_human");
+
+                    b.Property<Guid?>("RunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("run_id");
 
                     b.Property<DateTimeOffset>("StartedAt")
                         .HasColumnType("timestamp with time zone")
@@ -200,6 +229,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "ConversationId", "StartedAt" }, "IX_sessions_conversation_started")
                         .IsDescending(false, true);
 
+                    b.HasIndex(new[] { "DelegationId" }, "IX_sessions_delegation")
+                        .IsUnique()
+                        .HasFilter("delegation_id IS NOT NULL");
+
                     b.HasIndex(new[] { "ConversationId" }, "IX_sessions_live")
                         .IsUnique()
                         .HasFilter("status = 'Live'");
@@ -212,7 +245,9 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
 
                     b.ToTable("sessions", "ai", t =>
                         {
-                            t.HasCheckConstraint("CK_sessions_status", "status IN ('Live','HandedOff','WindowClosed','Interrupted','Failed','Abandoned')");
+                            t.HasCheckConstraint("CK_sessions_origin", "(origin = 'ChatbotBlock') = (delegation_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_sessions_status", "status IN ('Live','HandedOff','WindowClosed','Interrupted','Failed','Abandoned','Returned')");
                         });
                 });
 
@@ -225,6 +260,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AgentId")
                         .HasColumnType("uuid")
                         .HasColumnName("agent_id");
+
+                    b.Property<string>("BlockJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("block");
 
                     b.Property<string>("ConfigJson")
                         .IsRequired()

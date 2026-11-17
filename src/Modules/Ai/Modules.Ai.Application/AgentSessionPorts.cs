@@ -241,6 +241,10 @@ public static class AiDeterministicIds
 {
     public static Guid SessionFor(Guid inboundMessageId) => From($"ai-session:{inboundMessageId:D}");
 
+    /// <summary>Spec 2026-11-17 §5.4: la sesión de un bloque de chatbot sale de su delegación; la abra la fila <c>Delegated</c> o el primer
+    /// entrante que llegue antes, es la misma.</summary>
+    public static Guid SessionForDelegation(Guid delegationId) => From($"ai-delegation-session:{delegationId:D}");
+
     public static Guid GreetingClientId(Guid sessionId) => From($"session:{sessionId:D}:greeting");
 
     public static Guid ReplyClientId(Guid jobId, int part) => From($"job:{jobId:D}:{part}");

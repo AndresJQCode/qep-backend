@@ -53,11 +53,17 @@ public sealed class AgentTest
 
     public long Version { get; private set; } = 1;
 
+    /// <summary>Spec 2026-11-17 §7: la prueba en modo bloque (<c>ai.tests.block</c>); <c>null</c> es una prueba de conexión.</summary>
+    public string? BlockJson { get; private set; }
+
     public AgentConfig Config => AgentConfig.FromJson(ConfigJson);
+
+    public AgentTestBlock? Block => BlockJson is null ? null : JsonSerializer.Deserialize<AgentTestBlock>(BlockJson, Json);
 
     public IReadOnlyList<AgentTestEntry> Transcript => _transcript;
 
-    public static AgentTest Open(Guid id, Guid tenantId, Guid agentId, Guid memberId, Guid? customerId, AgentConfig draft, DateTimeOffset now)
+    public static AgentTest Open(
+        Guid id, Guid tenantId, Guid agentId, Guid memberId, Guid? customerId, AgentConfig draft, DateTimeOffset now, AgentTestBlock? block = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         return new AgentTest
@@ -68,6 +74,7 @@ public sealed class AgentTest
             MemberId = memberId,
             CustomerId = customerId,
             ConfigJson = draft.ToJson(),
+            BlockJson = block is null ? null : JsonSerializer.Serialize(block, Json),
             CreatedAt = now,
             UpdatedAt = now,
             ExpiresAt = now + Lifetime,
@@ -129,6 +136,15 @@ public sealed class AgentTest
         UpdatedAt = now;
         Version++;
     }
+}
+
+/// <summary>Spec 2026-11-17 §7 y D-B17: el paso del chatbot que simula una prueba del playground. <see cref="Context"/> es texto ya
+/// resuelto: en el playground no hay variables del flujo.</summary>
+public sealed record AgentTestBlock(string Objective, string? Context)
+{
+    public const int ObjectiveMaxLength = 2000;
+
+    public const int ContextMaxLength = 2000;
 }
 
 /// <param name="Role"><see cref="Customer"/>, <see cref="Agent"/> o <see cref="Handoff"/>.</param>

@@ -9,6 +9,21 @@ public enum AgentSessionStatus
     Interrupted,
     Failed,
     Abandoned,
+
+    /// <summary>Spec 2026-11-17 §5.4: una sesión de un bloque de chatbot devolvió el control al flujo. <c>end_reason</c> es la salida
+    /// (<c>done</c>, <c>human</c>, <c>noAnswer</c>, <c>idle</c>, <c>error</c>) y <c>failure_code</c> el motivo.</summary>
+    Returned,
+}
+
+/// <summary>Spec 2026-11-17 §5.4: de dónde salió la sesión. Se guarda por nombre (<c>CK_sessions_origin</c> lo cruza con
+/// <c>delegation_id</c>).</summary>
+public enum AgentSessionOrigin
+{
+    /// <summary>El agente ocupa la conexión y tomó la conversación por su disparador.</summary>
+    Connection,
+
+    /// <summary>Un chatbot le delegó la conversación desde su bloque «Agente IA» y la espera de vuelta.</summary>
+    ChatbotBlock,
 }
 
 /// <summary>
@@ -24,6 +39,9 @@ public sealed class AgentSession
     public const int ReasonMaxLength = 32;
 
     public const int FailureCodeMaxLength = 64;
+
+    /// <summary>D-B8: el tope del resumen de <c>finish_objective</c>.</summary>
+    public const int ObjectiveSummaryMaxLength = 500;
 
     private AgentSession()
     {
@@ -66,7 +84,56 @@ public sealed class AgentSession
 
     public string? FailureCode { get; private set; }
 
+    public AgentSessionOrigin Origin { get; private set; }
+
+    /// <summary>Spec 2026-11-17 §5.4: la delegación de Mensajería que abrió la sesión; sólo en <see cref="AgentSessionOrigin.ChatbotBlock"/>.</summary>
+    public Guid? DelegationId { get; private set; }
+
+    /// <summary>D-B15: copia del chatbot y la corrida de la delegación, para sumar consumo por chatbot sin cruzar esquemas.</summary>
+    public Guid? ChatbotId { get; private set; }
+
+    public Guid? RunId { get; private set; }
+
+    /// <summary>D-B11: la inactividad del bloque; <c>null</c> usa la de siempre (<c>AiSessionTimings.IdleAfter</c>).</summary>
+    public int? IdleMinutes { get; private set; }
+
+    /// <summary>D-B8: lo que dejó <c>finish_objective</c>.</summary>
+    public string? ObjectiveSummary { get; private set; }
+
     public bool IsLive => Status == AgentSessionStatus.Live;
+
+    public bool IsBlock => Origin == AgentSessionOrigin.ChatbotBlock;
+
+    /// <summary>Spec 2026-11-17 §5.4 y D-B5: la sesión de un bloque de chatbot, con la versión publicada del agente al entrar al bloque. El
+    /// id lo deriva quien llama de la delegación (<c>AiDeterministicIds.SessionForDelegation</c>), así un reintento no abre dos. Nace sin
+    /// turnos: el saludo del agente no se manda en un bloque (D-B6).</summary>
+    public static AgentSession OpenForBlock(
+        Guid id, Guid tenantId, Guid conversationId, Guid connectionId, Guid agentId, Guid agentVersionId, Guid delegationId, Guid chatbotId,
+        Guid runId, int? idleMinutes, DateTimeOffset now)
+    {
+        var session = Open(id, tenantId, conversationId, connectionId, agentId, agentVersionId, now);
+        session.Origin = AgentSessionOrigin.ChatbotBlock;
+        session.DelegationId = delegationId;
+        session.ChatbotId = chatbotId;
+        session.RunId = runId;
+        session.IdleMinutes = idleMinutes;
+        return session;
+    }
+
+    /// <summary>Spec 2026-11-17 §6.3: la sesión del bloque devuelve el control al flujo por <paramref name="output"/>, con su
+    /// <paramref name="reason"/> y el resumen de <c>finish_objective</c> si lo hubo. Sólo una sesión de bloque y viva.</summary>
+    public void Return(string output, string reason, string? summary, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(output);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (!IsBlock)
+        {
+            throw new InvalidOperationException("Only a chatbot block session returns to the flow.");
+        }
+
+        Finish(AgentSessionStatus.Returned, output, reason, now);
+        ObjectiveSummary = Fit(string.IsNullOrWhiteSpace(summary) ? null : summary.Trim(), ObjectiveSummaryMaxLength);
+    }
 
     public static AgentSession Open(
         Guid id, Guid tenantId, Guid conversationId, Guid connectionId, Guid agentId, Guid agentVersionId, DateTimeOffset now) =>

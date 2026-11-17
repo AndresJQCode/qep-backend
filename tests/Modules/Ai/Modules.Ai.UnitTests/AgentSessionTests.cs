@@ -121,6 +121,53 @@ public sealed class AgentSessionTests
         Assert.True(truncated);
     }
 
+    // Spec 2026-11-17 §5.4 y D-B5: la sesión del bloque fija la versión publicada al entrar, sabe de qué delegación viene y nace sin turnos
+    // (el saludo lo decide el flujo, D-B6).
+    [Fact]
+    public void OpenForBlockFixesTheVersionAndHasNoGreeting()
+    {
+        var (version, delegation, chatbot, run) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+
+        var session = AgentSession.OpenForBlock(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), version, delegation,
+            chatbot, run, idleMinutes: 45, Now);
+
+        Assert.Equal(AgentSessionOrigin.ChatbotBlock, session.Origin);
+        Assert.True(session.IsBlock);
+        Assert.Equal((version, (Guid?)delegation, (Guid?)chatbot, (Guid?)run, (int?)45), (session.AgentVersionId, session.DelegationId, session.ChatbotId, session.RunId, session.IdleMinutes));
+        Assert.Equal((AgentSessionStatus.Live, 1), (session.Status, session.NextSeq));
+        Assert.Equal(AgentSessionOrigin.Connection, NewSession().Origin);
+        Assert.Null(NewSession().DelegationId);
+    }
+
+    // §6.3: devolver termina la sesión con la salida en end_reason, el motivo en failure_code y el resumen de finish_objective.
+    [Fact]
+    public void ReturningEndsTheSessionWithTheOutputAndReason()
+    {
+        var session = AgentSession.OpenForBlock(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), idleMinutes: null, Now);
+
+        session.Return("done", "objective_completed", new string('r', 600), Now.AddMinutes(3));
+
+        Assert.Equal(
+            (AgentSessionStatus.Returned, "done", "objective_completed", Now.AddMinutes(3)),
+            (session.Status, session.EndReason, session.FailureCode, session.EndedAt!.Value));
+        Assert.Equal(AgentSession.ObjectiveSummaryMaxLength, session.ObjectiveSummary!.Length);
+        Assert.Throws<InvalidOperationException>(() => session.Return("idle", "idle", null, Now));
+        // Una sesión de una conexión no devuelve: no tiene a quién.
+        Assert.Throws<InvalidOperationException>(() => NewSession().Return("done", "objective_completed", null, Now));
+    }
+
+    [Fact]
+    public void TheSessionIdOfADelegationIsDeterministic()
+    {
+        var delegation = Guid.CreateVersion7();
+
+        Assert.Equal(AiDeterministicIds.SessionForDelegation(delegation), AiDeterministicIds.SessionForDelegation(delegation));
+        Assert.NotEqual(AiDeterministicIds.SessionFor(delegation), AiDeterministicIds.SessionForDelegation(delegation));
+    }
+
     [Fact]
     public void TheIdsOfARetryAreTheSame()
     {
