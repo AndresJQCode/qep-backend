@@ -245,7 +245,8 @@ public sealed class RunProcessorRecordingTests
             var chatbots = new ServingChatbots();
             var clock = new FixedClock();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new OkHttp(), media, audit, new NoDataConsents(), chatbots, NullLogger<RunEffects>.Instance);
+                Messenger, conversations, hours, http ?? new OkHttp(), media, audit, new NoDataConsents(), chatbots, new ModuleStatus(moduleEnabled),
+                NullLogger<RunEffects>.Instance);
             var recorder = new RunUnitWriter(Units, clock, Logs.CreateLogger<RunUnitWriter>());
             return new RunProcessor(
                 UnitOfWork, Runs, chatbots, Inbox, conversations, new TenantNames(), new Connections(), hours, media, new ModuleStatus(moduleEnabled),
@@ -485,6 +486,8 @@ public sealed class RunProcessorRecordingTests
     private sealed class ModuleStatus(bool enabled) : IAutomationsModuleStatus
     {
         public Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(enabled);
+
+        public Task<bool> IsAiEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     private sealed class NoAudit : IAutomationsAuditRecorder

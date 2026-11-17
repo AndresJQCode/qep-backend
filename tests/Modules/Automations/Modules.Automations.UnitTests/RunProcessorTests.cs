@@ -1186,7 +1186,7 @@ public sealed partial class RunProcessorTests
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
         IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null,
         EngineSettings? engineSettings = null, RecordingDataConsents? dataConsents = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation,
-        bool hoursOpen = true, bool resolvedAfterRun = false)
+        bool hoursOpen = true, bool resolvedAfterRun = false, bool aiEnabled = true)
     {
         public RecordingInbox Inbox { get; } = new();
 
@@ -1210,10 +1210,10 @@ public sealed partial class RunProcessorTests
             var files = media ?? new NoMedia();
             var effects = new RunEffects(
                 Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, DataConsents, new ServingChatbots(flow, engineSettings, trigger),
-                NullLogger<RunEffects>.Instance);
+                new ModuleStatus(moduleEnabled, aiEnabled), NullLogger<RunEffects>.Instance);
             return new RunProcessor(
                 Unit, Runs, new ServingChatbots(flow, engineSettings, trigger), Inbox, conversations, new TenantNames(), new Connections(), hours,
-                files, new ModuleStatus(moduleEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
+                files, new ModuleStatus(moduleEnabled, aiEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
 
@@ -1358,11 +1358,28 @@ public sealed partial class RunProcessorTests
     private sealed class Conversations(Exception? startFailure, AutomationConversationState? state, Exception? endFailure, bool resolvedAfterRun = false)
         : IAutomationConversations
     {
-        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        /// <summary>Spec 2026-11-17: cada delegación pedida, en orden.</summary>
+        public List<DelegationRequest> Delegations { get; } = [];
+
+        /// <summary>Lo que lanza la delegación cuando la conversación ya no es del chatbot.</summary>
+        public Exception? DelegateFailure { get; set; }
+
+        /// <summary>Spec 2026-11-17 §6.3: las delegaciones que lee el retorno, por id.</summary>
+        public Dictionary<Guid, DelegationResult> DelegationResults { get; } = [];
+
+        public Task<Guid> DelegateToAgentAsync(Guid tenantId, Guid conversationId, DelegationRequest request, CancellationToken cancellationToken)
+        {
+            if (DelegateFailure is not null)
+            {
+                return Task.FromException<Guid>(DelegateFailure);
+            }
+
+            Delegations.Add(request);
+            return Task.FromResult(Guid.CreateVersion7());
+        }
 
         public Task<DelegationResult?> ReadDelegationResultAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(DelegationResults.GetValueOrDefault(delegationId));
 
         /// <summary>Spec 2026-10-26 D-12b: las veces que el procesador preguntó por una resolución y desde cuándo.</summary>
         public List<DateTimeOffset> ResolvedChecks { get; } = [];
@@ -1542,9 +1559,11 @@ public sealed partial class RunProcessorTests
         public Task<(Stream Content, long Length)?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class ModuleStatus(bool enabled) : IAutomationsModuleStatus
+    private sealed class ModuleStatus(bool enabled, bool aiEnabled = true) : IAutomationsModuleStatus
     {
         public Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(enabled);
+
+        public Task<bool> IsAiEnabledAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(aiEnabled);
     }
 
     private sealed class RecordingAudit : IAutomationsAuditRecorder

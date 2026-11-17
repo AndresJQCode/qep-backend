@@ -456,6 +456,10 @@ public interface IAutomationsUnitOfWork
 public interface IAutomationsModuleStatus
 {
     Task<bool> IsEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 D-B16: ¿el tenant tiene el módulo <c>ai</c>? Sin él, un bloque «Agente IA» sale por <c>error</c> sin delegar.
+    /// Con la misma caché por tenant que <see cref="IsEnabledAsync"/>.</summary>
+    Task<bool> IsAiEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-21 §5.2 y D-M12/D-M13: las corridas del motor. Las lecturas <c>ForUpdate</c> y el barrido sólo valen dentro de
@@ -567,6 +571,9 @@ public static class RunUnitTriggers
     public const string CustomerMessage = "CustomerMessage";
     public const string Resume = "Resume";
     public const string Closed = "Closed";
+
+    /// <summary>Spec 2026-11-17 §6.3: el agente del bloque «Agente IA» devolvió la conversación (fila <c>AgentReturned</c>).</summary>
+    public const string AgentReturned = "AgentReturned";
 }
 
 /// <summary>Spec 2026-10-25 D-E14: por qué una corrida terminó sin que el motor la cerrara.</summary>
