@@ -147,6 +147,8 @@ public sealed class ShopifyStore
         Version++;
     }
 
+    /// <summary>Con asesor y con <see cref="Billing"/>, que siempre lleva la empresa aunque no tenga cuenta bancaria (spec
+    /// 2026-11-17 §4.4).</summary>
     public bool IsConfigured => AdvisorMembershipId is not null && Billing is not null;
 
     /// <summary>La fila vacía. <paramref name="linkedAt"/> es el momento del enlace: la conciliación arranca ahí y no trae
@@ -165,7 +167,7 @@ public sealed class ShopifyStore
         };
     }
 
-    private static string Required(string value, int maxLength, string parameterName)
+    private static string Required(string? value, int maxLength, string parameterName)
     {
         var trimmed = value?.Trim();
         return string.IsNullOrEmpty(trimmed) || trimmed.Length > maxLength
@@ -197,6 +199,13 @@ public sealed class ShopifyStore
             throw new ArgumentException("The billing currency must be a three-letter ISO 4217 code.", nameof(billing));
         }
 
+        // Banco y número en blanco los dos es la empresa sin cuenta (spec 2026-11-17 §4.4): se guardan en null. Uno solo es un
+        // dato a medias, y el validador del PUT ya lo atajó.
+        if (string.IsNullOrWhiteSpace(billing.BankName) && string.IsNullOrWhiteSpace(billing.AccountNumber))
+        {
+            return billing with { BankName = null, AccountNumber = null, Currency = currency.ToUpperInvariant() };
+        }
+
         return billing with
         {
             BankName = Required(billing.BankName, ShopifyBillingAccount.BankNameMaxLength, nameof(billing)),
@@ -207,8 +216,9 @@ public sealed class ShopifyStore
 }
 
 /// <summary>La empresa y la cuenta a la que se cobran los pedidos de la tienda; copia, como <c>QuotationBillingAccount</c>, con sus
-/// mismos anchos (los de <c>companies.company_bank_accounts</c>).</summary>
-public sealed record ShopifyBillingAccount(Guid CompanyId, string BankName, string AccountNumber, string Currency)
+/// mismos anchos (los de <c>companies.company_bank_accounts</c>). Banco y número en null los dos es una empresa sin cuenta (spec
+/// 2026-11-17 §4.4): la moneda sigue siendo la de la tienda, pero el importador ya no la compara con la del pedido.</summary>
+public sealed record ShopifyBillingAccount(Guid CompanyId, string? BankName, string? AccountNumber, string Currency)
 {
     public const int BankNameMaxLength = 120;
     public const int AccountNumberMaxLength = 32;

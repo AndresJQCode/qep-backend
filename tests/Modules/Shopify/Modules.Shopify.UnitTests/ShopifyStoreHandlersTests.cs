@@ -52,6 +52,48 @@ public sealed class ShopifyStoreHandlersTests
         Assert.Equal("shopify.store.billing_account_not_found", error.Code);
     }
 
+    // Spec 2026-11-17 §4.4: la tienda se configura con la empresa sola, sin banco ni número; la moneda sigue obligatoria.
+    [Fact]
+    public async Task AStoreIsConfiguredWithACompanyAndNoAccount()
+    {
+        var world = new StoreHandlersWorld();
+        world.Billing.Account = null;
+        world.Billing.Company = new ShopifyBillingCompanyRef(StoreHandlersWorld.CompanyId, true);
+        world.SeedStore();
+
+        var dto = await world.PutAsync(world.Command() with { BillingBankName = " ", BillingAccountNumber = null, BillingCurrency = "usd" });
+
+        var store = world.Database.Stores[StoreHandlersWorld.ConnectionId];
+        Assert.True(store.IsConfigured);
+        Assert.Equal(
+            new ShopifyBillingAccount(StoreHandlersWorld.CompanyId, null, null, "USD"),
+            store.Billing);
+        Assert.Equal((null, null, "USD"), (dto.BillingBankName, dto.BillingAccountNumber, dto.BillingCurrency));
+    }
+
+    [Fact]
+    public void OnlyTheAccountNumberIsAValidationError()
+    {
+        var world = new StoreHandlersWorld();
+
+        var result = new UpdateShopifyStoreValidator().Validate(world.Command() with { BillingBankName = null });
+
+        Assert.Equal(["billingBankName"], result.Errors.Select(error => error.PropertyName).Distinct());
+    }
+
+    [Fact]
+    public async Task AnUnknownCompanyIsBillingAccountNotFound()
+    {
+        var world = new StoreHandlersWorld();
+        world.Billing.Company = null;
+
+        var error = await Assert.ThrowsAsync<ShopifyDomainException>(
+            () => world.PutAsync(world.Command() with { BillingBankName = null, BillingAccountNumber = null }));
+
+        Assert.Equal("shopify.store.billing_account_not_found", error.Code);
+        Assert.Equal(0, world.UnitOfWork.Saves);
+    }
+
     [Fact]
     public async Task PutClassificationOtherTenantThrows()
     {

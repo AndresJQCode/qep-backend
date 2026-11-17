@@ -14,11 +14,13 @@ namespace Modules.Shopify.Application;
 /// SKU (<c>null</c>). Una línea que no es personalizada <b>nunca</b> mira las asociaciones.</para>
 /// <para>Spec 2026-11-14 (D2): una línea que una edición de Shopify dejó en 0 (<see cref="ShopifyLine.IsRemoved"/>) ya no es del
 /// pedido; no entra ni hace esperar. La usan la importación y el planificador de cambios, con la misma regla.</para>
+/// <para>Spec 2026-11-17 R7: <c>chargesVat</c> es el IVA de la empresa (en la importación) o el congelado del pedido (en el
+/// planificador); en <c>false</c> el precio de Shopify no suma IVA.</para>
 /// </summary>
 public sealed class ShopifyLineResolver(IShopifyProductLookup products, IShopifyCustomLineMappingRepository customLines)
 {
     public async Task<(IReadOnlyList<ShopifyOrderLineDraft> Lines, IReadOnlyList<string?> UnmatchedSkus, IReadOnlyList<string> UnmatchedTitles)> ResolveAsync(
-        Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken)
+        Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, bool chargesVat, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -90,7 +92,10 @@ public sealed class ShopifyLineResolver(IShopifyProductLookup products, IShopify
                 product.VariantId,
                 product.ProductId,
                 line.Quantity,
-                ShopifyPricing.UnitPriceWithVat(line.OriginalUnitPrice, snapshot.TaxesIncluded, product.TaxPercentage, currency),
+                // Sin IVA el precio de Shopify va tal cual, traiga o no impuestos; la línea lleva igual la tasa del producto, que
+                // el pedido guarda como suya y aplica en 0.
+                ShopifyPricing.UnitPriceWithVat(
+                    line.OriginalUnitPrice, snapshot.TaxesIncluded, chargesVat ? product.TaxPercentage : 0, currency),
                 // D2: Shopify reparte el descuento sobre la línea original; el porcentaje sale de la cantidad original.
                 ShopifyPricing.DiscountPercentage(line.DiscountAmount, line.OriginalUnitPrice, line.OriginalQuantity ?? line.Quantity),
                 product.TaxPercentage));

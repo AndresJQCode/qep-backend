@@ -51,8 +51,14 @@ public sealed class UpdateShopifyStoreValidator : AbstractValidator<UpdateShopif
     {
         RuleFor(command => command.AdvisorMembershipId).NotEmpty().OverridePropertyName("advisorMembershipId");
         RuleFor(command => command.BillingCompanyId).NotEmpty().OverridePropertyName("billingCompanyId");
-        RequiredText(command => command.BillingBankName, ShopifyBillingAccount.BankNameMaxLength, "billingBankName");
-        RequiredText(command => command.BillingAccountNumber, ShopifyBillingAccount.AccountNumberMaxLength, "billingAccountNumber");
+        // Spec 2026-11-17 §4.4: banco y número van los dos o ninguno (empresa sin cuenta). Cada campo marca su error: el que
+        // falta cuando el otro vino, o el que pasa del tope.
+        PairedText(
+            command => command.BillingBankName, command => command.BillingAccountNumber,
+            ShopifyBillingAccount.BankNameMaxLength, "billingBankName");
+        PairedText(
+            command => command.BillingAccountNumber, command => command.BillingBankName,
+            ShopifyBillingAccount.AccountNumberMaxLength, "billingAccountNumber");
         RuleFor(command => command.BillingCurrency)
             .Must(currency => currency?.Trim() is { Length: ShopifyBillingAccount.CurrencyLength } code && code.All(char.IsAsciiLetter))
             .WithMessage("The billing currency must be a three-letter ISO 4217 code.")
@@ -100,6 +106,18 @@ public sealed class UpdateShopifyStoreValidator : AbstractValidator<UpdateShopif
         Enum.GetValues<ShopifyEditSync>()
             .Select(mode => (ShopifyEditSync?)mode)
             .FirstOrDefault(mode => string.Equals(mode.ToString(), value, StringComparison.Ordinal));
+
+    private void PairedText(
+        System.Linq.Expressions.Expression<Func<UpdateShopifyStoreCommand, string?>> field,
+        Func<UpdateShopifyStoreCommand, string?> other,
+        int maxLength,
+        string name) =>
+        RuleFor(field)
+            .Must((command, value) => string.IsNullOrWhiteSpace(value)
+                ? string.IsNullOrWhiteSpace(other(command))
+                : value.Trim().Length <= maxLength)
+            .WithMessage($"The bank and the account number go together, or neither; each cannot exceed its limit ({maxLength}).")
+            .OverridePropertyName(name);
 
     private void RequiredText(System.Linq.Expressions.Expression<Func<UpdateShopifyStoreCommand, string?>> field, int maxLength, string name) =>
         RuleFor(field)
@@ -344,6 +362,30 @@ public sealed class UpdateShopifyStoreHandler(
                 ShopifyErrorCodes.StoreAdvisorNotMember, "The store advisor is not an active membership of the tenant.");
         }
 
+        var billing = await ValidatedBillingAsync(command, cancellationToken);
+
+        if (command.DefaultClassificationId is { } classificationId
+            && await references.ClassificationNameAsync(command.TenantId, classificationId, cancellationToken) is null)
+        {
+            throw new ShopifyDomainException(
+                ShopifyErrorCodes.StoreClassificationNotFound, "The default classification does not belong to the tenant.");
+        }
+
+        return billing;
+    }
+
+    // Spec 2026-11-17 §4.4: sin banco ni número basta la empresa del tenant, y la moneda es la que se eligió (no hay cuenta que
+    // la fije). Con cuenta, como siempre: la cuenta y su moneda.
+    private async Task<ShopifyBillingAccount> ValidatedBillingAsync(UpdateShopifyStoreCommand command, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command.BillingBankName) && string.IsNullOrWhiteSpace(command.BillingAccountNumber))
+        {
+            var company = await billingAccounts.FindCompanyAsync(command.TenantId, command.BillingCompanyId, cancellationToken)
+                ?? throw new ShopifyDomainException(
+                    ShopifyErrorCodes.StoreBillingAccountNotFound, "The billing company does not exist in this tenant.");
+            return new ShopifyBillingAccount(company.CompanyId, null, null, command.BillingCurrency!.Trim());
+        }
+
         var account = await billingAccounts.FindAsync(
             command.TenantId, command.BillingCompanyId, command.BillingBankName!, command.BillingAccountNumber!, cancellationToken);
         if (account is null
@@ -351,13 +393,6 @@ public sealed class UpdateShopifyStoreHandler(
         {
             throw new ShopifyDomainException(
                 ShopifyErrorCodes.StoreBillingAccountNotFound, "The billing account does not exist in that company with that currency.");
-        }
-
-        if (command.DefaultClassificationId is { } classificationId
-            && await references.ClassificationNameAsync(command.TenantId, classificationId, cancellationToken) is null)
-        {
-            throw new ShopifyDomainException(
-                ShopifyErrorCodes.StoreClassificationNotFound, "The default classification does not belong to the tenant.");
         }
 
         return new ShopifyBillingAccount(account.CompanyId, account.BankName, account.AccountNumber, account.Currency);

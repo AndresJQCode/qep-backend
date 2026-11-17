@@ -232,4 +232,26 @@ public sealed class ShopifyEditPlannerTests
         Assert.Equal("order_not_editable", plan.BlockReason);
         Assert.Null(plan.Draft);
     }
+
+    // Spec 2026-11-17 R7: un pedido de empresa sin IVA se planea con el IVA congelado del pedido. Las líneas sin impuestos de
+    // Shopify van a su precio (sin sumar IVA) y llevan la tasa del producto; el envío cobrado va al 0 % aunque el tenant no tenga
+    // tasa del envío.
+    [Fact]
+    public async Task AnOrderWithoutVatPlansLinesAndFreightWithoutVat()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.World.Shipping.FreightTaxPercentage = null;
+        world.Applied = Snapshot(taxesIncluded: false);
+        world.Order = world.Order with { ChargesVat = false };
+
+        var plan = await world.PlanAsync(Snapshot(lines: [Line(quantity: 3m)], shippingLines: [Freight()], taxesIncluded: false));
+
+        Assert.All(plan.Groups, group => Assert.Equal(ShopifyEditGroupOutcome.Apply, group.Outcome));
+        Assert.Equal(
+            [ShopifyEditGroupKind.Lines, ShopifyEditGroupKind.Shipping],
+            plan.Groups.Select(group => group.Kind).Order());
+        var line = Assert.Single(plan.Draft!.Lines!);
+        Assert.Equal((50_000m, 19, 3m), (line.UnitPrice, line.TaxPercentage, line.Quantity));
+        Assert.Equal((15_000m, 0), (plan.Draft.Shipping!.FreightAmount, plan.Draft.Shipping.FreightTaxPercentage));
+    }
 }

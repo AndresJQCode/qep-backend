@@ -37,7 +37,10 @@ public static class ShopifyShippingMapper
     private static readonly ShopifyShippingDraft NoShipping = new(false, null, null, null, 0m, 0, false);
     private static readonly ShopifyShippingDraft StorePickup = new(true, null, null, null, 0m, 0, false);
 
-    public static ShopifyShippingResult Map(ShopifyOrderSnapshot snapshot, string currency, ShopifyCarrierRef? carrier, int? freightRate)
+    /// <param name="chargesVat">Spec 2026-11-17 R7: en <c>false</c> (empresa sin IVA) el envío cobrado en COP va al 0 %, con el
+    /// valor de Shopify en pesos enteros y sin pedir la tasa del envío: nunca espera <c>freight_tax_rate_missing</c>.</param>
+    public static ShopifyShippingResult Map(
+        ShopifyOrderSnapshot snapshot, string currency, ShopifyCarrierRef? carrier, int? freightRate, bool chargesVat = true)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         if (IsStorePickup(snapshot))
@@ -65,6 +68,10 @@ public static class ShopifyShippingMapper
         {
             // D-S27: fuera de COP el valor va tal cual y la tasa se fuerza a 0 en el pedido.
             (chargeMode, freightAmount, taxPercentage) = (Charged, amount, 0);
+        }
+        else if (!chargesVat)
+        {
+            (chargeMode, freightAmount, taxPercentage) = (Charged, Math.Round(amount, 0, MidpointRounding.AwayFromZero), 0);
         }
         else if (freightRate is not { } rate)
         {

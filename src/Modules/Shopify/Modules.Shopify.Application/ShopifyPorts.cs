@@ -409,8 +409,14 @@ public sealed record ShopifyShippingDraft(
     int FreightTaxPercentage,
     bool CashOnDelivery);
 
-/// <summary>La cuenta de cobro de la tienda, como la guarda Companies; su moneda es la del pedido.</summary>
-public sealed record ShopifyBillingAccountRef(Guid CompanyId, string BankName, string AccountNumber, string Currency);
+/// <summary>La cuenta de cobro de la tienda, como la guarda Companies; su moneda es la del pedido. Banco y número en null los
+/// dos es la empresa sin cuenta (spec 2026-11-17 §4.4). <see cref="ChargesVat"/> es si la empresa cobra IVA hoy: el importador
+/// precia con él, y el pedido lo congela al crearse.</summary>
+public sealed record ShopifyBillingAccountRef(
+    Guid CompanyId, string? BankName, string? AccountNumber, string Currency, bool ChargesVat = true);
+
+/// <summary>La empresa de una tienda sin cuenta bancaria (spec 2026-11-17 §4.4), con su IVA.</summary>
+public sealed record ShopifyBillingCompanyRef(Guid CompanyId, bool ChargesVat);
 
 /// <summary>
 /// Los datos de <c>ExternalOrderDraft</c> de Quotations con tipos propios (§6.2.3). <see cref="FinancialStatus"/> es el de
@@ -548,7 +554,9 @@ public sealed record ShopifyOrderState(
     ShopifyShippingDraft Shipping,
     ShopifyShippingFingerprint? ShippingParty,
     string? ShippingCountry,
-    string? BuyerNotes);
+    string? BuyerNotes,
+    // Spec 2026-11-17 R7: el IVA congelado del pedido. El planificador precia con él, nunca con el de la empresa hoy.
+    bool ChargesVat = true);
 
 /// <summary>Spec 2026-11-14 §4: los grupos de un cambio que se aplican al pedido; cada uno en <c>null</c> no se toca.
 /// <see cref="BuyerNotes"/> sólo cuenta con <see cref="ReplaceBuyerNotes"/>. <see cref="ExpectedVersion"/> es la versión del
@@ -656,6 +664,10 @@ public interface IShopifyBillingAccounts
     /// <summary><c>null</c> si la empresa no es del tenant o la cuenta ya no está (<c>billing_account_missing</c>).</summary>
     Task<ShopifyBillingAccountRef?> FindAsync(
         Guid tenantId, Guid companyId, string bank, string number, CancellationToken cancellationToken);
+
+    /// <summary>La empresa sola, para una tienda sin cuenta (spec 2026-11-17 §4.4); <c>null</c> si no es del tenant
+    /// (<c>billing_account_missing</c> en el importador, <c>billing_account_not_found</c> al configurar).</summary>
+    Task<ShopifyBillingCompanyRef?> FindCompanyAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-15 §7: el número <c>PED-…</c> de los pedidos de QEP que la bandeja muestra en cada fila importada.

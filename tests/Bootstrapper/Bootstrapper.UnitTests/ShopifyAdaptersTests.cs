@@ -1113,6 +1113,19 @@ public sealed class ShopifyAdaptersTests
         Assert.Null(await OrderWriter(orders).ReadStateAsync(TenantId, Guid.CreateVersion7(), Ct));
     }
 
+    // Spec 2026-11-17 R7: el planificador de ediciones calcula con el IVA congelado del pedido, no con el de la empresa hoy.
+    [Fact]
+    public async Task ReadStateCarriesTheFrozenChargesVat()
+    {
+        var orderId = Guid.CreateVersion7();
+        var orders = new FakeExternalOrderWriter();
+        orders.EditStates[(TenantId, orderId)] = EditState(orderId) with { ChargesVat = false };
+
+        var state = await OrderWriter(orders).ReadStateAsync(TenantId, orderId, Ct);
+
+        Assert.False(state!.ChargesVat);
+    }
+
     [Fact]
     public async Task ReadStateCarriesStatusPreparedInvoicedCurrencyAndShippingCountry()
     {

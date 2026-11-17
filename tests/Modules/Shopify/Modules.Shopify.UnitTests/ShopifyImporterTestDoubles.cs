@@ -33,6 +33,17 @@ internal sealed class FakeBillingAccounts : IShopifyBillingAccounts
         Calls++;
         return Task.FromResult(Account is { } account && account.CompanyId == companyId ? account : null);
     }
+
+    /// <summary>La empresa sin cuenta (spec 2026-11-17 §4.4); por defecto existe y cobra IVA.</summary>
+    public ShopifyBillingCompanyRef? Company { get; set; } = new(ImporterWorld.CompanyId, true);
+
+    public int CompanyCalls { get; private set; }
+
+    public Task<ShopifyBillingCompanyRef?> FindCompanyAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken)
+    {
+        CompanyCalls++;
+        return Task.FromResult(Company is { } company && company.CompanyId == companyId ? company : null);
+    }
 }
 
 /// <summary><see cref="Log"/> es el orden de las búsquedas: <c>id:</c>, <c>document:</c>, <c>phone:</c>, <c>email:</c>.</summary>
@@ -565,6 +576,26 @@ internal sealed class ImporterWorld
             AdvisorId,
             new ShopifyBillingAccount(CompanyId, "Bancolombia", "123-456", "COP"),
             ClassificationId,
+            ShopifyStore.DefaultDocumentAttributeKey,
+            ShopifyStore.DefaultDocumentTypeAttributeKey,
+            ShopifyStore.DefaultIdentificationTypeCode,
+            null,
+            ShopifyEditSync.Manual,
+            ShopifyPaymentStatuses.All,
+            AdvisorId,
+            Now.AddDays(-1));
+        return this;
+    }
+
+    /// <summary>La tienda con la empresa sola, sin cuenta bancaria, en COP (spec 2026-11-17 §4.4).</summary>
+    public ImporterWorld WithoutAccount(bool chargesVat = true)
+    {
+        Billing.Account = null;
+        Billing.Company = new ShopifyBillingCompanyRef(CompanyId, chargesVat);
+        Store.Configure(
+            AdvisorId,
+            new ShopifyBillingAccount(CompanyId, null, null, "COP"),
+            null,
             ShopifyStore.DefaultDocumentAttributeKey,
             ShopifyStore.DefaultDocumentTypeAttributeKey,
             ShopifyStore.DefaultIdentificationTypeCode,
