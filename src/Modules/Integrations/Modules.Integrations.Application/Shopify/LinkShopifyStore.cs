@@ -130,7 +130,8 @@ public sealed class LinkShopifyStoreHandler(
 
         // Local sin túnel no hay URL pública: no se registra nada y la conciliación cubre (D-S17, §4.2).
         ShopifyWebhookRegistrationResult? registration = shopifyApp.WebhookCallbackUrl is { } callback
-            ? await ShopifyWebhookRegistration.EnsureAsync(gateway, shopDomain, accessToken, callback, cancellationToken)
+            ? await ShopifyWebhookRegistration.EnsureAsync(
+                gateway, shopDomain, accessToken, callback, ShopifyWebhookTopics.ParseScopes(install.Scopes), cancellationToken)
             : null;
 
         var fields = new Dictionary<string, string>(StringComparer.Ordinal)

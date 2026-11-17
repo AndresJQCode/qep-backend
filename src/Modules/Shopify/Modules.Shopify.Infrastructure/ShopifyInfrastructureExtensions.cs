@@ -92,6 +92,11 @@ public static class ShopifyInfrastructureExtensions
         // Spec 2026-11-14 §3: la detección de ediciones, con el mismo patrón (Bootstrapper registra ShopifyOrderEdits antes).
         services.TryAddScoped<IShopifyOrderEditDetector, NoShopifyOrderEditDetector>();
         services.AddScoped<ShopifyOrderIngestion>();
+        // Spec 2026-11-17 §6: los products/*. TryAdd porque AddShopifyProductSync registra lo mismo; depende además de
+        // IShopifyCatalogWriter e IShopifyBillingAccounts (Bootstrapper) y de ITenantPriceRounding (Tenancy).
+        services.TryAddScoped<ShopifyProductPricingResolver>();
+        services.TryAddScoped<IShopifyProductSyncScope, ShopifyProductSyncScope>();
+        services.TryAddScoped<ShopifyProductWebhooks>();
         services.AddScoped<ShopifyWebhookDeliveryProcessor>();
         // §5.3: la conciliación y «Sincronizar ahora» pasan cada pedido por la misma ingesta; necesitan también
         // IShopifyConnectionHealth e IShopifyApiVersion, de Bootstrapper.
@@ -150,8 +155,8 @@ public static class ShopifyInfrastructureExtensions
     /// </summary>
     public static IServiceCollection AddShopifyProductSync(this IServiceCollection services)
     {
-        services.AddScoped<ShopifyProductPricingResolver>();
-        services.AddScoped<IShopifyProductSyncScope, ShopifyProductSyncScope>();
+        services.TryAddScoped<ShopifyProductPricingResolver>();
+        services.TryAddScoped<IShopifyProductSyncScope, ShopifyProductSyncScope>();
         services.AddScoped<IShopifyProductImportQueue, ShopifyProductImportQueue>();
         services.AddScoped<ShopifyProductImportProcessor>();
         services.AddHostedService<ShopifyProductImportWorker>();

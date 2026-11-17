@@ -64,7 +64,11 @@ public sealed class LinkShopifyStoreHandlerTests
 
         /// <summary>Una instalación ya canjeada: A con <paramref name="initiatedTenantId"/>, B sin él.</summary>
         public ShopifyInstall SeedExchanged(
-            Guid? initiatedTenantId = null, string token = AccessToken, DateTimeOffset? at = null, TimeSpan? tokenLifetime = null)
+            Guid? initiatedTenantId = null,
+            string token = AccessToken,
+            DateTimeOffset? at = null,
+            TimeSpan? tokenLifetime = null,
+            string scopes = "read_orders,read_customers")
         {
             var now = at ?? IntegrationsTestBed.Now;
             var install = ShopifyInstall.Start(
@@ -72,7 +76,7 @@ public sealed class LinkShopifyStoreHandlerTests
                 initiatedTenantId, initiatedTenantId is null ? null : Integrations.MemberId, now);
             install.Claim(ShopifyInstall.ClaimedStatePrefix + "Y2xhaW1lZC1zdGF0ZS0wMTIzNDU2Nzg5YWJjZGVm", now);
             install.MarkExchanged(
-                "12345678", "Mi Tienda", "read_orders,read_customers",
+                "12345678", "Mi Tienda", scopes,
                 Integrations.Protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, token),
                 Integrations.Protector.Protect(install.Id, ShopifyFieldKeys.RefreshToken, RefreshToken),
                 now + (tokenLifetime ?? TimeSpan.FromHours(1)),
@@ -293,8 +297,29 @@ public sealed class LinkShopifyStoreHandlerTests
         Assert.Equal(ConnectionStatus.Active, connection.Status);
         Assert.Equal(nameof(ConnectionStatus.Active), response.Status);
         Assert.Equal(
-            ["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "app/uninstalled"],
+            ["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "app/uninstalled", "products/create", "products/update", "products/delete"],
             ShopifyWebhookTopics.Registered);
+    }
+
+    // Spec 2026-11-17 P10: el canje con read_products (o write_products) registra también los products/*.
+    [Fact]
+    public async Task LinkWithReadProductsRegistersTheProductTopics()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged(scopes: "read_orders,read_customers,read_products");
+
+        await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        Assert.Equal(
+            [
+                "list-webhooks", "create-webhook:orders/create", "create-webhook:orders/updated", "create-webhook:orders/paid",
+                "create-webhook:orders/cancelled", "create-webhook:app/uninstalled", "create-webhook:products/create",
+                "create-webhook:products/update", "create-webhook:products/delete",
+            ],
+            bed.Gateway.Calls);
+        var connection = Assert.Single(bed.Integrations.Repository.Connections);
+        Assert.Equal(8, connection.Fields[ShopifyFieldKeys.WebhookSubscriptionIds].Split(',').Length);
+        Assert.Equal(ConnectionStatus.Active, connection.Status);
     }
 
     [Fact]

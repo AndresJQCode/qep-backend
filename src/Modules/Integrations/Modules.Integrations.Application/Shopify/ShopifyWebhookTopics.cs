@@ -8,8 +8,31 @@ namespace Modules.Integrations.Application.Shopify;
 /// </summary>
 public static class ShopifyWebhookTopics
 {
+    /// <summary>Spec 2026-11-17 §6: los de productos, que sólo se piden con <c>read_products</c> (P10).</summary>
+    public static readonly IReadOnlyList<string> ProductTopics = ["products/create", "products/update", "products/delete"];
+
     public static readonly IReadOnlyList<string> Registered =
-        ["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "app/uninstalled"];
+        ["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "app/uninstalled", .. ProductTopics];
+
+    /// <summary>Spec 2026-11-17 §5.1: <c>write_products</c> cuenta como <c>read_products</c>, la misma regla que el canje. Copia de
+    /// <c>ShopifyScopes.CanReadProducts</c> del módulo Shopify (que este módulo no ve), amarradas por
+    /// <c>ShopifyProductScopeParityTests</c>: se cambian juntas.</summary>
+    public static bool CanReadProducts(IEnumerable<string> granted)
+    {
+        ArgumentNullException.ThrowIfNull(granted);
+        return granted.Any(scope => scope is "read_products" or "write_products");
+    }
+
+    /// <summary>P10: <see cref="Registered"/> sin los de productos si la tienda no concedió <c>read_products</c>. Sin eso, Shopify
+    /// rechaza la suscripción y la conexión pasaría a <c>NeedsAttention</c> por un topic que no puede pedir.</summary>
+    public static IReadOnlyList<string> ForScopes(IEnumerable<string> granted) =>
+        CanReadProducts(granted) ? Registered : [.. Registered.Except(ProductTopics, StringComparer.Ordinal)];
+
+    /// <summary>El campo <c>scopes</c> de la conexión o la instalación (separados por coma) como lista; vacío, ninguno.</summary>
+    public static IReadOnlyCollection<string> ParseScopes(string? scopes) =>
+        string.IsNullOrWhiteSpace(scopes)
+            ? []
+            : scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     /// <summary><c>orders/create</c> → <c>ORDERS_CREATE</c>. Un topic que ya viene en la forma de GraphQL queda igual.</summary>
     public static string ToGraphQl(string topic)
@@ -41,9 +64,16 @@ public sealed record ShopifyWebhookRegistrationResult(IReadOnlyList<string> Subs
 /// </summary>
 public static class ShopifyWebhookRegistration
 {
+    /// <param name="grantedScopes">Los scopes concedidos a la app en la tienda: deciden si se piden los <c>products/*</c> (P10).</param>
     public static async Task<ShopifyWebhookRegistrationResult> EnsureAsync(
-        IShopifyAdminGateway gateway, string shop, string token, Uri callback, CancellationToken cancellationToken)
+        IShopifyAdminGateway gateway,
+        string shop,
+        string token,
+        Uri callback,
+        IReadOnlyCollection<string> grantedScopes,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(grantedScopes);
         IReadOnlyList<ShopifyWebhookSubscription> existing;
         try
         {
@@ -55,7 +85,7 @@ public static class ShopifyWebhookRegistration
         }
 
         var ids = new List<string>();
-        foreach (var topic in ShopifyWebhookTopics.Registered)
+        foreach (var topic in ShopifyWebhookTopics.ForScopes(grantedScopes))
         {
             var graphQlTopic = ShopifyWebhookTopics.ToGraphQl(topic);
             var mine = existing.FirstOrDefault(subscription =>

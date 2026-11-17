@@ -96,6 +96,50 @@ public sealed class ShopifyConnectionTesterTests
         Assert.Equal(IntegrationProviders.Shopify.Key, Tester(gateway).ProviderKey);
     }
 
+    // Spec 2026-11-17 P10: sin read_products no se intentan los products/*, y la tienda no pasa a NeedsAttention por ellos.
+    [Fact]
+    public void ProductTopicsAreSkippedWithoutReadProducts()
+    {
+        var topics = ShopifyWebhookTopics.ForScopes(["read_orders", "read_customers"]);
+
+        Assert.Equal(["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "app/uninstalled"], topics);
+    }
+
+    [Fact]
+    public void WriteProductsRegistersProductTopics()
+    {
+        Assert.Equal(ShopifyWebhookTopics.Registered, ShopifyWebhookTopics.ForScopes(["read_orders", "write_products"]));
+        Assert.Equal(ShopifyWebhookTopics.Registered, ShopifyWebhookTopics.ForScopes(["read_products"]));
+    }
+
+    [Fact]
+    public async Task TheTesterDoesNotMarkNeedsAttentionWithoutReadProducts()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+        var fields = Fields();
+        fields[ShopifyFieldKeys.Scopes] = "read_orders,read_customers";
+
+        var result = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, result.Outcome);
+        Assert.DoesNotContain(gateway.Calls, call => call.StartsWith("create-webhook:products/", StringComparison.Ordinal));
+        Assert.Equal(5, result.RefreshedFields![ShopifyFieldKeys.WebhookSubscriptionIds].Split(',').Length);
+    }
+
+    [Fact]
+    public async Task TheTesterRegistersProductTopicsWithReadProducts()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+        var fields = Fields();
+        fields[ShopifyFieldKeys.Scopes] = "read_orders,read_customers,read_products";
+
+        var result = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, result.Outcome);
+        Assert.Contains("create-webhook:products/update", gateway.Calls);
+        Assert.Equal(8, result.RefreshedFields![ShopifyFieldKeys.WebhookSubscriptionIds].Split(',').Length);
+    }
+
     [Fact]
     public async Task Test200WithEveryTopicRegisteredCreatesNothing()
     {

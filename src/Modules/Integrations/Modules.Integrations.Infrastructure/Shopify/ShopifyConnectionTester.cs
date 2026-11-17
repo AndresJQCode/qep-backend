@@ -65,7 +65,9 @@ internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, ISho
             return ConnectionTestResult.OkWith(refreshed);
         }
 
-        var registration = await ShopifyWebhookRegistration.EnsureAsync(gateway, shop, token, callback, cancellationToken);
+        // P10: los products/* sólo con read_products; una tienda instalada antes no pasa a NeedsAttention por ellos.
+        var registration = await ShopifyWebhookRegistration.EnsureAsync(
+            gateway, shop, token, callback, ShopifyWebhookTopics.ParseScopes(fields.GetValueOrDefault(ShopifyFieldKeys.Scopes)), cancellationToken);
         if (registration.Failure is { } failure)
         {
             return failure == ShopifyGatewayFailure.Unreachable
