@@ -197,6 +197,22 @@ public sealed class CopilotThreadsHandlersTests
         Assert.Empty(bed.Repository.Threads);
     }
 
+    // D-C13: borrar queda auditado con el miembro y en la misma transacción del borrado; la entrada no lleva el texto del hilo.
+    [Fact]
+    public async Task DeletingAThreadIsAuditedWithTheMember()
+    {
+        var bed = Enabled();
+        var thread = await bed.Create().HandleAsync(new CreateCopilotThreadCommand(Tenant, "¿Cuánto vendimos?"), Ct);
+
+        await bed.Delete().HandleAsync(new DeleteCopilotThreadCommand(Tenant, thread.Id), Ct);
+
+        var entry = Assert.Single(bed.Audit.Entries);
+        Assert.Equal(
+            (Tenant, (Guid?)Member, AiAuditActions.CopilotThreadDeleted, AiAuditActions.ResourceCopilotThread, thread.Id),
+            (entry.Tenant, entry.Actor, entry.Action, entry.ResourceType, entry.ResourceId));
+        Assert.Equal([1], bed.Repository.AuditPendingAtDelete);
+    }
+
     [Fact]
     public async Task RenamingNeedsTheCurrentVersion()
     {
@@ -306,7 +322,9 @@ public sealed class CopilotThreadsHandlersTests
 
         public RenameCopilotThreadHandler Rename() => new(Context, Modules(), new RenameCopilotThreadValidator(), Repository, UnitOfWork);
 
-        public DeleteCopilotThreadHandler Delete() => new(Context, Modules(), Repository);
+        public FakeCopilotAudit Audit => _bed.Audit;
+
+        public DeleteCopilotThreadHandler Delete() => new(Context, Modules(), Repository, Audit, _bed.Clock);
 
         private FakeTenantModules Modules() => new(_bed.Modules);
 

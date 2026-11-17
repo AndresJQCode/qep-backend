@@ -31,6 +31,7 @@ public sealed partial class CopilotJobProcessor(
     ITenantClock tenantClock,
     CopilotPromptBuilder promptBuilder,
     CopilotTurnRunner runner,
+    ICopilotMemberNames memberNames,
     IClock clock,
     ILogger<CopilotJobProcessor> logger)
 {
@@ -124,8 +125,11 @@ public sealed partial class CopilotJobProcessor(
             return new CopilotStopped(AiErrorCodes.ProviderNotConfigured);
         }
 
+        // C-12: el nombre de quien pregunta, al contexto volátil; sin nombre conocido, el prompt sigue sin él.
+        var names = await memberNames.FindAsync(job.TenantId, [thread.UserId], cancellationToken);
         var prompt = promptBuilder.Build(new CopilotPromptInput(
-            settings.Instructions, thread.Messages, job.UpToSeq, await tenantClock.GetAsync(job.TenantId, cancellationToken)));
+            settings.Instructions, thread.Messages, job.UpToSeq, await tenantClock.GetAsync(job.TenantId, cancellationToken),
+            names.GetValueOrDefault(thread.UserId)));
         var context = new CopilotTurnContext(
             job.TenantId,
             thread.UserId,

@@ -1428,6 +1428,8 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-29 D-A3 y §4.3: conexiones, miembros y la ocupación neutral, por adaptadores (Ai no ve Mensajería).
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();
+        // Spec 2026-11-17 (copiloto) D-C12, plan C3.4: nombres por id de usuario para el consumo por miembro y el contexto volátil.
+        services.AddScoped<ICopilotMemberNames, CopilotMemberNames>();
         services.AddScoped<IAgentConnectionSlots, AgentConnectionSlots>();
         // Spec 2026-11-17 D-B18: qué chatbots publicados usan cada agente (SQL sobre automations; Ai no ve Automations).
         services.AddScoped<IAiChatbotUsage, AiChatbotUsage>();

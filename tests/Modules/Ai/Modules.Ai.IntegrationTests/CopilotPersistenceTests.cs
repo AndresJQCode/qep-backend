@@ -80,6 +80,115 @@ public sealed class CopilotPersistenceTests
         }
     }
 
+    // Plan fase 2, Parte C (decisión del plan): la lista de agentes no suma el consumo del copiloto, que no tiene agente.
+    [Fact]
+    public async Task TheAgentsTotalExcludesTheCopilot()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = Factory(connectionString);
+        await SeedTenantAsync(factory);
+        var agent = Guid.CreateVersion7();
+        await InsertUsageAsync(connectionString, agentId: agent, threadId: null, memberId: null);
+        await InsertUsageAsync(connectionString, agentId: null, threadId: Guid.CreateVersion7(), memberId: Member);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var month = DateTimeOffset.UtcNow.AddDays(-1);
+        var activity = await scope.ServiceProvider.GetRequiredService<IAgentActivityReader>()
+            .SummarizeAsync(Tenant, new AgentActivityWindow(month, month, DateTimeOffset.UtcNow.AddDays(1)), Ct);
+
+        var usage = Assert.Single(Assert.Single(activity.UsageByAgent).Value);
+        Assert.Equal((agent, 1, 10L, 5L), (activity.UsageByAgent.Keys.Single(), usage.Calls, usage.InputTokens, usage.OutputTokens));
+    }
+
+    // D-C12: el mes del copiloto por miembro; el consumo de un agente no entra.
+    [Fact]
+    public async Task TheCopilotUsageIsSummedPerMember()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = Factory(connectionString);
+        await SeedTenantAsync(factory);
+        var other = Guid.CreateVersion7();
+        await InsertUsageAsync(connectionString, agentId: null, threadId: Guid.CreateVersion7(), memberId: Member);
+        await InsertUsageAsync(connectionString, agentId: null, threadId: Guid.CreateVersion7(), memberId: Member);
+        await InsertUsageAsync(connectionString, agentId: null, threadId: Guid.CreateVersion7(), memberId: other);
+        await InsertUsageAsync(connectionString, agentId: Guid.CreateVersion7(), threadId: null, memberId: null);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var rows = await scope.ServiceProvider.GetRequiredService<ICopilotRepository>()
+            .SumTokensByMemberAsync(Tenant, DateTimeOffset.UtcNow.AddDays(-1), Ct);
+
+        Assert.Equal(
+            [new CopilotMemberTokenUsage(Member, 20, 10), new CopilotMemberTokenUsage(other, 10, 5)],
+            rows.OrderByDescending(row => row.InputTokens));
+    }
+
+    // D-C8 y D-C9: el barrido borra el hilo vencido con la retención del tenant (y lo audita con actor sistema), deja el hilo vivo, y borra
+    // sólo los tool_calls del copiloto con más de 30 días.
+    [Fact]
+    public async Task TheRetentionSweepDeletesExpiredThreadsAndOldCopilotToolCalls()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = Factory(connectionString);
+        await SeedTenantAsync(factory);
+        var now = DateTimeOffset.UtcNow;
+        var expired = CopilotThread.Create(Guid.CreateVersion7(), Tenant, Member, "¿Cuánto vendimos?", Guid.CreateVersion7(), now.AddDays(-91));
+        var alive = CopilotThread.Create(Guid.CreateVersion7(), Tenant, Member, "¿Y hoy?", Guid.CreateVersion7(), now.AddDays(-89));
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<ICopilotRepository>();
+            repository.AddThread(expired);
+            repository.AddThread(alive);
+            await scope.ServiceProvider.GetRequiredService<IAiUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var aliveJob = Guid.CreateVersion7();
+        var agentJob = Guid.CreateVersion7();
+        await InsertJobWithIdAsync(connectionString, aliveJob, sessionId: null, testId: null, threadId: alive.Id);
+        await InsertJobWithIdAsync(connectionString, agentJob, sessionId: null, testId: Guid.CreateVersion7(), threadId: null);
+        await InsertToolCallAsync(connectionString, aliveJob, "old", now.AddDays(-31));
+        await InsertToolCallAsync(connectionString, aliveJob, "new", now.AddDays(-1));
+        await InsertToolCallAsync(connectionString, agentJob, "agent", now.AddDays(-60));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var swept = await scope.ServiceProvider.GetRequiredService<CopilotRetentionSweeper>().SweepAsync(Ct);
+            Assert.Equal((1, 1), (swept.Threads, swept.ToolCalls));
+        }
+
+        Assert.Equal(1L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM ai.copilot_threads"));
+        Assert.Equal(
+            ["agent", "new"],
+            (await ScalarAsync<string>(connectionString, "SELECT string_agg(call_id, ',' ORDER BY call_id) FROM ai.tool_calls"))!.Split(','));
+        Assert.Equal(
+            1L,
+            await ScalarAsync<long>(
+                connectionString,
+                "SELECT count(*) FROM audit.entries WHERE action = 'ai.copilot.thread_deleted' AND actor_type = 'System' AND resource_id = @id",
+                ("id", expired.Id.ToString())));
+    }
+
+    private static Task<int> InsertJobWithIdAsync(string connectionString, Guid id, Guid? sessionId, Guid? testId, Guid? threadId) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO ai.model_jobs (id, tenant_id, session_id, test_id, copilot_thread_id, up_to_seq, status, attempts, next_attempt_at, created_at)
+            VALUES (@id, @tenant, @session, @test, @thread, 1, 'Done', 1, now(), now());
+            """,
+            ("id", id), ("tenant", Tenant), ("session", (object?)sessionId ?? DBNull.Value),
+            ("test", (object?)testId ?? DBNull.Value), ("thread", (object?)threadId ?? DBNull.Value));
+
+    private static Task<int> InsertToolCallAsync(string connectionString, Guid jobId, string callId, DateTimeOffset createdAt) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO ai.tool_calls (tenant_id, job_id, call_id, tool, arguments, result, outcome, duration_ms, created_at)
+            VALUES (@tenant, @job, @call, 'get_orders_summary', '{}'::jsonb, '{}'::jsonb, 'ok', 5, @at);
+            """,
+            ("tenant", Tenant), ("job", jobId), ("call", callId), ("at", createdAt));
+
     private static QepApiFactory Factory(string connectionString) =>
         new(connectionString, settings: new Dictionary<string, string> { ["Ai:Workers:Enabled"] = "false" });
 

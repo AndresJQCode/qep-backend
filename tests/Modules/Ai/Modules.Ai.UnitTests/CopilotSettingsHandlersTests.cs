@@ -78,6 +78,54 @@ public sealed class CopilotSettingsHandlersTests
         Assert.Equal(new DateTimeOffset(2026, 11, 1, 5, 0, 0, TimeSpan.Zero), bed.Repository.UsageSince);
     }
 
+    // D-C12 y plan C3.4: el desglose del mes por miembro lo suma el backend, con el nombre resuelto; el que más gastó primero. Un miembro
+    // que ya no se encuentra viaja igual, con un nombre de respaldo: su consumo es dinero del tenant.
+    [Fact]
+    public async Task TheUsageIsSummedPerMember()
+    {
+        var bed = new CopilotBed();
+        var ana = Guid.Parse("01900000-0000-7000-8000-0000000000c1");
+        var gone = Guid.Parse("01900000-0000-7000-8000-0000000000c2");
+        bed.Repository.Usage = new CopilotTokenUsage(1200, 300);
+        bed.Repository.ByMember = [new CopilotMemberTokenUsage(gone, 100, 50), new CopilotMemberTokenUsage(ana, 1100, 250)];
+        bed.Names.Names[ana] = "Ana";
+
+        var settings = await bed.GetSettings(Manager()).HandleAsync(new GetCopilotSettingsQuery(Tenant), Ct);
+
+        Assert.Equal(
+            [new CopilotMemberUsageDto(ana, "Ana", 1100, 250), new CopilotMemberUsageDto(gone, CopilotSettingsSupport.UnknownMemberName, 100, 50)],
+            settings.UsageThisMonth.ByMember);
+        Assert.Equal(new DateTimeOffset(2026, 11, 1, 5, 0, 0, TimeSpan.Zero), bed.Repository.ByMemberSince);
+        Assert.Equal([ana, gone], bed.Names.Asked.Order());
+    }
+
+    [Fact]
+    public async Task WithoutUsageTheBreakdownIsEmptyAndNamesAreNotAsked()
+    {
+        var bed = new CopilotBed();
+
+        var settings = await bed.GetSettings(Manager()).HandleAsync(new GetCopilotSettingsQuery(Tenant), Ct);
+
+        Assert.NotNull(settings.UsageThisMonth.ByMember);
+        Assert.Empty(settings.UsageThisMonth.ByMember);
+        Assert.Empty(bed.Names.Asked);
+    }
+
+    // D-C13: guardar la configuración queda auditado con el miembro, como metadato (ni instrucciones ni modelo en la entrada).
+    [Fact]
+    public async Task SavingTheSettingsIsAudited()
+    {
+        var bed = new CopilotBed();
+        var manager = Manager();
+
+        await bed.UpdateSettings(manager).HandleAsync(Enable(0), Ct);
+
+        var entry = Assert.Single(bed.Audit.Entries);
+        Assert.Equal(
+            (Tenant, (Guid?)manager.SubjectId, AiAuditActions.CopilotSettingsUpdated, AiAuditActions.ResourceCopilotSettings, Tenant),
+            (entry.Tenant, entry.Actor, entry.Action, entry.ResourceType, entry.ResourceId));
+    }
+
     [Fact]
     public async Task SavingCreatesTheRowAndReturnsTheNewVersion()
     {
@@ -227,7 +275,13 @@ internal sealed class CopilotBed
 {
     public TenantModuleSet Modules { get; init; } = TenantModuleSet.FromStored(TenantModuleKeys.All);
 
+    public CopilotBed() => Repository.Audit = Audit;
+
     public FakeCopilotRepository Repository { get; } = new();
+
+    public FakeCopilotAudit Audit { get; } = new();
+
+    public FakeCopilotMemberNames Names { get; } = new();
 
     public FakeCopilotCredentials Credentials { get; } = new();
 
@@ -240,11 +294,11 @@ internal sealed class CopilotBed
     public ITenantClock TenantClock => new BogotaClock(Clock);
 
     public GetCopilotSettingsHandler GetSettings(IExecutionContext context) =>
-        new(context, new FakeTenantModules(Modules), Repository, Credentials, Catalog, new BogotaClock(Clock));
+        new(context, new FakeTenantModules(Modules), Repository, Credentials, Catalog, new BogotaClock(Clock), Names);
 
     public UpdateCopilotSettingsHandler UpdateSettings(IExecutionContext context) =>
         new(context, new FakeTenantModules(Modules), new UpdateCopilotSettingsValidator(), Repository, Credentials, Catalog, UnitOfWork, Clock,
-            new BogotaClock(Clock));
+            new BogotaClock(Clock), Names, Audit);
 
     public FakeCopilotTools Tools { get; } = new();
 
@@ -315,6 +369,45 @@ internal sealed class CountingUnitOfWork : IAiUnitOfWork
     }
 }
 
+/// <summary>La auditoría del copiloto en memoria. <see cref="TakePending"/> imita el guardado: lo que el repositorio guarda junto al borrado.</summary>
+internal sealed class FakeCopilotAudit : IAiAuditRecorder
+{
+    private int _pending;
+
+    public List<(Guid Tenant, Guid? Actor, string Action, string ResourceType, Guid ResourceId)> Entries { get; } = [];
+
+    public void Record(Guid tenantId, Guid actorId, string action, Guid agentId, DateTimeOffset at) => throw new NotSupportedException();
+
+    public void RecordByAgent(Guid tenantId, string action, Guid agentId, DateTimeOffset at) => throw new NotSupportedException();
+
+    public void RecordCopilot(Guid tenantId, Guid? actorId, string action, string resourceType, Guid resourceId, DateTimeOffset at)
+    {
+        Entries.Add((tenantId, actorId, action, resourceType, resourceId));
+        _pending++;
+    }
+
+    public int TakePending()
+    {
+        var pending = _pending;
+        _pending = 0;
+        return pending;
+    }
+}
+
+internal sealed class FakeCopilotMemberNames : ICopilotMemberNames
+{
+    public Dictionary<Guid, string> Names { get; } = [];
+
+    public List<Guid> Asked { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken)
+    {
+        Asked.AddRange(userIds);
+        return Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+            userIds.Where(Names.ContainsKey).ToDictionary(userId => userId, userId => Names[userId]));
+    }
+}
+
 /// <summary>El repositorio en memoria: la configuración y los hilos del tenant, filtrando por dueño como el real.</summary>
 internal sealed class FakeCopilotRepository : ICopilotRepository
 {
@@ -371,8 +464,45 @@ internal sealed class FakeCopilotRepository : ICopilotRepository
     public Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken)
     {
         Deleted.Add(threadId);
+        // El real guarda lo pendiente (la auditoría) en la misma transacción del borrado.
+        AuditPendingAtDelete.Add(Audit?.TakePending() ?? 0);
         Threads.RemoveAll(thread => thread.TenantId == tenantId && thread.Id == threadId);
+        Expired.RemoveAll(candidate => candidate.TenantId == tenantId && candidate.ThreadId == threadId);
         return Task.CompletedTask;
+    }
+
+    public FakeCopilotAudit? Audit { get; set; }
+
+    public List<int> AuditPendingAtDelete { get; } = [];
+
+    public IReadOnlyList<CopilotMemberTokenUsage> ByMember { get; set; } = [];
+
+    public DateTimeOffset? ByMemberSince { get; private set; }
+
+    public Task<IReadOnlyList<CopilotMemberTokenUsage>> SumTokensByMemberAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        ByMemberSince = since;
+        return Task.FromResult(ByMember);
+    }
+
+    public List<CopilotExpiredThread> Expired { get; } = [];
+
+    public DateTimeOffset? ExpiredAsOf { get; private set; }
+
+    public Task<IReadOnlyList<CopilotExpiredThread>> ListExpiredThreadsAsync(DateTimeOffset now, int take, CancellationToken cancellationToken)
+    {
+        ExpiredAsOf = now;
+        return Task.FromResult<IReadOnlyList<CopilotExpiredThread>>([.. Expired.Take(take)]);
+    }
+
+    public int ExpiredToolCalls { get; set; }
+
+    public DateTimeOffset? ToolCallsBefore { get; private set; }
+
+    public Task<int> DeleteToolCallsBeforeAsync(DateTimeOffset before, CancellationToken cancellationToken)
+    {
+        ToolCallsBefore = before;
+        return Task.FromResult(ExpiredToolCalls);
     }
 
     /// <summary>Lo que escribió el worker en <c>progress</c>, en orden.</summary>

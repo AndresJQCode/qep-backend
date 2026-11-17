@@ -30,8 +30,21 @@ public interface ICopilotRepository
     Task<IReadOnlyList<DateTimeOffset>> ListQuestionTimesAsync(Guid tenantId, Guid userId, DateTimeOffset since, CancellationToken cancellationToken);
 
     /// <summary>D-C8: borra en una transacción los <c>tool_calls</c> de los trabajos del hilo y el hilo con sus mensajes. Los trabajos y el
-    /// consumo se quedan: la cola los cierra y el consumo es lo pagado.</summary>
+    /// consumo se quedan: la cola los cierra y el consumo es lo pagado. D-C13: en esa misma transacción guarda lo que haya pendiente en la
+    /// unidad de trabajo (la entrada <c>ai.copilot.thread_deleted</c>): sin borrado no hay auditoría, y sin auditoría no hay borrado.</summary>
     Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken);
+
+    /// <summary>D-C12, plan C3.4: los tokens del copiloto del tenant desde <paramref name="since"/>, por miembro que preguntó
+    /// (<c>member_user_id</c>). Incluye el consumo de hilos ya borrados: es lo pagado.</summary>
+    Task<IReadOnlyList<CopilotMemberTokenUsage>> SumTokensByMemberAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken);
+
+    /// <summary>D-C8: hasta <paramref name="take"/> hilos, de todos los tenants, sin actividad en la retención de su tenant
+    /// (<c>retention_days</c>, o <see cref="CopilotSettings.DefaultRetentionDays"/> sin configuración), los más viejos primero.</summary>
+    Task<IReadOnlyList<CopilotExpiredThread>> ListExpiredThreadsAsync(DateTimeOffset now, int take, CancellationToken cancellationToken);
+
+    /// <summary>D-C9 (plan fase 2, Parte C): borra los <c>tool_calls</c> de trabajos del copiloto creados antes de <paramref name="before"/>.
+    /// Los de los agentes no se tocan (P-5 sigue abierta). Devuelve cuántos borró.</summary>
+    Task<int> DeleteToolCallsBeforeAsync(DateTimeOffset before, CancellationToken cancellationToken);
 
     /// <summary>§7 paso 2: la lectura de la etapa larga del worker, sin tracking ni dueño (el trabajo ya es del hilo). <c>null</c> si se
     /// borró.</summary>
@@ -49,4 +62,15 @@ public interface ICopilotRepository
 public sealed record CopilotTokenUsage(long InputTokens, long OutputTokens)
 {
     public long Total => InputTokens + OutputTokens;
+}
+
+public sealed record CopilotMemberTokenUsage(Guid UserId, long InputTokens, long OutputTokens);
+
+public sealed record CopilotExpiredThread(Guid TenantId, Guid ThreadId);
+
+/// <summary>D-C12 y C-12: el nombre de los miembros por id de usuario (<c>Membership.DisplayName</c> o, sin él, el correo), como las notas de
+/// clientes. Adaptador en Bootstrapper: Ai no ve Tenancy ni Identity. Quien ya no tiene membresía ni usuario no viene en el diccionario.</summary>
+public interface ICopilotMemberNames
+{
+    Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken);
 }

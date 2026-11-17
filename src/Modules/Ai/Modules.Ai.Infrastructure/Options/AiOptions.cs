@@ -152,7 +152,13 @@ public sealed class AiCopilotOptions
     /// <summary>D-C9: el tope del historial en tokens, estimado por caracteres. <c>null</c>: sólo rige <see cref="MaxHistoryMessages"/>.</summary>
     public int? MaxContextTokens { get; set; }
 
+    /// <summary>D-C9 (plan fase 2, Parte C): días que viven los <c>tool_calls</c> de los trabajos del copiloto. Sólo los del copiloto: la
+    /// retención de los agentes (P-5) sigue abierta.</summary>
+    public int ToolCallRetentionDays { get; set; } = 30;
+
     public CopilotLimits ToLimits() => new(MessagesPerHour, MessagesPerDay);
+
+    public CopilotRetention ToRetention() => new(TimeSpan.FromDays(ToolCallRetentionDays));
 
     public CopilotRunLimits ToRunLimits() =>
         new(new AiRunLimits(
@@ -176,6 +182,7 @@ public sealed class AiCopilotOptions
         {
             (MaxOutputTokens, nameof(MaxOutputTokens)), (MaxModelCalls, nameof(MaxModelCalls)), (MaxToolCalls, nameof(MaxToolCalls)),
             (JobTimeoutSeconds, nameof(JobTimeoutSeconds)), (MaxHistoryMessages, nameof(MaxHistoryMessages)), (MaxContextTokens ?? 1, nameof(MaxContextTokens)),
+            (ToolCallRetentionDays, nameof(ToolCallRetentionDays)),
         })
         {
             if (value < 1)

@@ -81,12 +81,13 @@ internal sealed class CopilotRepository(AiDbContext dbContext) : ICopilotReposit
     }
 
     /// <summary>SQL directo en una transacción propia: los <c>tool_calls</c> no tienen FK al hilo (cuelgan del trabajo), así que el cascade de
-    /// los mensajes no los alcanza.</summary>
+    /// los mensajes no los alcanza. Lo pendiente del contexto (la auditoría del borrado) se guarda adentro, antes del commit.</summary>
     public async Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken)
     {
         await using var transaction = dbContext.Database.CurrentTransaction is null
             ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
             : null;
+        await dbContext.SaveChangesAsync(cancellationToken);
         await dbContext.Database.ExecuteSqlAsync(
             $"""
             DELETE FROM ai.tool_calls
@@ -100,5 +101,48 @@ internal sealed class CopilotRepository(AiDbContext dbContext) : ICopilotReposit
         {
             await transaction.CommitAsync(cancellationToken);
         }
+    }
+
+    public async Task<IReadOnlyList<CopilotMemberTokenUsage>> SumTokensByMemberAsync(
+        Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken) =>
+        await dbContext.UsageRecords.AsNoTracking()
+            .Where(record => record.TenantId == tenantId && record.CopilotThreadId != null && record.MemberUserId != null && record.CalledAt >= since)
+            .GroupBy(record => record.MemberUserId!.Value)
+            .Select(group => new CopilotMemberTokenUsage(
+                group.Key, group.Sum(record => (long)record.InputTokens), group.Sum(record => (long)record.OutputTokens)))
+            .ToListAsync(cancellationToken);
+
+    /// <summary>D-C8: la retención es por tenant; sin fila de configuración rige la de fábrica. Usa <c>IX_copilot_threads_activity</c>.</summary>
+    public async Task<IReadOnlyList<CopilotExpiredThread>> ListExpiredThreadsAsync(DateTimeOffset now, int take, CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.Database.SqlQuery<ExpiredThreadRow>(
+                $"""
+                SELECT t.tenant_id AS "TenantId", t.id AS "ThreadId"
+                  FROM ai.copilot_threads t
+                  LEFT JOIN ai.copilot_settings s ON s.tenant_id = t.tenant_id
+                 WHERE t.last_activity_at < {now} - make_interval(days => COALESCE(s.retention_days, {CopilotSettings.DefaultRetentionDays}))
+                 ORDER BY t.last_activity_at
+                 LIMIT {take}
+                """)
+            .ToListAsync(cancellationToken);
+        return [.. rows.Select(row => new CopilotExpiredThread(row.TenantId, row.ThreadId))];
+    }
+
+    public Task<int> DeleteToolCallsBeforeAsync(DateTimeOffset before, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlAsync(
+            $"""
+            DELETE FROM ai.tool_calls tc
+             USING ai.model_jobs j
+             WHERE tc.job_id = j.id AND tc.tenant_id = j.tenant_id
+               AND j.copilot_thread_id IS NOT NULL
+               AND tc.created_at < {before}
+            """,
+            cancellationToken);
+
+    private sealed class ExpiredThreadRow
+    {
+        public Guid TenantId { get; init; }
+
+        public Guid ThreadId { get; init; }
     }
 }

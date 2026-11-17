@@ -24,6 +24,7 @@ public sealed class CopilotJobProcessorTests
     private readonly FakeCopilotTools _tools = new();
     private readonly HeldJobs _jobs = new();
     private readonly FailingUnitOfWork _unitOfWork = new();
+    private readonly FakeCopilotMemberNames _names = new();
     private TenantModuleSet _modules = TenantModuleSet.FromStored(TenantModuleKeys.All);
 
     public CopilotJobProcessorTests()
@@ -50,6 +51,21 @@ public sealed class CopilotJobProcessorTests
         Assert.Equal((ModelJobStatus.Done, "answered"), (job.Status, job.Outcome));
         Assert.Equal([new CopilotPrincipal(Tenant, Member)], _tools.Executed.Select(call => call.Principal));
         Assert.Equal("claude-opus-5-5", _model.Requests[0].Model);
+    }
+
+    // Spec §6 (C-12) y plan C3.4: el nombre de quien pregunta va en el contexto volátil, nunca en el system (que se cachea).
+    [Fact]
+    public async Task TheVolatileContextNamesTheMember()
+    {
+        var (_, job) = Ask();
+        _names.Names[Member] = "Ana";
+        _model.Enqueue(LoopResponses.Tools(LoopResponses.Call("final", CopilotToolNames.Answer, new { text = "Hola.", citations = Array.Empty<string>() })));
+
+        await Processor().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Contains("<miembro>Ana</miembro>", _model.Requests[0].VolatileContext, StringComparison.Ordinal);
+        Assert.DoesNotContain("Ana", _model.Requests[0].SystemPrompt, StringComparison.Ordinal);
+        Assert.Equal([Member], _names.Asked);
     }
 
     [Fact]
@@ -234,6 +250,7 @@ public sealed class CopilotJobProcessorTests
             new FixedTenantClock(Now),
             new CopilotPromptBuilder(limits),
             new CopilotTurnRunner(_resolver, _ledger, _marks, _tools, limits, clock, NullLogger<CopilotTurnRunner>.Instance),
+            _names,
             clock,
             NullLogger<CopilotJobProcessor>.Instance);
     }

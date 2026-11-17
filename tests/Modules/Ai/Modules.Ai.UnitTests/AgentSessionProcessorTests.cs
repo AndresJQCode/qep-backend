@@ -633,6 +633,9 @@ public sealed class AgentSessionProcessorTests
         public void Record(Guid tenantId, Guid actorId, string action, Guid agentId, DateTimeOffset at) => Entries.Add((tenantId, action, agentId));
 
         public void RecordByAgent(Guid tenantId, string action, Guid agentId, DateTimeOffset at) => Entries.Add((tenantId, action, agentId));
+
+        public void RecordCopilot(Guid tenantId, Guid? actorId, string action, string resourceType, Guid resourceId, DateTimeOffset at) =>
+            Entries.Add((tenantId, action, resourceId));
     }
 
     internal sealed class FakeUnitOfWork : IAiSessionUnitOfWork

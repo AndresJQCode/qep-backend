@@ -92,6 +92,10 @@ public static class AiInfrastructureExtensions
         services.AddScoped<CopilotJobProcessor>();
         services.AddScoped<AgentSessionJobProcessor>();
         services.AddScoped<AiSessionSweeper>();
+        // Plan fase 2, C3.4: la retención del copiloto (hilos por tenant y tool_calls a los Ai:Copilot:ToolCallRetentionDays), una vez al día
+        // desde el worker de la cola.
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<AiOptions>>().Value.Copilot.ToRetention());
+        services.AddScoped<CopilotRetentionSweeper>();
         services.AddSingleton<AiInboxWorker>();
         services.AddHostedService(provider => provider.GetRequiredService<AiInboxWorker>());
         return services;

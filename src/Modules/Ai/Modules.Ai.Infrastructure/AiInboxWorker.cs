@@ -42,6 +42,10 @@ internal sealed partial class AiInboxWorker(
 
     private DateTimeOffset _nextIdleSweep = DateTimeOffset.MinValue;
     private DateTimeOffset _nextModuleSweep = DateTimeOffset.MinValue;
+    private DateTimeOffset _nextCopilotRetentionSweep = DateTimeOffset.MinValue;
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Copilot retention deleted {Threads} threads and {ToolCalls} tool calls.")]
+    private static partial void LogCopilotRetention(ILogger logger, int threads, int toolCalls);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "AI inbox worker tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
@@ -139,6 +143,18 @@ internal sealed partial class AiInboxWorker(
             if (orphans > 0)
             {
                 LogSwept(logger, orphans, "orphan_delegations");
+            }
+        }
+
+        // Spec 2026-11-17 (copiloto) D-C8 y D-C9: una vez al día; la primera vuelta corre al arrancar. Sólo conteos en el log, nunca texto.
+        if (force || now >= _nextCopilotRetentionSweep)
+        {
+            _nextCopilotRetentionSweep = now + TimeSpan.FromHours(Math.Max(1, options.Value.CopilotRetentionSweepHours));
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var swept = await scope.ServiceProvider.GetRequiredService<CopilotRetentionSweeper>().SweepAsync(cancellationToken);
+            if (swept.Threads > 0 || swept.ToolCalls > 0)
+            {
+                LogCopilotRetention(logger, swept.Threads, swept.ToolCalls);
             }
         }
     }

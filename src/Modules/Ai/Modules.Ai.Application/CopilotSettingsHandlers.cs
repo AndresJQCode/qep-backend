@@ -37,8 +37,8 @@ public sealed record CopilotSettingsDto(
     AiModelCatalogDto Models,
     long Version);
 
-/// <param name="ByMember">D-C12, plan C3.4: el desglose por miembro llega con esa tarea. Mientras tanto viaja <c>null</c> (el frontend lo lee
-/// como lista vacía), nunca una lista vacía que diría «nadie lo usó».</param>
+/// <param name="ByMember">D-C12, plan C3.4: el mes por miembro que preguntó, sumado por el backend (la pantalla nunca suma), del que más
+/// gastó al que menos. Vacía si nadie lo usó este mes. Incluye a quien ya no es miembro: su consumo es dinero del tenant.</param>
 public sealed record CopilotUsageDto(long InputTokens, long OutputTokens, IReadOnlyList<CopilotMemberUsageDto>? ByMember);
 
 public sealed record CopilotMemberUsageDto(Guid UserId, string Name, long InputTokens, long OutputTokens);
@@ -67,8 +67,11 @@ public sealed class UpdateCopilotSettingsValidator : AbstractValidator<UpdateCop
     }
 }
 
-internal static class CopilotSettingsSupport
+public static class CopilotSettingsSupport
 {
+    /// <summary>D-C12: el nombre de una fila de consumo cuyo miembro ya no se encuentra (sin membresía ni usuario). La fila viaja igual.</summary>
+    public const string UnknownMemberName = "Miembro eliminado";
+
     /// <summary>D-C11: el mes del tenant, con su huso; el tope mensual y el consumo de la pantalla cortan acá.</summary>
     public static async Task<(DateTimeOffset Start, DateTimeOffset NextStart)> MonthAsync(
         ITenantClock tenantClock, Guid tenantId, CancellationToken cancellationToken)
@@ -78,16 +81,18 @@ internal static class CopilotSettingsSupport
         return (calendar.StartOfDayUtc(first), calendar.StartOfDayUtc(first.AddMonths(1)));
     }
 
-    public static async Task<CopilotSettingsDto> ToDtoAsync(
+    internal static async Task<CopilotSettingsDto> ToDtoAsync(
         CopilotSettings settings,
         ICopilotRepository repository,
         IAiProviderCredentials credentials,
         IAiModelCatalog catalog,
         ITenantClock tenantClock,
+        ICopilotMemberNames memberNames,
         CancellationToken cancellationToken)
     {
         var (monthStart, _) = await MonthAsync(tenantClock, settings.TenantId, cancellationToken);
         var usage = await repository.SumTokensAsync(settings.TenantId, monthStart, cancellationToken);
+        var byMember = await ByMemberAsync(repository, memberNames, settings.TenantId, monthStart, cancellationToken);
         var states = await credentials.DescribeAsync(settings.TenantId, cancellationToken);
         var models = ModelCatalog.ToDto(catalog, states);
         var connected = states.Where(state => state.Connectable && state.ConnectionId is not null).Select(state => state.Provider.Value).ToHashSet();
@@ -98,7 +103,7 @@ internal static class CopilotSettingsSupport
             settings.Instructions,
             settings.MonthlyTokenBudget,
             settings.RetentionDays,
-            new CopilotUsageDto(usage.InputTokens, usage.OutputTokens, ByMember: null),
+            new CopilotUsageDto(usage.InputTokens, usage.OutputTokens, byMember),
             [.. AiProviders.All.Select(provider =>
             {
                 var state = states.FirstOrDefault(candidate => candidate.Provider == provider);
@@ -106,6 +111,26 @@ internal static class CopilotSettingsSupport
             })],
             models with { Providers = [.. models.Providers.Where(provider => connected.Contains(provider.Provider))] },
             settings.Version);
+    }
+
+    private static async Task<IReadOnlyList<CopilotMemberUsageDto>> ByMemberAsync(
+        ICopilotRepository repository, ICopilotMemberNames memberNames, Guid tenantId, DateTimeOffset monthStart, CancellationToken cancellationToken)
+    {
+        var rows = await repository.SumTokensByMemberAsync(tenantId, monthStart, cancellationToken);
+        if (rows.Count == 0)
+        {
+            return [];
+        }
+
+        var names = await memberNames.FindAsync(tenantId, [.. rows.Select(row => row.UserId)], cancellationToken);
+        return
+        [
+            .. rows
+                .OrderByDescending(row => row.InputTokens + row.OutputTokens)
+                .ThenBy(row => row.UserId)
+                .Select(row => new CopilotMemberUsageDto(
+                    row.UserId, names.TryGetValue(row.UserId, out var name) ? name : UnknownMemberName, row.InputTokens, row.OutputTokens)),
+        ];
     }
 
     /// <summary>El modelo elegido tiene que estar en la lista curada del proveedor y disponible.</summary>
@@ -131,13 +156,14 @@ public sealed class GetCopilotSettingsHandler(
     ICopilotRepository repository,
     IAiProviderCredentials credentials,
     IAiModelCatalog catalog,
-    ITenantClock tenantClock) : IQueryHandler<GetCopilotSettingsQuery, CopilotSettingsDto>
+    ITenantClock tenantClock,
+    ICopilotMemberNames memberNames) : IQueryHandler<GetCopilotSettingsQuery, CopilotSettingsDto>
 {
     public async Task<CopilotSettingsDto> HandleAsync(GetCopilotSettingsQuery query, CancellationToken cancellationToken)
     {
         await CopilotAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AiPermissions.CopilotManage, cancellationToken);
         var settings = await repository.FindSettingsAsync(query.TenantId, cancellationToken) ?? CopilotSettings.Unconfigured(query.TenantId);
-        return await CopilotSettingsSupport.ToDtoAsync(settings, repository, credentials, catalog, tenantClock, cancellationToken);
+        return await CopilotSettingsSupport.ToDtoAsync(settings, repository, credentials, catalog, tenantClock, memberNames, cancellationToken);
     }
 }
 
@@ -150,7 +176,9 @@ public sealed class UpdateCopilotSettingsHandler(
     IAiModelCatalog catalog,
     IAiUnitOfWork unitOfWork,
     IClock clock,
-    ITenantClock tenantClock) : ICommandHandler<UpdateCopilotSettingsCommand, CopilotSettingsDto>
+    ITenantClock tenantClock,
+    ICopilotMemberNames memberNames,
+    IAiAuditRecorder audit) : ICommandHandler<UpdateCopilotSettingsCommand, CopilotSettingsDto>
 {
     public async Task<CopilotSettingsDto> HandleAsync(UpdateCopilotSettingsCommand command, CancellationToken cancellationToken)
     {
@@ -187,7 +215,11 @@ public sealed class UpdateCopilotSettingsHandler(
             repository.AddSettings(settings);
         }
 
+        // D-C13: en el mismo commit, sólo metadatos (quién y cuándo); ni las instrucciones ni el modelo van a la auditoría.
+        audit.RecordCopilot(
+            command.TenantId, executionContext.SubjectId, AiAuditActions.CopilotSettingsUpdated, AiAuditActions.ResourceCopilotSettings,
+            command.TenantId, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return await CopilotSettingsSupport.ToDtoAsync(settings, repository, credentials, catalog, tenantClock, cancellationToken);
+        return await CopilotSettingsSupport.ToDtoAsync(settings, repository, credentials, catalog, tenantClock, memberNames, cancellationToken);
     }
 }

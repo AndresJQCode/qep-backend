@@ -325,14 +325,18 @@ public sealed class RenameCopilotThreadHandler(
 }
 
 /// <summary>D-C8: definitivo, sin papelera; se lleva los <c>tool_calls</c> de sus trabajos. Un trabajo en curso lo detecta en su commit y se
-/// descarta (plan C2.3). La auditoría <c>ai.copilot.thread_deleted</c> llega con el plan C3.4.</summary>
-public sealed class DeleteCopilotThreadHandler(IExecutionContext executionContext, ITenantModules tenantModules, ICopilotRepository repository)
+/// descarta (plan C2.3). D-C13 (plan C3.4): <c>ai.copilot.thread_deleted</c> con el miembro como actor, en la transacción del borrado.</summary>
+public sealed class DeleteCopilotThreadHandler(
+    IExecutionContext executionContext, ITenantModules tenantModules, ICopilotRepository repository, IAiAuditRecorder audit, IClock clock)
     : ICommandHandler<DeleteCopilotThreadCommand, bool>
 {
     public async Task<bool> HandleAsync(DeleteCopilotThreadCommand command, CancellationToken cancellationToken)
     {
         await CopilotAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.CopilotUse, cancellationToken);
         var thread = await CopilotThreadSupport.RequireOwnAsync(repository, executionContext, command.TenantId, command.ThreadId, cancellationToken);
+        audit.RecordCopilot(
+            command.TenantId, executionContext.SubjectId, AiAuditActions.CopilotThreadDeleted, AiAuditActions.ResourceCopilotThread, thread.Id,
+            clock.UtcNow);
         await repository.DeleteThreadAsync(command.TenantId, thread.Id, cancellationToken);
         return true;
     }

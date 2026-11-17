@@ -79,6 +79,10 @@ public interface IAiAuditRecorder
     /// <summary>Lo que hace el agente sin persona detrás (§4.7, <c>ai.quotation_draft.created</c>): actor <c>AiAgent</c> con el id del
     /// agente.</summary>
     void RecordByAgent(Guid tenantId, string action, Guid agentId, DateTimeOffset at);
+
+    /// <summary>Spec 2026-11-17 (copiloto) D-C13: auditoría de metadatos, nunca de contenido; por eso no hay parámetro para texto libre.
+    /// <paramref name="actorId"/> <c>null</c> es el sistema (el barrido de retención).</summary>
+    void RecordCopilot(Guid tenantId, Guid? actorId, string action, string resourceType, Guid resourceId, DateTimeOffset at);
 }
 
 /// <summary>Spec 2026-10-29 §4.7: las acciones de auditoría de los agentes.</summary>
@@ -95,6 +99,16 @@ public static class AiAuditActions
 
     /// <summary>§4.7: el agente creó un borrador de cotización (P-4b).</summary>
     public const string QuotationDraftCreated = "ai.quotation_draft.created";
+
+    /// <summary>Spec 2026-11-17 (copiloto) D-C13: la configuración del tenant; el id del recurso es el del tenant (una fila por tenant).</summary>
+    public const string ResourceCopilotSettings = "ai_copilot_settings";
+
+    public const string ResourceCopilotThread = "ai_copilot_thread";
+
+    public const string CopilotSettingsUpdated = "ai.copilot.settings_updated";
+
+    /// <summary>Por el miembro (actor humano) o por la retención (actor sistema).</summary>
+    public const string CopilotThreadDeleted = "ai.copilot.thread_deleted";
 }
 
 /// <summary>§4.3: el 409 <c>ai.agent.connection_taken</c> lleva <c>occupant</c> para que la pantalla ofrezca ir a pausar al que la ocupa.</summary>

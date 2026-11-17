@@ -33,6 +33,9 @@ public sealed class AiWorkerOptions
     /// <summary>§6.8: cada cuánto corre el barrido de tenants con el módulo apagado.</summary>
     public int ModuleSweepSeconds { get; set; } = 60;
 
+    /// <summary>Spec 2026-11-17 (copiloto) D-C8: cada cuánto corre la retención del copiloto (diaria).</summary>
+    public int CopilotRetentionSweepHours { get; set; } = 24;
+
     /// <summary>Plan 2026-11-12, Tarea 7: apaga los dos workers (cola y modelo). Las pruebas que siembran filas a mano lo apagan para que no
     /// les ganen la carrera; en producción queda prendido.</summary>
     public bool Enabled { get; set; } = true;
