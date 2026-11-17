@@ -95,12 +95,15 @@ public sealed class ExternalProductWriter(
             .ToArray();
         var targeted = targets.OfType<Guid>().ToHashSet();
         var removed = product.Variants.Where(variant => !targeted.Contains(variant.Id.Value)).ToArray();
+        // Una variante usada que una actualización anterior ya dejó inactiva sigue fuera del borrador para siempre: no es un
+        // cambio, o cada products/update reescribiría el producto.
+        var keptInactive = removed.Count(variant => !variant.IsActive);
         var (barcodes, dropped) = await KeepAvailableBarcodesAsync(draft, product, cancellationToken);
 
         // Review Focus 2: Shopify manda products/update también por inventario. Sin cambios no se toca
         // ni la biblioteca ni el producto: subir la versión le daría un 412 al asesor que lo tiene abierto.
-        if (removed.Length == 0
-            && await IsUnchangedAsync(product, draft, currency, targets, barcodes, savedById, cancellationToken))
+        if (removed.Length == keptInactive
+            && await IsUnchangedAsync(product, draft, currency, targets, barcodes, savedById, keptInactive, cancellationToken))
         {
             return new ExternalProductResult(
                 product.Id.Value, product.Version, KeysOf(draft, product, targets), dropped, Changed: false);
@@ -448,11 +451,12 @@ public sealed class ExternalProductWriter(
         Guid?[] targets,
         string?[] barcodes,
         Dictionary<Guid, ProductVariant> savedById,
+        int keptInactive,
         CancellationToken cancellationToken)
     {
         if (product.IsActive != draft.IsActive
             || !string.Equals(draft.Name.Trim(), product.Name, StringComparison.Ordinal)
-            || draft.Variants.Count != product.Variants.Count
+            || draft.Variants.Count != product.Variants.Count - keptInactive
             || targets.Any(target => target is null)
             || targets.Distinct().Count() != targets.Length)
         {

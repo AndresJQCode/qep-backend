@@ -187,6 +187,30 @@ public sealed class ExternalProductWriterTests(ExternalProductWriterTests.Host h
         Assert.True(product.Variants.Single(variant => variant.Id.Value == created.VariantIdsByKey["1"]).IsActive);
     }
 
+    // Revisión: una variante usada que ya quedó inactiva no es un cambio en cada products/update. Sin excluirla, el segundo
+    // update idéntico reescribía el producto y le subía la versión (un 412 al asesor que lo tiene abierto).
+    [Fact]
+    public async Task AnUpdateAfterAVariantWasKeptInactiveDoesNotRewriteTheProduct()
+    {
+        var created = await WriteAsync(writer => writer.CreateAsync(
+            Draft("Camiseta", [new ExternalOptionDraft("Talla", ["S", "M"])], Variant("1", "CAM-S", "S"), Variant("2", "CAM-M", "M")),
+            TestContext.Current.CancellationToken));
+        host.Usage.MarkUsed(created.VariantIdsByKey["2"]);
+        var draft = Draft("Camiseta", [new ExternalOptionDraft("Talla", ["S", "M"])], Variant("1", "CAM-S", "S"));
+        var first = await WriteAsync(writer => writer.UpdateAsync(
+            created.ProductId, draft, created.VariantIdsByKey, TestContext.Current.CancellationToken));
+        Assert.True(first.Changed);
+
+        var second = await WriteAsync(writer => writer.UpdateAsync(
+            created.ProductId, draft, created.VariantIdsByKey, TestContext.Current.CancellationToken));
+
+        Assert.False(second.Changed);
+        Assert.Equal(first.Version, second.Version);
+        var product = await ReadAsync(created.ProductId);
+        Assert.Equal(first.Version, product.Version);
+        Assert.False(product.Variants.Single(variant => variant.Id.Value == created.VariantIdsByKey["2"]).IsActive);
+    }
+
     // Un archivo que no entró a la galería quedaría Available sin dueño para siempre: se libera.
     [Fact]
     public async Task ReplacingAnImageThatDidNotEnterReleasesTheNewFile()
