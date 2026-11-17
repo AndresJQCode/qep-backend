@@ -244,10 +244,18 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
 
     public int Calls { get; private set; }
 
+    /// <summary>Sólo las lecturas por id: lo que se prueba es que quien llama no vuelve a pedir el mismo cliente.</summary>
+    public int FindCalls { get; private set; }
+
+    /// <summary>La instancia que devolvió el último <see cref="FindAsync"/>: la misma que siembra la prueba, no una copia.</summary>
+    public Customer? LastReturned { get; private set; }
+
     public Task<Customer?> FindAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken)
     {
         Calls++;
-        return Task.FromResult(customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.Id == customerId));
+        FindCalls++;
+        LastReturned = customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.Id == customerId);
+        return Task.FromResult(LastReturned);
     }
 
     public Task<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>> FindExistingIdentificationsAsync(
@@ -703,8 +711,16 @@ internal sealed class RecordingUnresolvedCityReporter : IUnresolvedCityReporter
 
 internal sealed class FakeCompanyRepository(params Company[] companies) : ICompanyRepository
 {
-    public Task<Company?> FindAsync(Guid tenantId, CompanyId companyId, CancellationToken cancellationToken) =>
-        Task.FromResult(companies.FirstOrDefault(company => company.TenantId == tenantId && company.Id == companyId));
+    public int FindCalls { get; private set; }
+
+    public Company? LastReturned { get; private set; }
+
+    public Task<Company?> FindAsync(Guid tenantId, CompanyId companyId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        LastReturned = companies.FirstOrDefault(company => company.TenantId == tenantId && company.Id == companyId);
+        return Task.FromResult(LastReturned);
+    }
 
     public Task<IReadOnlyList<Company>> SearchAsync(
         Guid tenantId, string? search, string? name, string? taxId, CompanyStatusFilter? status, CancellationToken cancellationToken) =>

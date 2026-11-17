@@ -215,6 +215,51 @@ public sealed class QuotationWithholdingLookupTests
         Assert.False(await lookup.IsWithholdingAgentAsync(TenantId, Guid.NewGuid(), "CO", "ReteICA", Bogota, ct));
     }
 
+    // El composer pregunta por el mismo cliente dos o tres veces en un request (si es agente y sus tasas): una lectura.
+    [Fact]
+    public async Task TheCustomerIsReadOnceAcrossAgentCheckAndCustomerRates()
+    {
+        var customer = NewCustomer();
+        var customers = new FakeCustomerRepository(customer);
+        var lookup = Lookup(customers, [Retefuente]);
+        var ct = TestContext.Current.CancellationToken;
+
+        await lookup.IsWithholdingAgentAsync(TenantId, customer.Id.Value, "CO", "ReteICA", CityId, ct);
+        await lookup.ForCustomerAsync(TenantId, customer.Id.Value, null, new DateOnly(2026, 6, 1), ct);
+
+        Assert.Equal(1, customers.FindCalls);
+    }
+
+    // Review Focus 5: la misma instancia, no una copia.
+    [Fact]
+    public async Task TheMemoReturnsTheTrackedInstance()
+    {
+        var customer = NewCustomer();
+        var customers = new FakeCustomerRepository(customer);
+        var lookup = Lookup(customers, [Retefuente]);
+
+        await lookup.IsWithholdingAgentAsync(
+            TenantId, customer.Id.Value, "CO", "ReteICA", CityId, TestContext.Current.CancellationToken);
+
+        Assert.Same(customer, customers.LastReturned);
+    }
+
+    [Fact]
+    public async Task TheCompanyIsReadOnceAcrossMunicipalLookups()
+    {
+        var company = NewCompany();
+        var companies = new FakeCompanyRepository(company);
+        var lookup = new QuotationWithholdingLookup(
+            new FakeCustomerRepository(), companies, new FakeTaxRateRepository(Retefuente), new InMemoryTaxUnitValues());
+        var date = new DateOnly(2026, 6, 1);
+        var ct = TestContext.Current.CancellationToken;
+
+        await lookup.ForCompanyMunicipalAsync(TenantId, company.Id.Value, "CO", Bogota, date, ct);
+        await lookup.ForCompanyMunicipalAsync(TenantId, company.Id.Value, "CO", Medellin, date, ct);
+
+        Assert.Equal(1, companies.FindCalls);
+    }
+
     private static Company NewCompany() =>
         Company.Create(
             CompanyId.New(), TenantId, "Verde S.A.S.",
