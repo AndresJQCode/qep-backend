@@ -228,6 +228,8 @@ public sealed class StorageFlowTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             // Fijado, nunca heredado de appsettings.json. SDD-CT-17: sin esto hereda
             // "infobip" y, sin sus claves, NotificationsOptionsValidator tira al arrancar
