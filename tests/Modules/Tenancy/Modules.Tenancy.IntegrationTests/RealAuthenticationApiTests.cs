@@ -78,6 +78,10 @@ public sealed class RealAuthenticationApiTests
                         .SetProperty(module => module.Status, TenantModuleStatus.Inactive)
                         .SetProperty(module => module.StatusChangedAt, now),
                     TestContext.Current.CancellationToken);
+            // El bump que da el handler real (ChangeTenantModules): la caché de permisos del pod sirve lo resuelto en el
+            // GET de arriba hasta 60 s, y un UPDATE directo no la entera.
+            await scope.ServiceProvider.GetRequiredService<ITenantAccessVersion>()
+                .BumpAsync(tenantId, TestContext.Current.CancellationToken);
         }
 
         Assert.Equal(HttpStatusCode.Forbidden, (await GetProductsAsync(owner, tenantId)).StatusCode);
@@ -198,7 +202,8 @@ public sealed class RealAuthenticationApiTests
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    // Por el agregado, no por SQL: es el mismo camino que usará el handler de la consola.
+    // Por el agregado, no por SQL: es el mismo camino que usará el handler de la consola. Y con el bump de la versión de acceso
+    // que ese handler da (ChangeTenantStatus): sin él, la caché de permisos del pod seguiría sirviendo lo de antes hasta 60 s.
     private static async Task SetTenantStatusAsync(QepApiFactory factory, Guid tenantId, bool suspend)
     {
         await using var scope = factory.Services.CreateAsyncScope();
@@ -215,6 +220,8 @@ public sealed class RealAuthenticationApiTests
         }
 
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await scope.ServiceProvider.GetRequiredService<ITenantAccessVersion>()
+            .BumpAsync(tenantId, TestContext.Current.CancellationToken);
     }
 
     [Fact]

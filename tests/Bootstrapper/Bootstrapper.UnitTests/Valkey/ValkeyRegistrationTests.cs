@@ -87,7 +87,8 @@ public sealed class ValkeyRegistrationTests
     // D-4: la caché de sesión de Identity y la del comprador siguen el mismo interruptor.
     [Theory]
     [InlineData("true", typeof(ValkeySessionCache), typeof(ValkeyBuyerSessionCache))]
-    [InlineData("false", typeof(NullSessionCache), typeof(NullBuyerSessionCache))]
+    // Apagado, la de Identity es la del pod y la del comprador sigue siendo el nulo.
+    [InlineData("false", typeof(MemorySessionCache), typeof(NullBuyerSessionCache))]
     public void TheSessionCachesFollowTheSessionsArea(string on, Type identity, Type buyer)
     {
         var services = Register(("Valkey:Areas:Sessions", on));
@@ -97,19 +98,19 @@ public sealed class ValkeyRegistrationTests
         Assert.IsType(buyer, provider.GetRequiredService<IBuyerSessionCache>());
     }
 
-    // D-5: apagada, IAuthorizationService es AuthorizationService tal cual (V3); prendida, el decorador. Se mira el registro y no
+    // D-5: prendida, el decorador de Valkey; apagada, el decorador con la caché del pod y su contador. Se mira el registro y no
     // la resolución: AuthorizationService necesita el resto de la composición.
     [Theory]
-    [InlineData("true", typeof(ValkeyTenantAccessVersion), true)]
-    [InlineData("false", typeof(NullTenantAccessVersion), false)]
-    public void ThePermissionsCacheFollowsThePermissionsArea(string on, Type version, bool decorated)
+    [InlineData("true", typeof(ValkeyTenantAccessVersion), typeof(CachedAuthorizationService))]
+    [InlineData("false", typeof(MemoryTenantAccessVersion), typeof(MemoryCachedAuthorizationService))]
+    public void ThePermissionsCacheFollowsThePermissionsArea(string on, Type version, Type decorator)
     {
         var services = Register(("Valkey:Areas:Permissions", on));
         using var provider = services.BuildServiceProvider();
 
         Assert.IsType(version, provider.GetRequiredService<ITenantAccessVersion>());
         var descriptor = Assert.Single(services, service => service.ServiceType == typeof(IAuthorizationService));
-        Assert.Equal(decorated, descriptor.ImplementationType == typeof(CachedAuthorizationService));
+        Assert.Equal(decorator, descriptor.ImplementationType);
         Assert.Contains(services, service => service.ServiceType == typeof(AuthorizationService));
     }
 
