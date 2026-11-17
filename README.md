@@ -6286,3 +6286,13 @@ miembros). Para presupuestar otra ruta, copia la prueba: un header distinto por 
 mensaje de la falla. En producción el mismo número es la cantidad de spans de Npgsql dentro de la traza del request en
 Tempo (`{ span.http.route = "/api/v1/tenants/{tenantId}/memberships" } | count() by (span:name)`), o
 `db.client.operation.duration` por ruta en Prometheus.
+
+En Quotations el contador no es un interceptor sino el `ActivityListener` de la fuente `Npgsql`, filtrado por la traza del
+request (`QuotationsApiHarness.StatementsOfAsync`): cuenta exactamente los spans que ve Tempo, incluidas las dos consultas
+transversales del stub de auth (estado del tenant y módulos). El presupuesto es el conteo medido redondeado hacia arriba al
+múltiplo de 5: un techo contra regresiones, no una meta.
+
+| Ruta | Prueba | Medido (2026-11-17) | Presupuesto |
+| --- | --- | --- | --- |
+| `GET /quotations/{id}` (dos líneas, cuenta de cobro) | `RequestQueryBudgetApiTests` (Quotations) | 24 | 25 |
+| `GET /orders/{id}` (convertido de esa cotización) | `RequestQueryBudgetApiTests` (Quotations) | 24 | 25 |

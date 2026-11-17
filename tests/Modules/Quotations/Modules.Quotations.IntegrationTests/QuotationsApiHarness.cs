@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -56,6 +57,45 @@ internal static class QuotationsApiHarness
     public static async Task<OrderResponse?> ReadConvertedOrderAsync(
         this HttpContent content, CancellationToken cancellationToken) =>
         (await content.ReadFromJsonAsync<OrderDetailResponse>(cancellationToken))?.Order;
+
+    /// <summary>
+    /// Las sentencias SQL de un solo request, en el orden en que terminaron. El <c>ActivityListener</c> es global al
+    /// proceso, las clases de prueba corren en paralelo y en el mismo host hay workers leyendo la base: lo único que
+    /// separa el request de todo eso es su traza, que entra por el header <c>traceparent</c> y que comparten todos sus
+    /// spans. Filtrar por base o por host contaría también a los workers. Es lo mismo que ve Tempo en producción.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> StatementsOfAsync(HttpClient client, HttpRequestMessage request)
+    {
+        var traceId = ActivityTraceId.CreateRandom();
+        var statements = new ConcurrentQueue<string>();
+
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name is "Npgsql" or "Microsoft.AspNetCore",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+                options.TraceId == traceId
+                    ? ActivitySamplingResult.AllDataAndRecorded
+                    : ActivitySamplingResult.None,
+            ActivityStopped = activity =>
+            {
+                if (activity.Source.Name == "Npgsql" && activity.TraceId == traceId)
+                {
+                    statements.Enqueue(activity.GetTagItem("db.query.text")?.ToString() ?? activity.DisplayName);
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        request.Headers.Add("traceparent", $"00-{traceId}-{ActivitySpanId.CreateRandom()}-01");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        // Sin esto, una traza que dejara de propagarse daría 0 sentencias y toda comparación pasaría sin medir nada.
+        Assert.NotEmpty(statements);
+
+        return statements.ToArray();
+    }
 
     /// <summary>Spec 2026-11-16: mueve la fecha de un pedido abierto con el guardado de «Editar pedido», con las mismas
     /// líneas y la versión que tiene ahora. Devuelve el detalle guardado.</summary>
