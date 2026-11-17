@@ -1398,6 +1398,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SendAgentTestMessageCommand, AgentTestDto>, SendAgentTestMessageHandler>();
         services.AddScoped<IQueryHandler<GetAgentTestQuery, AgentTestDto>, GetAgentTestHandler>();
         services.AddScoped<ICommandHandler<DeleteAgentTestCommand, bool>, DeleteAgentTestHandler>();
+        // Spec 2026-11-17 (copiloto) §8: configuración y estado.
+        services.AddScoped<IQueryHandler<GetCopilotSettingsQuery, CopilotSettingsDto>, GetCopilotSettingsHandler>();
+        services.AddScoped<ICommandHandler<UpdateCopilotSettingsCommand, CopilotSettingsDto>, UpdateCopilotSettingsHandler>();
+        services.AddScoped<IQueryHandler<GetCopilotStatusQuery, CopilotStatusDto>, GetCopilotStatusHandler>();
         services.AddValidatorsFromAssemblyContaining<CreateAgentValidator>();
         // Spec 2026-10-29 §8.3: las fuentes de las herramientas de lectura y las respuestas rápidas, por adaptadores sobre Catalog,
         // Quotations y Mensajería (Ai no ve ninguno de los tres).

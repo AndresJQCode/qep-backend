@@ -126,8 +126,57 @@ public static class AiEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        MapCopilot(group.MapGroup("/copilot"));
         return endpoints;
     }
+
+    /// <summary>Spec 2026-11-17 (copiloto) §8: <c>/ai/copilot</c>. Cada handler revalida tenant, permiso y la capacidad <c>copilot</c> (no la
+    /// <c>ai</c>, que exige Mensajería).</summary>
+    private static void MapCopilot(RouteGroupBuilder copilot)
+    {
+        copilot.MapGet("/settings", GetCopilotSettingsAsync)
+            .RequireAuthorization(AiPermissions.CopilotManage)
+            .Produces<CopilotSettingsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        copilot.MapPut("/settings", UpdateCopilotSettingsAsync)
+            .RequireAuthorization(AiPermissions.CopilotManage)
+            .Accepts<UpdateCopilotSettingsRequest>("application/json")
+            .Produces<CopilotSettingsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        copilot.MapGet("/status", GetCopilotStatusAsync)
+            .RequireAuthorization(AiPermissions.CopilotUse)
+            .Produces<CopilotStatusDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+    }
+
+    private static async Task<IResult> GetCopilotSettingsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetCopilotSettingsQuery(tenantId), cancellationToken));
+
+    // Adenda D-10: el cuerpo son los campos editables de la respuesta del GET; la versión va en If-Match ("0" sin fila todavía).
+    private static async Task<IResult> UpdateCopilotSettingsAsync(
+        Guid tenantId, UpdateCopilotSettingsRequest request, HttpContext httpContext, IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdateCopilotSettingsCommand(
+                tenantId, RequireCopilotVersion(httpContext), request.Enabled, request.Provider, request.Model, request.Instructions,
+                request.MonthlyTokenBudget, request.RetentionDays),
+            cancellationToken));
+
+    private static async Task<IResult> GetCopilotStatusAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetCopilotStatusQuery(tenantId), cancellationToken));
+
+    /// <summary>Como <see cref="RequireVersion"/>, pero acepta 0: la configuración del copiloto y un hilo recién leído sin fila tienen
+    /// versión 0 hasta el primer guardado.</summary>
+    private static long RequireCopilotVersion(HttpContext httpContext) =>
+        TryParseVersion(httpContext.Request.Headers.IfMatch, out var version, allowZero: true)
+            ? version
+            : throw new PreconditionRequiredException(
+                "precondition.if_match_required", "A valid If-Match header containing the loaded version is required.");
 
     // Sin Location: el playground abre con la prueba que vuelve. El cuerpo es opcional (sin cliente fijo).
     private static async Task<IResult> CreateTestAsync(
@@ -172,7 +221,7 @@ public static class AiEndpoints
             : throw new PreconditionRequiredException(
                 "precondition.if_match_required", "A valid If-Match header containing the loaded agent version is required.");
 
-    private static bool TryParseVersion(string? etag, out long version)
+    private static bool TryParseVersion(string? etag, out long version, bool allowZero = false)
     {
         version = 0;
         if (string.IsNullOrWhiteSpace(etag))
@@ -186,7 +235,7 @@ public static class AiEndpoints
             normalized = normalized[2..].Trim();
         }
 
-        return long.TryParse(normalized.Trim('"'), out version) && version > 0;
+        return long.TryParse(normalized.Trim('"'), out version) && (version > 0 || (allowZero && version == 0));
     }
 
     private static async Task<IResult> ListConnectionsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -279,3 +328,7 @@ public sealed record CreateAgentTestRequest(Guid? CustomerId, AgentTestBlockRequ
 public sealed record AgentTestBlockRequest(string? Objective, string? Context);
 
 public sealed record SendAgentTestMessageRequest(string Text);
+
+/// <summary>Adenda D-10 del plan fase 2: exactamente lo que manda el frontend (<c>saveCopilotSettings</c>).</summary>
+public sealed record UpdateCopilotSettingsRequest(
+    bool Enabled, string? Provider, string? Model, string? Instructions, long? MonthlyTokenBudget, int RetentionDays);
