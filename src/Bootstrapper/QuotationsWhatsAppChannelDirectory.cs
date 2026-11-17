@@ -21,10 +21,10 @@ internal sealed class QuotationsWhatsAppChannelDirectory(
         var channels = new List<WhatsAppChannel>();
 
         // Spec 2026-10-21 §4.1: Meta primero. Una conexión sin la plantilla APPROVED del documento no puede mandarlo.
-        foreach (var summary in await connections.ListActiveAsync(tenantId, IntegrationProviders.WhatsAppCloud.Key, cancellationToken))
+        // Cada proveedor llega resuelto en una sola lectura; la que no se resuelve (un secreto que no descifra) ya no viene.
+        foreach (var resolved in await connections.ListResolvedActiveAsync(tenantId, IntegrationProviders.WhatsAppCloud.Key, cancellationToken))
         {
-            var resolved = (await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection;
-            if (resolved is null || !await HasApprovedTemplateAsync(tenantId, resolved.Id, document, cancellationToken))
+            if (!await HasApprovedTemplateAsync(tenantId, resolved.Id, document, cancellationToken))
             {
                 continue;
             }
@@ -34,11 +34,9 @@ internal sealed class QuotationsWhatsAppChannelDirectory(
                 resolved.Id, resolved.Name, Value(resolved.Fields, WhatsAppCloudFieldKeys.DisplayPhoneNumber)));
         }
 
-        foreach (var summary in await connections.ListActiveAsync(tenantId, IntegrationProviders.Zenvia.Key, cancellationToken))
+        foreach (var resolved in await connections.ListResolvedActiveAsync(tenantId, IntegrationProviders.Zenvia.Key, cancellationToken))
         {
-            var resolved = (await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection;
-            if (resolved is null
-                || Value(resolved.Secrets, ZenviaFieldKeys.ApiToken) is not { } token
+            if (Value(resolved.Secrets, ZenviaFieldKeys.ApiToken) is not { } token
                 || Value(resolved.Fields, ZenviaFieldKeys.FromNumber) is not { } fromNumber
                 || Value(resolved.Fields, ZenviaFieldKeys.TemplateId) is not { } templateId)
             {

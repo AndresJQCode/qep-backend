@@ -113,19 +113,31 @@ internal sealed class FakeTenantProviders : ITenantProviders
 
 internal sealed class InMemoryConnectionRepository : IIntegrationConnectionRepository
 {
+    public InMemoryConnectionRepository(params IntegrationConnection[] connections) => Connections.AddRange(connections);
+
     public List<IntegrationConnection> Connections { get; } = [];
 
     /// <summary>Lo que pasa en cada lectura por id, antes de devolverla (por ejemplo, anotar qué candados había).</summary>
     public Action? OnFind { get; set; }
 
+    /// <summary>Cuántas veces se leyó una conexión por id: cada una es un viaje a la base.</summary>
+    public int FindCalls { get; private set; }
+
+    /// <summary>Cuántas veces se listaron las conexiones del tenant: cada una es un viaje a la base.</summary>
+    public int ListCalls { get; private set; }
+
     public Task<IntegrationConnection?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
+        FindCalls++;
         OnFind?.Invoke();
         return Task.FromResult(Connections.SingleOrDefault(connection => connection.TenantId == tenantId && connection.Id == connectionId));
     }
 
-    public Task<IReadOnlyList<IntegrationConnection>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<IntegrationConnection>>(Connections.Where(connection => connection.TenantId == tenantId).ToList());
+    public Task<IReadOnlyList<IntegrationConnection>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        ListCalls++;
+        return Task.FromResult<IReadOnlyList<IntegrationConnection>>(Connections.Where(connection => connection.TenantId == tenantId).ToList());
+    }
 
     public Task<int> CountAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
         Task.FromResult(Connections.Count(connection =>

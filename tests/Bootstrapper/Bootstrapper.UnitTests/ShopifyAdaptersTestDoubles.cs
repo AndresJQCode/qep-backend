@@ -609,18 +609,27 @@ internal sealed class FakeIntegrationConnections(params IntegrationConnection[] 
             candidate.TenantId == tenantId && candidate.Id == connectionId && candidate.Status == ConnectionStatus.Active);
         return Task.FromResult(connection is null
             ? ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null)
-            : ConnectionResolution.Resolved(new ResolvedConnection(
-                connection.Id, connection.ProviderKey, connection.Name,
-                new Dictionary<string, string>(connection.Fields, StringComparer.Ordinal),
-                connection.Secrets.ToDictionary(
-                    secret => secret.FieldKey, secret => Encoding.UTF8.GetString(secret.Protected.Ciphertext), StringComparer.Ordinal))));
+            : ConnectionResolution.Resolved(Resolved(connection)));
     }
+
+    public Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ResolvedConnection>>([.. connections
+            .Where(connection => connection.TenantId == tenantId && connection.Status == ConnectionStatus.Active
+                && string.Equals(connection.ProviderKey, providerKey, StringComparison.Ordinal))
+            .Select(Resolved)]);
 
     public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    private static ResolvedConnection Resolved(IntegrationConnection connection) =>
+        new(
+            connection.Id, connection.ProviderKey, connection.Name,
+            new Dictionary<string, string>(connection.Fields, StringComparer.Ordinal),
+            connection.Secrets.ToDictionary(
+                secret => secret.FieldKey, secret => Encoding.UTF8.GetString(secret.Protected.Ciphertext), StringComparer.Ordinal));
 }
 
 internal sealed class FakeTenantModules(Guid tenantId, TenantModuleSet modules) : ITenantModules

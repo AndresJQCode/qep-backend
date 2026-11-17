@@ -563,6 +563,8 @@ public sealed class AutomationAdaptersTests
         }
 
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     /// <summary>Mejor esfuerzo: el resumen se arma después del commit de varios cambios, así que si la evaluación falla el hilo sale sin

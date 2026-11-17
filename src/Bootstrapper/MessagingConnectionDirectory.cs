@@ -92,26 +92,20 @@ internal sealed class MessagingConnectionDirectory(
 
     public async Task<IReadOnlyList<MessagingConnectionDto>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        // El número (o el usuario de Instagram) que se muestra vive en los campos de la conexión, que sólo trae ResolveAsync (con el token
-        // descifrado, que acá se descarta). Una conexión que no se resuelve (un secreto que no descifra) no sirve para enviar y no se ofrece.
+        // El número (o el usuario de Instagram) que se muestra vive en los campos de la conexión, que sólo trae la resolución (con el token
+        // descifrado, que acá se descarta). Una conexión que no se resuelve (un secreto que no descifra) no sirve para enviar y no viene.
         // WhatsApp primero y después Instagram, cada grupo por nombre: la pantalla de conversación nueva sólo ofrece las de WhatsApp.
         var result = new List<MessagingConnectionDto>();
-        foreach (var summary in (await connections.ListActiveAsync(tenantId, Provider, cancellationToken)).OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var resolved in (await connections.ListResolvedActiveAsync(tenantId, Provider, cancellationToken)).OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
         {
-            if ((await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection is { } resolved)
-            {
-                result.Add(new MessagingConnectionDto(
-                    summary.Id, summary.Name, resolved.Fields.GetValueOrDefault(WhatsAppCloudFieldKeys.DisplayPhoneNumber)));
-            }
+            result.Add(new MessagingConnectionDto(
+                resolved.Id, resolved.Name, resolved.Fields.GetValueOrDefault(WhatsAppCloudFieldKeys.DisplayPhoneNumber)));
         }
 
-        foreach (var summary in (await connections.ListActiveAsync(tenantId, InstagramProvider, cancellationToken)).OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var resolved in (await connections.ListResolvedActiveAsync(tenantId, InstagramProvider, cancellationToken)).OrderBy(connection => connection.Name, StringComparer.OrdinalIgnoreCase))
         {
-            if ((await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection is { } resolved)
-            {
-                result.Add(new MessagingConnectionDto(
-                    summary.Id, summary.Name, null, nameof(ConversationChannel.Instagram), resolved.Fields.GetValueOrDefault(InstagramFieldKeys.Username)));
-            }
+            result.Add(new MessagingConnectionDto(
+                resolved.Id, resolved.Name, null, nameof(ConversationChannel.Instagram), resolved.Fields.GetValueOrDefault(InstagramFieldKeys.Username)));
         }
 
         return result;
