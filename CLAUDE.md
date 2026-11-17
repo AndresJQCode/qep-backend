@@ -584,6 +584,17 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   (`DELETE …/shopify/products/{id}/link`) es la salida.
 - **La imagen importada que no entra en la galería se libera explícitamente**, o queda un archivo `Available` de Storage para
   siempre (la galería es lo que lo retiene). La imagen va después del commit del producto, fuera de su transacción.
+- **El perfil de la tienda (`shopProfile`) es un campo interno de la conexión con el correo y el teléfono del comerciante**
+  (spec 2026-11-17 onboarding §2). Nada lo loguea ni lo audita: un log nuevo del asistente lleva el id de la conexión y el tipo de
+  la excepción (`TheSetupNeverLogsTheShopEmailOrPhone`). Un campo nuevo de `ShopQuery` entra en `ShopifyShopProfile` de **los dos**
+  módulos (Integrations y Shopify, que no se ven) y en el mapeo campo por campo de `ShopifyConnectionDirectory` (Bootstrapper).
+- **`products_coverage`, `products_coverage_accepted_at` y `setup_history_*` no suben la `Version` de `shopify.stores`.** Son estado
+  del asistente, no configuración: si un camino nuevo del asistente la sube, el formulario de la tienda abierto recibe 412 al
+  guardar. Lo amarran `RecordingCoverageDoesNotBumpTheVersion` y `ThePutStillSucceedsAfterCoverageWasMeasured`.
+- **`POST …/setup/company` crea la empresa en la transacción de Companies y la asigna en la de Shopify.** Si la asignación pierde
+  por versión, el 412 trae `details.companyId` (`ShopifySetupCompanyConflictException`) y el reintento lo manda para sólo asignar.
+  No lo «arregles» borrando la empresa: una creación en otro módulo no se deshace, y el reintento por `companyId` es lo idempotente.
+  La versión se revisa **antes** de crear, para que un 412 común no deje empresas sueltas.
 - **`develop` no va a `main` sin el frontend de Shopify** (2026-10-18). `shopify` está en `DefaultForNewTenants`
   (`TenantModuleKey.cs`, decisión del owner del 2026-10-15) y en `Production` la app está configurada a la fuerza —sin ella
   el pod no arranca—, así que el catálogo de Integraciones de todo tenant nuevo trae la tarjeta Shopify con

@@ -176,9 +176,10 @@ public static class ShopifyEndpoints
         return result.Created ? Results.Json(result, statusCode: StatusCodes.Status201Created) : Results.Ok(result);
     }
 
+    // Spec 2026-11-17 (onboarding) §7: ?source=setup (el paso «Historial») guarda el resumen; la respuesta no cambia.
     private static async Task<IResult> SyncStoreAsync(
-        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.SendAsync(new SyncShopifyStoreCommand(tenantId, connectionId), cancellationToken));
+        Guid tenantId, Guid connectionId, [FromQuery] string? source, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new SyncShopifyStoreCommand(tenantId, connectionId, source), cancellationToken));
 
     // §7: state acepta varios, repetido (?state=Waiting&state=Ignored) o separado por comas (?state=Waiting,Ignored).
     private static async Task<IResult> ListOrdersAsync(

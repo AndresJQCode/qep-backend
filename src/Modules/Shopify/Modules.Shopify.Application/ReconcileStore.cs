@@ -370,6 +370,7 @@ public sealed partial class ReconcileStore(
             Failed = Failed,
             FirstError = FirstError,
             Skipped = Skipped,
+            WaitingOrderIds = [.. States.Where(pair => pair.Value == ShopifyImportState.Waiting).Select(pair => pair.Key).Order()],
         };
 
         private int Count(ShopifyImportState state) => States.Values.Count(value => value == state);
@@ -403,4 +404,9 @@ public sealed record ShopifySyncResult(int Fetched, int Imported, int Waiting, i
 
     [JsonIgnore]
     public int Skipped { get; init; }
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4.2: los ids de Shopify de los pedidos que la corrida dejó en espera, en orden. Son para
+    /// el resumen del asistente (<c>source=setup</c>), que agrupa sólo los de esta corrida; no viajan.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<long> WaitingOrderIds { get; init; } = [];
 }

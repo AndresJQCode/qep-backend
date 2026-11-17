@@ -4909,6 +4909,27 @@ tiene: importar y la cobertura le responden 422 `shopify.products.scope_missing`
 webhooks no le pide los `products/*` (ni la pasa a `NeedsAttention` por ellos) hasta que el comercio vuelva a autorizar la app y
 el canje guarde el scope nuevo; el siguiente enlace o probador los registra.
 
+**Asistente de la tienda (onboarding, spec `2026-11-17-onboarding-tienda-shopify-design.md`).** Una tienda recién enlazada se
+configura en cinco pasos (`company`, `advisor`, `buyers`, `products`, `history`) con una sola lectura que dice qué falta. Rutas
+(todas revalidan tenant, permiso, módulo y conexión con 403):
+
+| Ruta | Permiso | Qué |
+| --- | --- | --- |
+| `GET …/shopify/stores/{connectionId}/setup?redirectUri=` | `integrations.connection.manage` | `ShopifySetupDto`: los cinco pasos con `status`, `blockedBy` y `missing`, el `openStep`, la tienda con `settings` (el cuerpo del `PUT`, con su `version`), la empresa elegida y la sugerida, las empresas activas, el asesor, los compradores, los productos, el historial, `waiting` y `stats`. Crea la tienda si el módulo no la tenía |
+| `POST …/shopify/stores/{connectionId}/setup/company` (`If-Match`) `{ companyId?, name?, taxId?, documentType?, country?, cityId?, cityName?, address?, phone?, email?, chargesVat?, bankAccount? }` | `integrations.connection.manage` (y `companies.company.manage` para crear) | Sin `companyId` crea la empresa por Companies (sus `errors`, su 403, la siembra de tasas) y la asigna: 201 `{ companyId, storeVersion }`. Con `companyId` sólo asigna: 200. 412 `concurrency.conflict` antes de crear si la versión no es la actual; si la asignación pierde después de crear, el 412 trae `details.companyId` y el reintento lo manda. 422 `shopify.store.billing_account_not_found`; 503 `shopify.store.sync_unavailable` si no hay moneda (ni cuenta, ni perfil, ni la guardada) |
+| `POST …/shopify/stores/{connectionId}/products/coverage/accept` | `integrations.connection.manage` | 204: «Seguir así», el paso `products` queda hecho con la cobertura que hay |
+| `POST …/shopify/stores/{connectionId}/sync?source=setup` | `quotations.order.manage` | La respuesta de siempre; además la tienda guarda el resumen de la corrida (`history.lastRun`). Otro `source` es 422 `errors.source` |
+
+- **El perfil de la tienda** (`shopProfile`) es un campo **interno** de la conexión de Integrations: un JSON con el correo, el
+  correo de contacto, la moneda, si los precios incluyen impuestos y la dirección de facturación de `ShopQuery`. Lo escriben el
+  enlace (de mejor esfuerzo) y el probador. No sale en la respuesta de la conexión ni en logs: lleva datos personales del
+  comerciante. Con él el asistente sugiere la empresa (la ciudad se resuelve en Geography sólo en `CO`) y la moneda.
+- **«¿Cobras impuestos?»** se sugiere con `productVariants(first: 1, query: "taxable:true")` mientras el paso `company` no esté
+  hecho y haya `read_products`; sin productos, sin scope o con Shopify caído es `null`.
+- **La cobertura se guarda en la tienda** (`products_coverage`, con `measuredAt`) en cada `GET …/products/coverage`, y el asistente
+  la mide sola (tope de 15 s) la primera vez que hay scope y no hubo importación. Ni la medición, ni «Seguir así», ni el resumen del
+  historial suben la versión de la tienda.
+
 **Ediciones en la tienda.** `GET|PUT …/shopify/stores/{connectionId}` llevan además `editSync` (`Manual`, por defecto, o
 `Automatic`) y `editPaymentStatuses` (los estados de pago de QEP en que un cambio de Shopify se aplica; por defecto los cuatro:
 `FullPaymentReceived`, `PartialPaymentReceived`, `PaymentPending`, `PendingVerification`). En el `PUT` los dos son opcionales y
@@ -4996,6 +5017,19 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    | `featuredMedia.preview.image.url(transform:)` entrega un JPG de hasta 2048×2048 | Mirar el archivo que quedó en Storage para un producto con imagen |
    | El filtro `product_status` de `productVariants` (la cobertura) deja fuera los archivados | Archivar un producto y ver que la cobertura no lo cuente |
    | Una tienda con variantes sin SKU y con `taxesIncluded = false` | Importarla: códigos `shp-{id}` y precios con IVA sumado si la empresa cobra IVA y la moneda es COP |
+6. **Asistente de la tienda (spec 2026-11-17 onboarding).** Una sola migración, **aditiva**, sin backfill: `AddStoreSetup`
+   (Shopify: cuatro columnas nulas en `shopify.stores`, `products_coverage`, `products_coverage_accepted_at`,
+   `setup_history_ran_at` y `setup_history_summary`). Un pod viejo las ignora. El perfil de la tienda no tiene migración: es un
+   campo de la conexión, y una conexión enlazada antes lo recibe en el siguiente probador o reenlace (hasta entonces la sugerencia
+   es sólo el nombre de la tienda).
+
+   Quedan por verificar contra una tienda de desarrollo:
+
+   | Qué | Cómo se cierra |
+   | --- | --- |
+   | `shop.billingAddress` (empresa, ciudad, `provinceCode` de Colombia, `countryCodeV2`, teléfono) llega como lo lee `ShopQuery` | Enlazar la tienda y mirar la sugerencia del `GET …/setup` |
+   | `shop.contactEmail` existe y es el correo que el comercio ve como de contacto | El mismo `GET …/setup`: `company.suggested.email` |
+   | `productVariants(first: 1, query: "taxable:true")` distingue una tienda con variantes gravadas de una sin | Marcar todas las variantes como no gravadas y ver `suggestedChargesVat: false`; marcar una y ver `true` |
 
 ### Contratos de servicio (cobros recurrentes)
 
