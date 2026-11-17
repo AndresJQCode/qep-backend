@@ -100,10 +100,11 @@ internal sealed class AiRunLedger(AiDbContext dbContext) : IAiRunLedger
         return dbContext.Database.ExecuteSqlAsync($"""
             INSERT INTO ai.usage_records (tenant_id, agent_id, agent_version_id, conversation_id, session_id, test_id, job_id, provider, model,
                                           served_model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
-                                          outcome, called_at)
+                                          outcome, called_at, copilot_thread_id, member_user_id)
             VALUES ({record.TenantId}, {record.AgentId}, {record.AgentVersionId}, {record.ConversationId}, {record.SessionId}, {record.TestId},
                     {record.JobId}, {record.Provider.Value}, {record.Model}, {record.ServedModel}, {checked((int)record.Usage.Input)},
-                    {checked((int)record.Usage.Output)}, {cacheCreation}, {cacheRead}, {record.Outcome}, {record.CalledAt})
+                    {checked((int)record.Usage.Output)}, {cacheCreation}, {cacheRead}, {record.Outcome}, {record.CalledAt},
+                    {record.CopilotThreadId}, {record.MemberUserId})
             """, cancellationToken);
     }
 
