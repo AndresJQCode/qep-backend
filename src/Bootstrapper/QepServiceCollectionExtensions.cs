@@ -1591,6 +1591,10 @@ public static class QepServiceCollectionExtensions
         // no guarda estado) y el IMeterFactory es el del host, el mismo que lee el exportador.
         services.AddSingleton(provider => new Observability.QueueGauges(
             provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
+        // Spec 2026-11-16: la hora del último webhook de Meta, en la misma vuelta del muestreador.
+        services.AddScoped<Observability.IWebhookArrivalSource, Observability.WebhookArrivalSource>();
+        services.AddSingleton(provider => new Observability.WebhookArrivalGauge(
+            provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
         services.AddHostedService<Observability.QueueSamplerWorker>();
 
         // Registro de llamadas a la API externa: el middleware encola y el escritor inserta, para que la base no demore una respuesta.

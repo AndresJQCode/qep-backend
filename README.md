@@ -2728,6 +2728,7 @@ la cola esté vacía.
 | `qep.queue.oldest_age`      | s      | `queue`   | Edad de la pendiente más vieja que nadie ha intentado (`attempts = 0`)                                |
 | `qep.messaging.inbound.lag` | s      | `channel` | Histograma: segundos entre la hora que Meta le pone a un mensaje entrante y el momento en que se guarda |
 | `qep.webhook.discarded`     | —      | `provider`, `reason` | Contador: eventos de Meta que llegaron con firma válida y no se ingresaron a propósito     |
+| `qep.webhook.last_received` | s      | `provider` | Hora Unix del último webhook de Meta aceptado (el `received_at` más reciente de `webhook_deliveries`) |
 
 `oldest_age` ignora lo que ya reintenta (una fila sana en reintento largo o un outbox envenenado no son atraso); en
 `automation` también las que espera una anterior de su misma conversación, y en `media` los medios importados con el
@@ -2740,6 +2741,11 @@ cuenta sin conexión), `without_user_id`, `paused`, `module_off`, `foreign_statu
 coexistencia), `unhandled_field`, `foreign_event` (visto o borrado de Instagram sin mensaje) e `ignored`. La alerta
 `QepWebhookDiscarding` de `migracion-k8s` mira sólo `unknown_route` y `without_user_id`, comparados con la misma hora de la
 semana anterior; los demás son tráfico normal y sólo van al panel. Un reintento de la entrega vuelve a contar, como el log.
+
+`qep.webhook.last_received` la lee `QueueSamplerWorker` en la misma vuelta que las colas (sólo el pod líder) y caduca igual a los
+60 s. Sale de la base, no del tráfico HTTP: sobrevive a un reinicio y sólo cuenta lo que pasó la firma, así que después de un
+despliegue dice cuándo entró el último webhook de verdad. Un proveedor sin entregas no publica. El panel «Último webhook de
+Meta» la muestra como «hace X»; no hay alerta de silencio (owner, 2026-11-16).
 
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.

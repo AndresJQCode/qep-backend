@@ -189,6 +189,8 @@ public static class MultiReplicaInventory
             "Api/WebTelemetryMetrics.cs:23 — HashSet de rutas que acota la cardinalidad del histograma a 256 (MaxRoutes) por pod; cada pod publica sus métricas"),
         new("Bootstrapper.Observability.QueueGauges", StateClassification.PerPodByDesign,
             "Bootstrapper/Observability/QueueGauges.cs:20 — la última lectura del pod; el dashboard agrega con max/avg"),
+        new("Bootstrapper.Observability.WebhookArrivalGauge", StateClassification.PerPodByDesign,
+            "Bootstrapper/Observability/WebhookArrivalGauge.cs:16 — la última lectura del pod (hora del último webhook); el dashboard agrega con max"),
         new("Bootstrapper.Valkey.ValkeyConnection", StateClassification.PerPodByDesign,
             "Bootstrapper/Valkey/ValkeyConnection.cs:31 — el multiplexer de cada pod"),
         new("Bootstrapper.Valkey.ValkeyQueueDoorbell", StateClassification.PerPodByDesign,
