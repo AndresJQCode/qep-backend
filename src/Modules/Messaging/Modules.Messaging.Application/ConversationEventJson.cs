@@ -24,6 +24,11 @@ public static class ConversationEventJson
             WriteId(writer, "reasonId", value.ReasonId);
             WriteId(writer, "previousCustomerId", value.PreviousCustomerId);
             WriteId(writer, "chatbotId", value.ChatbotId);
+            // Spec 2026-11-17 adenda D-5: la delegación lleva la foto de los nombres, el agente y la salida.
+            WriteText(writer, "chatbotName", value.ChatbotName);
+            WriteId(writer, "agentId", value.AgentId);
+            WriteText(writer, "agentName", value.AgentName);
+            WriteText(writer, "output", value.Output);
             WriteId(writer, "ticketId", value.TicketId);
             if (value.PauseReason is { } pauseReason)
             {
@@ -69,7 +74,10 @@ public static class ConversationEventJson
             return new ConversationEvent(
                 parsed, ReadId(root, "actor"), ReadId(root, "target"), ReadId(root, "previous"), ReadId(root, "customerId"),
                 ReadId(root, "linkedConversationId"), ReadId(root, "reasonId"), pauseReason, ReadId(root, "previousCustomerId"),
-                ReadHandoff(root), ReadId(root, "chatbotId"), ReadId(root, "ticketId"));
+                ReadHandoff(root), ReadId(root, "chatbotId"), ReadId(root, "ticketId"), ReadText(root, "chatbotName"), ReadId(root, "agentId"),
+                ReadText(root, "agentName"),
+                // Como pauseReason: una salida desconocida (de una versión futura) se lee null.
+                ReadText(root, "output") is { } output && BotDelegationOutputs.IsValid(output) ? output : null);
         }
         catch (JsonException)
         {

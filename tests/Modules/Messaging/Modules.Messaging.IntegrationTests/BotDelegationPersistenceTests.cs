@@ -57,7 +57,7 @@ public sealed class BotDelegationPersistenceTests
             var conversation = await dbContext.Conversations.SingleAsync(value => value.Id == conversationId, Ct);
             var delegation = await dbContext.BotDelegations.SingleAsync(value => value.Id == delegationId, Ct);
             delegation.Return("""{"output":"done","reason":"objective_completed"}""", DateTimeOffset.UtcNow);
-            conversation.ReturnFromAgent(delegationId, chatbotId, DateTimeOffset.UtcNow);
+            conversation.ReturnFromAgent(delegationId, chatbotId, BotDelegationOutputs.Done, DateTimeOffset.UtcNow);
             await dbContext.SaveChangesAsync(Ct);
         }
 

@@ -265,9 +265,16 @@ internal static class MessageMapping
                     EventCustomer(conversationEvent.CustomerId, customerRefs),
                     EventCustomer(conversationEvent.PreviousCustomerId, customerRefs),
                     ToDto(conversationEvent.Handoff, memberNames),
-                    Chatbot(conversationEvent.ChatbotId, chatbotNames),
+                    conversationEvent.ChatbotId is { } eventChatbot && conversationEvent.ChatbotName is { } chatbotSnapshot
+                        ? new ChatbotRefDto(eventChatbot, chatbotSnapshot)
+                        : Chatbot(conversationEvent.ChatbotId, chatbotNames),
                     conversationEvent.TicketId,
-                    conversationEvent.TicketId is { } ticketId ? ticketNumbers?.GetValueOrDefault(ticketId) : null),
+                    conversationEvent.TicketId is { } ticketId ? ticketNumbers?.GetValueOrDefault(ticketId) : null,
+                    // Spec 2026-11-17 adenda D-5: la foto del nombre gana; sin ella, el de hoy.
+                    conversationEvent.AgentId is { } eventAgent && conversationEvent.AgentName is { } agentSnapshot
+                        ? new AgentRefDto(eventAgent, agentSnapshot)
+                        : Agent(conversationEvent.AgentId, chatbotNames),
+                    conversationEvent.Output),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson), row.Imported) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),

@@ -13,6 +13,22 @@ public enum BotDelegationStatus
     Interrupted,
 }
 
+/// <summary>Spec 2026-11-17 D-B10 y adenda D-5: las cinco salidas del bloque «Agente IA», como viajan en el evento <c>AutomationReturned</c>
+/// y en el resultado de la delegación. Son contrato con el frontend y con el flujo: no se renombran.</summary>
+public static class BotDelegationOutputs
+{
+    public const string Done = "done";
+    public const string Human = "human";
+    public const string NoAnswer = "noAnswer";
+    public const string Idle = "idle";
+    public const string Error = "error";
+
+    /// <summary>En el orden del bloque.</summary>
+    public static IReadOnlyList<string> All { get; } = [Done, Human, NoAnswer, Idle, Error];
+
+    public static bool IsValid(string? output) => output is not null && All.Contains(output, StringComparer.Ordinal);
+}
+
 /// <summary>
 /// Spec 2026-11-17 §5.3 (D-B3): el chatbot le pasa una conversación a un agente de IA y la recupera. Vive en Mensajería porque es la única
 /// pieza que Automations y Ai ven (D-A3): chatbot, corrida, bloque y agente son referencias blandas. <see cref="Brief"/> lo arma Automations

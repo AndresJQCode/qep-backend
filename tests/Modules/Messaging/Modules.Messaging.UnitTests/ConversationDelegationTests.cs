@@ -38,7 +38,7 @@ public sealed class ConversationDelegationTests
         var conversation = WithChatbot();
         var version = conversation.Version;
 
-        var change = conversation.DelegateToAgent(DelegationId, AgentId, Now.AddMinutes(1));
+        var change = conversation.DelegateToAgent(DelegationId, AgentId, Now.AddMinutes(1), "Ventas", "Asesor IA");
 
         Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
         Assert.Equal(BotKind.Agent, conversation.AutomationBotKind);
@@ -48,7 +48,10 @@ public sealed class ConversationDelegationTests
         Assert.Null(conversation.AutomationStep);
         Assert.Equal(DelegationId, conversation.AutomationDelegationId);
         Assert.Equal(version + 1, conversation.Version);
-        Assert.Equal(new ConversationEvent(ConversationEventType.AutomationDelegated, ChatbotId: ChatbotId), change);
+        // Adenda D-5: el evento lleva chatbot y agente con la foto de sus nombres.
+        Assert.Equal(
+            new ConversationEvent(ConversationEventType.AutomationDelegated, ChatbotId: ChatbotId, ChatbotName: "Ventas", AgentId: AgentId, AgentName: "Asesor IA"),
+            change);
     }
 
     [Fact]
@@ -58,7 +61,7 @@ public sealed class ConversationDelegationTests
         var started = conversation.AutomationStartedAt;
 
         conversation.DelegateToAgent(DelegationId, AgentId, Now.AddMinutes(5));
-        conversation.ReturnFromAgent(DelegationId, ChatbotId, Now.AddMinutes(9));
+        conversation.ReturnFromAgent(DelegationId, ChatbotId, BotDelegationOutputs.Done, Now.AddMinutes(9));
 
         // BotAttendance.HumanTookOver compara AutomationResumedAt con el arranque de la corrida: sellarlo la daría por interrumpida.
         Assert.Equal(started, conversation.AutomationStartedAt);
@@ -115,7 +118,7 @@ public sealed class ConversationDelegationTests
         var conversation = Delegated();
         var version = conversation.Version;
 
-        var change = conversation.ReturnFromAgent(DelegationId, ChatbotId, Now.AddMinutes(3));
+        var change = conversation.ReturnFromAgent(DelegationId, ChatbotId, BotDelegationOutputs.NoAnswer, Now.AddMinutes(3), " Ventas ", "Asesor IA");
 
         Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
         Assert.Equal(BotKind.Chatbot, conversation.AutomationBotKind);
@@ -123,7 +126,24 @@ public sealed class ConversationDelegationTests
         Assert.Null(conversation.AutomationAgentId);
         Assert.Null(conversation.AutomationDelegationId);
         Assert.Equal(version + 1, conversation.Version);
-        Assert.Equal(new ConversationEvent(ConversationEventType.AutomationReturned, ChatbotId: ChatbotId), change);
+        Assert.Equal(
+            new ConversationEvent(
+                ConversationEventType.AutomationReturned, ChatbotId: ChatbotId, ChatbotName: "Ventas", AgentId: AgentId, AgentName: "Asesor IA",
+                Output: "noAnswer"),
+            change);
+    }
+
+    /// <summary>§6.4: ventana cerrada o contacto bloqueado devuelven sin salida.</summary>
+    [Fact]
+    public void ReturningWithoutOutputIsAllowedAndAnUnknownOutputIsAProgrammingError()
+    {
+        var conversation = Delegated();
+
+        Assert.Throws<ArgumentException>(() => conversation.ReturnFromAgent(DelegationId, ChatbotId, "finished", Now.AddMinutes(3)));
+        var change = conversation.ReturnFromAgent(DelegationId, ChatbotId, null, Now.AddMinutes(3));
+
+        Assert.Null(change.Output);
+        Assert.Equal(["done", "human", "noAnswer", "idle", "error"], BotDelegationOutputs.All);
     }
 
     [Fact]
@@ -132,7 +152,8 @@ public sealed class ConversationDelegationTests
         var conversation = Delegated();
         var version = conversation.Version;
 
-        var error = Assert.Throws<MessagingDomainException>(() => conversation.ReturnFromAgent(Guid.CreateVersion7(), ChatbotId, Now.AddMinutes(3)));
+        var error = Assert.Throws<MessagingDomainException>(
+            () => conversation.ReturnFromAgent(Guid.CreateVersion7(), ChatbotId, BotDelegationOutputs.Done, Now.AddMinutes(3)));
 
         Assert.Equal(MessagingErrorCodes.DelegationNotLive, error.Code);
         Assert.Equal("messaging.automation.delegation_not_live", MessagingErrorCodes.DelegationNotLive);
@@ -141,11 +162,28 @@ public sealed class ConversationDelegationTests
     }
 
     [Fact]
+    public void TheDelegationEventsRoundTripWithTheirNamesAndOutput()
+    {
+        var returned = new ConversationEvent(
+            ConversationEventType.AutomationReturned, ChatbotId: ChatbotId, ChatbotName: "Ventas", AgentId: AgentId, AgentName: "Asesor IA",
+            Output: "human");
+
+        var json = Modules.Messaging.Application.ConversationEventJson.Serialize(returned);
+
+        Assert.Equal(
+            $$"""{"type":"AutomationReturned","chatbotId":"{{ChatbotId}}","chatbotName":"Ventas","agentId":"{{AgentId}}","agentName":"Asesor IA","output":"human"}""",
+            json);
+        Assert.Equal(returned, Modules.Messaging.Application.ConversationEventJson.Parse(json));
+        // Una salida desconocida (versión futura) se lee null: el hilo no falla por eso.
+        Assert.Null(Modules.Messaging.Application.ConversationEventJson.Parse(json.Replace("\"human\"", "\"later\"", StringComparison.Ordinal))!.Output);
+    }
+
+    [Fact]
     public void ReturningAConversationWithoutDelegationIsRejected()
     {
         var conversation = WithChatbot();
 
-        var error = Assert.Throws<MessagingDomainException>(() => conversation.ReturnFromAgent(DelegationId, ChatbotId, Now));
+        var error = Assert.Throws<MessagingDomainException>(() => conversation.ReturnFromAgent(DelegationId, ChatbotId, BotDelegationOutputs.Done, Now));
 
         Assert.Equal(MessagingErrorCodes.DelegationNotLive, error.Code);
     }

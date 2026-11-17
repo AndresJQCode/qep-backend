@@ -152,11 +152,15 @@ public sealed record EventCustomerRefDto(Guid Id, string Name);
 /// por el bot (bloque «Resolver»), con <c>actor</c> null: el hilo dice «El asistente «X» resolvió la conversación» en vez de
 /// «Alguien»; resuelto al leer como <c>SentByChatbot</c>, con «Chatbot» si ya no existe. <c>ticketId</c> y <c>ticketNumber</c> sólo en
 /// <c>TicketOpened</c>/<c>TicketClosed</c> (Soporte fase 2): el número (<c>SOP-000127</c>) se resuelve al leer para que el hilo diga
-/// «Se abrió el ticket SOP-000127» sin otra consulta; <c>null</c> si el ticket ya no está, y el hilo dibuja el evento sin número.</summary>
+/// «Se abrió el ticket SOP-000127» sin otra consulta; <c>null</c> si el ticket ya no está, y el hilo dibuja el evento sin número.
+/// <c>AutomationDelegated</c>/<c>AutomationReturned</c> (spec 2026-11-17, adenda D-5) traen <c>chatbot</c> y <c>agent</c> con la foto del
+/// nombre del momento (si falta, el de hoy, o «Chatbot» / «Agente IA»), y el de retorno <c>output</c> (<c>done</c>, <c>human</c>,
+/// <c>noAnswer</c>, <c>idle</c>, <c>error</c>; <c>null</c> si volvió sin salida): el hilo dice quién pasó la conversación a quién sin otra
+/// consulta.</summary>
 public sealed record MessageEventDto(
     string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null,
     EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null,
-    ChatbotRefDto? Chatbot = null, Guid? TicketId = null, string? TicketNumber = null);
+    ChatbotRefDto? Chatbot = null, Guid? TicketId = null, string? TicketNumber = null, AgentRefDto? Agent = null, string? Output = null);
 
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
 /// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>, <c>AttemptsExhausted</c>, <c>DataConsentRejected</c>, <c>DataConsentUnavailable</c>): uno desconocido

@@ -417,8 +417,10 @@ public sealed partial class Conversation
     /// conversación abierta, asistente <c>Active</c> de un chatbot y sin delegación viva (con el asistente activo no hay asesor: tomarla
     /// lo pausa). No toca <see cref="AutomationStartedAt"/> ni <see cref="AutomationResumedAt"/>: con el sello,
     /// <c>BotAttendance.HumanTookOver</c> daría la corrida del chatbot por interrumpida (el mismo gotcha que
-    /// <see cref="ContinueAutomation"/>). El evento lleva el chatbot que delegó; el bot no es una membresía, así que va sin actor.</summary>
-    public ConversationEvent DelegateToAgent(Guid delegationId, Guid agentId, DateTimeOffset now)
+    /// <see cref="ContinueAutomation"/>). El evento lleva el chatbot que delegó y el agente, con la foto de sus nombres (adenda D-5); el bot
+    /// no es una membresía, así que va sin actor.</summary>
+    public ConversationEvent DelegateToAgent(
+        Guid delegationId, Guid agentId, DateTimeOffset now, string? chatbotName = null, string? agentName = null)
     {
         EnsureOpenForAutomation();
         if (AutomationStatus != ConversationAutomationStatus.Active || AutomationBotKind is BotKind.Agent
@@ -431,24 +433,41 @@ public sealed partial class Conversation
         SetBot(BotRef.Agent(agentId));
         AutomationDelegationId = delegationId;
         Touch(now);
-        return new ConversationEvent(ConversationEventType.AutomationDelegated, ChatbotId: chatbotId);
+        return new ConversationEvent(
+            ConversationEventType.AutomationDelegated, ChatbotId: chatbotId, ChatbotName: FitBotName(chatbotName), AgentId: agentId,
+            AgentName: FitBotName(agentName));
     }
 
     /// <summary>Spec 2026-11-17 §5.3 y §6.3: el agente devuelve la conversación al chatbot que la delegó. Sólo la delegación viva: otra
     /// (o ninguna) es <see cref="MessagingErrorCodes.DelegationNotLive"/>. Igual que al delegar, no toca el arranque ni la reanudación.
-    /// El paso del flujo queda vacío hasta que el motor lo reescriba al seguir.</summary>
-    public ConversationEvent ReturnFromAgent(Guid delegationId, Guid chatbotId, DateTimeOffset now)
+    /// El paso del flujo queda vacío hasta que el motor lo reescriba al seguir. <paramref name="output"/> es una de
+    /// <see cref="BotDelegationOutputs"/>, o <c>null</c> si volvió sin salida (ventana cerrada o contacto bloqueado, §6.4); otra cosa es un
+    /// error de programación.</summary>
+    public ConversationEvent ReturnFromAgent(
+        Guid delegationId, Guid chatbotId, string? output, DateTimeOffset now, string? chatbotName = null, string? agentName = null)
     {
+        if (output is not null && !BotDelegationOutputs.IsValid(output))
+        {
+            throw new ArgumentException($"'{output}' is not an output of the agent block.", nameof(output));
+        }
+
         if (AutomationDelegationId != delegationId)
         {
             throw new MessagingDomainException(MessagingErrorCodes.DelegationNotLive, "That delegation is not the live one of the conversation.");
         }
 
+        var agentId = AutomationAgentId;
         SetBot(BotRef.Chatbot(chatbotId));
         AutomationDelegationId = null;
         Touch(now);
-        return new ConversationEvent(ConversationEventType.AutomationReturned, ChatbotId: chatbotId);
+        return new ConversationEvent(
+            ConversationEventType.AutomationReturned, ChatbotId: chatbotId, ChatbotName: FitBotName(chatbotName), AgentId: agentId,
+            AgentName: FitBotName(agentName), Output: output);
     }
+
+    /// <summary>La foto del nombre de un bot en un evento mide como los títulos de un traspaso; en blanco, <c>null</c> (el hilo cae a
+    /// «Chatbot» o «Agente IA»).</summary>
+    private static string? FitBotName(string? name) => Truncate(name, AutomationHandoff.TextMaxLength);
 
     /// <summary>La única limpieza de la delegación: la llaman todas las transiciones que sacan la conversación de <c>Active</c> o le cambian
     /// el bot sin devolver (pausar, tomar, transferir, traspasar, resolver, terminar, arrancar a mano). Quien llama marca la delegación

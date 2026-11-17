@@ -59,6 +59,9 @@ public enum ConversationEventType
 /// <see cref="TicketId"/> sólo lo usan <c>TicketOpened</c> y <c>TicketClosed</c> (Soporte fase 2): el id del ticket; su número se
 /// resuelve al leer, como los nombres. Esos dos eventos son una marca en el hilo, no una acción del asesor sobre la conversación:
 /// no tocan su versión, su estado, sus no leídos ni <c>history_managed</c>.
+/// <c>AutomationDelegated</c> y <c>AutomationReturned</c> (spec 2026-11-17, adenda D-5) llevan <see cref="ChatbotId"/>, <see cref="AgentId"/>
+/// y la <b>foto</b> de sus nombres (<see cref="ChatbotName"/>, <see cref="AgentName"/>: el nombre del momento, no el de hoy); el de
+/// retorno suma <see cref="Output"/> (<see cref="BotDelegationOutputs"/>, <c>null</c> si volvió sin salida por ventana o bloqueo).
 /// Nunca teléfonos, BSUIDs ni textos de Meta (§11).
 /// </summary>
 public sealed record ConversationEvent(
@@ -73,4 +76,8 @@ public sealed record ConversationEvent(
     Guid? PreviousCustomerId = null,
     AutomationHandoff? Handoff = null,
     Guid? ChatbotId = null,
-    Guid? TicketId = null);
+    Guid? TicketId = null,
+    string? ChatbotName = null,
+    Guid? AgentId = null,
+    string? AgentName = null,
+    string? Output = null);
