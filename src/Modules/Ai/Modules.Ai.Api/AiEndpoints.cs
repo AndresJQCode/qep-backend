@@ -152,7 +152,104 @@ public static class AiEndpoints
             .RequireAuthorization(AiPermissions.CopilotUse)
             .Produces<CopilotStatusDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        // D-C7 y D-C8: los hilos privados del miembro. Preguntar responde sin esperar al modelo (202 al seguir el hilo, 201 al crearlo);
+        // el frontend sondea GET mientras pending. Un hilo de otro miembro es 404 ai.copilot.thread_not_found, nunca 403.
+        var threads = copilot.MapGroup("/threads");
+
+        threads.MapGet("/", ListCopilotThreadsAsync)
+            .RequireAuthorization(AiPermissions.CopilotUse)
+            .Produces<CopilotThreadPage>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        threads.MapPost("/", CreateCopilotThreadAsync)
+            .WithCopilotAsking()
+            .Accepts<CopilotQuestionRequest>("application/json")
+            .Produces<CopilotThreadDto>(StatusCodes.Status201Created);
+
+        threads.MapGet("/{threadId:guid}", GetCopilotThreadAsync)
+            .RequireAuthorization(AiPermissions.CopilotUse)
+            .Produces<CopilotThreadDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        threads.MapPut("/{threadId:guid}", RenameCopilotThreadAsync)
+            .RequireAuthorization(AiPermissions.CopilotUse)
+            .Accepts<RenameCopilotThreadRequest>("application/json")
+            .Produces<CopilotThreadDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        threads.MapDelete("/{threadId:guid}", DeleteCopilotThreadAsync)
+            .RequireAuthorization(AiPermissions.CopilotUse)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        threads.MapPost("/{threadId:guid}/messages", SendCopilotMessageAsync)
+            .WithCopilotAsking()
+            .Accepts<CopilotQuestionRequest>("application/json")
+            .Produces<CopilotThreadDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        threads.MapPost("/{threadId:guid}/messages/{messageId:guid}/retry", RetryCopilotMessageAsync)
+            .WithCopilotAsking()
+            .Produces<CopilotThreadDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status404NotFound);
     }
+
+    /// <summary>Lo común de preguntar (crear, enviar, reintentar): 409 busy, 422 disabled o proveedor sin cuenta, 429 con
+    /// <c>retryAfterSeconds</c>.</summary>
+    private static RouteHandlerBuilder WithCopilotAsking(this RouteHandlerBuilder route) =>
+        route.RequireAuthorization(AiPermissions.CopilotUse)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+    private static async Task<IResult> ListCopilotThreadsAsync(
+        Guid tenantId, string? cursor, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListCopilotThreadsQuery(tenantId, cursor), cancellationToken));
+
+    // Sin Location: el panel abre con el hilo que vuelve.
+    private static async Task<IResult> CreateCopilotThreadAsync(
+        Guid tenantId, CopilotQuestionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Created(
+            (string?)null,
+            await dispatcher.SendAsync(new CreateCopilotThreadCommand(tenantId, request.Text ?? string.Empty), cancellationToken));
+
+    private static async Task<IResult> GetCopilotThreadAsync(
+        Guid tenantId, Guid threadId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetCopilotThreadQuery(tenantId, threadId), cancellationToken));
+
+    private static async Task<IResult> RenameCopilotThreadAsync(
+        Guid tenantId, Guid threadId, RenameCopilotThreadRequest request, HttpContext httpContext, IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RenameCopilotThreadCommand(tenantId, threadId, RequireVersion(httpContext), request.Title ?? string.Empty), cancellationToken));
+
+    private static async Task<IResult> DeleteCopilotThreadAsync(
+        Guid tenantId, Guid threadId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new DeleteCopilotThreadCommand(tenantId, threadId), cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> SendCopilotMessageAsync(
+        Guid tenantId, Guid threadId, CopilotQuestionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Accepted(
+            (string?)null,
+            await dispatcher.SendAsync(new SendCopilotMessageCommand(tenantId, threadId, request.Text ?? string.Empty), cancellationToken));
+
+    private static async Task<IResult> RetryCopilotMessageAsync(
+        Guid tenantId, Guid threadId, Guid messageId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Accepted(
+            (string?)null,
+            await dispatcher.SendAsync(new RetryCopilotMessageCommand(tenantId, threadId, messageId), cancellationToken));
 
     private static async Task<IResult> GetCopilotSettingsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetCopilotSettingsQuery(tenantId), cancellationToken));
@@ -328,6 +425,12 @@ public sealed record CreateAgentTestRequest(Guid? CustomerId, AgentTestBlockRequ
 public sealed record AgentTestBlockRequest(string? Objective, string? Context);
 
 public sealed record SendAgentTestMessageRequest(string Text);
+
+/// <summary>§8: <c>{ text }</c> de crear un hilo y de preguntar en uno.</summary>
+public sealed record CopilotQuestionRequest(string? Text);
+
+/// <summary>§8: <c>{ title }</c>, con <c>If-Match</c>.</summary>
+public sealed record RenameCopilotThreadRequest(string? Title);
 
 /// <summary>Adenda D-10 del plan fase 2: exactamente lo que manda el frontend (<c>saveCopilotSettings</c>).</summary>
 public sealed record UpdateCopilotSettingsRequest(

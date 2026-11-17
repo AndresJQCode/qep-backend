@@ -81,6 +81,9 @@ public static class AiInfrastructureExtensions
         services.AddScoped<AiInboxProcessor>();
         // Spec 2026-11-17 (copiloto): configuración e hilos.
         services.AddScoped<ICopilotRepository, CopilotRepository>();
+        // D-C11: los topes por miembro, de Ai:Copilot (validados con AiOptions al arrancar).
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<AiOptions>>().Value.Copilot.ToLimits());
+        services.AddScoped<CopilotAsking>();
         services.AddScoped<AgentSessionJobProcessor>();
         services.AddScoped<AiSessionSweeper>();
         services.AddSingleton<AiInboxWorker>();

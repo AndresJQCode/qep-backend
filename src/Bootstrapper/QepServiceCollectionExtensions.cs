@@ -1402,6 +1402,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetCopilotSettingsQuery, CopilotSettingsDto>, GetCopilotSettingsHandler>();
         services.AddScoped<ICommandHandler<UpdateCopilotSettingsCommand, CopilotSettingsDto>, UpdateCopilotSettingsHandler>();
         services.AddScoped<IQueryHandler<GetCopilotStatusQuery, CopilotStatusDto>, GetCopilotStatusHandler>();
+        // Spec 2026-11-17 (copiloto) §8: los hilos privados del miembro.
+        services.AddScoped<IQueryHandler<ListCopilotThreadsQuery, CopilotThreadPage>, ListCopilotThreadsHandler>();
+        services.AddScoped<IQueryHandler<GetCopilotThreadQuery, CopilotThreadDto>, GetCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<CreateCopilotThreadCommand, CopilotThreadDto>, CreateCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<SendCopilotMessageCommand, CopilotThreadDto>, SendCopilotMessageHandler>();
+        services.AddScoped<ICommandHandler<RetryCopilotMessageCommand, CopilotThreadDto>, RetryCopilotMessageHandler>();
+        services.AddScoped<ICommandHandler<RenameCopilotThreadCommand, CopilotThreadDto>, RenameCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<DeleteCopilotThreadCommand, bool>, DeleteCopilotThreadHandler>();
         services.AddValidatorsFromAssemblyContaining<CreateAgentValidator>();
         // Spec 2026-10-29 §8.3: las fuentes de las herramientas de lectura y las respuestas rápidas, por adaptadores sobre Catalog,
         // Quotations y Mensajería (Ai no ve ninguno de los tres).

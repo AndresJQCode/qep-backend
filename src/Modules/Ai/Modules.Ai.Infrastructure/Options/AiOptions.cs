@@ -1,3 +1,4 @@
+using Modules.Ai.Application;
 using Modules.Ai.Domain;
 
 namespace Modules.Ai.Infrastructure.Options;
@@ -27,6 +28,9 @@ public sealed class AiOptions
     /// alias.</summary>
     public Dictionary<string, AiProviderOptions> Providers { get; set; } = new(StringComparer.Ordinal);
 
+    /// <summary>Spec 2026-11-17 (copiloto) D-C11: <c>Ai:Copilot</c>.</summary>
+    public AiCopilotOptions Copilot { get; set; } = new();
+
     /// <summary>Los mensajes nombran la clave de configuración que falla; ninguno lleva un valor secreto (aquí no hay ninguno).</summary>
     public IReadOnlyList<string> Validate()
     {
@@ -52,6 +56,8 @@ public sealed class AiOptions
         {
             ValidateProvider(key, provider, failures);
         }
+
+        Copilot.Validate(failures);
 
         if (AiProvider.TryParse(DefaultProvider, out _)
             && Providers.TryGetValue(DefaultProvider, out var defaultProvider)
@@ -115,6 +121,32 @@ public sealed class AiOptions
             {
                 failures.Add($"{at}:Effort must be empty or one of: {string.Join(", ", OpenAiEfforts)}.");
             }
+        }
+    }
+}
+
+/// <summary>Spec 2026-11-17 (copiloto) D-C11: los topes por miembro. Defaults del spec; los números van en configuración, no en código.</summary>
+public sealed class AiCopilotOptions
+{
+    /// <summary>Preguntas por miembro en una hora móvil (429 <c>ai.copilot.rate_limited</c>).</summary>
+    public int MessagesPerHour { get; set; } = 30;
+
+    /// <summary>Preguntas por miembro en 24 horas móviles.</summary>
+    public int MessagesPerDay { get; set; } = 200;
+
+    public CopilotLimits ToLimits() => new(MessagesPerHour, MessagesPerDay);
+
+    internal void Validate(List<string> failures)
+    {
+        const string path = "Ai:Copilot";
+        if (MessagesPerHour < 1)
+        {
+            failures.Add($"{path}:MessagesPerHour must be at least 1.");
+        }
+
+        if (MessagesPerDay < MessagesPerHour)
+        {
+            failures.Add($"{path}:MessagesPerDay must be at least {path}:MessagesPerHour.");
         }
     }
 }

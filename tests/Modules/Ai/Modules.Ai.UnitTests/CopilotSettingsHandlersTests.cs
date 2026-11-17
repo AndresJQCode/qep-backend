@@ -221,6 +221,8 @@ internal sealed class CopilotBed
 
     public FixedCopilotClock Clock { get; } = new(CopilotSettingsHandlersTests.Now);
 
+    public ITenantClock TenantClock => new BogotaClock(Clock);
+
     public GetCopilotSettingsHandler GetSettings(IExecutionContext context) =>
         new(context, new FakeTenantModules(Modules), Repository, Credentials, Catalog, new BogotaClock(Clock));
 
@@ -304,6 +306,10 @@ internal sealed class FakeCopilotRepository : ICopilotRepository
 
     public List<CopilotThread> Threads { get; } = [];
 
+    public List<Guid> Deleted { get; } = [];
+
+    public List<DateTimeOffset> QuestionTimes { get; } = [];
+
     public CopilotTokenUsage Usage { get; set; } = new(0, 0);
 
     public DateTimeOffset? UsageSince { get; private set; }
@@ -326,5 +332,28 @@ internal sealed class FakeCopilotRepository : ICopilotRepository
     {
         UsageSince = since;
         return Task.FromResult(Usage);
+    }
+
+    public Task<IReadOnlyList<CopilotThread>> ListThreadsAsync(
+        Guid tenantId, Guid userId, CopilotThreadCursor? after, int take, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<CopilotThread>>(
+        [
+            .. Threads
+                .Where(thread => thread.TenantId == tenantId && thread.UserId == userId)
+                .OrderByDescending(thread => thread.LastActivityAt).ThenByDescending(thread => thread.Id)
+                .Where(thread => after is null || thread.LastActivityAt < after.LastActivityAt
+                    || (thread.LastActivityAt == after.LastActivityAt && thread.Id.CompareTo(after.Id) < 0))
+                .Take(take),
+        ]);
+
+    public Task<IReadOnlyList<DateTimeOffset>> ListQuestionTimesAsync(
+        Guid tenantId, Guid userId, DateTimeOffset since, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DateTimeOffset>>([.. QuestionTimes.Where(time => time >= since)]);
+
+    public Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken)
+    {
+        Deleted.Add(threadId);
+        Threads.RemoveAll(thread => thread.TenantId == tenantId && thread.Id == threadId);
+        return Task.CompletedTask;
     }
 }

@@ -56,6 +56,17 @@ internal sealed class AiUnitOfWork(AiDbContext dbContext, IAgentConnectionSlots 
         {
             throw Concurrency(exception);
         }
+        // Spec 2026-11-17 (copiloto) D-C11: dos preguntas simultáneas en el mismo hilo chocan en el pendiente único o en el seq; la
+        // segunda es 409 ai.copilot.busy, como si hubiera llegado después.
+        catch (DbUpdateException exception) when (IsUnique(exception, CopilotModel.PendingMessageIndex) || IsUnique(exception, CopilotModel.MessageSeqIndex))
+        {
+            throw new ResourceConflictException(AiErrorCodes.CopilotBusy, "Espera la respuesta del copiloto antes de preguntar otra cosa.", exception);
+        }
+        // Dos primeros guardados de la configuración del copiloto con If-Match "0": el segundo es 412.
+        catch (DbUpdateException exception) when (IsUnique(exception, CopilotModel.SettingsKey))
+        {
+            throw Concurrency(exception);
+        }
         // Después de las ramas de DbUpdateException: el ExecuteSqlAsync de la sincronización lanza la PostgresException sin envolver. Dos
         // guardados que igual se cruzan en connection_bots son una carrera, no un error del servidor. Precedente: CustomersWriteRaces.
         catch (Exception exception) when (IsWriteRace(exception))
