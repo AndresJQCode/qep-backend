@@ -27,11 +27,18 @@ internal sealed class MessagingMemberNames(IMembershipRepository memberships, IU
 
         var scoped = await memberships.ListByIdsAsync(
             new TenantId(tenantId), memberIds.Select(id => new MembershipId(id)).ToArray(), cancellationToken);
+        // Un solo viaje a Identity por los correos de quienes no tienen nombre: una consulta por miembro de la página era una
+        // ida y vuelta de red por fila con la base en otro nodo.
+        var emails = await users.GetEmailsAsync(
+            scoped.Where(membership => string.IsNullOrWhiteSpace(membership.DisplayName))
+                .Select(membership => membership.UserId)
+                .ToList(),
+            cancellationToken);
         foreach (var membership in scoped)
         {
             var name = !string.IsNullOrWhiteSpace(membership.DisplayName)
                 ? membership.DisplayName
-                : await users.GetEmailAsync(membership.UserId, cancellationToken);
+                : emails.GetValueOrDefault(membership.UserId);
             if (!string.IsNullOrWhiteSpace(name))
             {
                 names[membership.Id.Value] = name;
