@@ -2008,10 +2008,6 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
 
-                            b1.Property<bool>("ChargesVat")
-                                .HasColumnType("boolean")
-                                .HasColumnName("billing_company_charges_vat");
-
                             b1.Property<Guid?>("CityId")
                                 .HasColumnType("uuid")
                                 .HasColumnName("billing_company_city_id");
@@ -2030,6 +2026,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(3)
                                 .HasColumnType("character varying(3)")
                                 .HasColumnName("billing_account_currency");
+
+                            b1.Property<bool?>("StoredChargesVat")
+                                .HasColumnType("boolean")
+                                .HasColumnName("billing_company_charges_vat");
 
                             b1.HasKey("QuotationId");
 

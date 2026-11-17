@@ -39,6 +39,25 @@ public sealed class OptionalBillingAccountMigrationTests
         Assert.True(quotation.ChargesVat);
     }
 
+    // Revisión: un pod sin la columna (rollout o rollback) escribe una cotización con empresa y deja el IVA en NULL. Se lee
+    // como true, y no lanza al materializar el owned.
+    [Fact]
+    public async Task AQuotationWithCompanyAndNullChargesVatReadsTrue()
+    {
+        await using var database = await StartDatabaseAsync();
+        var seeded = await SeedThroughTheApiAsync(database.GetConnectionString());
+        await ScalarAsync<object?>(
+            database.GetConnectionString(),
+            $"UPDATE quotations.quotations SET billing_company_charges_vat = NULL WHERE id = '{seeded.QuotationId}'");
+
+        await using var context = NewContext(database.GetConnectionString());
+        var quotation = await context.Set<Quotation>().SingleAsync(
+            row => row.Id == new QuotationId(seeded.QuotationId), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(quotation.BillingAccount);
+        Assert.True(quotation.ChargesVat);
+    }
+
     [Fact]
     public async Task ExistingOrdersChargeVatAndKeepTheirAccount()
     {

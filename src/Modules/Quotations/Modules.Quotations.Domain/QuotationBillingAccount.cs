@@ -56,6 +56,18 @@ public sealed record QuotationBillingAccount
     /// </summary>
     public bool ChargesVat { get; init; } = true;
 
+    /// <summary>
+    /// La columna de <see cref="ChargesVat"/>, sólo para la persistencia. En <c>quotations.quotations</c> es nullable (el owned
+    /// es opcional) y un pod sin esta columna —el anterior durante un rollout, o un rollback— escribe una cotización con empresa
+    /// y la deja en <c>NULL</c>. Un <c>NULL</c> se lee como <c>true</c>: hasta el spec 2026-11-17 toda empresa cobraba IVA.
+    /// Sin esto, materializar el <c>bool</c> desde el <c>NULL</c> lanzaba y la cotización no se podía abrir.
+    /// </summary>
+    private bool? StoredChargesVat
+    {
+        get => ChargesVat;
+        init => ChargesVat = value ?? true;
+    }
+
     /// <summary>Si hay cuenta bancaria, o sólo empresa (R3). No tiene columna.</summary>
     public bool HasBankAccount => BankName is not null;
 

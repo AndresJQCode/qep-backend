@@ -197,8 +197,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             // Spec ReteICA por empresa §7.5: el municipio de la empresa, congelado con la cuenta. Sin FK.
             billing.Property(value => value.CityId).HasColumnName("billing_company_city_id");
             // Spec 2026-11-17 §5.2: el IVA de la empresa, congelado con la cuenta. Sale nullable porque el owned es
-            // opcional; la migración lo rellena en true donde hay empresa, y EF siempre lo escribe (sin default).
-            billing.Property(value => value.ChargesVat).HasColumnName("billing_company_charges_vat");
+            // opcional; la migración lo rellena en true donde hay empresa, y EF siempre lo escribe (sin default). Se mapea
+            // por StoredChargesVat (bool?), que lee NULL como true: un pod sin la columna (rollout o rollback) deja NULL en
+            // una cotización con empresa, y el bool no se podía materializar desde ahí.
+            billing.Ignore(value => value.ChargesVat);
+            billing.Property<bool?>("StoredChargesVat").HasColumnName("billing_company_charges_vat");
             // Banco y número nulos es «empresa sin cuenta» (R3); se deriva, no se guarda.
             billing.Ignore(value => value.HasBankAccount);
         });
