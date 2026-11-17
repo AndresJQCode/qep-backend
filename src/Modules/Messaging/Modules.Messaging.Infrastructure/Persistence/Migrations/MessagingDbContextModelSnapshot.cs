@@ -93,6 +93,85 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Messaging.Domain.BotDelegation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("agent_id");
+
+                    b.Property<string>("Brief")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("brief");
+
+                    b.Property<Guid>("ChatbotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chatbot_id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset?>("EndedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ended_at");
+
+                    b.Property<Guid?>("LastInboundMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_inbound_message_id");
+
+                    b.Property<string>("NodeId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("node_id");
+
+                    b.Property<string>("Result")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("result");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("run_id");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "ConversationId" }, "IX_bot_delegations_live")
+                        .IsUnique()
+                        .HasFilter("status = 'Live'");
+
+                    b.HasIndex(new[] { "TenantId", "ConversationId" }, "IX_bot_delegations_tenant_conversation");
+
+                    b.ToTable("bot_delegations", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_bot_delegations_result", "(status = 'Returned') = (result IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_bot_delegations_status", "status IN ('Live','Returned','Interrupted')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Messaging.Domain.BusinessHoursSchedule", b =>
                 {
                     b.Property<Guid>("Id")
@@ -330,6 +409,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("AutomationChatbotId")
                         .HasColumnType("uuid")
                         .HasColumnName("automation_chatbot_id");
+
+                    b.Property<Guid?>("AutomationDelegationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("automation_delegation_id");
 
                     b.Property<string>("AutomationPauseReason")
                         .HasMaxLength(32)
@@ -590,6 +673,8 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_conversations_block", "(blocked_at IS NULL AND blocked_by_member_id IS NULL AND blocked_wa_id IS NULL) OR (blocked_at IS NOT NULL AND blocked_by_member_id IS NOT NULL AND blocked_wa_id IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_conversations_channel", "channel IN ('WhatsApp','Instagram')");
+
+                            t.HasCheckConstraint("CK_conversations_delegation", "automation_delegation_id IS NULL OR (automation_status = 'Active' AND automation_bot_kind = 2)");
 
                             t.HasCheckConstraint("CK_conversations_identity", "user_id IS NOT NULL OR wa_id IS NOT NULL");
 
@@ -1091,6 +1176,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<Guid?>("DelegationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("delegation_id");
+
                     b.Property<string>("Kind")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -1125,6 +1214,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "ConversationId", "CreatedAt" }, "IX_automation_inbox_conversation")
                         .HasFilter("processed_at IS NULL");
 
+                    b.HasIndex(new[] { "DelegationId", "Kind" }, "IX_automation_inbox_delegation")
+                        .IsUnique()
+                        .HasFilter("delegation_id IS NOT NULL");
+
                     b.HasIndex(new[] { "NextAttemptAt" }, "IX_automation_inbox_pending")
                         .HasFilter("processed_at IS NULL");
 
@@ -1135,7 +1228,9 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_automation_inbox_bot_kind", "bot_kind IN (1,2)");
 
-                            t.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')");
+                            t.HasCheckConstraint("CK_automation_inbox_delegation", "(kind IN ('Delegated','AgentReturned')) = (delegation_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun','Delegated','AgentReturned')");
                         });
                 });
 

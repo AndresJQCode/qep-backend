@@ -176,6 +176,7 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
             // viola CK_conversations_automation_assignment. Los CASE miran el valor ANTERIOR de automation_status; RETURNING ve
             // el nuevo, y por eso PausedNow se deduce de la razón y la hora que acaba de escribir (COALESCE: sin asistente son NULL).
             // Spec 2026-10-29 (regla R9): asignarla la saca de la regla de la importación (history_managed), como tomarla a mano.
+            // Spec 2026-11-17 §5.3: pausar limpia la delegación (CK_conversations_delegation); sin asistente Active ya era NULL.
             var taken = await dbContext.Database.SqlQuery<AutoAssignRow>(
                 $"""
                 UPDATE messaging.conversations
@@ -183,7 +184,8 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
                        automation_status = CASE WHEN automation_status = 'Active' THEN 'Paused' ELSE automation_status END,
                        automation_paused_at = CASE WHEN automation_status = 'Active' THEN {at} ELSE automation_paused_at END,
                        automation_paused_by_member_id = CASE WHEN automation_status = 'Active' THEN {memberId} ELSE automation_paused_by_member_id END,
-                       automation_pause_reason = CASE WHEN automation_status = 'Active' THEN 'AdvisorReplied' ELSE automation_pause_reason END
+                       automation_pause_reason = CASE WHEN automation_status = 'Active' THEN 'AdvisorReplied' ELSE automation_pause_reason END,
+                       automation_delegation_id = NULL
                  WHERE id = {conversationId} AND tenant_id = {tenantId} AND assigned_member_id IS NULL
                 RETURNING connection_id AS "ConnectionId",
                           COALESCE(automation_pause_reason = 'AdvisorReplied' AND automation_paused_at = {at}, false) AS "PausedNow",

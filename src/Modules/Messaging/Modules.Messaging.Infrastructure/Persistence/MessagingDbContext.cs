@@ -58,6 +58,18 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         + "OR (automation_bot_kind = 1 AND automation_chatbot_id IS NOT NULL AND automation_agent_id IS NULL) "
         + "OR (automation_bot_kind = 2 AND automation_agent_id IS NOT NULL AND automation_chatbot_id IS NULL)";
 
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: una delegación viva sólo con el asistente activo y en manos de un agente. Toda
+    /// transición que saca la conversación de <c>Active</c> tiene que limpiarla (<c>Conversation.LeaveDelegation</c> y la autoasignación por
+    /// SQL), o este CHECK la rechaza.</summary>
+    public const string DelegationCheck =
+        "automation_delegation_id IS NULL OR (automation_status = 'Active' AND automation_bot_kind = 2)";
+
+    /// <summary>Spec 2026-11-17 §5.3: un resultado si y sólo si se devolvió.</summary>
+    public const string BotDelegationResultCheck = "(status = 'Returned') = (result IS NOT NULL)";
+
+    /// <summary>Spec 2026-11-17 §5.3: las filas de la delegación (al agente y de vuelta al chatbot) llevan su delegación; las demás no.</summary>
+    public const string AutomationInboxDelegationCheck = "(kind IN ('Delegated','AgentReturned')) = (delegation_id IS NOT NULL)";
+
     /// <summary>Spec 2026-10-26 §3.1: el bloqueo son tres columnas que se escriben y se borran juntas.</summary>
     public const string BlockCheck =
         "(blocked_at IS NULL AND blocked_by_member_id IS NULL AND blocked_wa_id IS NULL) OR (blocked_at IS NOT NULL AND blocked_by_member_id IS NOT NULL AND blocked_wa_id IS NOT NULL)";
@@ -192,6 +204,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-21 §4.2: la cola del motor de chatbots.</summary>
     internal DbSet<AutomationInboxRecord> AutomationInbox => Set<AutomationInboxRecord>();
 
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3.</summary>
+    public DbSet<BotDelegation> BotDelegations => Set<BotDelegation>();
+
     /// <summary>Spec 2026-10-29 §4.3: quién atiende cada conexión, chatbot o agente.</summary>
     internal DbSet<ConnectionBotRecord> ConnectionBots => Set<ConnectionBotRecord>();
 
@@ -219,6 +234,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureResolutionReason(modelBuilder);
         ConfigureBusinessHours(modelBuilder);
         ConfigureAutomationInbox(modelBuilder);
+        ConfigureBotDelegation(modelBuilder);
         ConfigureConnectionBots(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
@@ -246,6 +262,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_conversations_automation_resolved", AutomationResolvedCheck);
             table.HasCheckConstraint("CK_conversations_automation_bot", AutomationBotCheck);
             table.HasCheckConstraint("CK_conversations_block", BlockCheck);
+            table.HasCheckConstraint("CK_conversations_delegation", DelegationCheck);
         });
         conversation.HasKey(value => value.Id);
         conversation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -312,8 +329,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.Imported).HasColumnName("imported").HasDefaultValue(false).HasSentinel(false);
         conversation.Property(value => value.StartedByEcho).HasColumnName("started_by_echo").HasDefaultValue(false).HasSentinel(false);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
-        // Spec 2026-11-17 §5.3: la columna llega con la migración AddBotDelegations (Task B1.2).
-        conversation.Ignore(value => value.AutomationDelegationId);
+        // Spec 2026-11-17 §5.3: referencia a messaging.bot_delegations, sin FK como el resto de referencias del asistente (borrar una
+        // conversación borra sus delegaciones a mano, CustomerDeletionReferences).
+        conversation.Property(value => value.AutomationDelegationId).HasColumnName("automation_delegation_id");
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
         // y el segundo pisa el filtro del primero.
@@ -639,8 +657,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         var inbox = modelBuilder.Entity<AutomationInboxRecord>();
         inbox.ToTable("automation_inbox", Schema, table =>
         {
-            table.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')");
+            table.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun','Delegated','AgentReturned')");
             table.HasCheckConstraint("CK_automation_inbox_bot_kind", "bot_kind IN (1,2)");
+            table.HasCheckConstraint("CK_automation_inbox_delegation", AutomationInboxDelegationCheck);
         });
         inbox.HasKey(value => value.MessageId);
         inbox.Property(value => value.MessageId).HasColumnName("message_id").ValueGeneratedNever();
@@ -659,6 +678,42 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // Spec 2026-10-29 §6.1: cada procesador reclama sólo las suyas.
         inbox.Property(value => value.BotKind).HasColumnName("bot_kind").HasDefaultValue((short)BotKind.Chatbot);
         inbox.HasIndex(value => new { value.BotKind, value.NextAttemptAt }, "IX_automation_inbox_pending_kind").HasFilter("processed_at IS NULL");
+        // Spec 2026-11-17 §5.3: la delegación de una fila Delegated o AgentReturned. Columna propia y no message_id (como pide el spec)
+        // porque message_id es la llave: las dos filas de una misma delegación chocarían. Una sola fila de cada tipo por delegación.
+        inbox.Property(value => value.DelegationId).HasColumnName("delegation_id");
+        inbox.HasIndex(value => new { value.DelegationId, value.Kind }, "IX_automation_inbox_delegation")
+            .IsUnique().HasFilter("delegation_id IS NOT NULL");
+    }
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: chatbot, corrida, bloque y agente son referencias blandas a Automations y a
+    /// Ai; la conversación y la conexión, a este esquema sin FK, como <c>automation_inbox</c> (el borrado de clientes la limpia a mano).</summary>
+    private static void ConfigureBotDelegation(ModelBuilder modelBuilder)
+    {
+        var delegation = modelBuilder.Entity<BotDelegation>();
+        delegation.ToTable("bot_delegations", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_bot_delegations_status", "status IN ('Live','Returned','Interrupted')");
+            table.HasCheckConstraint("CK_bot_delegations_result", BotDelegationResultCheck);
+        });
+        delegation.HasKey(value => value.Id);
+        delegation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        delegation.Property(value => value.TenantId).HasColumnName("tenant_id");
+        delegation.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        delegation.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        delegation.Property(value => value.ChatbotId).HasColumnName("chatbot_id");
+        delegation.Property(value => value.RunId).HasColumnName("run_id");
+        delegation.Property(value => value.NodeId).HasColumnName("node_id").HasMaxLength(BotDelegation.NodeIdMaxLength);
+        delegation.Property(value => value.AgentId).HasColumnName("agent_id");
+        delegation.Property(value => value.LastInboundMessageId).HasColumnName("last_inbound_message_id");
+        delegation.Property(value => value.Brief).HasColumnName("brief").HasColumnType("jsonb");
+        delegation.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        delegation.Property(value => value.Result).HasColumnName("result").HasColumnType("jsonb");
+        delegation.Property(value => value.StartedAt).HasColumnName("started_at");
+        delegation.Property(value => value.EndedAt).HasColumnName("ended_at");
+        // Nunca dos vivas de una conversación: la carrera de dos bloques se resuelve en la base.
+        delegation.HasIndex(value => value.ConversationId, "IX_bot_delegations_live").IsUnique().HasFilter("status = 'Live'");
+        // El borrado de clientes y el barrido de huérfanas buscan por conversación.
+        delegation.HasIndex(value => new { value.TenantId, value.ConversationId }, "IX_bot_delegations_tenant_conversation");
     }
 
     /// <summary>Spec 2026-10-29 §4.3: la clave primaria es la conexión, así que una conexión tiene un solo bot.</summary>
