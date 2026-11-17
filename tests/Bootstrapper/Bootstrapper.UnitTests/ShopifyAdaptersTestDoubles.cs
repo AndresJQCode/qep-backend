@@ -61,8 +61,13 @@ internal sealed class FakeQuotationSettingsStore(Guid? freightTaxRateId) : IQuot
 
 internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRepository
 {
-    public Task<TaxRate?> FindAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>
-        Task.FromResult(rates.FirstOrDefault(rate => rate.TenantId == tenantId && rate.Id == taxRateId));
+    public int FindCalls { get; private set; }
+
+    public Task<TaxRate?> FindAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(rates.FirstOrDefault(rate => rate.TenantId == tenantId && rate.Id == taxRateId));
+    }
 
     public int ListCalls { get; private set; }
 
