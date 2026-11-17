@@ -343,6 +343,29 @@ internal static class StoreApiHarness
         return new CompanyRef(await ReadIdAsync(response), accounts[0].Bank, accounts[0].Number);
     }
 
+    /// <summary>Una empresa sin cuentas bancarias (spec 2026-11-17 §4.1); <paramref name="chargesVat"/> dice si cobra IVA.</summary>
+    public static async Task<Guid> CreateCompanyWithoutAccountAsync(HttpClient client, Guid tenantId, string name, bool chargesVat = true)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name,
+                bankAccounts = Array.Empty<object>(),
+                chargesVat,
+                taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
+                cityId = await AnyCityIdAsync(client),
+                phone = "6045551234",
+                email = "ventas@origen.example.co",
+                address = "Cra 50 # 10-20, Rionegro",
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await ReadIdAsync(response);
+    }
+
     /// <summary>Un producto con precio de lista en cada moneda pedida: sólo así la moneda aparece en <c>currencies-in-use</c>.</summary>
     public static async Task<Guid> CreateProductAsync(
         HttpClient client, Guid tenantId, string code, string name, IReadOnlyDictionary<string, decimal> prices)

@@ -593,4 +593,35 @@ public sealed class StoreSettingsHandlerTests
             StoreErrorCodes.CurrencyInvalid,
             await CodeOfAsync(() => rig.ListAccountsHandler().HandleAsync(new ListStoreBillingAccountsQuery(TenantId, "EURO"), Ct)));
     }
+
+    // Spec 2026-11-17 §4.3: banco y número en blanco los dos se guardan como «empresa sin cuenta», en null y no en "".
+    [Fact]
+    public async Task SavesACurrencyWithoutAccount()
+    {
+        var rig = new SettingsRig();
+        var entry = new StoreCurrencyRequest("COP", new StoreBillingAccountRequest(CompanyId, " ", null, "COP"));
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(currencies: [entry])), Ct);
+
+        var account = Assert.Single(saved.Currencies).BillingAccount;
+        Assert.Equal(CompanyId, account.CompanyId);
+        Assert.Null(account.BankName);
+        Assert.Null(account.AccountNumber);
+        Assert.Equal("COP", account.Currency);
+        var stored = Assert.Single(rig.Stores.Stored!.Currencies).BillingAccount;
+        Assert.Null(stored.BankName);
+        Assert.Null(stored.AccountNumber);
+        var validated = Assert.Single(rig.Accounts.Validated);
+        Assert.Null(validated.Bank);
+        Assert.Null(validated.Number);
+    }
+
+    [Fact]
+    public void ABillingAccountOptionWithoutAccountHasNoBankNumberOrCurrency()
+    {
+        var option = new StoreBillingAccountOption(CompanyId, "Origen", null, null, null);
+
+        Assert.Null(option.BankName);
+        Assert.Null(option.Currency);
+    }
 }

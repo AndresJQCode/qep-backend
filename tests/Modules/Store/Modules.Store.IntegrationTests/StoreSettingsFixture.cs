@@ -101,7 +101,8 @@ internal sealed class StoreSettingsFixture : IAsyncDisposable
         return body;
     }
 
-    public object CurrencyEntry(string currency, string bank, string account, string? accountCurrency = null, Guid? companyId = null) =>
+    /// <summary>Banco y número en null es la empresa sin cuenta (spec 2026-11-17 §4.3).</summary>
+    public object CurrencyEntry(string currency, string? bank, string? account, string? accountCurrency = null, Guid? companyId = null) =>
         new
         {
             currency,

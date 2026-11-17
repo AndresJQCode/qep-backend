@@ -108,4 +108,25 @@ public sealed class UpdateStoreSettingsValidatorTests
         Assert.Contains("ExpectedVersion", FailedProperties(Body(), expectedVersion: -1));
         Assert.Empty(FailedProperties(Body(), expectedVersion: 0));
     }
+
+    // Spec 2026-11-17 §4.3: la moneda se puede cobrar con una empresa sin cuenta bancaria.
+    [Fact]
+    public void ACurrencyWithACompanyAndNoAccountIsValid()
+    {
+        var withoutAccount = new StoreCurrencyRequest("COP", new StoreBillingAccountRequest(CompanyId, null, null, "COP"));
+        var blanks = new StoreCurrencyRequest("COP", new StoreBillingAccountRequest(CompanyId, " ", "", "COP"));
+
+        Assert.Empty(FailedProperties(Body(currencies: [withoutAccount])));
+        Assert.Empty(FailedProperties(Body(currencies: [blanks])));
+    }
+
+    [Fact]
+    public void OnlyTheBankNameIsAValidationError()
+    {
+        var onlyBank = new StoreCurrencyRequest("COP", new StoreBillingAccountRequest(CompanyId, "Banco", null, "COP"));
+        var onlyNumber = new StoreCurrencyRequest("COP", new StoreBillingAccountRequest(CompanyId, null, "A-1", "COP"));
+
+        Assert.Equal(["currencies[0]"], FailedProperties(Body(currencies: [onlyBank])));
+        Assert.Equal(["currencies[0]"], FailedProperties(Body(currencies: [onlyNumber])));
+    }
 }

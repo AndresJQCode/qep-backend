@@ -64,10 +64,17 @@ public sealed class UpdateStoreSettingsValidator : AbstractValidator<UpdateStore
                 .Where(entry => entry?.BillingAccount is not null)
                 .Must(entry => entry!.BillingAccount!.CompanyId is { } id && id != Guid.Empty)
                 .WithMessage("La cuenta de cobro necesita su empresa.")
-                .Must(entry => HasText(entry!.BillingAccount!.BankName, BankNameMaxLength))
-                .WithMessage($"El banco es obligatorio y admite hasta {BankNameMaxLength} caracteres.")
-                .Must(entry => HasText(entry!.BillingAccount!.AccountNumber, AccountNumberMaxLength))
-                .WithMessage($"El número de cuenta es obligatorio y admite hasta {AccountNumberMaxLength} caracteres.")
+                // Empresa sin cuenta (spec 2026-11-17 §4.3): banco y número en blanco los dos. Sólo uno de los dos no dice a
+                // dónde se paga.
+                .Must(entry => IsWithoutAccount(entry!.BillingAccount!)
+                    || (!string.IsNullOrWhiteSpace(entry.BillingAccount!.BankName)
+                        && !string.IsNullOrWhiteSpace(entry.BillingAccount.AccountNumber)))
+                .WithMessage("Banco y número de cuenta van juntos, o ninguno.")
+                .Must(entry => IsWithoutAccount(entry!.BillingAccount!)
+                    || (HasText(entry.BillingAccount!.BankName, BankNameMaxLength)
+                        && HasText(entry.BillingAccount.AccountNumber, AccountNumberMaxLength)))
+                .WithMessage(
+                    $"El banco admite hasta {BankNameMaxLength} caracteres y el número de cuenta hasta {AccountNumberMaxLength}.")
                 .OverridePropertyName("currencies");
 
             RuleFor(command => command.Body.SalesCountries)
@@ -82,6 +89,9 @@ public sealed class UpdateStoreSettingsValidator : AbstractValidator<UpdateStore
                 .OverridePropertyName("featuredCategoryIds");
         });
     }
+
+    private static bool IsWithoutAccount(StoreBillingAccountRequest account) =>
+        string.IsNullOrWhiteSpace(account.BankName) && string.IsNullOrWhiteSpace(account.AccountNumber);
 
     private static bool HasText(string? value, int maxLength) =>
         !string.IsNullOrWhiteSpace(value) && value.Trim().Length <= maxLength;
@@ -136,8 +146,9 @@ public sealed class UpdateStoreSettingsHandler(
                 entry!.Currency ?? string.Empty,
                 new StoreBillingAccount(
                     entry.BillingAccount!.CompanyId!.Value,
-                    entry.BillingAccount.BankName!,
-                    entry.BillingAccount.AccountNumber!,
+                    // En blanco los dos es «empresa sin cuenta»; el dominio los guarda en null.
+                    entry.BillingAccount.BankName,
+                    entry.BillingAccount.AccountNumber,
                     entry.BillingAccount.Currency ?? string.Empty)))
             .ToList();
         var salesCountries = body.SalesCountries!.Select(country => country ?? string.Empty).ToList();

@@ -449,12 +449,13 @@ public sealed class StoreSettingsApiTests
         var response = await fixture.GetAsync("/settings/billing-accounts?currency=eur");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var items = (await StoreSettingsFixture.JsonAsync(response))["items"]!.AsArray();
+        // Las filas sin cuenta (una por empresa, spec 2026-11-17 §4.3) las cubre TheAccountListOffersEachActiveCompanyWithoutAccount.
+        var items = WithAccount((await StoreSettingsFixture.JsonAsync(response))["items"]!.AsArray());
         Assert.Equal(["Alfa SAS", "Origen Botánico SAS"], items.Select(i => (string)i!["companyName"]!).ToArray());
         Assert.All(items, item => Assert.Equal("EUR", (string)item!["currency"]!));
         Assert.Equal(["ALFA-EUR", "B-EUR-1"], items.Select(i => (string)i!["accountNumber"]!).ToArray());
 
-        var all = (await StoreSettingsFixture.JsonAsync(await fixture.GetAsync("/settings/billing-accounts")))["items"]!.AsArray();
+        var all = WithAccount((await StoreSettingsFixture.JsonAsync(await fixture.GetAsync("/settings/billing-accounts")))["items"]!.AsArray());
         Assert.Equal(4, all.Count);
 
         var malformed = await fixture.GetAsync("/settings/billing-accounts?currency=EURO");
@@ -473,7 +474,48 @@ public sealed class StoreSettingsApiTests
 
         var items = (await StoreSettingsFixture.JsonAsync(await fixture.GetAsync("/settings/billing-accounts?currency=COP")))["items"]!.AsArray();
 
-        Assert.Equal(["A-COP-1"], items.Select(i => (string)i!["accountNumber"]!).ToArray());
+        Assert.Equal(["A-COP-1"], WithAccount(items).Select(i => (string)i!["accountNumber"]!).ToArray());
+        Assert.DoesNotContain(items, item => (string)item!["companyName"]! == "Cerrada SAS");
+    }
+
+    private static List<JsonNode?> WithAccount(JsonArray items) =>
+        items.Where(item => item!["accountNumber"] is not null).ToList();
+
+    // Spec 2026-11-17 §4.3: además de sus cuentas, cada empresa activa se ofrece sin cuenta, para cualquier moneda.
+    [Fact]
+    public async Task TheAccountListOffersEachActiveCompanyWithoutAccount()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        await CreateCompanyWithoutAccountAsync(fixture.Admin, Tenant, "Sin Cuenta SAS");
+
+        var items = (await StoreSettingsFixture.JsonAsync(await fixture.GetAsync("/settings/billing-accounts?currency=COP")))["items"]!.AsArray();
+
+        var withoutAccount = items.Where(item => item!["accountNumber"] is null).ToList();
+        Assert.Equal(
+            ["Origen Botánico SAS", "Sin Cuenta SAS"],
+            withoutAccount.Select(item => (string)item!["companyName"]!).Order(StringComparer.Ordinal).ToArray());
+        Assert.All(withoutAccount, item =>
+        {
+            Assert.Null(item!["bankName"]);
+            Assert.Null(item["currency"]);
+        });
+    }
+
+    [Fact]
+    public async Task SavesACurrencyWithoutAccount()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        var company = await CreateCompanyWithoutAccountAsync(fixture.Admin, Tenant, "Sin Cuenta SAS");
+        var body = fixture.Body(b => b["currencies"] = new[] { fixture.CurrencyEntry("COP", null, null, companyId: company) });
+
+        var saved = await fixture.PutAsync(body);
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var account = (await StoreSettingsFixture.JsonAsync(await fixture.GetAsync()))["currencies"]![0]!["billingAccount"]!;
+        Assert.Equal(company, (Guid)account["companyId"]!);
+        Assert.Null(account["bankName"]);
+        Assert.Null(account["accountNumber"]);
+        Assert.Equal("COP", (string)account["currency"]!);
     }
 
     [Fact]
