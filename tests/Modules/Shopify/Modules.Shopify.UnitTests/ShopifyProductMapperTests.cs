@@ -132,6 +132,19 @@ public sealed class ShopifyProductMapperTests
         Assert.Equal(11_901m, Assert.Single(mapped.Product.Variants).Price);
     }
 
+    // Revisión (D5): en un update la tasa del producto es la que tiene guardada (es del asesor, S-2), no la que sale de taxable.
+    [Theory]
+    [InlineData(true, 0, 10_000)]
+    [InlineData(false, 19, 11_900)]
+    [InlineData(true, 5, 10_500)]
+    public void OnUpdateTheVatAddedIsTheSavedRate(bool taxable, int saved, int expected)
+    {
+        var mapped = ShopifyProductMapper.Map(
+            Product(variants: [Variant(1, taxable: taxable, price: 10_000m)]), Pricing(taxesIncluded: false), TenantId, ActorId, Now, saved);
+
+        Assert.Equal(expected, Assert.Single(mapped.Product.Variants).Price);
+    }
+
     [Fact]
     public void TaxesExcludedDoesNotAddVatForAnExemptProduct()
     {

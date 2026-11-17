@@ -25,7 +25,9 @@ public sealed record ShopifyMappedProduct(ShopifyCatalogProduct Product, int Wit
 /// <item><b>Tasa (D4, P4):</b> alguna variante <c>taxable</c> → 19 %; ninguna → Exento; mezcla → 19 % y aviso <c>mixed_taxable</c>. Se
 /// asigna sin mirar si la empresa cobra IVA. Sin esa tasa en el tenant, sin tasa y aviso <c>tax_rate_missing</c>.</item>
 /// <item><b>Precio (D5):</b> con <c>taxesIncluded = false</c>, empresa con IVA, moneda COP y tasa elegida, se le suma el IVA de esa tasa
-/// (19 o 0) con el redondeo de la moneda; en cualquier otro caso va tal cual (misma regla que <see cref="ShopifyPricing.UnitPriceWithVat"/>).</item>
+/// (19 o 0) con el redondeo de la moneda; en cualquier otro caso va tal cual (misma regla que <see cref="ShopifyPricing.UnitPriceWithVat"/>).
+/// En un update se suma la tasa que el producto tiene guardada (<c>savedTaxPercentage</c>): Catalog no la cambia (es del asesor,
+/// S-2), así que la derivada de <c>taxable</c> cobraría otro IVA que el que el producto cotiza.</item>
 /// </list>
 /// </summary>
 public static class ShopifyProductMapper
@@ -38,8 +40,15 @@ public static class ShopifyProductMapper
 
     private const int VatPercentage = 19;
 
+    /// <param name="savedTaxPercentage">En un update, el porcentaje de la tasa guardada del producto (0 sin tasa); <c>null</c> al
+    /// crear.</param>
     public static ShopifyMappedProduct Map(
-        ShopifyProductSnapshot product, ShopifyPricingContext pricing, Guid tenantId, Guid actorId, DateTimeOffset now)
+        ShopifyProductSnapshot product,
+        ShopifyPricingContext pricing,
+        Guid tenantId,
+        Guid actorId,
+        DateTimeOffset now,
+        int? savedTaxPercentage = null)
     {
         ArgumentNullException.ThrowIfNull(product);
         ArgumentNullException.ThrowIfNull(pricing);
@@ -63,7 +72,15 @@ public static class ShopifyProductMapper
             issues.Add(ShopifyProductCodes.TaxRateMissing);
         }
 
-        var addVat = !pricing.TaxesIncluded && pricing.CompanyChargesVat && ShopifyPricing.IsCop(pricing.Currency) && taxRateId is not null;
+        if (savedTaxPercentage is { } saved)
+        {
+            percentage = saved;
+        }
+
+        var addVat = !pricing.TaxesIncluded
+            && pricing.CompanyChargesVat
+            && ShopifyPricing.IsCop(pricing.Currency)
+            && (savedTaxPercentage is not null || taxRateId is not null);
         var variants = product.Variants
             .Select(variant => new ShopifyCatalogVariant(
                 variant.Id,

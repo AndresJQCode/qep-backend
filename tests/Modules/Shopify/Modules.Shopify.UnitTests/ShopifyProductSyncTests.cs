@@ -262,6 +262,20 @@ public sealed class ShopifyProductSyncTests
         Assert.Contains(world.Links.Rows, link => link.ConnectionId == other);
     }
 
+    // D5: sin impuestos incluidos, el update suma el IVA de la tasa guardada del producto (19 en la doble), aunque la variante ya
+    // no sea taxable en Shopify.
+    [Fact]
+    public async Task AnUpdateAddsTheVatOfTheSavedRate()
+    {
+        var world = new SyncWorld();
+        world.ImportedLinks(7001L, (1, "CAM-1"), updatedAt: Now.AddDays(-1));
+        var context = world.Context with { Pricing = world.Context.Pricing with { TaxesIncluded = false } };
+
+        await world.Sync.ApplyAsync(context, Product(variants: [new ShopifyVariantSnapshot(1, "CAM-1", null, 10_000m, false, [])]), Ct);
+
+        Assert.Equal(11_900m, Assert.Single(Assert.Single(world.Catalog.Updates).Product.Variants).Price);
+    }
+
     [Fact]
     public async Task ACatalogRejectionSkipsTheWholeProduct()
     {

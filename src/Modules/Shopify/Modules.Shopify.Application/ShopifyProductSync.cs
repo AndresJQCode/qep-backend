@@ -374,7 +374,11 @@ public sealed class ShopifyProductSync(
     {
         var connection = context.Connection;
         var now = clock.UtcNow;
-        var mapped = ShopifyProductMapper.Map(product, context.Pricing, connection.TenantId, context.ActorId, now);
+        // D5: el IVA que se suma a un precio sin impuestos es el de la tasa guardada del producto, no el que sale de taxable.
+        var saved = await products.FindByVariantIdsAsync(
+            connection.TenantId, [.. current.Select(link => link.VariantId)], cancellationToken);
+        var mapped = ShopifyProductMapper.Map(
+            product, context.Pricing, connection.TenantId, context.ActorId, now, saved.Values.FirstOrDefault()?.TaxPercentage);
         var existing = current
             .Where(link => product.Variants.Any(variant => variant.Id == link.ShopifyVariantId))
             .ToDictionary(link => link.ShopifyVariantId, link => link.VariantId);
