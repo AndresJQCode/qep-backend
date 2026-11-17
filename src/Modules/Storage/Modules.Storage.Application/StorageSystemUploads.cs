@@ -139,6 +139,54 @@ public sealed class StorageSystemUploads(
             resource.StorageKey, DownloadExpiry, resource.Name, cancellationToken);
     }
 
+    public async Task<SystemStoredFile> StoreAsync(
+        Guid tenantId,
+        FileOwnerType ownerType,
+        Guid ownerId,
+        string name,
+        string mimeType,
+        byte[] content,
+        long maxSizeBytes,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        if (SystemOwnedFiles.Includes(ownerType))
+        {
+            throw new ArgumentException(
+                $"Owner type '{ownerType}' is system-owned; use OpenAsync with its secret owner key.", nameof(ownerType));
+        }
+
+        FileUploadPolicy.ValidateDeclaration(name, mimeType, content.LongLength, maxSizeBytes);
+
+        var id = FileResourceId.New();
+        var key = StorageKey.StagingFor(tenantId, id);
+        var trimmedMimeType = mimeType.Trim();
+        var resource = FileResource.CreatePendingUpload(
+            id, tenantId, ownerId, ownerType, name.Trim(), trimmedMimeType, content.LongLength, key, clock.UtcNow);
+        // Antes de crear nada, como completar en la consola: un dueño de un módulo apagado no sube.
+        await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
+
+        // Primero la fila y después el objeto, como la consola: si la subida falla queda un PendingUpload que el barrido de staging
+        // limpia, nunca un objeto sin fila.
+        repository.Add(resource);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await objectStorage.UploadAsync(key, content, trimmedMimeType, cancellationToken);
+
+        try
+        {
+            await _completion.CompleteAsync(resource, actorId: null, cancellationToken);
+        }
+        catch (StorageDomainException)
+        {
+            // Tamaño distinto, contenido que no es lo que dice o imagen que no se procesa: ya quedó en cuarentena (ver CompleteAsync).
+            return new SystemStoredFile(id.Value, SystemUploadOutcome.Rejected);
+        }
+
+        return new SystemStoredFile(id.Value, resource.Status is FileResourceStatus.Available
+            ? SystemUploadOutcome.Available
+            : SystemUploadOutcome.Rejected);
+    }
+
     // Otro tenant, otro tipo de dueño u otro dueño: lo mismo que un id que no existe (plan F32).
     private async Task<FileResource?> LoadOwnedAsync(
         Guid tenantId, Guid fileId, FileOwnerType ownerType, Guid ownerId, CancellationToken cancellationToken)
