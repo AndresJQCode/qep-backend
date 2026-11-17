@@ -219,12 +219,15 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
             new { dueSoonBusinessDays = 3, formalNextStep = "Puedes acudir a la SIC.", surveyEnabled = true, autoCloseBusinessDays = 9 },
             version: 1);
         Assert.Equal(HttpStatusCode.OK, configured.StatusCode);
+        // The If-Match is the version the first PUT answered, as the screen does: SupportTenantSettings bumps the version once per
+        // changed group (next step, then survey), so that PUT ends at 3, not 2.
+        var configuredVersion = Settings(await JsonAsync(configured)).Version;
 
-        var saved = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 6 }, version: 2);
+        var saved = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 6 }, version: configuredVersion);
 
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
         var body = await JsonAsync(saved);
-        Assert.Equal((6, 0, 30, 3L), Settings(body));
+        Assert.Equal((6, 0, 30, configuredVersion + 1), Settings(body));
         Assert.Equal((true, 9, 1, 30), Survey(body));
         Assert.Equal("Puedes acudir a la SIC.", body.GetProperty("formalNextStep").GetString());
         Assert.Equal(
