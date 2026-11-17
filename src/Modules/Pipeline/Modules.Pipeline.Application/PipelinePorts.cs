@@ -24,6 +24,9 @@ public interface IDealRepository
     /// <summary>De los clientes pedidos, los que tienen al menos un negocio abierto.</summary>
     Task<IReadOnlySet<Guid>> CustomersWithOpenDealsAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
 
+    /// <summary>Decisión del owner 2026-11-16: si hay un negocio abierto nacido de esa conversación, sea del cliente que sea.</summary>
+    Task<bool> HasOpenDealFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
     /// <summary>D12: las etapas con al menos un negocio, abierto o cerrado. Ésas no se borran.</summary>
     Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken);
 

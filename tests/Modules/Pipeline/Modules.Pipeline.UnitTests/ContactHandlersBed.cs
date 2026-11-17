@@ -91,6 +91,26 @@ internal sealed class ContactHandlersBed
             Conversations,
             ClockAtNow);
 
+    public CreateDealHandler CreateDeal()
+    {
+        var execution = Execution;
+        return new CreateDealHandler(
+            execution,
+            new ModulesWithMessaging(),
+            Customers,
+            new AllActiveMembers(),
+            new PipelineCaller(new FakeMembership(MemberId), execution),
+            new DealCreator(execution, Provisioner, Deals, new FakeCurrency(), UnitOfWork, Audit, DetailBuilder),
+            ClockAtNow,
+            new CreateDealValidator());
+    }
+
+    /// <summary>Un entrante nuevo en la conversación del contacto.</summary>
+    public void ReceiveInbound(DateTimeOffset at) =>
+        Conversations.Items[ConversationId] = Conversations.Items[ConversationId] with { LastInboundAt = at, LastMessageAt = at };
+
+    public void Deactivate(Guid customerId) => Customers.Refs[customerId] = Customers.Refs[customerId] with { IsActive = false };
+
     public Deal OpenDeal(Guid customerId, string title, DateTimeOffset? changedAt = null)
     {
         var deal = Deal.Create(TenantId, Pipeline, customerId, MemberId, title, null, "COP", null, DealSource.Manual, null, DealActor.ForUser(MemberId), changedAt ?? Now);
@@ -124,6 +144,14 @@ internal sealed class CompanyAwareCustomers : IPipelineCustomerDirectory
 
     public Task<PipelineCompanyRef?> FindCompanyAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         Task.FromResult(Companies.GetValueOrDefault(customerId));
+}
+
+internal sealed class AllActiveMembers : IPipelineActiveMembers
+{
+    public Task<IReadOnlySet<Guid>> FindActiveAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(memberIds.ToHashSet());
+
+    public Task<IReadOnlyList<Guid>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
 internal sealed class FakeConversations : IPipelineConversationDirectory

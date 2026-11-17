@@ -185,6 +185,23 @@ public sealed class DealCreator(
     }
 }
 
+/// <summary>Decisión del owner 2026-11-16: un cliente inactivo no recibe un negocio nuevo. «Incompleto» no es «inactivo» (H13), y
+/// cotizaciones y pedidos no se frenan por esto: el evento que abriría el negocio deja la cotización o el pedido sin enlazar
+/// (<see cref="QuotationEventApplier"/>).</summary>
+public static class DealCustomers
+{
+    /// <summary>Un cliente que no se encontró no es asunto de esta regla: cada camino ya decide qué hacer con él.</summary>
+    public static bool CanReceiveDeals(PipelineCustomerRef? customer) => customer is not { IsActive: false };
+
+    public static void EnsureCanReceiveDeals(PipelineCustomerRef? customer)
+    {
+        if (!CanReceiveDeals(customer))
+        {
+            throw new PipelineDomainException(PipelineErrorCodes.DealCustomerInactive, "An inactive customer cannot receive new deals.");
+        }
+    }
+}
+
 /// <summary>§4.2: un negocio manual (D34: puede nacer sin monto; la moneda por defecto es la del tenant). El dueño por defecto es
 /// quien llama; otro dueño tiene que ser miembro del tenant. Crear lo hace <see cref="DealCreator"/>.</summary>
 public sealed class CreateDealHandler(
@@ -206,10 +223,12 @@ public sealed class CreateDealHandler(
         // Spec 2026-10-24 §3.3: nada nuevo se le asigna a un fusionado. Una pestaña vieja que todavía lo muestra crea el negocio a
         // nombre del que quedó, igual que un evento tardío de cotización (QuotationEventApplier).
         var customerId = await customers.ResolveSurvivorAsync(command.TenantId, command.CustomerId!.Value, cancellationToken);
-        if (!(await customers.FindAsync(command.TenantId, [customerId], cancellationToken)).ContainsKey(customerId))
+        if ((await customers.FindAsync(command.TenantId, [customerId], cancellationToken)).GetValueOrDefault(customerId) is not { } customer)
         {
             throw new PipelineDomainException(PipelineErrorCodes.DealCustomerNotFound, "The customer was not found in this tenant.");
         }
+
+        DealCustomers.EnsureCanReceiveDeals(customer);
 
         var callerId = await caller.RequireAsync(command.TenantId, cancellationToken);
         var owner = command.OwnerMemberId ?? callerId;

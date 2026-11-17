@@ -73,9 +73,13 @@ internal sealed class FakePipelineCustomers : IPipelineCustomerDirectory
 {
     public Dictionary<Guid, Guid> Survivors { get; } = [];
 
+    /// <summary>Los demás clientes existen y están activos.</summary>
+    public HashSet<Guid> Inactive { get; } = [];
+
     public Task<IReadOnlyDictionary<Guid, PipelineCustomerRef>> FindAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyDictionary<Guid, PipelineCustomerRef>>(
+            customerIds.Distinct().ToDictionary(id => id, id => new PipelineCustomerRef(id, "Cliente", true, !Inactive.Contains(id))));
 
     public Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         Task.FromResult(Survivors.GetValueOrDefault(customerId, customerId));
@@ -117,6 +121,9 @@ internal sealed class InMemoryDeals : IDealRepository
 
     public Task<IReadOnlySet<Guid>> CustomersWithOpenDealsAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<Guid>>(Items.Where(deal => !deal.IsClosed && customerIds.Contains(deal.CustomerId)).Select(deal => deal.CustomerId).ToHashSet());
+
+    public Task<bool> HasOpenDealFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        Task.FromResult(Items.Any(deal => deal.TenantId == tenantId && !deal.IsClosed && deal.OriginConversationId == conversationId));
 
     public Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<Guid>>(Items.Select(deal => deal.StageId).ToHashSet());

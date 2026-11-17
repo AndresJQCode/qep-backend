@@ -246,6 +246,10 @@ internal static class PipelineApiHarness
             "UPDATE customers.customers SET company_id = @company WHERE id = @contact",
             ("company", companyId), ("contact", contactId)));
 
+    public static async Task DeactivateCustomerAsync(string connectionString, Guid customerId) =>
+        Assert.Equal(1, await ExecuteAsync(connectionString,
+            "UPDATE customers.customers SET is_active = false, version = version + 1 WHERE id = @id", ("id", customerId)));
+
     /// <summary>Deja la fila como la deja la fusión (spec 2026-10-24 §3.2), copia de <c>CustomersApiHarness.MarkMergedAsync</c>:
     /// apunta al que queda, inactiva y con la versión subida. Para las pruebas que sólo necesitan leer un fusionado.</summary>
     public static async Task MarkMergedAsync(string connectionString, Guid mergedId, Guid survivorId) =>

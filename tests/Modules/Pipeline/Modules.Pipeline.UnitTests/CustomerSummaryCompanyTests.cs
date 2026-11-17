@@ -78,17 +78,30 @@ public sealed class CustomerSummaryCompanyTests
     }
 
     [Fact]
-    public async Task TriageStatusLooksAtTheWholeSet()
+    public async Task ACompanysOpenDealDoesNotTakeTheContactsThreadOutOfTriage()
     {
+        // Decisión del owner 2026-11-16: el triage es por contacto; la empresa no bloquea nada.
         var bed = new ContactHandlersBed();
         bed.OpenDeal(bed.Company, "De la empresa");
 
         var viaCompany = await bed.Summary().HandleAsync(Ask(bed, bed.Company), Ct);
         var viaPerson = await bed.Summary().HandleAsync(Ask(bed, bed.Person), Ct);
 
-        Assert.Equal("NotApplicable", viaCompany.Triage!.Status);
-        Assert.Equal("NotApplicable", viaPerson.Triage!.Status);
-        Assert.Empty(viaPerson.Triage.AvailableActions);
+        Assert.Equal("Pending", viaCompany.Triage!.Status);
+        Assert.Equal("Pending", viaPerson.Triage!.Status);
+    }
+
+    [Fact]
+    public async Task AnOpenDealBornFromTheThreadOnTheCompanyMakesItNotApplicable()
+    {
+        var bed = new ContactHandlersBed();
+        await bed.Triage().HandleAsync(new DecideTriageCommand(bed.TenantId, bed.ConversationId, "create", null, null), Ct);
+        bed.ReceiveInbound(ContactHandlersBed.Now.AddMinutes(5));
+
+        var summary = await bed.Summary().HandleAsync(Ask(bed, bed.Person), Ct);
+
+        Assert.Equal("NotApplicable", summary.Triage!.Status);
+        Assert.Empty(summary.Triage.AvailableActions);
     }
 
     [Fact]
