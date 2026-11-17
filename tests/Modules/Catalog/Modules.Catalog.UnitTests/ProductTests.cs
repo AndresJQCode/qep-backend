@@ -852,4 +852,80 @@ public sealed class ProductTests
 
         Assert.Equal("catalog.product.external_source_too_long", error.Code);
     }
+
+    // La imagen de Shopify reemplaza sólo la foto que puso la importación, en su lugar (spec
+    // 2026-11-17 §6 «imagen»): el orden que eligió el asesor no se toca.
+    [Fact]
+    public void ReplacingTheImportedImageKeepsItsPosition()
+    {
+        var imported = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        var replacement = Guid.CreateVersion7();
+        var product = NewExternalProduct(Product.ShopifySource, [imported, other]);
+
+        var replaced = product.ReplaceGalleryImage(imported, replacement, Now.AddMinutes(5));
+
+        Assert.True(replaced);
+        Assert.Equal([replacement, other], product.Gallery.Select(image => image.FileId));
+        Assert.Equal(2, product.Version);
+    }
+
+    // Una variante que apuntaba a la foto importada sigue apuntando a la misma fila de galería.
+    [Fact]
+    public void ReplacingTheImportedImageKeepsTheVariantPointingAtIt()
+    {
+        var imported = Guid.CreateVersion7();
+        var product = Product.Create(
+            ProductId.New(),
+            TenantId,
+            "Camiseta",
+            ProductDetails.Empty,
+            [],
+            [new ProductVariantInput { Code = "CAM-001", Pricing = ValidPricing, GalleryFileId = imported }],
+            [imported],
+            Now,
+            externalSource: Product.ShopifySource);
+        var imageRow = product.Gallery.Single().Id;
+
+        product.ReplaceGalleryImage(imported, Guid.CreateVersion7(), Now.AddMinutes(5));
+
+        Assert.Equal(imageRow, product.Variants.Single().GalleryImageId);
+    }
+
+    [Fact]
+    public void TheImportedImageRemovedByTheAdvisorIsNotReplaced()
+    {
+        var imported = Guid.CreateVersion7();
+        var advisorPhoto = Guid.CreateVersion7();
+        var product = NewExternalProduct(Product.ShopifySource, [advisorPhoto]);
+
+        var replaced = product.ReplaceGalleryImage(imported, Guid.CreateVersion7(), Now.AddMinutes(5));
+
+        Assert.False(replaced);
+        Assert.Equal([advisorPhoto], product.Gallery.Select(image => image.FileId));
+        Assert.Equal(1, product.Version);
+    }
+
+    [Fact]
+    public void TheFirstImportedImageEntersAnEmptyGallery()
+    {
+        var product = NewExternalProduct(Product.ShopifySource);
+        var image = Guid.CreateVersion7();
+
+        Assert.True(product.ReplaceGalleryImage(previousFileId: null, image, Now.AddMinutes(5)));
+
+        Assert.Equal(image, product.ImageFileId);
+    }
+
+    // Sin foto previa importada pero con fotos del asesor: la tienda no le gana el primer lugar.
+    [Fact]
+    public void TheFirstImportedImageDoesNotEnterAGalleryWithPhotos()
+    {
+        var advisorPhoto = Guid.CreateVersion7();
+        var product = NewExternalProduct(Product.ShopifySource, [advisorPhoto]);
+
+        Assert.False(product.ReplaceGalleryImage(previousFileId: null, Guid.CreateVersion7(), Now.AddMinutes(5)));
+
+        Assert.Equal([advisorPhoto], product.Gallery.Select(image => image.FileId));
+    }
 }

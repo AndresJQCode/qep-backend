@@ -23,7 +23,9 @@ public sealed class ProductGalleryImage
 
     public Guid Id { get; private set; }
 
-    public Guid FileId { get; private set; }
+    // internal set: sólo Product.ReplaceGalleryImage lo cambia, para que la imagen de Shopify tome el
+    // lugar de la que puso la importación en la misma fila.
+    public Guid FileId { get; internal set; }
 
     /// <summary>Base 0; define el orden de la galería.</summary>
     public int Position { get; internal set; }

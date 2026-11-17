@@ -623,6 +623,49 @@ public sealed class Product
         UpdatedAt = occurredAt;
     }
 
+    /// <summary>
+    /// Pone la imagen que trae la plataforma externa (spec 2026-11-17 §6 «imagen»): reemplaza
+    /// **sólo** la foto que puso la importación y deja el resto de la galería como la ordenó el asesor.
+    /// <list type="bullet">
+    /// <item><paramref name="previousFileId"/> sigue en la galería: el archivo nuevo toma su lugar en
+    /// la misma fila, así conserva la posición y las variantes que la usaban siguen apuntándole.</item>
+    /// <item><paramref name="previousFileId"/> es null y la galería está vacía: entra primera.</item>
+    /// <item>Cualquier otro caso (el asesor quitó la foto importada, o ya puso las suyas, o el archivo
+    /// ya está): no toca nada y devuelve <c>false</c>. Quien llama libera el archivo nuevo.</item>
+    /// </list>
+    /// No exige activo: la galería de un producto inactivo de la tienda también se mantiene.
+    /// </summary>
+    public bool ReplaceGalleryImage(Guid? previousFileId, Guid newFileId, DateTimeOffset occurredAt)
+    {
+        if (_gallery.Exists(image => image.FileId == newFileId))
+        {
+            return false;
+        }
+
+        if (previousFileId is { } previous)
+        {
+            var target = _gallery.Find(image => image.FileId == previous);
+            if (target is null)
+            {
+                return false;
+            }
+
+            target.FileId = newFileId;
+        }
+        else if (_gallery.Count == 0)
+        {
+            _gallery.Add(new ProductGalleryImage(Guid.CreateVersion7(), newFileId, 0));
+        }
+        else
+        {
+            return false;
+        }
+
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
     private static string? NormalizeExternalSource(string? externalSource)
     {
         if (string.IsNullOrWhiteSpace(externalSource))
