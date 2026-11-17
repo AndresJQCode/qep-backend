@@ -242,7 +242,8 @@ public sealed class MultiReplicaInventoryTests
 
         var violations = ReplicaViolations(Deployment(replicas: 2), configMap);
 
-        Assert.Equal(3, keys.Count);
+        // Enabled, Presence, RateLimiting, Permissions y Sessions (las dos últimas desde las cachés del pod, 2026-11-17).
+        Assert.Equal(5, keys.Count);
         foreach (var key in keys)
         {
             Assert.Single(violations, violation => violation.StartsWith(key + " ", StringComparison.Ordinal));

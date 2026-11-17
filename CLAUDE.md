@@ -1073,8 +1073,22 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `CachedBuyerSessionTests.LogoutWithACachedSessionRevokesTheRow`.
 - **Todo cambio que altere los permisos efectivos de un tenant llama `ITenantAccessVersion.BumpAsync` antes y después del guardado**
   (spec 2026-11-13, D-5). Roles, membresías (suspender, reactivar, quitar, activar, aceptar invitación), módulos y estado del tenant ya
-  lo hacen. Si un camino nuevo no lo llama, con `Valkey:Areas:Permissions` prendido la caché sirve los permisos de antes hasta 60 s: un
-  miembro suspendido sigue entrando, sin error. Lo amarra `CachedAuthorizationTests` (Tenancy).
+  lo hacen. Si un camino nuevo no lo llama, la caché sirve los permisos de antes hasta 60 s: un miembro suspendido sigue entrando, sin
+  error. **Desde el 2026-11-17 la caché existe también con el área apagada**: `MemoryPermissionCache` (por pod) decora a
+  `AuthorizationService` igual que la de Valkey, y la sesión tiene `MemorySessionCache` (15 min, con marca de revocación). Dos
+  consecuencias: (1) una prueba con auth real que cambie roles, módulos o estado del tenant por SQL o por `DbContext` directo, después
+  de que esa persona ya hizo un request al tenant, llama `BumpAsync` o ve el 200 de antes (`RealAuthenticationApiTests` lo hace en
+  `SetTenantStatusAsync` y en el apagado de Catalog); (2) con más de una réplica las dos áreas de Valkey tienen que estar prendidas,
+  y `MultiReplicaInventory.SharedStateSwitches` lo exige. Lo amarran `CachedAuthorizationTests` (Tenancy), `MemoryPermissionCacheTests`
+  y `MemorySessionCacheTests` (Bootstrapper.UnitTests) y `RequestQueryBudgetTests` (Tenancy), que cuenta los comandos SQL de un
+  request real: `GET /memberships?search=` eran 7 + N miembros (19 en producción, 3,27 s con la base en otro nodo) y ahora son 3 con la
+  caché caliente. Un lector nuevo de una lista de personas pide los correos por `IUserDirectory.GetEmailsAsync`, en lote, nunca
+  `GetEmailAsync` en un bucle. Dos exposiciones nuevas mientras las áreas de Valkey estén apagadas, donde antes el efecto era
+  inmediato: (3) durante un `RollingUpdate` con `maxSurge: 1` (`k8s/prod-deployment.yaml`) conviven dos pods por minutos, y una
+  suspensión o un cambio de roles aplicado en uno llega al otro en ≤ 60 s, y una revocación de sesión en ≤ ~5 min (el umbral de
+  toque de `SessionService` vuelve fallo toda entrada más vieja); (4) un runbook que cambie por SQL `tenancy.tenant_modules`, roles,
+  membresías o `identity.sessions` —prender `pos` con la fila de `tenant_modules`, por ejemplo— tiene efecto en el pod que ya corre
+  en ≤ 60 s (permisos) o ≤ 5 min (sesiones), no en el siguiente request.
 - **Una tabla de cola nueva entra al mapa de `QueueDoorbellInterceptor`** (`BuildingBlocks.Infrastructure`, `Tables`), con su cola en
   `DoorbellQueues`, y su worker espera con `doorbell.Listen(...)`. Sin eso el worker sólo se entera en la red de seguridad, no al
   insertar, y nada falla. El `DbContext` que mapee una de esas tablas lleva el interceptor: lo amarra

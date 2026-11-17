@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Net.Http.Json;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -261,44 +259,11 @@ public sealed class QuotationPreviewStatementCountApiTests(SharedQuotationsHost 
         return products;
     }
 
-    /// <summary>
-    /// Las sentencias de un solo request. El <c>ActivityListener</c> es global al proceso y las clases de
-    /// prueba corren en paralelo, y en este mismo host hay workers leyendo la base: lo único que separa el
-    /// request de todo eso es su traza, que entra por el header <c>traceparent</c> y que comparten todos sus
-    /// spans. Filtrar por base o por host contaría también a los workers.
-    /// </summary>
+    // El contador vive en QuotationsApiHarness (lo comparte RequestQueryBudgetApiTests); acá sólo se arma el POST.
     private static async Task<IReadOnlyList<string>> StatementsOfAsync<TBody>(HttpClient client, string url, TBody body)
     {
-        var traceId = ActivityTraceId.CreateRandom();
-        var statements = new ConcurrentQueue<string>();
-
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = source => source.Name is "Npgsql" or "Microsoft.AspNetCore",
-            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
-                options.TraceId == traceId
-                    ? ActivitySamplingResult.AllDataAndRecorded
-                    : ActivitySamplingResult.None,
-            ActivityStopped = activity =>
-            {
-                if (activity.Source.Name == "Npgsql" && activity.TraceId == traceId)
-                {
-                    statements.Enqueue(activity.GetTagItem("db.query.text")?.ToString() ?? activity.DisplayName);
-                }
-            },
-        };
-        ActivitySource.AddActivityListener(listener);
-
         using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body) };
-        request.Headers.Add("traceparent", $"00-{traceId}-{ActivitySpanId.CreateRandom()}-01");
-
-        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        // Sin esto, una traza que dejara de propagarse daría 0 = 0 y la prueba pasaría sin medir nada.
-        Assert.NotEmpty(statements);
-
-        return statements.ToArray();
+        return await QuotationsApiHarness.StatementsOfAsync(client, request);
     }
 
     /// <summary>

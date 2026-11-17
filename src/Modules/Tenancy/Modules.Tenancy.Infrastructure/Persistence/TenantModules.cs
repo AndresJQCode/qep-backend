@@ -6,13 +6,30 @@ namespace Modules.Tenancy.Infrastructure.Persistence;
 
 /// <summary>
 /// Una sola consulta: el tenant y sus claves, sin tracking. Las claves llegan tipadas por la
-/// conversión de EF y van directo a <see cref="TenantModuleSet.FromStored"/>. Sin caché (spec,
-/// alternativa descartada): a lo sumo una fila por módulo del catálogo, por PK, y los permisos ya se resuelven contra la
-/// base en cada request; el caché es asunto del adaptador del control plane.
+/// conversión de EF y van directo a <see cref="TenantModuleSet.FromStored"/>. Sin caché entre requests (spec,
+/// alternativa descartada): a lo sumo una fila por módulo del catálogo, por PK; entre requests cachea la
+/// resolución de permisos, que es quien la pide siempre. Sí memoiza dentro del scope: la resolución de
+/// permisos la pide al autenticar y varios handlers (<c>/modules</c>, <c>/authorization/catalog</c>, la
+/// bandeja de Messaging, los de Ai) la vuelven a pedir en el mismo request; eran dos viajes iguales a la base.
+/// Quien cambia los módulos escribe por el repositorio, no por acá, y su respuesta no relee por este puerto.
 /// </summary>
 internal sealed class TenantModules(TenancyDbContext dbContext) : ITenantModules
 {
+    private readonly Dictionary<Guid, TenantModuleSet?> _byTenant = [];
+
     public async Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        if (_byTenant.TryGetValue(tenantId, out var cached))
+        {
+            return cached;
+        }
+
+        var found = await LoadAsync(tenantId, cancellationToken);
+        _byTenant[tenantId] = found;
+        return found;
+    }
+
+    private async Task<TenantModuleSet?> LoadAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         var id = new TenantId(tenantId);
         var found = await dbContext.Tenants

@@ -29,6 +29,20 @@ internal sealed class UserRepository(IdentityDbContext dbContext) : IUserReposit
             user => user.Id == new UserId(userId),
             cancellationToken);
 
+    public async Task<IReadOnlyList<User>> ListByIdsAsync(IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken)
+    {
+        if (userIds.Count == 0)
+        {
+            return [];
+        }
+
+        // La lista va con el tipo del id para que EF aplique la conversión, como MembershipRepository.ListByIdsAsync.
+        var ids = userIds.Select(id => new UserId(id)).ToList();
+        return await dbContext.Users
+            .Where(user => ids.Contains(user.Id))
+            .ToListAsync(cancellationToken);
+    }
+
     public void Add(User user) => dbContext.Users.Add(user);
 
     public void Remove(User user) => dbContext.Users.Remove(user);

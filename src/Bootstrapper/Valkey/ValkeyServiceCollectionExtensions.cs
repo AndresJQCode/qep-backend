@@ -100,7 +100,8 @@ public static class ValkeyServiceCollectionExtensions
     }
 
     /// <summary>
-    /// La caché de sesión (D-4). Apagada, el nulo: nunca acierta y cada request lee Postgres como antes. Prendida
+    /// La caché de sesión (D-4). Apagada, la de Identity es la del pod (<see cref="MemorySessionCache"/>: mismos TTL y marca de
+    /// revocación, sin compartir entre pods) y la del comprador el nulo, que nunca acierta. Prendida
     /// (<c>Valkey:Areas:Sessions</c>), la entrada vive en <c>qep:sess:{hash}</c> (Identity) o <c>qep:sess:buyer:{hash}</c>
     /// (comprador) y toda revocación la saca.
     /// </summary>
@@ -108,7 +109,7 @@ public static class ValkeyServiceCollectionExtensions
     {
         if (!shared)
         {
-            services.AddSingleton<ISessionCache, NullSessionCache>();
+            services.AddSingleton<ISessionCache, MemorySessionCache>();
             services.AddSingleton<IBuyerSessionCache, NullBuyerSessionCache>();
             return;
         }
@@ -119,17 +120,19 @@ public static class ValkeyServiceCollectionExtensions
 
     /// <summary>
     /// La caché de permisos (D-5; plan P5). <see cref="AuthorizationService"/> se registra siempre como clase concreta (scoped,
-    /// como antes). Apagada, es también el <see cref="IAuthorizationService"/> y la versión de acceso del tenant es el nulo.
-    /// Prendida (<c>Valkey:Areas:Permissions</c>), <see cref="CachedAuthorizationService"/> la decora y los casos de uso que
-    /// cambian permisos suben <c>qep:tenantver:{tenantId}</c>.
+    /// como antes). Apagada, <see cref="MemoryCachedAuthorizationService"/> la decora con la caché del pod y la versión de acceso
+    /// del tenant es el contador de ese mismo pod (<see cref="MemoryPermissionCache"/>). Prendida
+    /// (<c>Valkey:Areas:Permissions</c>), <see cref="CachedAuthorizationService"/> la decora y los casos de uso que cambian
+    /// permisos suben <c>qep:tenantver:{tenantId}</c>.
     /// </summary>
     private static void AddPermissionsCache(IServiceCollection services, bool shared)
     {
         services.AddScoped<AuthorizationService>();
         if (!shared)
         {
-            services.AddScoped<IAuthorizationService>(provider => provider.GetRequiredService<AuthorizationService>());
-            services.AddSingleton<ITenantAccessVersion, NullTenantAccessVersion>();
+            services.AddSingleton<MemoryPermissionCache>();
+            services.AddScoped<IAuthorizationService, MemoryCachedAuthorizationService>();
+            services.AddSingleton<ITenantAccessVersion, MemoryTenantAccessVersion>();
             return;
         }
 

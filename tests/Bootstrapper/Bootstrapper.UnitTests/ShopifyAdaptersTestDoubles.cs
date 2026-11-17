@@ -61,8 +61,13 @@ internal sealed class FakeQuotationSettingsStore(Guid? freightTaxRateId) : IQuot
 
 internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRepository
 {
-    public Task<TaxRate?> FindAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>
-        Task.FromResult(rates.FirstOrDefault(rate => rate.TenantId == tenantId && rate.Id == taxRateId));
+    public int FindCalls { get; private set; }
+
+    public Task<TaxRate?> FindAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(rates.FirstOrDefault(rate => rate.TenantId == tenantId && rate.Id == taxRateId));
+    }
 
     public int ListCalls { get; private set; }
 
@@ -239,9 +244,13 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
 
     public int Calls { get; private set; }
 
+    /// <summary>Sólo las lecturas por id: lo que se prueba es que quien llama no vuelve a pedir el mismo cliente.</summary>
+    public int FindCalls { get; private set; }
+
     public Task<Customer?> FindAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken)
     {
         Calls++;
+        FindCalls++;
         return Task.FromResult(customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.Id == customerId));
     }
 
@@ -600,18 +609,31 @@ internal sealed class FakeIntegrationConnections(params IntegrationConnection[] 
             candidate.TenantId == tenantId && candidate.Id == connectionId && candidate.Status == ConnectionStatus.Active);
         return Task.FromResult(connection is null
             ? ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null)
-            : ConnectionResolution.Resolved(new ResolvedConnection(
-                connection.Id, connection.ProviderKey, connection.Name,
-                new Dictionary<string, string>(connection.Fields, StringComparer.Ordinal),
-                connection.Secrets.ToDictionary(
-                    secret => secret.FieldKey, secret => Encoding.UTF8.GetString(secret.Protected.Ciphertext), StringComparer.Ordinal))));
+            : ConnectionResolution.Resolved(Resolved(connection)));
     }
+
+    public Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ResolvedConnection>>([.. connections
+            .Where(connection => connection.TenantId == tenantId && connection.Status == ConnectionStatus.Active
+                && string.Equals(connection.ProviderKey, providerKey, StringComparison.Ordinal))
+            .Select(Resolved)]);
 
     public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+        Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    private static ResolvedConnection Resolved(IntegrationConnection connection) =>
+        new(
+            connection.Id, connection.ProviderKey, connection.Name,
+            new Dictionary<string, string>(connection.Fields, StringComparer.Ordinal),
+            connection.Secrets.ToDictionary(
+                secret => secret.FieldKey, secret => Encoding.UTF8.GetString(secret.Protected.Ciphertext), StringComparer.Ordinal));
 }
 
 internal sealed class FakeTenantModules(Guid tenantId, TenantModuleSet modules) : ITenantModules
@@ -698,8 +720,13 @@ internal sealed class RecordingUnresolvedCityReporter : IUnresolvedCityReporter
 
 internal sealed class FakeCompanyRepository(params Company[] companies) : ICompanyRepository
 {
-    public Task<Company?> FindAsync(Guid tenantId, CompanyId companyId, CancellationToken cancellationToken) =>
-        Task.FromResult(companies.FirstOrDefault(company => company.TenantId == tenantId && company.Id == companyId));
+    public int FindCalls { get; private set; }
+
+    public Task<Company?> FindAsync(Guid tenantId, CompanyId companyId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(companies.FirstOrDefault(company => company.TenantId == tenantId && company.Id == companyId));
+    }
 
     public Task<IReadOnlyList<Company>> SearchAsync(
         Guid tenantId, string? search, string? name, string? taxId, CompanyStatusFilter? status, CancellationToken cancellationToken) =>

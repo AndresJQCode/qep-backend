@@ -188,6 +188,13 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/RateLimiting/SharedRateLimitPartitions.cs:33-45 — con Valkey:Areas:RateLimiting la ventana se cuenta en Valkey y cae a memoria si falla"),
         new("Bootstrapper.Realtime.LocalRealtimePresence", StateClassification.SharedWithLocalFallback,
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:147-165 — con Valkey:Areas:Presence el hub global escribe «está respondiendo» en qep:rt:presence:{tenantId}:{topic} y esto queda de respaldo local"),
+        // Las cachés del pod que rigen con el área apagada (menos viajes a la base por request, 2026-11-17): con dos pods, un bump
+        // o una revocación en uno no invalida al otro hasta que la entrada venza (60 s / 15 min). Con el área prendida se
+        // registran los adaptadores de Valkey y éstas no se registran.
+        new("Bootstrapper.Valkey.Permissions.MemoryPermissionCache", StateClassification.SharedWithLocalFallback,
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:126-135 — con Valkey:Areas:Permissions la entrada y la versión de acceso viven en qep:perm:* y qep:tenantver:*; apagada, en este MemoryCache y su contador por tenant"),
+        new("Bootstrapper.Valkey.Sessions.MemorySessionCache", StateClassification.SharedWithLocalFallback,
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:107-114 — con Valkey:Areas:Sessions la entrada y la marca de revocación viven en qep:sess:*; apagada, en este MemoryCache"),
 
         new("Bootstrapper.ApiKeys.ExternalApiCallLogChannel", StateClassification.PerPodByDesign,
             "Bootstrapper/ApiKeys/ExternalApiCallLogChannel.cs:21 — Channel.CreateBounded por pod; lo no escrito se pierde con SIGKILL, igual que con un pod"),
@@ -243,6 +250,8 @@ public static class MultiReplicaInventory
         ["Modules.Messaging.Application.MessagingPresence"] = "Valkey__Areas__Presence",
         ["Bootstrapper.ApiKeys.ApiKeyRateLimiter"] = "Valkey__Areas__RateLimiting",
         ["Bootstrapper.Realtime.LocalRealtimePresence"] = "Valkey__Areas__Presence",
+        ["Bootstrapper.Valkey.Permissions.MemoryPermissionCache"] = "Valkey__Areas__Permissions",
+        ["Bootstrapper.Valkey.Sessions.MemorySessionCache"] = "Valkey__Areas__Sessions",
     };
 
     /// <summary>
