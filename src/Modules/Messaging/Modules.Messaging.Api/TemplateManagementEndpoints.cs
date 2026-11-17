@@ -38,6 +38,14 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-17: la sesión de subida de la imagen fija del encabezado. Sólo messaging.template.manage, nunca storage.file.*.
+        group.MapPost("/header-image/upload-session", CreateHeaderImageSessionAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Accepts<CreateTemplateHeaderImageSessionRequest>("application/json")
+            .Produces<TemplateHeaderImageSessionDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // El cuerpo HTTP es opcional: sin él se crea el texto base de la definición (spec §4.5) y se adopta una externa compatible. Dejar
         // que se infiera requerido responde 500 cuando un frontend viejo no manda nada (precedente: el envío de cotizaciones).
         group.MapPost("/quotation", ProvisionQuotationAsync)
@@ -150,6 +158,13 @@ internal static class TemplateManagementEndpoints
                     request.Examples),
                 cancellationToken));
 
+    private static async Task<IResult> CreateHeaderImageSessionAsync(
+        Guid tenantId, Guid connectionId, CreateTemplateHeaderImageSessionRequest request, IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new CreateTemplateHeaderImageSessionCommand(tenantId, connectionId, request.FileName, request.MimeType, request.SizeBytes),
+            cancellationToken));
+
     // Location = la pantalla, como al crear una libre.
     private static async Task<IResult> ProvisionQuotationAsync(
         Guid tenantId, Guid connectionId, ProvisionQuotationTemplateRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -253,3 +268,7 @@ public sealed record ProvisionBillingTemplatesRequest(string? ReminderBody, stri
 
 /// <summary><c>type</c> es <c>QuickReply</c>, <c>Url</c> o <c>PhoneNumber</c>, como <c>TemplateButtonDto</c>.</summary>
 public sealed record TemplateButtonRequest(string? Type, string? Text, string? Url, string? PhoneNumber);
+
+/// <summary>Spec 2026-11-17: la declaración de la imagen del encabezado. Todo opcional para que lo que falte salga 422 con su clave en
+/// <c>errors</c>, no 400 del binder.</summary>
+public sealed record CreateTemplateHeaderImageSessionRequest(string? FileName, string? MimeType, long SizeBytes);

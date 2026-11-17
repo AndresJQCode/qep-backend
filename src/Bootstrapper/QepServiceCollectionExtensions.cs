@@ -1213,6 +1213,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();
         // Messaging (spec 2026-10-14 §4.3): crear una plantilla libre y mandarla a aprobación.
         services.AddScoped<ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>, CreateTemplateHandler>();
+        // Spec 2026-11-17: la sesión de subida de la imagen del encabezado; el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<CreateTemplateHeaderImageSessionCommand, TemplateHeaderImageSessionDto>, CreateTemplateHeaderImageSessionHandler>();
         // Messaging (spec 2026-10-14 §4.3): aprovisionar, adoptar o reintentar la plantilla de cotización de una conexión.
         services.AddScoped<ICommandHandler<ProvisionQuotationTemplateCommand, ManagedTemplateDto>, ProvisionQuotationTemplateHandler>();
         services.AddScoped<ICommandHandler<ProvisionBillingTemplatesCommand, IReadOnlyList<ManagedTemplateDto>>, ProvisionBillingTemplatesHandler>();
