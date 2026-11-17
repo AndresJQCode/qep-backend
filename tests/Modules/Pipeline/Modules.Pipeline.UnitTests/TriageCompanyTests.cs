@@ -72,15 +72,104 @@ public sealed class TriageCompanyTests
     }
 
     [Fact]
-    public async Task ACompanyWithAnOpenDealMakesTheContactsConversationNotPending()
+    public async Task ACompanyWithAnOpenDealDoesNotBlockTheContactsTriage()
     {
+        // Decisión del owner 2026-11-16: el triage es por contacto; la empresa no bloquea nada.
         var bed = new ContactHandlersBed();
         bed.OpenDeal(bed.Company, "Ya abierto");
+
+        await bed.Triage().HandleAsync(Create(bed), Ct);
+
+        Assert.Equal(2, bed.Deals.Items.Count);
+        Assert.Single(bed.Decisions.Items);
+    }
+
+    [Fact]
+    public async Task AContactWithAnOpenDealOfItsOwnIsNotPending()
+    {
+        var bed = new ContactHandlersBed();
+        bed.OpenDeal(bed.Person, "Ya abierto");
 
         var failure = await Assert.ThrowsAsync<PipelineDomainException>(() => bed.Triage().HandleAsync(Create(bed), Ct));
 
         Assert.Equal(PipelineErrorCodes.TriageNotPending, failure.Code);
         Assert.Single(bed.Deals.Items);
         Assert.Empty(bed.Decisions.Items);
+    }
+
+    [Fact]
+    public async Task ADealBornOnTheCompanyFromThisConversationKeepsItNotPendingAfterANewInbound()
+    {
+        // Decisión del owner 2026-11-16: un negocio abierto nacido de la conversación cuenta como del contacto, aunque esté en la empresa.
+        var bed = new ContactHandlersBed();
+        await bed.Triage().HandleAsync(Create(bed), Ct);
+        bed.ReceiveInbound(ContactHandlersBed.Now.AddMinutes(5));
+
+        var failure = await Assert.ThrowsAsync<PipelineDomainException>(() => bed.Triage().HandleAsync(Create(bed), Ct));
+
+        Assert.Equal(PipelineErrorCodes.TriageNotPending, failure.Code);
+        Assert.Single(bed.Deals.Items);
+    }
+
+    [Fact]
+    public async Task OnceTheDealFromThisConversationClosesANewInboundMakesItPendingAgain()
+    {
+        var bed = new ContactHandlersBed();
+        await bed.Triage().HandleAsync(Create(bed), Ct);
+        Assert.Single(bed.Deals.Items).Win(bed.Pipeline, DealActor.ForUser(bed.MemberId), ContactHandlersBed.Now);
+        bed.ReceiveInbound(ContactHandlersBed.Now.AddMinutes(5));
+
+        await bed.Triage().HandleAsync(Create(bed), Ct);
+
+        Assert.Equal(2, bed.Deals.Items.Count);
+    }
+
+    [Fact]
+    public async Task ChoosingTheContactPutsTheDealOnTheContactWithItsName()
+    {
+        var bed = new ContactHandlersBed();
+
+        var result = await bed.Triage().HandleAsync(Create(bed) with { CustomerId = bed.Person }, Ct);
+
+        var deal = Assert.Single(bed.Deals.Items);
+        Assert.Equal((bed.Person, "Ana Pérez"), (deal.CustomerId, deal.Title));
+        Assert.Equal(bed.Person, result.Deal!.CustomerId);
+    }
+
+    [Fact]
+    public async Task ChoosingTheCompanyPutsTheDealOnTheCompany()
+    {
+        var bed = new ContactHandlersBed();
+
+        await bed.Triage().HandleAsync(Create(bed) with { CustomerId = bed.Company }, Ct);
+
+        var deal = Assert.Single(bed.Deals.Items);
+        Assert.Equal((bed.Company, "Acme SAS"), (deal.CustomerId, deal.Title));
+    }
+
+    [Fact]
+    public async Task ChoosingSomeoneElseIsRejected()
+    {
+        var bed = new ContactHandlersBed();
+
+        var failure = await Assert.ThrowsAsync<PipelineDomainException>(
+            () => bed.Triage().HandleAsync(Create(bed) with { CustomerId = bed.Stranger }, Ct));
+
+        Assert.Equal(PipelineErrorCodes.TriageDealCustomerInvalid, failure.Code);
+        Assert.Empty(bed.Deals.Items);
+        Assert.Empty(bed.Decisions.Items);
+    }
+
+    [Fact]
+    public async Task ChoosingTheCompanyWhenTheContactHasNoneIsRejected()
+    {
+        var bed = new ContactHandlersBed();
+        bed.Customers.Companies.Clear();
+
+        var failure = await Assert.ThrowsAsync<PipelineDomainException>(
+            () => bed.Triage().HandleAsync(Create(bed) with { CustomerId = bed.Company }, Ct));
+
+        Assert.Equal(PipelineErrorCodes.TriageDealCustomerInvalid, failure.Code);
+        Assert.Empty(bed.Deals.Items);
     }
 }

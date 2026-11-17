@@ -784,9 +784,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // El id viaja con su conversión: se arma el ref en memoria y no en la proyección SQL.
         var rows = await dbContext.Customers.AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && wanted.Contains(customer.Id))
-            .Select(customer => new { customer.Id, customer.Name, customer.Completeness })
+            .Select(customer => new { customer.Id, customer.Name, customer.Completeness, customer.IsActive })
             .ToListAsync(cancellationToken);
-        return rows.Select(row => new CustomerWhatsAppRef(row.Id.Value, row.Name, row.Completeness == CustomerCompleteness.Complete)).ToArray();
+        return rows.Select(row => new CustomerWhatsAppRef(row.Id.Value, row.Name, row.Completeness == CustomerCompleteness.Complete, row.IsActive)).ToArray();
     }
 
     public async Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken)

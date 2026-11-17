@@ -21,7 +21,7 @@ public sealed record WhatsAppPhoneContact(string PhoneE164, string? Name);
 
 public sealed record EnsuredCustomer(Guid CustomerId, EnsureOutcome Outcome);
 
-public sealed record CustomerWhatsAppRef(Guid Id, string Name, bool IsComplete);
+public sealed record CustomerWhatsAppRef(Guid Id, string Name, bool IsComplete, bool IsActive = true);
 
 /// <summary>
 /// Spec 2026-10-10 §6.2: lo que Messaging necesita de Customers para atar una conversación a un cliente, con

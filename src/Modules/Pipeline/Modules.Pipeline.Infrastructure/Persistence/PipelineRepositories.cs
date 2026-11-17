@@ -38,6 +38,10 @@ internal sealed class DealRepository(PipelineDbContext dbContext) : IDealReposit
         return found.ToHashSet();
     }
 
+    public Task<bool> HasOpenDealFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        dbContext.Deals.AsNoTracking()
+            .AnyAsync(deal => deal.TenantId == tenantId && deal.ClosedAt == null && deal.OriginConversationId == conversationId, cancellationToken);
+
     public async Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken)
     {
         var found = await dbContext.Deals.AsNoTracking()

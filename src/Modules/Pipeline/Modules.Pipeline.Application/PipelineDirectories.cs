@@ -6,8 +6,9 @@ public sealed record PipelineConversation(Guid Id, Guid? CustomerId, bool IsOpen
 /// <summary>§5.2 y D21: el último mensaje de las conversaciones del cliente (entrante o saliente) y cuáles son.</summary>
 public sealed record PipelineCustomerActivity(Guid CustomerId, DateTimeOffset? LastMessageAt, IReadOnlyList<Guid> ConversationIds);
 
-/// <summary>D36 y §6: nombre y completitud del cliente; un <c>Incomplete</c> se acepta (H13).</summary>
-public sealed record PipelineCustomerRef(Guid Id, string Name, bool IsComplete);
+/// <summary>D36 y §6: nombre, completitud y estado del cliente; un <c>Incomplete</c> se acepta (H13), un inactivo no recibe negocios
+/// nuevos (decisión del owner 2026-11-16).</summary>
+public sealed record PipelineCustomerRef(Guid Id, string Name, bool IsComplete, bool IsActive = true);
 
 /// <summary>
 /// D9: lo que Pipeline necesita de Messaging, con adaptador en Bootstrapper sobre <c>MessagingDbContext</c> (como

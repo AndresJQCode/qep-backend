@@ -363,7 +363,7 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task RepointContactsAsync(
+    public Task<IReadOnlyList<Guid>> RepointContactsAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 

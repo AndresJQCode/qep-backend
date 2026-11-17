@@ -137,13 +137,13 @@ public sealed class GetCustomerDealsSummaryHandler(
         }
 
         var triage = conversation is not null
-            ? await TriageAsync(query.TenantId, conversation, conversationCompanyId, cancellationToken)
+            ? await TriageAsync(query.TenantId, conversation, cancellationToken)
             : null;
         return new CustomerDealsSummaryDto(query.CustomerId, openDeals, closedDto, triage);
     }
 
     private async Task<ConversationTriageStateDto> TriageAsync(
-        Guid tenantId, PipelineConversation conversation, Guid? companyId, CancellationToken cancellationToken)
+        Guid tenantId, PipelineConversation conversation, CancellationToken cancellationToken)
     {
         var conversationId = conversation.Id;
         if (!await TriageState.MessagingEnabledAsync(tenantModules, tenantId, cancellationToken))
@@ -151,8 +151,8 @@ public sealed class GetCustomerDealsSummaryHandler(
             return new ConversationTriageStateDto(conversationId, "NotApplicable", [], null);
         }
 
-        // §4.5: el estado se calcula sobre el conjunto (empresa y persona), pida el hilo el id que pida.
-        var (pending, last, customerHasOpenDeal) = await TriageState.EvaluateAsync(deals, decisions, tenantId, conversation, companyId, cancellationToken);
+        // Decisión del owner 2026-11-16: el estado es del contacto de la conversación, pida el hilo el id que pida; la empresa no cuenta.
+        var (pending, last, customerHasOpenDeal) = await TriageState.EvaluateAsync(deals, decisions, tenantId, conversation, cancellationToken);
         var status = pending ? "Pending" : !conversation.IsOpen || customerHasOpenDeal ? "NotApplicable" : "Decided";
         IReadOnlyList<string> actions = pending && executionContext.HasPermission(PipelinePermissions.DealManage) ? TriageActions : [];
         TriageDecisionDto? lastDto = null;

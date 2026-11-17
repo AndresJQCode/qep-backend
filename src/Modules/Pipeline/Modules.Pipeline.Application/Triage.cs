@@ -9,7 +9,10 @@ namespace Modules.Pipeline.Application;
 /// <summary>Con <c>Created</c> viaja el negocio entero, para que el panel del chat lo dibuje sin otra llamada.</summary>
 public sealed record TriageResultDto(Guid ConversationId, string Decision, DealDetailDto? Deal);
 
-public sealed record DecideTriageCommand(Guid TenantId, Guid ConversationId, string? Action, string? Title, Guid? DismissReasonId)
+/// <param name="CustomerId">Decisión del owner 2026-11-16: en qué cliente nace el negocio, el contacto de la conversación o su
+/// empresa. Sin él, en la empresa si la hay (spec 2026-11-10 §4.5) y si no en el contacto. <c>dismiss</c> lo ignora.</param>
+public sealed record DecideTriageCommand(
+    Guid TenantId, Guid ConversationId, string? Action, string? Title, Guid? DismissReasonId, Guid? CustomerId = null)
     : ICommand<TriageResultDto>;
 
 /// <summary>D29: sólo <c>create</c> y <c>dismiss</c>. Sin motivo de descarte NO es <c>validation.failed</c>: el contrato pide
@@ -27,16 +30,19 @@ public sealed class DecideTriageValidator : AbstractValidator<DecideTriageComman
 /// (D36).</summary>
 internal static class TriageState
 {
-    /// <summary>Spec 2026-11-10 §4.5: el negocio de un contacto nace en su empresa, así que «el cliente ya tiene un negocio abierto» se
-    /// mira sobre el conjunto (el cliente de la conversación y su empresa). <c>HasOpenDeal</c> viaja para que la ficha nombre el estado.</summary>
+    /// <summary>Decisión del owner 2026-11-16: el triage es por contacto y la empresa no bloquea nada. El contacto «tiene un negocio
+    /// abierto» si tiene uno propio (la regla de antes del spec 2026-11-10) o si sigue abierto uno nacido de esta conversación, aunque
+    /// esté en la empresa: sin eso, el negocio que el triage abrió en la empresa volvería a pedir triage con cada entrante.
+    /// <c>HasOpenDeal</c> viaja para que la ficha nombre el estado.</summary>
     public static async Task<(bool Pending, TriageDecision? Last, bool HasOpenDeal)> EvaluateAsync(
-        IDealRepository deals, ITriageDecisionRepository decisions, Guid tenantId, PipelineConversation conversation, Guid? companyId,
+        IDealRepository deals, ITriageDecisionRepository decisions, Guid tenantId, PipelineConversation conversation,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(conversation);
         var last = (await decisions.FindLatestAsync(tenantId, [conversation.Id], cancellationToken)).GetValueOrDefault(conversation.Id);
         var hasOpenDeal = conversation.CustomerId is { } customerId &&
-            (await deals.CustomersWithOpenDealsAsync(tenantId, companyId is { } company ? [customerId, company] : [customerId], cancellationToken)).Count > 0;
+            ((await deals.CustomersWithOpenDealsAsync(tenantId, [customerId], cancellationToken)).Contains(customerId) ||
+             await deals.HasOpenDealFromConversationAsync(tenantId, conversation.Id, cancellationToken));
         return (TriageRules.IsPending(conversation.IsOpen, conversation.CustomerId, hasOpenDeal, conversation.LastInboundAt, last?.DecidedAgainstInboundAt), last, hasOpenDeal);
     }
 
@@ -72,11 +78,7 @@ public sealed class DecideTriageHandler(
 
         var conversation = await conversations.FindAsync(command.TenantId, command.ConversationId, cancellationToken)
             ?? throw PipelineNotFound.Conversation(command.ConversationId);
-        // Spec 2026-11-10 §4.5: la empresa del cliente de la conversación; sin cliente no hay pendiente y se corta abajo.
-        var company = conversation.CustomerId is { } conversationCustomer
-            ? await customers.FindCompanyAsync(command.TenantId, conversationCustomer, cancellationToken)
-            : null;
-        var (pending, _, _) = await TriageState.EvaluateAsync(deals, decisions, command.TenantId, conversation, company?.Id, cancellationToken);
+        var (pending, _, _) = await TriageState.EvaluateAsync(deals, decisions, command.TenantId, conversation, cancellationToken);
         if (!pending)
         {
             throw new PipelineDomainException(PipelineErrorCodes.TriageNotPending, "The conversation is no longer pending triage.");
@@ -105,19 +107,22 @@ public sealed class DecideTriageHandler(
             return new TriageResultDto(conversation.Id, TriageDecisionKind.Dismissed.ToString(), null);
         }
 
-        // G11: la decisión conserva al cliente de la conversación (la persona); sólo el negocio nace en la empresa, y su título por
-        // defecto es el de la empresa (A4), no el de quien escribe.
-        var dealCustomerId = company?.Id ?? customerId;
-        string defaultTitle;
-        if (company is not null)
+        // G11: la decisión conserva al cliente de la conversación (la persona). El negocio nace donde se eligió (decisión del owner
+        // 2026-11-16): el contacto o su empresa; sin elección, la empresa si la hay. Su título por defecto es el de quien lo recibe
+        // (A4 para la empresa).
+        var company = await customers.FindCompanyAsync(command.TenantId, customerId, cancellationToken);
+        var onCompany = command.CustomerId switch
         {
-            defaultTitle = company.Name;
-        }
-        else
-        {
-            var customer = (await customers.FindAsync(command.TenantId, [customerId], cancellationToken)).GetValueOrDefault(customerId);
-            defaultTitle = DealCardMapper.CustomerName(customer);
-        }
+            null => company is not null,
+            { } chosen when chosen == customerId => false,
+            { } chosen when company is not null && chosen == company.Id => true,
+            _ => throw new PipelineDomainException(
+                PipelineErrorCodes.TriageDealCustomerInvalid, "The deal must belong to the conversation's customer or to its company."),
+        };
+        var dealCustomerId = onCompany ? company!.Id : customerId;
+        var dealCustomer = (await customers.FindAsync(command.TenantId, [dealCustomerId], cancellationToken)).GetValueOrDefault(dealCustomerId);
+        DealCustomers.EnsureCanReceiveDeals(dealCustomer);
+        var defaultTitle = onCompany ? company!.Name : DealCardMapper.CustomerName(dealCustomer);
 
         var title = (!string.IsNullOrWhiteSpace(command.Title) ? command.Title : defaultTitle).Trim();
         if (title.Length > Deal.TitleMaxLength)
