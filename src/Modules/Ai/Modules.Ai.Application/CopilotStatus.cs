@@ -11,8 +11,8 @@ public sealed record GetCopilotStatusQuery(Guid TenantId) : IQuery<CopilotStatus
 /// sin deducir nada de los permisos ni de la configuración (que el miembro con <c>ai.copilot.use</c> ni siquiera puede leer).
 /// </summary>
 /// <param name="Reason"><c>null</c> con <paramref name="Available"/>; si no, el primero que aplica de <see cref="CopilotStatusReasons"/>.</param>
-/// <param name="Tools">Las herramientas que el copiloto le ofrece a <b>quien llama</b>, por permiso y módulo. Las calcula el registro de
-/// herramientas del plan C2.4; hasta entonces la lista va vacía (todavía no hay herramientas).</param>
+/// <param name="Tools">Los nombres de las herramientas que el copiloto le ofrece a <b>quien llama</b> ahora, por sus permisos y los módulos
+/// del tenant, ordenados (plan C2.4: el mismo cálculo que hace el trabajo). Vacía sin membresía activa.</param>
 public sealed record CopilotStatusDto(bool Available, string? Reason, IReadOnlyList<string> Tools);
 
 /// <summary>§8: los motivos de <c>GET /copilot/status</c>, en el orden en que se evalúan.</summary>
@@ -37,14 +37,16 @@ public sealed class GetCopilotStatusHandler(
     ICopilotRepository repository,
     IAiProviderCredentials credentials,
     IAiModelCatalog catalog,
-    ITenantClock tenantClock) : IQueryHandler<GetCopilotStatusQuery, CopilotStatusDto>
+    ITenantClock tenantClock,
+    ICopilotToolExecutor tools) : IQueryHandler<GetCopilotStatusQuery, CopilotStatusDto>
 {
     public async Task<CopilotStatusDto> HandleAsync(GetCopilotStatusQuery query, CancellationToken cancellationToken)
     {
         await CopilotAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AiPermissions.CopilotUse, cancellationToken);
         var settings = await repository.FindSettingsAsync(query.TenantId, cancellationToken);
         var reason = await CopilotAvailability.ReasonAsync(settings, repository, credentials, catalog, tenantClock, cancellationToken);
-        return new CopilotStatusDto(reason is null, reason, []);
+        var available = await tools.ListAvailableAsync(new CopilotPrincipal(query.TenantId, executionContext.SubjectId), cancellationToken);
+        return new CopilotStatusDto(reason is null, reason, [.. (available ?? []).Select(tool => tool.Name)]);
     }
 }
 

@@ -190,6 +190,22 @@ public sealed class CopilotSettingsHandlersTests
         Assert.NotNull(status.Tools);
     }
 
+    // Backend for frontend (§8): la lista es la del registro, calculada para quien llama; sin membresía activa, vacía.
+    [Fact]
+    public async Task StatusListsTheToolsTheCallerCanUseNow()
+    {
+        var bed = new CopilotBed();
+        var caller = new FakeExecutionContext(Tenant, AiPermissions.CopilotUse);
+
+        var status = await bed.GetStatus(caller).HandleAsync(new GetCopilotStatusQuery(Tenant), Ct);
+        bed.Tools.Available = null;
+        var inactive = await bed.GetStatus(caller).HandleAsync(new GetCopilotStatusQuery(Tenant), Ct);
+
+        Assert.Equal(["search_orders", "get_orders_summary"], status.Tools);
+        Assert.Equal([new CopilotPrincipal(Tenant, caller.SubjectId)], bed.Tools.Listed.Take(1));
+        Assert.Empty(inactive.Tools);
+    }
+
     [Fact]
     public async Task StatusNeedsUse()
     {
@@ -230,8 +246,10 @@ internal sealed class CopilotBed
         new(context, new FakeTenantModules(Modules), new UpdateCopilotSettingsValidator(), Repository, Credentials, Catalog, UnitOfWork, Clock,
             new BogotaClock(Clock));
 
+    public FakeCopilotTools Tools { get; } = new();
+
     public GetCopilotStatusHandler GetStatus(IExecutionContext context) =>
-        new(context, new FakeTenantModules(Modules), Repository, Credentials, Catalog, new BogotaClock(Clock));
+        new(context, new FakeTenantModules(Modules), Repository, Credentials, Catalog, new BogotaClock(Clock), Tools);
 
     internal sealed class FixedCopilotClock(DateTimeOffset now) : IClock
     {

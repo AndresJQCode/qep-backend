@@ -1,4 +1,5 @@
 using Bootstrapper.Authentication;
+using Bootstrapper.Copilot;
 using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
 using Bootstrapper.Realtime;
@@ -88,7 +89,8 @@ public static class QepServiceCollectionExtensions
         services.AddHttpContextAccessor();
         services.AddScoped<IClaimsTransformation, ExternalClaimsTransformation>();
         services.AddScoped<IClock, BuildingBlocks.Infrastructure.SystemClock>();
-        services.AddScoped<IExecutionContext, HttpExecutionContext>();
+        // Plan fase 2, C2.4: el de los claims del request, salvo en un scope del ejecutor del copiloto, que trae el del miembro.
+        services.AddQepExecutionContext();
         // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
         services.AddScoped<IApiCaller, HttpApiCaller>();
         services.AddScoped<IExternalCallNotes, HttpExternalCallNotes>();
@@ -1414,6 +1416,8 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-29 §8.3: las fuentes de las herramientas de lectura y las respuestas rápidas, por adaptadores sobre Catalog,
         // Quotations y Mensajería (Ai no ve ninguno de los tres).
         services.AddScoped<IAiCatalogSearch, AiCatalogSearch>();
+        // Spec 2026-11-17 (copiloto) D-C3: las herramientas del copiloto corren como el miembro, sobre las consultas de otros módulos.
+        services.AddCopilotTools();
         services.AddScoped<IAiOrderStatusReader, AiOrderStatusReader>();
         services.AddScoped<IAiQuickReplies, AiQuickReplies>();
         // Spec 2026-10-29 §8.3 y P-4: create_quotation_draft escribe en Quotations y valida la asesora del agente, por adaptadores.

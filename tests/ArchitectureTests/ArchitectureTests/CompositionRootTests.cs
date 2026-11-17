@@ -1232,6 +1232,57 @@ public sealed class CompositionRootTests
         Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
     }
 
+    /// <summary>
+    /// Plan fase 2, C2.4 (spec 2026-11-17 copiloto §6): un contexto de ejecución que no sale de los claims de un request sólo lo crea el
+    /// ejecutor de herramientas del copiloto, y sólo él lo instala en un scope. Cualquier otro lugar que lo hiciera podría correr consultas
+    /// con los permisos de alguien que no las pidió. Se lee del IL: un <c>new</c> o un <c>Enter</c> en otro tipo pone esto en rojo.
+    /// </summary>
+    [Fact]
+    public void OnlyTheCopilotExecutorCreatesADelegatedContext()
+    {
+        var bootstrapper = typeof(QepServiceCollectionExtensions).Assembly;
+        var delegated = bootstrapper.GetType("Bootstrapper.Copilot.DelegatedExecutionContext", throwOnError: true)!;
+        var scope = bootstrapper.GetType("Bootstrapper.Copilot.DelegatedExecutionScope", throwOnError: true)!;
+        var executor = bootstrapper.GetType("Bootstrapper.Copilot.CopilotToolExecutor", throwOnError: true)!;
+
+        var creators = IlScanner.CallersOf(bootstrapper, method => method is ConstructorInfo && method.DeclaringType == delegated);
+        var enterers = IlScanner.CallersOf(bootstrapper, method => method.DeclaringType == scope && method.Name == "Enter");
+
+        Assert.NotEmpty(creators);
+        Assert.NotEmpty(enterers);
+        Assert.All(creators.Concat(enterers), caller => Assert.True(
+            IlScanner.IsWithin(caller, executor), $"{caller.DeclaringType?.FullName}.{caller.Name} creates or installs a delegated context."));
+    }
+
+    /// <summary>Plan fase 2, C2.4: fuera de un scope del ejecutor del copiloto, <c>IExecutionContext</c> sigue siendo el de los claims del
+    /// request, y por scope (un singleton serviría el contexto de otro).</summary>
+    [Fact]
+    public void OutsideADelegatedScopeTheExecutionContextIsTheHttpOne()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.Equal(ServiceLifetime.Scoped, services.Single(descriptor => descriptor.ServiceType == typeof(IExecutionContext)).Lifetime);
+        Assert.Equal("HttpExecutionContext", scope.ServiceProvider.GetRequiredService<IExecutionContext>().GetType().Name);
+    }
+
+    /// <summary>Plan fase 2, C2.3: el trabajo del copiloto se arma con su ejecutor de herramientas, que vive en Bootstrapper.</summary>
+    [Fact]
+    public void TheContainerBuildsTheCopilotJobProcessor()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<CopilotJobProcessor>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICopilotToolExecutor>());
+    }
+
     /// <summary>Spec 2026-10-29 §12: el worker de modelo y el procesador de las pruebas se arman con todos sus puertos (las fuentes de las
     /// herramientas son adaptadores de Bootstrapper: sin su registro, el primer trabajo daría 500 en vez de una respuesta).</summary>
     [Fact]

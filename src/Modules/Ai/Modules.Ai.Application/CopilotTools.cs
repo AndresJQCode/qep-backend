@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Modules.Ai.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Ai.Application;
 
@@ -39,6 +40,14 @@ public static class CopilotToolErrors
 
     /// <summary>El registro pedido no existe en el tenant (o el miembro no lo ve).</summary>
     public const string NotFound = "not_found";
+}
+
+/// <summary>§6: lo que el modelo ve de una herramienta (<paramref name="Definition"/>, estricta: todos los campos en <c>required</c> y sin
+/// propiedades extra) y lo que exige para ofrecerse y correr: el permiso del miembro y el módulo del tenant, mirados en cada llamada.
+/// Es <b>además</b> de lo que la consulta ya verifica.</summary>
+public sealed record CopilotToolContract(AiToolDefinition Definition, string Permission, TenantModuleKey Module)
+{
+    public string Name => Definition.Name;
 }
 
 /// <summary>D-C3 y D-C15: con quién corre una herramienta. Sale del hilo (dueño y tenant), nunca de un argumento del modelo.</summary>
