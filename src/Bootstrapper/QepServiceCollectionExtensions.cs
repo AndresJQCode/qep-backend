@@ -1706,6 +1706,10 @@ public static class QepServiceCollectionExtensions
         // pasar por sus handlers ni sus permisos.
         services.AddScoped<ITenantLogoStorage, TenantLogoStorage>();
 
+        // Spec 2026-11-17: la imagen del encabezado de plantilla sobre Storage, con el mismo criterio que el logo: sin pasar por los
+        // handlers de Storage ni por sus permisos (la autoriza messaging.template.manage).
+        services.AddScoped<IMessagingTemplateImageStore, MessagingTemplateImageStore>();
+
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los
         // repositorios que ya registró AddGeographyInfrastructure.
