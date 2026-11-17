@@ -1,4 +1,4 @@
-namespace Modules.Customers.Application;
+﻿namespace Modules.Customers.Application;
 
 /// <summary>
 /// Las trece columnas que la importacion masiva de clientes (Fase 5) espera y que la plantilla
@@ -75,7 +75,14 @@ public static class CustomerImportColumns
 
     /// <summary>Las columnas que el importador lee si la cabecera las trae y que la plantilla, las filas a corregir y la
     /// exportación escriben después de <see cref="Ordered"/>.</summary>
-    public static readonly IReadOnlyList<string> Optional = [Company];
+    /// <summary>
+    /// Spec 2026-11-17: las etiquetas que la fila **suma** al cliente, separadas por <see cref="ExcelTagCell.Separator"/>. Opcional
+    /// y fuera de <see cref="Ordered"/> como «Empresa»: un Excel anterior sigue siendo válido y se lee como «sin etiquetas». Nunca
+    /// quita: la exportación escribe las actuales, y un archivo que las reemplazara borraría las que puso un asesor.
+    /// </summary>
+    public const string Tags = "Etiquetas";
+
+    public static readonly IReadOnlyList<string> Optional = [Company, Tags];
 
     public static readonly IReadOnlyList<string> Ordered =
     [
@@ -127,8 +134,9 @@ public sealed record ExcelCustomerRow(
     string? Classification,
     string? Retefuente,
     string? VatSurplus,
-    // Último y con valor por defecto: null cuando el archivo no trae la cabecera o la celda está vacía.
-    string? CompanyIdentificationNumber = null);
+    // Últimos y con valor por defecto: null cuando el archivo no trae la cabecera o la celda está vacía.
+    string? CompanyIdentificationNumber = null,
+    string? Tags = null);
 
 /// <summary>
 /// El resultado de parsear un Excel: si la cabecera trae las columnas esperadas y, si las
