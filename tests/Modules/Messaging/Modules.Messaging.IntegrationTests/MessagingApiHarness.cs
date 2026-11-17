@@ -308,6 +308,8 @@ internal static class MessagingApiHarness
 
             builder.ConfigureTestServices(services =>
             {
+                // Last registered, first stopped: frees the rate limiter that would otherwise keep this host alive (see the class).
+                services.AddHostedService<RateLimiterRelease>();
                 services.AddHttpClient(IntegrationsGraphClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphClientName)
