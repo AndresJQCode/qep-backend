@@ -372,10 +372,10 @@ public static class MessagingEndpoints
         || contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<IResult> ListConversationsAsync(
-        Guid tenantId, string? status, string? search, string? cursor, int? pageSize, string? assigned, string? channel, Guid? tagId, bool? unread, string? sort, string? automation,
+        Guid tenantId, string? status, string? search, string? cursor, int? pageSize, string? assigned, string? channel, Guid? tagId, bool? unread, string? sort, string? automation, Guid? connectionId,
         IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new ListConversationsQuery(tenantId, status, search, cursor, pageSize, assigned, channel, tagId, unread, sort, automation), cancellationToken));
+            new ListConversationsQuery(tenantId, status, search, cursor, pageSize, assigned, channel, tagId, unread, sort, automation, connectionId), cancellationToken));
 
     private static async Task<IResult> ListAssigneesAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListAssigneesQuery(tenantId), cancellationToken));

@@ -7,7 +7,7 @@ namespace Modules.Messaging.Application;
 
 public sealed record ListConversationsQuery(
     Guid TenantId, string? Status, string? Search, string? Cursor, int? PageSize, string? Assigned = null, string? Channel = null,
-    Guid? TagId = null, bool? Unread = null, string? Sort = null, string? Automation = null)
+    Guid? TagId = null, bool? Unread = null, string? Sort = null, string? Automation = null, Guid? ConnectionId = null)
     : IQuery<ConversationPageDto>;
 
 /// <summary>Spec §6.4: status ∈ Open|Resolved (default Open), search ≤ 100, pageSize 1–50 (default 30), cursor emitido
@@ -91,7 +91,7 @@ public sealed class ListConversationsHandler(
             _ => null,
         };
         var filter = new ConversationListFilter(
-            status, assigned, me, search, customerWaIds, customerIds, channel, tagCustomerIds, query.Unread is true, sort, automation);
+            status, assigned, me, search, customerWaIds, customerIds, channel, tagCustomerIds, query.Unread is true, sort, automation, query.ConnectionId);
 
         ConversationCursor? after = null;
         if (query.Cursor is not null && ConversationCursor.TryDecode(query.Cursor, out var decoded))
