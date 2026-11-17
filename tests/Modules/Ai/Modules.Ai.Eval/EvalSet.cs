@@ -10,6 +10,10 @@ internal sealed class EvalSet
 
     public List<EvalCase> Cases { get; set; } = [];
 
+    /// <summary>Plan fase 2, C3.5 (spec 2026-11-17 copiloto §10, D-C5): aggregate questions the copilot must answer with a summary tool,
+    /// never by adding up list rows. Validated by <c>--dry-run</c>; the copilot runner is not wired yet, so they never spend money.</summary>
+    public List<EvalCopilotCase> CopilotCases { get; set; } = [];
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { ReadCommentHandling = JsonCommentHandling.Skip };
 
     public static EvalSet Load(string path) =>
@@ -33,6 +37,30 @@ internal sealed class EvalCase
     public List<EvalTurn> History { get; set; } = [];
 
     public EvalExpectation Expect { get; set; } = new();
+}
+
+/// <summary>A question a member asks the copilot, and the tools its answer must (and must not) use.</summary>
+internal sealed class EvalCopilotCase
+{
+    public string Id { get; set; } = string.Empty;
+
+    public string Description { get; set; } = string.Empty;
+
+    public string Question { get; set; } = string.Empty;
+
+    public EvalCopilotExpectation Expect { get; set; } = new();
+}
+
+internal sealed class EvalCopilotExpectation
+{
+    /// <summary>Tools the copilot must call (all of them): the summary that is the only source of the total.</summary>
+    public List<string> RequiredTools { get; set; } = [];
+
+    /// <summary>Tools it must not call to reach the total: the lists whose rows a model would add up.</summary>
+    public List<string> ForbiddenTools { get; set; } = [];
+
+    /// <summary>The rubric for the judge model, in Spanish. <c>null</c>: the rules are the whole grade.</summary>
+    public string? Judge { get; set; }
 }
 
 internal sealed class EvalTurn

@@ -28,6 +28,57 @@ internal static class EvalSetValidator
 
     private static readonly IReadOnlyList<string> Roles = ["customer", "agent", "greeting"];
 
+    /// <summary>The copilot tools (<c>Bootstrapper.Copilot</c>, internal to the composition root, so the names are repeated here; a case that
+    /// names a tool that no longer exists fails the dry run instead of grading nothing).</summary>
+    public static readonly IReadOnlyList<string> CopilotTools =
+    [
+        "get_orders_summary", "list_orders_report", "get_quotations_summary", "list_quotations_report", "get_customers_summary",
+        "get_margin_summary", "get_price_changes_summary", "search_orders", "get_order", "search_quotations", "get_quotation",
+        "search_customers", "get_customer", "search_products", "get_product", "get_messaging_summary", "search_loans", "get_loan",
+        "list_installments", "search_services", "get_service", "list_charges",
+    ];
+
+    /// <summary>§6: the copilot's question limit.</summary>
+    public const int CopilotQuestionMaxLength = 2000;
+
+    private static IEnumerable<string> ValidateCopilot(EvalSet set)
+    {
+        foreach (var duplicate in set.Cases.Select(@case => @case.Id).Concat(set.CopilotCases.Select(@case => @case.Id))
+                     .GroupBy(id => id, StringComparer.Ordinal).Where(group => group.Count() > 1 && set.CopilotCases.Any(@case => @case.Id == group.Key)))
+        {
+            yield return $"Copilot case id '{duplicate.Key}' is repeated.";
+        }
+
+        foreach (var @case in set.CopilotCases)
+        {
+            var at = $"Copilot case '{@case.Id}'";
+            if (string.IsNullOrWhiteSpace(@case.Id))
+            {
+                yield return "A copilot case has no id.";
+            }
+
+            if (string.IsNullOrWhiteSpace(@case.Question) || @case.Question.Length > CopilotQuestionMaxLength)
+            {
+                yield return $"{at}: the question must have 1 to {CopilotQuestionMaxLength} characters.";
+            }
+
+            if (@case.Expect.RequiredTools.Count == 0)
+            {
+                yield return $"{at}: an aggregate question must require its summary tool.";
+            }
+
+            foreach (var tool in @case.Expect.RequiredTools.Concat(@case.Expect.ForbiddenTools).Where(tool => !CopilotTools.Contains(tool)))
+            {
+                yield return $"{at}: unknown copilot tool '{tool}'.";
+            }
+
+            foreach (var tool in @case.Expect.RequiredTools.Intersect(@case.Expect.ForbiddenTools))
+            {
+                yield return $"{at}: '{tool}' is both required and forbidden.";
+            }
+        }
+    }
+
     public static IReadOnlyList<string> Validate(EvalSet set)
     {
         var errors = new List<string>();
@@ -101,6 +152,7 @@ internal static class EvalSetValidator
                 .Select(source => $"{at}: unknown FAQ id '{source}'."));
         }
 
+        errors.AddRange(ValidateCopilot(set));
         return errors;
     }
 }

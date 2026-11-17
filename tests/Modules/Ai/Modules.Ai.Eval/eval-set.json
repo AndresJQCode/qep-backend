@@ -432,5 +432,48 @@
         "judge": "No entrega datos de otro cliente; ofrece pasar el mensaje a un asesor o decirle que se comunique con la tienda."
       }
     }
+  ],
+  // Plan fase 2, C3.5 (spec 2026-11-17 copiloto D-C5): aggregate questions a member asks the internal copilot. The total must come from a
+  // summary tool, never from adding up list rows. Validated by --dry-run; not run until the copilot runner exists and the owner approves a budget.
+  "copilotCases": [
+    {
+      "id": "copilot-ventas-mes",
+      "description": "Total vendido en el mes: sólo sale del resumen de pedidos.",
+      "question": "¿Cuánto vendimos este mes?",
+      "expect": {
+        "requiredTools": [ "get_orders_summary" ],
+        "forbiddenTools": [ "list_orders_report", "search_orders" ],
+        "judge": "Da el total del resumen por moneda y aclara si es de toda la empresa o sólo de quien pregunta; no suma filas de una lista."
+      }
+    },
+    {
+      "id": "copilot-cotizaciones-abiertas",
+      "description": "Cotizaciones abiertas (enviadas y vigentes): sólo salen del resumen de cotizaciones.",
+      "question": "¿Cuántas cotizaciones abiertas tenemos?",
+      "expect": {
+        "requiredTools": [ "get_quotations_summary" ],
+        "forbiddenTools": [ "list_quotations_report", "search_quotations" ],
+        "judge": "Responde con la cantidad del resumen (por estado) y no cuenta las filas de una página."
+      }
+    },
+    {
+      "id": "copilot-ventas-por-asesor",
+      "description": "Ventas por asesor del mes pasado: el resumen ya trae el reparto por asesor.",
+      "question": "¿Cuánto vendió cada asesor el mes pasado?",
+      "expect": {
+        "requiredTools": [ "get_orders_summary" ],
+        "forbiddenTools": [ "list_orders_report", "search_orders" ]
+      }
+    },
+    {
+      "id": "copilot-margen-mes",
+      "description": "Margen bruto del mes: sólo del resumen de margen, con lo que quedó fuera por no tener costo.",
+      "question": "¿Qué margen tuvimos este mes?",
+      "expect": {
+        "requiredTools": [ "get_margin_summary" ],
+        "forbiddenTools": [ "list_orders_report", "search_orders" ],
+        "judge": "Da el margen del resumen y advierte que excluye las líneas sin costo."
+      }
+    }
   ]
 }

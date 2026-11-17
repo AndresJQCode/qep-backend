@@ -51,6 +51,9 @@ foreach (var group in cases.GroupBy(@case => @case.Category, StringComparer.Ordi
     Console.WriteLine($"  {group.Key,-15} {group.Count()}");
 }
 
+// Plan fase 2, C3.5: the copilot cases are validated above but not run; their runner (the copilot loop with fixture tools) is pending.
+Console.WriteLine($"Copilot cases: {set.CopilotCases.Count} (validated, not run).");
+
 var plannedCalls = cases.Count * options.Repeat * options.Variants.Count;
 Console.WriteLine($"Variants: {(options.Variants.Count == 0 ? "none" : string.Join(", ", options.Variants.Select(variant => variant.Label)))}; judge: {options.Judge?.Label ?? "none"}.");
 Console.WriteLine($"Turns to run: {plannedCalls} (each one makes 1 to {new AiModelCallOptions().MaxModelCalls} model calls by default, plus one judge call per case with a rubric).");
