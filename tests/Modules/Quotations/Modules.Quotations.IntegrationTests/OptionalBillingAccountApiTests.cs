@@ -49,6 +49,69 @@ public sealed class OptionalBillingAccountApiTests(SharedQuotationsHost sharedHo
         Assert.Equal(JsonValueKind.Null, account.GetProperty("accountNumber").ValueKind);
     }
 
+    // Review Focus 5: la vista previa con empresa y sin cuenta, que antes respondía billingAccount: null.
+    [Fact]
+    public async Task ACompanyOnlyPreviewAnswersTheCompanyWithNullBankFields()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var company = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/orders/preview",
+            new PreviewOrderRequest(
+                clientId, "Transferencia", null, false, null, null, null,
+                [new OrderEditItemRequest(productId, 1m)], []) with { BillingCompanyId = company.CompanyId },
+            TestContext.Current.CancellationToken);
+
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, $"{(int)response.StatusCode} {text}");
+        using var body = JsonDocument.Parse(text);
+        var account = body.RootElement.GetProperty("billingAccount");
+        Assert.Equal(company.CompanyId, account.GetProperty("companyId").GetGuid());
+        Assert.Equal(JsonValueKind.Null, account.GetProperty("bankName").ValueKind);
+        Assert.Equal(JsonValueKind.Null, account.GetProperty("accountNumber").ValueKind);
+        Assert.True(account.GetProperty("chargesVat").GetBoolean());
+    }
+
+    [Fact]
+    public async Task TheDetailReturnsChargesVat()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var cityId = await EnsureCityIdAsync(client);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        using var created = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name = "Régimen Simple S.A.S.",
+                bankAccounts = Array.Empty<object>(),
+                taxId = "901.222.333-4",
+                country = "CO",
+                documentType = "NIT",
+                cityId,
+                chargesVat = false,
+            },
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        using var companyBody = JsonDocument.Parse(
+            await created.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var companyId = companyBody.RootElement.GetProperty("id").GetGuid();
+        var quotation = await CreateQuotationAsync(
+            client, tenantId, clientId, billingAccount: new QuotationBillingAccountRequest(companyId, null, null, null));
+
+        var text = await client.GetStringAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+
+        using var body = JsonDocument.Parse(text);
+        var account = body.RootElement.GetProperty("billingAccount");
+        Assert.False(account.GetProperty("chargesVat").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, account.GetProperty("bankName").ValueKind);
+    }
+
     // Sin cuenta, la moneda es la por defecto del tenant (COP), aunque el request traiga otra: la decide el documento (R3).
     [Fact]
     public async Task AManualOrderIsCreatedWithoutBankAccountInTheTenantCurrency()

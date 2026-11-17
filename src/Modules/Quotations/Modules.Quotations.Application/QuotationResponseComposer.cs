@@ -389,7 +389,8 @@ public sealed class QuotationResponseComposer(
                 company?.Phone,
                 account.BankName,
                 account.AccountNumber,
-                account.Currency);
+                account.Currency,
+                account.ChargesVat);
 
     // Field-by-field copy: the computation is QuotationMinimumPurchase.DescribeFor, the single
     // source of truth.

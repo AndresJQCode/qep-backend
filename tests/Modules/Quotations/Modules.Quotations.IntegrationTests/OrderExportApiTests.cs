@@ -844,6 +844,30 @@ public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClas
         Assert.Equal(string.Empty, row[headers.IndexOf("V. Consignacion 2")]);
     }
 
+    // Spec 2026-11-17 §4.2: un pedido de una empresa sin cuenta deja vacías las formas de pago aunque tenga comprobante; el
+    // ERP no recibe una cuenta que no existe.
+    [Fact]
+    public async Task AnOrderWithoutBankAccountLeavesThePaymentMethodCellsEmpty()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        await AddProofAsync(client, factory, tenantId, order.Id);
+        await ExecuteSqlAsync(
+            factory,
+            $"UPDATE quotations.orders SET billing_bank_name = NULL, billing_account_number = NULL WHERE id = '{order.Id}'");
+        await factory.Services.SeedOrdersExportLayoutAsync(tenantId, TestContext.Current.CancellationToken);
+
+        var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
+
+        var headers = sheet.Rows[0].ToList();
+        var row = sheet.Rows[1];
+        Assert.Equal(string.Empty, row[headers.IndexOf("Forma de pago 1")]);
+        Assert.Equal(5_000m, decimal.Parse(row[headers.IndexOf("V. Consignacion 1")], CultureInfo.InvariantCulture));
+    }
+
     // Spec 2026-10-05 (recoger en tienda), de punta a punta: con el layout de la semilla,
     // "Transportadora (P2)" sale "Recoger en tienda" en el pedido cuya cotización es de recogida y
     // "Coordinadora" en el otro, en el mismo archivo (Review Focus 2). Aparte de

@@ -311,7 +311,9 @@ public sealed record QuotationBillingAccountDto(
     string? Country = null,
     /// <summary>El municipio de la empresa congelado con la cuenta (<c>billing_company_city_id</c>, A12); null en un
     /// documento anterior que todavía no reenvió la cuenta.</summary>
-    Guid? CityId = null);
+    Guid? CityId = null,
+    /// <summary>Si la empresa emisora cobra IVA, congelado con la cuenta (spec 2026-11-17 §5.2).</summary>
+    bool ChargesVat = true);
 
 /// <summary>
 /// La cuenta elegida, tal como viaja en el request. Llegan los cuatro campos y no sólo el id de
@@ -932,7 +934,9 @@ public sealed record QuotationBillingResponse(
     /// <summary>Null, junto con <c>AccountNumber</c>, en una empresa sin cuenta (spec 2026-11-17 §4.2).</summary>
     string? BankName,
     string? AccountNumber,
-    string Currency);
+    string Currency,
+    /// <summary>Si la empresa emisora cobra IVA, congelado con el documento (spec 2026-11-17 §6).</summary>
+    bool ChargesVat = true);
 
 public sealed record QuotationPartyResponse(
     Guid Id,
