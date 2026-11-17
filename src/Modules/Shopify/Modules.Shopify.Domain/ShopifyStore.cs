@@ -67,6 +67,10 @@ public sealed class ShopifyStore
     /// <summary>§5.3: una corrida no se solapa con otra de la misma tienda.</summary>
     public DateTimeOffset? ReconcileLeaseUntil { get; private set; }
 
+    /// <summary>Spec 2026-11-17 §5.2: cuándo terminó <c>Done</c> la última importación de productos. Desde ahí los webhooks
+    /// <c>products/*</c> crean, actualizan y desactivan (§6); sin ella se ignoran.</summary>
+    public DateTimeOffset? ProductsSyncedAt { get; private set; }
+
     /// <summary>Concurrencia optimista con <c>If-Match</c> en el <c>PUT</c>.</summary>
     public long Version { get; private set; }
 
@@ -87,6 +91,10 @@ public sealed class ShopifyStore
 
         ShopDomain = normalized;
     }
+
+    /// <summary>Anota que el catálogo de la tienda ya se trajo. No sube <see cref="Version"/>: no es configuración del asesor, y
+    /// un 412 por esto le rompería el formulario abierto.</summary>
+    public void MarkProductsSynced(DateTimeOffset now) => ProductsSyncedAt = now;
 
     /// <summary>
     /// §6.1 y §7: la tienda configurada de una vez, como la guarda el <c>PUT</c>. Lo que depende de otros módulos (que

@@ -42,6 +42,26 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     /// chocan acá; <see cref="ShopifyUnitOfWork"/> lo traduce por nombre a <c>concurrency.conflict</c>.</summary>
     public const string OrderPushMirrorPendingIndex = "IX_order_pushes_mirror_pending";
 
+    /// <summary>Spec 2026-11-17 §3: una variante de Shopify se vincula una vez por tienda. Frena el duplicado entre el webhook y la
+    /// importación; <see cref="ShopifyUnitOfWork"/> lo traduce por nombre a <c>concurrency.conflict</c>.</summary>
+    public const string ProductLinkShopifyVariantIndex = "IX_product_links_connection_shopify_variant";
+
+    /// <summary>Spec 2026-11-17 §3: una variante de QEP tiene a lo sumo un vínculo por tienda.</summary>
+    public const string ProductLinkVariantIndex = "IX_product_links_connection_variant";
+
+    public const string ProductLinkShopifyProductIndex = "IX_product_links_connection_shopify_product";
+
+    public const string ProductLinkProductIndex = "IX_product_links_connection_product";
+
+    /// <summary>Spec 2026-11-17 §5.2: una importación viva por tienda; se traduce a <c>shopify.products.import_running</c>.</summary>
+    public const string ProductImportLiveIndex = "IX_product_imports_connection_live";
+
+    public const string ProductImportStatusLeaseIndex = "IX_product_imports_status_lease";
+
+    public const string ProductImportConnectionCreatedIndex = "IX_product_imports_connection_created";
+
+    public const string ProductImportIssueImportIndex = "IX_product_import_issues_import";
+
     // Los grupos de un envío como text[] por nombre, como edit_payment_statuses de la tienda.
     private static readonly ValueConverter<IReadOnlyList<ShopifyPushGroup>, string[]> PushGroupsConverter = new(
         groups => groups.Select(group => group.ToString()).ToArray(),
@@ -76,6 +96,12 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
 
     public DbSet<ShopifyOrderPush> OrderPushes => Set<ShopifyOrderPush>();
 
+    public DbSet<ShopifyProductLink> ProductLinks => Set<ShopifyProductLink>();
+
+    public DbSet<ShopifyProductImport> ProductImports => Set<ShopifyProductImport>();
+
+    public DbSet<ShopifyProductImportIssue> ProductImportIssues => Set<ShopifyProductImportIssue>();
+
     internal DbSet<ShopifyInboxMessage> Inbox => Set<ShopifyInboxMessage>();
 
     internal DbSet<ShopifyOutboxRecord> Outbox => Set<ShopifyOutboxRecord>();
@@ -100,6 +126,9 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         ConfigureCityCorrection(modelBuilder);
         ConfigureCityCorrectionJob(modelBuilder);
         ConfigureCustomLineMapping(modelBuilder);
+        ConfigureProductLink(modelBuilder);
+        ConfigureProductImport(modelBuilder);
+        ConfigureProductImportIssue(modelBuilder);
         ConfigureInbox(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
@@ -123,6 +152,93 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         mapping.HasIndex(value => new { value.ConnectionId, value.Title })
             .IsUnique()
             .HasDatabaseName(CustomLineMappingConnectionTitleIndex);
+    }
+
+    // Spec 2026-11-17 §3. Producto y variante de QEP son referencias blandas a catalog (otro esquema, sin FK).
+    private static void ConfigureProductLink(ModelBuilder modelBuilder)
+    {
+        var link = modelBuilder.Entity<ShopifyProductLink>();
+        link.ToTable("product_links", Schema, table =>
+            table.HasCheckConstraint("CK_product_links_origin", NamesCheck<ShopifyProductLinkOrigin>("origin")));
+        link.HasKey(value => value.Id);
+        link.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        link.Property(value => value.TenantId).HasColumnName("tenant_id");
+        link.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        link.Property(value => value.ShopifyProductId).HasColumnName("shopify_product_id");
+        link.Property(value => value.ShopifyVariantId).HasColumnName("shopify_variant_id");
+        link.Property(value => value.ProductId).HasColumnName("product_id");
+        link.Property(value => value.VariantId).HasColumnName("variant_id");
+        link.Property(value => value.Origin).HasColumnName("origin").HasConversion<string>().HasMaxLength(EnumNameMaxLength);
+        link.Property(value => value.ShopifyUpdatedAt).HasColumnName("shopify_updated_at");
+        link.Property(value => value.ShopifyImageId).HasColumnName("shopify_image_id");
+        link.Property(value => value.ImageFileId).HasColumnName("image_file_id");
+        link.Property(value => value.CreatedAt).HasColumnName("created_at");
+        link.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        link.HasIndex(value => new { value.ConnectionId, value.ShopifyVariantId }).IsUnique().HasDatabaseName(ProductLinkShopifyVariantIndex);
+        link.HasIndex(value => new { value.ConnectionId, value.VariantId }).IsUnique().HasDatabaseName(ProductLinkVariantIndex);
+        link.HasIndex(value => new { value.ConnectionId, value.ShopifyProductId }).HasDatabaseName(ProductLinkShopifyProductIndex);
+        link.HasIndex(value => new { value.ConnectionId, value.ProductId }).HasDatabaseName(ProductLinkProductIndex);
+    }
+
+    // Spec 2026-11-17 §5.2. Los nombres van a mano: el worker reclama y cierra por SQL crudo (status, lease_until, attempts).
+    private static void ConfigureProductImport(ModelBuilder modelBuilder)
+    {
+        var import = modelBuilder.Entity<ShopifyProductImport>();
+        import.ToTable("product_imports", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_product_imports_mode", NamesCheck<ShopifyProductImportMode>("mode"));
+            table.HasCheckConstraint("CK_product_imports_status", NamesCheck<ShopifyProductImportStatus>("status"));
+        });
+        import.HasKey(value => value.Id);
+        import.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        import.Property(value => value.TenantId).HasColumnName("tenant_id");
+        import.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        import.Property(value => value.Mode).HasColumnName("mode").HasConversion<string>().HasMaxLength(EnumNameMaxLength);
+        import.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(EnumNameMaxLength);
+        import.Property(value => value.Total).HasColumnName("total");
+        import.Property(value => value.Done).HasColumnName("done");
+        import.Property(value => value.Created).HasColumnName("created");
+        import.Property(value => value.Matched).HasColumnName("matched");
+        import.Property(value => value.WithoutSku).HasColumnName("without_sku");
+        import.Property(value => value.Skipped).HasColumnName("skipped");
+        import.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(ShopifyProductCodes.CodeMaxLength);
+        // Membresía y sujeto: referencias blandas a tenancy e identity.
+        import.Property(value => value.RequestedBy).HasColumnName("requested_by");
+        import.Property(value => value.RequestedBySubjectId).HasColumnName("requested_by_subject_id");
+        import.Property(value => value.Cursor).HasColumnName("cursor").HasMaxLength(ShopifyProductImport.CursorMaxLength);
+        import.Property(value => value.LeaseUntil).HasColumnName("lease_until");
+        import.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
+        import.Property(value => value.CreatedAt).HasColumnName("created_at");
+        import.Property(value => value.FinishedAt).HasColumnName("finished_at");
+        import.Ignore(value => value.IsLive);
+
+        import.HasIndex(value => value.ConnectionId)
+            .IsUnique()
+            .HasFilter("status IN ('Pending','Running')")
+            .HasDatabaseName(ProductImportLiveIndex);
+        import.HasIndex(value => new { value.Status, value.LeaseUntil }).HasDatabaseName(ProductImportStatusLeaseIndex);
+        import.HasIndex(value => new { value.ConnectionId, value.CreatedAt }).HasDatabaseName(ProductImportConnectionCreatedIndex);
+    }
+
+    private static void ConfigureProductImportIssue(ModelBuilder modelBuilder)
+    {
+        var issue = modelBuilder.Entity<ShopifyProductImportIssue>();
+        issue.ToTable("product_import_issues", Schema);
+        issue.HasKey(value => value.Id);
+        issue.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        issue.Property(value => value.ImportId).HasColumnName("import_id");
+        issue.Property(value => value.ShopifyProductId).HasColumnName("shopify_product_id");
+        issue.Property(value => value.Title).HasColumnName("title").HasMaxLength(ShopifyProductImportIssue.TitleMaxLength);
+        issue.Property(value => value.Code).HasColumnName("code").HasMaxLength(ShopifyProductCodes.CodeMaxLength);
+        issue.Property(value => value.CreatedAt).HasColumnName("created_at");
+
+        // Borrar la importación se lleva sus issues.
+        issue.HasOne<ShopifyProductImport>()
+            .WithMany()
+            .HasForeignKey(value => value.ImportId)
+            .OnDelete(DeleteBehavior.Cascade);
+        issue.HasIndex(value => new { value.ImportId, value.CreatedAt }).HasDatabaseName(ProductImportIssueImportIndex);
     }
 
     private static void ConfigureCityCorrectionJob(ModelBuilder modelBuilder)
@@ -284,6 +400,8 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
             .IsRequired();
         store.Property(value => value.LastReconciledAt).HasColumnName("last_reconciled_at");
         store.Property(value => value.ReconcileLeaseUntil).HasColumnName("reconcile_lease_until");
+        // Spec 2026-11-17 §5.2: nula en las tiendas de antes; los webhooks de productos se ignoran hasta la primera importación.
+        store.Property(value => value.ProductsSyncedAt).HasColumnName("products_synced_at");
         store.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
         store.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         store.Property(value => value.UpdatedBy).HasColumnName("updated_by");

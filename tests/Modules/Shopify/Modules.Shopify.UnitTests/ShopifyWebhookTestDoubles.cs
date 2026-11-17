@@ -397,6 +397,12 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
         return Task.CompletedTask;
     }
 
+    public Task LockProductAsync(Guid connectionId, long shopifyProductId, CancellationToken cancellationToken)
+    {
+        database.Log.Add($"product-lock:{connectionId}:{shopifyProductId}");
+        return Task.CompletedTask;
+    }
+
     public void DiscardPendingChanges()
     {
         Discards++;

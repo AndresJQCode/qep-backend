@@ -44,6 +44,8 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyCityCorrectionRepository, ShopifyCityCorrectionRepository>();
         services.AddScoped<IShopifyCityCorrectionJobRepository, ShopifyCityCorrectionJobRepository>();
         services.AddScoped<IShopifyCustomLineMappingRepository, ShopifyCustomLineMappingRepository>();
+        services.AddScoped<IShopifyProductLinkRepository, ShopifyProductLinkRepository>();
+        services.AddScoped<IShopifyProductImportRepository, ShopifyProductImportRepository>();
         services.AddSingleton<IShopifyOrderPayloadParser, ShopifyOrderPayloadParser>();
 
         // §5.3: la conciliación. El cliente GraphQL es scoped (lleva el estado del balde de Shopify de una corrida) y su
