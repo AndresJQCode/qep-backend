@@ -168,7 +168,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal("anthropic", provider.Key);
         Assert.Equal("Anthropic (Claude)", provider.DisplayName);
         Assert.Equal(IntegrationCategory.Ai, provider.Category);
-        Assert.Equal([TenantModuleKeys.Ai], provider.ConsumingModules);
+        Assert.Equal([TenantModuleKeys.Ai, TenantModuleKeys.Copilot], provider.ConsumingModules);
         Assert.Equal(1, provider.MaxConnections);
         Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
         Assert.False(provider.RequiresTenantEnablement);
@@ -198,7 +198,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal("openai", provider.Key);
         Assert.Equal("OpenAI", provider.DisplayName);
         Assert.Equal(IntegrationCategory.Ai, provider.Category);
-        Assert.Equal([TenantModuleKeys.Ai], provider.ConsumingModules);
+        Assert.Equal([TenantModuleKeys.Ai, TenantModuleKeys.Copilot], provider.ConsumingModules);
         Assert.Equal(1, provider.MaxConnections);
         Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
         Assert.False(provider.RequiresTenantEnablement);
@@ -356,6 +356,20 @@ public sealed class IntegrationCatalogTests
     [Fact]
     public void AContractedButIneffectiveModuleDoesNotMakeItVisible() =>
         Assert.False(IntegrationProviders.Zenvia.IsVisibleFor(TenantModuleSet.FromStored([TenantModuleKeys.Quotations])));
+
+    // Spec 2026-11-17 (copiloto), D-C2: la clave BYOK la consumen los agentes y el copiloto; con cualquiera de los dos encendido se ve.
+    [Fact]
+    public void TheAiProvidersAreVisibleWithAiOrCopilot()
+    {
+        TenantModuleKey[] onlyCopilot = [TenantModuleKeys.Copilot];
+        TenantModuleKey[] onlyAi = [TenantModuleKeys.Messaging, TenantModuleKeys.Ai];
+        foreach (var provider in new[] { IntegrationProviders.Anthropic, IntegrationProviders.OpenAi })
+        {
+            Assert.True(provider.IsVisibleFor(TenantModuleSet.FromStored(onlyCopilot)));
+            Assert.True(provider.IsVisibleFor(TenantModuleSet.FromStored(onlyAi)));
+            Assert.False(provider.IsVisibleFor(TenantModuleSet.FromStored([TenantModuleKeys.Messaging])));
+        }
+    }
 
     [Fact]
     public void TheDevelopmentStubSeesEverything() =>

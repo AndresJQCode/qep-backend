@@ -2156,6 +2156,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-29 §1: un agente IA habla con los clientes en nombre de la empresa; de fábrica sólo en admin. De núcleo.
                 AiPermissions.AgentRead,
                 AiPermissions.AgentManage,
+                // Spec 2026-11-17 (copiloto), D-C14 y OC-1: cada pregunta gasta saldo del tenant; de fábrica sólo en admin. De núcleo.
+                AiPermissions.CopilotUse,
+                AiPermissions.CopilotManage,
                 // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
@@ -3074,6 +3077,27 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("ai.agent", "Agentes IA", "manage"),
         });
+        // Spec 2026-11-17 (copiloto), D-C14: de núcleo como los de agentes; cada handler revisa la capacidad copilot.
+        services.AddSingleton(new PermissionDefinition(
+            AiPermissions.CopilotUse,
+            "Usar el copiloto",
+            "Permite preguntarle al copiloto por los datos de la empresa. Sólo ve lo que el miembro ya puede ver.",
+            "Ai",
+            "medium",
+            RequiredModules: [])
+        {
+            Shape = new("ai.copilot", "Copiloto", "use"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            AiPermissions.CopilotManage,
+            "Configurar el copiloto",
+            "Permite elegir el proveedor y el modelo del copiloto, su contexto del negocio, el tope mensual de tokens y la retención.",
+            "Ai",
+            "high",
+            RequiredModules: [])
+        {
+            Shape = new("ai.copilot", "Copiloto", "manage"),
+        });
         // Spec 2026-10-23 D-14: proveedores exige el módulo suppliers.
         services.AddSingleton(new PermissionDefinition(
             SuppliersPermissions.Read,
@@ -3594,6 +3618,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 AiPermissions.AgentManage,
                 policy => AddPermissionRequirement(policy, AiPermissions.AgentManage))
+            // Spec 2026-11-17 (copiloto): la otra mitad de sus permisos; sin ella el síntoma es 500, no 403.
+            .AddPolicy(
+                AiPermissions.CopilotUse,
+                policy => AddPermissionRequirement(policy, AiPermissions.CopilotUse))
+            .AddPolicy(
+                AiPermissions.CopilotManage,
+                policy => AddPermissionRequirement(policy, AiPermissions.CopilotManage))
             // Spec 2026-10-23 D-14: la otra mitad de los permisos de proveedores; sin ella el síntoma es 500.
             .AddPolicy(
                 SuppliersPermissions.Read,

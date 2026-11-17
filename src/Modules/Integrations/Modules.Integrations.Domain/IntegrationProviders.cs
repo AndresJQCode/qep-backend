@@ -309,14 +309,14 @@ public static class IntegrationProviders
         requiresTenantEnablement: false);
 
     /// <summary>Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant (BYOK, owner 2026-11-12), que consumen los agentes
-    /// IA. Una por tenant y sin habilitación por tenant: todo tenant con <c>ai</c> puede conectarla (P-16). El patrón sólo exige texto
+    /// IA y el copiloto (spec 2026-11-17, D-C2). Una por tenant y sin habilitación por tenant: todo tenant con <c>ai</c> o <c>copilot</c> puede conectarla (P-16). El patrón sólo exige texto
     /// imprimible sin espacios: el formato de las claves es de Anthropic y lo juzga el probador, no el catálogo. La pantalla ve los
     /// últimos 4 caracteres (D-A23).</summary>
     public static readonly IntegrationProvider Anthropic = new(
         "anthropic",
         "Anthropic (Claude)",
         IntegrationCategory.Ai,
-        [TenantModuleKeys.Ai],
+        [TenantModuleKeys.Ai, TenantModuleKeys.Copilot],
         [
             new FieldDefinition(
                 AnthropicFieldKeys.ApiKey, "Clave de API", FieldKind.Secret,
@@ -335,7 +335,7 @@ public static class IntegrationProviders
         "openai",
         "OpenAI",
         IntegrationCategory.Ai,
-        [TenantModuleKeys.Ai],
+        [TenantModuleKeys.Ai, TenantModuleKeys.Copilot],
         [
             new FieldDefinition(
                 OpenAiFieldKeys.ApiKey, "Clave de API", FieldKind.Secret,
