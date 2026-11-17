@@ -11,8 +11,11 @@ public static class CopilotRegistration
     {
         services.AddScoped<ICopilotToolExecutor, CopilotToolExecutor>();
         // Plan fase 2, C2.5: los reportes (CP-3). Sin estado: un singleton por herramienta.
-        // C3.1 y C3.2: pedidos y cotizaciones; clientes, catálogo y Mensajería (CP-4).
-        foreach (var tool in CopilotReportTools.All().Concat(CopilotDocumentTools.All()).Concat(CopilotDirectoryTools.All()))
+        // C3.1 a C3.3: pedidos y cotizaciones; clientes, catálogo y Mensajería; préstamos y contratos de servicio (CP-4).
+        foreach (var tool in CopilotReportTools.All()
+            .Concat(CopilotDocumentTools.All())
+            .Concat(CopilotDirectoryTools.All())
+            .Concat(CopilotFinanceTools.All()))
         {
             services.AddSingleton(tool);
         }
