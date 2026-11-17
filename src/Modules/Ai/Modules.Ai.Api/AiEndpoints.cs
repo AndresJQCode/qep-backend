@@ -59,6 +59,12 @@ public static class AiEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        agents.MapGet("/{agentId:guid}/export", ExportAgentAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Produces<AgentExportDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         agents.MapGet("/{agentId:guid}", GetAgentAsync)
             .RequireAuthorization(AiPermissions.AgentRead)
             .Produces<AgentEditorDto>()
@@ -366,6 +372,9 @@ public static class AiEndpoints
                 new CreateAgentCommand(
                     tenantId, request.Name, request.Source is null ? null! : new AgentSource(request.Source.Kind, request.Source.AgentId)),
                 cancellationToken));
+
+    private static async Task<IResult> ExportAgentAsync(Guid tenantId, Guid agentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ExportAgentQuery(tenantId, agentId), cancellationToken));
 
     private static async Task<IResult> GetAgentAsync(Guid tenantId, Guid agentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetAgentQuery(tenantId, agentId), cancellationToken));
