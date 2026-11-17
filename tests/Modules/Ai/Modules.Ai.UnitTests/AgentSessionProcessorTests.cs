@@ -13,9 +13,10 @@ namespace Modules.Ai.UnitTests;
 public sealed class AgentSessionProcessorTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 15, 12, 0, 0, TimeSpan.Zero);
-    private static readonly Guid Tenant = Guid.CreateVersion7();
-    private static readonly Guid Connection = Guid.CreateVersion7();
-    private static readonly Guid Conversation = Guid.CreateVersion7();
+    // Internos: AgentBlockSessionProcessorTests reusa los dobles, que los fijan.
+    internal static readonly Guid Tenant = Guid.CreateVersion7();
+    internal static readonly Guid Connection = Guid.CreateVersion7();
+    internal static readonly Guid Conversation = Guid.CreateVersion7();
     private static readonly Guid By = Guid.CreateVersion7();
 
     private sealed class World

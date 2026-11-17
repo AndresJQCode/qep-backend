@@ -54,7 +54,8 @@ internal sealed partial class AiConversations(
             row.BlockedAt is not null,
             ChannelOutboundRules.IsWindowOpen(row.Channel, row.LastInboundAt, now),
             expiresAt is { } expires ? (expires > now ? expires - now : TimeSpan.Zero) : null,
-            rule.TextMaxLength);
+            rule.TextMaxLength,
+            row.AutomationDelegationId);
     }
 
     public async Task StartAsync(Guid tenantId, Guid conversationId, Guid agentId, CancellationToken cancellationToken)

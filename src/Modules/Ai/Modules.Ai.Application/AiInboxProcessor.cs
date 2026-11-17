@@ -110,6 +110,16 @@ public sealed partial class AiInboxProcessor(
             return AiInboxOutcomes.Locked;
         }
 
+        // Spec 2026-11-17 §6.2: la fila Delegated no es un entrante (su message_id no es un mensaje): abre la sesión del bloque y nada más.
+        // Sin esta rama se leería como un arranque manual.
+        if (item.DelegationId is { } delegationId)
+        {
+            var conversationNow = await conversations.GetAsync(item.TenantId, item.ConversationId, cancellationToken);
+            var opened = await OpenBlockAsync(item, delegationId, inbound: null, NowFor(conversationNow), cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return opened;
+        }
+
         var session = await sessions.FindLiveForUpdateAsync(item.TenantId, item.ConversationId, cancellationToken);
         // P2-R24: esta fila ya se procesó (el cierre falló o el lease venció antes): nada se repite.
         var latest = session ?? await sessions.FindLatestAsync(item.TenantId, item.ConversationId, cancellationToken);
@@ -119,7 +129,7 @@ public sealed partial class AiInboxProcessor(
         }
 
         var conversation = await conversations.GetAsync(item.TenantId, item.ConversationId, cancellationToken);
-        var now = conversation?.AutomationResumedAt is { } resumedAt && resumedAt > clock.UtcNow ? resumedAt : clock.UtcNow;
+        var now = NowFor(conversation);
 
         // §6.8: con el módulo apagado el agente no contesta; la conversación que atendía pasa a la bandeja sin asignar, con aviso.
         if (!await modules.IsEnabledAsync(item.TenantId, cancellationToken))
@@ -151,7 +161,7 @@ public sealed partial class AiInboxProcessor(
         }
         else if (session is not null)
         {
-            await AppendCustomerTurnAsync(session, item, now, cancellationToken);
+            await AppendCustomerTurnAsync(session, item.MessageId, now, cancellationToken);
             outcome = AiInboxOutcomes.Continued;
         }
         else
@@ -170,6 +180,13 @@ public sealed partial class AiInboxProcessor(
         if (conversation.Status != AiConversationState.Open || conversation.AssignedMemberId is not null || conversation.Blocked)
         {
             return null;
+        }
+
+        // Spec 2026-11-17 §6.2: la conversación es de un agente por un bloque de chatbot y la fila Delegated todavía no abrió la sesión (un
+        // reintento por candado la dejó atrás). Este entrante abre la misma sesión del bloque, sin saludo ni disparador; nunca una de conexión.
+        if (conversation.AutomationDelegationId is { } delegationId)
+        {
+            return await OpenBlockAsync(item, delegationId, inbound: item, now, cancellationToken);
         }
 
         Agent? agent;
@@ -261,9 +278,91 @@ public sealed partial class AiInboxProcessor(
             }
         }
 
-        await AppendCustomerTurnAsync(session, item, now, cancellationToken);
+        await AppendCustomerTurnAsync(session, item.MessageId, now, cancellationToken);
         return AiInboxOutcomes.Started;
     }
+
+    /// <summary>
+    /// Spec 2026-11-17 §6.2: abre la sesión del bloque de la delegación, con el candado ya tomado. El id sale de la delegación, así que la
+    /// fila <c>Delegated</c> y un entrante que se le adelante abren la misma (el segundo es <c>duplicate</c>). Sin saludo (D-B6) y sin mirar
+    /// ocupante ni disparador: la conversación ya es del agente. Si el agente no puede atender (pausado, borrado, sin versión legible, sin la
+    /// cuenta de su proveedor, módulo apagado) no abre nada y la conversación vuelve al flujo por <c>error</c>.
+    /// </summary>
+    /// <param name="inbound">El entrante que llegó antes que la fila <c>Delegated</c>; <c>null</c> desde la fila.</param>
+    private async Task<string> OpenBlockAsync(
+        AiInboxItem item, Guid delegationId, AiInboxItem? inbound, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var sessionId = AiDeterministicIds.SessionForDelegation(delegationId);
+        if (await sessions.FindAsync(item.TenantId, sessionId, cancellationToken) is not null)
+        {
+            return AiInboxOutcomes.Duplicate;
+        }
+
+        var delegation = await conversations.ReadDelegationAsync(item.TenantId, delegationId, cancellationToken);
+        if (delegation is null || !delegation.IsLive || delegation.ConversationId != item.ConversationId)
+        {
+            // Una persona la tomó antes (la delegación quedó Interrupted) o ya volvió: nadie espera esta sesión.
+            return AiInboxOutcomes.Skipped;
+        }
+
+        // D-B16: con el módulo apagado el bloque sale por error y lo decide el flujo, no la bandeja.
+        if (!await modules.IsEnabledAsync(item.TenantId, cancellationToken))
+        {
+            return await ReturnAsync(item, delegationId, AgentBlockReasons.ModuleDisabled, cancellationToken);
+        }
+
+        // D-B18 y §6.6: un agente pausado no abre delegaciones nuevas (D-A6); uno borrado o sin versión legible, tampoco.
+        var agent = await sessions.FindAgentAsync(item.TenantId, delegation.AgentId, cancellationToken);
+        if (agent is not { Status: AgentStatus.Active, PublishedVersion: { } version } || !AiProvider.TryParse(version.Provider, out var provider))
+        {
+            LogCannotTakeBack(logger, item.TenantId, delegation.AgentId, item.ConversationId);
+            return await ReturnAsync(item, delegationId, AgentBlockReasons.AgentUnavailable, cancellationToken);
+        }
+
+        // C-19: la cuenta del proveedor de este agente.
+        var credential = await credentials.ResolveAsync(item.TenantId, provider!, cancellationToken);
+        if (credential.Credential is null)
+        {
+            LogProviderUnavailable(
+                logger, item.TenantId, agent.Id, item.ConversationId, provider!.Value,
+                credential.Unavailable is { } unavailable ? unavailable.ToString() : "unknown");
+            return await ReturnAsync(item, delegationId, AiErrorCodes.ProviderNotConfigured, cancellationToken);
+        }
+
+        // D-B5: la versión publicada de ahora, con la que la sesión termina aunque el agente se republique.
+        var brief = AgentBlockBrief.Parse(delegation.BriefJson);
+        var session = AgentSession.OpenForBlock(
+            sessionId, item.TenantId, item.ConversationId, delegation.ConnectionId, agent.Id, version.Id, delegationId, delegation.ChatbotId,
+            delegation.RunId, brief.IdleMinutes, now);
+        sessions.Add(session);
+
+        // D-B7: lastMessage responde el entrante que llevó la corrida al bloque; sin él (arranque manual) espera como nextMessage. Un
+        // entrante que se adelantó a la fila va detrás, en el mismo trabajo.
+        var turns = new List<Guid>(2);
+        if (brief.AnswersLastMessage && delegation.LastInboundMessageId is { } reached && reached != inbound?.MessageId)
+        {
+            turns.Add(reached);
+        }
+
+        if (inbound is not null)
+        {
+            turns.Add(inbound.MessageId);
+        }
+
+        await AppendCustomerTurnsAsync(session, turns, now, cancellationToken);
+        return AiInboxOutcomes.Started;
+    }
+
+    private async Task<string> ReturnAsync(AiInboxItem item, Guid delegationId, string reason, CancellationToken cancellationToken) =>
+        await AgentBlockReturn.TryReturnAsync(
+            conversations, item.TenantId, item.ConversationId, delegationId, AgentBlockResult.Error(reason), cancellationToken)
+            ? AiInboxOutcomes.Returned
+            : AiInboxOutcomes.Skipped;
+
+    /// <summary>El reloj de la unidad: si una persona devolvió la conversación al asistente con un reloj adelantado, la sesión empieza
+    /// después (P2-R25).</summary>
+    private DateTimeOffset NowFor(AiConversationState? conversation) =>
+        conversation?.AutomationResumedAt is { } resumedAt && resumedAt > clock.UtcNow ? resumedAt : clock.UtcNow;
 
     /// <summary>D-A9 y D-M16: sólo el entrante que abre o reabre la conversación arranca un agente; con <c>OutsideHours</c>, además, fuera
     /// del horario de la conexión.</summary>
@@ -283,18 +382,34 @@ public sealed partial class AiInboxProcessor(
 
     /// <summary>§6.2 paso 7 y D-A14: el turno del cliente y el trabajo. Con uno pendiente sólo se le suben los turnos; si no, uno nuevo con el
     /// debounce para juntar la ráfaga.</summary>
-    private async Task AppendCustomerTurnAsync(AgentSession session, AiInboxItem item, DateTimeOffset now, CancellationToken cancellationToken)
+    private Task AppendCustomerTurnAsync(AgentSession session, Guid messageId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        AppendCustomerTurnsAsync(session, [messageId], now, cancellationToken);
+
+    /// <summary>Varios turnos del cliente en la misma unidad, con un solo trabajo: el pendiente nuevo todavía no está en la base y la lectura
+    /// con <c>FOR UPDATE</c> no lo vería (<c>IX_model_jobs_session_open</c>).</summary>
+    private async Task AppendCustomerTurnsAsync(
+        AgentSession session, IReadOnlyList<Guid> messageIds, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var turn = session.AppendTurn(AgentTurnRoleKind.Customer, item.MessageId, null, [], truncated: false, now);
-        sessions.AddTurn(turn);
-        session.MarkInbound(item.MessageId);
+        AgentTurn? turn = null;
+        foreach (var messageId in messageIds)
+        {
+            turn = session.AppendTurn(AgentTurnRoleKind.Customer, messageId, null, [], truncated: false, now);
+            sessions.AddTurn(turn);
+            session.MarkInbound(messageId);
+        }
+
+        if (turn is null)
+        {
+            return;
+        }
+
         if (await sessions.FindPendingJobAsync(session.Id, cancellationToken) is { } pending)
         {
             pending.ExtendTo(turn.Seq);
             return;
         }
 
-        jobs.Add(ModelJob.ForSession(Guid.CreateVersion7(), item.TenantId, session.Id, turn.Seq, now + timings.Debounce, now));
+        jobs.Add(ModelJob.ForSession(Guid.CreateVersion7(), session.TenantId, session.Id, turn.Seq, now + timings.Debounce, now));
     }
 
     /// <summary>Revisión final, hallazgo 4: el traspaso de una conversación que el agente tiene sin sesión viva. Si una persona la tomó en el

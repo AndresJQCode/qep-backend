@@ -23,7 +23,8 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
         dbContext.BotDelegations
             .Where(delegation => delegation.Id == conversation.AutomationDelegationId)
             .Select(delegation => (Guid?)delegation.ChatbotId)
-            .FirstOrDefault());
+            .FirstOrDefault(),
+        conversation.AutomationDelegationId);
 
     public async Task<IReadOnlyList<ConversationRow>> ListAsync(
         Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken)

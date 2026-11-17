@@ -10,6 +10,8 @@ namespace Modules.Ai.Application;
 /// <param name="WindowOpen">Si la ventana del canal sigue abierta ahora (<c>ChannelOutboundRules</c> de Mensajería).</param>
 /// <param name="WindowRemaining">Lo que queda de esa ventana; <c>null</c> sin ventana.</param>
 /// <param name="TextMaxLength">§6.5: el largo máximo de un texto en el canal.</param>
+/// <param name="AutomationDelegationId">Spec 2026-11-17 §5.3: la delegación viva de un chatbot cuando el agente atiende por un bloque;
+/// <c>null</c> en las demás.</param>
 public sealed record AiConversationState(
     string Status,
     Guid? AssignedMemberId,
@@ -23,7 +25,8 @@ public sealed record AiConversationState(
     bool Blocked,
     bool WindowOpen,
     TimeSpan? WindowRemaining,
-    int TextMaxLength)
+    int TextMaxLength,
+    Guid? AutomationDelegationId = null)
 {
     public const string Open = "Open";
     public const string Resolved = "Resolved";
@@ -221,6 +224,9 @@ public static class AiInboxOutcomes
 
     /// <summary>Revisión final, hallazgo 4: la conversación era del agente, que no la puede retomar; pasó a una persona.</summary>
     public const string HandedOff = "handed_off";
+
+    /// <summary>Spec 2026-11-17 §6.2: la fila <c>Delegated</c> no pudo abrir la sesión del bloque y la conversación volvió al flujo.</summary>
+    public const string Returned = "returned";
     public const string Retry = "retry";
     public const string Locked = "locked";
 }
