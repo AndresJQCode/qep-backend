@@ -22,7 +22,9 @@ public static class AgentAttendance
     {
         ArgumentNullException.ThrowIfNull(conversation);
         ArgumentNullException.ThrowIfNull(session);
-        return !conversation.IsAttendedBy(session.AgentId) || conversation.AutomationResumedAt > session.StartedAt;
+        return !conversation.IsAttendedBy(session.AgentId) || conversation.AutomationResumedAt > session.StartedAt
+            // Spec 2026-11-17: la sesión de un bloque es de su delegación; otra (o ninguna) es que la conversación siguió sin ella.
+            || (session.IsBlock && conversation.AutomationDelegationId != session.DelegationId);
     }
 }
 
@@ -437,6 +439,15 @@ public sealed partial class AiInboxProcessor(
     {
         if (session is null)
         {
+            // Spec 2026-11-17 D-B16: una delegación cuya sesión todavía no abrió vuelve al flujo por error, no a la bandeja.
+            if (conversation?.AutomationDelegationId is { } delegationId)
+            {
+                await AgentBlockReturn.TryReturnAsync(
+                    conversations, item.TenantId, item.ConversationId, delegationId, AgentBlockResult.Error(AgentBlockReasons.ModuleDisabled),
+                    cancellationToken);
+                return;
+            }
+
             // Revisión final, hallazgo 4: sin sesión viva, una conversación que el agente tiene (una persona se la devolvió) también pasa a
             // la bandeja; si no, quedaba asignada a un agente que con el módulo apagado nunca contesta.
             if (conversation?.AutomationAgentId is { } agentId && conversation.IsAttendedBy(agentId))
@@ -449,15 +460,31 @@ public sealed partial class AiInboxProcessor(
             return;
         }
 
-        session.Finish(AgentSessionStatus.Interrupted, AgentSessionEndReasons.ModuleDisabled, null, now);
         session.MarkInbound(item.MessageId);
-        await AiHandoffs.ModuleDisabledAsync(conversations, sessions, item.TenantId, conversation, session, cancellationToken);
+        await AiHandoffs.EndForDisabledModuleAsync(conversations, sessions, item.TenantId, conversation, session, now, cancellationToken);
     }
 }
 
 /// <summary>Los traspasos que comparten el procesador, el worker y los barridos.</summary>
 public static class AiHandoffs
 {
+    /// <summary>§6.8 y spec 2026-11-17 D-B16: el módulo <c>ai</c> se apagó con la sesión viva. La de una conexión termina <c>Interrupted</c> y
+    /// su conversación pasa a la bandeja; la de un bloque devuelve la conversación al flujo por <c>error</c>, que decide qué sigue.</summary>
+    public static async Task EndForDisabledModuleAsync(
+        IAiConversations conversations, IAgentSessionRepository sessions, Guid tenantId, AiConversationState? conversation, AgentSession session,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (session.IsBlock)
+        {
+            await AgentBlockReturn.EndAsync(conversations, tenantId, session, AgentBlockResult.Error(AgentBlockReasons.ModuleDisabled), now, cancellationToken);
+            return;
+        }
+
+        session.Finish(AgentSessionStatus.Interrupted, AgentSessionEndReasons.ModuleDisabled, null, now);
+        await ModuleDisabledAsync(conversations, sessions, tenantId, conversation, session, cancellationToken);
+    }
+
     /// <summary>§6.8: la conversación que el agente atendía pasa a la bandeja sin asignar, con aviso. Una que ya no es suya queda como está.</summary>
     public static async Task ModuleDisabledAsync(
         IAiConversations conversations, IAgentSessionRepository sessions, Guid tenantId, AiConversationState? conversation, AgentSession session,

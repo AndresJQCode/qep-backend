@@ -75,7 +75,7 @@ public sealed class CreateQuotationDraftToolTests
         var outcome = await RunAsync(Context());
 
         Assert.Single(_drafts.Requests);
-        Assert.Equal(new AgentHandedOff(AgentHandoffCodes.QuotationDraftCreated, null, Advisor), outcome);
+        Assert.Equal(new AgentHandedOff(AgentHandoffCodes.QuotationDraftCreated, null, Advisor, "COT-0001"), outcome);
         Assert.Equal(
             [("call_a", AiRunOutcomes.Ok, (string?)null), ("call_b", AiRunOutcomes.Error, AgentToolErrors.OneWritePerResponse)],
             _calls.Select(call => (call.CallId, call.Outcome, call.ErrorCode)));
@@ -91,7 +91,8 @@ public sealed class CreateQuotationDraftToolTests
 
         var outcome = await RunAsync(Context());
 
-        Assert.Equal(new AgentHandedOff(AgentHandoffCodes.QuotationDraftCreated, null, other), outcome);
+        // Spec 2026-11-17 D-B13: el número viaja con el traspaso, para el bloque del chatbot.
+        Assert.Equal(new AgentHandedOff(AgentHandoffCodes.QuotationDraftCreated, null, other, "COT-0042"), outcome);
         Assert.Single(_model.Requests);
         var recorded = Assert.Single(_calls);
         Assert.Equal(AiRunOutcomes.Ok, recorded.Outcome);

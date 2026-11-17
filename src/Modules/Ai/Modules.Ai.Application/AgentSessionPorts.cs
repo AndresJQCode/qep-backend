@@ -179,8 +179,9 @@ public interface IAgentSessionRepository
     /// <summary>El trabajo <c>Pending</c> de la sesión (a lo sumo uno, <c>IX_model_jobs_session_open</c>).</summary>
     Task<ModelJob?> FindPendingJobAsync(Guid sessionId, CancellationToken cancellationToken);
 
-    /// <summary>D-A19: sesiones vivas sin moverse desde <paramref name="cutoff"/>, de todos los tenants.</summary>
-    Task<IReadOnlyList<AgentSessionRef>> ListIdleAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken);
+    /// <summary>D-A19 y spec 2026-11-17 D-B11: sesiones vivas sin moverse, de todos los tenants. El corte es por sesión: sus
+    /// <c>idle_minutes</c> si las tiene (bloque de chatbot), si no <paramref name="defaultIdle"/>.</summary>
+    Task<IReadOnlyList<AgentSessionRef>> ListIdleAsync(DateTimeOffset now, TimeSpan defaultIdle, int batch, CancellationToken cancellationToken);
 
     /// <summary>§6.8: las sesiones vivas de un tenant.</summary>
     Task<IReadOnlyList<AgentSessionRef>> ListLiveAsync(Guid tenantId, int batch, CancellationToken cancellationToken);
@@ -196,6 +197,15 @@ public interface IAgentSessionRepository
 
     /// <summary>El agente con sus versiones, en cualquier estado (una sesión termina con su versión aunque el agente se pause).</summary>
     Task<Agent?> FindAgentAsync(Guid tenantId, Guid agentId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 §6.5: las delegaciones de Mensajería que quedaron <c>Live</c> sin que su conversación las apunte (borrado de
+/// cliente, rollback manual) pasan a <c>Interrupted</c>. Adaptador en Bootstrapper con SQL sobre <c>messaging</c>; es idempotente, así
+/// que dos pods que barren a la vez no se pisan.</summary>
+public interface IAiDelegationSweep
+{
+    /// <summary>Cuántas interrumpió, hasta <paramref name="batch"/>.</summary>
+    Task<int> InterruptOrphansAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-29 §6.2 paso 1: el candado de la conversación, con la transacción de Ai abierta. El mismo espacio y hash que el

@@ -31,8 +31,8 @@ internal sealed class AiModuleStatus(ITenantModules tenantModules, IMemoryCache 
 
 /// <summary>
 /// Spec 2026-10-29 §6.2 (etapa 1) y §6.8: vacía las filas <c>bot_kind = 2</c> de <c>messaging.automation_inbox</c>, cada una en su scope, y
-/// corre los barridos de sesiones abandonadas (D-A19, cada 10 min) y de tenants con el módulo apagado (§6.8, cada minuto). Los tiempos
-/// son de <see cref="AiWorkerOptions"/>.
+/// corre los barridos de sesiones abandonadas (D-A19, cada 10 min, con las delegaciones huérfanas del spec 2026-11-17 §6.5) y de tenants
+/// con el módulo apagado (§6.8, cada minuto). Los tiempos son de <see cref="AiWorkerOptions"/>.
 /// </summary>
 internal sealed partial class AiInboxWorker(
     IServiceScopeFactory scopeFactory, IOptions<AiWorkerOptions> options, ILogger<AiInboxWorker> logger) : BackgroundService
@@ -127,10 +127,18 @@ internal sealed partial class AiInboxWorker(
         {
             _nextIdleSweep = now + TimeSpan.FromMinutes(Math.Max(1, options.Value.IdleSweepMinutes));
             await using var scope = scopeFactory.CreateAsyncScope();
-            var closed = await scope.ServiceProvider.GetRequiredService<AiSessionSweeper>().SweepIdleAsync(cancellationToken);
+            var sweeper = scope.ServiceProvider.GetRequiredService<AiSessionSweeper>();
+            var closed = await sweeper.SweepIdleAsync(cancellationToken);
             if (closed > 0)
             {
                 LogSwept(logger, closed, "abandoned");
+            }
+
+            // Spec 2026-11-17 §6.5: con el mismo periodo (10 min por defecto), las delegaciones vivas que ninguna conversación apunta.
+            var orphans = await sweeper.SweepOrphanDelegationsAsync(cancellationToken);
+            if (orphans > 0)
+            {
+                LogSwept(logger, orphans, "orphan_delegations");
             }
         }
     }

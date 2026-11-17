@@ -680,6 +680,20 @@ public sealed class AgentSessionProcessorTests
             }
         }
 
+        /// <summary>Spec 2026-11-17: una sesión viva de un bloque de chatbot, con un turno del cliente, que se movió por última vez en
+        /// <paramref name="updatedAt"/>.</summary>
+        public AgentSession LiveBlock(Agent agent, Guid delegationId, int? idleMinutes = null, DateTimeOffset? updatedAt = null)
+        {
+            _agents.Add(agent);
+            var at = updatedAt ?? Now.AddMinutes(-5);
+            var session = AgentSession.OpenForBlock(
+                AiDeterministicIds.SessionForDelegation(delegationId), Tenant, Conversation, Connection, agent.Id, agent.PublishedVersionId!.Value,
+                delegationId, Guid.CreateVersion7(), Guid.CreateVersion7(), idleMinutes, at);
+            Turns.Add(session.AppendTurn(AgentTurnRoleKind.Customer, Guid.CreateVersion7(), null, [], false, at));
+            All.Add(session);
+            return session;
+        }
+
         public AgentSession Live(Agent agent)
         {
             _agents.Add(agent);
@@ -710,14 +724,17 @@ public sealed class AgentSessionProcessorTests
 
         public Task<ModelJob?> FindPendingJobAsync(Guid sessionId, CancellationToken cancellationToken) => Task.FromResult(Pending);
 
-        public Task<IReadOnlyList<AgentSessionRef>> ListIdleAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<AgentSessionRef>>([]);
+        /// <summary>Todas las vivas como candidatas: el corte por sesión lo vuelve a mirar el barrido con el candado.</summary>
+        public Task<IReadOnlyList<AgentSessionRef>> ListIdleAsync(DateTimeOffset now, TimeSpan defaultIdle, int batch, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AgentSessionRef>>(
+                [.. All.Where(session => session.IsLive).Select(session => new AgentSessionRef(session.TenantId, session.ConversationId))]);
 
         public Task<IReadOnlyList<AgentSessionRef>> ListLiveAsync(Guid tenantId, int batch, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<AgentSessionRef>>([]);
+            Task.FromResult<IReadOnlyList<AgentSessionRef>>(
+                [.. All.Where(session => session.IsLive && session.TenantId == tenantId).Select(session => new AgentSessionRef(session.TenantId, session.ConversationId))]);
 
         public Task<IReadOnlyList<Guid>> ListTenantsWithLiveSessionsAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Guid>>([]);
+            Task.FromResult<IReadOnlyList<Guid>>([.. All.Where(session => session.IsLive).Select(session => session.TenantId).Distinct()]);
 
         public Task<bool> HasLiveSessionsAsync(Guid tenantId, Guid agentId, CancellationToken cancellationToken) =>
             Task.FromResult(All.Any(session => session.AgentId == agentId && session.IsLive));
@@ -898,9 +915,18 @@ public sealed class AgentSessionProcessorTests
     {
         public List<(Guid ClientId, string Text)> Sends { get; } = [];
 
+        /// <summary>Lo que responde el próximo envío, una vez (Mensajería no pudo enviar); sin él, enviado.</summary>
+        public AiSendResult? NextResult { get; set; }
+
         public Task<AiSendResult> SendTextAsync(
             Guid tenantId, Guid conversationId, Guid agentId, Guid clientId, string text, CancellationToken cancellationToken)
         {
+            if (NextResult is { } next)
+            {
+                NextResult = null;
+                return Task.FromResult(next);
+            }
+
             Sends.Add((clientId, text));
             return Task.FromResult(new AiSendResult(AiSendStatus.Sent, Guid.CreateVersion7()));
         }

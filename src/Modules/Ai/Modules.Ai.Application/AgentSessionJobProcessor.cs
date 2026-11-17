@@ -140,6 +140,14 @@ public sealed partial class AgentSessionJobProcessor(
             return;
         }
 
+        // Spec 2026-11-17 §6.3: la sesión de un bloque no traspasa; vuelve al flujo por error.
+        if (session.IsBlock)
+        {
+            await AgentBlockReturn.EndAsync(conversations, job.TenantId, session, AgentBlockReturn.For(cause), clock.UtcNow, cancellationToken);
+            await CloseAsync(job, ModelJobStatus.Failed, "agent_failed", cause.Code);
+            return;
+        }
+
         var conversation = await conversations.GetAsync(job.TenantId, conversationId, cancellationToken);
         if (conversation is not null && conversation.IsAttendedBy(session.AgentId))
         {
@@ -191,8 +199,9 @@ public sealed partial class AgentSessionJobProcessor(
             .ToList();
 
         var replies = config.UseQuickReplies ? await quickReplies.ListAsync(job.TenantId, cancellationToken) : [];
+        var block = await BlockOfAsync(job.TenantId, session, cancellationToken);
         var prompt = promptBuilder.Build(new AgentPromptInput(
-            config, replies, history, await tenantClock.GetAsync(job.TenantId, cancellationToken), conversation?.WindowRemaining));
+            config, replies, history, await tenantClock.GetAsync(job.TenantId, cancellationToken), conversation?.WindowRemaining, block));
         var context = new AgentTurnContext(
             job.TenantId,
             session.AgentId,
@@ -208,7 +217,8 @@ public sealed partial class AgentSessionJobProcessor(
             TestId: null,
             conversation?.CustomerId,
             [.. config.Faq.Select(faq => faq.Id), .. replies.Select(reply => reply.Id)],
-            IsTest: false);
+            IsTest: false,
+            block);
 
         var outcome = await runner.RunAsync(context, prompt, cancellationToken);
         if (outcome is AgentTurnRetry retry && job.Attempts < ModelJob.MaxAttempts)
@@ -220,6 +230,19 @@ public sealed partial class AgentSessionJobProcessor(
         }
 
         return outcome;
+    }
+
+    /// <summary>Spec 2026-11-17 D-B8: el objetivo y el contexto del paso, leídos de la delegación de la sesión en cada trabajo (la sesión no
+    /// los copia). <c>null</c> fuera de un bloque.</summary>
+    private async Task<AgentBlockContext?> BlockOfAsync(Guid tenantId, AgentSession session, CancellationToken cancellationToken)
+    {
+        if (session.DelegationId is not { } delegationId)
+        {
+            return null;
+        }
+
+        var brief = AgentBlockBrief.Parse((await conversations.ReadDelegationAsync(tenantId, delegationId, cancellationToken))?.BriefJson);
+        return new AgentBlockContext(brief.Objective, brief.Context);
     }
 
     /// <summary>§6.3 paso 4: el commit corto, con el candado de la conversación.</summary>
@@ -245,8 +268,7 @@ public sealed partial class AgentSessionJobProcessor(
         var conversation = await conversations.GetAsync(job.TenantId, conversationId, cancellationToken);
         if (!await modules.IsEnabledAsync(job.TenantId, cancellationToken))
         {
-            session.Finish(AgentSessionStatus.Interrupted, AgentSessionEndReasons.ModuleDisabled, null, now);
-            await AiHandoffs.ModuleDisabledAsync(conversations, sessions, job.TenantId, conversation, session, cancellationToken);
+            await AiHandoffs.EndForDisabledModuleAsync(conversations, sessions, job.TenantId, conversation, session, now, cancellationToken);
             await CloseAsync(job, ModelJobStatus.Discarded, AgentSessionEndReasons.ModuleDisabled, null);
             return;
         }
@@ -280,6 +302,14 @@ public sealed partial class AgentSessionJobProcessor(
             case AgentReplied replied:
                 await ReplyAsync(turn, replied, cancellationToken);
                 break;
+            case AgentFinished finished when session.IsBlock:
+                // D-B8: el objetivo del paso se cumplió; nada sale al cliente y el flujo sigue por done.
+                await AgentBlockReturn.EndAsync(
+                    conversations, job.TenantId, session,
+                    new AgentBlockResult(AgentBlockOutputs.Done, AgentBlockReasons.ObjectiveCompleted, string.IsNullOrEmpty(finished.Summary) ? null : finished.Summary),
+                    now, cancellationToken);
+                await CloseAsync(job, ModelJobStatus.Done, "returned", null);
+                break;
             case AgentHandedOff handedOff:
                 if (handedOff.Reason == AgentHandoffCodes.QuotationDraftCreated)
                 {
@@ -290,7 +320,7 @@ public sealed partial class AgentSessionJobProcessor(
 
                 await HandOffAsync(
                     turn, new AgentHandoffCause(HandoffCauseKind.AgentRequested, handedOff.Reason, version.Provider), AgentSessionStatus.HandedOff,
-                    sendMessage: true, cancellationToken, handedOff.MemberId);
+                    sendMessage: true, cancellationToken, handedOff.MemberId, handedOff.QuotationNumber);
                 await CloseAsync(job, ModelJobStatus.Done, "handed_off", null);
                 break;
             case AgentTurnRetry exhausted:
@@ -360,7 +390,17 @@ public sealed partial class AgentSessionJobProcessor(
         switch (result.Status)
         {
             case AiSendStatus.Blocked:
-                turn.Session.Finish(AgentSessionStatus.Interrupted, AgentSessionEndReasons.Blocked, null, turn.Now);
+                if (turn.Session.IsBlock)
+                {
+                    // Spec 2026-11-17 §6.4: vuelve sin salida y el motor termina la corrida Interrupted; la sesión, Interrupted como hoy.
+                    await AgentBlockReturn.EndAsync(
+                        conversations, turn.Job.TenantId, turn.Session, new AgentBlockResult(null, AgentBlockReasons.Blocked), turn.Now, cancellationToken);
+                }
+                else
+                {
+                    turn.Session.Finish(AgentSessionStatus.Interrupted, AgentSessionEndReasons.Blocked, null, turn.Now);
+                }
+
                 await CloseAsync(turn.Job, ModelJobStatus.Discarded, AgentSessionEndReasons.Blocked, null);
                 return;
             case AiSendStatus.NotAutomated:
@@ -388,8 +428,17 @@ public sealed partial class AgentSessionJobProcessor(
     /// configurado (o a <paramref name="memberId"/>, P-4b), y el fin de la sesión. Si una persona ya la tomó, el traspaso no hace falta.</summary>
     private async Task HandOffAsync(
         TurnCommit turn, AgentHandoffCause cause, AgentSessionStatus status, bool sendMessage, CancellationToken cancellationToken,
-        Guid? memberId = null)
+        Guid? memberId = null, string? quotationNumber = null)
     {
+        // Spec 2026-11-17 §6.3 y D-B9: en un bloque nada traspasa ni manda el mensaje de traspaso; la conversación vuelve al flujo por la
+        // salida de la causa (AgentBlockReturn.For) y el flujo decide a quién y con qué mensaje.
+        if (turn.Session.IsBlock)
+        {
+            await AgentBlockReturn.EndAsync(
+                conversations, turn.Job.TenantId, turn.Session, AgentBlockReturn.For(cause, memberId, quotationNumber), turn.Now, cancellationToken);
+            return;
+        }
+
         var handoff = turn.Config.Handoff;
         if (sendMessage && !string.IsNullOrWhiteSpace(handoff.Message))
         {
@@ -433,14 +482,16 @@ public sealed partial class AgentSessionJobProcessor(
     /// <summary>La forma guardada de una respuesta ya calculada (§6.3 paso 4); sólo la lee este procesador.</summary>
     private sealed record StoredOutcome(
         string Type, string? Text, IReadOnlyList<string>? Sources, string? Reason, string? Note, AgentFailureKind? Kind, AgentFailureReason? FailureReason,
-        string? Code, double? RetryAfterSeconds, Guid? MemberId = null)
+        string? Code, double? RetryAfterSeconds, Guid? MemberId = null, string? QuotationNumber = null)
     {
         public static string Write(AgentTurnOutcome outcome) => JsonSerializer.Serialize(
             outcome switch
             {
                 AgentReplied replied => new StoredOutcome("replied", replied.Text, replied.SourceIds, null, null, null, null, null, null),
+                // Spec 2026-11-17 D-B8: el resumen de finish_objective va en text.
+                AgentFinished finished => new StoredOutcome("finished", finished.Summary, null, null, null, null, null, null, null),
                 AgentHandedOff handedOff => new StoredOutcome(
-                    "handed_off", null, null, handedOff.Reason, handedOff.Note, null, null, null, null, handedOff.MemberId),
+                    "handed_off", null, null, handedOff.Reason, handedOff.Note, null, null, null, null, handedOff.MemberId, handedOff.QuotationNumber),
                 AgentTurnRetry retry => new StoredOutcome("retry", null, null, null, null, null, null, retry.Code, retry.RetryAfter?.TotalSeconds),
                 AgentTurnFailed failed => new StoredOutcome("failed", null, null, null, null, failed.Kind, failed.Reason, failed.Code, null),
                 _ => throw new InvalidOperationException($"Unknown outcome {outcome.GetType().Name}."),
@@ -453,7 +504,8 @@ public sealed partial class AgentSessionJobProcessor(
             return stored.Type switch
             {
                 "replied" => new AgentReplied(stored.Text ?? string.Empty, stored.Sources ?? []),
-                "handed_off" => new AgentHandedOff(stored.Reason ?? AgentHandoffReasons.All[0], stored.Note, stored.MemberId),
+                "finished" => new AgentFinished(stored.Text ?? string.Empty),
+                "handed_off" => new AgentHandedOff(stored.Reason ?? AgentHandoffReasons.All[0], stored.Note, stored.MemberId, stored.QuotationNumber),
                 "retry" => new AgentTurnRetry(stored.Code ?? AiModelErrorCodes.ProviderUnavailable,
                     stored.RetryAfterSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null),
                 _ => new AgentTurnFailed(stored.Kind ?? AgentFailureKind.AgentFailed, stored.FailureReason ?? AgentFailureReason.ProviderError, stored.Code),

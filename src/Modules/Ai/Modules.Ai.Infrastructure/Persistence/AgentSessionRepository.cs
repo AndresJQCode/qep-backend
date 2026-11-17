@@ -51,13 +51,19 @@ internal sealed class AgentSessionRepository(AiDbContext dbContext) : IAgentSess
         return rows.Count == 0 ? null : rows[0];
     }
 
-    public async Task<IReadOnlyList<AgentSessionRef>> ListIdleAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) =>
-        await dbContext.Sessions.AsNoTracking()
-            .Where(session => session.Status == AgentSessionStatus.Live && session.UpdatedAt < cutoff)
-            .OrderBy(session => session.UpdatedAt)
-            .Take(batch)
-            .Select(session => new AgentSessionRef(session.TenantId, session.ConversationId))
-            .ToListAsync(cancellationToken);
+    // Spec 2026-11-17 D-B11: el corte es por sesión (idle_minutes del bloque, o el de siempre). Recorre sólo las vivas (IX_sessions_live_updated);
+    // el barrido lo vuelve a mirar con el candado de la conversación.
+    public async Task<IReadOnlyList<AgentSessionRef>> ListIdleAsync(
+        DateTimeOffset now, TimeSpan defaultIdle, int batch, CancellationToken cancellationToken) =>
+        await dbContext.Database.SqlQuery<AgentSessionRef>(
+            $"""
+            SELECT tenant_id AS "TenantId", conversation_id AS "ConversationId"
+              FROM ai.sessions
+             WHERE status = 'Live'
+               AND updated_at < {now} - COALESCE(make_interval(mins => idle_minutes), {defaultIdle})
+             ORDER BY updated_at
+             LIMIT {batch}
+            """).ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<AgentSessionRef>> ListLiveAsync(Guid tenantId, int batch, CancellationToken cancellationToken) =>
         await dbContext.Sessions.AsNoTracking()

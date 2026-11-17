@@ -81,7 +81,9 @@ public sealed record AgentToolInvocation(
 /// <summary>Una herramienta que termina el turno con un traspaso determinista (P-4 y P-4b), sin otra vuelta del modelo.</summary>
 /// <param name="Code">El código del traspaso (<see cref="AgentHandoffCodes"/>).</param>
 /// <param name="MemberId">A quién va la conversación; <c>null</c> es el destino configurado del agente.</param>
-public sealed record AgentToolHandoff(string Code, Guid? MemberId);
+/// <param name="QuotationNumber">Spec 2026-11-17 D-B13: el número del borrador creado, que el bloque del chatbot guarda en
+/// <c>{saveTo}.quotationNumber</c>.</param>
+public sealed record AgentToolHandoff(string Code, Guid? MemberId, string? QuotationNumber = null);
 
 /// <param name="ResultJson">Lo que lee el modelo; con <paramref name="IsError"/>, el error (<c>{"error":"…"}</c>).</param>
 /// <param name="ErrorCode">El código del error, para <c>ai.tool_calls</c>.</param>
@@ -299,7 +301,7 @@ public sealed class SimulatedQuotationDraftTool : IAgentTool
         var number = $"PRUEBA-{invocation.JobId.ToString("N")[..8].ToUpperInvariant()}";
         return Task.FromResult(AgentToolResult.Ok(new { quotationNumber = number }) with
         {
-            Handoff = new AgentToolHandoff(AgentHandoffCodes.QuotationDraftCreated, null),
+            Handoff = new AgentToolHandoff(AgentHandoffCodes.QuotationDraftCreated, null, number),
         });
     }
 }
@@ -423,7 +425,7 @@ public sealed class CreateQuotationDraftTool(IAiQuotationDrafts drafts, IAiQuota
         {
             AiQuotationDraftStatus.Created => AgentToolResult.Ok(new { quotationNumber = result.QuotationNumber }) with
             {
-                Handoff = new AgentToolHandoff(AgentHandoffCodes.QuotationDraftCreated, result.AdvisorMemberId),
+                Handoff = new AgentToolHandoff(AgentHandoffCodes.QuotationDraftCreated, result.AdvisorMemberId, result.QuotationNumber),
             },
             AiQuotationDraftStatus.CustomerNotReady =>
                 AgentToolResult.Error(result.Code ?? AgentToolErrors.CustomerUnknown) with { Handoff = CustomerNotReady },

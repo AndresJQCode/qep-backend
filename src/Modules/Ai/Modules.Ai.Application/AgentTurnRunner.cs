@@ -52,7 +52,8 @@ public sealed record AgentReplied(string Text, IReadOnlyList<string> SourceIds) 
 /// (<see cref="AgentToolHandoff"/>).</param>
 /// <param name="Note">Para el evento interno, nunca para el cliente.</param>
 /// <param name="MemberId">P-4b: a quién va la conversación en vez del destino configurado (la asesora del borrador de cotización).</param>
-public sealed record AgentHandedOff(string Reason, string? Note, Guid? MemberId = null) : AgentTurnOutcome;
+/// <param name="QuotationNumber">Spec 2026-11-17 D-B13: el número del borrador, que vuelve al flujo en modo bloque.</param>
+public sealed record AgentHandedOff(string Reason, string? Note, Guid? MemberId = null, string? QuotationNumber = null) : AgentTurnOutcome;
 
 /// <summary>Un error que el worker reintenta (D-A17): proveedor caído o límite de tasa.</summary>
 public sealed record AgentTurnRetry(string Code, TimeSpan? RetryAfter) : AgentTurnOutcome;
@@ -317,7 +318,7 @@ public sealed partial class AgentTurnRunner(
             // modelo: lo que siga lo decide una persona. Las demás llamadas de la vuelta ya corrieron y quedaron anotadas.
             if (handoff is not null)
             {
-                return new AgentHandedOff(handoff.Code, null, handoff.MemberId);
+                return new AgentHandedOff(handoff.Code, null, handoff.MemberId, handoff.QuotationNumber);
             }
 
             rounds.Add(new AiModelRound(response.OpaqueAssistantBlocks, results));
