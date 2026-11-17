@@ -84,8 +84,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
     public async Task ProcessingAnnouncesTheTicket()
     {
         var scenario = await StartAsync(Factory);
-        await ExecuteAsync(
-            Factory, "UPDATE support.tenant_settings SET survey_enabled = true WHERE tenant_id = @tenant", ("tenant", scenario.TenantId));
+        await EnableSurveyAsync(scenario);
         var resolved = await scenario.MoveAsync(await scenario.CreateAsync(), "Resolved");
 
         await ProcessClaimedAsync();
@@ -93,7 +92,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         var email = Assert.Single(_email.Sent);
         Assert.Equal("ana@example.com", email.ToAddress);
         Assert.Equal(
-            "Sent|Email|t",
+            "Sent|Email|true",
             await TextAsync(
                 Factory,
                 "SELECT status || '|' || channel || '|' || (token_hash IS NOT NULL)::text FROM support.ticket_surveys WHERE ticket_id = @id",
@@ -185,7 +184,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         Assert.Equal(1, await worker.RunOnceAsync(10, Ct));
 
         Assert.Equal(
-            "Pending|send_failed|1|t|t",
+            "Pending|send_failed|1|true|true",
             await TextAsync(
                 Factory,
                 """
@@ -225,7 +224,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
         await AnswersTickAsync();
 
         Assert.Equal(
-            $"Good|WhatsApp|{tap}|t",
+            $"Good|WhatsApp|{tap}|true",
             await TextAsync(
                 Factory,
                 """
@@ -257,7 +256,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
             (send.ConversationId, send.ClientId, send.Text, send.UploadId));
         Assert.Equal("Gracias. Si quieres, cuéntanos en un mensaje por qué elegiste esa opción.", send.Text);
         Assert.Equal(
-            $"{prompt}|t|",
+            $"{prompt}|true|",
             await TextAsync(
                 Factory,
                 """
@@ -307,7 +306,7 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
 
         Assert.Single(_channels.ThreadSends);
         Assert.Equal(
-            "Good|window_closed|f",
+            "Good|window_closed|false",
             await TextAsync(
                 Factory,
                 "SELECT rating || '|' || prompt_failure_code || '|' || (prompt_message_id IS NOT NULL)::text FROM support.ticket_surveys WHERE id = @id",
@@ -496,9 +495,18 @@ public sealed class SupportSurveyApiTests : IAsyncLifetime
     private sealed record SentSurvey(
         SupportTicketScenario Scenario, Guid TenantId, Guid TicketId, Guid Conversation, Guid SurveyId, Guid SurveyMessage);
 
-    private Task EnableSurveyAsync(SupportTicketScenario scenario) =>
-        ExecuteAsync(
+    // The tenant's settings row is created on first access (SupportProvisioner), and StartAsync touches no Support endpoint: without
+    // provisioning first, the UPDATE matches no row and every survey is skipped as survey_disabled.
+    private async Task EnableSurveyAsync(SupportTicketScenario scenario)
+    {
+        await using (var scope = Factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISupportProvisioner>().EnsureAsync(scenario.TenantId, Ct);
+        }
+
+        await ExecuteAsync(
             Factory, "UPDATE support.tenant_settings SET survey_enabled = true WHERE tenant_id = @tenant", ("tenant", scenario.TenantId));
+    }
 
     private async Task<SupportSurveyBatch> ClaimAsync(int take)
     {

@@ -39,13 +39,15 @@ internal static class SupportMessagingSeed
         Guid? connectionId = null)
     {
         var id = Guid.CreateVersion7();
+        // @wa is cast in the CASE: a null wa_id (Instagram) goes out as an untyped parameter, and Postgres would deduce
+        // varchar from the wa_id column and text from the CASE (42P08, inconsistent types deduced for the parameter).
         await ExecuteAsync(
             factory,
             """
             INSERT INTO messaging.conversations (id, tenant_id, connection_id, channel, status, last_activity_at, created_at, updated_at, version,
                 customer_id, wa_id, user_id, profile_name, username, last_inbound_at, blocked_at, blocked_by_member_id, blocked_wa_id)
             VALUES (@id, @tenant, @connection, @channel, 'Open', now(), now(), now(), 1, @customer, @wa, @user, @profile, @username, @lastInbound,
-                CASE WHEN @blocked THEN now() END, CASE WHEN @blocked THEN gen_random_uuid() END, CASE WHEN @blocked THEN @wa END)
+                CASE WHEN @blocked THEN now() END, CASE WHEN @blocked THEN gen_random_uuid() END, CASE WHEN @blocked THEN @wa::varchar END)
             """,
             ("id", id), ("tenant", tenantId), ("connection", connectionId ?? Guid.CreateVersion7()), ("channel", channel),
             ("customer", customerId), ("wa", waId), ("user", userId), ("profile", profileName), ("username", username),

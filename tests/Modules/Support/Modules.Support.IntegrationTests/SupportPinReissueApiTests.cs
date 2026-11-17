@@ -128,7 +128,11 @@ public sealed class SupportPinReissueApiTests(ClockedSupportHost host) : IClassF
         Assert.Equal("PinReissued", reissued.GetProperty("kind").GetString());
         Assert.Equal(scenario.CallerMemberId, reissued.GetProperty("actor").GetProperty("id").GetGuid());
         Assert.Equal(1, await CountAuditEntriesAsync(scenario.Factory, SupportAuditActions.TicketPinReissued, Id(ticket).ToString()));
-        Assert.Equal(1, host.Publisher.Of(scenario.TenantId).Count - before);
+        // One TicketChangedAsync (spec 2026-11-16-support-anonymous-pin-reissue-design.md) is two notices: the ticket's own topic and the inbox.
+        var notices = host.Publisher.Of(scenario.TenantId).Skip(before).ToList();
+        Assert.Equal(
+            [SupportRealtimeTopics.Ticket(Id(ticket)), SupportRealtimeTopics.Inbox], notices.Select(notice => notice.Topic));
+        Assert.All(notices, notice => Assert.Equal(Id(ticket), notice.TicketId));
         var pin = Pin(body);
         Assert.Equal(0L, await SupportMessagingSeed.ScalarAsync(
             scenario.Factory,

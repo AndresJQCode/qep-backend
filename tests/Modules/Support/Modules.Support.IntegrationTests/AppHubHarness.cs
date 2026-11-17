@@ -31,12 +31,18 @@ internal static class AppHubHarness
             .Build();
     }
 
-    /// <summary>A tenant with a member of <paramref name="role"/> and that member's connection, already started.</summary>
+    /// <summary>A tenant with a member of <paramref name="role"/> and that member's connection, already started. A
+    /// <paramref name="tenant"/> passed in is the caller's, already seeded with its own modules: seeding it again would turn every
+    /// module back on (SeedTenantAsync inserts all of them by default).</summary>
     public static async Task<(string Tenant, Guid MemberId, HubConnection Connection, Received Received)> ConnectMemberAsync(
         QepApiFactory factory, string role = "advisor", string displayName = "Ana", string? tenant = null)
     {
-        tenant ??= NewTenantId();
-        await SeedTenantAsync(factory, tenant);
+        if (tenant is null)
+        {
+            tenant = NewTenantId();
+            await SeedTenantAsync(factory, tenant);
+        }
+
         var subject = Guid.CreateVersion7().ToString();
         var member = await SeedCallerMembershipAsync(factory, displayName, role, tenant, subject);
         var connection = Connect(factory, tenant, subject);

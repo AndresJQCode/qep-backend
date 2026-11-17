@@ -123,7 +123,7 @@ public sealed class QueueDoorbellInterceptorTests(DoorbellDatabase database) : I
     }
 }
 
-/// <summary>Un PostgreSQL con las siete tablas de cola reducidas a su <c>id</c>, para toda la clase.</summary>
+/// <summary>Un PostgreSQL con las ocho tablas de cola reducidas a su <c>id</c>, para toda la clase.</summary>
 public sealed class DoorbellDatabase : IAsyncLifetime
 {
     private PostgreSqlContainer _container = null!;
@@ -139,7 +139,7 @@ public sealed class DoorbellDatabase : IAsyncLifetime
         await using var context = NewContext(new QueueDoorbellInterceptorTests.RecordingDoorbell());
         await context.Database.ExecuteSqlRawAsync(
             """
-            CREATE SCHEMA platform; CREATE SCHEMA messaging; CREATE SCHEMA shopify; CREATE SCHEMA quotations;
+            CREATE SCHEMA platform; CREATE SCHEMA messaging; CREATE SCHEMA shopify; CREATE SCHEMA quotations; CREATE SCHEMA support;
             CREATE TABLE platform.outbox_messages (id uuid PRIMARY KEY);
             CREATE TABLE platform.outbox_messages_archive (id uuid PRIMARY KEY);
             CREATE TABLE messaging.automation_inbox (id uuid PRIMARY KEY);
@@ -148,6 +148,7 @@ public sealed class DoorbellDatabase : IAsyncLifetime
             CREATE TABLE messaging.message_media (id uuid PRIMARY KEY);
             CREATE TABLE messaging.scheduled_messages (id uuid PRIMARY KEY);
             CREATE TABLE quotations.export_jobs (id uuid PRIMARY KEY);
+            CREATE TABLE support.ticket_surveys (id uuid PRIMARY KEY);
             """,
             TestContext.Current.CancellationToken);
     }

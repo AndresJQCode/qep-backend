@@ -485,8 +485,10 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
 
         var lines = indexes!.Split('|');
         Assert.Equal(5, lines.Length);
+        // status is varchar: Postgres deparses the filter as ((status)::text = 'Resolved'::text).
         Assert.Contains(lines, line => line.StartsWith("IX_tickets_resolved_auto_close ", StringComparison.Ordinal)
-            && line.Contains("(resolved_at, id) WHERE (status = 'Resolved'", StringComparison.Ordinal));
+            && line.Contains("(resolved_at, id) WHERE", StringComparison.Ordinal)
+            && line.Contains("(status)::text = 'Resolved'::text", StringComparison.Ordinal));
         Assert.Contains(lines, line => line.StartsWith("IX_ticket_surveys_awaiting_rating ", StringComparison.Ordinal)
             && line.Contains("(sent_at, id) WHERE", StringComparison.Ordinal) && line.Contains("rating IS NULL", StringComparison.Ordinal));
         Assert.Contains(lines, line => line.StartsWith("IX_ticket_surveys_awaiting_comment ", StringComparison.Ordinal)

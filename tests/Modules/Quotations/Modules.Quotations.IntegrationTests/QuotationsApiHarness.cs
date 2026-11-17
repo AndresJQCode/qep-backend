@@ -1399,6 +1399,12 @@ internal static class QuotationsApiHarness
             // prenden con WithWebHostBuilder, que se aplica después y gana.
             builder.UseSetting("Seed:ExportLoad:Quotations", "0");
 
+            // Pinned for the same reason: with Seed:Enabled=true in the user-secrets of whoever runs the
+            // tests, every host seeds the development tenant at startup. A test that writes the seed tenant's
+            // rows first then collides with the seeder, and the seed validator fails startup before the
+            // export-load one. The seed tests turn it on with WithWebHostBuilder, which wins.
+            builder.UseSetting("Seed:Enabled", "false");
+
             builder.ConfigureServices(services =>
             {
                 // El envío sale por la conexión de Zenvia del tenant (plan 2026-10-21), y ninguna prueba llama a

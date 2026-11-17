@@ -37,8 +37,10 @@ public sealed class ShopifyStoresApiTests
         var stores = await response.Content.ReadFromJsonAsync<JsonArray>(Ct);
         var store = Assert.Single(stores!)!.AsObject();
         Assert.Equal(
-            ["connectionId", "isConfigured", "lastReconciledAt", "name", "shopDomain", "status", "waitingCount"],
+            ["connectionId", "heldPushCount", "isConfigured", "lastReconciledAt", "name", "shopDomain", "status", "waitingCount"],
             store.Select(pair => pair.Key).Order(StringComparer.Ordinal));
+        // HeldPushCount (af08a8f3, owner 2026-11-14) travels in zero when the store has no held pushes.
+        Assert.Equal(0, store["heldPushCount"]!.GetValue<int>());
         Assert.Equal(
             (world.ConnectionId.ToString(), "Mi tienda", Shop, "Active", true, 2),
             (Str(store, "connectionId"), Str(store, "name"), Str(store, "shopDomain"), Str(store, "status"),

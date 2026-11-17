@@ -220,6 +220,7 @@ public sealed class SupportSettingsApiTests(SharedSupportHost sharedHost) : ICla
             version: 1);
         Assert.Equal(HttpStatusCode.OK, configured.StatusCode);
 
+        // One PUT, one version (owner 2026-11-16), however many groups the first one changed.
         var saved = await PutAsync(client, SettingsUrl(tenant), new { dueSoonBusinessDays = 6 }, version: 2);
 
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);

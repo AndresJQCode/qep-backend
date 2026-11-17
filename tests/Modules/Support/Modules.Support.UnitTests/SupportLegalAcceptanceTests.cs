@@ -46,7 +46,7 @@ public sealed class SupportLegalAcceptanceTests
         Assert.Throws<ArgumentException>(() => Record(privacy, Question, characterization, ip: null));
         Assert.Throws<ArgumentException>(() => Record(privacy, question: null, characterization, Ip));
         Assert.Throws<ArgumentException>(() => Record(privacy, Question, characterization: null, Ip));
-        Assert.Throws<ArgumentException>(() => Record(privacy, Question, characterization, new string('1', 46)));
+        // An over-long IP is no longer rejected: it is cut to the column (final review N3, ALongerIpIsCutToTheColumn).
 
         var accepted = Record(privacy, Question, characterization, Ip);
 

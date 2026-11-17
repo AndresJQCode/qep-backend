@@ -685,6 +685,9 @@ public sealed class AuthSessionApiTests
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+            // Pinned, never inherited: with Seed:Enabled=true in the developer's user-secrets the host seeds the development and
+            // operator tenants, and Tenants.Single() sees three.
+            builder.UseSetting("Seed:Enabled", "false");
         }
     }
 }

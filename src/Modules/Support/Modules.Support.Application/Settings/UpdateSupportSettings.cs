@@ -72,32 +72,30 @@ public sealed class UpdateSupportSettingsHandler(
         }
 
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        // One PUT, one version (owner 2026-11-16): an absent group is passed back as stored, so it never counts as changed.
+        var changes = settings.Update(
+            command.DueSoonBusinessDays,
+            command.FormalNextStep ?? settings.FormalNextStep,
+            command.SurveyEnabled ?? settings.SurveyEnabled,
+            command.AutoCloseBusinessDays ?? settings.AutoCloseBusinessDays,
+            now);
         var changedFields = new List<string>();
-        var version = settings.Version;
-        settings.ChangeDueSoon(command.DueSoonBusinessDays, now);
-        if (settings.Version != version)
+        if (changes.DueSoonBusinessDays)
         {
             changedFields.Add("dueSoonBusinessDays");
         }
 
-        if (command.FormalNextStep is not null)
+        if (changes.FormalNextStep)
         {
-            version = settings.Version;
-            settings.ChangeFormalNextStep(command.FormalNextStep, now);
-            if (settings.Version != version)
-            {
-                changedFields.Add("formalNextStep");
-            }
+            changedFields.Add("formalNextStep");
         }
 
-        var (surveyEnabled, autoClose) = (settings.SurveyEnabled, settings.AutoCloseBusinessDays);
-        settings.ChangeSurvey(command.SurveyEnabled ?? surveyEnabled, command.AutoCloseBusinessDays ?? autoClose, now);
-        if (settings.SurveyEnabled != surveyEnabled)
+        if (changes.SurveyEnabled)
         {
             changedFields.Add("surveyEnabled");
         }
 
-        if (settings.AutoCloseBusinessDays != autoClose)
+        if (changes.AutoCloseBusinessDays)
         {
             changedFields.Add("autoCloseBusinessDays");
         }

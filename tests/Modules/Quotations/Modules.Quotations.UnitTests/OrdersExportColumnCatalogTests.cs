@@ -160,7 +160,8 @@ public sealed class OrdersExportColumnCatalogTests
             OrdersExportColumnCatalog.Columns.Skip(71).Take(10));
         Assert.Equal(71, OrdersExportColumnCatalog.IndexOf("shipping_name"));
         Assert.Equal(OrdersExportColumnCatalog.IndexOf("shipping_city") + 1, OrdersExportColumnCatalog.IndexOf("shipping_city_coordinadora"));
-        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 4, OrdersExportColumnCatalog.IndexOf("shipping_email"));
+        // Después del envío: las dos retenciones, buyer_notes y las dos tarifas (416882b8).
+        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 6, OrdersExportColumnCatalog.IndexOf("shipping_email"));
     }
 
     // Se retiraron las llaves «customer_own_*»: un layout guardado que las nombre las pierde (Effective descarta
