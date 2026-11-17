@@ -40,6 +40,12 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
 
     public DbSet<AgentTurn> Turns => Set<AgentTurn>();
 
+    public DbSet<CopilotSettings> CopilotSettings => Set<CopilotSettings>();
+
+    public DbSet<CopilotThread> CopilotThreads => Set<CopilotThread>();
+
+    public DbSet<CopilotMessage> CopilotMessages => Set<CopilotMessage>();
+
     internal DbSet<ToolCallRow> ToolCalls => Set<ToolCallRow>();
 
     internal DbSet<UsageRecordRow> UsageRecords => Set<UsageRecordRow>();
@@ -52,6 +58,7 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
         ConfigureVersion(modelBuilder);
         ConfigureConnection(modelBuilder);
         AiRunModel.Configure(modelBuilder);
+        CopilotModel.Configure(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
 

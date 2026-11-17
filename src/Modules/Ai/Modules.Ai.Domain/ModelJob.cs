@@ -11,7 +11,8 @@ public enum ModelJobStatus
 
 /// <summary>
 /// Spec 2026-10-29 §4.2 y D-A13: un trabajo de modelo de la cola <c>ai.model_jobs</c>. El worker lo reclama, llama al modelo fuera de toda
-/// transacción y lo cierra en un guardado corto. Es de una sesión (Tarea 7) o de una prueba del playground (§7), nunca de las dos.
+/// transacción y lo cierra en un guardado corto. Es de una sesión (Tarea 7), de una prueba del playground (§7) o de un hilo del copiloto (spec
+/// 2026-11-17), de uno solo.
 /// </summary>
 public sealed class ModelJob
 {
@@ -35,6 +36,9 @@ public sealed class ModelJob
     public Guid? SessionId { get; private set; }
 
     public Guid? TestId { get; private set; }
+
+    /// <summary>Spec 2026-11-17 (copiloto) §5.1: el tercer dueño posible, un hilo del copiloto. El <c>CHECK</c> exige exactamente uno.</summary>
+    public Guid? CopilotThreadId { get; private set; }
 
     public int UpToSeq { get; private set; }
 
@@ -105,6 +109,19 @@ public sealed class ModelJob
             Id = id,
             TenantId = tenantId,
             TestId = testId,
+            UpToSeq = upToSeq,
+            Status = ModelJobStatus.Pending,
+            NextAttemptAt = now,
+            CreatedAt = now,
+        };
+
+    /// <summary>Spec 2026-11-17 (copiloto) §7 paso 1: la respuesta a la pregunta <paramref name="upToSeq"/> de un hilo, sin debounce.</summary>
+    public static ModelJob ForCopilot(Guid id, Guid tenantId, Guid threadId, int upToSeq, DateTimeOffset now) =>
+        new()
+        {
+            Id = id,
+            TenantId = tenantId,
+            CopilotThreadId = threadId,
             UpToSeq = upToSeq,
             Status = ModelJobStatus.Pending,
             NextAttemptAt = now,

@@ -36,7 +36,8 @@ internal sealed class UsageRecordRow
 
     public Guid TenantId { get; init; }
 
-    public Guid AgentId { get; init; }
+    /// <summary>Spec 2026-11-17 (copiloto) §5.1: <c>null</c> en el consumo del copiloto, que no tiene agente.</summary>
+    public Guid? AgentId { get; init; }
 
     public Guid? AgentVersionId { get; init; }
 
@@ -47,6 +48,12 @@ internal sealed class UsageRecordRow
     public Guid? TestId { get; init; }
 
     public Guid JobId { get; init; }
+
+    /// <summary>D-C12: el hilo del copiloto que pagó la llamada; referencia blanda, sobrevive al borrado del hilo (es consumo pagado).</summary>
+    public Guid? CopilotThreadId { get; init; }
+
+    /// <summary>D-C12: quien preguntó; obligatorio en el consumo del copiloto, para el desglose por miembro.</summary>
+    public Guid? MemberUserId { get; init; }
 
     public string Provider { get; init; } = string.Empty;
 
@@ -72,7 +79,15 @@ internal sealed class UsageRecordRow
 /// </summary>
 internal static class AiRunModel
 {
-    public const string ModelJobsOwnerCheck = "(session_id IS NULL) <> (test_id IS NULL)";
+    /// <summary>Spec 2026-11-17 (copiloto) §5.1: exactamente uno de los tres dueños.</summary>
+    public const string ModelJobsOwnerCheck =
+        "((session_id IS NOT NULL)::int + (test_id IS NOT NULL)::int + (copilot_thread_id IS NOT NULL)::int) = 1";
+
+    /// <summary>§5.1: un consumo es de un agente o del copiloto, nunca de los dos ni de ninguno.</summary>
+    public const string UsageRecordsOwnerCheck = "(copilot_thread_id IS NULL) = (agent_id IS NOT NULL)";
+
+    /// <summary>§5.1 y D-C12: el consumo del copiloto siempre dice quién preguntó.</summary>
+    public const string UsageRecordsMemberCheck = "copilot_thread_id IS NULL OR member_user_id IS NOT NULL";
 
     public const string ModelJobsStatusCheck = "status IN ('Pending','Running','Done','Discarded','Failed')";
 
@@ -142,6 +157,8 @@ internal static class AiRunModel
         job.Property(value => value.TenantId).HasColumnName("tenant_id");
         job.Property(value => value.SessionId).HasColumnName("session_id");
         job.Property(value => value.TestId).HasColumnName("test_id");
+        // Referencia blanda al hilo, sin FK: borrar el hilo no borra la cola; el trabajo en curso lo detecta y se descarta (§7 paso 3).
+        job.Property(value => value.CopilotThreadId).HasColumnName("copilot_thread_id");
         job.Property(value => value.UpToSeq).HasColumnName("up_to_seq");
         job.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(12);
         job.Property(value => value.Attempts).HasColumnName("attempts");
@@ -156,6 +173,7 @@ internal static class AiRunModel
         job.HasIndex(value => value.SessionId, SessionOpenJobIndex).IsUnique().HasFilter("status = 'Pending'");
         job.HasIndex(value => value.NextAttemptAt, "IX_model_jobs_due").HasFilter("status IN ('Pending','Running')");
         job.HasIndex(value => value.TestId, "IX_model_jobs_test").HasFilter("test_id IS NOT NULL");
+        job.HasIndex(value => value.CopilotThreadId, "IX_model_jobs_copilot_thread").HasFilter("copilot_thread_id IS NOT NULL");
     }
 
     private static void ConfigureSession(ModelBuilder modelBuilder)
@@ -247,7 +265,11 @@ internal static class AiRunModel
     private static void ConfigureUsage(ModelBuilder modelBuilder)
     {
         var usage = modelBuilder.Entity<UsageRecordRow>();
-        usage.ToTable("usage_records", AiDbContext.Schema);
+        usage.ToTable("usage_records", AiDbContext.Schema, table =>
+        {
+            table.HasCheckConstraint("CK_usage_records_owner", UsageRecordsOwnerCheck);
+            table.HasCheckConstraint("CK_usage_records_copilot_member", UsageRecordsMemberCheck);
+        });
         usage.HasKey(value => value.Id);
         usage.Property(value => value.Id).HasColumnName("id").UseIdentityAlwaysColumn();
         usage.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -257,6 +279,8 @@ internal static class AiRunModel
         usage.Property(value => value.SessionId).HasColumnName("session_id");
         usage.Property(value => value.TestId).HasColumnName("test_id");
         usage.Property(value => value.JobId).HasColumnName("job_id");
+        usage.Property(value => value.CopilotThreadId).HasColumnName("copilot_thread_id");
+        usage.Property(value => value.MemberUserId).HasColumnName("member_user_id");
         usage.Property(value => value.Provider).HasColumnName("provider").HasMaxLength(AgentModelRef.ProviderMaxLength);
         usage.Property(value => value.Model).HasColumnName("model").HasMaxLength(AgentModelRef.IdMaxLength);
         usage.Property(value => value.ServedModel).HasColumnName("served_model").HasMaxLength(AgentModelRef.IdMaxLength);
@@ -268,5 +292,8 @@ internal static class AiRunModel
         usage.Property(value => value.CalledAt).HasColumnName("called_at");
         usage.HasIndex(value => new { value.TenantId, value.CalledAt }, "IX_usage_records_tenant_called").IsDescending(false, true);
         usage.HasIndex(value => value.TestId, "IX_usage_records_test").HasFilter("test_id IS NOT NULL");
+        // D-C12: el consumo del mes por miembro y el tope mensual del tenant.
+        usage.HasIndex(value => new { value.TenantId, value.MemberUserId, value.CalledAt }, "IX_usage_records_copilot")
+            .IsDescending(false, false, true).HasFilter("copilot_thread_id IS NOT NULL");
     }
 }

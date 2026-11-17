@@ -46,4 +46,27 @@ public static class AiErrorCodes
 
     /// <summary>409 (§4.7): la prueba ya tiene un mensaje en curso.</summary>
     public const string TestBusy = "ai.test.busy";
+
+    /// <summary>422 (spec 2026-11-17 copiloto §5.2): el tenant no configuró el copiloto o lo apagó.</summary>
+    public const string CopilotDisabled = "ai.copilot.disabled";
+
+    /// <summary>404: el hilo no existe en el tenant <b>o es de otro miembro</b>. Nunca 403: es un recurso privado y un 403 confirmaría que
+    /// existe (D-C8).</summary>
+    public const string CopilotThreadNotFound = "ai.copilot.thread_not_found";
+
+    /// <summary>409 (D-C11): el hilo ya tiene una respuesta en curso.</summary>
+    public const string CopilotBusy = "ai.copilot.busy";
+
+    /// <summary>429 (D-C11): el miembro pasó su tope por hora o por día; lleva <c>retryAfterSeconds</c> y el header <c>Retry-After</c>.</summary>
+    public const string CopilotRateLimited = "ai.copilot.rate_limited";
+
+    /// <summary>429 (D-C11): el tenant gastó su tope mensual de tokens; lleva <c>retryAfterSeconds</c> hasta el mes siguiente del tenant.</summary>
+    public const string CopilotBudgetExhausted = "ai.copilot.budget_exhausted";
+
+    /// <summary>422 al guardar la configuración: el modelo no está en la lista curada del proveedor, está retirado, o falta para prender.</summary>
+    public const string CopilotModelNotAvailable = "ai.copilot.model_not_available";
+
+    /// <summary>409 (plan fase 2, C1.5; código nuevo, no está en el spec): reintentar una respuesta que no es la última fallida del hilo. Pasa
+    /// sólo en una carrera (otra pestaña ya la reintentó); la pantalla relee el hilo.</summary>
+    public const string CopilotNotRetryable = "ai.copilot.not_retryable";
 }

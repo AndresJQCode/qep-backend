@@ -19,11 +19,12 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
     {
         ArgumentNullException.ThrowIfNull(window);
         var usage = await dbContext.UsageRecords.AsNoTracking()
-            .Where(record => record.TenantId == tenantId && record.CalledAt >= window.MonthStart)
+            // Plan fase 2, Parte C: el consumo del copiloto (sin agente) no suma en la lista de agentes; se muestra en su configuración.
+            .Where(record => record.TenantId == tenantId && record.CalledAt >= window.MonthStart && record.AgentId != null)
             .GroupBy(record => new { record.AgentId, record.Provider })
             .Select(group => new
             {
-                group.Key.AgentId,
+                AgentId = group.Key.AgentId!.Value,
                 Usage = new AgentUsageDto(
                     group.Key.Provider,
                     group.Count(),

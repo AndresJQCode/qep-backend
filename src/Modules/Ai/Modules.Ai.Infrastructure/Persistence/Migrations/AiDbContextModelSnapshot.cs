@@ -433,6 +433,183 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.ToTable("agent_versions", "ai");
                 });
 
+            modelBuilder.Entity("Modules.Ai.Domain.CopilotMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CitationsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("citations")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("error_code");
+
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("job_id");
+
+                    b.Property<string>("Progress")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("progress");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("role");
+
+                    b.Property<int>("Seq")
+                        .HasColumnType("integer")
+                        .HasColumnName("seq");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("")
+                        .HasColumnName("text");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("thread_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "ThreadId" }, "IX_copilot_messages_pending")
+                        .IsUnique()
+                        .HasFilter("status = 'Pending'");
+
+                    b.HasIndex(new[] { "ThreadId", "Seq" }, "IX_copilot_messages_thread_seq")
+                        .IsUnique();
+
+                    b.ToTable("copilot_messages", "ai", t =>
+                        {
+                            t.HasCheckConstraint("CK_copilot_messages_role", "role IN ('User','Assistant')");
+
+                            t.HasCheckConstraint("CK_copilot_messages_status", "status IN ('Done','Pending','Failed')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Ai.Domain.CopilotSettings", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<string>("Instructions")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("instructions");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("model");
+
+                    b.Property<long?>("MonthlyTokenBudget")
+                        .HasColumnType("bigint")
+                        .HasColumnName("monthly_token_budget");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("provider");
+
+                    b.Property<int>("RetentionDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("retention_days");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("TenantId")
+                        .HasName("PK_copilot_settings");
+
+                    b.ToTable("copilot_settings", "ai", t =>
+                        {
+                            t.HasCheckConstraint("CK_copilot_settings_enabled", "NOT enabled OR (provider IS NOT NULL AND model IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Ai.Domain.CopilotThread", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_activity_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("title");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "LastActivityAt" }, "IX_copilot_threads_activity");
+
+                    b.HasIndex(new[] { "TenantId", "UserId", "LastActivityAt" }, "IX_copilot_threads_owner")
+                        .IsDescending(false, false, true);
+
+                    b.ToTable("copilot_threads", "ai");
+                });
+
             modelBuilder.Entity("Modules.Ai.Domain.ModelJob", b =>
                 {
                     b.Property<Guid>("Id")
@@ -446,6 +623,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("completed_at");
+
+                    b.Property<Guid?>("CopilotThreadId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("copilot_thread_id");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -497,6 +678,9 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex(new[] { "CopilotThreadId" }, "IX_model_jobs_copilot_thread")
+                        .HasFilter("copilot_thread_id IS NOT NULL");
+
                     b.HasIndex(new[] { "NextAttemptAt" }, "IX_model_jobs_due")
                         .HasFilter("status IN ('Pending','Running')");
 
@@ -509,7 +693,7 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
 
                     b.ToTable("model_jobs", "ai", t =>
                         {
-                            t.HasCheckConstraint("CK_model_jobs_owner", "(session_id IS NULL) <> (test_id IS NULL)");
+                            t.HasCheckConstraint("CK_model_jobs_owner", "((session_id IS NOT NULL)::int + (test_id IS NOT NULL)::int + (copilot_thread_id IS NOT NULL)::int) = 1");
 
                             t.HasCheckConstraint("CK_model_jobs_status", "status IN ('Pending','Running','Done','Discarded','Failed')");
                         });
@@ -591,7 +775,7 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
 
-                    b.Property<Guid>("AgentId")
+                    b.Property<Guid?>("AgentId")
                         .HasColumnType("uuid")
                         .HasColumnName("agent_id");
 
@@ -615,6 +799,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("conversation_id");
 
+                    b.Property<Guid?>("CopilotThreadId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("copilot_thread_id");
+
                     b.Property<int>("InputTokens")
                         .HasColumnType("integer")
                         .HasColumnName("input_tokens");
@@ -622,6 +810,10 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("JobId")
                         .HasColumnType("uuid")
                         .HasColumnName("job_id");
+
+                    b.Property<Guid?>("MemberUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_user_id");
 
                     b.Property<string>("Model")
                         .IsRequired()
@@ -664,13 +856,22 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex(new[] { "TenantId", "MemberUserId", "CalledAt" }, "IX_usage_records_copilot")
+                        .IsDescending(false, false, true)
+                        .HasFilter("copilot_thread_id IS NOT NULL");
+
                     b.HasIndex(new[] { "TenantId", "CalledAt" }, "IX_usage_records_tenant_called")
                         .IsDescending(false, true);
 
                     b.HasIndex(new[] { "TestId" }, "IX_usage_records_test")
                         .HasFilter("test_id IS NOT NULL");
 
-                    b.ToTable("usage_records", "ai");
+                    b.ToTable("usage_records", "ai", t =>
+                        {
+                            t.HasCheckConstraint("CK_usage_records_copilot_member", "copilot_thread_id IS NULL OR member_user_id IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_usage_records_owner", "(copilot_thread_id IS NULL) = (agent_id IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Audit.Domain.AuditEntry", b =>
@@ -769,11 +970,25 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Modules.Ai.Domain.CopilotMessage", b =>
+                {
+                    b.HasOne("Modules.Ai.Domain.CopilotThread", null)
+                        .WithMany("Messages")
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Ai.Domain.Agent", b =>
                 {
                     b.Navigation("Connections");
 
                     b.Navigation("Versions");
+                });
+
+            modelBuilder.Entity("Modules.Ai.Domain.CopilotThread", b =>
+                {
+                    b.Navigation("Messages");
                 });
 #pragma warning restore 612, 618
         }

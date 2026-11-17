@@ -79,6 +79,8 @@ public static class AiInfrastructureExtensions
         services.AddScoped<IAiSessionUnitOfWork, AiSessionUnitOfWork>();
         services.AddScoped<IAiModuleStatus, AiModuleStatus>();
         services.AddScoped<AiInboxProcessor>();
+        // Spec 2026-11-17 (copiloto): configuración e hilos.
+        services.AddScoped<ICopilotRepository, CopilotRepository>();
         services.AddScoped<AgentSessionJobProcessor>();
         services.AddScoped<AiSessionSweeper>();
         services.AddSingleton<AiInboxWorker>();
