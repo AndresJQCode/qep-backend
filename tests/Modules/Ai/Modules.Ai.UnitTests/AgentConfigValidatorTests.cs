@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Modules.Ai.Domain;
 
 namespace Modules.Ai.UnitTests;
@@ -144,13 +145,18 @@ public sealed class AgentConfigValidatorTests
     public void WithTheQuotationToolOffItsSettingsAreNotRequired() =>
         Assert.Empty(AgentConfigValidator.Validate(Valid() with { QuotationDraft = null }, Context()));
 
-    // Un documento guardado antes de quotationDraft se sigue leyendo, sin la configuración.
+    // Un documento guardado antes de quotationDraft se sigue leyendo, sin la configuración. Sólo falta la clave de primer nivel:
+    // tools.quotationDraft (el interruptor) existe desde el agregado inicial (f25065ca), antes que la configuración (fa7879ca).
     [Fact]
     public void AConfigSavedBeforeTheQuotationSettingsStillReads()
     {
         var json = Valid().ToJson().Replace(",\"quotationDraft\":null", string.Empty, StringComparison.Ordinal);
 
-        Assert.DoesNotContain("quotationDraft", json, StringComparison.Ordinal);
+        using (var document = JsonDocument.Parse(json))
+        {
+            Assert.False(document.RootElement.TryGetProperty("quotationDraft", out _));
+        }
+
         Assert.Null(AgentConfig.FromJson(json).QuotationDraft);
     }
 }
