@@ -656,6 +656,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `QueueNames`, en `QueueMetricsSourceTests`, en el dashboard y en las reglas de alerta. La edad mira sólo `attempts = 0`, y la de
   `automation` repite el `NOT EXISTS` de `AutomationInbox.ClaimAsync`: si cambias el reclamo, cambia también la lectura. En una
   prueba, el registro del tenant deja eventos sin despachar en `platform.outbox_messages`: ciérralos antes de esperar una cola vacía.
+- **Los `reason` de `qep_webhook_discarded_total` son contrato con `migracion-k8s`** (spec 2026-11-16). `QepWebhookDiscarding`
+  los lee por nombre (`unknown_route`, `without_user_id`): renombrar uno en `WebhookDiscardReasons` compila, pasa las pruebas
+  de Messaging y deja la alerta muda. Un descarte nuevo de Meta (un `Log…Discarded` o `Log…Ignored` más en
+  `WebhookDeliveryProcessor`) llama `MessagingMetrics.RecordDiscarded` al lado del log, suma su motivo en
+  `WebhookDiscardReasons` y en `WebhookDiscardReasonsTests`, y decide si entra en la alerta. Si no suma, el descarte vuelve a
+  ser silencioso. Shopify todavía no cuenta (sin clientes conectados); los puntos están en el spec.
 - **Borrar una variante es explícito: `deletedVariantIds`. Omitirla del `PUT` responde `catalog.variant.missing_in_request`.**
   No lo «simplifiques» a «la que no viene se borra» (era lo que pedía el plan, y el spec §6 lo corrigió): la tabla de
   variantes llega a 2.048 filas y el formulario la pagina, así que una fila ausente puede ser una página que no se

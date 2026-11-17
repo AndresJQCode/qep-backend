@@ -2727,11 +2727,19 @@ la cola esté vacía.
 | `qep.queue.retrying`        | —      | `queue`   | De esas, las que ya se intentaron al menos una vez y reintentan                                       |
 | `qep.queue.oldest_age`      | s      | `queue`   | Edad de la pendiente más vieja que nadie ha intentado (`attempts = 0`)                                |
 | `qep.messaging.inbound.lag` | s      | `channel` | Histograma: segundos entre la hora que Meta le pone a un mensaje entrante y el momento en que se guarda |
+| `qep.webhook.discarded`     | —      | `provider`, `reason` | Contador: eventos de Meta que llegaron con firma válida y no se ingresaron a propósito     |
 
 `oldest_age` ignora lo que ya reintenta (una fila sana en reintento largo o un outbox envenenado no son atraso); en
 `automation` también las que espera una anterior de su misma conversación, y en `media` los medios importados con el
 historial y los abandonados. `campaign` no tiene columna de edad, así que sólo publica `backlog` y `retrying`. En
 `qep.messaging.inbound.lag` la etiqueta `channel` es `whatsapp` o `instagram`; un timestamp a futuro (reloj desfasado) cuenta cero.
+
+`qep.webhook.discarded` (spec 2026-11-16) suma en el mismo punto donde `WebhookDeliveryProcessor` loguea un descarte, con
+el mismo conteo. `provider` es `whatsapp` o `instagram`; `reason`, uno de `WebhookDiscardReasons`: `unknown_route` (número o
+cuenta sin conexión), `without_user_id`, `paused`, `module_off`, `foreign_status` (estado de un mensaje que QEP no mandó:
+coexistencia), `unhandled_field`, `foreign_event` (visto o borrado de Instagram sin mensaje) e `ignored`. La alerta
+`QepWebhookDiscarding` de `migracion-k8s` mira sólo `unknown_route` y `without_user_id`, comparados con la misma hora de la
+semana anterior; los demás son tráfico normal y sólo van al panel. Un reintento de la entrega vuelve a contar, como el log.
 
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
