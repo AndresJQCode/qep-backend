@@ -165,6 +165,8 @@ reglas de dominio que no tienen que ver con Shopify:
   por definir» en pedidos y cotizaciones, tienda pública sin instrucciones de pago, configuración de Shopify con cuenta
   opcional. Hasta que llegue, el backend tiene que funcionar con el frontend de hoy: `chargesVat` ausente = `true`, y un
   frontend viejo sigue mandando cuentas.
+- **El frontend de hoy se rompe con una cuenta nula** (hace `slice(-4)` del número, hallazgo del spec del frontend): el
+  arreglo del frontend que lee `accountNumber: null` se despliega **antes o junto** con este backend.
 - `docs/estado.md` se actualiza en `develop` al mergear.
 
 ## 8. Verificación
