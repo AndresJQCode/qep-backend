@@ -258,7 +258,11 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
                             served.GetValueOrDefault(job.Id) ?? [],
                             usage.GetValueOrDefault(job.Id)?.SingleOrDefault());
                     }),
-                ])),
+                ],
+                row.Session.Origin.ToString(),
+                row.Session.ChatbotId,
+                // La misma regla que el historial: la salida es el motivo de fin de una sesión que volvió al flujo.
+                row.Session.Status == AgentSessionStatus.Returned ? row.Session.EndReason : null)),
         ];
     }
 

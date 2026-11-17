@@ -225,6 +225,42 @@ public sealed class AgentActivityApiTests
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("output").ValueKind);
     }
 
+    // Spec 2026-11-17 §7: la actividad de la conversación trae origin, chatbot y output con los mismos nombres y la misma regla que /sessions.
+    [Fact]
+    public async Task TheConversationActivityShowsTheOriginOfABlockSession()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var seeded = await SeedAsync(factory, database.GetConnectionString());
+        using var _ = seeded.Client;
+        var now = DateTimeOffset.UtcNow;
+        var chatbot = Guid.CreateVersion7();
+        var conversation = Guid.CreateVersion7();
+        await ExecuteAsync(
+            seeded.ConnectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@chatbot, @tenant, 'Bienvenida', '{}'::jsonb, now(), @tenant, now(), @tenant, now());
+            """,
+            ("chatbot", chatbot), ("tenant", Guid.Parse(TenantId)));
+        await ExecuteAsync(
+            seeded.ConnectionString,
+            """
+            INSERT INTO ai.sessions (id, tenant_id, conversation_id, connection_id, agent_id, agent_version_id, status, next_seq, started_at, updated_at,
+                                     ended_at, end_reason, failure_code, origin, delegation_id, chatbot_id, run_id, idle_minutes)
+            VALUES (gen_random_uuid(), @tenant, @conversation, @connection, @agent, @version, 'Returned', 3, @at, @at, @at, 'done', 'objective_completed',
+                    'ChatbotBlock', gen_random_uuid(), @chatbot, gen_random_uuid(), 60)
+            """,
+            ("tenant", Guid.Parse(TenantId)), ("conversation", conversation), ("connection", seeded.ConnectionId), ("agent", seeded.AgentId),
+            ("version", seeded.VersionId), ("at", now.AddHours(-1)), ("chatbot", chatbot));
+
+        var activity = await JsonAsync(await seeded.Client.GetAsync($"{AiUrl()}/conversations/{conversation}/agent-activity", Ct));
+
+        var session = Assert.Single(activity.GetProperty("sessions").EnumerateArray().ToList());
+        Assert.Equal(("ChatbotBlock", "done"), (session.GetProperty("origin").GetString(), session.GetProperty("output").GetString()));
+        Assert.Equal((chatbot, "Bienvenida"), (session.GetProperty("chatbot").GetProperty("id").GetGuid(), session.GetProperty("chatbot").GetProperty("name").GetString()));
+    }
+
     private static async Task<Seeded> SeedAsync(QepApiFactory factory, string connectionString)
     {
         await SeedTenantAsync(factory);

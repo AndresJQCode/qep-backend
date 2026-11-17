@@ -86,6 +86,12 @@ public sealed record AgentActivityResponseDto(
     IReadOnlyList<string> ServedModels,
     AgentUsageDto? Usage);
 
+/// <summary>Una sesión en la actividad de la conversación.</summary>
+/// <param name="Origin">Spec 2026-11-17 §7: <c>Connection</c> o <c>ChatbotBlock</c>, por nombre; lo mismo que <see cref="AgentSessionDto.Origin"/>.</param>
+/// <param name="Chatbot">Backend for frontend: en una sesión de bloque, el chatbot que delegó con su nombre de ahora (<c>null</c> el nombre
+/// si se borró), para que la conversación diga «desde el chatbot X» sin pedir los chatbots; <c>null</c> en las de conexión.</param>
+/// <param name="Output">La salida por la que la sesión de bloque volvió al flujo (<c>done</c>, <c>human</c>, <c>noAnswer</c>, <c>idle</c>,
+/// <c>error</c>); <c>null</c> mientras sigue o si terminó sin volver.</param>
 public sealed record AgentActivitySessionDto(
     Guid Id,
     Guid AgentId,
@@ -98,7 +104,10 @@ public sealed record AgentActivitySessionDto(
     string? FailureCode,
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
-    IReadOnlyList<AgentActivityResponseDto> Responses);
+    IReadOnlyList<AgentActivityResponseDto> Responses,
+    string Origin = nameof(AgentSessionOrigin.Connection),
+    AgentSessionChatbotDto? Chatbot = null,
+    string? Output = null);
 
 /// <summary>Las sesiones del agente en una conversación, de la más vieja a la más nueva. Vacía si ningún agente la atendió (o si es de otro
 /// tenant: no se confirma que exista).</summary>
@@ -127,6 +136,9 @@ public sealed record AgentConversationJob(
     AgentUsageDto? Usage);
 
 /// <param name="ConfigJson">El <c>config</c> de la versión de la sesión: las preguntas frecuentes que pudo citar.</param>
+/// <param name="Origin">Spec 2026-11-17 §7: <c>Connection</c> o <c>ChatbotBlock</c>.</param>
+/// <param name="ChatbotId">El chatbot que delegó, en una sesión de bloque; el nombre lo pone el handler (Ai no ve Automations).</param>
+/// <param name="Output">La salida del bloque si la sesión volvió al flujo.</param>
 public sealed record AgentConversationSession(
     Guid Id,
     Guid AgentId,
@@ -140,7 +152,10 @@ public sealed record AgentConversationSession(
     string? FailureCode,
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
-    IReadOnlyList<AgentConversationJob> Jobs);
+    IReadOnlyList<AgentConversationJob> Jobs,
+    string Origin = nameof(AgentSessionOrigin.Connection),
+    Guid? ChatbotId = null,
+    string? Output = null);
 
 /// <summary>Las lecturas de la actividad (EF en Infrastructure). Todas filtran por tenant.</summary>
 public interface IAgentActivityReader
@@ -193,7 +208,11 @@ public sealed class ListAgentSessionsValidator : AbstractValidator<ListAgentSess
 /// que ve la conversación es <c>DECISIÓN-PENDIENTE P-10</c>.
 /// </summary>
 public sealed class GetConversationAgentActivityHandler(
-    IExecutionContext executionContext, ITenantModules tenantModules, IAgentActivityReader reader, IAiQuickReplies quickReplies)
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    IAgentActivityReader reader,
+    IAiQuickReplies quickReplies,
+    IAiChatbotNames chatbotNames)
     : IQueryHandler<GetConversationAgentActivityQuery, AgentActivityDto>
 {
     public const string FaqSource = AgentSourceResolver.FaqSource;
@@ -211,6 +230,11 @@ public sealed class GetConversationAgentActivityHandler(
 
         var shortcuts = await AgentSourceResolver.ShortcutsAsync(
             quickReplies, query.TenantId, sessions.Any(session => session.Jobs.Any(job => job.SourceIds.Count > 0)), cancellationToken);
+        // Spec 2026-11-17 §7: el nombre de ahora de los chatbots, en una sola lectura y sólo si hay sesiones de bloque.
+        Guid[] chatbots = [.. sessions.Select(session => session.ChatbotId).OfType<Guid>().Distinct()];
+        var names = chatbots.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await chatbotNames.ResolveAsync(query.TenantId, chatbots, cancellationToken);
         return new AgentActivityDto(
             query.ConversationId,
             [
@@ -225,7 +249,10 @@ public sealed class GetConversationAgentActivityHandler(
                                 job.Id, job.Status, job.Outcome, job.ErrorCode, job.CreatedAt, job.CompletedAt, job.MessageIds, job.Truncated,
                                 [.. job.SourceIds.Select(id => AgentSourceResolver.Resolve(id, faq, shortcuts, job.ToolCalls))],
                                 job.ToolCalls, session.Provider, job.ServedModels, job.Usage)),
-                        ]);
+                        ],
+                        session.Origin,
+                        session.ChatbotId is { } chatbot ? new AgentSessionChatbotDto(chatbot, names.GetValueOrDefault(chatbot)) : null,
+                        session.Output);
                 }),
             ]);
     }

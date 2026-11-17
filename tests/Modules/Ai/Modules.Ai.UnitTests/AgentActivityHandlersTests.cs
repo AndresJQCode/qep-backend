@@ -99,7 +99,8 @@ public sealed class AgentActivityHandlersTests
     public async Task WithoutReadPermissionTheActivityIsDenied()
     {
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            new GetConversationAgentActivityHandler(new FakeExecutionContext(Tenant), AllModules(), new FakeReader(), new FakeQuickReplies())
+            new GetConversationAgentActivityHandler(
+                    new FakeExecutionContext(Tenant), AllModules(), new FakeReader(), new FakeQuickReplies(), new FakeChatbotNames(new Dictionary<Guid, string>()))
                 .HandleAsync(new GetConversationAgentActivityQuery(Tenant, Conversation), Ct));
 
         Assert.Equal("authorization.denied", error.Code);
@@ -182,6 +183,42 @@ public sealed class AgentActivityHandlersTests
             [("ChatbotBlock", (Guid?)chatbot, "Bienvenida", "done"), ("ChatbotBlock", gone, null, null), ("Connection", null, null, null)],
             page.Items.Select(item => (item.Origin, item.Chatbot?.Id, item.Chatbot?.Name, item.Output)));
         Assert.Equal([[chatbot, gone]], names.Asked);
+    }
+
+    // Spec 2026-11-17 §7: la actividad de la conversación dice de dónde salió cada sesión, con los mismos nombres y la misma semántica que el
+    // historial (GET /sessions): origen, chatbot con su nombre de ahora (sin nombre si se borró) y la salida por la que volvió al flujo.
+    [Fact]
+    public async Task TheConversationActivityShowsTheOriginOfABlockSession()
+    {
+        var (chatbot, gone) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        var reader = new FakeReader
+        {
+            Conversation =
+            [
+                Session([]),
+                Session([]) with { Origin = "ChatbotBlock", ChatbotId = gone, Status = "Live" },
+                Session([]) with { Origin = "ChatbotBlock", ChatbotId = chatbot, Status = "Returned", EndReason = "done", Output = "done" },
+            ],
+        };
+        var names = new FakeChatbotNames(new Dictionary<Guid, string> { [chatbot] = "Bienvenida" });
+
+        var activity = await Handler(reader, names).HandleAsync(new GetConversationAgentActivityQuery(Tenant, Conversation), Ct);
+
+        Assert.Equal(
+            [("Connection", null, null, null), ("ChatbotBlock", (Guid?)gone, null, null), ("ChatbotBlock", chatbot, "Bienvenida", "done")],
+            activity.Sessions.Select(session => (session.Origin, session.Chatbot?.Id, session.Chatbot?.Name, session.Output)));
+        Assert.Single(names.Asked);
+        Assert.Equal([gone, chatbot], names.Asked[0].Order());
+    }
+
+    [Fact]
+    public async Task WithoutBlockSessionsNoChatbotIsLookedUp()
+    {
+        var names = new FakeChatbotNames(new Dictionary<Guid, string>());
+
+        await Handler(new FakeReader { Conversation = [Session([])] }, names).HandleAsync(new GetConversationAgentActivityQuery(Tenant, Conversation), Ct);
+
+        Assert.Empty(names.Asked);
     }
 
     // Spec 2026-11-17 §7 y D-B17: la prueba en modo bloque ofrece finish_objective, lleva el objetivo en el contexto volátil y la transcripción
@@ -271,8 +308,10 @@ public sealed class AgentActivityHandlersTests
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), "Asesor virtual", Guid.CreateVersion7(), 1, "anthropic", "claude-sonnet-5-5", "Ended",
             "resolved", null, startedAt, startedAt.AddMinutes(5), 1, []);
 
-    private static GetConversationAgentActivityHandler Handler(FakeReader reader) =>
-        new(new FakeExecutionContext(Tenant, AiPermissions.AgentRead), AllModules(), reader, new FakeQuickReplies());
+    private static GetConversationAgentActivityHandler Handler(FakeReader reader, FakeChatbotNames? names = null) =>
+        new(
+            new FakeExecutionContext(Tenant, AiPermissions.AgentRead), AllModules(), reader, new FakeQuickReplies(),
+            names ?? new FakeChatbotNames(new Dictionary<Guid, string>()));
 
     private static FakeTenantModules AllModules() => new(TenantModuleSet.FromStored(TenantModuleKeys.All));
 
