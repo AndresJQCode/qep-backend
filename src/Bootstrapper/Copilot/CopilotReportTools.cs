@@ -36,7 +36,12 @@ internal static class CopilotReportTools
 
     /// <param name="properties">Los fragmentos de <c>properties</c> del esquema (<c>"nombre":{…}</c>), en orden.</param>
     public static CopilotToolContract Contract(string name, string description, string permission, params string[] properties) =>
-        new(new AiToolDefinition(name, description, Schema("{" + string.Join(',', properties) + "}")), permission, TenantModuleKeys.Reporting);
+        Contract(name, description, permission, TenantModuleKeys.Reporting, properties);
+
+    /// <param name="module">El módulo del endpoint que la herramienta replica: el mismo que enmascara su permiso.</param>
+    public static CopilotToolContract Contract(
+        string name, string description, string permission, TenantModuleKey module, params string[] properties) =>
+        new(new AiToolDefinition(name, description, Schema("{" + string.Join(',', properties) + "}")), permission, module);
 
     /// <summary>C-8: estricto. Todas las propiedades en <c>required</c> (las opcionales aceptan <c>null</c>) y sin propiedades extra.</summary>
     private static string Schema(string propertiesJson)
@@ -115,6 +120,18 @@ internal static class CopilotArguments
             _ => throw new CopilotArgumentException(name),
         };
 
+    /// <summary>El id de un detalle: sin él no hay qué leer.</summary>
+    public static Guid RequiredId(JsonElement arguments, string name) => Id(arguments, name) ?? throw new CopilotArgumentException(name);
+
+    /// <summary>Un texto de búsqueda corto (un número de documento, un nombre). El handler lo usa como filtro, nunca como instrucción.</summary>
+    public static string? Search(JsonElement arguments, string name) =>
+        Value(arguments, name) switch
+        {
+            null => null,
+            { ValueKind: JsonValueKind.String } value when value.GetString()!.Trim() is { Length: <= 100 } text => text.Length == 0 ? null : text,
+            _ => throw new CopilotArgumentException(name),
+        };
+
     public static int Page(JsonElement arguments) =>
         Value(arguments, "page") switch
         {
@@ -132,7 +149,11 @@ internal static class CopilotArguments
 internal sealed record CopilotReportList<TItem>(IReadOnlyList<TItem> Items, int Total, int Page, bool Truncated)
 {
     public static CopilotReportList<TItem> Of<TSource>(ReportPage<TSource> page, Func<TSource, TItem> map) =>
-        new([.. page.Items.Take(CopilotReportTools.PageSize).Select(map)], page.Total, page.Page, page.Page * CopilotReportTools.PageSize < page.Total);
+        Of(page.Items, page.Total, page.Page, map);
+
+    /// <summary>Lo mismo para las páginas de los otros módulos, que traen sus filas, el total y la página con otros nombres.</summary>
+    public static CopilotReportList<TItem> Of<TSource>(IEnumerable<TSource> items, int total, int page, Func<TSource, TItem> map) =>
+        new([.. items.Take(CopilotReportTools.PageSize).Select(map)], total, page, page * CopilotReportTools.PageSize < total);
 }
 
 internal sealed class GetOrdersSummaryTool : ICopilotTool
