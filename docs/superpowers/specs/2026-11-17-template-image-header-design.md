@@ -122,7 +122,11 @@ No public header image may outlive its template row.
   handler unpublishes and soft-deletes the image, retried by the outbox until it succeeds. The
   delete request itself never fails because of the image.
 - **Create fails after the image was published** (Meta rejects the `POST`, upload to Meta fails):
-  the handler unpublishes and deletes the image before returning the error.
+  the handler unpublishes and deletes the image before returning the error. If that immediate
+  release itself fails (storage down), the handler writes the same outbox release message instead,
+  so the image is still released by retry.
+- The file is **system-owned** in Storage: the Storage console cannot delete or unpublish a live
+  header image.
 - A **rejected** template keeps its row, so its image is not an orphan; it is released when the row
   is removed.
 - An abandoned form leaves nothing: the frontend uploads only on submit.
