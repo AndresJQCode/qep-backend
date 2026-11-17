@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Companies.Domain;
 using Modules.Tenancy.Application;
 
@@ -34,7 +35,9 @@ public sealed class CreateCompanyHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<CreateCompanyCommand> validator,
-    ICompanyTaxRateLookup taxRateLookup)
+    ICompanyTaxRateLookup taxRateLookup,
+    ICompanyDefaultTaxRates defaultTaxRates,
+    ILogger<CreateCompanyHandler> logger)
     : ICommandHandler<CreateCompanyCommand, CompanyDto>
 {
     public async Task<CompanyDto> HandleAsync(
@@ -109,6 +112,13 @@ public sealed class CreateCompanyHandler(
         // agregado y ya la hizo cumplir Company.Create en memoria. Por eso este SaveChanges no
         // tiene detras ninguna rama de traduccion de 23505.
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Spec 2026-11-17 §5.3: después del commit, nunca dentro. Un fallo no deshace la empresa.
+        if (CompanyDefaultTaxRateSeeding.Applies(company.ChargesVat, company.Country))
+        {
+            await CompanyDefaultTaxRateSeeding.TryEnsureAsync(
+                defaultTaxRates, logger, command.TenantId, executionContext.SubjectId, cancellationToken);
+        }
 
         return company.ToDto(
             city,

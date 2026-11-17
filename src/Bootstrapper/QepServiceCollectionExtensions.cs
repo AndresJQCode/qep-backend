@@ -1877,6 +1877,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationAdvisorLookup, QuotationAdvisorLookup>();
         services.AddScoped<IQuotationProductLookup, QuotationProductLookup>();
         services.AddScoped<IQuotationCompanyLookup, QuotationCompanyLookup>();
+        // Spec 2026-11-17 §5.3: las tasas de IVA por defecto de Colombia que pide Companies, sobre Catalog y Quotations.
+        services.AddScoped<ICompanyDefaultTaxRates, CompanyDefaultTaxRates>();
         // Mismo patron (CAT-05) entre `quotations` y `geography`: resuelve la ciudad de una parte
         // con datos propios para el Excel de pedidos.
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();
