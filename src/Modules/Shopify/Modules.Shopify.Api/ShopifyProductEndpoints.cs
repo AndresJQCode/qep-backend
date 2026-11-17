@@ -64,9 +64,13 @@ public static class ShopifyProductEndpoints
         return Results.Accepted($"/api/v1/tenants/{tenantId}/shopify/stores/{connectionId}/products/import", started);
     }
 
+    // Sin importaciones el cuerpo es el literal `null`: Results.Json(null) no escribe nada y la pantalla recibiría un cuerpo vacío.
     private static async Task<IResult> GetImportAsync(
-        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Json(await dispatcher.QueryAsync(new GetShopifyProductImportQuery(tenantId, connectionId), cancellationToken));
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var import = await dispatcher.QueryAsync(new GetShopifyProductImportQuery(tenantId, connectionId), cancellationToken);
+        return import is null ? Results.Content("null", "application/json") : Results.Ok(import);
+    }
 
     private static async Task<IResult> GetCoverageAsync(
         Guid tenantId,

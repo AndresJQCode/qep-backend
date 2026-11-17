@@ -191,7 +191,7 @@ internal static class ConnectionMapping
             connection.ProviderKey,
             connection.Name,
             connection.Status.ToString(),
-            provider.PublicFields.ToDictionary(
+            provider.ResponseFields.ToDictionary(
                 field => field.Key,
                 field => connection.Fields.GetValueOrDefault(field.Key),
                 StringComparer.Ordinal),

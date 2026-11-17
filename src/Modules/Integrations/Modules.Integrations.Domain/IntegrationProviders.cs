@@ -273,7 +273,7 @@ public static class IntegrationProviders
                 // 4096 es ShopifyShopProfile.FieldMaxLength (Integrations.Application, que el dominio no ve): cámbialos juntos.
                 ShopifyFieldKeys.ShopProfile, "Perfil de la tienda", FieldKind.Text,
                 required: false, maxLength: 4096, pattern: null,
-                invalidMessage: "El perfil que devolvió Shopify no tiene una forma válida.", isInternal: true),
+                invalidMessage: "El perfil que devolvió Shopify no tiene una forma válida.", isInternal: true, isPrivate: true),
         ],
         DefaultMaxConnections,
         onboarding: ProviderOnboarding.ShopifyOAuth);
