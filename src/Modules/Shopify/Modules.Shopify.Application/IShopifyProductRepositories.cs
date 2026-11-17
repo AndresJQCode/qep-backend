@@ -16,9 +16,13 @@ public interface IShopifyProductLinkRepository
     Task<IReadOnlyDictionary<long, ShopifyProductLink>> FindByShopifyVariantsAsync(
         Guid tenantId, Guid connectionId, IReadOnlyCollection<long> shopifyVariantIds, CancellationToken cancellationToken);
 
-    /// <summary>Los vínculos de un producto de QEP en esa conexión.</summary>
+    /// <summary>Los vínculos de un producto de Shopify en cualquiera de esas conexiones (P11: las viejas de la misma tienda).</summary>
+    Task<IReadOnlyList<ShopifyProductLink>> FindByShopifyProductInAsync(
+        IReadOnlyCollection<Guid> connectionIds, long shopifyProductId, CancellationToken cancellationToken);
+
+    /// <summary>Los vínculos de un producto de QEP en esas conexiones (la actual y, P11, las viejas de la misma tienda).</summary>
     Task<IReadOnlyList<ShopifyProductLink>> FindByProductAsync(
-        Guid tenantId, Guid connectionId, Guid productId, CancellationToken cancellationToken);
+        Guid tenantId, IReadOnlyCollection<Guid> connectionIds, Guid productId, CancellationToken cancellationToken);
 
     /// <summary>Los vínculos de un producto de QEP en cualquier tienda del tenant (desvincular, §7).</summary>
     Task<IReadOnlyList<ShopifyProductLink>> FindByProductInTenantAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken);
@@ -27,8 +31,8 @@ public interface IShopifyProductLinkRepository
     Task<IReadOnlyList<ShopifyProductLink>> FindByVariantsAsync(
         Guid connectionId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
 
-    /// <summary>Los productos de QEP con algún vínculo <c>Imported</c> en esa conexión (P9).</summary>
-    Task<IReadOnlySet<Guid>> ListImportedProductIdsAsync(Guid connectionId, CancellationToken cancellationToken);
+    /// <summary>Los productos de QEP con algún vínculo <c>Imported</c> en esas conexiones (P9 y P11).</summary>
+    Task<IReadOnlySet<Guid>> ListImportedProductIdsAsync(IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken);
 
     /// <summary>Todos los ids de variante de Shopify vinculados en esa conexión (modo <c>Missing</c> y cobertura).</summary>
     Task<IReadOnlySet<long>> ListLinkedShopifyVariantIdsAsync(Guid connectionId, CancellationToken cancellationToken);

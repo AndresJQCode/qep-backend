@@ -55,6 +55,15 @@ public sealed record ShopifyProductOutcome(ShopifyProductOutcomeKind Kind, Shopi
 /// reintenta una vez y después es <c>concurrent_write</c>.</para>
 /// <para><b>Vínculos colgando</b> (Review Focus 4): un vínculo cuya variante de QEP ya no existe (producto borrado a mano) se borra y
 /// el producto se trata como si no tuviera vínculos.</para>
+/// <para><b>P11, la tienda vuelta a enlazar.</b> Borrar la conexión y enlazar la tienda otra vez da otra conexión, y los vínculos
+/// quedan en la vieja. Las conexiones viejas son las otras tiendas del mismo tenant con el mismo dominio
+/// (<see cref="IShopifyStoreRepository.FindByShopDomainAsync"/>, como <c>AdoptWaitingOrdersAsync</c>). Un producto de Shopify sin
+/// vínculos en la conexión actual adopta los suyos de una vieja (se mueven, con su origen, versión e imagen): casa por id de
+/// Shopify, así que también un producto sin SKU. Y el SKU que casa con un importado de una vieja cuenta para P9. Los vínculos de la
+/// vieja no se sueltan al desinstalar ni con <c>shop/redact</c> (no son datos personales): son lo que permite adoptarlos.</para>
+/// <para><b>P9 sin robos.</b> El SKU que casa con un producto importado sólo lo vuelve a vincular si el producto de Shopify de sus
+/// vínculos ya no existe (<see cref="IShopifyProductsSource.ReadProductAsync"/> da <c>null</c>). Si sigue vivo, el nuevo es un
+/// duplicado: se salta con <c>sku_in_other_product</c>, sin escribir nada, o los dos se quitarían los vínculos en cada webhook.</para>
 /// <para><b>La imagen</b> va después del commit, fuera de la transacción: sólo en un producto importado, y sólo si el id de la imagen
 /// destacada cambió (o es nuevo). Si falla, el producto queda y se anota <c>image_failed</c>.</para>
 /// </summary>
@@ -65,6 +74,8 @@ public sealed class ShopifyProductSync(
     IShopifyProductLookup products,
     IShopifyImageFetcher images,
     IShopifyProductImageStore imageStore,
+    IShopifyProductsSource source,
+    IShopifyStoreRepository stores,
     IClock clock)
 {
     public const string OptionNameTaken = "catalog.option.name_taken";
@@ -162,7 +173,13 @@ public sealed class ShopifyProductSync(
         ShopifyProductSyncContext context, ShopifyProductSnapshot product, CancellationToken cancellationToken)
     {
         var connection = context.Connection;
+        var oldConnections = await OldConnectionsAsync(connection, cancellationToken);
         var current = (await links.FindByShopifyProductAsync(connection.ConnectionId, product.Id, cancellationToken)).ToList();
+        if (current.Count == 0 && oldConnections.Count > 0)
+        {
+            current = await AdoptAsync(connection, oldConnections, product.Id, cancellationToken);
+        }
+
         if (current.Count > 0)
         {
             // Review Focus 4: los vínculos cuya variante de QEP ya no existe se borran; si no queda ninguno, es un producto nuevo.
@@ -208,15 +225,84 @@ public sealed class ShopifyProductSync(
         var byCode = skus.Count == 0
             ? new Dictionary<string, ShopifyProductRef>(StringComparer.Ordinal)
             : await products.FindByCodesAsync(connection.TenantId, [.. skus], cancellationToken);
-        var imported = byCode.Count == 0 ? new HashSet<Guid>() : await links.ListImportedProductIdsAsync(connection.ConnectionId, cancellationToken);
+        Guid[] scope = [connection.ConnectionId, .. oldConnections];
+        var imported = byCode.Count == 0 ? new HashSet<Guid>() : await links.ListImportedProductIdsAsync(scope, cancellationToken);
         var match = ShopifyProductMatcher.Match(product, byCode, imported);
         var now = clock.UtcNow;
-        return match.Kind switch
+        switch (match.Kind)
         {
-            ShopifyMatchKind.None => await CreateAsync(context, product, cancellationToken),
-            ShopifyMatchKind.Relink => await RelinkAsync(context, product, match, cancellationToken),
-            _ => LinkMatched(context, product, match, now),
-        };
+            case ShopifyMatchKind.None:
+                return await CreateAsync(context, product, cancellationToken);
+            case ShopifyMatchKind.Relink:
+                var old = await links.FindByProductAsync(connection.TenantId, scope, match.QepProductId!.Value, cancellationToken);
+                return await AnyStillInShopifyAsync(connection, old, product.Id, cancellationToken)
+                    ? Rejected(ShopifyProductCodes.SkuInOtherProduct)
+                    : await RelinkAsync(context, product, match, old, cancellationToken);
+            default:
+                return LinkMatched(context, product, match, now);
+        }
+    }
+
+    // P11: las otras conexiones del tenant con la tienda del mismo dominio (las que quedaron al volver a enlazarla).
+    private async Task<IReadOnlyList<Guid>> OldConnectionsAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken)
+    {
+        var domain = connection.ShopDomain?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(domain))
+        {
+            return [];
+        }
+
+        return [.. (await stores.FindByShopDomainAsync(domain, cancellationToken))
+            .Where(store => store.TenantId == connection.TenantId && store.ConnectionId != connection.ConnectionId)
+            .Select(store => store.ConnectionId)
+            .Distinct()];
+    }
+
+    // P11: los vínculos del mismo producto de Shopify en una conexión vieja pasan a la actual, con su origen, versión e imagen. Se
+    // guarda el borrado antes de agregar, como en RelinkAsync.
+    private async Task<List<ShopifyProductLink>> AdoptAsync(
+        ShopifyConnectionRef connection, IReadOnlyList<Guid> oldConnections, long shopifyProductId, CancellationToken cancellationToken)
+    {
+        var orphaned = await links.FindByShopifyProductInAsync(oldConnections, shopifyProductId, cancellationToken);
+        if (orphaned.Count == 0)
+        {
+            return [];
+        }
+
+        foreach (var link in orphaned)
+        {
+            links.Remove(link);
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        var now = clock.UtcNow;
+        var adopted = new List<ShopifyProductLink>();
+        foreach (var old in orphaned.GroupBy(link => link.ShopifyVariantId).Select(group => group.First()))
+        {
+            var link = ShopifyProductLink.Create(
+                connection.TenantId, connection.ConnectionId, old.ShopifyProductId, old.ShopifyVariantId, old.ProductId, old.VariantId,
+                old.Origin, old.ShopifyUpdatedAt, now);
+            link.RecordImage(old.ShopifyImageId, old.ImageFileId, now);
+            links.Add(link);
+            adopted.Add(link);
+        }
+
+        return adopted;
+    }
+
+    // P9: un producto de Shopify de los vínculos viejos que sigue existiendo dice que el nuevo es un duplicado, no un recreado.
+    private async Task<bool> AnyStillInShopifyAsync(
+        ShopifyConnectionRef connection, IReadOnlyList<ShopifyProductLink> old, long current, CancellationToken cancellationToken)
+    {
+        foreach (var shopifyProductId in old.Select(link => link.ShopifyProductId).Where(id => id != current).Distinct())
+        {
+            if (await source.ReadProductAsync(connection, shopifyProductId, cancellationToken) is not null)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<Applied> CreateAsync(ShopifyProductSyncContext context, ShopifyProductSnapshot product, CancellationToken cancellationToken)
@@ -243,15 +329,18 @@ public sealed class ShopifyProductSync(
             new PendingImage(write.ProductId, created, null, null));
     }
 
-    // P9: el SKU casó con un producto importado de esta conexión que Shopify borró y recreó con otro id. Los vínculos viejos de ese
-    // producto se borran (y se guardan antes de agregar los nuevos: el índice único por variante de QEP no deja convivir los dos),
-    // se reactiva y sigue como un importado.
+    // P9: el SKU casó con un producto importado de esta conexión (o de una vieja de la misma tienda, P11) que Shopify borró y
+    // recreó con otro id. Los vínculos viejos de ese producto se borran (y se guardan antes de agregar los nuevos: el índice único
+    // por variante de QEP no deja convivir los dos), se reactiva y sigue como un importado.
     private async Task<Applied> RelinkAsync(
-        ShopifyProductSyncContext context, ShopifyProductSnapshot product, ShopifyMatch match, CancellationToken cancellationToken)
+        ShopifyProductSyncContext context,
+        ShopifyProductSnapshot product,
+        ShopifyMatch match,
+        IReadOnlyList<ShopifyProductLink> old,
+        CancellationToken cancellationToken)
     {
         var connection = context.Connection;
         var productId = match.QepProductId!.Value;
-        var old = await links.FindByProductAsync(connection.TenantId, connection.ConnectionId, productId, cancellationToken);
         var previousImage = old.FirstOrDefault(link => link.ImageFileId is not null);
         foreach (var link in old)
         {

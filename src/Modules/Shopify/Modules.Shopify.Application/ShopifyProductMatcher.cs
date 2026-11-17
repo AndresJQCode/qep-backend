@@ -11,8 +11,9 @@ public enum ShopifyMatchKind
     /// <summary>Casan algunas: se vinculan esas, el producto no se crea y las demás se saltan con <c>partial_match</c>.</summary>
     Partial,
 
-    /// <summary>P9: el producto de QEP elegido ya era importado de esta conexión (Shopify lo borró y lo recreó): se vuelve a
-    /// vincular como importado y se reactiva.</summary>
+    /// <summary>P9: el producto de QEP elegido ya era importado de esta conexión o de una vieja de la misma tienda (P11). El
+    /// sincronizador lo vuelve a vincular sólo si el producto de Shopify de esos vínculos ya no existe (Shopify lo borró y lo
+    /// recreó); si sigue vivo, el nuevo es un duplicado y se salta con <c>sku_in_other_product</c>.</summary>
     Relink,
 }
 
@@ -50,7 +51,8 @@ public static class ShopifyProductMatcher
     }
 
     /// <param name="byCode">Lo que devolvió <c>FindByCodesAsync</c> para <see cref="SkusOf"/>.</param>
-    /// <param name="importedProducts">Los productos de QEP con algún vínculo <c>Imported</c> en esta conexión (P9).</param>
+    /// <param name="importedProducts">Los productos de QEP con algún vínculo <c>Imported</c> en esta conexión o en una vieja de la
+    /// misma tienda (P9, P11).</param>
     public static ShopifyMatch Match(
         ShopifyProductSnapshot product, IReadOnlyDictionary<string, ShopifyProductRef> byCode, IReadOnlySet<Guid> importedProducts)
     {

@@ -351,10 +351,15 @@ internal sealed class FakeProductLinks : IShopifyProductLinkRepository
             .ToDictionary(link => link.ShopifyVariantId));
     }
 
-    public Task<IReadOnlyList<ShopifyProductLink>> FindByProductAsync(
-        Guid tenantId, Guid connectionId, Guid productId, CancellationToken cancellationToken) =>
+    public Task<IReadOnlyList<ShopifyProductLink>> FindByShopifyProductInAsync(
+        IReadOnlyCollection<Guid> connectionIds, long shopifyProductId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
-            Rows.Where(link => link.TenantId == tenantId && link.ConnectionId == connectionId && link.ProductId == productId).ToList());
+            Rows.Where(link => connectionIds.Contains(link.ConnectionId) && link.ShopifyProductId == shopifyProductId).ToList());
+
+    public Task<IReadOnlyList<ShopifyProductLink>> FindByProductAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> connectionIds, Guid productId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
+            Rows.Where(link => link.TenantId == tenantId && connectionIds.Contains(link.ConnectionId) && link.ProductId == productId).ToList());
 
     public Task<IReadOnlyList<ShopifyProductLink>> FindByProductInTenantAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
@@ -365,9 +370,9 @@ internal sealed class FakeProductLinks : IShopifyProductLinkRepository
         Task.FromResult<IReadOnlyList<ShopifyProductLink>>(
             Rows.Where(link => link.ConnectionId == connectionId && variantIds.Contains(link.VariantId)).ToList());
 
-    public Task<IReadOnlySet<Guid>> ListImportedProductIdsAsync(Guid connectionId, CancellationToken cancellationToken) =>
+    public Task<IReadOnlySet<Guid>> ListImportedProductIdsAsync(IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<Guid>>(Rows
-            .Where(link => link.ConnectionId == connectionId && link.Origin == ShopifyProductLinkOrigin.Imported)
+            .Where(link => connectionIds.Contains(link.ConnectionId) && link.Origin == ShopifyProductLinkOrigin.Imported)
             .Select(link => link.ProductId)
             .ToHashSet());
 

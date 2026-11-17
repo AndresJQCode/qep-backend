@@ -206,9 +206,19 @@ optimización de después). El paso 4 del onboarding (trabajo 3) la compone en s
   payload) y suman en un contador `qep_shopify_product_sync_failures_total{reason}`.
 - **P9. Producto borrado y recreado en Shopify.** Si el SKU casa con una variante inactiva de un producto `Imported` de la
   misma conexión, se vuelve a vincular como `Imported` y el producto se reactiva (no queda como `MatchedBySku` muerto).
+  **Sólo si el producto viejo ya no existe en Shopify** (revisión 2026-11-17): se consulta el producto de Shopify de los
+  vínculos viejos y, si sigue vivo, el nuevo es un duplicado del comerciante: se salta con `sku_in_other_product` y no
+  escribe nada. Sin esa consulta, original y duplicado se quitarían los vínculos en cada webhook.
 - **P10. Registro de webhooks sin `read_products`.** `ShopifyWebhookRegistration.EnsureAsync` registra los
   `products/*` sólo si los scopes concedidos de la conexión incluyen `read_products` (o `write_products`); sin él no los
   intenta y la conexión no pasa a `NeedsAttention`. El canje con el scope nuevo los registra.
+- **P11. Tienda vuelta a enlazar** (revisión 2026-11-17). Borrar la conexión y enlazar la tienda otra vez da una conexión
+  nueva, y los vínculos quedan en la vieja. Las conexiones viejas son las otras tiendas (`shopify.stores`) del mismo tenant
+  con el mismo dominio, el criterio de `AdoptWaitingOrdersAsync`. Un producto de Shopify sin vínculos en la conexión actual
+  **adopta** los de una vieja por id de producto de Shopify (se mueven con su origen, versión e imagen), así que no se
+  duplica ni un producto sin SKU; y un SKU que casa con un importado de una vieja cuenta para P9 (con la misma consulta de
+  si sigue vivo). Desinstalar o `shop/redact` **no** sueltan los vínculos de la vieja: no son datos personales, y son lo que
+  permite adoptarlos. Otro tenant con la misma tienda nunca adopta.
 
 ## 11. Lo que queda a quien construye
 

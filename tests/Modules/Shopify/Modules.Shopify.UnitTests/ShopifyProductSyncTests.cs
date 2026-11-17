@@ -183,6 +183,83 @@ public sealed class ShopifyProductSyncTests
         var link = Assert.Single(world.Links.Rows);
         Assert.Equal((8001L, 11L, variants[0], ShopifyProductLinkOrigin.Imported), (link.ShopifyProductId, link.ShopifyVariantId, link.VariantId, link.Origin));
         Assert.Equal([KeyValuePair.Create(11L, variants[0])], Assert.Single(world.Catalog.Updates).Existing.ToArray());
+        // El viejo se consultó en Shopify y ya no existe: por eso se vuelve a vincular.
+        Assert.Equal(1, world.Source.ProductRequests);
+    }
+
+    // Revisión (P9): el comerciante duplicó el producto en Shopify. El original sigue vivo, así que el duplicado no le quita los
+    // vínculos (si lo hiciera, el siguiente webhook del original se los volvería a quitar): se salta con sku_in_other_product.
+    [Fact]
+    public async Task ADuplicateOfALiveProductDoesNotStealItsLinks()
+    {
+        var world = new SyncWorld();
+        var (_, variants) = world.ImportedLinks(7001L, (1, "CAM-1"), updatedAt: Now.AddDays(-2));
+        world.Source.Products[7001L] = Product(id: 7001L, variants: [Variant(1, "CAM-1")]);
+
+        var outcome = await world.ApplyAsync(Product(id: 8001L, variants: [Variant(11, "CAM-1")]));
+
+        Assert.Equal(ShopifyProductOutcomeKind.Skipped, outcome.Kind);
+        Assert.Equal([ShopifyProductCodes.SkuInOtherProduct], outcome.IssueCodes);
+        var link = Assert.Single(world.Links.Rows);
+        Assert.Equal((7001L, 1L, variants[0]), (link.ShopifyProductId, link.ShopifyVariantId, link.VariantId));
+        Assert.Empty(world.Catalog.Activations);
+        Assert.Empty(world.Catalog.Updates);
+        Assert.Empty(world.Catalog.Creates);
+    }
+
+    // Revisión (P11): la tienda se volvió a enlazar y tiene otra conexión. El mismo producto de Shopify, importado por la conexión
+    // vieja del mismo tenant y el mismo dominio, se adopta: sus vínculos pasan a la conexión nueva y no se crea otro producto,
+    // aunque no tenga SKU con qué casar.
+    [Fact]
+    public async Task AReconnectedStoreAdoptsTheProductsOfItsOldConnection()
+    {
+        var world = new SyncWorld();
+        var old = world.OldConnection();
+        var (productId, variants) = world.ImportedLinks(7001L, (1, "shp-1"), updatedAt: Now.AddDays(-2), connectionId: old);
+        world.Links.Rows[^1].RecordImage(55L, Guid.CreateVersion7(), Now.AddDays(-2));
+
+        var outcome = await world.ApplyAsync(Product(id: 7001L, variants: [Variant(1, null)]));
+
+        Assert.Equal(ShopifyProductOutcomeKind.Updated, outcome.Kind);
+        Assert.Empty(world.Catalog.Creates);
+        Assert.Equal(productId, Assert.Single(world.Catalog.Updates).ProductId);
+        var link = Assert.Single(world.Links.Rows);
+        Assert.Equal(
+            (ImporterWorld.ConnectionId, 7001L, 1L, variants[0], ShopifyProductLinkOrigin.Imported, (long?)55L),
+            (link.ConnectionId, link.ShopifyProductId, link.ShopifyVariantId, link.VariantId, link.Origin, link.ShopifyImageId));
+    }
+
+    // P11: un producto recreado en Shopify después de reconectar casa por SKU con uno importado por la conexión vieja: si el viejo
+    // ya no existe en Shopify, se vuelve a vincular en la conexión nueva.
+    [Fact]
+    public async Task ARecreatedProductOfTheOldConnectionIsRelinkedToTheNewOne()
+    {
+        var world = new SyncWorld();
+        var old = world.OldConnection();
+        var (productId, variants) = world.ImportedLinks(7001L, (1, "CAM-1"), updatedAt: Now.AddDays(-2), connectionId: old);
+
+        var outcome = await world.ApplyAsync(Product(id: 8001L, variants: [Variant(11, "CAM-1")]));
+
+        Assert.Equal(ShopifyProductOutcomeKind.Relinked, outcome.Kind);
+        var link = Assert.Single(world.Links.Rows);
+        Assert.Equal((ImporterWorld.ConnectionId, 8001L, variants[0]), (link.ConnectionId, link.ShopifyProductId, link.VariantId));
+        Assert.Equal(productId, Assert.Single(world.Catalog.Updates).ProductId);
+    }
+
+    // Otro tenant con la misma tienda no es «la conexión vieja»: sus vínculos no se tocan.
+    [Fact]
+    public async Task TheSameShopInAnotherTenantIsNotAdopted()
+    {
+        var world = new SyncWorld();
+        var otherTenant = Guid.CreateVersion7();
+        var other = world.OldConnection(tenantId: otherTenant);
+        world.Links.Link(otherTenant, other, 7001L, 1L, Guid.CreateVersion7(), Guid.CreateVersion7());
+
+        var outcome = await world.ApplyAsync(Product(id: 7001L, variants: [Variant(1, "NUEVA-1")]));
+
+        Assert.Equal(ShopifyProductOutcomeKind.Created, outcome.Kind);
+        Assert.Equal(2, world.Links.Rows.Count);
+        Assert.Contains(world.Links.Rows, link => link.ConnectionId == other);
     }
 
     [Fact]
@@ -349,7 +426,24 @@ public sealed class ShopifyProductSyncTests
 
         public ShopifyProductSyncContext Context { get; }
 
-        public ShopifyProductSync Sync => new(UnitOfWork, Links, Catalog, Products, Fetcher, ImageStore, new FakeClock(Now));
+        public FakeProductsSource Source { get; } = new();
+
+        public ShopifyProductSync Sync =>
+            new(UnitOfWork, Links, Catalog, Products, Fetcher, ImageStore, Source, new FakeStoreRepository(Database), new FakeClock(Now));
+
+        /// <summary>La tienda de esta conexión y otra del mismo dominio (la conexión anterior, borrada al volver a enlazar), del
+        /// mismo tenant salvo que se pida otro. Devuelve la conexión vieja.</summary>
+        public Guid OldConnection(Guid? tenantId = null)
+        {
+            var current = ShopifyStore.Create(ImporterWorld.ConnectionId, ImporterWorld.TenantId, Now.AddDays(-1));
+            current.RecordShopDomain(Context.Connection.ShopDomain);
+            Database.Stores[current.ConnectionId] = current;
+            var oldConnection = Guid.CreateVersion7();
+            var old = ShopifyStore.Create(oldConnection, tenantId ?? ImporterWorld.TenantId, Now.AddDays(-30));
+            old.RecordShopDomain(Context.Connection.ShopDomain);
+            Database.Stores[oldConnection] = old;
+            return oldConnection;
+        }
 
         public Task<ShopifyProductOutcome> ApplyAsync(ShopifyProductSnapshot product) => Sync.ApplyAsync(Context, product, Ct);
 
@@ -364,8 +458,14 @@ public sealed class ShopifyProductSyncTests
         }
 
         public (Guid ProductId, Guid[] Variants) ImportedLinks(
-            long shopifyProductId, (long Id, string Sku) variant, DateTimeOffset updatedAt, bool active = true, long? imageId = null, Guid? imageFileId = null) =>
-            ImportedLinks(shopifyProductId, [variant], updatedAt, active, imageId, imageFileId);
+            long shopifyProductId,
+            (long Id, string Sku) variant,
+            DateTimeOffset updatedAt,
+            bool active = true,
+            long? imageId = null,
+            Guid? imageFileId = null,
+            Guid? connectionId = null) =>
+            LinksOf(shopifyProductId, [variant], ShopifyProductLinkOrigin.Imported, updatedAt, active, imageId, imageFileId, connectionId);
 
         public (Guid ProductId, Guid[] Variants) ImportedLinks(
             long shopifyProductId,
@@ -386,7 +486,8 @@ public sealed class ShopifyProductSyncTests
             DateTimeOffset updatedAt,
             bool active,
             long? imageId,
-            Guid? imageFileId)
+            Guid? imageFileId,
+            Guid? connectionId = null)
         {
             var productId = Guid.CreateVersion7();
             var ids = new List<Guid>();
@@ -394,7 +495,8 @@ public sealed class ShopifyProductSyncTests
             {
                 var variantId = QepVariant(productId, sku, active);
                 ids.Add(variantId);
-                Links.Link(ImporterWorld.TenantId, ImporterWorld.ConnectionId, shopifyProductId, id, productId, variantId, origin, updatedAt);
+                Links.Link(
+                    ImporterWorld.TenantId, connectionId ?? ImporterWorld.ConnectionId, shopifyProductId, id, productId, variantId, origin, updatedAt);
                 Links.Rows[^1].RecordImage(imageId, imageFileId, updatedAt);
             }
 

@@ -32,11 +32,30 @@ internal sealed class ShopifyProductLinkRepository(ShopifyDbContext dbContext) :
         return rows.ToDictionary(link => link.ShopifyVariantId);
     }
 
-    public async Task<IReadOnlyList<ShopifyProductLink>> FindByProductAsync(
-        Guid tenantId, Guid connectionId, Guid productId, CancellationToken cancellationToken) =>
-        await dbContext.ProductLinks
-            .Where(link => link.TenantId == tenantId && link.ConnectionId == connectionId && link.ProductId == productId)
+    public async Task<IReadOnlyList<ShopifyProductLink>> FindByShopifyProductInAsync(
+        IReadOnlyCollection<Guid> connectionIds, long shopifyProductId, CancellationToken cancellationToken)
+    {
+        var wanted = connectionIds.Distinct().ToArray();
+        if (wanted.Length == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.ProductLinks
+            .Where(link => wanted.Contains(link.ConnectionId) && link.ShopifyProductId == shopifyProductId)
+            .OrderBy(link => link.CreatedAt)
+            .ThenBy(link => link.Id)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ShopifyProductLink>> FindByProductAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> connectionIds, Guid productId, CancellationToken cancellationToken)
+    {
+        var wanted = connectionIds.Distinct().ToArray();
+        return await dbContext.ProductLinks
+            .Where(link => link.TenantId == tenantId && wanted.Contains(link.ConnectionId) && link.ProductId == productId)
+            .ToListAsync(cancellationToken);
+    }
 
     public async Task<IReadOnlyList<ShopifyProductLink>> FindByProductInTenantAsync(
         Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
@@ -58,11 +77,13 @@ internal sealed class ShopifyProductLinkRepository(ShopifyDbContext dbContext) :
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlySet<Guid>> ListImportedProductIdsAsync(Guid connectionId, CancellationToken cancellationToken)
+    public async Task<IReadOnlySet<Guid>> ListImportedProductIdsAsync(
+        IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken)
     {
+        var wanted = connectionIds.Distinct().ToArray();
         var ids = await dbContext.ProductLinks
             .AsNoTracking()
-            .Where(link => link.ConnectionId == connectionId && link.Origin == ShopifyProductLinkOrigin.Imported)
+            .Where(link => wanted.Contains(link.ConnectionId) && link.Origin == ShopifyProductLinkOrigin.Imported)
             .Select(link => link.ProductId)
             .Distinct()
             .ToListAsync(cancellationToken);
