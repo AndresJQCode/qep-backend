@@ -42,6 +42,9 @@ public static class AgentLimits
     /// <summary>Como los chatbots: cuántas conexiones puede atender un agente.</summary>
     public const int MaxConnections = 10;
 
+    /// <summary>El cuerpo de importar un agente: un <c>config</c> con todos sus topes llenos cabe de sobra.</summary>
+    public const int ImportBodyMaxBytes = 1024 * 1024;
+
     /// <summary>§4.7: <c>draft_saved</c> se audita como máximo una vez por minuto, como Automations.</summary>
     public static readonly TimeSpan DraftAuditInterval = TimeSpan.FromMinutes(1);
 }

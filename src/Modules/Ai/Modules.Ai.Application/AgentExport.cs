@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using FluentValidation;
 using Modules.Ai.Domain;
 using Modules.Tenancy.Application;
 
@@ -38,5 +39,57 @@ public sealed class ExportAgentHandler(
         var agent = await agents.FindAsync(query.TenantId, query.AgentId, cancellationToken) ?? throw AiNotFound.Agent(query.AgentId);
         return new AgentExportDto(
             AgentExportDto.CurrentSchema, AgentExportDto.KindValue, agent.Name, AgentExport.Portable(agent.DraftConfig), clock.UtcNow);
+    }
+}
+
+/// <param name="Name">El que se eligió al importar o, sin él, el del archivo; lo resuelve el endpoint.</param>
+public sealed record ImportAgentCommand(Guid TenantId, string Name, AgentExportDto Export) : ICommand<AgentEditorDto>;
+
+/// <summary>Un archivo de chatbot (sin <c>kind</c>) o de otra versión es 422, no un agente vacío. El <c>config</c> sigue los topes de
+/// guardar el borrador, con las claves bajo <c>Export.Config.</c>.</summary>
+public sealed class ImportAgentValidator : AbstractValidator<ImportAgentCommand>
+{
+    public ImportAgentValidator()
+    {
+        AgentRules.Name(RuleFor(command => command.Name));
+        RuleFor(command => command.Export).NotNull();
+        When(command => command.Export is not null, () =>
+        {
+            RuleFor(command => command.Export.Schema).Equal(AgentExportDto.CurrentSchema)
+                .WithMessage($"Only schema {AgentExportDto.CurrentSchema} files can be imported.");
+            RuleFor(command => command.Export.Kind).Equal(AgentExportDto.KindValue)
+                .WithMessage("The file is not an AI agent export.");
+            RuleFor(command => command.Export.Config).NotNull().SetValidator(new AgentConfigFieldsValidator());
+        });
+    }
+}
+
+/// <summary>Como crear un agente en blanco, con el <c>config</c> del archivo: nace en borrador, sin conexiones, y se audita como creado.</summary>
+public sealed class ImportAgentHandler(
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    AiCaller caller,
+    IAgentRepository agents,
+    IAiUnitOfWork unitOfWork,
+    IAiAuditRecorder audit,
+    IClock clock,
+    IValidator<ImportAgentCommand> validator,
+    AgentEditorBuilder builder)
+    : ICommandHandler<ImportAgentCommand, AgentEditorDto>
+{
+    public async Task<AgentEditorDto> HandleAsync(ImportAgentCommand command, CancellationToken cancellationToken)
+    {
+        await AiAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.AgentManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var by = await caller.RequireAsync(command.TenantId, cancellationToken);
+        var name = command.Name.Trim();
+        await CreateAgentHandler.EnsureNameIsFreeAsync(agents, command.TenantId, name, null, cancellationToken);
+
+        var now = clock.UtcNow;
+        var agent = Agent.Create(command.TenantId, name, AgentExport.Portable(command.Export.Config), by, now);
+        agents.Add(agent);
+        audit.Record(command.TenantId, executionContext.SubjectId, AiAuditActions.AgentCreated, agent.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return await builder.BuildAsync(agent, cancellationToken);
     }
 }

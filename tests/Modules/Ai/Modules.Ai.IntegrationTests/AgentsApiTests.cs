@@ -820,4 +820,76 @@ public sealed class AgentsApiTests
         Assert.Equal("ai.agent.not_found", (await ProblemAsync(missing)).Code);
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
     }
+
+    /// <summary>El archivo exportado del agente <paramref name="id"/>, con el miembro y el borrador de cotización puestos otra vez a mano
+    /// (un archivo editado): importar los vuelve a quitar.</summary>
+    private static async Task<Dictionary<string, object?>> HandEditedExportAsync(HttpClient client, Guid id)
+    {
+        var file = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+            await BodyAsync(await client.GetAsync($"{Agents}/{id}/export", Ct)))!;
+        var config = JsonSerializer.Deserialize<Dictionary<string, object?>>(((JsonElement)file["config"]!).GetRawText())!;
+        var handoff = JsonSerializer.Deserialize<Dictionary<string, object?>>(((JsonElement)config["handoff"]!).GetRawText())!;
+        handoff["memberId"] = Guid.NewGuid();
+        config["handoff"] = handoff;
+        config["quotationDraft"] = new
+        {
+            advisorMemberId = Guid.NewGuid(),
+            billingAccount = new { companyId = Guid.NewGuid(), bankName = "Banco", accountNumber = "123", currency = "COP" },
+        };
+        file["config"] = config;
+        return file;
+    }
+
+    // Spec 2026-11-17 importar/exportar §4: importar crea un agente nuevo en borrador, sin conexiones y sin los ids del tenant, y el editor
+    // ya dice qué falta elegir.
+    [Fact]
+    public async Task AnImportedAgentIsBornAsADraftWithoutTheTenantsIds()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        var (id, _) = await PublishableAsync(setup, config: ConfigWithTenantIds());
+        var export = await HandEditedExportAsync(setup.Client, id);
+
+        var response = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/import", new { name = "Ventas importado", export });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var editor = await JsonAsync(response);
+        Assert.NotEqual(id, editor.GetProperty("id").GetGuid());
+        Assert.Equal("Ventas importado", editor.GetProperty("name").GetString());
+        Assert.Equal("Draft", editor.GetProperty("status").GetString());
+        Assert.Empty(editor.GetProperty("connectionIds").EnumerateArray());
+        var config = editor.GetProperty("draft").GetProperty("config");
+        Assert.Equal("Atiende las dudas de los clientes de la tienda.", config.GetProperty("instructions").GetString());
+        Assert.Equal(JsonValueKind.Null, config.GetProperty("handoff").GetProperty("memberId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, config.GetProperty("quotationDraft").ValueKind);
+        var codes = editor.GetProperty("issues").EnumerateArray().Select(issue => issue.GetProperty("code").GetString()).ToList();
+        Assert.Contains("handoff_member_missing", codes);
+        Assert.Contains("quotation_advisor_missing", codes);
+        Assert.Contains("quotation_billing_account_missing", codes);
+    }
+
+    [Fact]
+    public async Task ImportingATakenNameOrAChatbotFileIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        using var reader = CreateClient(factory, permissions: AiPermissions.AgentRead);
+        var id = (await CreateAsync(setup.Client)).GetProperty("id").GetGuid();
+        var export = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+            await BodyAsync(await setup.Client.GetAsync($"{Agents}/{id}/export", Ct)))!;
+
+        var taken = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/import", new { export });
+        export.Remove("kind");
+        var chatbot = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/import", new { name = "Otro", export });
+        var denied = await SendAsync(reader, HttpMethod.Post, $"{Agents}/import", new { name = "Otro", export });
+
+        Assert.Equal(HttpStatusCode.Conflict, taken.StatusCode);
+        Assert.Equal("ai.agent.name_taken", (await ProblemAsync(taken)).Code);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, chatbot.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
 }
