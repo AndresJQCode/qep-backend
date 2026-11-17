@@ -171,6 +171,8 @@ internal sealed class FakeStorageSystemUploads : IStorageSystemUploads
         Guid tenantId, FileOwnerType ownerType, Guid ownerId, string name, string mimeType, long sizeBytes, long maxSizeBytes,
         CancellationToken cancellationToken)
     {
+        // La misma declaración que valida StorageSystemUploads.OpenAsync: un nombre que no casa con su tipo no abre nada.
+        FileUploadPolicy.ValidateDeclaration(name, mimeType, sizeBytes, maxSizeBytes);
         Opens.Add(new Opened(tenantId, ownerType, ownerId, name, mimeType, sizeBytes, maxSizeBytes));
         return Task.FromResult(Session);
     }

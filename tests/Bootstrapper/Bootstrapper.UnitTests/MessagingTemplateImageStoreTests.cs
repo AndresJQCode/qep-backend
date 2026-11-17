@@ -40,6 +40,32 @@ public sealed class MessagingTemplateImageStoreTests
         Assert.Equal(_uploads.Session.Headers, session.Headers);
     }
 
+    // La política de Mensajería sólo mira el tipo declarado; la extensión la revisa Storage. Su rechazo llega como el error de la imagen,
+    // no como un código de Storage que el formulario de plantillas no conoce.
+    [Theory]
+    [InlineData("banner.gif", "image/png")]
+    [InlineData("banner.pdf", "image/jpeg")]
+    [InlineData("banner.png", "image/jpeg")]
+    public async Task AStorageTypeRejectionIsAnUnsupportedHeaderImage(string fileName, string mimeType)
+    {
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(
+            () => NewStore().OpenUploadAsync(TenantId, fileName, mimeType, 1024, Ct));
+
+        Assert.Equal(MessagingErrorCodes.TemplateHeaderImageUnsupported, error.Code);
+        Assert.Empty(error.FieldErrors);
+        Assert.Empty(_uploads.Opens);
+    }
+
+    [Fact]
+    public async Task AStorageSizeRejectionIsATooLargeHeaderImage()
+    {
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(
+            () => NewStore().OpenUploadAsync(TenantId, "banner.png", "image/png", TemplateHeaderImagePolicy.MaxSizeBytes + 1, Ct));
+
+        Assert.Equal(MessagingErrorCodes.TemplateHeaderImageTooLarge, error.Code);
+        Assert.Empty(_uploads.Opens);
+    }
+
     [Theory]
     [InlineData(SystemUploadOutcome.Available, TemplateImageState.Available)]
     [InlineData(SystemUploadOutcome.NotFound, TemplateImageState.NotFound)]

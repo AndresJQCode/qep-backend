@@ -30,10 +30,32 @@ internal sealed class MessagingTemplateImageStore(
     public async Task<TemplateImageUploadSession> OpenUploadAsync(
         Guid tenantId, string fileName, string mimeType, long sizeBytes, CancellationToken cancellationToken)
     {
-        var session = await uploads.OpenAsync(
-            tenantId, OwnerType, tenantId, fileName, mimeType, sizeBytes, TemplateHeaderImagePolicy.MaxSizeBytes, cancellationToken);
+        SystemUploadSession session;
+        try
+        {
+            session = await uploads.OpenAsync(
+                tenantId, OwnerType, tenantId, fileName, mimeType, sizeBytes, TemplateHeaderImagePolicy.MaxSizeBytes, cancellationToken);
+        }
+        catch (StorageDomainException exception) when (TranslateDeclarationRejection(exception) is { } translated)
+        {
+            throw translated;
+        }
+
         return new TemplateImageUploadSession(session.FileId, session.UploadUrl, session.Headers);
     }
+
+    // La política de Mensajería sólo mira el tipo declarado; la extensión y el tope los revisa FileUploadPolicy. Su rechazo sale con el
+    // error de la imagen (sin mapa errors, como en la sesión), porque el formulario de plantillas no conoce los códigos de Storage. Un
+    // nombre inválido no se traduce: sigue siendo storage.file.name_*.
+    private static MessagingDomainException? TranslateDeclarationRejection(StorageDomainException exception) =>
+        exception.Code switch
+        {
+            "storage.file.type_not_allowed" or "storage.file.mime_mismatch" => new MessagingDomainException(
+                MessagingErrorCodes.TemplateHeaderImageUnsupported, "A template header image must be a JPEG or PNG file.", exception),
+            "storage.file.size_invalid" => new MessagingDomainException(
+                MessagingErrorCodes.TemplateHeaderImageTooLarge, "A template header image cannot exceed 5 MB.", exception),
+            _ => null,
+        };
 
     public async Task<TemplateImageFile> CompleteAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
     {
