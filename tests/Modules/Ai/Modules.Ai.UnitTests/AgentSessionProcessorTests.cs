@@ -256,7 +256,8 @@ public sealed class AgentSessionProcessorTests
 
         Assert.Equal("Claro, te ayudo.", Assert.Single(world.Outbound.Sends).Text);
         Assert.Equal(AiDeterministicIds.ReplyClientId(job.Id, 0), world.Outbound.Sends[0].ClientId);
-        Assert.Equal(AgentTurnRoleKind.Agent, Assert.Single(world.Sessions.Turns).Role);
+        // El turno del cliente lo pone Live(); la respuesta agrega exactamente un turno del agente.
+        Assert.Equal([AgentTurnRoleKind.Customer, AgentTurnRoleKind.Agent], world.Sessions.Turns.Select(turn => turn.Role));
         Assert.Equal((ModelJobStatus.Done, 1), (job.Status, session.RepliesWithoutHuman));
         Assert.True(session.IsLive);
     }
