@@ -1,9 +1,243 @@
+using System.Text.Json.Serialization;
 using BuildingBlocks.Application;
+using FluentValidation;
 using Microsoft.Extensions.Logging;
+using Modules.Audit.Domain;
 using Modules.Shopify.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Shopify.Application;
+
+/// <summary>La cuenta de cobro del cuerpo de <c>POST …/setup/company</c> (spec §7 H3). Todo opcional en el binding para que un
+/// campo ausente sea un 422 con <c>errors</c>.</summary>
+public sealed record ShopifySetupBankAccountInput(string? BankName, string? AccountNumber, string? Currency);
+
+/// <summary>
+/// <c>POST …/stores/{connectionId}/setup/company</c> (<c>integrations.connection.manage</c>, y <c>companies.company.manage</c> para
+/// crear). Sin <paramref name="CompanyId"/> crea la empresa con el resto del cuerpo; con él, sólo la asigna. <paramref name="ExpectedVersion"/>
+/// es la versión de la tienda y llega por <c>If-Match</c> (plan D5).
+/// </summary>
+public sealed record AssignShopifySetupCompanyCommand(
+    Guid TenantId,
+    Guid ConnectionId,
+    Guid? CompanyId,
+    string? Name,
+    string? TaxId,
+    string? DocumentType,
+    string? Country,
+    Guid? CityId,
+    string? CityName,
+    string? Address,
+    string? Phone,
+    string? Email,
+    bool? ChargesVat,
+    ShopifySetupBankAccountInput? BankAccount,
+    long ExpectedVersion) : ICommand<ShopifySetupCompanyResultDto>;
+
+/// <summary>La respuesta: la empresa asignada y la versión nueva de la tienda (también en el <c>ETag</c>), para que el paso
+/// siguiente guarde el <c>PUT</c> sin releer. <see cref="Created"/> decide 201 o 200 en el endpoint y no viaja.</summary>
+public sealed record ShopifySetupCompanyResultDto(Guid CompanyId, long StoreVersion)
+{
+    [JsonIgnore]
+    public bool Created { get; init; }
+}
+
+/// <summary>
+/// Sólo la forma, con las claves del cuerpo en camelCase. El resto (NIT, tipo de documento por país, ciudad, correo) lo valida el
+/// caso de uso de Companies, y sus <c>errors</c> salen con sus propias claves (<c>TaxId</c>, <c>CityId</c>…): el formulario del
+/// asistente lee las dos.
+/// </summary>
+public sealed class AssignShopifySetupCompanyValidator : AbstractValidator<AssignShopifySetupCompanyCommand>
+{
+    public AssignShopifySetupCompanyValidator()
+    {
+        When(command => command.CompanyId is null, () =>
+        {
+            RuleFor(command => command.Name)
+                .Must(value => !string.IsNullOrWhiteSpace(value))
+                .WithMessage("The company name is required to create it.")
+                .OverridePropertyName("name");
+            RuleFor(command => command.TaxId)
+                .Must(value => !string.IsNullOrWhiteSpace(value))
+                .WithMessage("The tax id is required to create the company.")
+                .OverridePropertyName("taxId");
+            RuleFor(command => command.Country)
+                .Must(value => value?.Trim() is { Length: 2 } code && code.All(char.IsAsciiLetter))
+                .WithMessage("The country must be an ISO 3166-1 alpha-2 code.")
+                .OverridePropertyName("country");
+            // Sin respuesta no se adivina (spec §4.3): la pantalla sólo preselecciona cuando Shopify lo sugiere.
+            RuleFor(command => command.ChargesVat)
+                .NotNull()
+                .WithMessage("Elige si cobras IVA.")
+                .OverridePropertyName("chargesVat");
+        });
+        RuleFor(command => command.CompanyId)
+            .NotEqual(Guid.Empty)
+            .When(command => command.CompanyId is not null)
+            .OverridePropertyName("companyId");
+        When(command => command.BankAccount is not null, () =>
+        {
+            RuleFor(command => command.BankAccount!.BankName)
+                .Must(value => value?.Trim() is { Length: > 0 and <= ShopifyBillingAccount.BankNameMaxLength })
+                .WithMessage($"The bank name is required and cannot exceed {ShopifyBillingAccount.BankNameMaxLength} characters.")
+                .OverridePropertyName("bankAccount.bankName");
+            RuleFor(command => command.BankAccount!.AccountNumber)
+                .Must(value => value?.Trim() is { Length: > 0 and <= ShopifyBillingAccount.AccountNumberMaxLength })
+                .WithMessage($"The account number is required and cannot exceed {ShopifyBillingAccount.AccountNumberMaxLength} characters.")
+                .OverridePropertyName("bankAccount.accountNumber");
+            RuleFor(command => command.BankAccount!.Currency)
+                .Must(value => IsCurrency(value))
+                .WithMessage("The account currency must be a three-letter ISO 4217 code.")
+                .OverridePropertyName("bankAccount.currency");
+        });
+        RuleFor(command => command.ExpectedVersion).GreaterThan(0).OverridePropertyName("expectedVersion");
+    }
+
+    internal static bool IsCurrency(string? value) =>
+        value?.Trim() is { Length: ShopifyBillingAccount.CurrencyLength } code && code.All(char.IsAsciiLetter);
+}
+
+/// <summary>
+/// Spec 2026-11-17 (onboarding) §4.2 y §7, plan D5–D7. En orden: tenant, permiso y módulo (403); la forma (422); la conexión del
+/// tenant (403); la tienda (o la nueva del primer contacto); la versión (412 <c>concurrency.conflict</c>, <b>antes</b> de crear nada);
+/// la membresía de quien guarda (403). Con <c>companyId</c>, la empresa activa del tenant y, si viene, su cuenta con esa moneda
+/// (<c>shopify.store.billing_account_not_found</c>); sin él, la moneda y después la empresa por Companies (su transacción, su
+/// autorización, su validador y la siembra de tasas). La moneda de una tienda sin cuenta (D7): la de la cuenta, la del perfil de
+/// Shopify o la ya guardada; sin ninguna, 503 <c>shopify.store.sync_unavailable</c>.
+/// <para>La asignación sube la versión y audita <c>shopify.store.updated</c> con los nombres de los campos, como el <c>PUT</c>. Si
+/// pierde por versión después de crear la empresa, el 412 trae la empresa creada
+/// (<see cref="ShopifySetupCompanyConflictException"/>) y el reintento la manda: no se crea otra (Review Focus 1).</para>
+/// </summary>
+public sealed class AssignShopifySetupCompanyHandler(
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    IShopifyConnectionDirectory connections,
+    IShopifyStoreRepository stores,
+    IShopifySetupCompanies companies,
+    IShopifyBillingAccounts billingAccounts,
+    IMembershipDirectory memberships,
+    IShopifyUnitOfWork unitOfWork,
+    IShopifyAuditRecorder auditRecorder,
+    IClock clock,
+    IValidator<AssignShopifySetupCompanyCommand> validator) : ICommandHandler<AssignShopifySetupCompanyCommand, ShopifySetupCompanyResultDto>
+{
+    public async Task<ShopifySetupCompanyResultDto> HandleAsync(AssignShopifySetupCompanyCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await ShopifyAuthorization.EnsureAsync(
+            executionContext, tenantModules, command.TenantId, ShopifyPermissions.ConnectionManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var connection = await ShopifyStoreSupport.ConnectionAsync(connections, command.TenantId, command.ConnectionId, cancellationToken);
+
+        var now = clock.UtcNow;
+        var store = await stores.FindAsync(command.TenantId, command.ConnectionId, cancellationToken);
+        var isNew = store is null;
+        store ??= ShopifyStoreSupport.NewStore(connection, now);
+        if (store.Version != command.ExpectedVersion)
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The Shopify store changed after it was loaded.");
+        }
+
+        var updatedBy = await memberships.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
+            ?? throw ShopifyAuthorization.Denied();
+
+        var created = command.CompanyId is null;
+        var billing = created
+            ? await CreateCompanyAsync(command, connection, store, cancellationToken)
+            : await ExistingBillingAsync(command, command.CompanyId!.Value, connection, store, cancellationToken);
+
+        var before = ShopifyStoreSupport.ComparedFields(store);
+        store.AssignBilling(billing, updatedBy, now);
+        if (isNew)
+        {
+            await ShopifyStoreSupport.AddNewAsync(stores, store, cancellationToken);
+        }
+
+        auditRecorder.Record(
+            command.TenantId,
+            executionContext.SubjectId,
+            AuditActorType.Human,
+            ShopifyAuditActions.StoreUpdated,
+            ShopifyAuditActions.ConnectionResourceType,
+            store.ConnectionId.ToString(),
+            ShopifyStoreSupport.ChangedFieldNamesJson(before, ShopifyStoreSupport.ComparedFields(store)),
+            now);
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (RequestConcurrencyException exception) when (created && ShopifyStoreSupport.IsConflict(exception))
+        {
+            // La empresa ya quedó en Companies (otra transacción): el reintento la asigna con su id.
+            throw new ShopifySetupCompanyConflictException(billing.CompanyId, exception);
+        }
+
+        return new ShopifySetupCompanyResultDto(billing.CompanyId, store.Version) { Created = created };
+    }
+
+    private static ShopifyDomainException BillingNotFound() =>
+        new(ShopifyErrorCodes.StoreBillingAccountNotFound, "The billing company or account does not exist in this tenant.");
+
+    // Plan D7: la de la cuenta del cuerpo, la del perfil de Shopify o la ya guardada en la tienda. Un perfil con una moneda que no
+    // tiene forma ISO se ignora: guardarla rompería la tienda.
+    private static string ResolveCurrency(AssignShopifySetupCompanyCommand command, ShopifyConnectionRef connection, ShopifyStore store)
+    {
+        var candidates = new[] { command.BankAccount?.Currency, connection.Profile?.CurrencyCode, store.Billing?.Currency };
+        return candidates.FirstOrDefault(AssignShopifySetupCompanyValidator.IsCurrency)?.Trim().ToUpperInvariant()
+            ?? throw new ServiceUnavailableException(
+                ShopifyErrorCodes.StoreSyncUnavailable, "The Shopify store currency is unknown; Shopify could not be read yet.");
+    }
+
+    private async Task<ShopifyBillingAccount> CreateCompanyAsync(
+        AssignShopifySetupCompanyCommand command, ShopifyConnectionRef connection, ShopifyStore store, CancellationToken cancellationToken)
+    {
+        // La moneda antes de crear: sin ella la tienda no se puede asignar, y una empresa creada para nada no se puede deshacer.
+        var currency = ResolveCurrency(command, connection, store);
+        var account = command.BankAccount is { } input
+            ? new ShopifySetupBankAccount(input.BankName!.Trim(), input.AccountNumber!.Trim(), input.Currency!.Trim().ToUpperInvariant())
+            : null;
+        var company = await companies.CreateAsync(
+            new ShopifySetupCompanyDraft(
+                command.TenantId,
+                command.Name!.Trim(),
+                command.TaxId!.Trim(),
+                command.DocumentType,
+                command.Country!.Trim().ToUpperInvariant(),
+                command.CityId,
+                command.CityName,
+                command.Address,
+                command.Phone,
+                command.Email,
+                command.ChargesVat!.Value,
+                account),
+            cancellationToken);
+        return new ShopifyBillingAccount(company.Id, account?.BankName, account?.AccountNumber, currency);
+    }
+
+    // Con cuenta, como el PUT: la cuenta tiene que estar en esa empresa con esa moneda, y se guarda como la tiene Companies. Con
+    // companyId no se agrega una cuenta a una empresa existente.
+    private async Task<ShopifyBillingAccount> ExistingBillingAsync(
+        AssignShopifySetupCompanyCommand command,
+        Guid companyId,
+        ShopifyConnectionRef connection,
+        ShopifyStore store,
+        CancellationToken cancellationToken)
+    {
+        _ = await companies.FindActiveAsync(command.TenantId, companyId, cancellationToken) ?? throw BillingNotFound();
+        if (command.BankAccount is not { } input)
+        {
+            return new ShopifyBillingAccount(companyId, null, null, ResolveCurrency(command, connection, store));
+        }
+
+        var account = await billingAccounts.FindAsync(command.TenantId, companyId, input.BankName!, input.AccountNumber!, cancellationToken);
+        if (account is null || !string.Equals(account.Currency.Trim(), input.Currency!.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw BillingNotFound();
+        }
+
+        return new ShopifyBillingAccount(account.CompanyId, account.BankName, account.AccountNumber, account.Currency);
+    }
+}
 
 /// <summary><c>GET …/stores/{connectionId}/setup?redirectUri=</c> (<c>integrations.connection.manage</c>): el asistente de la tienda.
 /// <paramref name="RedirectUri"/> es a dónde vuelve la reautorización si falta <c>read_products</c>.</summary>

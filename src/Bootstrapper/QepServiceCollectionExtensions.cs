@@ -1412,6 +1412,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<UpdateShopifyStoreCommand, ShopifyStoreDto>, UpdateShopifyStoreHandler>();
         // Spec 2026-11-17 (onboarding) §4.1: el asistente de la tienda (integrations.connection.manage, política de Integrations).
         services.AddScoped<IQueryHandler<GetShopifySetupQuery, ShopifySetupDto>, GetShopifySetupHandler>();
+        services.AddScoped<ICommandHandler<AssignShopifySetupCompanyCommand, ShopifySetupCompanyResultDto>, AssignShopifySetupCompanyHandler>();
         services.AddScoped<IQueryHandler<ListShopifyOrdersQuery, ShopifyOrderPageDto>, ListShopifyOrdersHandler>();
         services.AddScoped<IQueryHandler<GetShopifyOrdersSummaryQuery, ShopifyOrdersSummaryDto>, GetShopifyOrdersSummaryHandler>();
         services.AddScoped<ICommandHandler<RetryShopifyOrderCommand, ShopifyOrderRowDto>, RetryShopifyOrderHandler>();

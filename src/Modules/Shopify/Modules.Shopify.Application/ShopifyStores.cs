@@ -263,7 +263,7 @@ public sealed class UpdateShopifyStoreHandler(
         var updatedBy = await memberships.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
             ?? throw ShopifyAuthorization.Denied();
 
-        var before = ComparedFields(store);
+        var before = ShopifyStoreSupport.ComparedFields(store);
         store.Configure(
             command.AdvisorMembershipId,
             billing,
@@ -290,39 +290,11 @@ public sealed class UpdateShopifyStoreHandler(
             ShopifyAuditActions.StoreUpdated,
             ShopifyAuditActions.ConnectionResourceType,
             store.ConnectionId.ToString(),
-            ChangedFieldNamesJson(before, ComparedFields(store)),
+            ShopifyStoreSupport.ChangedFieldNamesJson(before, ShopifyStoreSupport.ComparedFields(store)),
             clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await ShopifyStoreSupport.ToDtoAsync(store, members, references, cancellationToken);
     }
-
-    // Lo que el formulario edita, con los nombres de los campos del cuerpo. Los valores sólo sirven para comparar el antes y el
-    // después: a la auditoría llegan los nombres de los que cambiaron, nunca los valores (el número de cuenta no se audita).
-    private static Dictionary<string, string?> ComparedFields(ShopifyStore store) => new(StringComparer.Ordinal)
-    {
-        ["advisorMembershipId"] = store.AdvisorMembershipId?.ToString(),
-        ["billingCompanyId"] = store.Billing?.CompanyId.ToString(),
-        ["billingBankName"] = store.Billing?.BankName,
-        ["billingAccountNumber"] = store.Billing?.AccountNumber,
-        ["billingCurrency"] = store.Billing?.Currency,
-        ["defaultClassificationId"] = store.DefaultClassificationId?.ToString(),
-        ["documentAttributeKey"] = store.DocumentAttributeKey,
-        ["documentTypeAttributeKey"] = store.DocumentTypeAttributeKey,
-        ["defaultIdentificationType"] = store.DefaultIdentificationType,
-        ["historyDays"] = store.HistoryDays?.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        ["editSync"] = store.EditSync.ToString(),
-        ["editPaymentStatuses"] = string.Join(',', store.EditPaymentStatuses),
-    };
-
-    /// <summary>El detalle de <c>shopify.store.updated</c>, con la misma forma que <c>tenancy.settings.updated</c>: un arreglo JSON
-    /// con los <b>nombres</b> de los campos que cambiaron, en el orden del formulario, sin ningún valor. Un <c>PUT</c> que no
-    /// cambia nada audita <c>[]</c>.</summary>
-    private static string ChangedFieldNamesJson(Dictionary<string, string?> before, Dictionary<string, string?> after) =>
-        JsonSerializer.Serialize(
-            after
-                .Where(pair => !string.Equals(before.GetValueOrDefault(pair.Key), pair.Value, StringComparison.Ordinal))
-                .Select(pair => pair.Key)
-                .ToArray());
 
     // La cuenta se guarda como la tiene Companies (banco y número recortados como allá): es la misma comparación con la que el
     // importador la vuelve a buscar en cada pedido (billing_account_missing). La moneda tiene que ser la de la cuenta: una tienda
@@ -456,6 +428,35 @@ internal static class ShopifyStoreSupport
             throw;
         }
     }
+
+    /// <summary>Lo que el formulario edita, con los nombres de los campos del cuerpo del <c>PUT</c>. Los valores sólo sirven para
+    /// comparar el antes y el después: a la auditoría llegan los nombres de los que cambiaron, nunca los valores (el número de cuenta
+    /// no se audita). Lo comparten el <c>PUT</c> y la empresa del asistente, para auditar igual.</summary>
+    public static Dictionary<string, string?> ComparedFields(ShopifyStore store) => new(StringComparer.Ordinal)
+    {
+        ["advisorMembershipId"] = store.AdvisorMembershipId?.ToString(),
+        ["billingCompanyId"] = store.Billing?.CompanyId.ToString(),
+        ["billingBankName"] = store.Billing?.BankName,
+        ["billingAccountNumber"] = store.Billing?.AccountNumber,
+        ["billingCurrency"] = store.Billing?.Currency,
+        ["defaultClassificationId"] = store.DefaultClassificationId?.ToString(),
+        ["documentAttributeKey"] = store.DocumentAttributeKey,
+        ["documentTypeAttributeKey"] = store.DocumentTypeAttributeKey,
+        ["defaultIdentificationType"] = store.DefaultIdentificationType,
+        ["historyDays"] = store.HistoryDays?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        ["editSync"] = store.EditSync.ToString(),
+        ["editPaymentStatuses"] = string.Join(',', store.EditPaymentStatuses),
+    };
+
+    /// <summary>El detalle de <c>shopify.store.updated</c>, con la misma forma que <c>tenancy.settings.updated</c>: un arreglo JSON
+    /// con los <b>nombres</b> de los campos que cambiaron, en el orden del formulario, sin ningún valor. Un guardado que no
+    /// cambia nada audita <c>[]</c>.</summary>
+    public static string ChangedFieldNamesJson(Dictionary<string, string?> before, Dictionary<string, string?> after) =>
+        JsonSerializer.Serialize(
+            after
+                .Where(pair => !string.Equals(before.GetValueOrDefault(pair.Key), pair.Value, StringComparison.Ordinal))
+                .Select(pair => pair.Key)
+                .ToArray());
 
     public static async Task<ShopifyStoreDto> ToDtoAsync(
         ShopifyStore store, IShopifyMemberDirectory members, IShopifyStoreReferences references, CancellationToken cancellationToken)
