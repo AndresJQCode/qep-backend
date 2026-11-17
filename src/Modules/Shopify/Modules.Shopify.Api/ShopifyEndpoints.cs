@@ -39,6 +39,12 @@ public static class ShopifyEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-11-17 (onboarding) §4.1: el asistente de la tienda (BFF).
+        group.MapGet("/stores/{connectionId:guid}/setup", GetSetupAsync)
+            .RequireAuthorization(ShopifyPermissions.ConnectionManage)
+            .Produces<ShopifySetupDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapPost("/stores/{connectionId:guid}/sync", SyncStoreAsync)
             .RequireAuthorization(ShopifyPermissions.OrderManage)
             .Produces<ShopifySyncResult>()
@@ -120,6 +126,14 @@ public static class ShopifyEndpoints
         httpContext.Response.Headers.ETag = $"\"{store.Version}\"";
         return Results.Ok(store);
     }
+
+    private static async Task<IResult> GetSetupAsync(
+        Guid tenantId,
+        Guid connectionId,
+        [FromQuery] string? redirectUri,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetShopifySetupQuery(tenantId, connectionId, redirectUri), cancellationToken));
 
     private static async Task<IResult> SyncStoreAsync(
         Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

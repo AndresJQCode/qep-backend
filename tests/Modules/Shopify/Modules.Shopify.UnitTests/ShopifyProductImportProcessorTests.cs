@@ -344,8 +344,12 @@ internal sealed class FakeProductsSource : IShopifyProductsSource
         return Task.FromResult(Products.GetValueOrDefault(productId));
     }
 
+    /// <summary>Cuántas páginas de variantes se pidieron: cada medición de la cobertura pide al menos una.</summary>
+    public int VariantKeyRequests { get; private set; }
+
     public Task<ShopifyVariantKeysPage> ListVariantKeysAsync(ShopifyConnectionRef connection, string? cursor, CancellationToken cancellationToken)
     {
+        VariantKeyRequests++;
         if (Failure is { } failure)
         {
             return Task.FromException<ShopifyVariantKeysPage>(failure);

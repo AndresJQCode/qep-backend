@@ -154,11 +154,14 @@ public sealed class GetShopifyProductImportHandler(
         await ShopifyStoreSupport.ConnectionAsync(connections, query.TenantId, query.ConnectionId, cancellationToken);
 
         var import = await imports.FindLatestAsync(query.TenantId, query.ConnectionId, cancellationToken);
-        if (import is null)
-        {
-            return null;
-        }
+        return import is null ? null : await ToDtoAsync(imports, import, cancellationToken);
+    }
 
+    /// <summary>La importación con sus primeros <see cref="MaxIssues"/> issues. La comparte el asistente (<c>GET …/setup</c>), para
+    /// que los dos muestren lo mismo.</summary>
+    internal static async Task<ShopifyProductImportDto> ToDtoAsync(
+        IShopifyProductImportRepository imports, ShopifyProductImport import, CancellationToken cancellationToken)
+    {
         var issues = await imports.ListIssuesAsync(import.Id, MaxIssues, cancellationToken);
         return new ShopifyProductImportDto(
             import.Id,
