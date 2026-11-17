@@ -1076,8 +1076,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Un consumidor nuevo de `platform.outbox_messages` escucha `DoorbellQueues.Outbox`**, con `DoorbellQueues.SafetyNet(DoorbellQueues.Outbox)`,
   como `OutboxPublisherWorker` o `NotificationsDeliveryWorker`. Un timbre de `outbox` despierta a todos los oyentes del proceso; un
   consumidor que siga con su `Task.Delay` de antes funciona, pero no se entera del timbre.
-- **Un comando nuevo contra Valkey tiene que pasar la ACL de producción** (`~qep:* &qep:* +@all -@dangerous -@scripting`, DP-V4):
-  sin Lua (`EVAL`, `SCRIPT`), sin `KEYS`, `FLUSH*`, `INFO` ni `CONFIG`, y toda clave o canal con prefijo `qep:`. El gateway traga
+- **Un comando nuevo contra Valkey tiene que pasar la ACL de producción** (`~qep:* &qep:* +@all -@dangerous -@scripting +info`,
+  DP-V4; `+info` desde 2026-11-17): sin Lua (`EVAL`, `SCRIPT`), sin `KEYS`, `FLUSH*` ni `CONFIG`, y toda clave o canal con prefijo
+  `qep:`. `INFO` se permite sólo para el cliente, nunca desde el código: sin él, StackExchange.Redis detecta la réplica con un
+  `SET <guid> "" PX 1` fuera de `~qep:*` en cada chequeo de 60 s, y `ValkeyACLDenied` dispara todo el tiempo por ruido propio;
+  `CONFIG` sí se apaga en el `CommandMap` (`ValkeyConnection.BuildOptions`). Lo amarra `TheClientSendsNothingTheAclDenies`. El gateway traga
   un `NOPERM` como respaldo del área, así que en producción no se ve como error: se ve como
   `qep_valkey_fallbacks_total{area=…}` subiendo. Las primitivas de presencia y limitadores las cubre `ValkeyAclTests`; sesiones,
   permisos, timbres, líder del muestreador y compuerta del toque, `ValkeyAclCompatibilityTests` (las dos en `Bootstrapper.UnitTests`),
