@@ -18,7 +18,8 @@ public sealed record UpdateCompanyCommand(
     string? Phone,
     string? Email,
     string? Address,
-    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CompanyWriteRules.
 public sealed class UpdateCompanyValidator : AbstractValidator<UpdateCompanyCommand>
@@ -95,7 +96,10 @@ public sealed class UpdateCompanyHandler(
                 Email = command.Email,
                 Address = command.Address
             },
-            now);
+            now,
+            // Ausente conserva (no «true»): un frontend que todavía no manda el campo no puede
+            // prender el IVA que otro apagó. Mismo criterio que las tasas de retención.
+            command.ChargesVat ?? company.ChargesVat);
         company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
 
         auditPublisher.Publish(

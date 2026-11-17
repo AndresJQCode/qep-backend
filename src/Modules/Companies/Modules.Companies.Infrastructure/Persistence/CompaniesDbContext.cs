@@ -79,6 +79,14 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
             .IsConcurrencyToken();
         company.Property(value => value.CreatedAt).HasColumnName("created_at");
         company.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+
+        // Default true en la base para que las empresas existentes sigan cobrando IVA (spec
+        // 2026-11-17 §5.1). El sentinel es obligatorio: sin él EF omite el `false` del INSERT —es
+        // el valor CLR por defecto— y la base guarda true (precedente: stores.show_prices).
+        company.Property(value => value.ChargesVat)
+            .HasColumnName("charges_vat")
+            .HasDefaultValue(true)
+            .HasSentinel(true);
         company.HasIndex(value => value.TenantId).HasDatabaseName("IX_companies_tenant");
 
         // GIN trigram, no btree: CompanyRepository.SearchAsync filtra `Name` con

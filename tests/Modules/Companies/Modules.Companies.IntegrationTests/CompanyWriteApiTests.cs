@@ -194,15 +194,15 @@ public sealed class CompanyWriteApiTests
         Assert.Equal(2, company.BankAccounts.Count);
     }
 
-    // Una empresa sin ninguna cuenta no es un estado valido: AccountNumber era NOT NULL antes de
-    // EMP-08 y el modulo no baja esa garantia de paso. La lista vacia es lo que produce quitar la
-    // ultima fila del formulario, asi que el 422 tiene que ser explicito y con su campo marcado.
+    // Spec 2026-11-17 §4.1 y §5.1: una empresa puede existir sin cuentas, y sin "chargesVat" en el
+    // cuerpo cobra IVA, para que un frontend que todavía no manda el campo no lo apague.
     [Fact]
-    public async Task CreateWithoutAnyAccountIsRejected()
+    public async Task CreatesACompanyWithoutBankAccountsThatChargesVatByDefault()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
 
         var response = await client.PostAsJsonAsync(
             CompaniesUrl(),
@@ -213,11 +213,80 @@ public sealed class CompanyWriteApiTests
                 taxId = "900.111.222-3",
                 country = "CO",
                 documentType = "NIT",
+                cityId,
             },
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Contains("BankAccounts", await ValidationFieldsAsync(response));
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var company = await response.Content.ReadFromJsonAsync<CompanyResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(company);
+        Assert.True(company.ChargesVat);
+        Assert.Empty(company.BankAccounts);
+    }
+
+    // Ausente en el PUT conserva lo guardado: un frontend viejo no puede prender el IVA que el
+    // nuevo apagó (decisión del plan 2026-11-17).
+    [Fact]
+    public async Task UpdateWithoutChargesVatKeepsTheStoredValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+        var created = await client.PostAsJsonAsync(
+            CompaniesUrl(),
+            new
+            {
+                name = "Andes Logistica S.A.S.",
+                bankAccounts = Array.Empty<object>(),
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
+                cityId,
+                chargesVat = false,
+            },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var company = await created.Content.ReadFromJsonAsync<CompanyResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(company);
+        Assert.False(company.ChargesVat);
+
+        var updated = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{company.Id}",
+            new
+            {
+                name = "Andes Logistica S.A.S.",
+                bankAccounts = Array.Empty<object>(),
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
+                cityId,
+            },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+
+        var reread = await client.GetFromJsonAsync<CompanyResponse>(
+            $"{CompaniesUrl()}/{company.Id}",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(reread);
+        Assert.False(reread.ChargesVat);
+    }
+
+    [Fact]
+    public async Task TheListReturnsChargesVat()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        await CreateCompanyAsync(client, "Andes Logistica S.A.S.", "CTA-000123");
+
+        var body = await client.GetStringAsync(CompaniesUrl(), TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(body);
+        var item = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+        Assert.True(item.GetProperty("chargesVat").GetBoolean());
     }
 
     // La lista ausente del JSON llega como null y no como lista vacia. Sin la regla NotEmpty
@@ -549,12 +618,13 @@ public sealed class CompanyWriteApiTests
     }
 
     [Fact]
-    public async Task UpdateWithoutAnyAccountIsRejected()
+    public async Task UpdateCanRemoveEveryAccount()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
-        var created = await CreateCompanyAsync(client, "Andes Logistica S.A.S.", "CTA-000123");
+        var cityId = await EnsureCityIdAsync(client);
+        var created = await CreateCompanyAsync(client, "Andes Logistica S.A.S.", "CTA-000123", cityId: cityId);
 
         var response = await client.PutAsJsonAsync(
             $"{CompaniesUrl()}/{created.Id}",
@@ -565,19 +635,16 @@ public sealed class CompanyWriteApiTests
                 taxId = "900.111.222-3",
                 country = "CO",
                 documentType = "NIT",
+                cityId,
             },
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-
-        // El rechazo no puede haber dejado la empresa sin cuentas. Update muta en el sitio, asi que
-        // vaciar la coleccion antes de validar dejaria este GET devolviendo una lista vacia aunque
-        // el 422 diga que no se guardo nada.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var reread = await client.GetFromJsonAsync<CompanyResponse>(
             $"{CompaniesUrl()}/{created.Id}",
             TestContext.Current.CancellationToken);
         Assert.NotNull(reread);
-        Assert.Equal("CTA-000123", Assert.Single(reread.BankAccounts).AccountNumber);
+        Assert.Empty(reread.BankAccounts);
     }
 
     [Fact]

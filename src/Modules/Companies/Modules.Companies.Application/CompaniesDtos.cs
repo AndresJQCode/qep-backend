@@ -40,6 +40,7 @@ public sealed record CompanyWithholdingTaxRateDto(
 
 /// <param name="WithholdingTaxRates">Las tasas municipales de la empresa, ordenadas por departamento, municipio y tipo
 /// (spec ReteICA por empresa §9.2). Nunca null.</param>
+/// <param name="ChargesVat">Si la empresa cobra IVA (spec 2026-11-17 §5.1).</param>
 public sealed record CompanyDto(
     Guid Id,
     string Name,
@@ -56,7 +57,8 @@ public sealed record CompanyDto(
     string? CityName,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates);
+    IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates,
+    bool ChargesVat);
 
 public sealed record CompanyResponse(
     Guid Id,
@@ -74,7 +76,8 @@ public sealed record CompanyResponse(
     string? CityName,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates);
+    IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates,
+    bool ChargesVat);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito: <c>email</c> y <c>address</c> no se pintan
@@ -108,7 +111,8 @@ public sealed record CompanyListItemResponse(
     string DocumentType,
     string? Phone,
     string City,
-    bool IsActive);
+    bool IsActive,
+    bool ChargesVat);
 
 /// <summary>
 /// Una cuenta en la fila del listado: el subconjunto de <see cref="CompanyBankAccountPayload"/>
@@ -134,6 +138,9 @@ public sealed record CompaniesResponse(IReadOnlyCollection<CompanyListItemRespon
 //
 // WithholdingTaxRateIds (spec ReteICA por empresa §9.2) es la excepción al «el PUT reemplaza todo»: ausente o null conserva
 // las tasas guardadas (en el alta, ninguna) para que el frontend viejo, que no lo manda, no las borre; [] las quita todas.
+//
+// ChargesVat (spec 2026-11-17 §5.1) tampoco reemplaza: en el alta, ausente es «cobra IVA»; en el PUT, ausente conserva
+// el valor guardado, para que un frontend que todavía no manda el campo no prenda el IVA que otro apagó.
 public sealed record CreateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
@@ -145,7 +152,8 @@ public sealed record CreateCompanyRequest(
     string? Phone,
     string? Email,
     string? Address,
-    IReadOnlyList<Guid>? WithholdingTaxRateIds = null);
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null);
 
 public sealed record UpdateCompanyRequest(
     string Name,
@@ -158,4 +166,5 @@ public sealed record UpdateCompanyRequest(
     string? Phone,
     string? Email,
     string? Address,
-    IReadOnlyList<Guid>? WithholdingTaxRateIds = null);
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null);

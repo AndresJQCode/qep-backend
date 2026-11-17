@@ -55,6 +55,27 @@ public sealed class CompanyWriteRulesTests
         Assert.Contains(result.Errors, error => error.PropertyName == "BankAccounts[0].Currency");
     }
 
+    // Spec 2026-11-17 §4.1: una empresa puede no tener cuentas; la lista sigue siendo obligatoria
+    // en el cuerpo para que un JSON sin el campo no llegue al dominio como null.
+    [Fact]
+    public void AnEmptyBankAccountListIsValid() =>
+        Assert.False(Fails(Command() with { BankAccounts = [] }, "BankAccounts"));
+
+    [Fact]
+    public void AMissingBankAccountListIsAValidationError() =>
+        Assert.True(Fails(Command() with { BankAccounts = null! }, "BankAccounts"));
+
+    [Fact]
+    public void TwentyOneBankAccountsAreStillTooMany()
+    {
+        var accounts = Enumerable
+            .Range(0, CompanyBankAccount.MaxPerCompany + 1)
+            .Select(index => new CompanyBankAccountPayload("Bancolombia", $"CTA-{index}", "COP"))
+            .ToArray();
+
+        Assert.True(Fails(Command() with { BankAccounts = accounts, ChargesVat = false }, "BankAccounts"));
+    }
+
     [Fact]
     public void ACountryThatIsNotTwoLettersFailsOnCountry() =>
         Assert.True(Fails(Command(country: "Col"), "Country"));

@@ -17,7 +17,8 @@ public sealed record CreateCompanyCommand(
     string? Phone,
     string? Email,
     string? Address,
-    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    bool? ChargesVat = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Las reglas viven en CompanyWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCompanyValidator : AbstractValidator<CreateCompanyCommand>
@@ -89,7 +90,9 @@ public sealed class CreateCompanyHandler(
                 Email = command.Email,
                 Address = command.Address
             },
-            now);
+            now,
+            // Spec 2026-11-17 §5.1: ausente es «cobra IVA».
+            command.ChargesVat ?? true);
         company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
 
         repository.Add(company);
