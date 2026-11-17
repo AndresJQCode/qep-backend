@@ -2836,6 +2836,15 @@ otro hasta que la entrada venza, y por eso `MultiReplicaInventory` exige las dos
 request, además, `MembershipDirectory` y `TenantModules` memoizan por scope: la membresía y los módulos se leen una vez aunque
 los pidan la autenticación y el handler.
 
+Mientras las áreas estén apagadas hay dos exposiciones que antes no existían, porque el efecto era inmediato:
+
+- **Despliegue.** Con `RollingUpdate` y `maxSurge: 1` (`k8s/prod-deployment.yaml`) el pod viejo y el nuevo conviven por minutos.
+  Una suspensión o un cambio de roles aplicado en uno llega al otro en ≤ 60 s, y una revocación de sesión en ≤ ~5 min: el umbral
+  de toque de `SessionService` vuelve fallo toda entrada de más de cinco minutos.
+- **Runbooks por SQL.** Un cambio a mano en `tenancy.tenant_modules`, en roles, en membresías o en `identity.sessions` —prender
+  `pos` con la fila de `tenant_modules`, por ejemplo— no sube la versión de acceso: el pod que ya corre lo ve en ≤ 60 s
+  (permisos) o ≤ 5 min (sesiones), no en el siguiente request.
+
 **El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
 producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
 el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiqueta `area`). En Grafana, durante el día

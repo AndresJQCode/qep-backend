@@ -1076,7 +1076,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   y `MemorySessionCacheTests` (Bootstrapper.UnitTests) y `RequestQueryBudgetTests` (Tenancy), que cuenta los comandos SQL de un
   request real: `GET /memberships?search=` eran 7 + N miembros (19 en producción, 3,27 s con la base en otro nodo) y ahora son 3 con la
   caché caliente. Un lector nuevo de una lista de personas pide los correos por `IUserDirectory.GetEmailsAsync`, en lote, nunca
-  `GetEmailAsync` en un bucle.
+  `GetEmailAsync` en un bucle. Dos exposiciones nuevas mientras las áreas de Valkey estén apagadas, donde antes el efecto era
+  inmediato: (3) durante un `RollingUpdate` con `maxSurge: 1` (`k8s/prod-deployment.yaml`) conviven dos pods por minutos, y una
+  suspensión o un cambio de roles aplicado en uno llega al otro en ≤ 60 s, y una revocación de sesión en ≤ ~5 min (el umbral de
+  toque de `SessionService` vuelve fallo toda entrada más vieja); (4) un runbook que cambie por SQL `tenancy.tenant_modules`, roles,
+  membresías o `identity.sessions` —prender `pos` con la fila de `tenant_modules`, por ejemplo— tiene efecto en el pod que ya corre
+  en ≤ 60 s (permisos) o ≤ 5 min (sesiones), no en el siguiente request.
 - **Una tabla de cola nueva entra al mapa de `QueueDoorbellInterceptor`** (`BuildingBlocks.Infrastructure`, `Tables`), con su cola en
   `DoorbellQueues`, y su worker espera con `doorbell.Listen(...)`. Sin eso el worker sólo se entera en la red de seguridad, no al
   insertar, y nada falla. El `DbContext` que mapee una de esas tablas lleva el interceptor: lo amarra
