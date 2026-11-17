@@ -862,6 +862,9 @@ public sealed class AgentSessionProcessorTests
         public Task ReturnToChatbotAsync(Guid tenantId, Guid conversationId, Guid delegationId, string resultJson, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task InterruptOrphanDelegationAsync(Guid tenantId, Guid conversationId, Guid delegationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public AiConversationState? State { get; set; }
 
         public Guid? StartedAgent { get; private set; }

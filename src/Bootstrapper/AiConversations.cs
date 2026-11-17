@@ -182,6 +182,29 @@ internal sealed partial class AiConversations(
         await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
     }
 
+    public async Task InterruptOrphanDelegationAsync(Guid tenantId, Guid conversationId, Guid delegationId, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var services = new Services(scope.ServiceProvider);
+        var delegation = await services.Delegations.FindAsync(tenantId, delegationId, cancellationToken);
+        if (delegation is null || delegation.ConversationId != conversationId)
+        {
+            return;
+        }
+
+        // Se vuelve a mirar en Mensajería: la conversación pudo volver a apuntarla entre la lectura de Ai y ésta.
+        var conversation = await scope.ServiceProvider.GetRequiredService<IConversationRepository>().FindAsync(tenantId, conversationId, cancellationToken);
+        var now = services.Clock.UtcNow;
+        if (conversation?.AutomationDelegationId == delegationId || !delegation.Interrupt(now))
+        {
+            return;
+        }
+
+        // La corrida que delegó espera en el bloque y el barrido de abandonadas la salta (§6.5): la señal la cierra si nadie la atiende.
+        services.Inbox.EnqueueReleaseRun(tenantId, delegation.ConnectionId, conversationId, BotKind.Chatbot, now);
+        await services.UnitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
     /// <summary>La salida del resultado para el evento del hilo; Mensajería no interpreta el resto del JSON. Sin <c>output</c> (o
     /// <c>null</c>) es un retorno sin salida (§6.4).</summary>
     private static string? OutputOf(string resultJson)

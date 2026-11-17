@@ -249,6 +249,26 @@ public sealed class AgentBlockSessionProcessorTests
         Assert.Empty(world.Conversations.Returns);
     }
 
+    // Revisión de la rama, hallazgo 2: una delegación Live que la conversación ya no apunta (otra la reemplazó, o un traspaso limpió la
+    // columna sin cerrarla) no abre sesión: nadie va a recibir lo que el agente conteste. Se interrumpe y la fila se salta.
+    [Theory]
+    [InlineData("other")]
+    [InlineData("none")]
+    public async Task ADelegationTheConversationNoLongerPointsToIsInterruptedAndSkipped(string current)
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        world.Credentials.Available.Add("anthropic");
+        var delegation = Delegate(world, agent, lastInbound: Guid.CreateVersion7());
+        world.Conversations.State = DelegatedState(agent.Id, current == "other" ? Guid.CreateVersion7() : null);
+
+        Assert.Equal(AiInboxOutcomes.Skipped, await world.Inbound().ProcessAsync(DelegatedRow(delegation), Ct));
+
+        Assert.Empty(world.Sessions.All);
+        Assert.Empty(world.Conversations.Returns);
+        Assert.Equal([delegation.DelegationId], world.Conversations.Interrupted);
+    }
+
     // Un entrante que el procesador toma antes que la fila Delegated (un reintento por candado) abre la misma sesión del bloque, con el
     // entrante del bloque y el nuevo; la fila Delegated después es un duplicado. Nunca abre una sesión de conexión con saludo.
     [Fact]
@@ -604,6 +624,15 @@ public sealed class AgentBlockSessionProcessorTests
             Returns.Add((delegationId, resultJson));
             Delegations[delegationId] = delegation with { Status = "Returned" };
             State = State with { AutomationBotKind = "Chatbot", AutomationAgentId = null, AutomationDelegationId = null };
+            return Task.CompletedTask;
+        }
+
+        /// <summary>Hallazgo 2: las delegaciones huérfanas que el procesador interrumpió, en orden.</summary>
+        public List<Guid> Interrupted { get; } = [];
+
+        public Task InterruptOrphanDelegationAsync(Guid tenantId, Guid conversationId, Guid delegationId, CancellationToken cancellationToken)
+        {
+            Interrupted.Add(delegationId);
             return Task.CompletedTask;
         }
     }

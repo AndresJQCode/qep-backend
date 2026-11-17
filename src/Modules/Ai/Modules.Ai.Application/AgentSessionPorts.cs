@@ -93,6 +93,11 @@ public interface IAiConversations
     /// conversación de vuelta al chatbot que delegó (sin tocar el arranque) y la fila <c>AgentReturned</c> para el motor. Si la delegación ya
     /// no es la viva de esa conversación (una persona la tomó) sale la excepción de dominio <c>messaging.automation.delegation_not_live</c>.</summary>
     Task ReturnToChatbotAsync(Guid tenantId, Guid conversationId, Guid delegationId, string resultJson, CancellationToken cancellationToken);
+
+    /// <summary>Revisión de la rama, hallazgo 2: una delegación <c>Live</c> de la conversación que ésta ya no apunta no la retoma nadie. Pasa a
+    /// <c>Interrupted</c> y la corrida que espera en el bloque recibe su señal <c>ReleaseRun</c> (<c>bot_kind = 1</c>), en un solo guardado.
+    /// Mensajería lo vuelve a mirar: si la delegación ya terminó, o la conversación la apunta otra vez, no hace nada.</summary>
+    Task InterruptOrphanDelegationAsync(Guid tenantId, Guid conversationId, Guid delegationId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: la delegación leída por Ai. <see cref="BriefJson"/> es

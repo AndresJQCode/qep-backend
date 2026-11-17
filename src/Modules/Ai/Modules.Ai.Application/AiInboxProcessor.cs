@@ -117,6 +117,14 @@ public sealed partial class AiInboxProcessor(
         if (item.DelegationId is { } delegationId)
         {
             var conversationNow = await conversations.GetAsync(item.TenantId, item.ConversationId, cancellationToken);
+            // Revisión de la rama, hallazgo 2: la delegación viva sola no alcanza. Si la conversación ya no la apunta (la reemplazó otra, o un
+            // cambio limpió la columna sin cerrarla) lo que el agente conteste no le llega a nadie y la corrida espera para siempre.
+            if (conversationNow?.AutomationDelegationId != delegationId)
+            {
+                await conversations.InterruptOrphanDelegationAsync(item.TenantId, item.ConversationId, delegationId, cancellationToken);
+                return AiInboxOutcomes.Skipped;
+            }
+
             var opened = await OpenBlockAsync(item, delegationId, inbound: null, NowFor(conversationNow), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return opened;

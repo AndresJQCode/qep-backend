@@ -118,6 +118,31 @@ public sealed class BotDelegationAdaptersTests
         _ => automations.EndAsync(conversation.TenantId, conversation.Id, Ct),
     };
 
+    // Hallazgo 2: la fila Delegated de una delegación que la conversación ya no apunta. Mensajería la cierra y le avisa a la corrida que
+    // espera en el bloque; si la conversación la sigue apuntando, no toca nada.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnOrphanDelegationIsInterruptedAndItsRunSignaled(bool orphan)
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct);
+        if (orphan)
+        {
+            conversation.Take(Guid.CreateVersion7(), Now.AddMinutes(1));
+        }
+
+        world.Reset();
+
+        await world.Ai().InterruptOrphanDelegationAsync(conversation.TenantId, conversation.Id, delegationId, Ct);
+
+        Assert.Equal(orphan ? BotDelegationStatus.Interrupted : BotDelegationStatus.Live, Assert.Single(world.Delegations).Status);
+        Assert.Equal(orphan ? [$"{AutomationInboxKinds.ReleaseRun} {BotKind.Chatbot}"] : [], world.Queued);
+        Assert.Equal(orphan ? 1 : 0, world.Saves);
+    }
+
     [Fact]
     public async Task DelegatingAConversationAPersonTookThrowsTheDomainError()
     {
