@@ -572,6 +572,18 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   Shopify deja `variant` y `product` en `null` pero conserva el SKU: esa línea es de producto y nunca casa por nombre (los dos
   parsers y `ShopifyOrderImporter.CustomTitleOf` aplican la misma regla). El 409 sale sólo del índice
   (`ShopifyUnitOfWork` lo traduce por nombre): no lo muevas a una consulta previa en el handler.
+- **Todo camino que escriba en Catalog desde Shopify pasa por `ShopifyProductSync`** (spec 2026-11-17). Ahí van el candado de
+  producto `pg_advisory_xact_lock(20261118, hashtext('{conexión}:{producto}'))` y el `CatalogDbContext` enrolado en la transacción
+  de Shopify (`IShopifyCatalogWriter`): producto, opciones y vínculos se confirman juntos o no se confirman. Un rechazo de Catalog
+  deja la transacción abortada en Postgres; no se sigue usando: se descarta y lo siguiente va en otra (la importación corre cada
+  producto en su scope, `IShopifyProductSyncScope`). Escribir en Catalog desde otro lado deja dos productos cuando el webhook y la
+  importación llegan a la vez.
+- **Un producto con `external_source` rechaza en el `PUT` nombre, opciones, variantes, códigos y precios de lista** (422
+  `catalog.product.managed_externally` con `errors`): los manda Shopify. Un camino nuevo de edición en Catalog aplica
+  `ExternallyManagedProducts`, o la siguiente sincronización pisa lo que el asesor cambió. Desvincular
+  (`DELETE …/shopify/products/{id}/link`) es la salida.
+- **La imagen importada que no entra en la galería se libera explícitamente**, o queda un archivo `Available` de Storage para
+  siempre (la galería es lo que lo retiene). La imagen va después del commit del producto, fuera de su transacción.
 - **`develop` no va a `main` sin el frontend de Shopify** (2026-10-18). `shopify` está en `DefaultForNewTenants`
   (`TenantModuleKey.cs`, decisión del owner del 2026-10-15) y en `Production` la app está configurada a la fuerza —sin ella
   el pod no arranca—, así que el catálogo de Integraciones de todo tenant nuevo trae la tarjeta Shopify con

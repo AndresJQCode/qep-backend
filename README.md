@@ -4872,7 +4872,7 @@ sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`
 | `Shopify:App:ClientId` | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID` | Client ID de la app en el Dev Dashboard |
 | `Shopify:App:ClientSecret` | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET` | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code` |
 | `Shopify:App:ApiVersion` | ConfigMap, `2026-10` | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`) |
-| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers` | Lo que pide la autorización (`write_orders` desde el 2026-11-14) |
+| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers,read_products` | Lo que pide la autorización (`write_orders` desde el 2026-11-14, `read_products` desde el 2026-11-17) |
 | `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
 | `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
 | `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
@@ -4888,6 +4888,26 @@ Shopify con `orderUpdate`, que exige `write_orders`. Según el owner, los comerc
 `Shopify:App:Scopes` es para que una instalación nueva lo pida, y un canje nuevo sin él falla con `scopes_missing`. Falta
 verificarlo (V-13): si una tienda no lo tuviera, sus envíos quedan retenidos (`Held`) con `access_denied`; el comercio tiene que
 volver a abrir la app desde su Shopify para concederlo, y después alguien los suelta con `POST …/stores/{connectionId}/pushes/release`.
+
+**Productos desde Shopify (spec 2026-11-17).** Traer el catálogo de una tienda a Catalog, mantenerlo con los webhooks y medir
+cuánto ya tiene par en QEP. Rutas (BFF, todas revalidan tenant, permiso, módulo y conexión con 403):
+
+| Ruta | Permiso | Qué |
+| --- | --- | --- |
+| `POST …/shopify/stores/{connectionId}/products/import` `{ mode: "All" \| "Missing", redirectUri? }` | `integrations.connection.manage` | 202 `{ importId }`; 409 `shopify.products.import_running`; 422 `shopify.store.not_operational`, `shopify.products.company_required` o `shopify.products.scope_missing` (con `reauthorizeUrl`, `null` sin `redirectUri`) |
+| `GET …/shopify/stores/{connectionId}/products/import` | `integrations.connection.read` | La última importación (contadores e issues, hasta 50) o `null` |
+| `GET …/shopify/stores/{connectionId}/products/coverage?redirectUri=` | `integrations.connection.read` | `{ shopifyVariants, matched, catalogEmpty, missingSample }`, consultado en el momento; 503 `shopify.store.sync_unavailable` si Shopify no responde |
+| `DELETE …/shopify/products/{productId}/link` | `integrations.connection.manage` | 204: quita los vínculos del producto en cualquier tienda del tenant y lo deja propio de QEP; 404 `shopify.products.link_not_found` |
+
+La importación la corre `ShopifyProductImportWorker` (cola `shopify.product_imports`, lease de 2 min, 4 intentos, timbre
+`shopify_products`), página por página. Cuando termina `Done`, la tienda queda con `products_synced_at` y desde ahí los
+`products/create|update|delete` crean, actualizan y desactivan; antes se ignoran con `products_not_synced`. Un producto que falla
+en un webhook se loguea (id y código, nunca el cuerpo) y suma en `qep_shopify_product_sync_failures_total{reason}`.
+
+**`read_products` (spec 2026-11-17).** Lo piden la importación, la cobertura y los `products/*`. Una tienda instalada antes no lo
+tiene: importar y la cobertura le responden 422 `shopify.products.scope_missing` con la URL para reautorizar, y el registro de
+webhooks no le pide los `products/*` (ni la pasa a `NeedsAttention` por ellos) hasta que el comercio vuelva a autorizar la app y
+el canje guarde el scope nuevo; el siguiente enlace o probador los registra.
 
 **Ediciones en la tienda.** `GET|PUT …/shopify/stores/{connectionId}` llevan además `editSync` (`Manual`, por defecto, o
 `Automatic`) y `editPaymentStatuses` (los estados de pago de QEP en que un cambio de Shopify se aplica; por defecto los cuatro:
@@ -4958,6 +4978,24 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada, y que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo y mirar `shopify.orders.payload` y `shopify.order_edits` |
    | V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes`, y que el `orders/updated` de vuelta salga como eco. Además: (a) el teléfono de ida y vuelta: si Shopify guarda en E.164 el teléfono nacional que QEP mandó, el eco tiene que salir igual (QEP compara sin el indicativo de país, `ShopifyOrderProjection.SamePhone`); (b) que `note: null` borre la nota en Shopify y no se ignore (si la ignora, mandar `""`) | Corregir una ciudad en QEP, ver el envío `Sent` y la dirección en Shopify, y que no aparezca un cambio; mirar el teléfono que quedó en Shopify; borrar la nota del cliente en QEP y verla vacía en Shopify |
    | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` de cada tienda; un envío `Held` con `access_denied` también lo delata |
+5. **Productos desde Shopify (spec 2026-11-17).** Migraciones aditivas, sin backfill: `AddProductExternalSource` (Catalog) y
+   `AddProductSync` (Shopify: `product_links`, `product_imports`, `product_import_issues` y `stores.products_synced_at`). El
+   worker de importaciones (`ShopifyProductImportWorker`) entra con el backend, y `Shopify:App:Scopes` pasa a
+   `read_orders,write_orders,read_customers,read_products` en el ConfigMap.
+
+   **Antes del ConfigMap, la app.** Igual que con `write_orders`: `CompleteShopifyInstall` exige todo scope configurado, así que
+   primero se publica en el Partner Dashboard una versión de la app que pida `read_products` y después llega el ConfigMap. Al
+   revés, toda instalación nueva o reenlace falla con `integrations.shopify.scopes_missing`. Las tiendas ya instaladas siguen
+   funcionando sin `read_products`: reciben 422 `scope_missing` al importar y no reciben `products/*` hasta reautorizar.
+
+   Quedan por verificar contra Shopify real (§9):
+
+   | Qué | Cómo se cierra |
+   | --- | --- |
+   | `productsCount(limit: null)` devuelve el total de activos y borradores | Importar una tienda de desarrollo y comparar `total` con su lista de productos |
+   | `featuredMedia.preview.image.url(transform:)` entrega un JPG de hasta 2048×2048 | Mirar el archivo que quedó en Storage para un producto con imagen |
+   | El filtro `product_status` de `productVariants` (la cobertura) deja fuera los archivados | Archivar un producto y ver que la cobertura no lo cuente |
+   | Una tienda con variantes sin SKU y con `taxesIncluded = false` | Importarla: códigos `shp-{id}` y precios con IVA sumado si la empresa cobra IVA y la moneda es COP |
 
 ### Contratos de servicio (cobros recurrentes)
 
