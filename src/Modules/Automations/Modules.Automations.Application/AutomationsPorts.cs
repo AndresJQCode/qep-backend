@@ -185,6 +185,11 @@ public interface IAutomationsAgentDirectory
 {
     /// <summary>Todos los agentes del tenant, en cualquier estado, ordenados por nombre.</summary>
     Task<IReadOnlyList<AutomationAgentRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 D-B15: los tokens de entrada y de salida de las llamadas al modelo hechas en [<paramref name="from"/>,
+    /// <paramref name="until"/>) por las sesiones de bloque de cada chatbot. Un chatbot sin consumo no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, (long InputTokens, long OutputTokens)>> UsageByChatbotAsync(
+        Guid tenantId, DateTimeOffset from, DateTimeOffset until, CancellationToken cancellationToken);
 }
 
 /// <summary>Una conexión «API externa» del tenant (D-H4); <see cref="Status"/> es el nombre del estado de Integrations.</summary>

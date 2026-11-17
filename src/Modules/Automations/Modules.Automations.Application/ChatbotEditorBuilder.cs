@@ -48,10 +48,11 @@ public sealed class ChatbotEditorBuilder(
         var servedBy = await ServedByAsync(chatbot.TenantId, cancellationToken);
         var today = await TodayAsync(chatbot.TenantId, [chatbot.Id], cancellationToken);
 
+        // Spec 2026-11-17 §7: el editor siempre trae los agentes (el selector del bloque), así que la misma lectura valida.
+        var ai = await AiOfAsync(chatbot.TenantId, cancellationToken);
+
         var (flow, problem) = ParseStored(chatbot);
-        var issues = flow is null
-            ? [problem!]
-            : Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames, await AiOfAsync(chatbot.TenantId, flow, cancellationToken));
+        var issues = flow is null ? [problem!] : Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames, ai);
         var published = chatbot.PublishedVersionId is { } publishedId
             ? chatbot.Versions.FirstOrDefault(version => version.Id == publishedId)
             : null;
@@ -70,7 +71,9 @@ public sealed class ChatbotEditorBuilder(
             FlowValidator.KnownVariables(flow ?? EmptyFlow),
             chatbot.ExhaustedAction.ToString(),
             chatbot.ExhaustedMemberId,
-            [.. assignable.Select(member => new ChatbotMemberDto(member.Id, member.Name))]);
+            [.. assignable.Select(member => new ChatbotMemberDto(member.Id, member.Name))],
+            [.. ai.Agents.Select(agent => new ChatbotEditorAgentDto(agent.Id, agent.Name, agent.Status, agent.Provider, agent.Model))],
+            ai.Enabled);
     }
 
     /// <summary>`GET /connections` (§4.4): las mismas conexiones que trae el editor, armadas por el mismo código.</summary>
@@ -159,7 +162,28 @@ public sealed class ChatbotEditorBuilder(
         ArgumentNullException.ThrowIfNull(rows);
         var tenantConnections = await connections.ListAsync(tenantId, cancellationToken);
         var today = await TodayAsync(tenantId, [.. rows.Select(row => row.Id)], cancellationToken);
-        return new ChatbotListResponse([.. rows.Select(row => ToSummary(row, tenantConnections, today))]);
+        var usage = await AiUsageThisMonthAsync(tenantId, rows.Count, cancellationToken);
+        return new ChatbotListResponse([
+            .. rows.Select(row => ToSummary(row, tenantConnections, today) with
+            {
+                AiUsageThisMonth = usage.TryGetValue(row.Id, out var tokens) ? new ChatbotAiUsageDto(tokens.InputTokens, tokens.OutputTokens) : null,
+            }),
+        ]);
+    }
+
+    /// <summary>Spec 2026-11-17 D-B15: «este mes» es el del reloj del tenant, como «hoy» (§4.4), no el de UTC.</summary>
+    private async Task<IReadOnlyDictionary<Guid, (long InputTokens, long OutputTokens)>> AiUsageThisMonthAsync(
+        Guid tenantId, int rows, CancellationToken cancellationToken)
+    {
+        if (rows == 0)
+        {
+            return new Dictionary<Guid, (long, long)>();
+        }
+
+        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        var first = new DateOnly(calendar.Today.Year, calendar.Today.Month, 1);
+        return await agents.UsageByChatbotAsync(
+            tenantId, calendar.StartOfDayUtc(first), calendar.StartOfDayUtc(first.AddMonths(1)), cancellationToken);
     }
 
     /// <summary>El borrador guardado siempre pasó por <see cref="FlowJson.Parse"/>, pero un dato viejo o un cambio de esquema puede
