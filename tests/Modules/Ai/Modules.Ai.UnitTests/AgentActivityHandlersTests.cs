@@ -158,13 +158,114 @@ public sealed class AgentActivityHandlersTests
         Assert.Equal(["cursor"], forged.Errors.Select(error => error.PropertyName));
     }
 
-    private static ListAgentSessionsHandler SessionsHandler(FakeReader reader) =>
+    // Spec 2026-11-17 §7: cada sesión dice de dónde salió; la de un bloque trae su chatbot (con el nombre de ahora) y la salida por la que
+    // volvió al flujo. Un chatbot borrado conserva el id y llega sin nombre.
+    [Fact]
+    public async Task TheSessionHistoryShowsTheChatbotOfABlockSession()
+    {
+        var at = new DateTimeOffset(2026, 11, 17, 14, 0, 0, TimeSpan.Zero);
+        var (chatbot, gone) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        var reader = new FakeReader
+        {
+            Stored =
+            [
+                SessionRow(at) with { Origin = "ChatbotBlock", Chatbot = new AgentSessionChatbotDto(chatbot, null), Status = "Returned", EndReason = "done", Output = "done" },
+                SessionRow(at.AddMinutes(-1)) with { Origin = "ChatbotBlock", Chatbot = new AgentSessionChatbotDto(gone, null), Status = "Live" },
+                SessionRow(at.AddMinutes(-2)),
+            ],
+        };
+        var names = new FakeChatbotNames(new Dictionary<Guid, string> { [chatbot] = "Bienvenida" });
+
+        var page = await SessionsHandler(reader, names).HandleAsync(new ListAgentSessionsQuery(Tenant, null, null, null, null), Ct);
+
+        Assert.Equal(
+            [("ChatbotBlock", (Guid?)chatbot, "Bienvenida", "done"), ("ChatbotBlock", gone, null, null), ("Connection", null, null, null)],
+            page.Items.Select(item => (item.Origin, item.Chatbot?.Id, item.Chatbot?.Name, item.Output)));
+        Assert.Equal([[chatbot, gone]], names.Asked);
+    }
+
+    // Spec 2026-11-17 §7 y D-B17: la prueba en modo bloque ofrece finish_objective, lleva el objetivo en el contexto volátil y la transcripción
+    // muestra el retorno con su salida, su motivo y el resumen, en vez de un traspaso.
+    [Fact]
+    public async Task ABlockTestOffersFinishObjectiveAndShowsTheReturn()
+    {
+        var at = new DateTimeOffset(2026, 11, 17, 14, 0, 0, TimeSpan.Zero);
+        var draft = AgentConfig.Default(new AgentModelRef("anthropic", "claude-sonnet-5-5")) with { Instructions = "Atiende." };
+        var test = AgentTest.Open(
+            Guid.CreateVersion7(), Tenant, Guid.CreateVersion7(), Guid.CreateVersion7(), null, draft, at, new AgentTestBlock("Resuelve dudas de precios.", "Eligió «Precios»."));
+        var job = ModelJob.ForTest(Guid.CreateVersion7(), Tenant, test.Id, 1, at);
+        test.AddCustomerMessage("¿Cuánto cuesta?", job.Id, at);
+        var model = new AgentSessionProcessorTests.ScriptedModel();
+        model.Enqueue(new AiModelResponse(
+            null, [new AiToolCall("final", AgentToolNames.FinishObjective, """{"summary":"Le di el precio."}""")], [], AiStopReason.ToolUse,
+            new AiModelUsage(10, 5, null, null), "claude-sonnet-5-5", "req_1"));
+        var credentials = new AgentSessionProcessorTests.FakeCredentials();
+        credentials.Available.Add("anthropic");
+        var limits = new AiRunLimits(16_000, TimeSpan.FromSeconds(120), 6, 8, 30, null);
+        var processor = new AgentTestJobProcessor(
+            new FakeTests(test), credentials, new AgentSessionProcessorTests.EmptyCatalog(), new FakeQuickReplies(),
+            new FixedTenantClock(at), new AgentPromptBuilder(limits),
+            new AgentTurnRunner(
+                new AgentSessionProcessorTests.SingleResolver(model), [], new AgentSessionProcessorTests.NoLedger(), credentials, limits,
+                new FixedClock(at), Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentTurnRunner>.Instance),
+            new NoUnitOfWork(), new FixedClock(at), Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentTestJobProcessor>.Instance);
+
+        await processor.ProcessAsync(job, Ct);
+
+        var request = Assert.Single(model.Requests);
+        Assert.Contains(request.Tools, tool => tool.Name == AgentToolNames.FinishObjective);
+        Assert.Contains("Resuelve dudas de precios.", request.VolatileContext, StringComparison.Ordinal);
+        var dto = await new GetAgentTestHandler(
+                new FakeExecutionContext(Tenant, AiPermissions.AgentManage), AllModules(), new FakeTests(test), new FakeQuickReplies(), new FixedClock(at))
+            .HandleAsync(new GetAgentTestQuery(Tenant, test.Id), Ct);
+        Assert.Equal(new AgentTestReturnedDto("done", "objective_completed", "Le di el precio."), dto.Returned);
+        Assert.Equal(new AgentTestBlock("Resuelve dudas de precios.", "Eligió «Precios»."), dto.Block);
+        var entry = dto.Transcript[^1];
+        Assert.Equal((AgentTestEntry.Returned, "done", "objective_completed", "Le di el precio."), (entry.Role, entry.Output, entry.Reason, entry.Text));
+        Assert.False(dto.HandedOff);
+        Assert.False(dto.Pending);
+    }
+
+    // §7: el objetivo es obligatorio y los dos textos miden a lo sumo 2000, como en el bloque del flujo.
+    [Fact]
+    public void ABlockTestNeedsAnObjectiveWithinItsLimits()
+    {
+        var validator = new CreateAgentTestValidator();
+
+        var blank = validator.Validate(new CreateAgentTestCommand(Tenant, Guid.CreateVersion7(), null, new AgentTestBlock("  ", null)));
+        var tooLong = validator.Validate(new CreateAgentTestCommand(
+            Tenant, Guid.CreateVersion7(), null, new AgentTestBlock(new string('o', 2001), new string('c', 2001))));
+        var plain = validator.Validate(new CreateAgentTestCommand(Tenant, Guid.CreateVersion7(), null));
+
+        Assert.Equal(["Block.Objective"], blank.Errors.Select(error => error.PropertyName));
+        Assert.Equal(["Block.Context", "Block.Objective"], tooLong.Errors.Select(error => error.PropertyName).Order(StringComparer.Ordinal));
+        Assert.True(plain.IsValid);
+    }
+
+    private static ListAgentSessionsHandler SessionsHandler(FakeReader reader, FakeChatbotNames? names = null) =>
         new(
             new FakeExecutionContext(Tenant, AiPermissions.AgentRead),
             AllModules(),
             reader,
             new ListAgentSessionsValidator(),
-            new FixedTenantClock(new DateTimeOffset(2026, 11, 17, 15, 0, 0, TimeSpan.Zero)));
+            new FixedTenantClock(new DateTimeOffset(2026, 11, 17, 15, 0, 0, TimeSpan.Zero)),
+            names ?? new FakeChatbotNames(new Dictionary<Guid, string>()));
+
+    private sealed class FakeChatbotNames(IReadOnlyDictionary<Guid, string> names) : IAiChatbotNames
+    {
+        public List<Guid[]> Asked { get; } = [];
+
+        public Task<IReadOnlyDictionary<Guid, string>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, CancellationToken cancellationToken)
+        {
+            Asked.Add([.. chatbotIds]);
+            return Task.FromResult(names);
+        }
+    }
+
+    private sealed class NoUnitOfWork : IAiUnitOfWork
+    {
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
 
     private static AgentSessionDto SessionRow(DateTimeOffset startedAt) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), "Asesor virtual", Guid.CreateVersion7(), 1, "anthropic", "claude-sonnet-5-5", "Ended",

@@ -123,6 +123,13 @@ public interface IAiChatbotUsage
     Task<IReadOnlyDictionary<Guid, IReadOnlyList<AiChatbotRef>>> ListByAgentAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-17 §7: el nombre de ahora de los chatbots, por tenant e ids (adaptador en Bootstrapper sobre
+/// <c>automations.chatbots</c>). Uno borrado no aparece.</summary>
+public interface IAiChatbotNames
+{
+    Task<IReadOnlyDictionary<Guid, string>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, CancellationToken cancellationToken);
+}
+
 /// <summary>Spec 2026-11-17 D-B18: el 409 lleva los chatbots para que la pantalla diga cuáles hay que cambiar antes de borrar.</summary>
 public sealed class AgentInUseByChatbotsException(IReadOnlyList<AiChatbotRef> chatbots)
     : ResourceConflictException(

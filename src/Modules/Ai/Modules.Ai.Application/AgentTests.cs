@@ -38,7 +38,22 @@ public interface IAiModelJobs
     Task RetryHeldAsync(Guid jobId, DateTimeOffset retryAt, CancellationToken cancellationToken);
 }
 
-public sealed record CreateAgentTestCommand(Guid TenantId, Guid AgentId, Guid? CustomerId) : ICommand<AgentTestDto>;
+/// <param name="Block">Spec 2026-11-17 §7: la prueba en modo bloque (<c>{ objective, context? }</c>): ofrece <c>finish_objective</c> y la
+/// transcripción muestra el retorno en vez del traspaso.</param>
+public sealed record CreateAgentTestCommand(Guid TenantId, Guid AgentId, Guid? CustomerId, AgentTestBlock? Block = null) : ICommand<AgentTestDto>;
+
+/// <summary>§7: los topes del bloque del flujo (spec 2026-11-17 §5.1): objetivo 1..2000 y contexto hasta 2000.</summary>
+public sealed class CreateAgentTestValidator : AbstractValidator<CreateAgentTestCommand>
+{
+    public CreateAgentTestValidator() =>
+        When(command => command.Block is not null, () =>
+        {
+            RuleFor(command => command.Block!.Objective)
+                .Must(objective => !string.IsNullOrWhiteSpace(objective)).WithMessage("The objective cannot be blank.")
+                .MaximumLength(AgentTestBlock.ObjectiveMaxLength);
+            RuleFor(command => command.Block!.Context).MaximumLength(AgentTestBlock.ContextMaxLength);
+        });
+}
 
 public sealed record SendAgentTestMessageCommand(Guid TenantId, Guid TestId, string Text) : ICommand<AgentTestDto>;
 
@@ -62,9 +77,16 @@ public sealed record AgentTestDto(
     bool HandedOff,
     IReadOnlyList<AgentTestEntryDto> Transcript,
     IReadOnlyList<AgentTestToolCallDto> ToolCalls,
-    IReadOnlyList<AgentTestUsageDto> Usage);
+    IReadOnlyList<AgentTestUsageDto> Usage,
+    AgentTestBlock? Block = null,
+    AgentTestReturnedDto? Returned = null);
 
-/// <param name="Role"><c>customer</c>, <c>agent</c> o <c>handoff</c>.</param>
+/// <summary>Spec 2026-11-17 §7: el último retorno al flujo de una prueba en modo bloque, ya sacado de la transcripción para que la pantalla lo
+/// muestre sin recorrerla. <see cref="Output"/> es una de las cinco salidas del bloque.</summary>
+public sealed record AgentTestReturnedDto(string Output, string Reason, string? Summary);
+
+/// <param name="Role"><c>customer</c>, <c>agent</c>, <c>handoff</c> o <c>returned</c>.</param>
+/// <param name="Output">Spec 2026-11-17 §7: con <c>returned</c>, la salida del bloque; el resumen va en <paramref name="Text"/>.</param>
 /// <param name="SourceIds">Los ids crudos; se conservan porque el frontend ya los lee.</param>
 /// <param name="Sources">Backend for frontend (plan 2026-11-17 A4, F-4): las mismas fuentes ya resueltas, con la forma de la actividad real
 /// (<see cref="AgentActivitySourceDto"/>), para que el playground muestre la pregunta, el atajo o la herramienta sin cruzar el borrador ni las
@@ -77,7 +99,8 @@ public sealed record AgentTestEntryDto(
     IReadOnlyList<AgentActivitySourceDto> Sources,
     string? Reason,
     string? Code,
-    DateTimeOffset At);
+    DateTimeOffset At,
+    string? Output = null);
 
 public sealed record AgentTestToolCallDto(
     string CallId, string Tool, JsonElement Arguments, JsonElement? Result, string Outcome, string? ErrorCode, int DurationMs, DateTimeOffset At);
@@ -139,15 +162,21 @@ internal static class AgentTestSupport
                 [.. entry.SourceIds.Select(id => AgentSourceResolver.Resolve(id, faq, shortcuts, activity.ToolCalls))],
                 entry.Reason,
                 entry.Code,
-                entry.At))],
+                entry.At,
+                entry.Output))],
             activity.ToolCalls,
-            activity.Usage);
+            activity.Usage,
+            test.Block,
+            test.Transcript.LastOrDefault(entry => entry.Role == AgentTestEntry.Returned) is { Output: { } output } returned
+                ? new AgentTestReturnedDto(output, returned.Reason ?? string.Empty, returned.Text)
+                : null);
     }
 }
 
 public sealed class CreateAgentTestHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
+    IValidator<CreateAgentTestCommand> validator,
     AiCaller caller,
     IAgentRepository agents,
     IAiProviderCredentials credentials,
@@ -158,13 +187,17 @@ public sealed class CreateAgentTestHandler(
 {
     public async Task<AgentTestDto> HandleAsync(CreateAgentTestCommand command, CancellationToken cancellationToken)
     {
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.AgentManage, cancellationToken);
         var memberId = await caller.RequireAsync(command.TenantId, cancellationToken);
         var agent = await agents.FindAsync(command.TenantId, command.AgentId, cancellationToken) ?? throw AiNotFound.Agent(command.AgentId);
         var draft = agent.DraftConfig;
         await AgentTestSupport.RequireProviderAsync(credentials, command.TenantId, draft, cancellationToken);
 
-        var test = AgentTest.Open(Guid.CreateVersion7(), command.TenantId, agent.Id, memberId, command.CustomerId, draft, clock.UtcNow);
+        var block = command.Block is { } requested
+            ? new AgentTestBlock(requested.Objective.Trim(), string.IsNullOrWhiteSpace(requested.Context) ? null : requested.Context.Trim())
+            : null;
+        var test = AgentTest.Open(Guid.CreateVersion7(), command.TenantId, agent.Id, memberId, command.CustomerId, draft, clock.UtcNow, block);
         tests.Add(test);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await AgentTestSupport.ToDtoAsync(test, new AgentTestActivity([], []), quickReplies, cancellationToken);
@@ -295,8 +328,10 @@ public sealed partial class AgentTestJobProcessor(
         }
 
         var replies = config.UseQuickReplies ? await quickReplies.ListAsync(job.TenantId, cancellationToken) : [];
+        // Spec 2026-11-17 §7: el mismo contexto volátil y la misma herramienta final que una sesión de bloque real.
+        var block = test.Block is { } testBlock ? new AgentBlockContext(testBlock.Objective, testBlock.Context ?? string.Empty) : null;
         var prompt = promptBuilder.Build(new AgentPromptInput(
-            config, replies, HistoryOf(test), await tenantClock.GetAsync(job.TenantId, cancellationToken), WindowRemaining: null));
+            config, replies, HistoryOf(test), await tenantClock.GetAsync(job.TenantId, cancellationToken), WindowRemaining: null, block));
         var context = new AgentTurnContext(
             job.TenantId,
             test.AgentId,
@@ -312,7 +347,8 @@ public sealed partial class AgentTestJobProcessor(
             TestId: test.Id,
             test.CustomerId,
             [.. config.Faq.Select(faq => faq.Id), .. replies.Select(reply => reply.Id)],
-            IsTest: true);
+            IsTest: true,
+            block);
 
         var outcome = await runner.RunAsync(context, prompt, cancellationToken);
 
@@ -333,6 +369,17 @@ public sealed partial class AgentTestJobProcessor(
     private void Finish(AgentTest test, ModelJob job, AgentTurnOutcome outcome)
     {
         var now = clock.UtcNow;
+        if (test.Block is not null && outcome is not AgentReplied)
+        {
+            // Spec 2026-11-17 §7: en modo bloque nada traspasa; la transcripción muestra la salida con la misma tabla que una sesión real.
+            var result = ReturnOf(outcome, config: test.Config);
+            test.RecordReturn(job.Id, result.Output ?? AgentBlockOutputs.Error, result.Reason, result.Summary, now);
+            job.Complete(
+                outcome is AgentTurnFailed or AgentTurnRetry ? ModelJobStatus.Failed : ModelJobStatus.Done, "returned",
+                outcome is AgentTurnFailed or AgentTurnRetry ? result.Reason : null, now);
+            return;
+        }
+
         switch (outcome)
         {
             case AgentReplied replied:
@@ -356,6 +403,18 @@ public sealed partial class AgentTestJobProcessor(
                 throw new InvalidOperationException($"Unknown outcome {outcome.GetType().Name}.");
         }
     }
+
+    /// <summary>La fila de §6.3 de cada resultado del playground en modo bloque (<see cref="AgentBlockReturn.For"/>).</summary>
+    private static AgentBlockResult ReturnOf(AgentTurnOutcome outcome, AgentConfig config) => outcome switch
+    {
+        AgentFinished finished => new AgentBlockResult(
+            AgentBlockOutputs.Done, AgentBlockReasons.ObjectiveCompleted, string.IsNullOrEmpty(finished.Summary) ? null : finished.Summary),
+        AgentHandedOff handedOff => AgentBlockReturn.For(
+            new AgentHandoffCause(HandoffCauseKind.AgentRequested, handedOff.Reason, config.Model.Provider), handedOff.MemberId, handedOff.QuotationNumber),
+        AgentTurnRetry exhausted => AgentBlockResult.Error(exhausted.Code),
+        AgentTurnFailed failed => AgentBlockResult.Error(failed.Code ?? AgentHandoffCodes.For(failed.Reason)),
+        _ => throw new InvalidOperationException($"Unknown outcome {outcome.GetType().Name}."),
+    };
 
     private string? EffortOf(AiProvider provider, string model) =>
         catalog.Providers.FirstOrDefault(entry => entry.Provider == provider)?.Models.FirstOrDefault(entry => entry.Id == model)?.Effort;

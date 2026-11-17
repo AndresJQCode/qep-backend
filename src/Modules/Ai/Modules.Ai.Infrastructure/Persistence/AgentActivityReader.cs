@@ -155,7 +155,11 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
                 row.Session.StartedAt,
                 row.Session.EndedAt,
                 replies.GetValueOrDefault(row.Session.Id),
-                usage.GetValueOrDefault(row.Session.Id) ?? [])),
+                usage.GetValueOrDefault(row.Session.Id) ?? [],
+                row.Session.Origin.ToString(),
+                // Spec 2026-11-17 §7: el nombre lo pone el handler (Ai no ve Automations).
+                row.Session.ChatbotId is { } chatbot ? new AgentSessionChatbotDto(chatbot, null) : null,
+                row.Session.Status == AgentSessionStatus.Returned ? row.Session.EndReason : null)),
         ];
     }
 

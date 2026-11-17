@@ -29,6 +29,11 @@ public sealed record AgentTodayDto(int Handled, int HandedOff, int QuotationDraf
 /// <summary>Una sesión del historial (spec §5 <c>GET /sessions</c>): estado, motivo de fin, respuestas y consumo.</summary>
 /// <param name="Replies">Respuestas enviadas (una por trabajo, aunque se haya partido en varios mensajes).</param>
 /// <param name="Usage">Por proveedor (C-4); una sesión usa un solo proveedor (C-17), así que es a lo sumo una entrada.</param>
+/// <param name="Origin">Spec 2026-11-17 §7: <c>Connection</c> o <c>ChatbotBlock</c>, por nombre.</param>
+/// <param name="Chatbot">Backend for frontend (§7): en una sesión de bloque, el chatbot que delegó con su nombre de ahora (para que el
+/// historial diga «desde el chatbot X» sin que la pantalla pida los chatbots, que exigen otro permiso); <c>null</c> en las de conexión.</param>
+/// <param name="Output">La salida por la que la sesión de bloque volvió al flujo (<c>done</c>, <c>human</c>, <c>noAnswer</c>, <c>idle</c>,
+/// <c>error</c>); <c>null</c> mientras sigue o si terminó sin volver.</param>
 public sealed record AgentSessionDto(
     Guid Id,
     Guid AgentId,
@@ -43,7 +48,13 @@ public sealed record AgentSessionDto(
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
     int Replies,
-    IReadOnlyList<AgentUsageDto> Usage);
+    IReadOnlyList<AgentUsageDto> Usage,
+    string Origin = nameof(AgentSessionOrigin.Connection),
+    AgentSessionChatbotDto? Chatbot = null,
+    string? Output = null);
+
+/// <summary>Spec 2026-11-17 §7: el chatbot de una sesión de bloque. <see cref="Name"/> es <c>null</c> si el chatbot se borró.</summary>
+public sealed record AgentSessionChatbotDto(Guid Id, string? Name);
 
 /// <summary>Plan 2026-11-17 A5 (F-6): una página del historial, de la más reciente a la más vieja.</summary>
 /// <param name="NextCursor">Lo que se manda en <c>cursor</c> para pedir la siguiente; <c>null</c> en la última.</param>
@@ -231,7 +242,8 @@ public sealed class ListAgentSessionsHandler(
     ITenantModules tenantModules,
     IAgentActivityReader reader,
     IValidator<ListAgentSessionsQuery> validator,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IAiChatbotNames chatbotNames)
     : IQueryHandler<ListAgentSessionsQuery, AgentSessionListResponse>
 {
     public const int PageSize = 50;
@@ -263,7 +275,26 @@ public sealed class ListAgentSessionsHandler(
         var nextCursor = rows.Count > PageSize
             ? AgentSessionCursor.Encode(new AgentSessionCursor(page[^1].StartedAt, page[^1].Id))
             : null;
-        return new AgentSessionListResponse(page, nextCursor);
+        return new AgentSessionListResponse(await WithChatbotNamesAsync(query.TenantId, page, cancellationToken), nextCursor);
+    }
+
+    /// <summary>Spec 2026-11-17 §7: el nombre de ahora de los chatbots de la página, en una sola lectura.</summary>
+    private async Task<IReadOnlyList<AgentSessionDto>> WithChatbotNamesAsync(
+        Guid tenantId, IReadOnlyList<AgentSessionDto> page, CancellationToken cancellationToken)
+    {
+        Guid[] ids = [.. page.Select(session => session.Chatbot?.Id).OfType<Guid>().Distinct()];
+        if (ids.Length == 0)
+        {
+            return page;
+        }
+
+        var names = await chatbotNames.ResolveAsync(tenantId, ids, cancellationToken);
+        return
+        [
+            .. page.Select(session => session.Chatbot is { } chatbot
+                ? session with { Chatbot = chatbot with { Name = names.GetValueOrDefault(chatbot.Id) } }
+                : session),
+        ];
     }
 }
 

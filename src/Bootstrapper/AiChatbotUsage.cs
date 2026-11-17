@@ -47,3 +47,22 @@ internal sealed class AiChatbotUsage(AutomationsDbContext automations) : IAiChat
 
     private sealed record UsageRow(string? AgentId, Guid ChatbotId, string Name);
 }
+
+/// <summary>Spec 2026-11-17 §7: el nombre de ahora de los chatbots de las sesiones de bloque, para el historial de sesiones de Ai.</summary>
+internal sealed class AiChatbotNames(AutomationsDbContext automations) : IAiChatbotNames
+{
+    public async Task<IReadOnlyDictionary<Guid, string>> ResolveAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(chatbotIds);
+        if (chatbotIds.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var ids = chatbotIds.Distinct().ToArray();
+        return await automations.Chatbots.AsNoTracking()
+            .Where(chatbot => chatbot.TenantId == tenantId && ids.Contains(chatbot.Id))
+            .ToDictionaryAsync(chatbot => chatbot.Id, chatbot => chatbot.Name, cancellationToken);
+    }
+}

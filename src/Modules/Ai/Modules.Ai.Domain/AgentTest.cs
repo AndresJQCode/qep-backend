@@ -118,6 +118,17 @@ public sealed class AgentTest
         Touch(now);
     }
 
+    /// <summary>Spec 2026-11-17 §7: en modo bloque, lo que en un canal sería un traspaso o el fin del objetivo es un retorno al flujo con su
+    /// salida, su motivo y el resumen de <c>finish_objective</c>. La prueba sigue abierta: el tester puede seguir escribiendo.</summary>
+    public void RecordReturn(Guid jobId, string output, string reason, string? summary, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(output);
+        EnsurePending(jobId);
+        Append(new AgentTestEntry(NextSeq(), AgentTestEntry.Returned, string.IsNullOrWhiteSpace(summary) ? null : summary, [], reason, null, now, output));
+        PendingJobId = null;
+        Touch(now);
+    }
+
     private void EnsurePending(Guid jobId)
     {
         if (PendingJobId != jobId)
@@ -147,14 +158,19 @@ public sealed record AgentTestBlock(string Objective, string? Context)
     public const int ContextMaxLength = 2000;
 }
 
-/// <param name="Role"><see cref="Customer"/>, <see cref="Agent"/> o <see cref="Handoff"/>.</param>
+/// <param name="Role"><see cref="Customer"/>, <see cref="Agent"/>, <see cref="Handoff"/> o <see cref="Returned"/>.</param>
 /// <param name="SourceIds">Las fuentes válidas que citó la respuesta del agente.</param>
-/// <param name="Reason">El motivo del traspaso que pidió el modelo.</param>
+/// <param name="Reason">El motivo del traspaso que pidió el modelo, o el del retorno al flujo.</param>
 /// <param name="Code">El código de un traspaso por falla (tope, proveedor, clave).</param>
+/// <param name="Output">Spec 2026-11-17 §7: con <see cref="Returned"/>, la salida del bloque por la que la prueba habría vuelto al flujo; el
+/// resumen de <c>finish_objective</c> va en <paramref name="Text"/>.</param>
 public sealed record AgentTestEntry(
-    int Seq, string Role, string? Text, IReadOnlyList<string> SourceIds, string? Reason, string? Code, DateTimeOffset At)
+    int Seq, string Role, string? Text, IReadOnlyList<string> SourceIds, string? Reason, string? Code, DateTimeOffset At, string? Output = null)
 {
     public const string Customer = "customer";
     public const string Agent = "agent";
     public const string Handoff = "handoff";
+
+    /// <summary>Spec 2026-11-17 §7: la prueba en modo bloque volvió al flujo.</summary>
+    public const string Returned = "returned";
 }

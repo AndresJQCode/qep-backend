@@ -134,7 +134,11 @@ public static class AiEndpoints
         Guid tenantId, Guid agentId, CreateAgentTestRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Created(
             (string?)null,
-            await dispatcher.SendAsync(new CreateAgentTestCommand(tenantId, agentId, request?.CustomerId), cancellationToken));
+            await dispatcher.SendAsync(
+                new CreateAgentTestCommand(
+                    tenantId, agentId, request?.CustomerId,
+                    request?.Block is { } block ? new AgentTestBlock(block.Objective ?? string.Empty, block.Context) : null),
+                cancellationToken));
 
     private static async Task<IResult> SendTestMessageAsync(
         Guid tenantId, Guid testId, SendAgentTestMessageRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -268,7 +272,10 @@ public sealed record CreateAgentRequest(string Name, AgentSourceRequest Source);
 public sealed record UpdateAgentRequest(string Name, IReadOnlyList<Guid>? ConnectionIds);
 
 /// <summary>§7: <c>customerId</c> fija un cliente del tenant para <c>get_order_status</c>; sin él, la herramienta responde
-/// <c>customer_unknown</c>.</summary>
-public sealed record CreateAgentTestRequest(Guid? CustomerId);
+/// <c>customer_unknown</c>. <c>block</c> (spec 2026-11-17 §7) prueba el agente como dentro de un bloque «Agente IA» de un chatbot.</summary>
+public sealed record CreateAgentTestRequest(Guid? CustomerId, AgentTestBlockRequest? Block = null);
+
+/// <summary>Spec 2026-11-17 §7: el paso del chatbot que simula la prueba; <c>objective</c> 1..2000 y <c>context</c> hasta 2000.</summary>
+public sealed record AgentTestBlockRequest(string? Objective, string? Context);
 
 public sealed record SendAgentTestMessageRequest(string Text);

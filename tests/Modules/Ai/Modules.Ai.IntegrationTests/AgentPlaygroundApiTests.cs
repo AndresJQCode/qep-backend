@@ -128,6 +128,59 @@ public sealed class AgentPlaygroundApiTests
             (source.GetProperty("kind").GetString(), source.GetProperty("id").GetString(), source.GetProperty("label").GetString()));
     }
 
+    // Spec 2026-11-17 §7: la prueba en modo bloque ofrece finish_objective, lleva el objetivo en el contexto volátil y muestra el retorno.
+    [Fact]
+    public async Task ABlockTestOffersFinishObjectiveAndShowsTheReturn()
+    {
+        await using var database = await StartDatabaseAsync();
+        var anthropic = new FakeAnthropicMessagesHandler(AnthropicTestKey);
+        anthropic.Enqueue(FakeAnthropicMessagesHandler.ToolUse("toolu_01", AgentToolNames.FinishObjective, """{"summary":"Quiere 3 jabones de avena."}"""));
+        using var factory = new QepApiFactory(database.GetConnectionString(), services => UseFakeAnthropic(services, anthropic));
+        await SeedTenantAsync(factory);
+        await SeedAnthropicConnectionAsync(factory);
+        using var client = CreateClient(factory, permissions: Manage);
+        var agentId = await DraftAgentAsync(client);
+
+        var opened = await SendAsync(
+            client, HttpMethod.Post, $"{Agents}/{agentId}/tests",
+            new { customerId = (Guid?)null, block = new { objective = "Toma el pedido de jabones.", context = "Eligió «Comprar»." } });
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        var openedBody = await JsonAsync(opened);
+        Assert.Equal("Toma el pedido de jabones.", openedBody.GetProperty("block").GetProperty("objective").GetString());
+        var testId = openedBody.GetProperty("id").GetGuid();
+        Assert.Equal(
+            HttpStatusCode.Accepted,
+            (await SendAsync(client, HttpMethod.Post, $"{Tests}/{testId}/messages", new { text = "Quiero 3 de avena." })).StatusCode);
+        var test = await WaitUntilAnsweredAsync(client, testId);
+
+        var returned = test.GetProperty("returned");
+        Assert.Equal(
+            ("done", "objective_completed", "Quiere 3 jabones de avena."),
+            (returned.GetProperty("output").GetString(), returned.GetProperty("reason").GetString(), returned.GetProperty("summary").GetString()));
+        Assert.Equal(["customer", "returned"], test.GetProperty("transcript").EnumerateArray().Select(entry => entry.GetProperty("role").GetString()));
+        Assert.False(test.GetProperty("handedOff").GetBoolean());
+        // Una sola llamada: finish_objective es final y no pide otra vuelta del modelo.
+        Assert.True(Assert.Single(anthropic.Requests).KeyMatched);
+    }
+
+    [Fact]
+    public async Task ABlockTestWithoutObjectiveIs422WithTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SeedAnthropicConnectionAsync(factory);
+        using var client = CreateClient(factory, permissions: Manage);
+        var agentId = await DraftAgentAsync(client);
+
+        var response = await SendAsync(client, HttpMethod.Post, $"{Agents}/{agentId}/tests", new { block = new { objective = " " } });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await JsonAsync(response);
+        Assert.Equal("validation.failed", problem.GetProperty("code").GetString());
+        Assert.True(problem.GetProperty("errors").TryGetProperty("Block.Objective", out _));
+    }
+
     internal static void UseFakeAnthropic(IServiceCollection services, HttpMessageHandler handler) =>
         services.AddHttpClient(ClaudeModelClient.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => handler);
 
