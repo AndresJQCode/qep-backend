@@ -193,7 +193,17 @@ public sealed class ConversationListApiTests
             .Where(sql => (sql.Contains("count(", StringComparison.OrdinalIgnoreCase) || sql.Contains("sum(", StringComparison.OrdinalIgnoreCase))
                 && sql.Contains("messaging.conversations", StringComparison.Ordinal))
             .ToList();
-        Assert.Single(counts);
+        var sql = Assert.Single(counts);
+
+        // El WHERE externo (no los FILTER de cada agregado) acota a abiertas o con no leídos: sin eso la sentencia recorre
+        // todas las conversaciones del tenant, resueltas e historial importado incluidos, y no puede usar los índices
+        // parciales IX_conversations_tenant_open / IX_conversations_tenant_unread.
+        var from = sql.IndexOf("FROM messaging.conversations", StringComparison.Ordinal);
+        var groupBy = sql.IndexOf("GROUP BY", from, StringComparison.Ordinal);
+        Assert.True(from >= 0 && groupBy > from, sql);
+        var outerWhere = sql[from..groupBy];
+        Assert.Contains("status", outerWhere, StringComparison.Ordinal);
+        Assert.Contains("unread_count", outerWhere, StringComparison.Ordinal);
     }
 
     // Sin conversaciones el agregado no devuelve fila: los contadores son ceros, no null.

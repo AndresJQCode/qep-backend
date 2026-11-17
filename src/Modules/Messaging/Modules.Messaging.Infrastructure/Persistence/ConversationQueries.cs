@@ -105,11 +105,14 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
 
     public async Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)
     {
-        // Una sola sentencia con count(*) FILTER (WHERE …): recorre por tenant_id un índice IX_conversations_tenant_* en vez
-        // de seis index-only scans sobre los parciales. Con la base en otro nodo, un viaje gana a seis aunque cada uno fuera
-        // más barato. D-A10: mine y unassigned cuentan sólo abiertas.
+        // Una sola sentencia con count(*) FILTER (WHERE …) en vez de seis consultas: con la base en otro nodo, un viaje gana a
+        // seis aunque cada uno fuera más barato. D-A10: mine y unassigned cuentan sólo abiertas. Todo agregado exige abierta o
+        // con no leídos, así que el WHERE externo pide lo mismo: el resultado no cambia y el planificador puede unir con un
+        // BitmapOr los parciales IX_conversations_tenant_open e IX_conversations_tenant_unread, en vez de recorrer todas las
+        // conversaciones del tenant (resueltas e historial importado incluidos).
         var counts = await dbContext.Conversations.AsNoTracking()
-            .Where(conversation => conversation.TenantId == tenantId)
+            .Where(conversation => conversation.TenantId == tenantId
+                && (conversation.Status == ConversationStatus.Open || conversation.UnreadCount > 0))
             .GroupBy(_ => 1)
             .Select(group => new
             {
