@@ -142,6 +142,14 @@ public sealed class ShopifyProductImport
         Cursor = nextCursor;
     }
 
+    /// <summary>Guardada una página, el reclamo que la guardó es el primer intento de la siguiente: <see cref="Attempts"/> cuenta
+    /// los intentos de la página en curso, no los de la importación entera (el reclamo de la cola le suma uno).</summary>
+    public void RestartAttempts()
+    {
+        EnsureLive();
+        Attempts = 1;
+    }
+
     public void Complete(DateTimeOffset now)
     {
         EnsureLive();

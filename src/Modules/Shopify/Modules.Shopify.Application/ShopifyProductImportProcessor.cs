@@ -49,7 +49,8 @@ public interface IShopifyProductSyncScope
 /// tienda con <c>products_synced_at</c>.</item>
 /// <item>Fallas de Shopify: <c>Rejected</c> → <c>token_expired</c>; <c>AccessDenied</c> → <c>scope_missing</c>; <c>Throttled</c> o
 /// <c>Unavailable</c> reintentan con el lease (<see cref="RetryDelay"/>) sin perder cursor ni contadores, hasta
-/// <see cref="MaxAttempts"/>, y después <c>unreachable</c>.</item>
+/// <see cref="MaxAttempts"/> intentos <b>por página</b> (guardar una página reinicia la cuenta), y después <c>unreachable</c>.</item>
+/// <item>El token se relee antes de cada página: una importación larga usa el que dejó el refresco, no el del reclamo.</item>
 /// </list>
 /// </summary>
 public sealed class ShopifyProductImportProcessor(
@@ -98,9 +99,12 @@ public sealed class ShopifyProductImportProcessor(
             return;
         }
 
+        // Los intentos de la página en curso: los del reclamo, hasta que se guarda una página (entonces este reclamo es el
+        // primero de la siguiente).
+        var progress = new PageAttempts(claim.Attempts);
         try
         {
-            await RunAsync(import, connection, cancellationToken);
+            await RunAsync(import, connection, progress, cancellationToken);
         }
         catch (ShopifyProductsSourceException exception)
         {
@@ -113,14 +117,14 @@ public sealed class ShopifyProductImportProcessor(
                     await FailAsync(import, ShopifyProductCodes.ScopeMissing, cancellationToken);
                     break;
                 default:
-                    if (claim.Attempts >= MaxAttempts)
+                    if (progress.Attempts >= MaxAttempts)
                     {
                         await FailAsync(import, ShopifyProductCodes.Unreachable, cancellationToken);
                     }
                     else
                     {
                         // Vuelve a la cola: el cursor y los contadores son los de la última página guardada.
-                        await queue.RenewAsync(import.Id, clock.UtcNow + RetryDelay(claim.Attempts, exception.RetryAfter), cancellationToken);
+                        await queue.RenewAsync(import.Id, clock.UtcNow + RetryDelay(progress.Attempts, exception.RetryAfter), cancellationToken);
                     }
 
                     break;
@@ -128,7 +132,8 @@ public sealed class ShopifyProductImportProcessor(
         }
     }
 
-    private async Task RunAsync(ShopifyProductImport import, ShopifyConnectionRef connection, CancellationToken cancellationToken)
+    private async Task RunAsync(
+        ShopifyProductImport import, ShopifyConnectionRef connection, PageAttempts progress, CancellationToken cancellationToken)
     {
         var resolution = await pricing.ResolveAsync(connection, cancellationToken);
         if (resolution.FailureCode is { } code)
@@ -149,8 +154,18 @@ public sealed class ShopifyProductImportProcessor(
             : null;
         var context = new ShopifyProductSyncContext(connection, resolution.Pricing!, import.RequestedBySubjectId, ShopifySyncTrigger.Import);
         var cursor = import.Cursor;
+        var first = true;
         while (true)
         {
+            if (!first
+                && await connections.FindAsync(import.TenantId, import.ConnectionId, cancellationToken) is { AccessToken: not null } fresh)
+            {
+                // Sin token (el refresco va tarde) se sigue con el que había: si ya no sirve, Shopify lo dice como Rejected.
+                connection = fresh;
+                context = context with { Connection = fresh };
+            }
+
+            first = false;
             var page = await source.FetchProductsAsync(connection, cursor, cancellationToken);
             var tally = ShopifyProductTally.Empty;
             foreach (var product in page.Products)
@@ -184,10 +199,17 @@ public sealed class ShopifyProductImportProcessor(
                 return;
             }
 
+            import.RestartAttempts();
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            progress.Attempts = 1;
             await queue.RenewAsync(import.Id, clock.UtcNow + Lease, cancellationToken);
             cursor = page.NextCursor;
         }
+    }
+
+    private sealed class PageAttempts(int attempts)
+    {
+        public int Attempts { get; set; } = attempts;
     }
 
     private async Task FailAsync(ShopifyProductImport import, string code, CancellationToken cancellationToken)

@@ -121,6 +121,45 @@ public sealed class ShopifyProductImportProcessorTests
         Assert.Equal(ShopifyProductCodes.Unreachable, world.Import.FailureCode);
     }
 
+    // Revisión: MaxAttempts acota los intentos de una página, no de la importación entera. Un catálogo grande con fallas sueltas
+    // terminaba unreachable aunque cada página avanzara.
+    [Fact]
+    public async Task ARecordedPageRestartsTheAttemptCount()
+    {
+        var world = new ImportWorld();
+        world.Source.Shop = new ShopifyShopInfo("COP", true, 2);
+        world.Source.Pages.Enqueue(new ShopifyProductsPage([Product(1, 11)], "c1"));
+        world.Source.FailFromFetch = 2;
+        world.Source.Failure = new ShopifyProductsSourceException(ShopifyProductsSourceFailure.Unavailable, null);
+
+        await world.ProcessAsync(attempts: ShopifyProductImportProcessor.MaxAttempts);
+
+        Assert.Equal(ShopifyProductImportStatus.Running, world.Import.Status);
+        Assert.Equal((1, "c1"), (world.Import.Attempts, world.Import.Cursor));
+        // El reintento espera como el primer intento de la página nueva.
+        Assert.Equal((world.Import.Id, Now.AddSeconds(30)), world.Queue.Renewals[^1]);
+    }
+
+    // Revisión: el token se relee en cada página; el refresco de ShopifyTokenRefreshWorker llega a una importación larga.
+    [Fact]
+    public async Task EachPageUsesTheCurrentToken()
+    {
+        var world = new ImportWorld();
+        world.Source.Shop = new ShopifyShopInfo("COP", true, 2);
+        world.Source.Pages.Enqueue(new ShopifyProductsPage([Product(1, 11)], "c1"));
+        world.Source.Pages.Enqueue(new ShopifyProductsPage([Product(2, 21)], null));
+        world.Source.OnFetch = () =>
+        {
+            var current = world.Connections.Connections["mi-tienda.myshopify.com"];
+            world.Connections.Connections["mi-tienda.myshopify.com"] = current with { AccessToken = "shpat_refreshed" };
+        };
+
+        await world.ProcessAsync();
+
+        Assert.Equal(["shpat_x", "shpat_refreshed"], world.Source.Tokens);
+        Assert.Equal("shpat_refreshed", world.Sync.Contexts[^1].Connection.AccessToken);
+    }
+
     [Fact]
     public async Task MissingModeSkipsFullyLinkedProducts()
     {
@@ -322,15 +361,27 @@ internal sealed class FakeProductsSource : IShopifyProductsSource
         return ShopFailure is { } failure ? Task.FromException<bool>(failure) : Task.FromResult(Taxable);
     }
 
+    /// <summary>Con <see cref="Failure"/>: la primera llamada de páginas que falla (1 = todas).</summary>
+    public int FailFromFetch { get; set; } = 1;
+
+    /// <summary>Corre después de cada página servida (para cambiar el mundo entre una y otra).</summary>
+    public Action? OnFetch { get; set; }
+
+    /// <summary>El token con que se pidió cada página.</summary>
+    public List<string?> Tokens { get; } = [];
+
     public Task<ShopifyProductsPage> FetchProductsAsync(ShopifyConnectionRef connection, string? cursor, CancellationToken cancellationToken)
     {
         Cursors.Add(cursor);
-        if (Failure is { } failure)
+        Tokens.Add(connection.AccessToken);
+        if (Failure is { } failure && Cursors.Count >= FailFromFetch)
         {
             return Task.FromException<ShopifyProductsPage>(failure);
         }
 
-        return Task.FromResult(Pages.TryDequeue(out var page) ? page : new ShopifyProductsPage([], null));
+        var served = Pages.TryDequeue(out var page) ? page : new ShopifyProductsPage([], null);
+        OnFetch?.Invoke();
+        return Task.FromResult(served);
     }
 
     public Task<ShopifyProductSnapshot?> ReadProductAsync(ShopifyConnectionRef connection, long productId, CancellationToken cancellationToken)
