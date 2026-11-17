@@ -99,6 +99,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-12 §3.4: <c>MessagingUnitOfWork</c> discrimina por este nombre para responder <c>shortcut_taken</c>.</summary>
     public const string QuickReplyShortcutIndex = "IX_quick_replies_tenant_shortcut";
 
+    /// <summary>Spec 2026-11-17 §5.3 y revisión de la rama, hallazgo 3: una sola delegación viva por conversación. <c>MessagingSaveChanges</c>
+    /// discrimina por este nombre para responder <c>messaging.automation.delegation_live_exists</c>.</summary>
+    public const string BotDelegationLiveIndex = "IX_bot_delegations_live";
+
     /// <summary>Spec 2026-10-29: el mismo tope que <c>QuickReplyOrder.MaxItems</c> (500).</summary>
     public const string QuickReplyOrderCapCheck = "cardinality(quick_reply_ids) <= 500";
 
@@ -711,7 +715,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         delegation.Property(value => value.StartedAt).HasColumnName("started_at");
         delegation.Property(value => value.EndedAt).HasColumnName("ended_at");
         // Nunca dos vivas de una conversación: la carrera de dos bloques se resuelve en la base.
-        delegation.HasIndex(value => value.ConversationId, "IX_bot_delegations_live").IsUnique().HasFilter("status = 'Live'");
+        delegation.HasIndex(value => value.ConversationId, BotDelegationLiveIndex).IsUnique().HasFilter("status = 'Live'");
         // El borrado de clientes y el barrido de huérfanas buscan por conversación.
         delegation.HasIndex(value => new { value.TenantId, value.ConversationId }, "IX_bot_delegations_tenant_conversation");
     }

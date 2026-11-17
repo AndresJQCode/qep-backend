@@ -69,7 +69,7 @@ public sealed class BotDelegationAdaptersTests
             conversation.TenantId, conversation.Id,
             new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, row, Brief, InboxRowId: row), Ct);
 
-        Assert.Equal(["begin", $"reassign {BotKind.Agent} except {row}", "save", "commit"], world.Log);
+        Assert.Equal(["begin", "interrupt live", $"reassign {BotKind.Agent} except {row}", "save", "commit"], world.Log);
     }
 
     // Hallazgo 1: el traspaso, la resolución y el fin del chatbot sobre una conversación delegada sacan al agente como lo hace una persona:
@@ -117,6 +117,26 @@ public sealed class BotDelegationAdaptersTests
         "resolve" => automations.ResolveAsync(conversation.TenantId, conversation.Id, ChatbotId, null, Ct),
         _ => automations.EndAsync(conversation.TenantId, conversation.Id, Ct),
     };
+
+    // Revisión de la rama, hallazgo 3: una delegación Live que quedó colgada de la conversación (un traspaso que limpió la columna sin
+    // cerrarla) frenaba toda delegación nueva por IX_bot_delegations_live. Delegar la cierra en la misma transacción, antes de agregar la nueva.
+    [Fact]
+    public async Task DelegatingInterruptsAnOrphanLiveDelegationOfTheConversationFirst()
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var orphan = BotDelegation.Start(
+            Guid.CreateVersion7(), conversation.TenantId, conversation.Id, conversation.ConnectionId, ChatbotId, Guid.CreateVersion7(), "ai-agent-0",
+            AgentId, null, Brief, Now.AddHours(-1));
+        world.Delegations.Add(orphan);
+
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct);
+
+        Assert.Equal(BotDelegationStatus.Interrupted, orphan.Status);
+        Assert.Equal(BotDelegationStatus.Live, world.Delegations.Single(value => value.Id == delegationId).Status);
+        Assert.Equal(["begin", "interrupt live", $"reassign {BotKind.Agent} except none", "save", "commit"], world.Log);
+    }
 
     // Hallazgo 2: la fila Delegated de una delegación que la conversación ya no apunta. Mensajería la cierra y le avisa a la corrida que
     // espera en el bloque; si la conversación la sigue apuntando, no toca nada.
@@ -271,7 +291,7 @@ public sealed class BotDelegationAdaptersTests
                     .Where(id => id == ChatbotId || id == AgentId)
                     .Distinct()
                     .ToDictionary(id => id, id => id == ChatbotId ? "Ventas" : "Asesor IA"))));
-            services.AddScoped<IBotDelegationRepository>(_ => new MemoryDelegations(Delegations));
+            services.AddScoped<IBotDelegationRepository>(_ => new MemoryDelegations(Delegations, Log));
             services.AddScoped(_ => Stub<IAutomationInbox>((method, args) =>
             {
                 if (method.Name is nameof(IAutomationInbox.EnqueueDelegated) or nameof(IAutomationInbox.EnqueueAgentReturned))
@@ -376,8 +396,15 @@ public sealed class BotDelegationAdaptersTests
         public override string ToString() => conversation.Id.ToString();
     }
 
-    private sealed class MemoryDelegations(List<BotDelegation> delegations) : IBotDelegationRepository
+    private sealed class MemoryDelegations(List<BotDelegation> delegations, List<string> log) : IBotDelegationRepository
     {
+        public Task<int> InterruptLiveAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            log.Add("interrupt live");
+            return Task.FromResult(delegations.Count(value =>
+                value.TenantId == tenantId && value.ConversationId == conversationId && value.Interrupt(now)));
+        }
+
         public Task<BotDelegation?> FindAsync(Guid tenantId, Guid delegationId, CancellationToken cancellationToken) =>
             Task.FromResult(delegations.SingleOrDefault(value => value.TenantId == tenantId && value.Id == delegationId));
 

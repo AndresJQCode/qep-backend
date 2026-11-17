@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Persistence;
 using Npgsql;
@@ -108,6 +109,86 @@ public sealed class BotDelegationPersistenceTests
 
         Assert.Equal(2L, await CountAsync(connectionString,
             "SELECT count(*) FROM messaging.bot_delegations WHERE conversation_id = @id", ("id", conversationId)));
+    }
+
+    /// <summary>Revisión de la rama, hallazgo 3: por la unidad de trabajo del módulo, el choque del índice sale como la excepción de dominio
+    /// que el motor de chatbots atiende; y delegar cierra antes las vivas de la conversación.</summary>
+    [Fact]
+    public async Task ASecondLiveDelegationIsTheDomainConflictAndInterruptingLiveOnesLetsTheNextIn()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IBotDelegationRepository>().Add(NewLive(tenantId, conversationId, connectionId));
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IBotDelegationRepository>().Add(NewLive(tenantId, conversationId, connectionId));
+
+            var error = await Assert.ThrowsAsync<MessagingDomainException>(
+                () => scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct));
+
+            Assert.Equal(MessagingErrorCodes.DelegationLiveExists, error.Code);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>();
+            var delegations = scope.ServiceProvider.GetRequiredService<IBotDelegationRepository>();
+            await using var transaction = await unitOfWork.BeginTransactionAsync(Ct);
+            // De otro tenant no toca nada.
+            Assert.Equal(0, await delegations.InterruptLiveAsync(Guid.CreateVersion7(), conversationId, DateTimeOffset.UtcNow, Ct));
+            Assert.Equal(1, await delegations.InterruptLiveAsync(tenantId, conversationId, DateTimeOffset.UtcNow, Ct));
+            delegations.Add(NewLive(tenantId, conversationId, connectionId));
+            await unitOfWork.SaveChangesAsync(Ct);
+            await transaction.CommitAsync(Ct);
+        }
+
+        Assert.Equal("Interrupted,Live", await ScalarAsync<string>(connectionString,
+            "SELECT string_agg(status, ',' ORDER BY started_at, status) FROM messaging.bot_delegations WHERE conversation_id = @id", ("id", conversationId)));
+    }
+
+    /// <summary>Hallazgo 3: el barrido de huérfanas también avisa a la corrida que espera en el bloque, con una señal ReleaseRun del chatbot en
+    /// la misma sentencia. Una delegación sin conversación se cierra igual, sin fila.</summary>
+    [Fact]
+    public async Task TheOrphanSweepSignalsTheChatbotOfEachInterruptedDelegation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = await SeedConversationAsync(factory, tenantId, connectionId, "573001112255");
+        var gone = Guid.CreateVersion7();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            dbContext.BotDelegations.Add(NewLive(tenantId, conversationId, connectionId));
+            dbContext.BotDelegations.Add(NewLive(tenantId, gone, connectionId));
+            await dbContext.SaveChangesAsync(Ct);
+        }
+
+        int swept;
+        using (var scope = factory.Services.CreateScope())
+        {
+            swept = await scope.ServiceProvider.GetRequiredService<Modules.Ai.Application.IAiDelegationSweep>()
+                .InterruptOrphansAsync(DateTimeOffset.UtcNow, 10, Ct);
+        }
+
+        Assert.Equal(2, swept);
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.bot_delegations WHERE status = 'Live'"));
+        Assert.Equal("ReleaseRun|1", await ScalarAsync<string>(connectionString,
+            "SELECT string_agg(kind || '|' || bot_kind, ',') FROM messaging.automation_inbox WHERE conversation_id = @id AND processed_at IS NULL",
+            ("id", conversationId)));
+        Assert.Equal(0L, await CountAsync(connectionString,
+            "SELECT count(*) FROM messaging.automation_inbox WHERE conversation_id = @id", ("id", gone)));
     }
 
     [Fact]

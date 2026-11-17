@@ -209,6 +209,9 @@ internal sealed partial class AutomationConversations(
         // Revisión de la rama, hallazgo 1: una transacción explícita porque mover las filas es SQL que corre en el acto. La versión de la
         // conversación ya está cargada: un entrante que la ingesta encole después la sube y el guardado choca (se reintenta la unidad).
         await using var transaction = await services.UnitOfWork.BeginTransactionAsync(cancellationToken);
+        // Hallazgo 3: el agregado ya exigió que la conversación no apunte a ninguna (es del chatbot), así que toda delegación viva de ella está
+        // huérfana y frenaría la nueva por IX_bot_delegations_live. Se cierra antes de agregar; su corrida ya no está viva (ésta lo está).
+        await services.Delegations.InterruptLiveAsync(tenantId, conversationId, now, cancellationToken);
         // Los entrantes que la ingesta encoló para el chatbot mientras su unidad corría pasan al agente. Son más viejos que la fila Delegated,
         // así que el agente los atiende primero y abre la sesión del bloque con ellos (AiInboxProcessor.TryOpenAsync).
         await services.Inbox.ReassignPendingEngineAsync(tenantId, conversationId, BotKind.Agent, request.InboxRowId, cancellationToken);

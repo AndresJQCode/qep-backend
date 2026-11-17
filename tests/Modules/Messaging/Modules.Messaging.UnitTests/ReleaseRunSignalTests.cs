@@ -110,6 +110,9 @@ public sealed class ReleaseRunSignalTests
         }
 
         public void Add(BotDelegation delegation) => throw new NotSupportedException();
+
+        public Task<int> InterruptLiveAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeInbox : IAutomationInbox
