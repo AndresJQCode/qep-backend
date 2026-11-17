@@ -45,7 +45,9 @@ public sealed class AgentActivityHandlersTests
         var response = Assert.Single(Assert.Single(
             (await Handler(reader).HandleAsync(new GetConversationAgentActivityQuery(Tenant, Conversation), Ct)).Sessions).Responses);
 
-        Assert.Equal(("anthropic", ["claude-sonnet-5-5", "claude-opus-5-5"]), (response.Provider, response.ServedModels));
+        // Por separado: dentro de una tupla la lista se compararía por referencia, no por contenido.
+        Assert.Equal("anthropic", response.Provider);
+        Assert.Equal(["claude-sonnet-5-5", "claude-opus-5-5"], response.ServedModels);
         Assert.Equal(new AgentUsageDto("anthropic", 2, 3000, 120, 800, null), response.Usage);
     }
 
