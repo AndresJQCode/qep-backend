@@ -327,6 +327,32 @@ cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
   despliegue desempata sus filas viejas por id.
 - **Fusión de clientes:** backend y frontend salen juntos. Una migración en Customers (`AddCustomerMerge`: columnas `merged_into_id`/`merged_at` e `IX_customers_tenant_identification` recreado como parcial); su `Down` falla si ya hubo fusiones con el mismo documento entre fusionado y que-queda. La fusión escribe por nombre en tablas de cinco módulos (CLAUDE.md, «`CustomerMergeReferences`…»).
 
+## Después de desplegar: migraciones de contrato pendientes
+
+Columnas que el código ya no usa y que se dejaron en la base a propósito (expand/contract) para que el binario viejo
+siguiera funcionando durante el despliegue. Se quitan en una **release posterior**, en rama aparte, cuando ya no quede
+ningún pod ni frontend viejo en producción. Nunca en la misma release que las dejó sin uso.
+
+- [ ] **Retención fija → retenciones por tipo** (spec `2026-11-10-impuestos-por-tipo-design.md` §11.5; registrada
+  2026-11-16). La retención pasó a `customers.customer_tax_rates` y a `quotations.quotation_withholdings` /
+  `order_withholdings` (`MigrateRetentionToWithholdings` sólo copió, no borró). Hoy siguen como propiedades sombra con
+  `DEFAULT`, sólo para que el `INSERT` nuevo no falle por `NOT NULL`:
+  - `customers.customers.with_retention` (`CustomersDbContext.cs:214`)
+  - `quotations.quotations.customer_with_retention` y `.party_with_retention` (`QuotationsDbContext.cs:189-195`)
+  - `quotations.orders.customer_with_retention` y `.party_with_retention` (`QuotationsDbContext.cs:686-690`)
+
+  **Antes:** que el backend y el frontend de impuestos por tipo estén en producción. **Al hacerla:** quitar las
+  propiedades sombra, generar la migración con `DropColumn`, quitar las columnas de los `INSERT` crudos de
+  `ExportLoadSeeder.cs` y retirar los campos derivados de la API (`withRetention`, `billingWithRetention`,
+  `client.withRetention`) **junto con el frontend que los deje de leer**. `retention_amount` **no** entra: sigue en el
+  modelo como la suma de las retenciones (`RetentionAmount`, columna `retention_amount` del Excel de pedidos).
+- [ ] **Estados del pedido: históricos de `OrderStatusAxes`** (decisión del owner pendiente). Quedaron en
+  `quotations.orders`, sin uso en el código: `approved_at`, `approved_by` (aprobación anterior) y `legacy_status`,
+  `legacy_payment_status` (respaldo del estado y del pago de antes). El owner pidió conservarlos (2026-11-11, «sin
+  pérdida»), y el `Down` de `OrderStatusAxes` los usa para revertir. Quitarlos borra ese dato y la posibilidad de
+  revertir, así que va sólo si el owner lo decide, con respaldo de la base antes, y nunca mientras un rollback de esa
+  release siga siendo una opción.
+
 ## Decisiones del owner pendientes
 
 - Soporte/PQRSF: que el abogado confirme lo decidido el 2026-11-15 sobre petición incompleta (Ley 1755, art. 17), reclamación
