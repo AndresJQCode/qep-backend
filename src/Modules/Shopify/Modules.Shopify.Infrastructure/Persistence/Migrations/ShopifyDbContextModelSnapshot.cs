@@ -923,13 +923,11 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                                 .HasColumnType("uuid");
 
                             b1.Property<string>("AccountNumber")
-                                .IsRequired()
                                 .HasMaxLength(32)
                                 .HasColumnType("character varying(32)")
                                 .HasColumnName("billing_account_number");
 
                             b1.Property<string>("BankName")
-                                .IsRequired()
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");
