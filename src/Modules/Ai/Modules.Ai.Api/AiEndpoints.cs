@@ -188,9 +188,16 @@ public static class AiEndpoints
     private static async Task<IResult> ListConnectionsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListAiConnectionsQuery(tenantId), cancellationToken));
 
+    // Plan 2026-11-17 A5: from y to son días del tenant (yyyy-MM-dd), los dos inclusivos; cursor es el nextCursor de la página anterior.
     private static async Task<IResult> ListSessionsAsync(
-        Guid tenantId, Guid? agentId, DateTimeOffset? from, DateTimeOffset? to, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new ListAgentSessionsQuery(tenantId, agentId, from, to), cancellationToken));
+        Guid tenantId,
+        Guid? agentId,
+        DateOnly? from,
+        DateOnly? to,
+        string? cursor,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListAgentSessionsQuery(tenantId, agentId, from, to, cursor), cancellationToken));
 
     private static async Task<IResult> GetConversationActivityAsync(
         Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

@@ -75,7 +75,13 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
     }
 
     public async Task<IReadOnlyList<AgentSessionDto>> ListSessionsAsync(
-        Guid tenantId, Guid? agentId, DateTimeOffset? startedFrom, DateTimeOffset? startedBefore, int limit, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid? agentId,
+        DateTimeOffset? startedFrom,
+        DateTimeOffset? startedBefore,
+        AgentSessionCursor? after,
+        int take,
+        CancellationToken cancellationToken)
     {
         var sessions = dbContext.Sessions.AsNoTracking().Where(session => session.TenantId == tenantId);
         if (agentId is { } agent)
@@ -93,13 +99,21 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
             sessions = sessions.Where(session => session.StartedAt < end);
         }
 
+        // Plan 2026-11-17 A5: keyset (started_at, id) < (@at, @id), el mismo orden de la página; el id desempata dos sesiones del mismo
+        // instante, así ninguna se repite ni se salta entre páginas (precedente ConversationQueries).
+        if (after is { } cursor)
+        {
+            sessions = sessions.Where(session => EF.Functions.LessThan(
+                ValueTuple.Create(session.StartedAt, session.Id), ValueTuple.Create(cursor.StartedAt, cursor.Id)));
+        }
+
         var rows = await (
                 from session in sessions
                 join version in dbContext.AgentVersions.AsNoTracking() on session.AgentVersionId equals version.Id
                 join owner in dbContext.Agents.AsNoTracking() on session.AgentId equals owner.Id
                 orderby session.StartedAt descending, session.Id descending
                 select new { Session = session, version.Number, version.Provider, version.Model, owner.Name })
-            .Take(limit)
+            .Take(take)
             .ToListAsync(cancellationToken);
         if (rows.Count == 0)
         {

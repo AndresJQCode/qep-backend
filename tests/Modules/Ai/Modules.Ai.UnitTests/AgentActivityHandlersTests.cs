@@ -2,6 +2,7 @@ using System.Text.Json;
 using BuildingBlocks.Application;
 using Modules.Ai.Application;
 using Modules.Ai.Domain;
+using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
 namespace Modules.Ai.UnitTests;
@@ -104,25 +105,70 @@ public sealed class AgentActivityHandlersTests
         Assert.Equal("authorization.denied", error.Code);
     }
 
+    // Plan 2026-11-17 A5 (F-6): from y to son días del tenant, los dos inclusivos (precedente GetMessagingReportSummary): Bogotá es UTC-5, así
+    // que el 1 de noviembre empieza a las 05:00 UTC y el 15 termina a las 05:00 UTC del 16.
     [Fact]
-    public async Task TheSessionHistoryPassesItsFiltersAndCap()
+    public async Task TheHistoryFiltersByTenantDaysInclusive()
     {
         var reader = new FakeReader();
         var agent = Guid.CreateVersion7();
-        var from = new DateTimeOffset(2026, 11, 1, 5, 0, 0, TimeSpan.Zero);
-        var to = new DateTimeOffset(2026, 11, 15, 5, 0, 0, TimeSpan.Zero);
 
-        await new ListAgentSessionsHandler(
-                new FakeExecutionContext(Tenant, AiPermissions.AgentRead), AllModules(), reader, new ListAgentSessionsValidator())
-            .HandleAsync(new ListAgentSessionsQuery(Tenant, agent, from, to), Ct);
+        await SessionsHandler(reader).HandleAsync(
+            new ListAgentSessionsQuery(Tenant, agent, new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 15), null), Ct);
 
-        Assert.Equal((agent, from, to, ListAgentSessionsHandler.MaxSessions), reader.SessionsAsked);
+        Assert.Equal(
+            (agent, new DateTimeOffset(2026, 11, 1, 5, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 11, 16, 5, 0, 0, TimeSpan.Zero), (AgentSessionCursor?)null,
+                ListAgentSessionsHandler.PageSize + 1),
+            reader.SessionsAsked);
+    }
+
+    // 50 por página, de la más reciente a la más vieja, y el cursor sigue donde terminó la página: ninguna se repite ni se salta, aunque dos
+    // empiecen en el mismo instante (desempata el id).
+    [Fact]
+    public async Task TheHistoryPagesWithACursorWithoutRepeating()
+    {
+        var at = new DateTimeOffset(2026, 11, 10, 15, 0, 0, TimeSpan.Zero);
+        var reader = new FakeReader
+        {
+            Stored = [.. Enumerable.Range(0, 75).Select(index => SessionRow(at.AddMinutes(-(index / 2))))],
+        };
+
+        var first = await SessionsHandler(reader).HandleAsync(new ListAgentSessionsQuery(Tenant, null, null, null, null), Ct);
+        var second = await SessionsHandler(reader).HandleAsync(new ListAgentSessionsQuery(Tenant, null, null, null, first.NextCursor), Ct);
+
+        Assert.Equal(ListAgentSessionsHandler.PageSize, first.Items.Count);
+        Assert.NotNull(first.NextCursor);
+        Assert.Equal(25, second.Items.Count);
+        Assert.Null(second.NextCursor);
+        var expected = reader.Stored.OrderByDescending(session => session.StartedAt).ThenByDescending(session => session.Id).Select(session => session.Id);
+        Assert.Equal(expected, first.Items.Concat(second.Items).Select(session => session.Id));
     }
 
     [Fact]
-    public void ARangeThatEndsBeforeItStartsIsInvalid() =>
-        Assert.False(new ListAgentSessionsValidator().Validate(new ListAgentSessionsQuery(
-            Tenant, null, new DateTimeOffset(2026, 11, 15, 0, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero))).IsValid);
+    public void ToBeforeFromIsRejected()
+    {
+        var validator = new ListAgentSessionsValidator();
+
+        var backwards = validator.Validate(new ListAgentSessionsQuery(Tenant, null, new DateOnly(2026, 11, 15), new DateOnly(2026, 11, 1), null));
+        var sameDay = validator.Validate(new ListAgentSessionsQuery(Tenant, null, new DateOnly(2026, 11, 15), new DateOnly(2026, 11, 15), null));
+        var forged = validator.Validate(new ListAgentSessionsQuery(Tenant, null, null, null, "no-es-un-cursor"));
+
+        Assert.Equal(["to"], backwards.Errors.Select(error => error.PropertyName));
+        Assert.True(sameDay.IsValid);
+        Assert.Equal(["cursor"], forged.Errors.Select(error => error.PropertyName));
+    }
+
+    private static ListAgentSessionsHandler SessionsHandler(FakeReader reader) =>
+        new(
+            new FakeExecutionContext(Tenant, AiPermissions.AgentRead),
+            AllModules(),
+            reader,
+            new ListAgentSessionsValidator(),
+            new FixedTenantClock(new DateTimeOffset(2026, 11, 17, 15, 0, 0, TimeSpan.Zero)));
+
+    private static AgentSessionDto SessionRow(DateTimeOffset startedAt) =>
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), "Asesor virtual", Guid.CreateVersion7(), 1, "anthropic", "claude-sonnet-5-5", "Ended",
+            "resolved", null, startedAt, startedAt.AddMinutes(5), 1, []);
 
     private static GetConversationAgentActivityHandler Handler(FakeReader reader) =>
         new(new FakeExecutionContext(Tenant, AiPermissions.AgentRead), AllModules(), reader, new FakeQuickReplies());
@@ -157,16 +203,34 @@ public sealed class AgentActivityHandlersTests
     {
         public IReadOnlyList<AgentConversationSession> Conversation { get; init; } = [];
 
-        public (Guid? Agent, DateTimeOffset? From, DateTimeOffset? To, int Limit) SessionsAsked { get; private set; }
+        public IReadOnlyList<AgentSessionDto> Stored { get; init; } = [];
+
+        public (Guid? Agent, DateTimeOffset? From, DateTimeOffset? To, AgentSessionCursor? After, int Take) SessionsAsked { get; private set; }
 
         public Task<AgentListActivity> SummarizeAsync(Guid tenantId, AgentActivityWindow window, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        // El keyset del lector real, en memoria: (started_at, id) < (@at, @id), de la más reciente a la más vieja.
         public Task<IReadOnlyList<AgentSessionDto>> ListSessionsAsync(
-            Guid tenantId, Guid? agentId, DateTimeOffset? startedFrom, DateTimeOffset? startedBefore, int limit, CancellationToken cancellationToken)
+            Guid tenantId,
+            Guid? agentId,
+            DateTimeOffset? startedFrom,
+            DateTimeOffset? startedBefore,
+            AgentSessionCursor? after,
+            int take,
+            CancellationToken cancellationToken)
         {
-            SessionsAsked = (agentId, startedFrom, startedBefore, limit);
-            return Task.FromResult<IReadOnlyList<AgentSessionDto>>([]);
+            SessionsAsked = (agentId, startedFrom, startedBefore, after, take);
+            return Task.FromResult<IReadOnlyList<AgentSessionDto>>(
+            [
+                .. Stored
+                    .Where(session => after is null
+                        || session.StartedAt < after.StartedAt
+                        || (session.StartedAt == after.StartedAt && session.Id.CompareTo(after.Id) < 0))
+                    .OrderByDescending(session => session.StartedAt)
+                    .ThenByDescending(session => session.Id)
+                    .Take(take),
+            ]);
         }
 
         public Task<IReadOnlyList<AgentConversationSession>> LoadConversationAsync(
@@ -191,6 +255,16 @@ public sealed class AgentActivityHandlersTests
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow => now;
+    }
+
+    /// <summary>Bogotá sin horario de verano: UTC-5 fijo.</summary>
+    private sealed class FixedTenantClock(DateTimeOffset now) : ITenantClock
+    {
+        private static readonly TimeZoneInfo Bogota =
+            TimeZoneInfo.CreateCustomTimeZone("America/Bogota", TimeSpan.FromHours(-5), "Bogotá", "Bogotá");
+
+        public Task<TenantCalendar> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult(new TenantCalendar(now, Bogota));
     }
 
     private sealed class FakeQuickReplies : IAiQuickReplies

@@ -110,7 +110,8 @@ public sealed class AgentActivityApiTests
         await UsageAsync(seeded, newer, null, job, "claude-sonnet-5-5", 100, 10, null, null, now);
         await SessionAsync(seeded, Guid.CreateVersion7(), "Abandoned", now.AddDays(-10));
 
-        var from = Uri.EscapeDataString(now.AddDays(-1).ToString("O"));
+        // Plan 2026-11-17 A5: from es un día del tenant; dos días atrás cubre las de hace horas en cualquier zona y deja afuera la de hace 10.
+        var from = DateOnly.FromDateTime(now.AddDays(-2).UtcDateTime).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         var history = await JsonAsync(await seeded.Client.GetAsync($"{AiUrl()}/sessions?agentId={seeded.AgentId}&from={from}", Ct));
 
         var items = history.GetProperty("items").EnumerateArray().ToList();
@@ -132,12 +133,54 @@ public sealed class AgentActivityApiTests
         var conversation = Guid.CreateVersion7();
         await SessionAsync(seeded, conversation, "Live", DateTimeOffset.UtcNow);
 
-        var invalid = await seeded.Client.GetAsync($"{AiUrl()}/sessions?from=2026-11-15T00:00:00Z&to=2026-11-01T00:00:00Z", Ct);
+        var invalid = await seeded.Client.GetAsync($"{AiUrl()}/sessions?from=2026-11-15&to=2026-11-01", Ct);
         using var reader = CreateClient(factory, permissions: [AiPermissions.AgentRead]);
         var other = await reader.GetAsync($"{AiUrl(OtherTenantId)}/conversations/{conversation}/agent-activity", Ct);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, other.StatusCode);
+    }
+
+    // Plan 2026-11-17 A5 (F-6): from y to son días del tenant (Bogotá, UTC-5), los dos inclusivos, y el historial se pagina de a 50 con
+    // nextCursor sin repetir ni saltar sesiones; ya no hay un tope silencioso.
+    [Fact]
+    public async Task TheSessionsHistoryPagesByTenantDays()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var seeded = await SeedAsync(factory, database.GetConnectionString());
+        using var _ = seeded.Client;
+        // El 10 de noviembre en Bogotá va de 2026-11-10T05:00Z a 2026-11-11T05:00Z (exclusivo).
+        var dayStart = new DateTimeOffset(2026, 11, 10, 5, 0, 0, TimeSpan.Zero);
+        var inside = new List<Guid>();
+        for (var index = 0; index < 52; index++)
+        {
+            // De a dos por minuto: el id desempata las del mismo instante.
+            inside.Add(await SessionAsync(seeded, Guid.CreateVersion7(), "HandedOff", dayStart.AddMinutes(index / 2)));
+        }
+
+        await SessionAsync(seeded, Guid.CreateVersion7(), "HandedOff", dayStart.AddTicks(-10)); // 1 µs antes: Postgres guarda microsegundos.
+        await SessionAsync(seeded, Guid.CreateVersion7(), "HandedOff", dayStart.AddDays(1));
+        inside.Add(await SessionAsync(seeded, Guid.CreateVersion7(), "HandedOff", dayStart.AddDays(1).AddTicks(-10)));
+
+        var first = await JsonAsync(await seeded.Client.GetAsync($"{AiUrl()}/sessions?from=2026-11-10&to=2026-11-10", Ct));
+        var cursor = first.GetProperty("nextCursor").GetString();
+        Assert.NotNull(cursor);
+        var second = await JsonAsync(await seeded.Client.GetAsync(
+            $"{AiUrl()}/sessions?from=2026-11-10&to=2026-11-10&cursor={Uri.EscapeDataString(cursor)}", Ct));
+
+        var firstIds = first.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetGuid()).ToList();
+        var secondIds = second.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetGuid()).ToList();
+        Assert.Equal(50, firstIds.Count);
+        Assert.Equal(3, secondIds.Count);
+        Assert.Equal(JsonValueKind.Null, second.GetProperty("nextCursor").ValueKind);
+        Assert.Equal(inside.Order(), firstIds.Concat(secondIds).Order());
+        var startedAt = first.GetProperty("items").EnumerateArray().Concat(second.GetProperty("items").EnumerateArray())
+            .Select(item => item.GetProperty("startedAt").GetDateTimeOffset()).ToList();
+        Assert.Equal(startedAt.OrderDescending(), startedAt);
+
+        var forged = await seeded.Client.GetAsync($"{AiUrl()}/sessions?cursor=no-es-un-cursor", Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, forged.StatusCode);
     }
 
     private static async Task<Seeded> SeedAsync(QepApiFactory factory, string connectionString)

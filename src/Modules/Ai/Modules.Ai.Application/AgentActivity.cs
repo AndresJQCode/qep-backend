@@ -45,7 +45,9 @@ public sealed record AgentSessionDto(
     int Replies,
     IReadOnlyList<AgentUsageDto> Usage);
 
-public sealed record AgentSessionListResponse(IReadOnlyList<AgentSessionDto> Items);
+/// <summary>Plan 2026-11-17 A5 (F-6): una página del historial, de la más reciente a la más vieja.</summary>
+/// <param name="NextCursor">Lo que se manda en <c>cursor</c> para pedir la siguiente; <c>null</c> en la última.</param>
+public sealed record AgentSessionListResponse(IReadOnlyList<AgentSessionDto> Items, string? NextCursor);
 
 /// <summary>Una fuente de una respuesta, ya resuelta. <see cref="Kind"/> es <c>faq</c>, <c>quickReply</c> o <c>tool</c>.</summary>
 /// <param name="Label">La pregunta, el atajo o el nombre de la herramienta; <c>null</c> si la respuesta rápida ya no existe.</param>
@@ -134,27 +136,45 @@ public interface IAgentActivityReader
 {
     Task<AgentListActivity> SummarizeAsync(Guid tenantId, AgentActivityWindow window, CancellationToken cancellationToken);
 
-    /// <summary>Las sesiones más recientes primero, a lo sumo <paramref name="limit"/>.</summary>
+    /// <summary>Las sesiones más recientes primero, a lo sumo <paramref name="take"/>, desde después de <paramref name="after"/> en el orden
+    /// <c>(started_at, id)</c> descendente.</summary>
+    /// <param name="startedFrom">Inclusivo.</param>
+    /// <param name="startedBefore">Exclusivo.</param>
     Task<IReadOnlyList<AgentSessionDto>> ListSessionsAsync(
-        Guid tenantId, Guid? agentId, DateTimeOffset? startedFrom, DateTimeOffset? startedBefore, int limit, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid? agentId,
+        DateTimeOffset? startedFrom,
+        DateTimeOffset? startedBefore,
+        AgentSessionCursor? after,
+        int take,
+        CancellationToken cancellationToken);
 
     Task<IReadOnlyList<AgentConversationSession>> LoadConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 }
 
 public sealed record GetConversationAgentActivityQuery(Guid TenantId, Guid ConversationId) : IQuery<AgentActivityDto>;
 
-/// <param name="From">Inclusivo, sobre el inicio de la sesión.</param>
-/// <param name="To">Exclusivo.</param>
-public sealed record ListAgentSessionsQuery(Guid TenantId, Guid? AgentId, DateTimeOffset? From, DateTimeOffset? To)
+/// <summary>Plan 2026-11-17 A5 (F-6): el historial por días del tenant, sobre el inicio de la sesión.</summary>
+/// <param name="From">Día del tenant, inclusivo (desde su inicio en su zona horaria).</param>
+/// <param name="To">Día del tenant, inclusivo (hasta su final en su zona horaria).</param>
+/// <param name="Cursor">El <c>nextCursor</c> de la página anterior, tal cual.</param>
+public sealed record ListAgentSessionsQuery(Guid TenantId, Guid? AgentId, DateOnly? From, DateOnly? To, string? Cursor)
     : IQuery<AgentSessionListResponse>;
 
 public sealed class ListAgentSessionsValidator : AbstractValidator<ListAgentSessionsQuery>
 {
-    public ListAgentSessionsValidator() =>
+    public ListAgentSessionsValidator()
+    {
         RuleFor(query => query.To)
-            .GreaterThan(query => query.From)
+            .GreaterThanOrEqualTo(query => query.From)
             .When(query => query.From is not null && query.To is not null)
-            .WithMessage("To must be after From.");
+            .OverridePropertyName("to")
+            .WithMessage("to must be on or after from.");
+        RuleFor(query => query.Cursor)
+            .Must(value => AgentSessionCursor.TryDecode(value, out _)).When(query => query.Cursor is not null)
+            .OverridePropertyName("cursor")
+            .WithMessage("cursor is not a cursor issued by this list.");
+    }
 }
 
 /// <summary>
@@ -200,20 +220,50 @@ public sealed class GetConversationAgentActivityHandler(
     }
 }
 
-/// <summary>Spec §5 <c>GET /sessions?agentId=&amp;from=&amp;to=</c>: el historial, de la más reciente a la más vieja.</summary>
+/// <summary>
+/// Spec §5 y plan 2026-11-17 A5 <c>GET /sessions?agentId=&amp;from=&amp;to=&amp;cursor=</c>: el historial, de la más reciente a la más vieja,
+/// paginado por cursor. Backend for frontend: <c>from</c> y <c>to</c> son días del tenant (su zona horaria la resuelve el backend, como en
+/// <c>GetMessagingReportSummary</c>) y la pantalla pide la siguiente página con <c>nextCursor</c>, sin un tope silencioso que deje sesiones
+/// afuera.
+/// </summary>
 public sealed class ListAgentSessionsHandler(
-    IExecutionContext executionContext, ITenantModules tenantModules, IAgentActivityReader reader, IValidator<ListAgentSessionsQuery> validator)
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    IAgentActivityReader reader,
+    IValidator<ListAgentSessionsQuery> validator,
+    ITenantClock tenantClock)
     : IQueryHandler<ListAgentSessionsQuery, AgentSessionListResponse>
 {
-    /// <summary>El spec no pagina el historial; para que un rango largo no traiga todo, se devuelven las más recientes hasta este tope.</summary>
-    public const int MaxSessions = 200;
+    public const int PageSize = 50;
 
     public async Task<AgentSessionListResponse> HandleAsync(ListAgentSessionsQuery query, CancellationToken cancellationToken)
     {
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AiPermissions.AgentRead, cancellationToken);
         await validator.ValidateAndThrowAsync(query, cancellationToken);
-        return new AgentSessionListResponse(
-            await reader.ListSessionsAsync(query.TenantId, query.AgentId, query.From, query.To, MaxSessions, cancellationToken));
+
+        DateTimeOffset? startedFrom = null;
+        DateTimeOffset? startedBefore = null;
+        if (query.From is not null || query.To is not null)
+        {
+            var calendar = await tenantClock.GetAsync(query.TenantId, cancellationToken);
+            startedFrom = query.From is { } from ? calendar.StartOfDayUtc(from) : null;
+            startedBefore = query.To is { } to ? calendar.EndOfDayExclusiveUtc(to) : null;
+        }
+
+        AgentSessionCursor? after = null;
+        if (query.Cursor is not null && AgentSessionCursor.TryDecode(query.Cursor, out var decoded))
+        {
+            after = decoded;
+        }
+
+        // Una de más para saber si hay otra página sin contar el total.
+        var rows = await reader.ListSessionsAsync(
+            query.TenantId, query.AgentId, startedFrom, startedBefore, after, PageSize + 1, cancellationToken);
+        IReadOnlyList<AgentSessionDto> page = rows.Count > PageSize ? [.. rows.Take(PageSize)] : rows;
+        var nextCursor = rows.Count > PageSize
+            ? AgentSessionCursor.Encode(new AgentSessionCursor(page[^1].StartedAt, page[^1].Id))
+            : null;
+        return new AgentSessionListResponse(page, nextCursor);
     }
 }
 
