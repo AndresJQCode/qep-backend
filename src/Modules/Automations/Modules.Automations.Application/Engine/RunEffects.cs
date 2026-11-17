@@ -64,6 +64,12 @@ public sealed partial class RunEffects(
         var reentries = 0;
         // Spec 2026-11-17 D-B7 y plan B3: el motor no guarda el último entrante; el bloque «Agente IA» lo recibe de la entrada de la unidad.
         var lastInbound = (input as EngineInput.CustomerMessage)?.MessageId ?? unit.InboundMessageId;
+        // Revisión de la rama, hallazgo 5: una respuesta del cliente al chatbot corta la racha de delegaciones de la corrida.
+        if (input is EngineInput.CustomerMessage)
+        {
+            run.RecordCustomerReply();
+        }
+
         EngineInput? next = input;
         while (next is not null)
         {
@@ -137,8 +143,9 @@ public sealed partial class RunEffects(
                         break;
                     case Effect.DelegateToAgent delegation:
                         // Spec 2026-11-17 §6.6: un bucle aiAgent → error → aiAgent (con ai apagado vuelve en la misma unidad) cuenta como
-                        // cualquier reentrada (P2-R40).
-                        if (++reentries > EngineReentries.Max)
+                        // cualquier reentrada (P2-R40). Hallazgo 5 de la revisión: y como cada vuelta del agente es otra unidad, la racha de
+                        // delegaciones sin respuesta del cliente se cuenta en la corrida, con el mismo tope y el mismo corte.
+                        if (++reentries > EngineReentries.Max || run.ConsecutiveDelegations >= EngineReentries.Max)
                         {
                             await FailAsync(
                                 run, state,
@@ -148,6 +155,7 @@ public sealed partial class RunEffects(
                             return;
                         }
 
+                        run.RecordDelegation();
                         var delegated = await DelegateAsync(run, state, delegation, lastInbound, unit.InboxRowId, now, cancellationToken);
                         if (delegated is null)
                         {

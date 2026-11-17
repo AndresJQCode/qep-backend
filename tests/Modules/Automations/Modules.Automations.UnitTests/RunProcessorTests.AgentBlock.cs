@@ -238,6 +238,93 @@ public sealed partial class RunProcessorTests
         Assert.Equal(((Guid?)null, (Guid?)manual.MessageId), (request.LastInboundMessageId, request.InboxRowId));
     }
 
+    // Revisión de la rama, hallazgo 5: un bloque «Agente IA» cuya salida idle vuelve a él. Cada vuelta del agente es otra unidad, así que el
+    // tope por unidad nunca cortaba el bucle; la cuenta vive en la corrida.
+    private const string IdleLoopFlow = """
+        { "schema": 1, "start": { "firstNodeId": "ai" }, "variables": [],
+          "nodes": [
+            { "id": "ai", "kind": "aiAgent", "title": "Asesor IA", "agentId": "a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1",
+              "objective": "Resuelve dudas.", "context": "", "firstTurn": "nextMessage", "idleMinutes": 5, "saveTo": "asesor",
+              "outputs": { "done": null, "human": null, "noAnswer": null, "idle": "ai", "error": null } }
+          ] }
+        """;
+
+    private static ConversationRun DelegatedRunAfter(int delegations)
+    {
+        var run = DelegatedRun(DateTimeOffset.UtcNow.AddMinutes(-10));
+        for (var i = 0; i < delegations; i++)
+        {
+            run.RecordDelegation();
+        }
+
+        return run;
+    }
+
+    [Fact]
+    public async Task EachDelegationCountsOnTheRunAcrossUnits()
+    {
+        var run = DelegatedRunAfter(3);
+        var bed = new Bed(null, ActiveState(), flow: IdleLoopFlow);
+        bed.Runs.Added.Add(run);
+        var delegation = Returned(run, """{"output":"idle","reason":"idle"}""");
+        bed.Conversations.DelegationResults[delegation.DelegationId] = delegation;
+
+        await bed.Processor().ProcessAsync(ReturnedItem(delegation.DelegationId), TestContext.Current.CancellationToken);
+
+        Assert.Single(bed.Conversations.Delegations);
+        Assert.True(run.ToState().IsDelegated);
+        Assert.Equal(4, run.ConsecutiveDelegations);
+    }
+
+    [Fact]
+    public async Task AnAgentBlockReenteredPastTheCapWithoutTheCustomerFailsAsALoop()
+    {
+        var run = DelegatedRunAfter(EngineReentries.Max);
+        var bed = new Bed(null, ActiveState(), flow: IdleLoopFlow);
+        bed.Runs.Added.Add(run);
+        var delegation = Returned(run, """{"output":"idle","reason":"idle"}""");
+        bed.Conversations.DelegationResults[delegation.DelegationId] = delegation;
+
+        await bed.Processor().ProcessAsync(ReturnedItem(delegation.DelegationId), TestContext.Current.CancellationToken);
+
+        Assert.Empty(bed.Conversations.Delegations);
+        Assert.Equal(RunStatus.Failed, run.Status);
+        var (cause, member) = Assert.Single(bed.Conversations.Handoffs);
+        Assert.Equal((AutomationsRunFailures.Of(EndReasons.LoopDetected), "ai", (Guid?)null), (cause.Code, cause.NodeId, member));
+    }
+
+    // Una respuesta del cliente al chatbot corta la racha: la siguiente delegación vuelve a contar desde uno.
+    [Fact]
+    public async Task ACustomerAnswerToTheChatbotResetsTheCount()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "q" }, "variables": [],
+              "nodes": [
+                { "id": "q", "kind": "openQuestion", "title": "Pregunta", "text": "¿Qué necesitas?", "saveTo": "need",
+                  "validation": { "kind": "none" }, "outputs": { "answered": "ai", "invalid": null } },
+                { "id": "ai", "kind": "aiAgent", "title": "Asesor IA", "agentId": "a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1",
+                  "objective": "Resuelve dudas.", "context": "", "firstTurn": "lastMessage", "idleMinutes": 5, "saveTo": "asesor",
+                  "outputs": { "done": null, "human": null, "noAnswer": null, "idle": null, "error": null } }
+              ] }
+            """;
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "q" }, DateTimeOffset.UtcNow.AddMinutes(-1));
+        for (var i = 0; i < EngineReentries.Max; i++)
+        {
+            run.RecordDelegation();
+        }
+
+        var bed = new Bed(null, ActiveState(), flow: flow);
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Single(bed.Conversations.Delegations);
+        Assert.Equal(1, run.ConsecutiveDelegations);
+        Assert.Empty(bed.Conversations.Handoffs);
+    }
+
     // D-B14: la señal de la toma humana (bot_kind = 1) cierra la corrida delegada sin salir por ninguna salida.
     [Fact]
     public async Task TakingOverDuringTheDelegationInterruptsTheRunWithoutAnyOutput()
