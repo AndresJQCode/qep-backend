@@ -204,6 +204,35 @@ Códigos nuevos, mapeados en `ApiExceptionHandler.cs`:
 - **P-4.** ¿Se le avisa al mayorista de un pedido nuevo por correo, o sólo en la bandeja?
 - **P-5.** ¿Un `Code` del mayorista que choca con un `Barcode` del distribuidor se trata como el mismo
   producto? Propuesta: no; sólo `Code`.
+- **P-6.** Al aprobar con cambios, ¿el mayorista sólo cambia cantidades, o también puede cambiar precios
+  o agregar líneas?
+
+## Respuestas al builder check (propuestas mías, salvo donde se indica)
+
+- **Contrato HTTP:** lo fija el plan del backend, en una sección «Contrato HTTP» que el plan del frontend
+  cita, como en préstamos. El PDF de la orden lo genera el backend. Un `Draft` se edita y se borra; desde
+  `Sent` no.
+- **Aprobar con cambios:** sólo cantidades, y cero es rechazada. El mayorista no agrega líneas ni cambia
+  precios en un pedido `Wholesale`; el backend lo valida en la edición del borrador. Cada línea del
+  `Order` guarda el id de la línea de la orden de compra, y el evento la devuelve por ese id. **Pendiente
+  de confirmar con el owner (P-6).**
+- **Precio base e impuestos:** el precio base es el precio por defecto de la variante en la moneda del
+  mayorista; sin precio en esa moneda, la variante no se ofrece. Precios con IVA incluido, como en
+  cotizaciones. La empresa facturadora es la por defecto del mayorista. El producto creado en el comprador
+  lleva costo y no lleva tasa de impuesto: la elige el distribuidor al ponerle precio.
+- **Producto creado por el sistema:** sin categoría, tipo por defecto, una variante, activo. Match por
+  `Code` exacto después de recortar espacios, contra variantes de cualquier estado. Idempotente: la línea
+  marca `CreatedInCatalog` en la misma transacción, y un evento repetido no crea dos veces. No depende de
+  permisos del miembro.
+- **Aceptar la invitación:** el correo del login debe coincidir con el de la invitación. Token de un solo
+  uso. Quien crea el tenant queda como owner. Para vincular un tenant existente hay que ser su owner.
+- **Bloquear y desbloquear:** el mayorista lo hace desde Distribuidores. Bloquear no toca órdenes ya
+  enviadas; sólo impide enviar nuevas. No hay «terminar» en este corte.
+- **El mayorista anula un pedido ya aprobado:** la orden del comprador pasa a `Cancelled` si todavía no
+  está `Received`; los productos ya creados se quedan. Una orden cancelada no se reenvía: se duplica.
+- **`Distributor.CustomerId`:** nulo mientras `Invited`.
+- **Visibilidad:** el asesor del mayorista ve el pedido en Pedidos con los permisos de siempre, y lee
+  Distribuidores con `wholesale.distributor.read`. Compras del distribuidor no cambia.
 
 ## Decisiones de diseño tomadas por mí (no del owner)
 
