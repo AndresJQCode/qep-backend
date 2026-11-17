@@ -58,6 +58,28 @@ internal sealed class CopilotRepository(AiDbContext dbContext) : ICopilotReposit
                 select message.CreatedAt)
             .ToListAsync(cancellationToken);
 
+    public Task<CopilotThread?> ReadThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken) =>
+        dbContext.CopilotThreads.AsNoTracking()
+            .Include(thread => thread.Messages.OrderBy(message => message.Seq))
+            .SingleOrDefaultAsync(thread => thread.TenantId == tenantId && thread.Id == threadId, cancellationToken);
+
+    public Task<CopilotThread?> FindThreadForJobAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken) =>
+        dbContext.CopilotThreads
+            .Include(thread => thread.Messages.OrderBy(message => message.Seq))
+            .SingleOrDefaultAsync(thread => thread.TenantId == tenantId && thread.Id == threadId, cancellationToken);
+
+    public Task SetProgressAsync(Guid tenantId, Guid threadId, Guid jobId, string progress, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(progress);
+        var value = progress.Length <= CopilotThread.ProgressMaxLength ? progress : progress[..CopilotThread.ProgressMaxLength];
+        return dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE ai.copilot_messages SET progress = {value}
+             WHERE tenant_id = {tenantId} AND thread_id = {threadId} AND job_id = {jobId} AND status = 'Pending'
+            """,
+            cancellationToken);
+    }
+
     /// <summary>SQL directo en una transacción propia: los <c>tool_calls</c> no tienen FK al hilo (cuelgan del trabajo), así que el cascade de
     /// los mensajes no los alcanza.</summary>
     public async Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken)

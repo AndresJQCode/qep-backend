@@ -43,7 +43,7 @@ public sealed class AiWorkerOptions
 
 /// <summary>
 /// Spec 2026-10-29 §6.3: vacía <c>ai.model_jobs</c>. Cada trabajo en su scope: se reclama (<c>SKIP LOCKED</c>), se corre con el modelo fuera de
-/// toda transacción y se cierra con un guardado corto. Corre los del playground (§7) y los de las sesiones reales (§6.3).
+/// toda transacción y se cierra con un guardado corto. Corre los del playground (§7), los de las sesiones reales (§6.3) y los del copiloto (spec 2026-11-17).
 /// </summary>
 internal sealed partial class AiModelWorker(
     IServiceScopeFactory scopeFactory, IOptions<AiWorkerOptions> options, ILogger<AiModelWorker> logger) : BackgroundService
@@ -97,7 +97,12 @@ internal sealed partial class AiModelWorker(
 
             try
             {
-                if (job.TestId is not null)
+                if (job.CopilotThreadId is not null)
+                {
+                    // Spec 2026-11-17 (copiloto) §7: el mismo worker, otro procesador.
+                    await scope.ServiceProvider.GetRequiredService<CopilotJobProcessor>().ProcessAsync(job, cancellationToken);
+                }
+                else if (job.TestId is not null)
                 {
                     await scope.ServiceProvider.GetRequiredService<AgentTestJobProcessor>().ProcessAsync(job, cancellationToken);
                 }

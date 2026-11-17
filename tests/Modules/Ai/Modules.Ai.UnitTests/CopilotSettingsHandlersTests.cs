@@ -356,4 +356,27 @@ internal sealed class FakeCopilotRepository : ICopilotRepository
         Threads.RemoveAll(thread => thread.TenantId == tenantId && thread.Id == threadId);
         return Task.CompletedTask;
     }
+
+    /// <summary>Lo que escribió el worker en <c>progress</c>, en orden.</summary>
+    public List<(Guid ThreadId, Guid JobId, string Progress)> ProgressWrites { get; } = [];
+
+    /// <summary>Corre después de la lectura sin tracking: la prueba borra el hilo «mientras el modelo piensa».</summary>
+    public Action? OnRead { get; set; }
+
+    public Task<CopilotThread?> ReadThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken)
+    {
+        var thread = Threads.SingleOrDefault(candidate => candidate.TenantId == tenantId && candidate.Id == threadId);
+        OnRead?.Invoke();
+        return Task.FromResult(thread);
+    }
+
+    public Task<CopilotThread?> FindThreadForJobAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken) =>
+        Task.FromResult(Threads.SingleOrDefault(thread => thread.TenantId == tenantId && thread.Id == threadId));
+
+    public Task SetProgressAsync(Guid tenantId, Guid threadId, Guid jobId, string progress, CancellationToken cancellationToken)
+    {
+        ProgressWrites.Add((threadId, jobId, progress));
+        Threads.SingleOrDefault(thread => thread.TenantId == tenantId && thread.Id == threadId)?.SetProgress(jobId, progress);
+        return Task.CompletedTask;
+    }
 }

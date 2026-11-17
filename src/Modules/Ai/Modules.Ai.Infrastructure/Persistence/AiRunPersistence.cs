@@ -58,9 +58,8 @@ internal sealed class AiModelJobs(AiDbContext dbContext) : IAiModelJobs
 
     /// <summary>
     /// <c>SKIP LOCKED</c>: dos workers (o dos réplicas) nunca toman el mismo trabajo. Un <c>Running</c> con el lease vencido es de un worker
-    /// que murió, o uno que dejó su respuesta guardada o su reintento con el lease acortado (§6.3): se retoma (§6.4). De pruebas y de
-    /// sesiones. Los del copiloto (spec 2026-11-17) todavía no: hasta que su procesador llegue (plan fase 2, C2.3) quedan en la cola, y
-    /// reclamarlos los mandaría al procesador de sesiones sin sesión.
+    /// que murió, o uno que dejó su respuesta guardada o su reintento con el lease acortado (§6.3): se retoma (§6.4). De pruebas, de
+    /// sesiones y del copiloto (spec 2026-11-17): el worker elige el procesador por el dueño.
     /// </summary>
     public async Task<ModelJob?> ClaimAsync(DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken)
     {
@@ -71,7 +70,6 @@ internal sealed class AiModelJobs(AiDbContext dbContext) : IAiModelJobs
              WHERE id = (
                    SELECT id FROM ai.model_jobs
                     WHERE ((status = 'Pending' AND next_attempt_at <= {now}) OR (status = 'Running' AND lease_until < {now}))
-                      AND copilot_thread_id IS NULL
                     ORDER BY next_attempt_at
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED)

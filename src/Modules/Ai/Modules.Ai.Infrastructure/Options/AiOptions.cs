@@ -134,7 +134,29 @@ public sealed class AiCopilotOptions
     /// <summary>Preguntas por miembro en 24 horas móviles.</summary>
     public int MessagesPerDay { get; set; } = 200;
 
+    /// <summary>D-C11: el tope de salida de cada llamada del copiloto.</summary>
+    public int MaxOutputTokens { get; set; } = 16_000;
+
+    /// <summary>D-C11: llamadas al modelo por trabajo.</summary>
+    public int MaxModelCalls { get; set; } = 8;
+
+    /// <summary>D-C11: llamadas a herramientas por trabajo.</summary>
+    public int MaxToolCalls { get; set; } = 12;
+
+    /// <summary>D-C11: el tope de todo un trabajo.</summary>
+    public int JobTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>D-C9: los últimos mensajes del hilo que viajan al modelo.</summary>
+    public int MaxHistoryMessages { get; set; } = 20;
+
+    /// <summary>D-C9: el tope del historial en tokens, estimado por caracteres. <c>null</c>: sólo rige <see cref="MaxHistoryMessages"/>.</summary>
+    public int? MaxContextTokens { get; set; }
+
     public CopilotLimits ToLimits() => new(MessagesPerHour, MessagesPerDay);
+
+    public CopilotRunLimits ToRunLimits() =>
+        new(new AiRunLimits(
+            MaxOutputTokens, TimeSpan.FromSeconds(JobTimeoutSeconds), MaxModelCalls, MaxToolCalls, MaxHistoryMessages, MaxContextTokens));
 
     internal void Validate(List<string> failures)
     {
@@ -147,6 +169,19 @@ public sealed class AiCopilotOptions
         if (MessagesPerDay < MessagesPerHour)
         {
             failures.Add($"{path}:MessagesPerDay must be at least {path}:MessagesPerHour.");
+        }
+
+        // Un cero dejaría al copiloto sin poder contestar nunca: frena el arranque.
+        foreach (var (value, key) in new[]
+        {
+            (MaxOutputTokens, nameof(MaxOutputTokens)), (MaxModelCalls, nameof(MaxModelCalls)), (MaxToolCalls, nameof(MaxToolCalls)),
+            (JobTimeoutSeconds, nameof(JobTimeoutSeconds)), (MaxHistoryMessages, nameof(MaxHistoryMessages)), (MaxContextTokens ?? 1, nameof(MaxContextTokens)),
+        })
+        {
+            if (value < 1)
+            {
+                failures.Add($"{path}:{key} must be greater than zero.");
+            }
         }
     }
 }

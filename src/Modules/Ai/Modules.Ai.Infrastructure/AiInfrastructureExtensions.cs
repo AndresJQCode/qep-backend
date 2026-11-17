@@ -84,6 +84,12 @@ public static class AiInfrastructureExtensions
         // D-C11: los topes por miembro, de Ai:Copilot (validados con AiOptions al arrancar).
         services.AddSingleton(provider => provider.GetRequiredService<IOptions<AiOptions>>().Value.Copilot.ToLimits());
         services.AddScoped<CopilotAsking>();
+        // Plan fase 2, C2.3: el trabajo del copiloto en el mismo worker de modelo, con sus topes de Ai:Copilot. Su ejecutor de herramientas
+        // (ICopilotToolExecutor) va en Bootstrapper: ejecuta consultas de otros módulos como el miembro.
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<AiOptions>>().Value.Copilot.ToRunLimits());
+        services.AddScoped<CopilotPromptBuilder>();
+        services.AddScoped<CopilotTurnRunner>();
+        services.AddScoped<CopilotJobProcessor>();
         services.AddScoped<AgentSessionJobProcessor>();
         services.AddScoped<AiSessionSweeper>();
         services.AddSingleton<AiInboxWorker>();

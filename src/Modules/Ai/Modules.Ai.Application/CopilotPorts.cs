@@ -32,6 +32,18 @@ public interface ICopilotRepository
     /// <summary>D-C8: borra en una transacción los <c>tool_calls</c> de los trabajos del hilo y el hilo con sus mensajes. Los trabajos y el
     /// consumo se quedan: la cola los cierra y el consumo es lo pagado.</summary>
     Task DeleteThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken);
+
+    /// <summary>§7 paso 2: la lectura de la etapa larga del worker, sin tracking ni dueño (el trabajo ya es del hilo). <c>null</c> si se
+    /// borró.</summary>
+    Task<CopilotThread?> ReadThreadAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken);
+
+    /// <summary>§7 paso 3: la misma lectura con tracking, para el commit corto; trae el estado de la base (también el <c>progress</c> que
+    /// escribió <see cref="SetProgressAsync"/>).</summary>
+    Task<CopilotThread?> FindThreadForJobAsync(Guid tenantId, Guid threadId, CancellationToken cancellationToken);
+
+    /// <summary>D-C7: la herramienta en curso en la respuesta pendiente del trabajo, con un UPDATE corto propio, sin el change tracker ni
+    /// candados de otras tablas. Si la respuesta ya no está pendiente no toca nada.</summary>
+    Task SetProgressAsync(Guid tenantId, Guid threadId, Guid jobId, string progress, CancellationToken cancellationToken);
 }
 
 public sealed record CopilotTokenUsage(long InputTokens, long OutputTokens)
