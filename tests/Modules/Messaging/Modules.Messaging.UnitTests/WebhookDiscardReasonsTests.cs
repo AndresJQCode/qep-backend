@@ -9,7 +9,7 @@ public sealed class WebhookDiscardReasonsTests
     [Fact]
     public void TheReasonsAreTheContractTheAlertsRead() =>
         Assert.Equal(
-            ["unknown_route", "without_user_id", "paused", "module_off", "foreign_status", "unhandled_field", "foreign_event", "ignored"],
+            ["unknown_route", "without_user_id", "paused", "module_off", "foreign_status", "unhandled_field", "foreign_event", "ignored", "history_invalid"],
             WebhookDiscardReasons.All);
 
     [Fact]
