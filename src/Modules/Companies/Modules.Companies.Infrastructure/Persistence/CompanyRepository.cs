@@ -104,9 +104,15 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
     // colecciones owned (cuentas y tasas municipales) EF une las dos y no ordena la última por su clave: sin este
     // OrderBy el orden de las cuentas quedaba a merced del plan de Postgres y salía invertido
     // (CompanyApiTests.ListReturnsTheBankNameOfEachAccountInStoredOrder).
+    //
+    // AsSingleQuery explícito, como QuotationRepository: dos colecciones owned en un JOIN disparan el aviso 20504 de EF
+    // (MultipleCollectionIncludeWarning) en cada /companies. Las cuentas son a lo sumo 20 por empresa y las tasas
+    // municipales unas pocas por tenant: las filas repetidas no pesan, y partir la consulta serían tres viajes a la
+    // base en vez de uno, que es lo que cuesta con Postgres en otro nodo.
     private IQueryable<Company> CompaniesWithOrderedBankAccounts() =>
-        dbContext.Companies.Include(company =>
-            company.BankAccounts.OrderBy(account => EF.Property<int>(account, "Id")));
+        dbContext.Companies
+            .Include(company => company.BankAccounts.OrderBy(account => EF.Property<int>(account, "Id")))
+            .AsSingleQuery();
 
     public async Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         (await dbContext.Companies
