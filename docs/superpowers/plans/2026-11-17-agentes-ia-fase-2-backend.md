@@ -895,3 +895,23 @@ módulos tocados, uno por uno — Ai, Automations, Messaging, Tenancy, Integrati
 - Cada migración nueva (`AddBotDelegations`, `AddChatbotBlockSessions`, `AddCopilotModuleKey`, `AddCopilot`) tiene su `Down` descrito.
 - Las pruebas de integración se escriben y se compilan; sus comandos filtrados están por bloque.
 - Lo que el spec deja al owner queda con su default implementado y la pregunta listada.
+
+## Adenda del orquestador (2026-11-17): contrato que cierra las discrepancias del plan de frontend de fase 2
+
+Resuelto sin el owner, con el criterio de «el contrato lo manda la pantalla». Ambos planes (backend y frontend) siguen esta adenda.
+
+- **D-5, eventos de la delegación.** `AutomationDelegated` lleva `{ chatbotId, chatbotName, agentId, agentName }` y `AutomationReturned`
+  lleva `{ chatbotId, chatbotName, agentId, agentName, output }`, con `output` ∈ `done | human | noAnswer | idle | error`. Los nombres son
+  la foto del momento, como el resto de los eventos de la conversación.
+- **D-6, traspaso por salida sin conectar.** `HandoffCauseKind` nuevo `AgentBlockOutputUnhandled`, con `code` = la salida (`human`,
+  `noAnswer`, `error`) y los nombres de chatbot y agente. Paridad con el frontend como el resto de los kinds.
+- **D-7, `Retry-After`.** Todo 429 del copiloto lleva también `retryAfterSeconds` en las extensiones del ProblemDetails. No se abre CORS
+  a más headers.
+- **D-10, `PUT /copilot/settings`.** El cuerpo son los campos editables de la respuesta de `GET /copilot/settings` (proveedor y modelo,
+  contexto del negocio, tope mensual de tokens, retención en días), con `If-Match`. Lo que la respuesta trae y no es editable (uso,
+  `version`, estados) no viaja.
+- **D-11, renombrar desde la lista.** Cada ítem de la lista de hilos trae `version`.
+- **D-14, orden de módulos.** `copilot` va inmediatamente después de `ai` en `TenantModuleKey.All` y en `TENANT_MODULE_KEYS`.
+- **D-3/D-4, simulador.** La respuesta de la simulación detenida en el bloque trae `waitingAt: { nodeId, kind: "aiAgent" }` (null si no
+  está en un bloque de agente). Un `agentResult` fuera del bloque responde 422 `automations.simulation.not_waiting_at_agent`. El
+  frontend sólo manda `{ output }`; los campos extra que el backend acepta son opcionales.
