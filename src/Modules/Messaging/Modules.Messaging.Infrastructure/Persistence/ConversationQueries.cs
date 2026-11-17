@@ -37,6 +37,12 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
             query = query.Where(conversation => conversation.Channel == channel);
         }
 
+        // Spec qep-frontend 2026-11-17 (chip y filtro por conexión): ausente = todos los números.
+        if (filter.ConnectionId is { } connectionId)
+        {
+            query = query.Where(conversation => conversation.ConnectionId == connectionId);
+        }
+
         // Spec qep-frontend 2026-10-15: una conversación sin cliente no tiene etiquetas y no pasa el filtro.
         if (filter.TagCustomerIds is { } tagged)
         {

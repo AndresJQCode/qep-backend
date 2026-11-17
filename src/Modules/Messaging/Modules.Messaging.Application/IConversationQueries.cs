@@ -68,7 +68,9 @@ public sealed record ConversationListFilter(
     IReadOnlyCollection<Guid>? TagCustomerIds = null,
     bool UnreadOnly = false,
     ConversationSort Sort = ConversationSort.Newest,
-    AutomationFilter? Automation = null);
+    AutomationFilter? Automation = null,
+    /// <summary>Spec qep-frontend 2026-11-17 (chip y filtro por conexión): <c>null</c> = todos los números.</summary>
+    Guid? ConnectionId = null);
 
 /// <summary>Spec 2026-10-21 §4.5: <c>automation=any|active|paused|none</c>; <c>null</c> = sin filtro, <c>Any</c> = cualquiera distinta de <c>None</c>.</summary>
 public enum AutomationFilter
