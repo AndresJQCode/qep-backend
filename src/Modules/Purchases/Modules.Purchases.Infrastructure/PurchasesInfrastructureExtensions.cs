@@ -1,7 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Modules.Purchases.Application;
+using Modules.Purchases.Infrastructure.Pdf;
 using Modules.Purchases.Infrastructure.Persistence;
 
 namespace Modules.Purchases.Infrastructure;
@@ -27,6 +30,19 @@ public static class PurchasesInfrastructureExtensions
         services.AddScoped<IPurchaseOrderNumberGenerator, PurchaseOrderNumberGenerator>();
         services.AddScoped<IPurchasesUnitOfWork, PurchasesUnitOfWork>();
         services.AddScoped<IPurchasesAuditPublisher, PurchasesAuditPublisher>();
+
+        // El PDF de la orden, con sección y clave propias de qcode-pdf. Sin la clave en Production el pod no arranca
+        // (ValidateOnStart). Singleton por fábrica con un HttpClient propio y su timeout, como SupportPdfRenderer: sin estado.
+        services.AddOptions<PurchasesPdfOptions>().Bind(configuration.GetSection(PurchasesPdfOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<PurchasesPdfOptions>, PurchasesPdfOptionsValidator>();
+        services.AddSingleton<IPurchaseOrderPdfRenderer>(provider =>
+        {
+            var options = provider.GetRequiredService<IOptions<PurchasesPdfOptions>>();
+            return new PurchaseOrderPdfRenderer(
+                new HttpClient { Timeout = TimeSpan.FromSeconds(options.Value.TimeoutSeconds) },
+                options,
+                provider.GetRequiredService<ILogger<PurchaseOrderPdfRenderer>>());
+        });
 
         return services;
     }

@@ -21,4 +21,7 @@ public static class PurchasesErrorCodes
     public const string InvalidCurrency = "purchases.order.invalid_currency";
 
     public const string ConfirmLinesMismatch = "purchases.order.confirm_lines_mismatch";
+
+    /// <summary>502: <c>qcode-pdf</c> no devolvió el PDF. No está en el contrato del spec (pendiente del owner, R8).</summary>
+    public const string PdfRenderFailed = "purchases.order.pdf_render_failed";
 }

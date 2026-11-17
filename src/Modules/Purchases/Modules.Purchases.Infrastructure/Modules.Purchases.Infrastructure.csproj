@@ -19,6 +19,10 @@
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
   </ItemGroup>
   <ItemGroup>
+    <!-- La plantilla de la orden viaja dentro del ensamblado, como quotation.typ y formal-reply.typ. -->
+    <EmbeddedResource Include="Pdf\purchase-order.typ" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Modules.Purchases.UnitTests" />
     <InternalsVisibleTo Include="Modules.Purchases.IntegrationTests" />
   </ItemGroup>

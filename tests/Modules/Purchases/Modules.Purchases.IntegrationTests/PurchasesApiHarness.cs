@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Catalog.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
@@ -396,6 +397,15 @@ internal static class PurchasesApiHarness
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos en la base de pruebas.
             builder.UseSetting("Seed:Enabled", "false");
+
+            // El PDF nunca sale a qcode-pdf en las pruebas: el falso devuelve unos bytes fijos y guarda el último documento.
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IPurchaseOrderPdfRenderer>();
+                services.AddSingleton<FakePurchaseOrderPdfRenderer>();
+                services.AddSingleton<IPurchaseOrderPdfRenderer>(provider =>
+                    provider.GetRequiredService<FakePurchaseOrderPdfRenderer>());
+            });
 
             if (configureServices is not null)
             {

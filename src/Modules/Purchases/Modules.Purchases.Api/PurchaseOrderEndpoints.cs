@@ -48,6 +48,14 @@ public static class PurchaseOrderEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // En cualquier estado y con el permiso de leer. 502 si qcode-pdf no lo devuelve.
+        group.MapGet("/{orderId:guid}/pdf", GetOrderPdfAsync)
+            .RequireAuthorization(PurchasesPermissions.OrderRead)
+            .Produces(StatusCodes.Status200OK, contentType: "application/pdf")
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status502BadGateway);
+
         group.MapPut("/{orderId:guid}", UpdateOrderAsync)
             .RequireAuthorization(PurchasesPermissions.OrderManage)
             .Accepts<PurchaseOrderWriteRequest>("application/json")
@@ -129,6 +137,17 @@ public static class PurchaseOrderEndpoints
         var order = await dispatcher.QueryAsync(new GetPurchaseOrderQuery(tenantId, orderId), cancellationToken);
 
         return Results.Ok(order);
+    }
+
+    private static async Task<IResult> GetOrderPdfAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var file = await dispatcher.QueryAsync(new GetPurchaseOrderPdfQuery(tenantId, orderId), cancellationToken);
+
+        return Results.File(file.Content, "application/pdf", file.FileName);
     }
 
     private static async Task<IResult> CreateOrderAsync(
