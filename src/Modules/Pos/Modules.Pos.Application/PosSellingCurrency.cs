@@ -12,24 +12,13 @@ internal sealed record PosSellingContext(string Currency, bool ChargesVat)
 }
 
 /// <summary>
-/// La moneda en la que el cajero vende ahora, para las lecturas que no reciben caja (búsqueda,
-/// escaneo, vista previa): la de su caja abierta, congelada al abrir; sin caja, la vigente del
-/// tenant, que es con la que abriría. Así la vista previa cotiza con la misma lista que el POST cobra.
-/// La vista previa necesita además el IVA congelado de la caja (<see cref="ResolveContextAsync"/>); sin
-/// caja es <c>true</c>, como hasta ahora.
+/// La moneda y el IVA con que el cajero vende ahora, para las lecturas que no reciben caja (búsqueda,
+/// escaneo, vista previa): los de su caja abierta, congelados al abrir; sin caja, la moneda vigente del
+/// tenant, que es con la que abriría, y con IVA, como hasta ahora. Así la búsqueda, el escaneo y la vista
+/// previa dan el mismo precio y la misma tasa que el POST cobra.
 /// </summary>
 internal static class PosSellingCurrency
 {
-    public static async Task<string> ResolveAsync(
-        ICashSessionRepository sessions,
-        IMembershipDirectory membershipDirectory,
-        ITenantDefaultCurrency tenantDefaultCurrency,
-        IExecutionContext executionContext,
-        Guid tenantId,
-        CancellationToken cancellationToken) =>
-        (await ResolveContextAsync(
-            sessions, membershipDirectory, tenantDefaultCurrency, executionContext, tenantId, cancellationToken)).Currency;
-
     public static async Task<PosSellingContext> ResolveContextAsync(
         ICashSessionRepository sessions,
         IMembershipDirectory membershipDirectory,

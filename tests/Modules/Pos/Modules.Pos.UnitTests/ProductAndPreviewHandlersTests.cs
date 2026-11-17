@@ -216,6 +216,45 @@ public sealed class ProductAndPreviewHandlersTests
         Assert.Equal((0m, 11_900m), (preview.TaxAmount, preview.Total));
     }
 
+    // Spec 2026-11-17 R4: la búsqueda y el escaneo dan la tasa con que la caja cobra, no la del producto. El carrito del
+    // frontend toma de ahí su expectedTaxPercentage: con la del producto, cada línea de una caja sin IVA saldría con un
+    // aviso «El IVA cambió del 19 % al 0 %» hasta que la vista previa la corrige.
+    [Fact]
+    public async Task SearchAndByCodeInACashSessionWithoutVatAnswerTheEffectiveRate()
+    {
+        var bed = new PosTestBed();
+        bed.Products.Add("SH-400", "Shampoo 400 ml", 11_900m, 19, id: Shampoo, barcode: "7701234000011");
+        bed.OpenSessionInStore(chargesVat: false);
+
+        var page = await Search(bed, Seller).HandleAsync(
+            new SearchPosProductsQuery(TenantId, null, 1, 40), TestContext.Current.CancellationToken);
+        var found = await ByCode(bed, Seller).HandleAsync(
+            new FindPosProductByCodeQuery(TenantId, "7701234000011"), TestContext.Current.CancellationToken);
+        var preview = await Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, [new(Shampoo, 1m, 0m)]), TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, Assert.Single(Assert.Single(page.Items).Variants).TaxPercentage);
+        Assert.Equal(0, found.TaxPercentage);
+        // Lo que el carrito espera es lo que la vista previa cobra: sin diferencia no hay aviso ni pos.sale.price_changed.
+        Assert.Equal(found.TaxPercentage, Assert.Single(preview.Lines).TaxPercentage);
+    }
+
+    [Fact]
+    public async Task SearchAndByCodeInACashSessionWithVatAnswerTheProductRate()
+    {
+        var bed = new PosTestBed();
+        bed.Products.Add("SH-400", "Shampoo 400 ml", 11_900m, 19, id: Shampoo, barcode: "7701234000011");
+        bed.OpenSessionInStore();
+
+        var page = await Search(bed, Seller).HandleAsync(
+            new SearchPosProductsQuery(TenantId, null, 1, 40), TestContext.Current.CancellationToken);
+        var found = await ByCode(bed, Seller).HandleAsync(
+            new FindPosProductByCodeQuery(TenantId, "7701234000011"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(19, Assert.Single(Assert.Single(page.Items).Variants).TaxPercentage);
+        Assert.Equal(19, found.TaxPercentage);
+    }
+
     // Spec 2026-10-27: la vista previa lee la regla del tenant en cada llamada.
     [Fact]
     public async Task ThePreviewUsesTheTenantRule()
