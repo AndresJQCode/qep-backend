@@ -118,6 +118,23 @@ public sealed class AgentEditorBuilderTests
         Assert.Equal(2, billing.ListCalls);
     }
 
+    // Spec 2026-11-17 §7 y D-B18: cada fila de la lista trae los chatbots publicados cuyo flujo usa el agente; uno que nadie usa trae [].
+    [Fact]
+    public async Task TheAgentListShowsTheChatbotsThatUseIt()
+    {
+        var used = NewAgent();
+        var unused = Agent.Create(Tenant, "Otro", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now);
+        var chatbot = new AiChatbotRef(Guid.CreateVersion7(), "Bienvenida");
+        var usage = new Dictionary<Guid, IReadOnlyList<AiChatbotRef>> { [used.Id] = [chatbot] };
+
+        var list = await Builder(new FakeConnections()).BuildListAsync(
+            Tenant, [used, unused], new AgentListActivity(new Dictionary<Guid, IReadOnlyList<AgentUsageDto>>(), new Dictionary<Guid, AgentTodayDto>()),
+            usage, Ct);
+
+        Assert.Equal([chatbot], list.Items.Single(item => item.Id == used.Id).UsedByChatbots);
+        Assert.Empty(list.Items.Single(item => item.Id == unused.Id).UsedByChatbots);
+    }
+
     private static Agent QuotingAgent(AgentBillingAccount account) =>
         Agent.Create(
             Tenant,

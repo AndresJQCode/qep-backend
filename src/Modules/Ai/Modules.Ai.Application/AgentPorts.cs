@@ -113,6 +113,29 @@ public sealed class AgentConnectionTakenException(AiConnectionOccupant occupant,
     };
 }
 
+/// <summary>Un chatbot por su id y su nombre, como lo lee el frontend (<c>{ id, name }</c>).</summary>
+public sealed record AiChatbotRef(Guid Id, string Name);
+
+/// <summary>Spec 2026-11-17 §7 y D-B18: qué chatbots publicados usan cada agente en un bloque «Agente IA» de su versión publicada (adaptador
+/// en Bootstrapper con SQL sobre <c>automations</c>: Ai no ve Automations, D-A3). Un agente que nadie usa no aparece.</summary>
+public interface IAiChatbotUsage
+{
+    Task<IReadOnlyDictionary<Guid, IReadOnlyList<AiChatbotRef>>> ListByAgentAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-17 D-B18: el 409 lleva los chatbots para que la pantalla diga cuáles hay que cambiar antes de borrar.</summary>
+public sealed class AgentInUseByChatbotsException(IReadOnlyList<AiChatbotRef> chatbots)
+    : ResourceConflictException(
+        AiErrorCodes.AgentInUseByChatbots,
+        "Un chatbot publicado usa este agente. Quítalo del flujo y publica el chatbot para poder borrarlo."),
+      IHasProblemExtensions
+{
+    public IReadOnlyDictionary<string, object?> ProblemExtensions { get; } = new Dictionary<string, object?>(StringComparer.Ordinal)
+    {
+        ["chatbots"] = chatbots,
+    };
+}
+
 /// <summary>Plan 2026-11-12 C-18: 422 con el proveedor que falta, para que la pantalla lleve a conectarlo.</summary>
 public sealed class AiProviderNotConfiguredException(AiProvider provider)
     : DomainException(

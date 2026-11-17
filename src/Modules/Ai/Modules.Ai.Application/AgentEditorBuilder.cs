@@ -119,10 +119,16 @@ public sealed class AgentEditorBuilder(
             billingAccounts);
     }
 
+    /// <param name="usedByChatbots">Spec 2026-11-17 §7: los chatbots publicados que usan cada agente (<see cref="IAiChatbotUsage"/>).</param>
     public async Task<AgentListResponse> BuildListAsync(
-        Guid tenantId, IReadOnlyList<Agent> agents, AgentListActivity activity, CancellationToken cancellationToken)
+        Guid tenantId,
+        IReadOnlyList<Agent> agents,
+        AgentListActivity activity,
+        IReadOnlyDictionary<Guid, IReadOnlyList<AiChatbotRef>> usedByChatbots,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(activity);
+        ArgumentNullException.ThrowIfNull(usedByChatbots);
         var byId = (await connections.ListAsync(tenantId, cancellationToken)).ToDictionary(connection => connection.Id);
         return new AgentListResponse(
         [
@@ -146,7 +152,8 @@ public sealed class AgentEditorBuilder(
                     agent.HasDraftChanges,
                     agent.Version,
                     activity.UsageByAgent.GetValueOrDefault(agent.Id) ?? [],
-                    activity.TodayByAgent.GetValueOrDefault(agent.Id) ?? AgentTodayDto.None);
+                    activity.TodayByAgent.GetValueOrDefault(agent.Id) ?? AgentTodayDto.None,
+                    usedByChatbots.GetValueOrDefault(agent.Id) ?? []);
             }),
         ],
         [

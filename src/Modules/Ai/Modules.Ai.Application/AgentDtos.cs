@@ -13,6 +13,9 @@ namespace Modules.Ai.Application;
 /// <param name="UsageThisMonth">Plan 2026-11-12 C-4: los tokens del mes del tenant por proveedor, con caché; vacío si no gastó nada. Incluye
 /// el playground, que gasta la misma clave.</param>
 /// <param name="Today">Spec §5: lo del día del tenant.</param>
+/// <param name="UsedByChatbots">Backend for frontend (spec 2026-11-17 §7, D-B18): los chatbots publicados que usan el agente en un bloque, para
+/// que la lista avise antes de borrar o pausar. Viaja acá porque quien ve agentes tiene <c>ai.agent.read</c> y no necesariamente permiso de
+/// chatbots; <c>[]</c> si ninguno.</param>
 public sealed record AgentSummaryDto(
     Guid Id,
     string Name,
@@ -24,7 +27,8 @@ public sealed record AgentSummaryDto(
     bool HasDraftChanges,
     long Version,
     IReadOnlyList<AgentUsageDto> UsageThisMonth,
-    AgentTodayDto Today);
+    AgentTodayDto Today,
+    IReadOnlyList<AiChatbotRef> UsedByChatbots);
 
 /// <summary>El nombre y el canal viajan con la conexión para que la lista no cruce con <c>GET /connections</c>.</summary>
 public sealed record AgentConnectionSummaryDto(Guid Id, string Name, string Channel);

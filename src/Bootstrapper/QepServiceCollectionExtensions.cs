@@ -1413,6 +1413,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();
         services.AddScoped<IAgentConnectionSlots, AgentConnectionSlots>();
+        // Spec 2026-11-17 D-B18: qué chatbots publicados usan cada agente (SQL sobre automations; Ai no ve Automations).
+        services.AddScoped<IAiChatbotUsage, AiChatbotUsage>();
         // Spec 2026-10-29 §6.1–§6.6 (plan 2026-11-12, Tarea 7): la cola, la conversación, el envío y el horario de los agentes en canales
         // reales, por adaptadores sobre Mensajería.
         services.AddScoped<IAiInbox, AiInbox>();

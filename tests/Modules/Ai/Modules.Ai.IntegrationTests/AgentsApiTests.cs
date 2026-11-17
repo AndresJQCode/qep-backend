@@ -189,8 +189,106 @@ public sealed class AgentsApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var (code, root) = await ProblemAsync(response);
         Assert.Equal("ai.agent.invalid", code);
-        Assert.Equal(["connections", "instructions"], root.GetProperty("errors").EnumerateObject().Select(error => error.Name).Order(StringComparer.Ordinal));
+        // Spec 2026-11-17 D-B6: sin conexiones es aviso, no error.
+        Assert.Equal(["instructions"], root.GetProperty("errors").EnumerateObject().Select(error => error.Name).Order(StringComparer.Ordinal));
     }
+
+    // Spec 2026-11-17 D-B6: un agente sólo para bloques de chatbots se publica sin conexiones; el aviso sigue en el editor.
+    [Fact]
+    public async Task AnAgentWithoutConnectionsPublishes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        await SeedAnthropicConnectionAsync(factory);
+        var created = await CreateAsync(setup.Client);
+        var id = created.GetProperty("id").GetGuid();
+        var draft = await SendAsync(setup.Client, HttpMethod.Put, $"{Agents}/{id}/draft", ValidConfig(), ifMatch: created.GetProperty("version").GetInt64());
+
+        var response = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/{id}/publish", ifMatch: (await JsonAsync(draft)).GetProperty("version").GetInt64());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var agent = await JsonAsync(response);
+        Assert.Equal("Active", agent.GetProperty("status").GetString());
+        var issue = Assert.Single(agent.GetProperty("issues").EnumerateArray());
+        Assert.Equal(("connections_missing", "Warning"), (issue.GetProperty("code").GetString(), issue.GetProperty("severity").GetString()));
+        Assert.Null(await SlotAsync(setup.ConnectionString, setup.WhatsAppId));
+    }
+
+    // Spec 2026-11-17 §7: la lista dice qué chatbots publicados usan cada agente en un bloque; el borrador de un chatbot no cuenta.
+    [Fact]
+    public async Task TheAgentListShowsTheChatbotsThatUseIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        var id = (await CreateAsync(setup.Client)).GetProperty("id").GetGuid();
+        var other = (await CreateAsync(setup.Client, "Otro")).GetProperty("id").GetGuid();
+        var chatbot = await SeedPublishedChatbotAsync(setup.ConnectionString, "Bienvenida", id);
+        await SeedDraftChatbotAsync(setup.ConnectionString, "Borrador", other);
+
+        var list = await JsonAsync(await setup.Client.GetAsync(Agents, Ct));
+
+        var used = list.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == id).GetProperty("usedByChatbots");
+        var entry = Assert.Single(used.EnumerateArray());
+        Assert.Equal((chatbot, "Bienvenida"), (entry.GetProperty("id").GetGuid(), entry.GetProperty("name").GetString()));
+        Assert.Empty(list.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == other).GetProperty("usedByChatbots").EnumerateArray());
+    }
+
+    // Spec 2026-11-17 D-B18: borrar un agente que usa un chatbot publicado es 409 con los chatbots, y el agente sigue ahí.
+    [Fact]
+    public async Task DeletingAnAgentUsedByAPublishedChatbotIsAConflictWithTheChatbots()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        var created = await CreateAsync(setup.Client);
+        var id = created.GetProperty("id").GetGuid();
+        var chatbot = await SeedPublishedChatbotAsync(setup.ConnectionString, "Bienvenida", id);
+
+        var response = await SendAsync(setup.Client, HttpMethod.Delete, $"{Agents}/{id}", ifMatch: created.GetProperty("version").GetInt64());
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var (code, root) = await ProblemAsync(response);
+        Assert.Equal("ai.agent.in_use_by_chatbots", code);
+        var listed = Assert.Single(root.GetProperty("chatbots").EnumerateArray());
+        Assert.Equal((chatbot, "Bienvenida"), (listed.GetProperty("id").GetGuid(), listed.GetProperty("name").GetString()));
+        Assert.Equal(HttpStatusCode.OK, (await setup.Client.GetAsync($"{Agents}/{id}", Ct)).StatusCode);
+    }
+
+    /// <summary>Un chatbot publicado cuyo flujo tiene un bloque «Agente IA» con <paramref name="agentId"/> (el JSON de <c>FlowJson</c>).</summary>
+    private static async Task<Guid> SeedPublishedChatbotAsync(string connectionString, string name, Guid agentId)
+    {
+        var (chatbot, version) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        await ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@chatbot, @tenant, @name, '{}'::jsonb, now(), @tenant, now(), @tenant, now());
+            INSERT INTO automations.chatbot_versions (id, chatbot_id, tenant_id, number, flow, layout, published_at, published_by)
+            VALUES (@version, @chatbot, @tenant, 1, @flow::jsonb, '{}'::jsonb, now(), @tenant);
+            UPDATE automations.chatbots SET status = 'Active', published_version_id = @version WHERE id = @chatbot;
+            """,
+            ("chatbot", chatbot), ("version", version), ("tenant", Guid.Parse(TenantId)), ("name", name), ("flow", AgentFlow(agentId)));
+        return chatbot;
+    }
+
+    private static async Task SeedDraftChatbotAsync(string connectionString, string name, Guid agentId) =>
+        await ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@chatbot, @tenant, @name, @flow::jsonb, now(), @tenant, now(), @tenant, now());
+            """,
+            ("chatbot", Guid.CreateVersion7()), ("tenant", Guid.Parse(TenantId)), ("name", name), ("flow", AgentFlow(agentId)));
+
+    private static string AgentFlow(Guid agentId) =>
+        $$"""
+        {"schema":1,"start":{"firstNodeId":"ai-1"},"variables":[],"nodes":[{"id":"ai-1","kind":"aiAgent","title":"Asesor IA","outputs":{},"agentId":"{{agentId}}","objective":"Resuelve dudas.","context":"","firstTurn":"lastMessage","idleMinutes":60,"saveTo":"asesor_ia"}]}
+        """;
 
     // C-18: sin la conexión Active del proveedor del agente no se publica, y la respuesta dice cuál falta.
     [Fact]

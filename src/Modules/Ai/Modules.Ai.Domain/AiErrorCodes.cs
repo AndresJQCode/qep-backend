@@ -32,6 +32,9 @@ public static class AiErrorCodes
     /// <summary>409 (§4.7): borrar un agente que todavía atiende conversaciones (sesiones vivas). Se pausa y se espera a que terminen.</summary>
     public const string AgentHasLiveSessions = "ai.agent.has_live_sessions";
 
+    /// <summary>409 (spec 2026-11-17 D-B18): borrar un agente que usa un chatbot publicado; lleva <c>chatbots: [{ id, name }]</c>.</summary>
+    public const string AgentInUseByChatbots = "ai.agent.in_use_by_chatbots";
+
     /// <summary>404: una conexión que no es del tenant (no se dice de quién es).</summary>
     public const string ConnectionNotFound = "ai.connection.not_found";
 

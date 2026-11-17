@@ -56,9 +56,14 @@ public static class AgentConfigValidator
             issues.Add(Error("instructions_missing", "instructions", "Escribe las instrucciones del agente."));
         }
 
+        // Spec 2026-11-17 D-B6: un agente sólo para bloques de chatbots no ocupa conexión propia; sin conexiones se publica y sólo se avisa.
         if (context.ConnectionCount == 0)
         {
-            issues.Add(Error("connections_missing", "connections", "Elige al menos una conexión para que el agente atienda."));
+            issues.Add(new AgentIssue(
+                AgentIssueSeverity.Warning,
+                "connections_missing",
+                "connections",
+                "El agente no tiene conexiones: sólo atenderá cuando un chatbot lo llame desde un bloque «Agente IA»."));
         }
 
         switch (context.Model)

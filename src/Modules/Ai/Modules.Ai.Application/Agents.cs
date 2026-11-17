@@ -149,7 +149,8 @@ public sealed class ListAgentsHandler(
     IAgentRepository agents,
     AgentEditorBuilder builder,
     IAgentActivityReader activity,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IAiChatbotUsage chatbotUsage)
     : IQueryHandler<ListAgentsQuery, AgentListResponse>
 {
     public async Task<AgentListResponse> HandleAsync(ListAgentsQuery query, CancellationToken cancellationToken)
@@ -160,6 +161,7 @@ public sealed class ListAgentsHandler(
             query.TenantId,
             await agents.ListAsync(query.TenantId, query.Search, cancellationToken),
             await activity.SummarizeAsync(query.TenantId, window, cancellationToken),
+            await chatbotUsage.ListByAgentAsync(query.TenantId, cancellationToken),
             cancellationToken);
     }
 }
@@ -398,12 +400,14 @@ public sealed class ResumeAgentHandler(
 }
 
 /// <summary>Borra el agente con sus versiones y conexiones, y libera la ocupación en el mismo commit. Con sesiones vivas responde 409
-/// <c>ai.agent.has_live_sessions</c> (§4.7, §6.4).</summary>
+/// <c>ai.agent.has_live_sessions</c> (§4.7, §6.4); si no, con un chatbot publicado que lo usa, 409 <c>ai.agent.in_use_by_chatbots</c>
+/// (spec 2026-11-17 D-B18).</summary>
 public sealed class DeleteAgentHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IAgentRepository agents,
     IAgentSessionRepository sessions,
+    IAiChatbotUsage chatbotUsage,
     IAiUnitOfWork unitOfWork,
     IAiAuditRecorder audit,
     IClock clock)
@@ -419,6 +423,13 @@ public sealed class DeleteAgentHandler(
         {
             throw new ResourceConflictException(
                 AiErrorCodes.AgentHasLiveSessions, "El agente todavía atiende conversaciones. Pausa el agente y espera a que terminen para borrarlo.");
+        }
+
+        // D-B18: un bloque publicado que lo nombra saldría por error en cada corrida. Una publicación del chatbot que se cruce con este
+        // borrado no la frena nada: el bloque sale por error con agent_unavailable (D-B18), que es lo mismo que con el agente pausado.
+        if ((await chatbotUsage.ListByAgentAsync(command.TenantId, cancellationToken)).GetValueOrDefault(agent.Id) is { Count: > 0 } chatbots)
+        {
+            throw new AgentInUseByChatbotsException(chatbots);
         }
 
         agents.Remove(agent);

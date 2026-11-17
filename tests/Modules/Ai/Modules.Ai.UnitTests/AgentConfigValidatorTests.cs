@@ -26,8 +26,17 @@ public sealed class AgentConfigValidatorTests
             AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), Context(connections: 0));
 
         Assert.Equal(
-            [("instructions_missing", "instructions", AgentIssueSeverity.Error), ("connections_missing", "connections", AgentIssueSeverity.Error)],
+            [("instructions_missing", "instructions", AgentIssueSeverity.Error), ("connections_missing", "connections", AgentIssueSeverity.Warning)],
             issues.Select(issue => (issue.Code, issue.Path, issue.Severity)));
+    }
+
+    // Spec 2026-11-17 D-B6: un agente pensado sólo para bloques de chatbots no ocupa conexión propia; sin conexiones se publica con aviso.
+    [Fact]
+    public void AnAgentWithoutConnectionsCanBePublishedWithAWarning()
+    {
+        var issue = Assert.Single(AgentConfigValidator.Validate(Valid(), Context(connections: 0, publishing: true)));
+
+        Assert.Equal(("connections_missing", "connections", AgentIssueSeverity.Warning), (issue.Code, issue.Path, issue.Severity));
     }
 
     [Fact]
