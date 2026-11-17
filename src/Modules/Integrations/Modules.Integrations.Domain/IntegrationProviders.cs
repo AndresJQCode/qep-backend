@@ -56,6 +56,11 @@ public static class ShopifyFieldKeys
     public const string RefreshTokenExpiresAt = "refreshTokenExpiresAt";
     public const string AccessToken = "accessToken";
     public const string RefreshToken = "refreshToken";
+
+    /// <summary>Spec 2026-11-17 §2 (plan D1): el perfil de la tienda (correo, moneda, dirección de facturación…) como JSON
+    /// compacto. Interno: lleva datos personales del comerciante y no sale en la respuesta de la conexión. Lo escriben el
+    /// enlace y el probador; lo lee el asistente de configuración del módulo <c>shopify</c>.</summary>
+    public const string ShopProfile = "shopProfile";
 }
 
 /// <summary>Spec 2026-10-21 D-H1. Todos son campos que escribe una persona; <see cref="ApiKey"/> es el único secreto.
@@ -264,6 +269,11 @@ public static class IntegrationProviders
                 ShopifyFieldKeys.RefreshToken, "Token de refresco", FieldKind.Secret,
                 required: false, maxLength: 2048, pattern: null,
                 invalidMessage: "El token de refresco que devolvió Shopify no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                // 4096 es ShopifyShopProfile.FieldMaxLength (Integrations.Application, que el dominio no ve): cámbialos juntos.
+                ShopifyFieldKeys.ShopProfile, "Perfil de la tienda", FieldKind.Text,
+                required: false, maxLength: 4096, pattern: null,
+                invalidMessage: "El perfil que devolvió Shopify no tiene una forma válida.", isInternal: true),
         ],
         DefaultMaxConnections,
         onboarding: ProviderOnboarding.ShopifyOAuth);

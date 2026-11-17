@@ -287,7 +287,7 @@ public sealed class LinkShopifyStoreHandlerTests
         var response = await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
 
         Assert.Equal(
-            ["list-webhooks", "create-webhook:orders/updated", "create-webhook:orders/paid", "create-webhook:orders/cancelled", "create-webhook:app/uninstalled"],
+            ["shop", "list-webhooks", "create-webhook:orders/updated", "create-webhook:orders/paid", "create-webhook:orders/cancelled", "create-webhook:app/uninstalled"],
             bed.Gateway.Calls);
         Assert.All(bed.Gateway.Tokens, token => Assert.Equal(AccessToken, token));
         var connection = Assert.Single(bed.Integrations.Repository.Connections);
@@ -312,7 +312,7 @@ public sealed class LinkShopifyStoreHandlerTests
 
         Assert.Equal(
             [
-                "list-webhooks", "create-webhook:orders/create", "create-webhook:orders/updated", "create-webhook:orders/paid",
+                "shop", "list-webhooks", "create-webhook:orders/create", "create-webhook:orders/updated", "create-webhook:orders/paid",
                 "create-webhook:orders/cancelled", "create-webhook:app/uninstalled", "create-webhook:products/create",
                 "create-webhook:products/update", "create-webhook:products/delete",
             ],
@@ -527,10 +527,66 @@ public sealed class LinkShopifyStoreHandlerTests
 
         await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
 
-        Assert.Empty(bed.Gateway.Calls);
+        // Sólo la lectura del perfil (spec 2026-11-17 §2); ningún webhook.
+        Assert.Equal(["shop"], bed.Gateway.Calls);
         var connection = Assert.Single(bed.Integrations.Repository.Connections);
         Assert.Equal(ConnectionStatus.Active, connection.Status);
         Assert.False(connection.Fields.ContainsKey(ShopifyFieldKeys.WebhookSubscriptionIds));
+    }
+
+    // Spec 2026-11-17 §2 y plan D1: el enlace guarda el perfil de la tienda para que el asistente sugiera la empresa apenas
+    // se enlaza.
+    [Fact]
+    public async Task LinkStoresTheShopProfile()
+    {
+        var bed = new Bed();
+        var install = bed.SeedExchanged();
+
+        var response = await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        var connection = Assert.Single(bed.Integrations.Repository.Connections);
+        var profile = ShopifyShopProfile.TryParse(connection.Fields[ShopifyFieldKeys.ShopProfile]);
+        Assert.NotNull(profile);
+        Assert.Equal("COP", profile.CurrencyCode);
+        Assert.Equal("Mi Tienda SAS", profile.BillingAddress?.Company);
+        // Es un campo interno: la respuesta de la conexión no lo trae, ni el correo del comerciante.
+        Assert.DoesNotContain(ShopifyFieldKeys.ShopProfile, response.Fields.Keys);
+        Assert.DoesNotContain(bed.Integrations.Audit.Entries, entry => entry.ToString().Contains("dueno@mitienda.co", StringComparison.Ordinal));
+    }
+
+    // De mejor esfuerzo: si Shopify no responde la lectura del perfil, el enlace sigue.
+    [Theory]
+    [InlineData(ShopifyGatewayFailure.Unreachable)]
+    [InlineData(ShopifyGatewayFailure.Rejected)]
+    [InlineData(ShopifyGatewayFailure.Invalid)]
+    public async Task ALinkWhoseShopReadFailsStillLinks(ShopifyGatewayFailure failure)
+    {
+        var bed = new Bed();
+        bed.Gateway.FailAt = "shop";
+        bed.Gateway.Failure = failure;
+        var install = bed.SeedExchanged();
+
+        await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        var connection = Assert.Single(bed.Integrations.Repository.Connections);
+        Assert.Equal(ConnectionStatus.Active, connection.Status);
+        Assert.False(connection.Fields.ContainsKey(ShopifyFieldKeys.ShopProfile));
+    }
+
+    [Fact]
+    public async Task ARelinkWhoseShopReadFailsKeepsTheOldProfile()
+    {
+        var bed = new Bed();
+        var existing = bed.SeedLinked();
+        var old = new ShopifyShopProfile(null, null, "USD", null, false, null).Serialize();
+        existing.ApplyProviderFields(IntegrationProviders.Shopify,new Dictionary<string, string> { [ShopifyFieldKeys.ShopProfile] = old });
+        bed.Gateway.FailAt = "shop";
+        bed.Gateway.Failure = ShopifyGatewayFailure.Unreachable;
+        var install = bed.SeedExchanged();
+
+        await bed.Handler().HandleAsync(bed.Command(install.Id), Ct);
+
+        Assert.Equal(old, existing.Fields[ShopifyFieldKeys.ShopProfile]);
     }
 
     // Spec 2026-11-12 §6.1: la conexión guarda el refresh token de la instalación y los dos vencimientos.

@@ -8,7 +8,8 @@ namespace Modules.Integrations.Infrastructure.Shopify;
 /// <summary>
 /// Spec 2026-10-15 §4.1, probador de <c>shopify</c>, con el token guardado y sobre <see cref="IShopifyAdminGateway"/>:
 /// lee <c>shop { id name myshopifyDomain }</c>, luego las suscripciones de la app, y vuelve a crear los topics de
-/// <see cref="ShopifyWebhookTopics.Registered"/> que falten. Un 200 refresca <c>shopName</c> y repone
+/// <see cref="ShopifyWebhookTopics.Registered"/> que falten. Un 200 refresca <c>shopName</c> y <c>shopProfile</c> (spec
+/// 2026-11-17 §2), y repone
 /// <c>webhookSubscriptionIds</c> (D-S19). Clases:
 /// <list type="bullet">
 /// <item>la tienda responde 401, 402 (tienda congelada) u otro 4xx → <c>credentials_rejected</c>;</item>
@@ -58,6 +59,12 @@ internal sealed class ShopifyConnectionTester(IShopifyAdminGateway gateway, ISho
         if (!string.IsNullOrWhiteSpace(info.Name))
         {
             refreshed[ShopifyFieldKeys.ShopName] = info.Name;
+        }
+
+        // Spec 2026-11-17 §2: el perfil se refresca con el nombre. Sin perfil no se pisa el guardado.
+        if (info.Profile is { } profile)
+        {
+            refreshed[ShopifyFieldKeys.ShopProfile] = profile.Serialize();
         }
 
         if (shopifyApp.WebhookCallbackUrl is not { } callback)
