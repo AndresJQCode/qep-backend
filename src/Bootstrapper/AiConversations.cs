@@ -174,11 +174,20 @@ internal sealed partial class AiConversations(
         delegation.Return(resultJson, now);
         var change = conversation.ReturnFromAgent(
             delegationId, delegation.ChatbotId, output, now, names.GetValueOrDefault(delegation.ChatbotId), names.GetValueOrDefault(delegation.AgentId));
-        services.Inbox.EnqueueAgentReturned(tenantId, conversation.ConnectionId, conversationId, delegationId, now);
+        // Revisión de la rama, hallazgo 6 (el espejo del 1): una transacción explícita porque mover las filas es SQL que corre en el acto; con
+        // la versión de la conversación ya cargada, un entrante que entre en el medio hace chocar el guardado y el retorno se reintenta.
+        await using var transaction = await services.UnitOfWork.BeginTransactionAsync(cancellationToken);
+        // Lo que la ingesta encoló para el agente mientras volvía pasa al chatbot (el procesador de Ai ya no lo atendería). La fila
+        // AgentReturned va justo delante del más viejo de esos entrantes: la cola atiende por hora, y la corrida tiene que salir del bloque
+        // antes de leerlos como respuesta (con la corrida todavía delegada, el motor los saltaría).
+        var oldest = await services.Inbox.ReassignPendingEngineAsync(tenantId, conversationId, BotKind.Chatbot, null, cancellationToken);
+        var queuedAt = oldest is { } first && first <= now ? first.AddTicks(-10) : now;
+        services.Inbox.EnqueueAgentReturned(tenantId, conversation.ConnectionId, conversationId, delegationId, queuedAt);
         services.Events.Record(tenantId, conversation.ConnectionId, conversation.Id, change, now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.AutomationReturned, conversation.Id, now);
-        // Spec 2026-11-17 §6.3: resultado, conversación, fila AgentReturned, evento y auditoría en un solo guardado.
+        // Spec 2026-11-17 §6.3: resultado, conversación, filas de la cola, evento y auditoría en una sola transacción.
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));
     }
 

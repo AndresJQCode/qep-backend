@@ -206,6 +206,41 @@ public sealed class BotDelegationAdaptersTests
         Assert.Equal(1, world.Saves);
     }
 
+    // Revisión de la rama, hallazgo 6 (el espejo del 1): un entrante que la ingesta encoló para el agente antes de que el retorno se
+    // confirmara pasa a la cola del chatbot en la misma transacción. La fila AgentReturned va delante de él: la corrida tiene que salir del
+    // bloque antes de leerlo como respuesta (con la corrida todavía delegada, el motor lo saltaría).
+    [Fact]
+    public async Task ReturningMovesThePendingRowsToTheChatbotBehindTheAgentReturnedRow()
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct);
+        world.Reset();
+        var burst = Now.AddSeconds(-30);
+        world.OldestReassigned = burst;
+
+        await world.Ai().ReturnToChatbotAsync(conversation.TenantId, conversation.Id, delegationId, Result, Ct);
+
+        Assert.Equal(["begin", $"reassign {BotKind.Chatbot} except none", "save", "commit"], world.Log);
+        Assert.Equal([$"{AutomationInboxKinds.AgentReturned} {delegationId}"], world.Queued);
+        Assert.True(Assert.Single(world.QueuedAt) < burst);
+    }
+
+    [Fact]
+    public async Task WithNothingMovedTheAgentReturnedRowIsQueuedNow()
+    {
+        var conversation = ChatbotConversation();
+        var world = new World(conversation);
+        var delegationId = await world.Automations().DelegateToAgentAsync(
+            conversation.TenantId, conversation.Id, new DelegationRequest(Guid.CreateVersion7(), ChatbotId, "ai-agent-1", AgentId, null, Brief), Ct);
+        world.Reset();
+
+        await world.Ai().ReturnToChatbotAsync(conversation.TenantId, conversation.Id, delegationId, Result, Ct);
+
+        Assert.Equal(Now, Assert.Single(world.QueuedAt));
+    }
+
     [Fact]
     public async Task ReturningADelegationAPersonInterruptedThrowsAndWritesNothing()
     {

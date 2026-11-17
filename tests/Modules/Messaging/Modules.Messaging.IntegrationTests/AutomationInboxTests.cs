@@ -498,6 +498,34 @@ public sealed class AutomationInboxTests
             inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Agent, inProcess, Ct)));
     }
 
+    /// <summary>Hallazgo 6: al volver del agente, la fila AgentReturned se encola un microsegundo antes del entrante más viejo que pasó al
+    /// chatbot, así que el motor la reclama primero y la corrida sale del bloque antes de leer el entrante.</summary>
+    [Fact]
+    public async Task AnAgentReturnedRowQueuedBeforeTheMovedRowsIsClaimedFirst()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var delegationId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await EnqueueManualStartAsync(f, connectionId, conversationId, now);
+        await WithInboxAsync(f, inbox => inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Agent, null, Ct));
+
+        using (var scope = f.Host.Services.CreateScope())
+        {
+            var inbox = scope.ServiceProvider.GetRequiredService<IAutomationInbox>();
+            var oldest = await inbox.ReassignPendingEngineAsync(f.Tenant.TenantId, conversationId, BotKind.Chatbot, null, Ct);
+            Assert.NotNull(oldest);
+            inbox.EnqueueAgentReturned(f.Tenant.TenantId, connectionId, conversationId, delegationId, oldest.Value.AddTicks(-10));
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        var claimed = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, BotKind.Chatbot, Ct)));
+        Assert.Equal((AutomationInboxKinds.AgentReturned, (Guid?)delegationId), (claimed.Kind, claimed.DelegationId));
+    }
+
     private static async Task EnqueueReleaseRunAsync(
         Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now, BotKind botKind = BotKind.Chatbot)
     {
