@@ -2349,6 +2349,27 @@ que crea `IX_customers_tenant_identification_normalized` sobre `(tenant_id, <exp
 No es único. Si la expresión de la consulta y la del índice difieren en un carácter, Postgres no usa el índice y la consulta
 recorre la tabla; `TheMatchQueryUsesTheNormalizedIndex` lo amarra.
 
+### Clientes: importación por Excel y etiquetas
+
+`POST …/customers/import` (`customers.customer.import`) lee la primera hoja por **nombre de cabecera**, no por posición. Las trece
+columnas de `CustomerImportColumns.Ordered` son obligatorias en la cabecera (un archivo sin alguna se rechaza entero); después van
+las opcionales, que un archivo viejo puede no traer: «Empresa» y «Etiquetas». La plantilla (`GET …/customers/import/template`), el
+archivo de filas a corregir y la exportación escriben las mismas cabeceras, en el mismo orden, así que un exportado se corrige y se
+vuelve a subir.
+
+- **Qué exige una fila que crea.** `Nombre` y `Telefono` siempre. Documento (tipo y número) y Departamento + Ciudad sólo si la
+  política del tenant los pide al guardar (`CustomerFieldPolicy`); sin ellos el cliente nace `Incomplete`. `Direccion` es
+  opcional (spec 2026-11-17): sin calle el cliente nace sin domicilio y sin libreta, como en el formulario. Una lista de
+  contactos con sólo nombre y celular entra, con la política relajada.
+- **`Etiquetas`** (spec 2026-11-17): varios nombres separados por `;` (`Evento macel; VIP`). Cada nombre casa sin distinguir
+  mayúsculas con las etiquetas del tenant; la que no existe **se crea**, en gris y en tipo oración (`evento MACEL` →
+  `Evento macel`, `TagNameFormat.SentenceCase`); la que existe conserva su nombre. La celda **suma y nunca quita**: en una fila
+  de actualización (con `Cuc`) el cliente conserva las que tenía. Los errores son de fila, con `field: "Tags"` (el mismo `PropertyName` del validador):
+  `customers.import.row.tag_name_too_long` (más de 40 caracteres), `customers.import.row.tag_limit_per_customer` (el cliente
+  quedaría con más de 20) y `customers.import.row.tag_limit_reached` (crearla pasaría las 100 del tenant). Una fila con error de
+  etiquetas no se importa, y una etiqueta nueva que sólo esa fila pedía no se crea. La auditoría del import lleva `tagsCreated=N`
+  en su `resourceId`, y cada etiqueta creada publica `customers.tag.created` como la pantalla.
+
 ### Clientes: fusión
 
 Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se puede deshacer**.

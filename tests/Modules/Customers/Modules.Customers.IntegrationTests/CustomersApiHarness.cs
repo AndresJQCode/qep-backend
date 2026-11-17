@@ -374,7 +374,8 @@ internal static class CustomersApiHarness
         string? ReteIca = null,
         string? VatSurplus = null,
         string? LegacyWithRetention = null,
-        string? Company = null);
+        string? Company = null,
+        string? Tags = null);
 
     /// <summary>
     /// Arma un <c>.xlsx</c> real en memoria con ClosedXML — las pruebas de import ya no suben
@@ -421,7 +422,8 @@ internal static class CustomersApiHarness
                 [CustomerImportColumns.VatSurplus] = row.VatSurplus,
                 // La columna que ya no existe: un archivo viejo todavia la trae y se lee ignorandola.
                 ["Con Retencion"] = row.LegacyWithRetention,
-                [CustomerImportColumns.Company] = row.Company
+                [CustomerImportColumns.Company] = row.Company,
+                [CustomerImportColumns.Tags] = row.Tags
             };
             for (var column = 0; column < columns.Count; column++)
             {

@@ -919,6 +919,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   propia, atada por `DocumentTypesByCountryTests`; Customers (`IdentificationTypeParser`) y Quotations (`PartyFiscalTypesParser`) las atan sus pruebas de paridad. Customers y las
   partes de facturación comparan el tipo con **su propio** país en cada escritura (una fila guardada que no cumple se lee, pero no se puede volver a guardar igual); un país vacío
   en una parte es `CO`.
+- **La importación por Excel crea etiquetas en tipo oración y nunca las quita** (spec 2026-11-17). La celda «Etiquetas» se lee
+  una sola vez con `ExcelTagCell.Parse` (validador y handler), la etiqueta nueva se bautiza con `TagNameFormat.SentenceCase` y la
+  que ya existe conserva su nombre aunque el archivo la traiga con otras mayúsculas. Un camino nuevo que escriba etiquetas desde
+  un archivo pasa por esas dos funciones; y no «simplifiques» la celda a «reemplaza la lista»: la exportación escribe las
+  actuales, pero un archivo armado a mano borraría las que puso el asesor. Y `Direccion` dejó de ser obligatoria en el Excel
+  (`ca9ee15c`): es opcional en el formulario y en el dominio, y la regla vieja del importador sólo impedía cargar listas de
+  nombre y celular.
 - **`PosCustomerLookupTests.TheIdentificationTypesMatchTheCustomersModule` compara Pos con `AllowedFor("CO")`, igual que la importación de clientes por Excel y la de contratos de
   servicio.** Ensanchar Customers no ensancha a ninguno de ellos; si el owner lo quiere, es una decisión aparte.
 - **`MergeForStore` toma el país de la solicitud junto con su documento cuando el cliente no tiene documento** (la dirección sale de la solicitud y el teléfono conserva su E.164

@@ -26,10 +26,11 @@ public sealed class ExcelCustomerRowRulesTests
         string? city = "Medellin",
         string? classification = "Mayorista",
         string? retefuente = null,
-        string? vatSurplus = "No") =>
+        string? vatSurplus = "No",
+        string? tags = null) =>
         new(2, cuc, name, null, identificationType, identificationNumber, phone,
             email, address,
-            department, city, classification, retefuente, vatSurplus);
+            department, city, classification, retefuente, vatSurplus, Tags: tags);
 
     private static readonly CustomerFieldPolicy Relaxed =
         new(new FieldRequirement(false, true), new FieldRequirement(false, true));
@@ -275,6 +276,51 @@ public sealed class ExcelCustomerRowRulesTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, error =>
             error.ErrorCode == "customers.import.row.phone_too_long");
+    }
+
+    // La direccion es opcional, igual que en el formulario de alta (CustomerWriteRules): sin calle el
+    // cliente nace sin domicilio y sin libreta, como un contacto que solo trae nombre y celular.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ARowWithoutAnAddressIsValid(string? address)
+    {
+        var result = validator.Validate(ValidRow(address: address));
+
+        Assert.True(result.IsValid);
+    }
+
+    // La celda «Etiquetas» (spec 2026-11-17): cada nombre con el largo de una etiqueta, y nunca más de las que un cliente puede
+    // tener. Son errores de fila, con su código, para que el lote siga.
+    [Fact]
+    public void ATagNameLongerThanTheLimitFails()
+    {
+        var result = validator.Validate(
+            ValidRow(tags: "VIP; " + new string('A', Tag.NameMaxLength + 1)));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.tag_name_too_long" &&
+            error.PropertyName == nameof(ExcelCustomerRow.Tags));
+    }
+
+    [Fact]
+    public void MoreThanTwentyTagsInACellFail()
+    {
+        var names = string.Join("; ", Enumerable.Range(1, CustomerTagAssignment.MaxPerCustomer + 1).Select(i => $"Etiqueta {i}"));
+
+        var result = validator.Validate(ValidRow(tags: names));
+
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.tag_limit_per_customer" &&
+            error.PropertyName == nameof(ExcelCustomerRow.Tags));
+    }
+
+    [Fact]
+    public void ACellWithOnlySeparatorsIsValid()
+    {
+        Assert.True(validator.Validate(ValidRow(tags: "; ;")).IsValid);
     }
 
     [Fact]

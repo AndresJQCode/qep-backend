@@ -5,6 +5,7 @@ using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Customers.Domain;
 using Modules.Geography.Infrastructure.Persistence;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
@@ -859,12 +860,10 @@ public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHo
         Assert.Equal("El Fusionado", (await GetAsync(manager, merged.Id)).Name);
     }
 
-    // La celda Direccion es obligatoria: es el domicilio del cliente y, al crear, siembra ademas
-    // la primera fila de la libreta (spec 2026-09-18). En modo actualizacion cambia solo el
-    // domicilio. Se rechaza como fila, con su codigo, y no como una excepcion del dominio a mitad
-    // del archivo -- que se llevaria puesto el resto del lote.
+    // La celda Direccion es opcional, como en el formulario de alta: una lista de contactos con solo nombre y
+    // celular tiene que entrar. Sin calle el cliente nace sin domicilio y sin libreta (no hay fila que sembrar).
     [Fact]
-    public async Task ImportRowWithoutAnAddressIsRejectedWithItsOwnCode()
+    public async Task ImportRowWithoutAnAddressCreatesTheCustomerWithoutAddressOrBook()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -891,9 +890,125 @@ public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHo
         var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(result);
-        Assert.Equal(0, result.ImportedCount);
-        Assert.Contains(result.Errors, error =>
-            error.RowNumber == 2 && error.Code == "customers.import.row.address_required");
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, result.ImportedCount);
+        var customer = await ImportedCustomerAsync(client, result);
+        Assert.Null(customer.Address);
+        Assert.Empty(customer.Addresses);
+    }
+
+    private static readonly IReadOnlyList<string> HeadersWithTags = [.. CustomerImportColumns.Ordered, CustomerImportColumns.Tags];
+
+    private static async Task<IReadOnlyList<TagDto>> TagsOfTenantAsync(HttpClient client) =>
+        (await client.GetFromJsonAsync<IReadOnlyList<TagDto>>($"{CustomersUrl()}/tags", TestContext.Current.CancellationToken))!;
+
+    private static async Task<IReadOnlyList<TagDto>> TagsOfAsync(HttpClient client, Guid customerId) =>
+        (await client.GetFromJsonAsync<IReadOnlyList<TagDto>>($"{CustomersUrl()}/{customerId}/tags", TestContext.Current.CancellationToken))!;
+
+    private static async Task<TagDto> CreateTagAsync(HttpClient manager, string name)
+    {
+        var response = await manager.PostAsJsonAsync($"{CustomersUrl()}/tags", new { name, color = "blue" }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<TagDto>(TestContext.Current.CancellationToken))!;
+    }
+
+    // La celda «Etiquetas» (spec 2026-11-17) suma etiquetas al cliente. La que no existe se crea en tipo oración; la que ya existe
+    // casa sin distinguir mayúsculas y conserva su nombre; y un segundo archivo agrega sin quitar lo que el cliente ya tenía.
+    [Fact]
+    public async Task ImportCreatesMissingTagsInSentenceCaseKeepsExistingOnesAndNeverRemoves()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        using var manager = CreateManager(factory);
+        var here = await EnsureCityAsync(manager);
+        var classification = await CreateClassificationAsync(manager);
+        var vip = await CreateTagAsync(manager, "VIP");
+
+        var created = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Name: "Ana", IdentificationNumber: "900.111.111-1", Department: here.DepartmentName, City: here.CityName,
+                    Classification: classification.Name, Tags: "evento MACEL; vip"),
+                new ExcelRowInput(
+                    Name: "Beto", IdentificationNumber: "900.222.222-2", Department: here.DepartmentName, City: here.CityName,
+                    Classification: classification.Name, Tags: "Evento Macel")
+            ],
+            HeadersWithTags);
+        Assert.Empty(created.Errors);
+        Assert.Equal(2, created.ImportedCount);
+
+        // Una sola etiqueta nueva aunque dos filas la traigan con distintas mayúsculas; la existente no se renombra.
+        var tenantTags = await TagsOfTenantAsync(manager);
+        Assert.Equal(["Evento macel", "VIP"], tenantTags.Select(tag => tag.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(vip.Id, Assert.Single(tenantTags, tag => tag.Name == "VIP").Id);
+
+        var ana = await ImportedCustomerAsync(client, created);
+        var beto = await ImportedCustomerAsync(client, created, 1);
+        Assert.Equal(["Evento macel", "VIP"], (await TagsOfAsync(manager, ana.Id)).Select(tag => tag.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(["Evento macel"], (await TagsOfAsync(manager, beto.Id)).Select(tag => tag.Name));
+
+        var updated = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Cuc: ana.Cuc, Name: "Ana", IdentificationNumber: "900.111.111-1", Department: here.DepartmentName,
+                    City: here.CityName, Classification: classification.Name, Tags: "Mayorista")
+            ],
+            HeadersWithTags);
+        Assert.Empty(updated.Errors);
+
+        Assert.Equal(
+            ["Evento macel", "Mayorista", "VIP"],
+            (await TagsOfAsync(manager, ana.Id)).Select(tag => tag.Name).Order(StringComparer.Ordinal));
+    }
+
+    // Una fila que dejaría al cliente con más de 20 etiquetas falla con su código y no escribe nada: ni la fila ni las etiquetas
+    // nuevas que sólo ella pedía.
+    [Fact]
+    public async Task ARowThatWouldExceedTwentyTagsIsRejectedAndWritesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        using var manager = CreateManager(factory);
+        var here = await EnsureCityAsync(manager);
+        var classification = await CreateClassificationAsync(manager);
+
+        var created = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Name: "Ana", IdentificationNumber: "900.111.111-1", Department: here.DepartmentName, City: here.CityName,
+                    Classification: classification.Name)
+            ]);
+        var ana = await ImportedCustomerAsync(client, created);
+        var nineteen = new List<Guid>();
+        for (var index = 1; index <= CustomerTagAssignment.MaxPerCustomer - 1; index++)
+        {
+            nineteen.Add((await CreateTagAsync(manager, $"Etiqueta {index}")).Id);
+        }
+
+        (await manager.PutAsJsonAsync($"{CustomersUrl()}/{ana.Id}/tags", new { tagIds = nineteen }, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+
+        var updated = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Cuc: ana.Cuc, Name: "Ana renombrada", IdentificationNumber: "900.111.111-1", Department: here.DepartmentName,
+                    City: here.CityName, Classification: classification.Name, Tags: "Nueva uno; Nueva dos")
+            ],
+            HeadersWithTags);
+
+        Assert.Equal(0, updated.ImportedCount);
+        Assert.Contains(updated.Errors, error =>
+            error.RowNumber == 2 && error.Code == "customers.import.row.tag_limit_per_customer" && error.Field == nameof(ExcelCustomerRow.Tags));
+        var after = await GetAsync(client, ana.Id);
+        Assert.Equal("Ana", after.Name);
+        Assert.Equal(CustomerTagAssignment.MaxPerCustomer - 1, (await TagsOfAsync(manager, ana.Id)).Count);
+        Assert.DoesNotContain(await TagsOfTenantAsync(manager), tag => tag.Name == "Nueva uno");
     }
 
     // El telefono es obligatorio y el correo no. Un telefono vacio se rechaza como fila, con su
