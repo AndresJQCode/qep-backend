@@ -392,6 +392,9 @@ public sealed class TenantModulesApiTests(SharedTenancyHost host) : IClassFixtur
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+            // Pinned too: Seed:Enabled=true in those user-secrets seeds the development and operator tenants, and the
+            // operator console counts them.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("Registration:PublicTenantSignupEnabled", "true");
             builder.UseSetting("Authentication:UseDevelopmentStub", "true");
             if (grantDefaultModulesOnSignup is { } grant)
