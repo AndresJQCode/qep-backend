@@ -1,4 +1,4 @@
-using Modules.Customers.Application;
+﻿using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using static Modules.Customers.UnitTests.CustomerWriteDoubles;
 
@@ -105,7 +105,7 @@ public sealed class ImportCustomersCompanyTests
         public async Task<ImportCustomersResponse> ImportAsync(params ExcelCustomerRow[] rows)
         {
             var handler = new ImportCustomersHandler(
-                Repository, Directory, new Classifications([]), new ColombiaGeography(), new CustomerWriteDoubles.TaxRates(), new SequentialCucs(), new StubImporter(rows),
+                Repository, Directory, new EngagementTestBed.FakeTags(), new Classifications([]), new ColombiaGeography(), new CustomerWriteDoubles.TaxRates(), new SequentialCucs(), new StubImporter(rows),
                 Work, Audit, Importer, new FixedClock(), new TenantDirectory(), new PlusNormalizer());
             return await handler.HandleAsync(
                 new ImportCustomersCommand(CustomerWriteDoubles.Tenant, "clientes.xlsx", 10, new MemoryStream([1])), CancellationToken.None);
@@ -172,7 +172,7 @@ public sealed class ImportCustomersCompanyTests
         await bed.ImportAsync(Row(2, "Ana", "1010", "900111111", type: "CC"), Row(3, "Luis", "2020", "900111111", type: "CC"));
 
         Assert.Empty(bed.CompanyChanges);
-        Assert.Equal("clientes.xlsx (imported=2, errors=0, companyChanged=2)", bed.ImportedResource);
+        Assert.Equal("clientes.xlsx (imported=2, errors=0, companyChanged=2, tagsCreated=0)", bed.ImportedResource);
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public sealed class ImportCustomersCompanyTests
 
         Assert.Empty(response.Errors);
         Assert.Empty(bed.CompanyChanges);
-        Assert.Equal("clientes.xlsx (imported=1, errors=0, companyChanged=0)", bed.ImportedResource);
+        Assert.Equal("clientes.xlsx (imported=1, errors=0, companyChanged=0, tagsCreated=0)", bed.ImportedResource);
     }
 
     [Fact]
