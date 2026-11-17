@@ -11,11 +11,16 @@ namespace Bootstrapper.Observability;
 /// <c>WebhookArrivalSourceTests</c>.
 ///
 /// Sólo entra lo que pasó la firma (un 401 no inserta), así que es la hora del último webhook que QEP aceptó. Busca por
-/// <c>id</c> descendente (la PK, que crece con la llegada) porque no hay índice sobre <c>received_at</c>; un proveedor raro
-/// recorre hacia atrás las filas del otro, acotadas por la purga (<c>DeliveryRetentionDays</c>). Tope de 5 s por consulta.
+/// <c>id</c> descendente (la PK, que crece con la llegada) dentro del proveedor, con <c>IX_webhook_deliveries_provider_id</c>:
+/// sin él, un proveedor sin filas (Instagram sin conexiones) recorría la tabla entera cada 15 s. Lo amarra
+/// <c>TheLastReceivedQueryUsesTheProviderIndex</c>. Tope de 5 s por consulta.
 /// </summary>
-internal sealed class WebhookArrivalSource(MessagingDbContext messaging) : IWebhookArrivalSource
+public sealed class WebhookArrivalSource(MessagingDbContext messaging) : IWebhookArrivalSource
 {
+    /// <summary>Pública para la prueba del plan: si deja de poder usar el índice, la prueba se pone en rojo.</summary>
+    public const string LastReceivedSql =
+        "SELECT received_at FROM messaging.webhook_deliveries WHERE provider = @provider ORDER BY id DESC LIMIT 1";
+
     private const int CommandTimeoutSeconds = 5;
 
     // Los valores que escribe WebhookDeliveries.ProviderColumnValue (internal de Messaging); los amarra WebhookArrivalSourceTests.
@@ -36,9 +41,7 @@ internal sealed class WebhookArrivalSource(MessagingDbContext messaging) : IWebh
             foreach (var provider in Providers)
             {
                 await using var command = connection.CreateCommand();
-                command.CommandText = """
-                    SELECT received_at FROM messaging.webhook_deliveries WHERE provider = @provider ORDER BY id DESC LIMIT 1
-                    """;
+                command.CommandText = LastReceivedSql;
                 command.CommandTimeout = CommandTimeoutSeconds;
                 var parameter = command.CreateParameter();
                 parameter.ParameterName = "provider";

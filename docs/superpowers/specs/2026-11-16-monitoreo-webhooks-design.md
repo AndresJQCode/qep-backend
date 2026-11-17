@@ -72,9 +72,9 @@ conjunto cerrado. El valor sumado es el número de eventos descartados (mensajes
 Gauge `qep.webhook.last_received` (unidad `s`, segundos Unix; etiqueta `provider`): el `received_at` de la entrega más
 reciente de cada proveedor en `messaging.webhook_deliveries`. Lo lee `QueueSamplerWorker` en cada vuelta (sólo el pod
 líder, como las colas) y deja de publicarse si la lectura tiene más de 60 s, igual que `QueueGauges`. Un proveedor sin
-ninguna fila no publica. La entrega más reciente se busca por `id` descendente (la PK), sin índice nuevo: no hay índice
-sobre `received_at` y la tabla se purga por `DeliveryRetentionDays`. Si Instagram es raro, esa búsqueda recorre hacia
-atrás las de WhatsApp: aceptable con la purga, a revisar con `EXPLAIN` en producción.
+ninguna fila no publica. La entrega más reciente se busca por `id` descendente dentro del proveedor, con el índice nuevo
+`IX_webhook_deliveries_provider_id` `(provider, id)` (migración aditiva `AddWebhookDeliveriesProviderIndex`): sin él, un
+proveedor sin filas (Instagram sin conexiones) recorría la tabla entera cada 15 s (revisión final, 2026-11-16).
 
 ### Shopify (pendiente)
 

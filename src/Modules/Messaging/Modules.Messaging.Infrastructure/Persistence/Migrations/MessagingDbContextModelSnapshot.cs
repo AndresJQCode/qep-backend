@@ -1710,6 +1710,9 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_webhook_deliveries_pending")
                         .HasFilter("processed_at IS NULL");
 
+                    b.HasIndex("Provider", "Id")
+                        .HasDatabaseName("IX_webhook_deliveries_provider_id");
+
                     b.ToTable("webhook_deliveries", "messaging");
                 });
 
