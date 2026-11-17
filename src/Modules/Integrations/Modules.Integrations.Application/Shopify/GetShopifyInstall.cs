@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Integrations.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
@@ -23,7 +24,16 @@ public sealed record ShopifyInstallResponse(
 
 /// <param name="CanLink">El usuario tiene <c>integrations.connection.manage</c> en ese tenant.</param>
 /// <param name="ModuleEnabled">El tenant tiene el módulo <c>shopify</c> activo.</param>
-public sealed record ShopifyInstallTenantResponse(Guid TenantId, string Name, bool CanLink, bool ModuleEnabled);
+/// <param name="ConnectedShops">Spec 2026-11-17 §3: las tiendas Shopify ya conectadas a ese tenant, para que la pantalla diga
+/// «ya tiene 1 tienda conectada» y nadie cruce tiendas por error; si la tienda que se instala está en la lista, ofrece «Ir a
+/// la configuración». Sólo con <paramref name="CanLink"/> (plan D10: quien no administra integraciones no necesita ver las
+/// tiendas del tenant); si no, <c>[]</c>. Siempre presente, nunca <c>null</c>.</param>
+public sealed record ShopifyInstallTenantResponse(
+    Guid TenantId, string Name, bool CanLink, bool ModuleEnabled, IReadOnlyList<ShopifyConnectedShopResponse> ConnectedShops);
+
+/// <param name="ShopName">El campo <c>shopName</c> de la conexión o, sin él, el nombre de la conexión.</param>
+/// <param name="ShopDomain">El campo <c>shopDomain</c>: el <c>*.myshopify.com</c>, que es lo que identifica a la tienda.</param>
+public sealed record ShopifyConnectedShopResponse(string ShopName, string ShopDomain);
 
 /// <summary>
 /// 404 <c>install_not_found</c> para un id desconocido, vencido o todavía sin canjear (§12: el <c>installId</c> sólo lo
@@ -36,6 +46,7 @@ public sealed class GetShopifyInstallHandler(
     IActiveTenantsQuery activeTenants,
     IRolePermissionChecker rolePermissions,
     ITenantModules tenantModules,
+    IIntegrationConnectionRepository connections,
     IExecutionContext executionContext,
     IClock clock)
     : IQueryHandler<GetShopifyInstallQuery, ShopifyInstallResponse>
@@ -56,9 +67,25 @@ public sealed class GetShopifyInstallHandler(
             // null = tenant fuera de tenancy.tenants (sólo el stub): no se enmascara, como TenantModuleGuard.
             var modules = await tenantModules.FindAsync(tenant.TenantId, cancellationToken);
             tenants.Add(new ShopifyInstallTenantResponse(
-                tenant.TenantId, tenant.DisplayName, canLink, modules is null || modules.IsEnabled(TenantModuleKeys.Shopify)));
+                tenant.TenantId,
+                tenant.DisplayName,
+                canLink,
+                modules is null || modules.IsEnabled(TenantModuleKeys.Shopify),
+                canLink ? await ConnectedShopsAsync(tenant.TenantId, cancellationToken) : []));
         }
 
         return new ShopifyInstallResponse(install.ShopDomain, install.ShopName!, install.ExpiresAt, install.InitiatedTenantId, tenants);
     }
+
+    /// <summary>Las conexiones <c>shopify</c> del tenant que tienen dominio, por nombre (ordinal, sin mayúsculas).</summary>
+    private async Task<IReadOnlyList<ShopifyConnectedShopResponse>> ConnectedShopsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await connections.ListAsync(tenantId, cancellationToken))
+            .Where(connection => string.Equals(connection.ProviderKey, IntegrationProviders.Shopify.Key, StringComparison.Ordinal))
+            .Select(connection => (
+                Domain: connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopDomain),
+                Name: connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopName) is { Length: > 0 } shopName ? shopName : connection.Name))
+            .Where(shop => !string.IsNullOrWhiteSpace(shop.Domain))
+            .OrderBy(shop => shop.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(shop => new ShopifyConnectedShopResponse(shop.Name, shop.Domain!))
+            .ToArray();
 }
