@@ -21,6 +21,7 @@ using Modules.Integrations.Application;
 using Modules.Messaging.Application;
 using Modules.Pipeline.Application;
 using Modules.Pos.Application;
+using Modules.Purchases.Application;
 using Modules.Shopify.Application;
 using Modules.Suppliers.Application;
 using Modules.Support.Application;
@@ -321,9 +322,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheEightySevenConstants()
+    public void PermissionDiscoveryFindsTheEightyNineConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -343,8 +344,9 @@ public sealed class CompositionRootTests
         // + los tres de costo y margen (spec 2026-11-10 §5)
         // + los dos de agentes IA (ai.agent.read|manage, spec 2026-10-29)
         // + los tres de soporte (support.*, spec 2026-11-14)
-        // + los dos del copiloto (ai.copilot.use|manage, spec 2026-11-17).
-        Assert.Equal(87, PermissionConstants().Length);
+        // + los dos del copiloto (ai.copilot.use|manage, spec 2026-11-17)
+        // + los dos de compras (purchases.order.read|manage, spec 2026-11-17).
+        Assert.Equal(89, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -896,6 +898,31 @@ public sealed class CompositionRootTests
             Assert.Contains(permission, catalog.PermissionsFor("admin"));
             Assert.Contains(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 (compras, P-3 propuesta): los dos permisos exigen el módulo <c>purchases</c> (apagado, el editor de roles
+    /// los oculta y la API responde un 403 pelado) y van sólo a admin; ni asesor, ni facturación, ni cajero.
+    /// </summary>
+    [Fact]
+    public void ThePurchasesPermissionsRequireThePurchasesModuleAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        Assert.Equal("purchases.order.read", PurchasesPermissions.OrderRead);
+        Assert.Equal("purchases.order.manage", PurchasesPermissions.OrderManage);
+        foreach (var permission in new[] { PurchasesPermissions.OrderRead, PurchasesPermissions.OrderManage })
+        {
+            Assert.Equal("Compras", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Purchases], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
         }
     }

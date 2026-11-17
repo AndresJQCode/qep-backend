@@ -53,6 +53,7 @@ using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
 using Modules.Pos.Application;
 using Modules.Pos.Infrastructure;
+using Modules.Purchases.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
@@ -2206,6 +2207,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
+                // Spec 2026-11-17 (compras): las órdenes de compra las administra quien administra la empresa (P-3, propuesta).
+                PurchasesPermissions.OrderRead,
+                PurchasesPermissions.OrderManage,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
                 ServiceContractsPermissions.Manage,
@@ -3163,6 +3167,28 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("suppliers.supplier", "Proveedores", "manage"),
         });
+        // Spec 2026-11-17 (compras): con [purchases], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
+        // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            PurchasesPermissions.OrderRead,
+            "Ver órdenes de compra",
+            "Permite ver las órdenes de compra y descargar su PDF.",
+            "Compras",
+            "low",
+            RequiredModules: [ModuleKeys.Purchases])
+        {
+            Shape = new("purchases.order", "Órdenes de compra", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            PurchasesPermissions.OrderManage,
+            "Gestionar órdenes de compra",
+            "Permite crear, editar, enviar, confirmar, recibir y cancelar órdenes de compra.",
+            "Compras",
+            "medium",
+            RequiredModules: [ModuleKeys.Purchases])
+        {
+            Shape = new("purchases.order", "Órdenes de compra", "manage"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -3676,6 +3702,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 SuppliersPermissions.Manage,
                 policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage))
+            // Spec 2026-11-17 (compras): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                PurchasesPermissions.OrderRead,
+                policy => AddPermissionRequirement(policy, PurchasesPermissions.OrderRead))
+            .AddPolicy(
+                PurchasesPermissions.OrderManage,
+                policy => AddPermissionRequirement(policy, PurchasesPermissions.OrderManage))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 ServiceContractsPermissions.Read,
