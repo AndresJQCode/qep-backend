@@ -1,4 +1,4 @@
-﻿namespace Modules.Customers.Application;
+namespace Modules.Customers.Application;
 
 /// <summary>
 /// La celda «Etiquetas» del Excel de clientes (spec 2026-11-17): varios nombres separados por <see cref="Separator"/>. Cada uno

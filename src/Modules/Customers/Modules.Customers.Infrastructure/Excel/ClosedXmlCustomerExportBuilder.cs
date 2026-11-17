@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using ClosedXML.Excel;
 using Modules.Customers.Application;
 using Modules.Tenancy.Application;

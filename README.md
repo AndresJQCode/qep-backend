@@ -2364,7 +2364,7 @@ vuelve a subir.
 - **`Etiquetas`** (spec 2026-11-17): varios nombres separados por `;` (`Evento macel; VIP`). Cada nombre casa sin distinguir
   mayúsculas con las etiquetas del tenant; la que no existe **se crea**, en gris y en tipo oración (`evento MACEL` →
   `Evento macel`, `TagNameFormat.SentenceCase`); la que existe conserva su nombre. La celda **suma y nunca quita**: en una fila
-  de actualización (con `Cuc`) el cliente conserva las que tenía. Los errores son de fila, con `field: "tags"`:
+  de actualización (con `Cuc`) el cliente conserva las que tenía. Los errores son de fila, con `field: "Tags"` (el mismo `PropertyName` del validador):
   `customers.import.row.tag_name_too_long` (más de 40 caracteres), `customers.import.row.tag_limit_per_customer` (el cliente
   quedaría con más de 20) y `customers.import.row.tag_limit_reached` (crearla pasaría las 100 del tenant). Una fila con error de
   etiquetas no se importa, y una etiqueta nueva que sólo esa fila pedía no se crea. La auditoría del import lleva `tagsCreated=N`

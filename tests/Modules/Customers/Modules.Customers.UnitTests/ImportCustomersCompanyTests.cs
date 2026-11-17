@@ -1,4 +1,4 @@
-﻿using Modules.Customers.Application;
+using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using static Modules.Customers.UnitTests.CustomerWriteDoubles;
 
@@ -94,6 +94,8 @@ public sealed class ImportCustomersCompanyTests
 
         public TrackedUnitOfWork Work { get; } = new();
 
+        public EngagementTestBed.FakeTags Tags { get; } = new();
+
         public RecordingAudit Audit { get; } = new();
 
         public IEnumerable<string> CompanyChanges =>
@@ -105,7 +107,7 @@ public sealed class ImportCustomersCompanyTests
         public async Task<ImportCustomersResponse> ImportAsync(params ExcelCustomerRow[] rows)
         {
             var handler = new ImportCustomersHandler(
-                Repository, Directory, new EngagementTestBed.FakeTags(), new Classifications([]), new ColombiaGeography(), new CustomerWriteDoubles.TaxRates(), new SequentialCucs(), new StubImporter(rows),
+                Repository, Directory, Tags, new Classifications([]), new ColombiaGeography(), new CustomerWriteDoubles.TaxRates(), new SequentialCucs(), new StubImporter(rows),
                 Work, Audit, Importer, new FixedClock(), new TenantDirectory(), new PlusNormalizer());
             return await handler.HandleAsync(
                 new ImportCustomersCommand(CustomerWriteDoubles.Tenant, "clientes.xlsx", 10, new MemoryStream([1])), CancellationToken.None);
@@ -120,8 +122,64 @@ public sealed class ImportCustomersCompanyTests
             new CustomerCommercialInfo(), CustomerWriteDoubles.Now, new PlusNormalizer());
 
     private static ExcelCustomerRow Row(
-        int rowNumber, string name, string number, string? company = null, string? cuc = null, string type = "NIT") =>
-        new(rowNumber, cuc, name, null, type, number, "3001112233", null, "Calle 2", "Atlantico", "Barranquilla", null, Retefuente: null, VatSurplus: "No", company);
+        int rowNumber, string name, string number, string? company = null, string? cuc = null, string type = "NIT",
+        string? tags = null, string? address = "Calle 2") =>
+        new(rowNumber, cuc, name, null, type, number, "3001112233", null, address, "Atlantico", "Barranquilla", null, Retefuente: null, VatSurplus: "No", company, tags);
+
+    // Revisión final (C1): una fila con etiquetas que el plan de empresas rechaza no puede tumbar el lote. El plan de etiquetas se
+    // decide antes que el de empresas, así que hay que recortarlo a las filas que de verdad se escriben.
+    [Fact]
+    public async Task ARowWhoseCompanyFailsAndHasTagsIsARowErrorAndTheRestIsImported()
+    {
+        var bed = new Bed();
+
+        var response = await bed.ImportAsync(
+            Row(2, "Ana", "1010", "999999999", type: "CC", tags: "VIP; Solo de ana"),
+            Row(3, "Beto", "2020", type: "CC", tags: "VIP"));
+
+        Assert.Equal("customers.import.row.company_not_found", ErrorOf(response, 2).Code);
+        Assert.Equal("created", Assert.Single(response.Imported).Action);
+        // La etiqueta que sólo pedía la fila rechazada no se crea; la compartida se crea una vez, en tipo oración.
+        Assert.Equal(["Vip"], bed.Tags.Tags.Select(tag => tag.Name));
+        var beto = Created(bed, "Beto");
+        Assert.Equal(beto.Id, Assert.Single(bed.Tags.Assignments).CustomerId);
+        Assert.Equal("clientes.xlsx (imported=1, errors=1, companyChanged=0, tagsCreated=1)", bed.ImportedResource);
+    }
+
+    // Revisión final (I1): dos filas de actualización del mismo cliente (mismo Cuc, sin documento que las deduplique) con la misma
+    // etiqueta no pueden agregar dos veces la misma asignación: EF revienta por clave repetida y la respuesta sería 500.
+    [Fact]
+    public async Task TwoUpdateRowsOfTheSameCustomerWithTheSameTagAssignItOnce()
+    {
+        var contact = Existing("CLI08000002", "Ana", "1010", IdentificationType.Cc);
+        var bed = new Bed(contact);
+
+        // Sin documento en las filas: con documento, la deduplicación del archivo ya frenaría la segunda.
+        var response = await bed.ImportAsync(
+            Row(2, "Ana", "", cuc: "CLI08000002", type: "", tags: "VIP"),
+            Row(3, "Ana", "", cuc: "CLI08000002", type: "", tags: "VIP; Nueva"));
+
+        Assert.Empty(response.Errors);
+        var pairs = bed.Tags.Assignments.Select(assignment => (assignment.CustomerId, assignment.TagId)).ToArray();
+        Assert.Equal(pairs.Distinct().Count(), pairs.Length);
+        Assert.Equal(2, pairs.Length);
+        Assert.All(pairs, pair => Assert.Equal(contact.Id, pair.CustomerId));
+    }
+
+    // Revisión final (I2): la dirección dejó de ser obligatoria en el Excel (ca9ee15c). En una fila de actualización la celda vacía
+    // significa «no se envía», como el documento y la ciudad: un archivo de Cuc + nombre + celular + etiquetas no borra domicilios.
+    [Fact]
+    public async Task AnUpdateRowWithoutAnAddressKeepsTheStoredOne()
+    {
+        var contact = Existing("CLI08000002", "Ana", "1010", IdentificationType.Cc);
+        var bed = new Bed(contact);
+
+        var response = await bed.ImportAsync(Row(2, "Ana Maria", "1010", cuc: "CLI08000002", type: "CC", address: null));
+
+        Assert.Empty(response.Errors);
+        Assert.Equal("Ana Maria", contact.Name);
+        Assert.Equal("Calle 1", contact.Address);
+    }
 
     private static ImportRowError ErrorOf(ImportCustomersResponse response, int rowNumber) =>
         Assert.Single(response.Errors, error => error.RowNumber == rowNumber);

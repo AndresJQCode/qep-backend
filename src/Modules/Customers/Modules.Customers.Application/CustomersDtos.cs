@@ -1,4 +1,4 @@
-﻿namespace Modules.Customers.Application;
+namespace Modules.Customers.Application;
 
 /// <summary>
 /// La ciudad de un cliente, resuelta. Tipo propio de <c>Customers</c> y no el <c>CityDto</c> de

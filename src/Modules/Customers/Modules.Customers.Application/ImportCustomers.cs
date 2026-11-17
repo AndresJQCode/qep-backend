@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Customers.Domain;
@@ -303,6 +303,9 @@ public sealed class ImportCustomersHandler(
             var (taggable, tagPlan) = await PlanTagsAsync(command.TenantId, eligible, errors, cancellationToken);
             var (writable, links) = await PlanCompanyLinksAsync(
                 command.TenantId, taggable, loaded, ownersByNumber, errors, cancellationToken);
+            // El plan de empresas puede sacar filas que el de etiquetas ya aceptó: sus etiquetas no se escriben (la fila tampoco).
+            var writtenRows = writable.Select(candidate => candidate.RowNumber).ToHashSet();
+            tagPlan = tagPlan.Where(entry => writtenRows.Contains(entry.RowNumber)).ToList();
             var written = await CreateOrUpdateCustomersAsync(
                 command.TenantId, writable, loaded, parsed.WithholdingColumns ?? CustomerImportColumns.WithholdingTypes, now,
                 cancellationToken);
@@ -856,7 +859,9 @@ public sealed class ImportCustomersHandler(
                     {
                         Phone = candidate.Phone,
                         Email = candidate.Email,
-                        Address = candidate.Address ?? string.Empty,
+                        // La celda vacía es «no se envía», como el documento y la ciudad: desde que Direccion es opcional en el Excel,
+                        // un archivo de Cuc + nombre + celular (para etiquetar, por ejemplo) no puede borrar domicilios.
+                        Address = candidate.Address ?? customer.Address,
                         // Sin departamento ni ciudad en la fila se conserva el carril de ciudad guardado (pais, CityId, CityName).
                         Country = candidate.City is null ? customer.Country ?? Customer.ColombiaCountryCode : Customer.ColombiaCountryCode,
                         CityId = candidate.City is null ? customer.CityId : candidate.City.CityId,
@@ -1146,9 +1151,8 @@ public sealed class ImportCustomersHandler(
     /// sube, no se confirma la transacción y no queda nada escrito.
     /// </summary>
     /// <returns>Cuántos vínculos cambiaron, para el evento de la importación.</returns>
-    // El nombre del campo como lo serializa la fila (CustomerImportRowData.Tags en camelCase), igual que CompanyField: es la
-    // celda que el frontend resalta en la fila a corregir.
-    private const string TagsField = "tags";
+    // El mismo Field que el validador de la fila (PropertyName): un solo nombre por columna para que el frontend resalte la celda.
+    private const string TagsField = nameof(ExcelCustomerRow.Tags);
 
     /// <summary>
     /// Qué etiquetas suma cada fila (spec 2026-11-17), decidido para todo el archivo antes de escribir nada: las que ya existen
@@ -1188,33 +1192,45 @@ public sealed class ImportCustomersHandler(
             errors.Add(new ImportRowError(row.RowNumber, "customers.import.row." + suffix, message, TagsField, ToRowData(row.SourceRow)));
         }
 
+        // Dos filas de actualización pueden apuntar al mismo cliente (mismo Cuc, sin documento que las deduplique): lo que la
+        // primera suma cuenta para la segunda, y la misma etiqueta no se asigna dos veces.
+        var plannedNewByCustomer = new Dictionary<CustomerId, HashSet<string>>();
         var tentative = new List<TagPlanRow>(withCell.Length);
         foreach (var row in withCell)
         {
-            var current = row.TargetId is { } id && currentByCustomer.TryGetValue(id, out var set) ? set : [];
+            HashSet<TagId> current = [];
+            HashSet<string> plannedNew = new(StringComparer.OrdinalIgnoreCase);
+            if (row.TargetId is { } id)
+            {
+                current = currentByCustomer.TryGetValue(id, out var set) ? set : (currentByCustomer[id] = []);
+                plannedNew = plannedNewByCustomer.TryGetValue(id, out var names) ? names : (plannedNewByCustomer[id] = new(StringComparer.OrdinalIgnoreCase));
+            }
+
             var toAssign = new List<TagId>();
             var toCreate = new List<string>();
             foreach (var name in row.TagNames)
             {
                 if (existingByName.TryGetValue(name, out var tag))
                 {
-                    if (!current.Contains(tag.Id))
+                    if (!current.Contains(tag.Id) && !toAssign.Contains(tag.Id))
                     {
                         toAssign.Add(tag.Id);
                     }
                 }
-                else
+                else if (!plannedNew.Contains(name))
                 {
                     toCreate.Add(name);
                 }
             }
 
-            if (current.Count + toAssign.Count + toCreate.Count > CustomerTagAssignment.MaxPerCustomer)
+            if (current.Count + plannedNew.Count + toAssign.Count + toCreate.Count > CustomerTagAssignment.MaxPerCustomer)
             {
                 Reject(row, "tag_limit_per_customer", $"A customer cannot have more than {CustomerTagAssignment.MaxPerCustomer} tags.");
                 continue;
             }
 
+            current.UnionWith(toAssign);
+            plannedNew.UnionWith(toCreate);
             tentative.Add(new TagPlanRow(row.RowNumber, toAssign, toCreate));
         }
 
@@ -1244,12 +1260,22 @@ public sealed class ImportCustomersHandler(
     private int ApplyTags(Guid tenantId, List<TagPlanRow> plan, Dictionary<int, Customer> customersByRow, DateTimeOffset now)
     {
         var createdByName = new Dictionary<string, TagId>(StringComparer.OrdinalIgnoreCase);
+        // La misma asignación dos veces en un SaveChanges revienta por clave (PK_customer_tags): el plan ya la evita, esto lo garantiza.
+        var assigned = new HashSet<(CustomerId, TagId)>();
+        void Assign(Customer customer, TagId tagId)
+        {
+            if (assigned.Add((customer.Id, tagId)))
+            {
+                tags.AddAssignment(CustomerTagAssignment.Create(customer.Id, tagId, tenantId, executionContext.SubjectId, now));
+            }
+        }
+
         foreach (var entry in plan)
         {
             var customer = customersByRow[entry.RowNumber];
             foreach (var tagId in entry.ToAssign)
             {
-                tags.AddAssignment(CustomerTagAssignment.Create(customer.Id, tagId, tenantId, executionContext.SubjectId, now));
+                Assign(customer, tagId);
             }
 
             foreach (var name in entry.ToCreate)
@@ -1264,7 +1290,7 @@ public sealed class ImportCustomersHandler(
                     createdByName[name] = tagId;
                 }
 
-                tags.AddAssignment(CustomerTagAssignment.Create(customer.Id, tagId, tenantId, executionContext.SubjectId, now));
+                Assign(customer, tagId);
             }
         }
 

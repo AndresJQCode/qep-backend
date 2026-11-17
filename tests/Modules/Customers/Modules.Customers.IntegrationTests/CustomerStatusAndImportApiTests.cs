@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using ClosedXML.Excel;
@@ -1004,7 +1004,7 @@ public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHo
 
         Assert.Equal(0, updated.ImportedCount);
         Assert.Contains(updated.Errors, error =>
-            error.RowNumber == 2 && error.Code == "customers.import.row.tag_limit_per_customer" && error.Field == "tags");
+            error.RowNumber == 2 && error.Code == "customers.import.row.tag_limit_per_customer" && error.Field == nameof(ExcelCustomerRow.Tags));
         var after = await GetAsync(client, ana.Id);
         Assert.Equal("Ana", after.Name);
         Assert.Equal(CustomerTagAssignment.MaxPerCustomer - 1, (await TagsOfAsync(manager, ana.Id)).Count);
