@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure.RichText;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -77,6 +78,26 @@ public sealed class MarkQuotationSentHandlerTests
         Assert.Empty(harness.Repository.HistoryEntries);
     }
 
+    // Spec 2026-10-26: con OnCustomerSave, la fila de facturación con nombre propio exige su tipo de persona también
+    // al marcarla enviada, igual que en el envío. Se rechaza antes de pagar el PDF.
+    [Fact]
+    public async Task MarkSentRequiresTheBillingPersonTypeWhenTheTenantAsksForIt()
+    {
+        var harness = NewHandler(billingWithoutPersonType: true);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(harness.Command, TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.billing.person_type_required", error.Code);
+        Assert.Equal(["Parties.Billing.PersonType"], error.FieldErrors.Keys);
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+        Assert.Empty(harness.Repository.HistoryEntries);
+        Assert.Empty(harness.Audit.Actions);
+        Assert.Empty(harness.Lifecycle.Published);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Equal(0, harness.UnitOfWork.Saves);
+    }
+
     [Fact]
     public async Task MarkSentWithoutManagePermissionIsForbidden()
     {
@@ -102,9 +123,28 @@ public sealed class MarkQuotationSentHandlerTests
     private static Harness NewHandler(
         QuotationStatus? closedAs = null,
         bool customerActive = true,
-        string? deniedPermission = null)
+        string? deniedPermission = null,
+        bool billingWithoutPersonType = false)
     {
         var tenant = new StubTenantDirectory();
+        var parties = QuotationParties.Empty;
+        if (billingWithoutPersonType)
+        {
+            tenant.Regional = new(
+                "America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal, "CO",
+                PersonTypeRequirement.OnCustomerSave);
+            parties = parties with
+            {
+                Billing = new QuotationPartyDetails
+                {
+                    Name = "Otra S.A.S.",
+                    IdentificationNumber = "900123456",
+                    IdentificationType = PartyIdentificationType.Nit,
+                    PersonType = null,
+                },
+            };
+        }
+
         var quotation = Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -114,7 +154,7 @@ public sealed class MarkQuotationSentHandlerTests
             ValidUntil,
             paymentMethod: "Transferencia bancaria",
             notes: null,
-            QuotationParties.Empty,
+            parties,
             OrderBuilders.BillingAccount,
             defaultCurrency: "COP",
             customerVatSurplus: false,

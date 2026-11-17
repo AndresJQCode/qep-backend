@@ -11,8 +11,8 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
 /// Marcar como enviada: el asesor ya le hizo llegar la cotización al cliente por fuera de QEP y
-/// sólo quiere que el estado lo diga. No genera PDF ni manda nada, y deja <c>MarkedSent</c> en el
-/// historial en vez de <c>Sent</c>. El evento de outbox no se afirma acá: en el host compartido
+/// sólo quiere que el estado lo diga. Genera y guarda el PDF, pero no lo publica ni manda nada, y
+/// deja <c>MarkedSent</c> en el historial en vez de <c>Sent</c>. El evento de outbox no se afirma acá: en el host compartido
 /// un conteo sin tenant depende de las demás pruebas de la clase, y lo cubre la unitaria.
 /// </summary>
 public sealed class QuotationMarkSentApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>

@@ -153,8 +153,9 @@ public static class QuotationEndpoints
 
         // Marcar como enviada sin que QEP la entregue: el asesor ya se la hizo llegar al cliente
         // por fuera (su propio WhatsApp, un correo) y sólo quiere que el estado lo refleje. No es
-        // `/send`: no genera PDF ni manda nada, y el historial lo deja como `MarkedSent` para que
-        // nadie lo confunda con un envío de QEP. Sin cuerpo.
+        // `/send`: genera y guarda el PDF —el documento que el asesor descarga y el que queda como
+        // «lo que se le envió»—, pero no lo publica ni manda nada, y el historial lo deja como
+        // `MarkedSent` para que nadie lo confunda con un envío de QEP. Sin cuerpo.
         group.MapPost("/{quotationId:guid}/mark-sent", MarkQuotationSentAsync)
             .RequireAuthorization(QuotationsPermissions.QuotationManage)
             .Produces<QuotationResponse>()
