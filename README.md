@@ -4614,7 +4614,57 @@ se reintenta, o agotado, termina en traspaso: el cliente nunca se queda sin resp
   `MaxModelCalls` 6, `MaxToolCalls` 8, `MaxHistoryTurns` 30, `MaxContextTokens` sin valor). Son la propuesta del spec
   (P-2) hasta que el eval diga otra cosa.
 - `Ai:Workers`: `PollSeconds`, `BatchSize`, `LeaseMinutes`, `DebounceSeconds`, `IdleHours`, `IdleSweepMinutes`,
-  `ModuleSweepSeconds` y `Enabled` (apaga los dos workers; las pruebas que siembran filas a mano lo usan).
+  `ModuleSweepSeconds`, `CopilotRetentionSweepHours` (24: la retención del copiloto) y `Enabled` (apaga los dos workers; las
+  pruebas que siembran filas a mano lo usan).
+- `Ai:Copilot`: los topes del copiloto (D-C11): `MessagesPerHour` 30 y `MessagesPerDay` 200 por miembro, `MaxOutputTokens`
+  16.000, `MaxModelCalls` 8, `MaxToolCalls` 12, `JobTimeoutSeconds` 120, `MaxHistoryMessages` 20, `MaxContextTokens` sin
+  valor, y `ToolCallRetentionDays` 30 (cuánto viven los `tool_calls` de sus trabajos). Se validan al arrancar; un cero frena
+  el pod.
+
+#### Bloque «Agente IA» en chatbots
+
+Spec `2026-11-17-agente-ia-en-chatbots-design.md` (plan `2026-11-17-agentes-ia-fase-2-backend.md`, Parte B). Un nodo `aiAgent`
+del canvas **delega** la conversación en un agente publicado y la recupera por una de cinco salidas: `done`
+(`finish_objective`), `human`, `noAnswer`, `idle` y `error`. La delegación es de Mensajería y neutral
+(`messaging.bot_delegations`, `conversations.automation_delegation_id`): la conversación sigue `Active`, cambia de bot a
+`bot_kind = 2` sin pasar por `None` y vuelve al chatbot con una fila `AgentReturned` en `messaging.automation_inbox`. El agente
+corre en una sesión de origen `ChatbotBlock` (sin saludo, con el objetivo y el contexto del paso en el contexto volátil) y
+**nunca traspasa por su cuenta**: toda terminación devuelve al flujo, salvo la toma humana, la ventana cerrada y el bloqueo. Un
+agente puede publicarse sin conexiones (sólo para bloques) y no se borra mientras un chatbot publicado lo use (409
+`ai.agent.in_use_by_chatbots`). El simulador de chatbots se detiene en el bloque y el probador elige la salida: nunca llama al
+modelo.
+
+#### Copiloto interno
+
+Spec `2026-11-17-copiloto-interno-design.md` (Parte C del mismo plan). Un chat privado por miembro que contesta con los datos de
+su organización, **con sus permisos y sólo leyendo**. Módulo propio `copilot` (sin dependencias, fuera de
+`DefaultForNewTenants`), permisos `ai.copilot.use` (chatear) y `ai.copilot.manage` (configurar), los dos sólo en `admin` de
+fábrica. Rutas bajo `/api/v1/tenants/{tenantId}/ai/copilot`: `settings` (`GET|PUT`, con `If-Match`), `status` y `threads`
+(listar, crear con la primera pregunta, leer, renombrar, borrar, preguntar y reintentar).
+
+- **Corre como el miembro.** Cada herramienta resuelve los permisos del miembro en el momento de llamarse, exige el permiso y el
+  módulo del endpoint que replica y despacha **la misma consulta** con un contexto de ejecución delegado
+  (`Bootstrapper/Copilot/CopilotToolExecutor.cs`). Hereda así toda regla de alcance del handler (el asesor ve lo suyo, el costo
+  sólo con su permiso). La garantía es la de un request: con la caché de permisos de Valkey, lo que el miembro pierde vale en la
+  llamada siguiente o en ≤ 60 s.
+- **Herramientas** (lista cerrada en `Bootstrapper/Copilot`): reportes (`get_orders_summary`, `list_orders_report`,
+  `get_quotations_summary`, `list_quotations_report`, `get_customers_summary`, `get_margin_summary`,
+  `get_price_changes_summary`), pedidos y cotizaciones (`search_orders`, `get_order`, `search_quotations`, `get_quotation`),
+  clientes, catálogo y Mensajería (`search_customers`, `get_customer`, `search_products`, `get_product`,
+  `get_messaging_summary`), préstamos y contratos de servicio (`search_loans`, `get_loan`, `list_installments`,
+  `search_services`, `get_service`, `list_charges`). Los totales salen sólo de los resúmenes; las listas devuelven a lo sumo 20
+  filas con `total` y `truncated`. Los detalles son proyecciones: sin comprobantes, archivos, PDF, cuentas bancarias, notas de
+  clientes ni texto de conversaciones.
+- **Citas.** Cada fila trae `ref { kind, id, label }` (`order`, `quotation`, `customer`, `product`, `loan`, `service`,
+  `charge`); la respuesta sólo guarda las citas que salieron de un `ref` de **ese** trabajo, y el enlace lo arma el frontend
+  con `kind` + `id`.
+- **Asíncrono.** Preguntar responde 202 con la respuesta pendiente; `AiModelWorker` corre el trabajo y el frontend sondea el
+  hilo (`progress` dice qué herramienta está en curso).
+- **Retención y auditoría.** Un barrido diario borra los hilos sin actividad en la retención del tenant (`retentionDays`,
+  7..365, 90 por defecto) y los `tool_calls` del copiloto con más de `Ai:Copilot:ToolCallRetentionDays`. Guardar la
+  configuración y borrar un hilo (por el miembro o por la retención, actor sistema) quedan en la auditoría como
+  `ai.copilot.settings_updated` y `ai.copilot.thread_deleted`, sin texto de preguntas ni respuestas. `GET /settings` trae el
+  consumo del mes por miembro (`usageThisMonth.byMember`).
 
 **Agregar un proveedor** es tocar, juntos: `AiProviders` (Domain), el proveedor en Integrations con su migración del
 `CHECK` de `provider_key` y su probador de clave, un adaptador de `IAiModelClient` en
@@ -4673,6 +4723,9 @@ Remove-Item Env:QEP_EVAL_ANTHROPIC_API_KEY
   caso con rúbrica que pasó las reglas (hay 25 con rúbrica). El techo de una variante con juez es 43 × 6 + 25 = 283
   llamadas; un turno sin herramientas hace una sola, así que lo normal queda muy por debajo. `--dry-run` imprime la cuenta
   de turnos de la corrida que pidas.
+- **Copiloto:** `eval-set.json` trae además `copilotCases`, preguntas de agregado («¿cuánto vendimos este mes?») que deben
+  usar el resumen y nunca sumar filas de una lista. `--dry-run` las valida (herramientas que existen, pregunta de 1 a 2000
+  caracteres); todavía no se corren: falta el corredor del copiloto con herramientas de mentira.
 
 #### Despliegue
 
@@ -4683,7 +4736,9 @@ Remove-Item Env:QEP_EVAL_ANTHROPIC_API_KEY
 3. Backend con sus migraciones: `AddAi`, `AddAiModelRuns` y `AddAiSessions` (Ai), `AddAnthropicProvider` y
    `AddOpenAiProvider` (Integrations), `AddConnectionBots` y `AddAgentAutomation` (Messaging), `AddQuotationExternalKey`
    (Quotations) y `AddAiModuleKey` (Tenancy). El módulo nace apagado para todos: se prende por tenant cuando el frontend
-   esté listo.
+   esté listo. La fase 2 suma `AddBotDelegations` (Messaging), `AddChatbotBlockSessions` y `AddCopilot` (Ai) y
+   `AddCopilotModuleKey` (Tenancy); el módulo `copilot` también nace apagado. Sus `Down` no se corren en producción (ver
+   `CLAUDE.md`).
 4. Dashboard y alertas de la cola `ai_model` y de `qep.ai.model.*` van en el repo de plataforma, no en éste.
 
 ### Integración con Shopify

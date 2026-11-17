@@ -1298,6 +1298,36 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   agentes (`Modules.Ai.Application.HandoffCauseKind`) y `AutomationHandoffKind` (Messaging), traducidos por nombre en Bootstrapper. Un
   código de traspaso de agente nuevo tiene que pasar `AutomationHandoff.IsValidCode` o se guarda `null` sin error, y un proveedor nuevo
   tiene que sobrevivir la limpieza del hilo. Los amarra `HandoffCauseKindParityTests` (Bootstrapper.UnitTests).
+- **Toda transición que saca una conversación de `Active` (o le cambia el bot) limpia `automation_delegation_id`** (spec 2026-11-17 agente
+  IA en chatbots, plan fase 2 B1.1). `CK_conversations_delegation` sólo admite la delegación con `automation_status = 'Active'` y
+  `automation_bot_kind = 2`: tomar, resolver, pausar, transferir o terminar sin pasar por la limpieza central de `Conversation` falla en la
+  base, no en el dominio. Un método nuevo que mueva el estado de automatización pasa por ella.
+- **La toma humana de una conversación delegada señala a los dos bots** (B1.3). `ReleaseRunSignal.EnqueueIfAssisted` recibe la delegación
+  leída **antes** del cambio, como el bot: con una viva encola `bot_kind = 2` (la sesión del agente termina) **y** `bot_kind = 1` (la corrida
+  que espera en el bloque se interrumpe), y marca la delegación `Interrupted` en el mismo guardado. Con una sola señal, el otro bot queda
+  esperando una vuelta que nunca llega. Las filas `Delegated` y `AgentReturned` de `automation_inbox` no tienen mensaje: todo lector nuevo
+  de la cola va con `LEFT JOIN` al mensaje.
+- **Los `Down` de la fase 2 de agentes no se corren en producción.** `AddBotDelegations` (Messaging) sólo sobre una base sin delegaciones
+  vivas: con una, la conversación queda en `bot_kind = 2` sin agente que la devuelva. `AddChatbotBlockSessions` (Ai) falla con sesiones
+  `Returned` (el CHECK viejo no las admite) y se deshace entero. `AddCopilot` (Ai) falla con trabajos o consumo del copiloto (`agent_id`
+  nulo); borrarlos antes pierde el consumo pagado. `AddCopilotModuleKey` (Tenancy) falla si algún tenant ya tiene `copilot`. El rollback es
+  revertir el código con los módulos `ai` y `copilot` apagados.
+- **Sólo `CopilotToolExecutor` crea un `DelegatedExecutionContext`** (spec 2026-11-17 copiloto D-C3, plan C2.4). `IExecutionContext` sale
+  de una fábrica scoped: el delegado si el scope lo trae, el de HTTP si no. Abrir un scope delegado en otro lugar haría correr código como
+  un miembro que no pidió nada; lo amarra `CompositionRootTests` leyendo el IL. Ninguna herramienta del copiloto corre con
+  `AiServicePrincipal`.
+- **Las herramientas del copiloto sólo despachan consultas, y la misma del endpoint** (D-C4). `CopilotToolsTests` (ArchitectureTests) lee
+  el IL de `Bootstrapper.Copilot`: ningún `IRequestDispatcher.SendAsync`, ningún `ICommand<>`, nada de Integrations ni consultas
+  `Operator*`, y cada herramienta despacha algún `IQuery<>`. Una herramienta nueva usa la constante de permiso del módulo (no un texto
+  copiado), el módulo de su endpoint, esquema estricto, tope de 20 filas con `total`/`truncated`, y un `kind` de cita que el frontend
+  sepa enrutar (`citationRoute`; `charge` no tiene pantalla y sale como cita sin enlace). El tenant sale del hilo, nunca de un argumento.
+- **La garantía de permisos del copiloto es la de un request, no instantánea** (D-C3). Cada llamada a una herramienta resuelve los
+  permisos del miembro, pero con `Valkey:Areas:Permissions` prendido pasa por `CachedAuthorizationService`: lo que sube la versión de
+  acceso del tenant se ve en la llamada siguiente; lo que no, en ≤ 60 s.
+- **El texto del copiloto vive sólo en el hilo** (D-C13). Preguntas y respuestas están en `ai.copilot_messages` (y la respuesta ya pagada
+  en `model_jobs.result` hasta su commit); nunca en logs, auditoría ni `tool_calls`. La auditoría (`ai.copilot.settings_updated`,
+  `ai.copilot.thread_deleted`) es de metadatos: `IAiAuditRecorder.RecordCopilot` no tiene parámetro de texto libre. Borrar un hilo
+  guarda su auditoría en la misma transacción del borrado (`CopilotRepository.DeleteThreadAsync`). Lo amarra `CopilotNoLeakTests`.
 
 ## Verificación
 
