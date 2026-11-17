@@ -59,6 +59,9 @@ public static class ShopifyInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => ShopifyGraphQlClient.CreatePrimaryHandler())
             .RemoveAllLoggers();
         services.AddScoped<IShopifyOrdersSource, ShopifyGraphQlClient>();
+        // Spec 2026-11-17 §5.2: el catálogo, con el mismo transporte (y su propio balde por scope).
+        services.AddScoped<IShopifyProductsSource, ShopifyProductsClient>();
+        services.AddSingleton<IShopifyProductPayloadParser, ShopifyProductPayloadParser>();
         services.AddScoped<IShopifyReconcileLeases, ShopifyReconcileLeases>();
         return services;
     }

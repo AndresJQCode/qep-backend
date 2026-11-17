@@ -1,0 +1,66 @@
+{
+  "_source": "Sintético con la forma documentada de products(first:) de la Admin API GraphQL 2026-10.",
+  "data": {
+    "products": {
+      "pageInfo": { "hasNextPage": true, "endCursor": "cursor-page-1" },
+      "nodes": [
+        {
+          "id": "gid://shopify/Product/7001",
+          "title": "  Camiseta básica ",
+          "status": "ACTIVE",
+          "updatedAt": "2026-11-10T15:00:00Z",
+          "options": [
+            { "name": "Talla", "optionValues": [ { "name": "S" }, { "name": "M" } ] },
+            { "name": "Color", "optionValues": [ { "name": "Rojo" } ] }
+          ],
+          "featuredMedia": {
+            "id": "gid://shopify/MediaImage/9",
+            "preview": { "image": { "url": "https://cdn.shopify.com/s/files/1/0001/camiseta.jpg?v=1&width=2048" } }
+          },
+          "variants": {
+            "pageInfo": { "hasNextPage": false, "endCursor": "v-end" },
+            "nodes": [
+              {
+                "id": "gid://shopify/ProductVariant/4455",
+                "sku": "CAM-S-R",
+                "barcode": "7701234567890",
+                "price": "50000.00",
+                "taxable": true,
+                "selectedOptions": [ { "name": "Color", "value": "Rojo" }, { "name": "Talla", "value": "S" } ]
+              },
+              {
+                "id": "gid://shopify/ProductVariant/4456",
+                "sku": null,
+                "barcode": "",
+                "price": "52000.50",
+                "taxable": false,
+                "selectedOptions": [ { "name": "Talla", "value": "M" }, { "name": "Color", "value": "Rojo" } ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "gid://shopify/Product/7002",
+          "title": "Gorra",
+          "status": "DRAFT",
+          "updatedAt": "2026-11-11T08:30:00Z",
+          "options": [ { "name": "Title", "optionValues": [ { "name": "Default Title" } ] } ],
+          "featuredMedia": null,
+          "variants": {
+            "pageInfo": { "hasNextPage": false, "endCursor": null },
+            "nodes": [
+              {
+                "id": "gid://shopify/ProductVariant/4460",
+                "sku": "GOR-001",
+                "barcode": null,
+                "price": "30000",
+                "taxable": true,
+                "selectedOptions": [ { "name": "Title", "value": "Default Title" } ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
