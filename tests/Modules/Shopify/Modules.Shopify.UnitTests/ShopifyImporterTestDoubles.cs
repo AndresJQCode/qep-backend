@@ -19,6 +19,10 @@ internal sealed class FakeMemberDirectory : IShopifyMemberDirectory
 
     public Task<string?> NameAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
         Task.FromResult<string?>(null);
+
+    public Task<IReadOnlyList<ShopifyMemberOption>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyMemberOption>>(
+            Active.Select(id => new ShopifyMemberOption(id, id.ToString())).OrderBy(option => option.Name, StringComparer.Ordinal).ToArray());
 }
 
 internal sealed class FakeBillingAccounts : IShopifyBillingAccounts
@@ -369,6 +373,13 @@ internal sealed class FakeProductLinks : IShopifyProductLinkRepository
 
     public Task<IReadOnlySet<long>> ListLinkedShopifyVariantIdsAsync(Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<long>>(Rows.Where(link => link.ConnectionId == connectionId).Select(link => link.ShopifyVariantId).ToHashSet());
+
+    public Task<int> CountLinkedProductsAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Rows
+            .Where(link => link.TenantId == tenantId && link.ConnectionId == connectionId)
+            .Select(link => link.ProductId)
+            .Distinct()
+            .Count());
 
     public void Add(ShopifyProductLink link) => Rows.Add(link);
 

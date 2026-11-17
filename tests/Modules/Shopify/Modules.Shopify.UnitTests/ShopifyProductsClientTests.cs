@@ -38,6 +38,44 @@ public sealed class ShopifyProductsClientTests
         Assert.Equal("status:active OR status:draft", Variable(request.Body, "query"));
     }
 
+    // Spec 2026-11-17 (onboarding) §4.3: «¿Cobras impuestos?» se sugiere con una sola variante gravada.
+    [Fact]
+    public async Task TheTaxableQueryAsksForOneTaxableVariant()
+    {
+        var bed = new Bed((_, _) => Json(HttpStatusCode.OK, """
+            {"data":{"productVariants":{"nodes":[{"id":"gid://shopify/ProductVariant/1"}]}}}
+            """));
+
+        var taxable = await bed.Client.HasTaxableVariantAsync(Connection, Ct);
+
+        Assert.True(taxable);
+        var request = Assert.Single(bed.Handler.Requests);
+        using var body = JsonDocument.Parse(request.Body);
+        Assert.Contains(
+            "productVariants(first: 1, query: \"taxable:true\")",
+            body.RootElement.GetProperty("query").GetString(),
+            StringComparison.Ordinal);
+        Assert.Equal(Token, request.Token);
+    }
+
+    [Fact]
+    public async Task NoTaxableVariantIsFalse()
+    {
+        var bed = new Bed((_, _) => Json(HttpStatusCode.OK, """{"data":{"productVariants":{"nodes":[]}}}"""));
+
+        Assert.False(await bed.Client.HasTaxableVariantAsync(Connection, Ct));
+    }
+
+    [Fact]
+    public async Task AnUnreadableTaxableAnswerIsUnavailable()
+    {
+        var bed = new Bed((_, _) => Json(HttpStatusCode.OK, """{"data":{"productVariants":null}}"""));
+
+        var error = await Assert.ThrowsAsync<ShopifyProductsSourceException>(() => bed.Client.HasTaxableVariantAsync(Connection, Ct));
+
+        Assert.Equal(ShopifyProductsSourceFailure.Unavailable, error.Failure);
+    }
+
     [Fact]
     public async Task FetchProductsReadsThePageAndItsCursor()
     {

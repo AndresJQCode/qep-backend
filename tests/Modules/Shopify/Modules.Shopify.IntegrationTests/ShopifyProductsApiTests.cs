@@ -263,5 +263,8 @@ public sealed class ShopifyProductsApiTests
 
         public Task<ShopifyVariantKeysPage> ListVariantKeysAsync(ShopifyConnectionRef connection, string? cursor, CancellationToken cancellationToken) =>
             Task.FromResult(new ShopifyVariantKeysPage(variants, null));
+
+        public Task<bool> HasTaxableVariantAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
     }
 }

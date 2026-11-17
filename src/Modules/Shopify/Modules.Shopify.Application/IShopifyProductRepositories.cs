@@ -33,6 +33,10 @@ public interface IShopifyProductLinkRepository
     /// <summary>Todos los ids de variante de Shopify vinculados en esa conexión (modo <c>Missing</c> y cobertura).</summary>
     Task<IReadOnlySet<long>> ListLinkedShopifyVariantIdsAsync(Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-17 (onboarding) §7: los productos de QEP distintos con algún vínculo en esa conexión, para la
+    /// cabecera del asistente («productos sincronizados»).</summary>
+    Task<int> CountLinkedProductsAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     void Add(ShopifyProductLink link);
 
     void Remove(ShopifyProductLink link);

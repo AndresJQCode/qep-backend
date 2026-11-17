@@ -743,6 +743,14 @@ internal sealed class NamedMemberDirectory : IShopifyMemberDirectory
 
     public Task<string?> NameAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
         Task.FromResult(tenantId == StoreHandlersWorld.TenantId ? Names.GetValueOrDefault(membershipId) : null);
+
+    public Task<IReadOnlyList<ShopifyMemberOption>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyMemberOption>>(tenantId != StoreHandlersWorld.TenantId
+            ? []
+            : Active
+                .Select(id => new ShopifyMemberOption(id, Names.GetValueOrDefault(id) ?? id.ToString()))
+                .OrderBy(option => option.Name, StringComparer.Ordinal)
+                .ToArray());
 }
 
 internal sealed class FakeStoreReferences : IShopifyStoreReferences
@@ -756,6 +764,13 @@ internal sealed class FakeStoreReferences : IShopifyStoreReferences
 
     public Task<string?> ClassificationNameAsync(Guid tenantId, Guid classificationId, CancellationToken cancellationToken) =>
         Task.FromResult(Classifications.GetValueOrDefault((tenantId, classificationId)));
+
+    public Task<IReadOnlyList<ShopifyNamedRef>> ListClassificationsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShopifyNamedRef>>(Classifications
+            .Where(entry => entry.Key.TenantId == tenantId)
+            .Select(entry => new ShopifyNamedRef(entry.Key.ClassificationId, entry.Value))
+            .OrderBy(reference => reference.Name, StringComparer.Ordinal)
+            .ToArray());
 }
 
 internal sealed class FakeMembershipDirectory : IMembershipDirectory

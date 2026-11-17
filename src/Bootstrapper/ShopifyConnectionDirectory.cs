@@ -4,6 +4,9 @@ using Modules.Integrations.Domain;
 using Modules.Shopify.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
+using IntegrationsShopProfile = Modules.Integrations.Application.Shopify.ShopifyShopProfile;
+using ShopifyShopAddress = Modules.Shopify.Application.ShopifyShopAddress;
+using ShopifyShopProfile = Modules.Shopify.Application.ShopifyShopProfile;
 
 namespace Bootstrapper;
 
@@ -98,8 +101,32 @@ internal sealed class ShopifyConnectionDirectory(
             LinkedAt = connection.CreatedAt,
             // Spec 2026-11-17 §5.1: los scopes que guardó el canje; una tienda instalada antes de read_products no lo tiene.
             Scopes = ShopifyScopes.Parse(connection.Fields.GetValueOrDefault(ShopifyFieldKeys.Scopes)),
+            Profile = ToProfile(IntegrationsShopProfile.TryParse(connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopProfile))),
         };
     }
+
+    /// <summary>Spec 2026-11-17 (onboarding) §2: el perfil que guardó Integrations, campo por campo en la copia de Shopify (los
+    /// dos records se llaman igual a propósito). Un perfil ausente o roto ya llega como <c>null</c> de
+    /// <see cref="IntegrationsShopProfile.TryParse"/>.</summary>
+    private static ShopifyShopProfile? ToProfile(IntegrationsShopProfile? profile) =>
+        profile is null
+            ? null
+            : new ShopifyShopProfile(
+                profile.Email,
+                profile.ContactEmail,
+                profile.CurrencyCode,
+                profile.TaxesIncluded,
+                profile.BillingAddress is not { } address
+                    ? null
+                    : new ShopifyShopAddress(
+                        address.Company,
+                        address.Address1,
+                        address.Address2,
+                        address.City,
+                        address.Province,
+                        address.ProvinceCode,
+                        address.CountryCode,
+                        address.Phone));
 
     // Operativa = conexión Active, módulo shopify efectivo en el tenant (§5.2) y un token que descifra. El módulo se revisa acá
     // aunque ResolveAsync ya mire la visibilidad del proveedor: es la regla de Shopify, no un detalle de Integrations.

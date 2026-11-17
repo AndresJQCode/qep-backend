@@ -79,6 +79,14 @@ internal sealed class ShopifyProductLinkRepository(ShopifyDbContext dbContext) :
         return ids.ToHashSet();
     }
 
+    public Task<int> CountLinkedProductsAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.ProductLinks
+            .AsNoTracking()
+            .Where(link => link.TenantId == tenantId && link.ConnectionId == connectionId)
+            .Select(link => link.ProductId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+
     public void Add(ShopifyProductLink link) => dbContext.ProductLinks.Add(link);
 
     public void Remove(ShopifyProductLink link) => dbContext.ProductLinks.Remove(link);

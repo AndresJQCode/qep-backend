@@ -17,6 +17,10 @@ public interface IShopifyProductsSource
 
     /// <summary>Una página de 250 variantes (activas o borradores) con su SKU, para la cobertura.</summary>
     Task<ShopifyVariantKeysPage> ListVariantKeysAsync(ShopifyConnectionRef connection, string? cursor, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4.3: si alguna variante de la tienda es gravada
+    /// (<c>productVariants(first: 1, query: "taxable:true")</c>). Es la sugerencia de «¿Cobras impuestos?».</summary>
+    Task<bool> HasTaxableVariantAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken);
 }
 
 public enum ShopifyProductsSourceFailure

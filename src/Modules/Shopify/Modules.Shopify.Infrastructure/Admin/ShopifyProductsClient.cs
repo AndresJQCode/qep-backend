@@ -54,6 +54,10 @@ internal sealed partial class ShopifyProductsClient(
         "query VariantKeys($after: String) { productVariants(first: 250, after: $after, query: \"product_status:active OR product_status:draft\") { "
         + PageInfo + " nodes { id sku product { title } } } }";
 
+    // Spec 2026-11-17 (onboarding) §4.3: basta una variante gravada para sugerir «cobra impuestos».
+    internal const string TaxableVariantQuery =
+        "query TaxableVariant { productVariants(first: 1, query: \"taxable:true\") { nodes { id } } }";
+
     private readonly ShopifyGraphQlTransport transport = new(httpClientFactory, apiVersion, time);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Shopify {Operation} failed: {Failure} (HTTP {StatusCode}, {Detail})")]
@@ -126,6 +130,13 @@ internal sealed partial class ShopifyProductsClient(
         }
 
         return new ShopifyVariantKeysPage(keys, NextCursor(variants, "variant_keys"));
+    }
+
+    public async Task<bool> HasTaxableVariantAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken)
+    {
+        var data = await SendAsync("taxable_variant", connection, TaxableVariantQuery, new JsonObject(), cancellationToken);
+        var nodes = data?["productVariants"]?["nodes"] as JsonArray ?? throw Unusable("taxable_variant", "no_variants");
+        return nodes.Count > 0;
     }
 
     /// <summary>Las páginas siguientes de <c>variants</c> del producto, sin tope; el cursor tiene que avanzar. <c>false</c> si el

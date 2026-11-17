@@ -1440,6 +1440,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyCatalogWriter, ShopifyCatalogWriter>();
         services.AddScoped<IShopifyProductImageStore, ShopifyProductImageStore>();
         services.AddScoped<IShopifyReauthorization, ShopifyReauthorization>();
+        // Spec 2026-11-17 (onboarding) §4.2: el asistente crea la empresa con el caso de uso de Companies.
+        services.AddScoped<IShopifySetupCompanies, ShopifySetupCompanies>();
         // §6.2: el importador y, con él, el procesador de entregas y su worker. Sin estas tres líneas el webhook
         // responde 200, encola y nadie procesa nunca; CompositionRootTests arma el contenedor con ValidateOnBuild y resuelve el
         // worker para que eso no pase en silencio.

@@ -45,9 +45,34 @@ public sealed record ShopifyConnectionRef(
     /// adaptador no los sabe. <see cref="ShopifyScopes.CanReadProducts"/> decide con ellos.</summary>
     public IReadOnlyCollection<string> Scopes { get; init; } = [];
 
+    /// <summary>Spec 2026-11-17 (onboarding) §2, plan D1: el perfil de la tienda que guardó Integrations (el campo interno
+    /// <c>shopProfile</c>); <c>null</c> si nunca se leyó o está roto. Lleva correo y teléfono: <see cref="ToString"/> lo
+    /// omite.</summary>
+    public ShopifyShopProfile? Profile { get; init; }
+
     public override string ToString() =>
         $"ShopifyConnectionRef {{ TenantId = {TenantId}, ConnectionId = {ConnectionId}, ShopId = {ShopId}, ShopDomain = {ShopDomain}, IsOperational = {IsOperational} }}";
 }
+
+/// <summary>
+/// Spec 2026-11-17 (onboarding) §2: el perfil de la tienda como lo ve este módulo. Copia de forma del de Integrations
+/// (<c>Modules.Integrations.Application.Shopify.ShopifyShopProfile</c>), que Shopify no ve; <c>ShopifyConnectionDirectory</c>
+/// (Bootstrapper) mapea campo por campo. <see cref="Email"/>, <see cref="ContactEmail"/> y el teléfono son datos personales del
+/// comerciante: no van a logs, auditoría ni eventos.
+/// </summary>
+public sealed record ShopifyShopProfile(
+    string? Email, string? ContactEmail, string? CurrencyCode, bool? TaxesIncluded, ShopifyShopAddress? BillingAddress);
+
+/// <summary>La dirección de facturación de la tienda. <see cref="CountryCode"/> es el <c>countryCodeV2</c> de Shopify.</summary>
+public sealed record ShopifyShopAddress(
+    string? Company,
+    string? Address1,
+    string? Address2,
+    string? City,
+    string? Province,
+    string? ProvinceCode,
+    string? CountryCode,
+    string? Phone);
 
 /// <summary>Spec 2026-10-15 §5.2 y §5.3: avisarle a Integrations que la tienda dejó de responder. Adaptador en Bootstrapper sobre
 /// <c>IConnectionHealthReporter</c>: <see cref="ReportUninstalledAsync"/> con <c>app_uninstalled</c>,
@@ -665,7 +690,14 @@ public interface IShopifyMemberDirectory
 
     /// <summary>El nombre visible de la membresía o, sin él, el correo del usuario. <c>null</c> si no es del tenant.</summary>
     Task<string?> NameAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4.1: las membresías activas del tenant con su nombre (el de
+    /// <see cref="NameAsync"/>), en orden de nombre. Son las opciones del paso «Asesor».</summary>
+    Task<IReadOnlyList<ShopifyMemberOption>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
+
+/// <summary>Una membresía activa elegible como asesor de la tienda.</summary>
+public sealed record ShopifyMemberOption(Guid MembershipId, string Name);
 
 /// <summary>Spec 2026-10-15 §6.1: la cuenta de cobro de la tienda se valida contra Companies, con la misma comparación que
 /// Quotations (banco sin mayúsculas, número exacto, los dos recortados).</summary>
@@ -708,6 +740,64 @@ public interface IShopifyStoreReferences
     Task<string?> CompanyNameAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken);
 
     Task<string?> ClassificationNameAsync(Guid tenantId, Guid classificationId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4.1: las clasificaciones activas del tenant, en orden de nombre. Son las opciones
+    /// del paso «Compradores».</summary>
+    Task<IReadOnlyList<ShopifyNamedRef>> ListClassificationsAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Un id con su nombre visible.</summary>
+public sealed record ShopifyNamedRef(Guid Id, string Name);
+
+/// <summary>Una cuenta bancaria de una empresa, como la elige o la crea el asistente.</summary>
+public sealed record ShopifySetupBankAccount(string BankName, string AccountNumber, string Currency);
+
+/// <summary>Una empresa activa del tenant como la dibuja el paso «Empresa» del asistente.</summary>
+/// <param name="DocumentType">El nombre del tipo de documento de Companies (<c>NIT</c>, <c>CC</c>…).</param>
+/// <param name="Country">ISO 3166-1 alfa-2.</param>
+public sealed record ShopifySetupCompanyRef(
+    Guid Id,
+    string Name,
+    string TaxId,
+    string DocumentType,
+    string Country,
+    bool ChargesVat,
+    IReadOnlyList<ShopifySetupBankAccount> BankAccounts);
+
+/// <summary>Lo que el asistente manda para crear la empresa (spec 2026-11-17 onboarding §4.2, plan D5). Las reglas son las de
+/// Companies: el validador de <c>CreateCompanyCommand</c> responde con sus claves.</summary>
+/// <param name="CityId">Obligatoria en <c>CO</c>.</param>
+/// <param name="CityName">El texto de la ciudad fuera de <c>CO</c>.</param>
+/// <param name="BankAccount">La cuenta de cobro, si viene (spec §7 H3); se guarda en la empresa.</param>
+public sealed record ShopifySetupCompanyDraft(
+    Guid TenantId,
+    string Name,
+    string TaxId,
+    string? DocumentType,
+    string Country,
+    Guid? CityId,
+    string? CityName,
+    string? Address,
+    string? Phone,
+    string? Email,
+    bool ChargesVat,
+    ShopifySetupBankAccount? BankAccount);
+
+/// <summary>
+/// Spec 2026-11-17 (onboarding) §4.2. Adaptador en Bootstrapper sobre Companies. <see cref="CreateAsync"/> corre
+/// <c>ICommandHandler&lt;CreateCompanyCommand, CompanyDto&gt;</c> (autorización, validador, ciudad, siembra de tasas): sus
+/// excepciones salen tal cual (<c>ValidationException</c> con las claves de Companies, <c>CompaniesDomainException</c>,
+/// <c>RequestForbiddenException</c>).
+/// </summary>
+public interface IShopifySetupCompanies
+{
+    /// <summary>Las empresas activas del tenant, por nombre.</summary>
+    Task<IReadOnlyList<ShopifySetupCompanyRef>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>La empresa si es del tenant y está activa; si no, <c>null</c>.</summary>
+    Task<ShopifySetupCompanyRef?> FindActiveAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken);
+
+    Task<ShopifySetupCompanyRef> CreateAsync(ShopifySetupCompanyDraft draft, CancellationToken cancellationToken);
 }
 
 /// <summary>Un sinónimo de Geography como lo necesita el trabajo de corrección: su ciudad <b>actual</b> y si está borrado (spec

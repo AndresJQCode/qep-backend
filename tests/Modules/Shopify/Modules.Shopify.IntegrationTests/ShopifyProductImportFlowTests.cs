@@ -136,6 +136,9 @@ public sealed class ShopifyProductImportFlowTests
         public Task<ShopifyShopInfo> ReadShopAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken) =>
             Task.FromResult(new ShopifyShopInfo("COP", true, products.Count));
 
+        public Task<bool> HasTaxableVariantAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
+
         public Task<ShopifyProductsPage> FetchProductsAsync(ShopifyConnectionRef connection, string? cursor, CancellationToken cancellationToken)
         {
             lock (Cursors)

@@ -98,6 +98,8 @@ public sealed class ShopifyLayerTests
     [InlineData(typeof(IShopifyCatalogWriter))]
     [InlineData(typeof(IShopifyProductImageStore))]
     [InlineData(typeof(IShopifyReauthorization))]
+    // Spec 2026-11-17 (onboarding) §4.2: la empresa del asistente se crea con el caso de uso de Companies, desde Bootstrapper.
+    [InlineData(typeof(IShopifySetupCompanies))]
     public void TheCatalogWriterAndImageStoreLiveInBootstrapper(Type port)
     {
         var bootstrapper = typeof(Bootstrapper.QepServiceCollectionExtensions).Assembly;

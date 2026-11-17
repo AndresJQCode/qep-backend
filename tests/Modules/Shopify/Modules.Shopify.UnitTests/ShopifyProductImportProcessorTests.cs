@@ -311,6 +311,17 @@ internal sealed class FakeProductsSource : IShopifyProductsSource
         return ShopFailure is { } failure ? Task.FromException<ShopifyShopInfo>(failure) : Task.FromResult(Shop);
     }
 
+    /// <summary>Lo que responde la sugerencia de «¿Cobras impuestos?» (spec 2026-11-17 onboarding §4.3).</summary>
+    public bool Taxable { get; set; }
+
+    public int TaxableRequests { get; private set; }
+
+    public Task<bool> HasTaxableVariantAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken)
+    {
+        TaxableRequests++;
+        return ShopFailure is { } failure ? Task.FromException<bool>(failure) : Task.FromResult(Taxable);
+    }
+
     public Task<ShopifyProductsPage> FetchProductsAsync(ShopifyConnectionRef connection, string? cursor, CancellationToken cancellationToken)
     {
         Cursors.Add(cursor);

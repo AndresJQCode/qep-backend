@@ -82,7 +82,24 @@ public interface IShopifyOrderMirrorRepository
     /// <summary>Spec 2026-11-14 §6: las filas de una página de cambios, en una sola lectura y sin tracking. Las que no son del tenant
     /// no aparecen.</summary>
     Task<IReadOnlyList<ShopifyOrderMirror>> ListByIdsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-17 (onboarding) §4.1, plan D11: las filas <c>Waiting</c> de la conexión agrupadas por motivo, con hasta 5
+    /// SKU distintos no nulos de <c>wait_detail-&gt;'skus'</c> para <c>product_unmatched</c> (vacía para los demás). Con
+    /// <paramref name="shopifyOrderIds"/> sólo esos pedidos; <c>null</c> son todos. Orden: cantidad descendente y luego motivo
+    /// ordinal. Siempre filtra por tenant y conexión.
+    /// </summary>
+    Task<IReadOnlyList<ShopifyWaitingGroup>> SummarizeWaitingAsync(
+        Guid tenantId, Guid connectionId, IReadOnlyCollection<long>? shopifyOrderIds, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (onboarding) §7: los pedidos de la conexión importados desde <paramref name="since"/>
+    /// (<c>imported_at &gt;= since</c>), para la cabecera del asistente.</summary>
+    Task<int> CountImportedSinceAsync(Guid tenantId, Guid connectionId, DateTimeOffset since, CancellationToken cancellationToken);
 }
+
+/// <summary>Los pedidos en espera de una tienda por un motivo. <see cref="Sample"/>: hasta 5 SKU para
+/// <c>product_unmatched</c>; <c>[]</c> para los demás.</summary>
+public sealed record ShopifyWaitingGroup(string Reason, int Count, IReadOnlyList<string> Sample);
 
 /// <summary>Spec 2026-11-14 §3 y §6: los cambios de Shopify (<c>shopify.order_edits</c>). Con tracking salvo las listas; lo
 /// agregado commitea con <see cref="IShopifyUnitOfWork"/>. Todo método recibe <c>tenantId</c>.</summary>
