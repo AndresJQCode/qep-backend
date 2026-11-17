@@ -601,6 +601,21 @@ internal static class QuotationsApiHarness
             TestContext.Current.CancellationToken);
     }
 
+    /// <summary>
+    /// Deja al tenant sin tasa de IVA del envío. Desde el spec 2026-11-17 §5.3, crear una empresa colombiana con IVA por la
+    /// API (<see cref="CreateCompanyWithBankAccountAsync"/>, <see cref="CreateSentQuotationAsync"/>) fija la de 19 %: la
+    /// prueba que necesita el tenant sin ella la borra después de crear la empresa. Por SQL, para no pedir el permiso de
+    /// ajustes del tenant.
+    /// </summary>
+    public static async Task ClearFreightTaxRateAsync(QepApiFactory factory, Guid tenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"UPDATE quotations.tenant_quotation_settings SET freight_tax_rate_id = NULL WHERE tenant_id = {tenantId}",
+            TestContext.Current.CancellationToken);
+    }
+
     /// <summary>Una sentencia SQL suelta contra la base del host (para simular un documento anterior a una migración).
     /// Devuelve las filas afectadas.</summary>
     public static async Task<int> ExecuteSqlAsync(QepApiFactory factory, string sql)

@@ -105,6 +105,8 @@ public sealed class CompanyVatApiTests(SharedQuotationsHost sharedHost) : IClass
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var withoutVat = await CreateCompanyAsync(client, tenantId, cityId, chargesVat: false);
         var withVat = await CreateCompanyAsync(client, tenantId, cityId, chargesVat: true);
+        // La empresa con IVA fija «IVA 19%» como tasa del envío (spec 2026-11-17 §5.3); el fixture la quiere vacía.
+        await ClearFreightTaxRateAsync(factory, tenantId);
         return new Fixture(client, tenantId, clientId, productId, cityId, withoutVat, withVat);
     }
 
