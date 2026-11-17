@@ -170,6 +170,17 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithMessage("The city is required.")
             .When(row => IsBlank(row.City) && (!IsBlank(row.Department) || (!IsUpdate(row) && cityRequired)));
 
+        // La celda «Etiquetas» (spec 2026-11-17) se lee con ExcelTagCell, la misma lectura del handler: cada nombre con el largo
+        // de una etiqueta, y nunca más de las que un cliente puede tener. Lo que depende de la base (las que el cliente ya tiene,
+        // el tope del tenant) lo decide el handler, también como error de fila.
+        RuleFor(row => row.Tags)
+            .Must(cell => ExcelTagCell.Parse(cell).All(name => name.Length <= Tag.NameMaxLength))
+                .WithErrorCode("customers.import.row.tag_name_too_long")
+                .WithMessage($"A tag name cannot exceed {Tag.NameMaxLength} characters.")
+            .Must(cell => ExcelTagCell.Parse(cell).Count <= CustomerTagAssignment.MaxPerCustomer)
+                .WithErrorCode("customers.import.row.tag_limit_per_customer")
+                .WithMessage($"A customer cannot have more than {CustomerTagAssignment.MaxPerCustomer} tags.");
+
         RuleFor(row => row.VatSurplus)
             .Must(BeSiOrNoOrEmpty)
                 .WithErrorCode("customers.import.row.vat_surplus_invalid")
@@ -1182,7 +1193,8 @@ public sealed class ImportCustomersHandler(
         // P9: el campo heredado se queda en el contrato para no romper al frontend que reenvía la fila, siempre null.
         ReteIca: null,
         row.VatSurplus,
-        row.CompanyIdentificationNumber);
+        row.CompanyIdentificationNumber,
+        row.Tags);
 
     private static string EnsureAcceptableFile(string fileName, long sizeInBytes)
     {

@@ -1,4 +1,4 @@
-using Modules.Tenancy.Application;
+﻿using Modules.Tenancy.Application;
 
 namespace Modules.Customers.Application;
 
@@ -15,9 +15,12 @@ public interface ICustomerExportBuilder
     /// van en su hora (spec 2026-09-17, punto 8a), y <c>calendar.UtcNow</c> es el instante en que se
     /// generó. El <paramref name="dateTimePattern"/> es el formato de fecha del tenant más la hora
     /// (<c>RegionalDateFormat.WithTime</c>, D-R7): las fechas de texto se escriben con él.</summary>
+    /// <para><paramref name="tagNamesByCustomer"/> son las etiquetas de cada cliente, por id, en el orden en que se escriben; el
+    /// que no tiene aparece sin entrada y su celda queda vacía (spec 2026-11-17).</para>
     CustomerExportFile Build(
         IReadOnlyList<CustomerDto> customers,
         IReadOnlyDictionary<Guid, string> companyIdentificationNumbers,
+        IReadOnlyDictionary<Guid, IReadOnlyList<string>> tagNamesByCustomer,
         TenantCalendar calendar,
         string dateTimePattern,
         CancellationToken cancellationToken);

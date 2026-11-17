@@ -1,4 +1,4 @@
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
 using Modules.Customers.Application;
 using Modules.Customers.Infrastructure.Excel;
 
@@ -166,17 +166,35 @@ public sealed class ClosedXmlCustomerImportTemplateBuilderTests
     }
 
     [Fact]
-    public void TheTemplateEndsWithTheCompanyColumn()
+    public void TheTemplateEndsWithTheOptionalColumns()
     {
         using var workbook = BuildWorkbook();
 
         var headers = workbook.Worksheet("Clientes").Row(1).CellsUsed().Select(cell => cell.GetString()).ToArray();
 
-        // Las trece de siempre, en su orden, y «Empresa» después: un archivo viejo sigue siendo válido porque la última es opcional.
-        Assert.Equal(CustomerImportColumns.Ordered.Count + 1, headers.Length);
+        // Las trece de siempre, en su orden, y las opcionales después («Empresa», «Etiquetas»): un archivo viejo sigue siendo
+        // válido porque las últimas son opcionales.
+        Assert.Equal(CustomerImportColumns.Ordered.Count + 2, headers.Length);
         Assert.Equal(CustomerImportColumns.Ordered, headers.Take(CustomerImportColumns.Ordered.Count));
-        Assert.Equal("Empresa", headers[^1]);
+        Assert.Equal(["Empresa", "Etiquetas"], headers.Skip(CustomerImportColumns.Ordered.Count));
         Assert.DoesNotContain(CustomerImportColumns.Company, CustomerImportColumns.Ordered);
+        Assert.DoesNotContain(CustomerImportColumns.Tags, CustomerImportColumns.Ordered);
+    }
+
+    [Fact]
+    public void TheFailedRowsFileCarriesTheTagsCell()
+    {
+        var failed = new CustomerImportRowData(
+            null, "Ana", null, "CC", "1010", "3001112233", null, "Calle 2", "Antioquia", "Medellin", "", Retefuente: null, ReteIca: null,
+            VatSurplus: "No", null, Tags: "Evento macel; VIP");
+        using var workbook = new XLWorkbook(new MemoryStream(
+            builder.BuildWithRows(Departments, Classifications, IdentificationTypes, [failed], CancellationToken.None)));
+
+        var sheet = workbook.Worksheet("Clientes");
+        var column = CustomerImportColumns.Ordered.Count + 2;
+
+        Assert.Equal("Etiquetas", sheet.Cell(1, column).GetString());
+        Assert.Equal("Evento macel; VIP", sheet.Cell(2, column).GetString());
     }
 
     [Fact]

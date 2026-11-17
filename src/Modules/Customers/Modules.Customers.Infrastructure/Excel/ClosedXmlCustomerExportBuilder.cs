@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using ClosedXML.Excel;
 using Modules.Customers.Application;
 using Modules.Tenancy.Application;
@@ -50,6 +50,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     public CustomerExportFile Build(
         IReadOnlyList<CustomerDto> customers,
         IReadOnlyDictionary<Guid, string> companyIdentificationNumbers,
+        IReadOnlyDictionary<Guid, IReadOnlyList<string>> tagNamesByCustomer,
         TenantCalendar calendar,
         string dateTimePattern,
         CancellationToken cancellationToken)
@@ -70,6 +71,8 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
                 index + 2,
                 customers[index],
                 companyIdentificationNumbers.GetValueOrDefault(customers[index].Id, string.Empty),
+                // El mismo separador que el importador lee (ExcelTagCell): un exportado se vuelve a subir sin perder etiquetas.
+                string.Join(ExcelTagCell.Separator + " ", tagNamesByCustomer.GetValueOrDefault(customers[index].Id, [])),
                 calendar,
                 dateTimePattern);
         }
@@ -94,10 +97,10 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     // es un error de programacion (alguien sumo una columna a la importacion y no al export): falla
     // aca y no deja un archivo con las columnas corridas.
     private static void WriteRow(
-        IXLWorksheet sheet, int excelRow, CustomerDto customer, string companyIdentificationNumber,
+        IXLWorksheet sheet, int excelRow, CustomerDto customer, string companyIdentificationNumber, string tags,
         TenantCalendar calendar, string dateTimePattern)
     {
-        var values = RowValues(customer, companyIdentificationNumber, calendar, dateTimePattern);
+        var values = RowValues(customer, companyIdentificationNumber, tags, calendar, dateTimePattern);
         for (var column = 0; column < Columns.Count; column++)
         {
             sheet.Cell(excelRow, column + 1).Value = values.TryGetValue(Columns[column], out var value)
@@ -110,7 +113,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     // clasificacion y del departamento/ciudad, no sus ids. Un incompleto deja vacio lo que no tiene
     // (spec 2026-10-10 §5.2).
     private static Dictionary<string, string> RowValues(
-        CustomerDto customer, string companyIdentificationNumber, TenantCalendar calendar, string dateTimePattern) =>
+        CustomerDto customer, string companyIdentificationNumber, string tags, TenantCalendar calendar, string dateTimePattern) =>
         new(StringComparer.Ordinal)
     {
         [CustomerImportColumns.Cuc] = customer.Cuc ?? string.Empty,
@@ -145,6 +148,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         [CompletenessColumn] = customer.IsComplete ? "Completa" : "Incompleta",
         [PersonTypeColumn] = customer.PersonType ?? string.Empty,
         [CustomerImportColumns.Company] = companyIdentificationNumber,
+        [CustomerImportColumns.Tags] = tags,
     };
 
     private static string RateName(CustomerDto customer, string type) =>

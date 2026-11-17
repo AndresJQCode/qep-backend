@@ -1,4 +1,4 @@
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
 using Modules.Customers.Application;
 
 namespace Modules.Customers.Infrastructure.Excel;
@@ -84,6 +84,9 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             var company = indexes.ContainsKey(CustomerImportColumns.Company)
                 ? Cell(row, indexes, CustomerImportColumns.Company)
                 : null;
+            var tags = indexes.ContainsKey(CustomerImportColumns.Tags)
+                ? Cell(row, indexes, CustomerImportColumns.Tags)
+                : null;
 
             // Una fila completamente vacia es ruido de formato (una fila en blanco que Excel deja
             // entre los datos y el final de la hoja), no una fila de datos que haya que reportar
@@ -92,7 +95,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 identificationType is null &&
                 identificationNumber is null && phone is null && email is null &&
                 address is null && department is null && city is null &&
-                classification is null && retefuente is null && vatSurplus is null && company is null)
+                classification is null && retefuente is null && vatSurplus is null && company is null && tags is null)
             {
                 continue;
             }
@@ -112,7 +115,8 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 classification,
                 retefuente,
                 vatSurplus,
-                company));
+                company,
+                tags));
         }
 
         return new ExcelCustomerImportFile(true, rows, withholdingColumns);
