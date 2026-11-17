@@ -1156,6 +1156,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>, ListTemplatesHandler>();
         services.AddScoped<ICommandHandler<SendTemplateMessageCommand, MessageDto>, SendTemplateMessageHandler>();
         services.AddScoped<ICommandHandler<StartConversationCommand, StartConversationResult>, StartConversationHandler>();
+        // Spec 2026-11-17: abrir la conversación del cliente sin enviar. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<OpenCustomerConversationCommand, OpenCustomerConversationResult>, OpenCustomerConversationHandler>();
         // Messaging (spec 2026-10-11 §6.2): campañas. Cada handler a mano: sin registro, 500.
         services.AddScoped<IQueryHandler<ListCampaignsQuery, CampaignPageDto<CampaignSummaryDto>>, ListCampaignsHandler>();
         services.AddScoped<IQueryHandler<GetCampaignQuery, CampaignDetailDto>, GetCampaignHandler>();
