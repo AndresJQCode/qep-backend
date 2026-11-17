@@ -786,6 +786,16 @@ public sealed class CustomerMergeApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    // Decisión del owner 2026-11-16: cada vínculo que la fusión cambia deja su company_changed, como PUT …/company. Cuenta todos,
+    // los del vínculo de la preparación incluidos.
+    private static async Task<long> CompanyChangesAsync(string connectionString, Guid customer) =>
+        long.Parse(
+            (await TextAsync(
+                connectionString,
+                "SELECT count(*) FROM platform.outbox_messages "
+                + $"WHERE payload->>'action' = '{CustomerAuditActions.CompanyChanged}' AND payload->>'resourceId' = '{customer}'"))!,
+            CultureInfo.InvariantCulture);
+
     private static Task<string?> CompanyOfAsync(string connectionString, Guid customer) =>
         TextAsync(connectionString, $"SELECT company_id FROM customers.customers WHERE id = '{customer}'");
 
@@ -837,6 +847,10 @@ public sealed class CustomerMergeApiTests
         Assert.Null(await CompanyOfAsync(arranged.ConnectionString, company));
         Assert.Null(await CompanyOfAsync(arranged.ConnectionString, survivor));
         await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+        Assert.Equal(
+            (2L, 2L, 0L, 0L),
+            (await CompanyChangesAsync(arranged.ConnectionString, first), await CompanyChangesAsync(arranged.ConnectionString, second),
+             await CompanyChangesAsync(arranged.ConnectionString, company), await CompanyChangesAsync(arranged.ConnectionString, survivor)));
     }
 
     [Fact]
@@ -856,6 +870,9 @@ public sealed class CustomerMergeApiTests
         Assert.Null(await CompanyOfAsync(arranged.ConnectionString, contact));
         Assert.Equal(company.ToString(), await MergedIntoAsync(arranged.ConnectionString, contact));
         await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+        Assert.Equal(
+            (2L, 0L),
+            (await CompanyChangesAsync(arranged.ConnectionString, contact), await CompanyChangesAsync(arranged.ConnectionString, company)));
     }
 
     [Fact]
@@ -878,6 +895,10 @@ public sealed class CustomerMergeApiTests
         Assert.Equal(JsonValueKind.Null, body.GetProperty("company").ValueKind);
         Assert.Equal(1, body.GetProperty("contactCount").GetInt32());
         await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+        Assert.Equal(
+            (2L, 2L, 0L),
+            (await CompanyChangesAsync(arranged.ConnectionString, survivor), await CompanyChangesAsync(arranged.ConnectionString, other),
+             await CompanyChangesAsync(arranged.ConnectionString, company)));
     }
 
     [Fact]
