@@ -312,6 +312,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.Imported).HasColumnName("imported").HasDefaultValue(false).HasSentinel(false);
         conversation.Property(value => value.StartedByEcho).HasColumnName("started_by_echo").HasDefaultValue(false).HasSentinel(false);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
+        // Spec 2026-11-17 §5.3: la columna llega con la migración AddBotDelegations (Task B1.2).
+        conversation.Ignore(value => value.AutomationDelegationId);
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
         // y el segundo pisa el filtro del primero.

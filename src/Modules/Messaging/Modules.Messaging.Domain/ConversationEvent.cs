@@ -36,6 +36,13 @@ public enum ConversationEventType
 
     /// <summary>Soporte fase 2 (plan E11): se cerró un ticket que sigue esta conversación (va al final).</summary>
     TicketClosed,
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: el chatbot delegó la conversación en un agente de IA (va al final). Lleva el
+    /// chatbot en <c>ChatbotId</c>.</summary>
+    AutomationDelegated,
+
+    /// <summary>Spec 2026-11-17 §5.3: el agente devolvió la conversación al chatbot que la delegó (va al final). Lleva el chatbot.</summary>
+    AutomationReturned,
 }
 
 /// <summary>
