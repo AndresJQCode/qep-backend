@@ -60,6 +60,9 @@ public static class QuotationChangeSummary
     public static string Resent(string? contactName = null) =>
         contactName is null ? "Reenviada al cliente con su PDF." : Trim($"Reenviada a {contactName} con su PDF.");
 
+    /// <summary>Sin destinatario ni PDF: QEP no mandó nada, sólo anota lo que dice el asesor.</summary>
+    public static string MarkedSent() => "Marcada como enviada por fuera de QEP.";
+
     /// <summary>
     /// Un intento de envío que falló, contado para quien vende y no para quien programa.
     ///
