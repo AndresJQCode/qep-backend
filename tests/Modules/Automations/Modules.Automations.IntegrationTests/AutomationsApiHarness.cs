@@ -229,6 +229,8 @@ internal static class AutomationsApiHarness
             // Sin vigilar archivos de configuración (MessagingApiHarness explica el límite de FSEvents de macOS).
             builder.UseSetting("hostBuilder:reloadConfigOnChange", "false");
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

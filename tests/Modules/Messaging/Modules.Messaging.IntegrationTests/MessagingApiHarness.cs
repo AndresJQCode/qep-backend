@@ -259,6 +259,8 @@ internal static class MessagingApiHarness
             builder.UseSetting("hostBuilder:reloadConfigOnChange", "false");
             // Pool acotado sólo en pruebas: un host no puede acaparar las conexiones del contenedor compartido.
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 80 }.ConnectionString);
+            // Pinned, never inherited: the developer's user-secrets may turn the seed on.
+            builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
