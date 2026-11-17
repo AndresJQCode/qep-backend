@@ -108,6 +108,8 @@ public static class MultiReplicaInventory
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyRepositories.cs:199-202 — lease por tienda (reconcile_lease_until)"),
         new("Modules.Shopify.Infrastructure.Workers.ShopifyOrderPushWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyOrderPushQueue.cs:36-39 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por envío"),
+        new("Modules.Shopify.Infrastructure.Workers.ShopifyProductImportWorker", WorkerClassification.Claimed,
+            "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyProductImportQueue.cs:27-32 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por importación"),
         // Un solo hosted drena en secuencia los trece consumidores de correo (spec 2026-11-13, D-7); cada uno reclama igual que antes.
         new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
 

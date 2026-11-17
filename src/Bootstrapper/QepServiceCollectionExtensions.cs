@@ -1479,6 +1479,9 @@ public static class QepServiceCollectionExtensions
         services.AddShopifyOrderEditDecisions();
         // Spec 2026-11-14 §5: el worker que manda a Shopify las correcciones (orderUpdate).
         services.AddShopifyOrderPushes();
+        // Spec 2026-11-17 §5.2: la importación de productos (procesador, cola y worker), sobre los adaptadores de Catalog y Storage
+        // registrados arriba.
+        services.AddShopifyProductSync();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los

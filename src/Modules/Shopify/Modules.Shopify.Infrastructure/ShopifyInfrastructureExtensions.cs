@@ -141,6 +141,22 @@ public static class ShopifyInfrastructureExtensions
         return services;
     }
 
+    /// <summary>
+    /// Spec 2026-11-17 §5.2: la importación de productos y su worker. El procesador y la regla de precios dependen de
+    /// <see cref="IShopifyConnectionDirectory"/>, <see cref="IShopifyBillingAccounts"/>, <see cref="IShopifyCatalogWriter"/> (Bootstrapper)
+    /// y de <c>ITenantPriceRounding</c> (Tenancy): Bootstrapper lo llama después de esos registros. Las pruebas quitan el worker y lo
+    /// corren a mano (<c>DrainAsync</c>).
+    /// </summary>
+    public static IServiceCollection AddShopifyProductSync(this IServiceCollection services)
+    {
+        services.AddScoped<ShopifyProductPricingResolver>();
+        services.AddScoped<IShopifyProductSyncScope, ShopifyProductSyncScope>();
+        services.AddScoped<IShopifyProductImportQueue, ShopifyProductImportQueue>();
+        services.AddScoped<ShopifyProductImportProcessor>();
+        services.AddHostedService<ShopifyProductImportWorker>();
+        return services;
+    }
+
     /// <summary>§5.3: el cron de la conciliación. Requiere <see cref="AddShopifyWebhookProcessing"/>; las pruebas lo quitan y lo
     /// corren a mano.</summary>
     public static IServiceCollection AddShopifyReconcileWorker(this IServiceCollection services)
