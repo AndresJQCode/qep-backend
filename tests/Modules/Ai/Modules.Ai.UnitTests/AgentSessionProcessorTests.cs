@@ -304,7 +304,10 @@ public sealed class AgentSessionProcessorTests
         var agent = PublishedAgent(provider: "openai");
         var session = world.Sessions.Live(agent);
         world.Conversations.State = State("Active", "Agent", agent.Id);
-        var job = HeldJob(session, """{"type":"failed","kind":"ProviderFailed","failureReason":"ProviderError","code":"ai.provider.quota_exhausted"}""");
+        // La forma que escribe StoredOutcome.Write: opciones Web sin conversor de enums, así que kind y failureReason viajan como números.
+        var job = HeldJob(
+            session,
+            $$"""{"type":"failed","kind":{{(int)AgentFailureKind.ProviderFailed}},"failureReason":{{(int)AgentFailureReason.ProviderError}},"code":"ai.provider.quota_exhausted"}""");
 
         await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
 
