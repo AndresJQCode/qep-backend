@@ -275,8 +275,10 @@ public sealed class CreatePosSaleHandler(
             }
 
             // Basta con que cambie uno: un cambio sólo de tasa no mueve el total (IVA incluido) pero
-            // sí el desglose del ticket.
-            if (price != line.ExpectedUnitPrice || product.TaxPercentage != line.ExpectedTaxPercentage)
+            // sí el desglose del ticket. La tasa es la efectiva de la caja (spec 2026-11-17 R4): en una
+            // caja sin IVA, quien mande la del producto vio otra vista previa.
+            var taxPercentage = session.EffectiveTaxPercentage(product.TaxPercentage);
+            if (price != line.ExpectedUnitPrice || taxPercentage != line.ExpectedTaxPercentage)
             {
                 throw new PosDomainException(
                     "pos.sale.price_changed", $"The price or tax rate of '{product.Code}' changed.");
@@ -286,7 +288,7 @@ public sealed class CreatePosSaleHandler(
             decimal? unitCost = unitCosts.TryGetValue(line.VariantId, out var cost) ? cost : null;
             return new PosSaleLineInput(
                 product.VariantId, product.ProductId, product.Code, product.Name, line.Quantity, price,
-                line.DiscountPercentage, product.TaxPercentage, unitCost);
+                line.DiscountPercentage, taxPercentage, unitCost);
         }).ToArray();
     }
 

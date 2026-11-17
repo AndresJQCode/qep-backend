@@ -200,6 +200,22 @@ public sealed class ProductAndPreviewHandlersTests
         Assert.Equal((2_380m, 3_420m, 18_000m, 21_420m), (shampoo.DiscountAmount, shampoo.TaxAmount, shampoo.Subtotal, shampoo.LineTotal));
     }
 
+    // Spec 2026-11-17 R4: en una caja de empresa sin IVA la tasa efectiva es 0 y el total es el precio de lista.
+    [Fact]
+    public async Task APreviewOfACashSessionWithoutVatHasNoTax()
+    {
+        var bed = new PosTestBed();
+        bed.AddWorkedExampleProducts();
+        bed.OpenSessionInStore(chargesVat: false);
+
+        var preview = await Preview(bed, Seller).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, [new(Shampoo, 1m, 0m)]), TestContext.Current.CancellationToken);
+
+        var line = Assert.Single(preview.Lines);
+        Assert.Equal((0, 0m, 11_900m), (line.TaxPercentage, line.TaxAmount, line.LineTotal));
+        Assert.Equal((0m, 11_900m), (preview.TaxAmount, preview.Total));
+    }
+
     // Spec 2026-10-27: la vista previa lee la regla del tenant en cada llamada.
     [Fact]
     public async Task ThePreviewUsesTheTenantRule()

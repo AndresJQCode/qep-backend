@@ -57,6 +57,42 @@ public sealed class PosSaleApiTests
         Assert.Equal(11_900m, original!.Total);
     }
 
+    // Spec 2026-11-17 R4: la caja de una empresa sin IVA vende al precio de lista con tasa 0; mandar la tasa del producto es
+    // pos.sale.price_changed.
+    [Fact]
+    public async Task ASaleOfACashSessionWithoutVatHasNoTaxAndTheProductRateIsPriceChanged()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database, chargesVat: false);
+        var session = await world.OpenSessionAsync(world.Admin);
+        object[] withoutVat =
+        [
+            new { variantId = world.Shampoo, quantity = 1m, discountPercentage = 0m, expectedUnitPrice = 11_900m, expectedTaxPercentage = 0 },
+        ];
+
+        var preview = await world.Admin.PostAsJsonAsync(
+            $"{world.Url}/sales/preview",
+            new { lines = new[] { new { variantId = world.Shampoo, quantity = 1m, discountPercentage = 0m } } },
+            TestContext.Current.CancellationToken);
+        var stale = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
+            PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, world.PlainLine(), PosWorld.CashPayment(20_000m)),
+            TestContext.Current.CancellationToken);
+        var created = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
+            PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, withoutVat, PosWorld.CashPayment(20_000m)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var previewed = await preview.Content.ReadFromJsonAsync<PosPreviewResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal((0, 0m, 11_900m), (previewed!.Lines[0].TaxPercentage, previewed.TaxAmount, previewed.Total));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, stale.StatusCode);
+        Assert.Contains("pos.sale.price_changed", await stale.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var sale = await created.Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal((0m, 11_900m), (sale!.TaxAmount, sale.Total));
+        Assert.All(sale.Lines, line => Assert.Equal((0, 0m), (line.TaxPercentage, line.TaxAmount)));
+    }
+
     // Spec, «Integración»: dos POST idénticos en paralelo, repetido 20 veces → cada vez una fila,
     // las dos respuestas 2xx y el mismo saleNumber. Si el planificador serializa las dos peticiones,
     // las dos salidas son repeticiones válidas (preflight F-24). El camino del choque 412/id_taken lo

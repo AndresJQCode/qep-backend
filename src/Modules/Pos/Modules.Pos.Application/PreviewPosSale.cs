@@ -56,11 +56,13 @@ public sealed class PreviewPosSaleHandler(
         var found = await products.FindManyAsync(
             command.TenantId, command.Lines.Select(line => line.VariantId).Distinct().ToArray(), cancellationToken);
 
-        var currency = await PosSellingCurrency.ResolveAsync(
+        // La moneda y el IVA de la caja abierta (spec 2026-11-17 R4): la vista previa cobra lo mismo que el POST.
+        var selling = await PosSellingCurrency.ResolveContextAsync(
             sessions, membershipDirectory, tenantDefaultCurrency, executionContext, command.TenantId, cancellationToken);
+        var currency = selling.Currency;
         // La regla se lee en cada vista previa: la que cobra la venta es la vigente al cobrar (spec 2026-10-27 D8).
         var rounding = await priceRounding.GetAsync(command.TenantId, currency, cancellationToken);
-        var lines = command.Lines.Select(line => ToLine(line, found, currency, rounding)).ToArray();
+        var lines = command.Lines.Select(line => ToLine(line, found, selling, rounding)).ToArray();
         var sellable = lines.Where(line => line.Sellable).ToArray();
         var subtotal = VatIncludedLine.Round(sellable.Sum(line => line.Subtotal));
         var tax = VatIncludedLine.Round(sellable.Sum(line => line.TaxAmount));
@@ -76,9 +78,10 @@ public sealed class PreviewPosSaleHandler(
     }
 
     private static PosPreviewLineResponse ToLine(
-        PosPreviewLineRequest line, IReadOnlyDictionary<Guid, PosProductRef> found, string currency,
+        PosPreviewLineRequest line, IReadOnlyDictionary<Guid, PosProductRef> found, PosSellingContext selling,
         PriceRounding rounding)
     {
+        var currency = selling.Currency;
         if (!found.TryGetValue(line.VariantId, out var product))
         {
             return new PosPreviewLineResponse(
@@ -87,19 +90,20 @@ public sealed class PreviewPosSaleHandler(
         }
 
         var price = product.PriceIn(currency);
+        var taxPercentage = selling.EffectiveTaxPercentage(product.TaxPercentage);
         var reason = PosProductMapping.UnsellableReason(product, currency);
         if (reason is not null)
         {
             return new PosPreviewLineResponse(
-                line.VariantId, product.ProductId, product.Code, product.Name, line.Quantity, price, product.TaxPercentage,
+                line.VariantId, product.ProductId, product.Code, product.Name, line.Quantity, price, taxPercentage,
                 line.DiscountPercentage, 0m, 0m, 0m, 0m, false, reason);
         }
 
         var amounts = VatIncludedLine.Compute(
-            line.Quantity, price!.Value, line.DiscountPercentage, product.TaxPercentage, rounding);
+            line.Quantity, price!.Value, line.DiscountPercentage, taxPercentage, rounding);
         return new PosPreviewLineResponse(
             line.VariantId, product.ProductId, product.Code, product.Name, line.Quantity,
-            VatIncludedLine.ChargedListPrice(price.Value, rounding), product.TaxPercentage,
+            VatIncludedLine.ChargedListPrice(price.Value, rounding), taxPercentage,
             line.DiscountPercentage, amounts.DiscountAmount, amounts.TaxAmount, amounts.Subtotal, amounts.LineTotal,
             true, null);
     }
