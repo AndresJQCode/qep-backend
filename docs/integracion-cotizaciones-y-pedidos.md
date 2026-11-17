@@ -23,6 +23,8 @@ diferencia con la respuesta real de la API, **gana la API** y este documento se 
 Quotation.status: Draft → Sent → Converted
                               ↘ Voided (desde Draft o Sent)
                               ↘ Expired (job automático, sólo desde Sent)
+                  Draft → Sent por dos caminos: `/send` (QEP la manda por WhatsApp; historial `Sent`)
+                                                o `/mark-sent` (el asesor ya la mandó por fuera; historial `MarkedSent`)
 
 Order.status:        Pending → Approved → Invoiced
                      Invoiced → Approved (revertir la facturación; no anula nada fuera de QEP)
@@ -70,6 +72,7 @@ Todo lo que cuelga de `/quotations/{id}/items...` sigue siendo de la cotización
 | `PUT` | `/quotations/{id}/items/{itemId}` | `UpdateQuotationItemRequest` | Re-resuelve el descuento para la nueva cantidad |
 | `DELETE` | `/quotations/{id}/items/{itemId}` | — | |
 | `POST` | `/quotations/{id}/send` | `SendQuotationRequest` | El PDF ya se subió a Storage antes de este llamado (ver abajo) |
+| `POST` | `/quotations/{id}/mark-sent` | — (sin body) | 200 `QuotationResponse` en `Sent`. Marca como enviada una cotización que el asesor ya le hizo llegar al cliente por fuera de QEP (su propio WhatsApp, un correo). Genera y guarda el PDF, pero no lo publica ni manda nada. Deja en el historial `eventType: "MarkedSent"` (no `Sent`) y publica el mismo evento de envío para el embudo. Exige `quotations.quotation.manage`. 422 `quotation.quotation.not_draft`, `quotation.quotation.valid_until_required`, `quotation.billing.account_required`, `quotation.billing.identification_required`, `quotation.billing.person_type_required` y los del cliente (`quotation.quotation.client_not_found`, `client_incomplete`, `client_cuc_missing`, `client_inactive`) |
 | `POST` | `/quotations/{id}/void` | — (sin body) | |
 | `GET` | `/quotations/{id}/order` | — | 200 `OrderDetailResponse`, el mismo de `GET /orders/{orderId}`. 404 si no se convirtió todavía |
 | `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | 201 `OrderDetailResponse` (el mismo de `GET /orders/{orderId}`: la pantalla dibuja el resumen sin pedir nada después) + `Location`. Copia la cotización a un pedido en `Pending` (`source: "Quotation"`) y la deja en `Converted`, en una sola operación. Las notas del pedido son un solo campo: `notes` las reemplaza tal cual; `null` u omitido hereda las de la cotización; `""` (o en blanco) deja el pedido sin notas |
@@ -283,7 +286,7 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 |---|---|---|
 | `quotation.quotation.client_not_found` / `client_incomplete` / `client_inactive` / `client_cuc_missing` | 422 | Cliente inválido al crear (también en `/quotations/preview`) o al convertir |
 | `quotation.quotation.not_editable` | 422 | La cotización no está en `Draft`/`Sent` |
-| `quotation.quotation.not_draft` | 422 | `send` sobre algo que no es `Draft` |
+| `quotation.quotation.not_draft` | 422 | `send` o `mark-sent` sobre algo que no es `Draft` |
 | `quotation.quotation.not_sent` | 422 | `void`/convertir sobre algo que no es `Sent` (void también acepta Draft) |
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |

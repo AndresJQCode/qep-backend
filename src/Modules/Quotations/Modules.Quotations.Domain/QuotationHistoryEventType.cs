@@ -34,4 +34,10 @@ public enum QuotationHistoryEventType
     /// restableció, o una re-resolución descartó uno editado. Va al final: se guarda como texto.
     /// </summary>
     WithholdingRateEdited,
+
+    /// <summary>
+    /// El asesor la marcó como enviada por fuera de QEP (spec 2026-11-17): pasó a <c>Sent</c> sin que QEP mandara nada.
+    /// Va aparte de <see cref="Sent"/> porque ese dice que QEP sí la entregó con su PDF. Va al final: se guarda como texto.
+    /// </summary>
+    MarkedSent,
 }

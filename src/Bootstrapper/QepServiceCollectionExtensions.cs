@@ -900,6 +900,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<SendQuotationCommand, QuotationDto>,
             SendQuotationHandler>();
         services.AddScoped<
+            ICommandHandler<MarkQuotationSentCommand, QuotationDto>,
+            MarkQuotationSentHandler>();
+        services.AddScoped<
             ICommandHandler<VoidQuotationCommand, QuotationDto>,
             VoidQuotationHandler>();
         services.AddScoped<
