@@ -967,7 +967,7 @@ public sealed class SupportReplyOutboundTests
         var sent = Assert.IsType<SupportReplySendResult.Sent>(await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(
             new SupportFormalTemplateSend(
                 f.Tenant.TenantId, f.ConversationId, null, null, null, "Ana Pérez", Guid.CreateVersion7(), f.MemberId, "SOP-000127",
-                "Revisamos tu caso", FormalPdf(), "Respuesta-SOP-000127.pdf"),
+                "Revisamos tu caso.", FormalPdf(), "Respuesta-SOP-000127.pdf"),
             Ct)));
 
         Assert.Equal(f.ConversationId, sent.ConversationId);
@@ -1007,7 +1007,7 @@ public sealed class SupportReplyOutboundTests
         var result = await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(
             new SupportFormalTemplateSend(
                 f.Tenant.TenantId, f.ConversationId, null, null, null, "Ana Pérez", Guid.CreateVersion7(), f.MemberId, "SOP-000127",
-                "Revisamos tu caso", FormalPdf(), "Respuesta-SOP-000127.pdf"),
+                "Revisamos tu caso.", FormalPdf(), "Respuesta-SOP-000127.pdf"),
             Ct));
 
         Assert.Equal(new SupportReplySendResult.Rejected("template_not_approved"), result);
