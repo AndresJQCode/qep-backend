@@ -109,10 +109,10 @@ public sealed class AgentBlockSessionProcessorTests
 
     /// <summary>La fila Delegated: su message_id no es un mensaje ni la delegación (B1.3).</summary>
     private static AiInboxItem DelegatedRow(AiDelegation delegation) =>
-        new(Guid.CreateVersion7(), Tenant, Connection, Conversation, false, Now, 1, ReleaseRun: false, DelegationId: delegation.DelegationId);
+        new(Guid.CreateVersion7(), Tenant, Connection, Conversation, Now, 1, ReleaseRun: false, DelegationId: delegation.DelegationId);
 
     private static AiInboxItem InboundRow() =>
-        new(Guid.CreateVersion7(), Tenant, Connection, Conversation, false, Now, 1, ReleaseRun: false);
+        new(Guid.CreateVersion7(), Tenant, Connection, Conversation, Now, 1, ReleaseRun: false);
 
     [Fact]
     public async Task ADelegatedRowOpensABlockSessionWithoutGreeting()

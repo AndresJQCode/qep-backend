@@ -284,7 +284,7 @@ internal sealed class AiInbox(IAutomationInbox inbox) : IAiInbox
     public async Task<IReadOnlyList<AiInboxItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken) =>
     [
         .. (await inbox.ClaimAsync(now, batch, BotKind.Agent, cancellationToken)).Select(item => new AiInboxItem(
-            item.MessageId, item.TenantId, item.ConnectionId, item.ConversationId, item.Opened, item.CreatedAt, item.Attempts,
+            item.MessageId, item.TenantId, item.ConnectionId, item.ConversationId, item.CreatedAt, item.Attempts,
             ReleaseRun: item.Kind == AutomationInboxKinds.ReleaseRun,
             DelegationId: item.Kind == AutomationInboxKinds.Delegated ? item.DelegationId : null)),
     ];
