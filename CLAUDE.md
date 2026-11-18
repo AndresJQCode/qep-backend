@@ -1387,7 +1387,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El link de la invitación de mayorista sale de `Notifications:AppBaseUrl`** (`AccountLinks.WholesaleInvitation`, ruling W1),
   no de una variable propia: no hay `WholesaleInvitationUrl` que dar de alta en el pipeline. El token viaja sólo en el payload
   del outbox; `SensitivePaths.Mask` lo tapa en `platform.request_failures` y en su línea de log, también el de la invitación de
-  miembros. Una ruta nueva con un secreto en un segmento se suma ahí.
+  miembros, y `SensitivePathTelemetry` (registrado en `Program.cs` después de `AddQepLogging`) con la misma regla en el
+  `url.path` de los spans de OpenTelemetry y en el scope `RequestPath` de cada log del request. Una ruta nueva con un secreto en
+  un segmento se suma ahí.
 - **«Por aprobar» de un pedido `Wholesale` es `WholesaleApprovedAt`, no un estado** (mayorista fase 3, D-1). `OrderStatus` sigue
   `Open/Archived/Cancelled`; pendiente es `Open` sin `wholesale_approved_at`. Aprobado deja de ser editable (`IsEditable`, D-3):
   la aprobación ya le llevó las líneas al distribuidor y una edición posterior nunca le llegaría. «Lo anuló el comprador» tampoco
