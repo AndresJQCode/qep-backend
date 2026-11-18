@@ -20,7 +20,9 @@ Decisiones del owner (conversación del 2026-11-18):
   documento. Cada conexión tiene su propia configuración; el asistente se muestra al crearla y la configuración queda
   editable en cualquier momento.
 - La factura se emite electrónica a la DIAN. Aun así, cada conexión tiene el interruptor **«Enviar a la DIAN al
-  generar»**, prendido por defecto.
+  generar»**, que **nace apagado** (owner, 2026-11-18, porque no hay cuenta de pruebas: §9).
+- El flete se factura **junto con el pedido o en una factura aparte, según la configuración de cada conexión** (owner,
+  2026-11-18).
 - Enfoque elegido: **A** (§4), un módulo `Siigo` propio, como `Shopify`.
 
 Las decisiones que tomé yo van marcadas **[decisión del diseño]**.
@@ -157,7 +159,8 @@ Una fila de configuración por conexión, creada vacía al crear la conexión (o
 | `document_type_id` | Id de Siigo del comprobante de venta (FV) | Sí |
 | `seller_id` | Id de usuario de Siigo que va como vendedor | Sí |
 | `cost_center_id` | Centro de costo de Siigo | No |
-| `send_to_dian` | «Enviar a la DIAN al generar», `stamp.send`. Default `true` según el owner (con `HasSentinel(true)`, precedente `allow_attachments`); **propuesta pendiente de su respuesta: `false` al crear la conexión** (§9), porque sin cuenta de pruebas una factura emitida no se borra | — |
+| `send_to_dian` | «Enviar a la DIAN al generar», `stamp.send`. **Default `false`** (owner, 2026-11-18): sin cuenta de pruebas, una factura emitida no se borra (§9). Es un `false` explícito en el modelo y en la columna (`HasDefaultValue(false)`); la pantalla avisa mientras esté apagado | — |
+| `freight_separate_invoice` | El flete sale en una factura aparte (un ítem, cantidad 1) y no como un ítem más de la factura del pedido. Default `false` **[decisión del diseño]**: una sola factura por pedido, que es lo simple | — |
 | `send_mail` | `mail.send`: Siigo le manda la factura al cliente. Default `false` **[decisión del diseño]** | — |
 | `freight_product_code` | Código del producto o servicio de Siigo que factura el flete | Sólo si el pedido cobra flete |
 | `warehouse_id` | Bodega de Siigo para los ítems (`items[].warehouse`); el contrato observado la manda en cada ítem | Sólo si los productos llevan control de inventario (V-8) |
@@ -273,14 +276,16 @@ rechazo. `POST …/siigo-invoice/stamp` reintenta el envío (`POST /v1/invoices/
 
 ### 5.6 Estado y pantalla
 
-`siigo.invoices`: `id`, `tenant_id`, `connection_id`, `order_id`, `status` (`Pending` | `Created` | `Stamped` |
+`siigo.invoices`: `id`, `tenant_id`, `connection_id`, `order_id`, `kind` (`Order` | `Freight`: una fila por factura, y con
+`freight_separate_invoice` un pedido puede tener las dos), `status` (`Pending` | `Created` | `Stamped` |
 `StampRejected` | `Rejected` | `Unknown` | `Failed`), `idempotency_key`, `request_json`, `siigo_invoice_id`,
 `number`, `cufe`, `siigo_total`, `error_code`, `error_detail` (de Siigo, recortado; sin datos del cliente), `attempts`,
-`created_by`, `created_at`, `updated_at`. Índice único parcial `(tenant_id, order_id) WHERE status NOT IN ('Rejected',
-'Failed')`, traducido por nombre a `409 siigo.invoice.already_exists`: el candado da la respuesta amable, el índice cierra
-la carrera (precedente `IX_orders_tenant_external_key`).
+`created_by`, `created_at`, `updated_at`. Índice único parcial `(tenant_id, order_id, kind) WHERE status NOT IN
+('Rejected', 'Failed')`, traducido por nombre a `409 siigo.invoice.already_exists`: el candado da la respuesta amable, el
+índice cierra la carrera (precedente `IX_orders_tenant_external_key`).
 
-- `GET …/orders/{orderId}/siigo-invoice` → la fila vigente o 404.
+- `GET …/orders/{orderId}/siigo-invoice` → las filas vigentes del pedido, una por `kind` (la del pedido y, si hay, la de
+  flete), o 404. `resolve` y el reintento reciben el `kind` (`Order` por defecto).
 - `POST …/orders/{orderId}/siigo-invoice/resolve` con `{ "outcome": "exists", "number": "FV-1-123" }` o
   `{ "outcome": "missing" }`, sólo desde `Unknown`: la persona miró en Siigo. `exists` marca el pedido con ese número;
   `missing` pasa la fila a `Failed` y libera el pedido para facturar de nuevo. Auditoría con quién lo resolvió.
@@ -332,7 +337,20 @@ exija, V-6).
   `price` = precio unitario **sin IVA** derivado de `Subtotal` (6 decimales) y `discount` = `DiscountPercentage`; `taxes`
   = el vínculo de `TaxPercentage` (sin `taxes` si es 0 y no hay vínculo del 0). **El builder decide** entre `price` y
   `taxed_price` con la prueba de cuadre (§6.4) como juez.
-- Flete cobrado (`FreightSubtotal > 0`) → un ítem con `freight_product_code`, cantidad 1, su IVA vinculado.
+- Flete cobrado (`FreightSubtotal > 0`) → un ítem con `freight_product_code`, cantidad 1, su IVA vinculado. Con
+  `freight_separate_invoice` apagado va como un ítem más de la factura del pedido. Con la opción prendida va en **su propia
+  factura** (`kind = Freight`), con un solo ítem, la observación «Flete del pedido N» y su propia `Idempotency-Key`, y las
+  dos facturas se arman así **[decisión del diseño]**:
+  - La del pedido (`kind = Order`) lleva las líneas, las retenciones y el total `ProductsTotal` menos retenciones; la de
+    flete lleva sólo el flete con su IVA (`FreightSubtotal` + `FreightTaxAmount`) y **ninguna retención**, porque la base
+    de retenciones de QEP sale de las líneas y no incluye el flete (`WithholdingBases.From(items)`).
+  - Cada factura valida su propio total (§6.4) y cada una tiene sus `payments` que suman **su** neto. La propuesta reparte
+    los comprobantes primero a la del pedido y lo que sobre a la de flete; el saldo de cada una va a contraentrega o a
+    crédito, y quien factura puede cambiar el reparto antes de enviar (el `POST` acepta `payments` por factura).
+  - Se crea primero la del pedido. **El pedido se marca facturado cuando la del pedido sale** (§5.5); la de flete sigue
+    después en la misma petición y, si Siigo la rechaza, queda `Rejected` con el pedido ya marcado y la pantalla ofrece
+    «Facturar flete» para reintentar sólo esa. Una sin la otra es un estado válido, no un error del pedido.
+  - `send_to_dian` aplica a las dos por igual.
 - `AppliedWithholdings` → por vínculo (`withholding_links`). **Sólo se manda el id**: el monto lo calcula Siigo, así que
   el de QEP (porcentaje y base mínima por UVT) puede no coincidir, y ahí actúa el rechazo `invalid_total_payments`
   (§6.4). **Dónde va depende del tipo**: ReteICA en `retentions` de la factura; ReteFuente en los `taxes` de **cada
@@ -403,9 +421,8 @@ protege para que ninguna de ellas pueda salir mal sin que se vea:
 - **Las primeras facturas de cada conexión salen con «Enviar a la DIAN» apagado.** Es el interruptor que ya existe
   (§5.2), no un modo de pruebas: la factura queda creada en Siigo, sin emitir, y una persona la revisa allá antes de
   prender el interruptor. Una factura emitida a la DIAN no se borra, y sin cuenta de pruebas es la única red que hay.
-  **[propuesta del diseño, pendiente del owner]** La conexión nace con el interruptor **apagado** y no prendido como
-  dijo el owner (§1, §5.2), y la pantalla de configuración avisa que mientras esté apagado nada llega a la DIAN. Prenderlo
-  es una decisión de quien configura. Si el owner prefiere prendido por defecto, el resto del diseño no cambia.
+  **Decisión del owner (2026-11-18):** la conexión nace con el interruptor **apagado**, y la pantalla de configuración
+  avisa que mientras esté apagado nada llega a la DIAN. Prenderlo es una decisión de quien configura.
 - Una factura creada y sin emitir se borra a mano en Siigo; QEP no la borra, y `resolve` con `missing` libera el pedido.
 - Toda respuesta o error inesperado de Siigo se guarda recortado en la fila (sin datos del cliente) para poder ajustar el
   armado de la petición sin volver a facturar.
@@ -426,10 +443,8 @@ protege para que ninguna de ellas pueda salir mal sin que se vea:
   autorretención: dónde van y si QEP las necesita; **(d)** si una factura sin emitir se puede borrar por API
   (`DELETE /v1/invoices/{id}`), para no depender de borrar a mano.
 - **V-8** Cuándo exige Siigo la bodega en un ítem (productos con control de inventario) y si un servicio la rechaza.
-- **P-1 (decisión del owner, pendiente)** El contrato observado factura el flete **en una factura aparte** (un ítem,
-  cantidad 1, observación «Flete del pedido N», su propia clave de idempotencia). Este diseño lo pone como un ítem de la
-  misma factura (§6.3). Si el flete va aparte hay dos facturas por pedido, dos números y dos envíos a la DIAN, y la marca
-  de facturado depende de las dos; si va junto, una sola. Mientras no se decida rige «junto».
+- **P-1 (resuelta, owner 2026-11-18)** El contrato observado factura el flete en una factura aparte; este diseño lo deja
+  como opción por conexión (`freight_separate_invoice`, §5.2 y §6.3).
 
 Conexión y empresa **[decisión del diseño]**: cambiar la empresa de una conexión se permite; las facturas ya emitidas
 conservan su `connection_id` y los pedidos nuevos se enrutan por la empresa vigente. Borrar la conexión en Integrations
