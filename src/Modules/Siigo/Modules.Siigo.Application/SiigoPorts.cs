@@ -100,3 +100,20 @@ public interface ISiigoVariantCatalog
     /// se pinta, y armar el de cada variante costaría las opciones de todo el catálogo.</summary>
     Task<IReadOnlyList<SiigoVariantRef>> ListAllActiveCodesAsync(Guid tenantId, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Quotations. El pedido tal como el armador de la factura lo necesita, y la marca de «facturado» una vez que Siigo la creó (spec
+/// 2026-11-18 §5.5). El adaptador (<c>SiigoOrderSource</c>, Bootstrapper) llena <see cref="Invoicing.SiigoInvoiceInput"/> desde el
+/// contrato <c>IExternalOrderInvoicing</c> de Quotations y traduce los enums de documento y de persona por nombre; Siigo nunca referencia
+/// tipos de Quotations.
+/// </summary>
+public interface ISiigoOrderSource
+{
+    /// <summary>La foto del pedido, o <c>null</c> si no es del tenant. Lanza los mismos 422 que la marca manual cuando el pedido no se
+    /// puede facturar (anulado, ya facturado, sin pagar, sin datos del cliente).</summary>
+    Task<Invoicing.SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
+    /// <summary>Marca el pedido como facturado en Siigo con el número de la factura y su id. Idempotente.</summary>
+    Task MarkInvoicedAsync(
+        Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken);
+}

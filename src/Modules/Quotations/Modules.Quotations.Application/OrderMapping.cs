@@ -77,7 +77,9 @@ internal static class OrderMapping
         [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)],
         order.OrderDate,
         order.RequiresShipping,
-        WholesaleOf(order));
+        WholesaleOf(order),
+        order.InvoiceProvider,
+        order.InvoiceNumber);
 
     /// <summary>Mayorista fase 3: el vínculo del pedido con la orden del distribuidor; null fuera de un pedido mayorista.</summary>
     public static OrderWholesaleState? WholesaleOf(Order order) =>

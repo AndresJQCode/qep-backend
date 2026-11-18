@@ -99,6 +99,21 @@ public sealed class OrderInvoicingHandlerTests
         Assert.Equal(["quotation.order.invoice_reverted"], audit.Actions);
     }
 
+    // Spec 2026-11-18 §5.5: con una factura de Siigo saliendo o sin resolver, la marca manual espera.
+    [Fact]
+    public async Task InvoicingWithAnOpenExternalInvoiceIsAConflictAndMarksNothing()
+    {
+        var row = NewPaidRow();
+        var audit = new RecordingQuotationAuditPublisher();
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            InvoiceAsync(NewInvoiceHandler(row, audit, Invoicer(), externalInvoiceOpen: true), row));
+
+        Assert.Equal("order.order.external_invoice_pending", error.Code);
+        Assert.False(row.IsInvoiced);
+        Assert.Empty(audit.Actions);
+    }
+
     // Spec 2026-11-10 §3.4 y §6: el pago completo lo exige el ajuste del tenant, que arranca prendido.
     [Fact]
     public async Task InvoicingRequiresFullPaymentByDefault()
@@ -189,7 +204,8 @@ public sealed class OrderInvoicingHandlerTests
         RecordingQuotationAuditPublisher audit,
         IExecutionContext executionContext,
         FixedQuotationSettingsStore? settings = null,
-        StubQuotationCustomerLookup? customer = null) =>
+        StubQuotationCustomerLookup? customer = null,
+        bool externalInvoiceOpen = false) =>
         new(
             new StubOrderListRepository(row),
             new NoOpQuotationsUnitOfWork(),
@@ -208,7 +224,8 @@ public sealed class OrderInvoicingHandlerTests
                 Guid.CreateVersion7(), TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
                 "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
                 PersonType: "Natural", Country: "CO",
-                IdentificationNumber: "900123456", IdentificationType: "NIT")));
+                IdentificationNumber: "900123456", IdentificationType: "NIT")),
+            new FixedExternalInvoiceStatus(externalInvoiceOpen));
 
     private static RevertOrderInvoicingHandler NewRevertHandler(
         Order row,
@@ -249,5 +266,10 @@ public sealed class OrderInvoicingHandlerTests
         public TenantId TenantId { get; } = new(tenantId);
 
         public bool HasPermission(string permission) => grantedPermissions.Contains(permission);
+    }
+
+    private sealed class FixedExternalInvoiceStatus(bool open) : IExternalInvoiceStatus
+    {
+        public Task<bool> HasOpenInvoiceAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) => Task.FromResult(open);
     }
 }

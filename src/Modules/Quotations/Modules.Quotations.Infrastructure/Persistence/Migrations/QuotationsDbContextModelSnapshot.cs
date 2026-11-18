@@ -309,6 +309,21 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("global_scale_floor");
 
+                    b.Property<string>("InvoiceExternalId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("invoice_external_id");
+
+                    b.Property<string>("InvoiceNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("invoice_number");
+
+                    b.Property<string>("InvoiceProvider")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("invoice_provider");
+
                     b.Property<DateTimeOffset?>("InvoicedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("invoiced_at");

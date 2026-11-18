@@ -1086,6 +1086,10 @@ public static class QepServiceCollectionExtensions
         // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
         // consume; ningún consumidor referencia Modules.Quotations.Application.
         services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
+        // Spec 2026-11-18 §5.5: el pedido visto por un facturador externo (Siigo) y la pregunta «¿hay una factura externa abierta?» que
+        // la marca manual hace antes de marcar. Quotations declara los dos puertos; el segundo lo implementa Bootstrapper sobre siigo.invoices.
+        services.AddScoped<IExternalOrderInvoicing, ExternalOrderInvoicingService>();
+        services.AddScoped<IExternalInvoiceStatus, SiigoOpenInvoiceCheck>();
         // Spec 2026-10-29 §8.3: el borrador de cotización sin sesión que pide un agente IA (create_quotation_draft); Ai lo
         // consume por un adaptador (AiQuotationDrafts).
         services.AddScoped<IExternalQuotationWriter, ExternalQuotationService>();
@@ -1585,6 +1589,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ISiigoConnectionDirectory, SiigoConnectionDirectory>();
         services.AddScoped<ISiigoCompanyDirectory, SiigoCompanyDirectory>();
         services.AddScoped<ISiigoTaxRateDirectory, SiigoTaxRateDirectory>();
+        // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
+        services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
+        services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
