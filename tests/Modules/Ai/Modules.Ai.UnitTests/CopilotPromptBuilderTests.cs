@@ -32,6 +32,22 @@ public sealed class CopilotPromptBuilderTests
         Assert.DoesNotContain("Ana", first.SystemPrompt, StringComparison.Ordinal);
     }
 
+    // Prueba local 2026-11-17: a «¿qué herramientas tienes?» el copiloto volvió a correr get_quotations_summary del turno anterior para
+    // cumplir «sólo datos de este turno», y abrió la respuesta con esas cifras. Una pregunta sobre sus capacidades no llama herramientas,
+    // y una consulta vieja no se repite si la pregunta nueva no la necesita.
+    [Fact]
+    public void TheRulesExemptCapabilityQuestionsAndForbidRepeatingAnOldQuery()
+    {
+        Assert.Contains(
+            "Si te preguntan qué puedes hacer o qué herramientas tienes, contesta con answer sin llamar herramientas",
+            CopilotPromptBuilder.QepInstructions,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "No repitas una consulta de un turno anterior si la pregunta nueva no necesita esos datos",
+            CopilotPromptBuilder.QepInstructions,
+            StringComparison.Ordinal);
+    }
+
     // D-C9: viaja el texto del hilo, nunca las citas ni los resultados de herramientas de trabajos viejos; la pregunta del trabajo cierra.
     [Fact]
     public void OldToolResultsNeverTravel()

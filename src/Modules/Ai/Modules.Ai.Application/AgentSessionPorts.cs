@@ -44,10 +44,11 @@ public sealed record AiConversationState(
 public sealed record AiThreadMessage(Guid Id, AgentTurnKind Kind, string? Text);
 
 /// <summary>Spec 2026-10-29 §6.1 y §6.2: una fila <c>bot_kind = 2</c> de <c>messaging.automation_inbox</c>. <c>Attempts</c> es el testigo del
-/// reclamo; <c>Opened</c> (D-M16) dice que el entrante abrió o reabrió la conversación. <c>DelegationId</c> (spec 2026-11-17 §5.3) sólo lo
-/// trae la fila <c>Delegated</c> de un chatbot que delegó en el agente: abre la sesión del bloque y su <c>MessageId</c> no es un mensaje.</summary>
+/// reclamo. <c>DelegationId</c> (spec 2026-11-17 §5.3) sólo lo trae la fila <c>Delegated</c> de un chatbot que delegó en el agente: abre la
+/// sesión del bloque y su <c>MessageId</c> no es un mensaje. No lleva la columna <c>opened</c>: desde el spec 2026-10-26 D-1 el disparador
+/// no depende de si el entrante abrió la conversación.</summary>
 public sealed record AiInboxItem(
-    Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts, bool ReleaseRun,
+    Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, DateTimeOffset CreatedAt, int Attempts, bool ReleaseRun,
     Guid? DelegationId = null);
 
 /// <summary>La cola de entrantes de los agentes: la de Mensajería, filtrada por <c>bot_kind = 2</c> (adaptador en Bootstrapper).</summary>
