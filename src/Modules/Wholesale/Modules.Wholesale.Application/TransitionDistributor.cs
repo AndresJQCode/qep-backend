@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Tenancy.Application;
 using Modules.Wholesale.Domain;
 
@@ -17,9 +18,9 @@ public sealed record TransitionDistributorCommand(
 /// Reenviar rota token y vigencia (el link anterior pasa a 404) y vuelve a publicar el correo; bloquear y desbloquear sólo
 /// cambian el estado. Fuera de su estado: 409 <c>invalid_transition</c>, antes de tocar el dominio. Con teléfono (spec
 /// 2026-11-18), reenviar encola un aviso nuevo si la conexión guardada sigue lista; si no, el aviso queda fallido con
-/// <c>whatsapp_unavailable</c> y el correo sale igual.
+/// <c>whatsapp_unavailable</c> y el correo sale igual, también si consultar las conexiones falla.
 /// </summary>
-public sealed class TransitionDistributorHandler(
+public sealed partial class TransitionDistributorHandler(
     IExecutionContext executionContext,
     IClock clock,
     IDistributorRepository distributors,
@@ -28,10 +29,10 @@ public sealed class TransitionDistributorHandler(
     IWholesaleUnitOfWork unitOfWork,
     IWholesaleAuditPublisher auditPublisher,
     IWholesaleEventPublisher eventPublisher,
-    DistributorComposer composer)
+    DistributorComposer composer,
+    ILogger<TransitionDistributorHandler> logger)
     : ICommandHandler<TransitionDistributorCommand, DistributorDetailDto>
 {
-
     private static readonly string[] StatusField = ["status"];
 
     public async Task<DistributorDetailDto> HandleAsync(TransitionDistributorCommand command, CancellationToken cancellationToken)
@@ -109,7 +110,21 @@ public sealed class TransitionDistributorHandler(
             return false;
         }
 
-        var ready = await whatsAppConnections.ListReadyAsync(distributor.TenantId, cancellationToken);
-        return ready.Any(connection => connection.Id == connectionId);
+        // Un fallo del aviso nunca frena el correo: si Integrations falla (base, catálogo, un secreto que no descifra), el aviso
+        // queda como no listo (Failed whatsapp_unavailable) y el reenvío sigue. El log lleva sólo ids, nunca el teléfono.
+        try
+        {
+            var ready = await whatsAppConnections.ListReadyAsync(distributor.TenantId, cancellationToken);
+            return ready.Any(connection => connection.Id == connectionId);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogConnectionsUnavailable(logger, exception, distributor.TenantId, distributor.Id.Value, connectionId);
+            return false;
+        }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not list the WhatsApp connections ready for the invitation notice of distributor {DistributorId} of tenant {TenantId} (connection {ConnectionId}); the notice fails and the email goes out.")]
+    private static partial void LogConnectionsUnavailable(
+        ILogger logger, Exception exception, Guid tenantId, Guid distributorId, Guid connectionId);
 }

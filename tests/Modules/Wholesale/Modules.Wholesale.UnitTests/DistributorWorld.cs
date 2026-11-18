@@ -71,7 +71,8 @@ internal sealed class DistributorWorld
         new UpdateDistributorValidator());
 
     public TransitionDistributorHandler TransitionHandler() =>
-        new(Context, Clock, Distributors, WhatsApp, Memberships, UnitOfWork, Audit, Events, Composer());
+        new(Context, Clock, Distributors, WhatsApp, Memberships, UnitOfWork, Audit, Events, Composer(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<TransitionDistributorHandler>.Instance);
 
     public DeleteDistributorHandler DeleteHandler() => new(Context, Clock, Distributors, UnitOfWork, Audit);
 

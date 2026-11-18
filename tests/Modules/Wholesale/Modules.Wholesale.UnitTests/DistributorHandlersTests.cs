@@ -472,6 +472,26 @@ public sealed class DistributorHandlersTests
         Assert.Equal(2L, detail.Version);
     }
 
+    // Un fallo del aviso nunca frena el correo: si consultar las conexiones lanza, el reenvío sale y el aviso queda fallido.
+    [Fact]
+    public async Task ResendWhenListingTheConnectionsThrowsStillSendsTheEmailAndFailsTheNotice()
+    {
+        var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: Guid.CreateVersion7());
+        _world.WhatsApp.ThrowWhenCalled = true;
+
+        var detail = await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, distributor.Id.Value, 1, DistributorAction.Resend, "trace-4"), Ct);
+
+        Assert.Equal(1, _world.WhatsApp.ListCalls);
+        Assert.Equal("trace-4", Assert.Single(_world.Events.Invitations).CorrelationId);
+        Assert.Empty(_world.Events.Notices);
+        Assert.Equal((1, (InvitationNoticeStatus?)InvitationNoticeStatus.Failed, "whatsapp_unavailable"),
+            (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus, distributor.Invitation.NoticeFailureCode));
+        Assert.Contains("whatsAppNotice=false", Assert.Single(_world.Audit.Entries).ChangedFields);
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+        Assert.Equal(2L, detail.Version);
+    }
+
     // Sin conexiones listas la lista llega vacía y el formulario no ofrece el aviso.
     [Fact]
     public async Task OptionsBringTheReadyWhatsAppConnections()
