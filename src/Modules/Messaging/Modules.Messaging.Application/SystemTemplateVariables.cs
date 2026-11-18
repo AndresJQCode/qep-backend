@@ -58,6 +58,15 @@ public static class SystemTemplateVariables
         new("radicado", "Radicado del caso", "SOP-000127"),
     ];
 
+    /// <summary>Mayorista: el aviso por WhatsApp de una invitación de distribuidor. <c>mayorista</c> es el nombre del tenant que invita y
+    /// <c>correo</c> el correo completo al que salió la invitación; ni el link ni el token llegan a Mensajería.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> WholesaleInvitationNotice { get; } =
+    [
+        .. Fixed,
+        new("mayorista", "Nombre del mayorista", "Distribuciones Andinas"),
+        new("correo", "Correo de la invitación", "compras@distribuidora.co"),
+    ];
+
     public static IReadOnlyList<SystemTemplateVariable> BillingReminder { get; } =
     [
         .. Fixed,

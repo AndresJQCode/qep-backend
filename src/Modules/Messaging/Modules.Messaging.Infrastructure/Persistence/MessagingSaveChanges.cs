@@ -136,6 +136,16 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateSupportSurveyExists, "This connection already has its support survey template.", exception);
         }
+        // Mayorista: lo mismo para la plantilla del aviso de invitación de distribuidor.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateWholesaleInvitationNoticeIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateWholesaleInvitationNoticeExists, "This connection already has its wholesale invitation notice template.",
+                exception);
+        }
         // Spec 2026-11-09: un programado activo por conversación y un clientId por conversación. Los dos son 409 ya_existe: el handler de
         // crear relee por clientId y devuelve el existente si fue el mismo reintento.
         catch (DbUpdateException exception)
