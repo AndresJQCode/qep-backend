@@ -94,6 +94,8 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/HistorySync/CoexistenceEventsProcessor.cs:28 — ClaimedOutboxConsumer; el alta además con ON CONFLICT (connection_id) DO NOTHING (:61)"),
         new("Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestWorker", WorkerClassification.Claimed,
             "Modules/Messaging/Modules.Messaging.Infrastructure/HistorySync/HistorySyncRequestProcessor.cs:96-102 — FOR UPDATE SKIP LOCKED y claimed_until de 2 min"),
+        new("Modules.Storage.Infrastructure.TemplateImages.TemplateHeaderImageSweepWorker", WorkerClassification.Claimed,
+            "Modules/Storage/Modules.Storage.Infrastructure/TemplateImages/TemplateHeaderImageFiles.cs:70-81 — cada archivo se reclama con FOR UPDATE SKIP LOCKED y se relee vivo bajo el candado; el segundo pod lo salta o lo ve Deleted y no audita dos veces"),
         new("Modules.Messaging.Infrastructure.ScheduledMessages.ScheduledMessageWorker", WorkerClassification.Claimed,
             "Modules/Messaging/Modules.Messaging.Infrastructure/ScheduledMessages/ScheduledMessageStore.cs:25-28 — FOR UPDATE SKIP LOCKED y locked_until"),
         new("Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker", WorkerClassification.Claimed,
