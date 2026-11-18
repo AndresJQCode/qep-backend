@@ -598,6 +598,117 @@ public sealed class FlowValidatorTests
         Assert.DoesNotContain(FlowValidator.Validate(Flow(message, End()), Ctx()), i => i.Code == "message.url_invalid");
     }
 
+    // Spec 2026-11-18 «Validation»: con archivo, el texto es su pie y puede ir vacío.
+    private static readonly Guid MediaFile = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+
+    private const string MediaMissingText = "Falta el archivo de este mensaje. Vuelve a subirlo.";
+
+    [Theory]
+    [InlineData("image")]
+    [InlineData("video")]
+    [InlineData("audio")]
+    [InlineData("document")]
+    public void MediaWithoutTextIsValid(string kind) =>
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(MediaMessage(kind), End()), MediaCtx(kind)), i => i.NodeId == "n1");
+
+    // Review Focus 3: el cta_url de WhatsApp exige cuerpo, así que con botón el pie vacío sigue sin poder publicarse.
+    [Fact]
+    public void MediaWithAButtonStillNeedsText()
+    {
+        var message = MediaMessage("image", button: new UrlButton("Ver", "https://qcode.co/catalogo"));
+
+        var issue = Single(FlowValidator.Validate(Flow(message, End()), MediaCtx("image")), "text.empty");
+
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+    }
+
+    [Theory]
+    [InlineData("image", false)]
+    [InlineData("video", false)]
+    [InlineData("document", false)]
+    [InlineData("image", true)]
+    [InlineData("audio", true)]
+    public void ACaptionOver1024IsTooLong(string kind, bool withButton)
+    {
+        var message = MediaMessage(kind, new string('a', 1025), withButton ? new UrlButton("Ver", "https://qcode.co") : null);
+
+        var issue = Single(FlowValidator.Validate(Flow(message, End()), MediaCtx(kind)), "text.too_long");
+
+        Assert.Equal((FlowIssueSeverity.Error, "n1"), (issue.Severity, issue.NodeId));
+        Assert.Contains("el máximo es 1024", issue.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            FlowValidator.Validate(Flow(MediaMessage(kind, new string('a', 1024), message.UrlButton), End()), MediaCtx(kind)),
+            i => i.Code == "text.too_long");
+    }
+
+    // Sin botón, el texto de un audio sale solo, después del audio: rige el tope del texto libre.
+    [Fact]
+    public void AudioTextUpTo4096IsAccepted()
+    {
+        Assert.DoesNotContain(
+            FlowValidator.Validate(Flow(MediaMessage("audio", new string('a', 4096)), End()), MediaCtx("audio")), i => i.Code == "text.too_long");
+
+        var issue = Single(FlowValidator.Validate(Flow(MediaMessage("audio", new string('a', 4097)), End()), MediaCtx("audio")), "text.too_long");
+        Assert.Contains("el máximo es 4096", issue.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMissingFileIsAnErrorWithTheSpecText()
+    {
+        foreach (var context in new[] { Ctx(), Ctx() with { MediaFiles = new Dictionary<Guid, string>() } })
+        {
+            var issue = Single(FlowValidator.Validate(Flow(MediaMessage("image", "Mira"), End()), context), "message.media_missing");
+
+            Assert.Equal((FlowIssueSeverity.Error, "n1", MediaMissingText), (issue.Severity, issue.NodeId, issue.Message));
+        }
+    }
+
+    // Un id que resuelve a otro tipo no es el archivo que el bloque dibuja.
+    [Fact]
+    public void AFileOfAnotherKindIsMissing()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(MediaMessage("image", "Mira"), End()), MediaCtx("video")), "message.media_missing");
+
+        Assert.Equal(FlowIssueSeverity.Error, issue.Severity);
+    }
+
+    [Fact]
+    public void AudioWithTextWarnsCaptionSeparate()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(MediaMessage("audio", "Escúchalo"), End()), MediaCtx("audio")), "message.audio_caption_separate");
+
+        Assert.Equal(
+            (FlowIssueSeverity.Warning, "n1", "El audio no lleva texto: se envía como un mensaje aparte, después del audio."),
+            (issue.Severity, issue.NodeId, issue.Message));
+        Assert.DoesNotContain(
+            FlowValidator.Validate(Flow(MediaMessage("image", "Mira"), End()), MediaCtx("image")), i => i.Code == "message.audio_caption_separate");
+    }
+
+    [Fact]
+    public void AudioWithAButtonWarnsButtonSeparate()
+    {
+        var message = MediaMessage("audio", "Escúchalo", new UrlButton("Ver", "https://qcode.co"));
+
+        var issue = Single(FlowValidator.Validate(Flow(message, End()), MediaCtx("audio")), "message.audio_button_separate");
+
+        Assert.Equal(
+            (FlowIssueSeverity.Warning, "n1", "El audio no lleva botón: el botón se envía en un mensaje aparte, después del audio."),
+            (issue.Severity, issue.NodeId, issue.Message));
+    }
+
+    [Fact]
+    public void AnUnknownVariableInTheCaptionStillWarns()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(MediaMessage("image", "Tu pedido {pedido}"), End()), MediaCtx("image")), "variable.never_set");
+
+        Assert.Equal((FlowIssueSeverity.Warning, "n1"), (issue.Severity, issue.NodeId));
+    }
+
+    private static MessageNode MediaMessage(string kind, string text = "", UrlButton? button = null) =>
+        new("n1", "Catálogo", Out(("next", "end")), text, button, new MessageMedia(kind, MediaFile));
+
+    private static FlowValidationContext MediaCtx(string kind) => Ctx() with { MediaFiles = new Dictionary<Guid, string> { [MediaFile] = kind } };
+
     [Theory]
     [InlineData(0, true)]
     [InlineData(1, false)]

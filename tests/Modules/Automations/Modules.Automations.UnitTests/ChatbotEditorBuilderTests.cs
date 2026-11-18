@@ -1,5 +1,6 @@
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
+using Modules.Automations.Domain.Flow;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
@@ -49,12 +50,86 @@ public sealed class ChatbotEditorBuilderTests
         Assert.Equal((new DateTimeOffset(2026, 11, 1, 5, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 12, 1, 5, 0, 0, TimeSpan.Zero)), directory.Window);
     }
 
+    // Review Focus 2: un flujo pegado de otro tenant trae un fileId que el store no resuelve para este tenant.
+    [Fact]
+    public async Task AForeignFileIsMissingAndNotListed()
+    {
+        var foreign = Guid.CreateVersion7();
+        var store = new Media();
+
+        var editor = await Builder(new Directory([]), aiEnabled: false, store).BuildAsync(WithMedia(foreign), Ct);
+
+        Assert.Empty(editor.MediaFiles);
+        Assert.Contains(editor.Issues, issue => issue.Code == "message.media_missing" && issue.NodeId == "m1");
+        Assert.Equal([foreign], Assert.Single(store.Asked));
+    }
+
+    [Fact]
+    public async Task AResolvedFileIsListedAndValid()
+    {
+        var fileId = Guid.CreateVersion7();
+        var file = new ChatbotMediaFile(fileId, "image", "catalogo.jpg", "image/jpeg", 2048, new Uri($"https://public.test/{fileId}/catalogo.jpg"));
+        var store = new Media { Files = { file } };
+
+        var editor = await Builder(new Directory([]), aiEnabled: false, store).BuildAsync(WithMedia(fileId), Ct);
+
+        Assert.Equal([ChatbotMediaFileDto.From(file)], editor.MediaFiles);
+        Assert.DoesNotContain(editor.Issues, issue => issue.Code == "message.media_missing");
+
+        // Guardar y publicar validan por ValidateAsync: el mismo archivo resuelve igual.
+        var chatbot = WithMedia(fileId);
+        var issues = await Builder(new Directory([]), aiEnabled: false, store).ValidateAsync(chatbot, FlowJson.Parse(chatbot.DraftFlowJson), Ct);
+        Assert.DoesNotContain(issues, issue => issue.Code == "message.media_missing");
+    }
+
+    [Fact]
+    public async Task AFlowWithoutMediaNeverAsksTheStore()
+    {
+        var store = new Media();
+
+        var editor = await Builder(new Directory([]), aiEnabled: false, store).BuildAsync(NewChatbot(), Ct);
+        await Builder(new Directory([]), aiEnabled: false, store).ValidateStoredAsync(NewChatbot(), Ct);
+
+        Assert.Empty(editor.MediaFiles);
+        Assert.Empty(store.Asked);
+    }
+
+    private static Chatbot WithMedia(Guid fileId) =>
+        Chatbot.Create(
+            TenantId, "Catálogo", string.Empty, ChatbotTrigger.NewConversation, [],
+            $$"""
+            { "schema": 1, "start": { "firstNodeId": "m1" }, "variables": [], "nodes": [
+              { "id": "m1", "kind": "message", "title": "Catálogo", "text": "", "urlButton": null,
+                "media": { "kind": "image", "fileId": "{{fileId}}" }, "outputs": { "next": null } } ] }
+            """,
+            "{}", Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+
     private static ChatbotSummaryRow Row(Guid id) =>
         new(id, "Bot", string.Empty, ChatbotStatus.Draft, ChatbotTrigger.NewConversation, [], null, null, DateTimeOffset.UtcNow, 1);
 
-    private static ChatbotEditorBuilder Builder(Directory directory, bool aiEnabled) =>
+    private static ChatbotEditorBuilder Builder(Directory directory, bool aiEnabled, Media? media = null) =>
         new(new NoConnections(), new NoExternalApis(), new NoMembers(), new NoHours(), new NoRuns(), new BogotaClock(), new NoSlots(), directory,
-            new Modules(aiEnabled));
+            new Modules(aiEnabled), media ?? new Media());
+
+    private sealed class Media : IChatbotMediaStore
+    {
+        public List<ChatbotMediaFile> Files { get; } = [];
+
+        public List<IReadOnlyCollection<Guid>> Asked { get; } = [];
+
+        public Task<ChatbotMediaSession> OpenUploadAsync(
+            Guid tenantId, string fileName, string contentType, long sizeBytes, long maxBytes, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ChatbotMediaCompletion> CompleteAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ChatbotMediaFile>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken)
+        {
+            Asked.Add([.. fileIds]);
+            return Task.FromResult<IReadOnlyList<ChatbotMediaFile>>([.. Files.Where(file => fileIds.Contains(file.FileId))]);
+        }
+    }
 
     private sealed class Directory(IReadOnlyList<AutomationAgentRef> agents) : IAutomationsAgentDirectory
     {
