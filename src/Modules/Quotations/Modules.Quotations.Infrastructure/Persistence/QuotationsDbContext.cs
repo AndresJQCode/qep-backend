@@ -1,5 +1,8 @@
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
+using BuildingBlocks.Domain.Taxes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Infrastructure.Persistence;
@@ -298,6 +301,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // catálogo al congelar; `percentage` es el efectivo. Las filas anteriores se rellenan con su `percentage`.
         withholding.Property(value => value.CityId).HasColumnName("city_id");
         withholding.Property(value => value.CatalogPercentage).HasColumnName("catalog_percentage").HasPrecision(6, 3);
+        // Spec 2026-11-18 §4.2: el alcance congelado, por nombre. Las filas de antes quedan All y su total no cambia; el
+        // default coincide con el CLR, así que no hace falta sentinel.
+        withholding.Property(value => value.AppliesTo)
+            .HasColumnName("applies_to")
+            .HasConversion<string>()
+            .HasDefaultValue(WithholdingScope.All);
         withholding.Ignore(value => value.Overridden);
         withholding.Ignore(value => value.Rate);
     }
@@ -344,6 +353,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         document.Ignore("ShippingDetails");
     }
 
+    // Spec 2026-11-18 §3.4: tipo y unidad de la línea, por nombre, text not null. El default de la base es el valor de
+    // toda línea de antes y de lo que escriba un pod viejo durante el rollout (expand/contract), y coincide con el
+    // default CLR: no hace falta sentinel. Igual en quotation_items y order_items.
+    private static void ConfigureLineKind(
+        PropertyBuilder<ProductKind> kind, PropertyBuilder<SalesUnit> salesUnit)
+    {
+        kind.HasColumnName("kind").HasConversion<string>().HasDefaultValue(ProductKind.Physical);
+        salesUnit.HasColumnName("sales_unit").HasConversion<string>().HasDefaultValue(SalesUnit.Unit);
+    }
+
     private static void ConfigureQuotationItem(ModelBuilder modelBuilder)
     {
         var item = modelBuilder.Entity<QuotationItem>();
@@ -368,6 +387,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.ProductName)
             .HasColumnName("product_name")
             .HasMaxLength(QuotationProductSnapshot.NameMaxLength);
+        ConfigureLineKind(item.Property(value => value.Kind), item.Property(value => value.SalesUnit));
         item.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
         item.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
         // Texto y no entero, igual que QuotationHistoryEventType: sumar un valor al enum no va a
@@ -866,6 +886,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.ProductName)
             .HasColumnName("product_name")
             .HasMaxLength(QuotationProductSnapshot.NameMaxLength);
+        ConfigureLineKind(item.Property(value => value.Kind), item.Property(value => value.SalesUnit));
         item.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
         item.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
         item.Property(value => value.DiscountOrigin)

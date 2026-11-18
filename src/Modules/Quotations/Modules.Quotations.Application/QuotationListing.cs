@@ -76,13 +76,14 @@ internal static class QuotationListing
                 quotations.Select(quotation => quotation.AdvisorId.Value).Distinct().ToArray(),
                 cancellationToken);
 
-        // Sin lineas ni pedido a proposito: el Excel no pinta IsComplete, OrderId ni OrderStatus, y
-        // resolverlos seria dos idas mas por exportacion para columnas que no existen.
+        // Sin lineas ni pedido a proposito: el Excel no pinta IsComplete, RequiresShipping, OrderId ni OrderStatus, y
+        // resolverlos seria idas mas por exportacion para columnas que no existen.
         return quotations
             .Select(quotation => quotation.ToListItemDto(
                 clientNames.GetValueOrDefault(quotation.ClientId),
                 advisors.GetValueOrDefault(quotation.AdvisorId.Value)?.Label,
                 hasItems: false,
+                requiresShipping: true,
                 order: null))
             .ToArray();
     }

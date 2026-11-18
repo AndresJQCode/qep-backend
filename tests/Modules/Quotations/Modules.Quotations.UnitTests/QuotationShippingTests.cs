@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -213,4 +214,34 @@ public sealed class QuotationShippingTests
 
         Assert.Equal(shipping, quotation.ShippingDetails);
     }
+
+    // ---- requiresShipping (spec 2026-11-18 §5) ----
+
+    // Sin líneas da true: es el estado de hoy, y el formulario vacío muestra envío.
+    [Fact]
+    public void AnEmptyDocumentRequiresShipping() => Assert.True(NewQuotation().RequiresShipping);
+
+    [Fact]
+    public void OnlyServicesDoesNotRequireShipping()
+    {
+        var quotation = NewQuotation();
+        AddService(quotation);
+        AddService(quotation);
+
+        Assert.False(quotation.RequiresShipping);
+    }
+
+    [Fact]
+    public void MixedRequiresShipping()
+    {
+        var quotation = QuotationWithALineOf119000();
+        AddService(quotation);
+
+        Assert.True(quotation.RequiresShipping);
+    }
+
+    private static void AddService(Quotation quotation) =>
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 80_000m, 0m, 19, Advisor, Now,
+            ProductKind.Service, SalesUnit.Hour);
 }

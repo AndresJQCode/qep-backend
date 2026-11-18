@@ -570,6 +570,7 @@ public static class QuotationEndpoints
         quotation.IsComplete,
         quotation.OrderId,
         quotation.OrderStatus,
-        ShippingResponse.From(quotation.Shipping));
+        ShippingResponse.From(quotation.Shipping),
+        quotation.RequiresShipping);
 
 }

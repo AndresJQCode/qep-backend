@@ -222,6 +222,21 @@ public sealed class OrderPdfDocumentMapperTests
         Assert.Equal((string.Empty, string.Empty), (document.CustomerName, document.CustomerContact));
     }
 
+    // Spec 2026-11-18 §6: el pedido imprime la unidad con la misma regla que la cotización.
+    [Fact]
+    public void AnOrderWithAServiceLabelsItsLine()
+    {
+        var detail = Detail();
+        var line = detail.Items.Single() with { Quantity = 1m, Kind = "Service", SalesUnit = "Month" };
+
+        var document = Map(detail with { Items = [line] });
+
+        Assert.Equal("mes", Assert.Single(document.Items).Unit);
+    }
+
+    [Fact]
+    public void AnOrderOfUnitsOmitsTheUnit() => Assert.Null(Assert.Single(Map(Detail()).Items).Unit);
+
     [Fact]
     public void MapsTheLogo()
     {

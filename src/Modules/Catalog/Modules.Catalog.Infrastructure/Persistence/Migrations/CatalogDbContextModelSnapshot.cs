@@ -171,11 +171,25 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Physical")
+                        .HasColumnName("kind");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("name");
+
+                    b.Property<string>("SalesUnit")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Unit")
+                        .HasColumnName("sales_unit");
 
                     b.Property<Guid?>("TaxRateId")
                         .HasColumnType("uuid")
@@ -451,6 +465,13 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("AppliesTo")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("All")
+                        .HasColumnName("applies_to");
+
                     b.Property<Guid?>("CityId")
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
@@ -513,11 +534,11 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "Type", "CityId")
                         .HasDatabaseName("IX_tax_rates_tenant_type_city");
 
-                    b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase")
+                    b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase", "AppliesTo")
                         .IsUnique()
                         .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase"), false);
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase", "AppliesTo"), false);
 
                     b.ToTable("tax_rates", "catalog");
                 });

@@ -870,6 +870,99 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         Assert.Null(created.City);
     }
 
+    // Spec 2026-11-18 §4.2: una retención declara a qué líneas aplica, por nombre, y se lee igual.
+    [Fact]
+    public async Task CreateRetefuenteForServicesRoundTrips()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await PostTaxRateAsync(
+            client, new { name = "Retefuente servicios", percentage = 4m, type = "Retefuente", appliesTo = "Services" });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await ReadTaxRateAsync(response);
+        Assert.Equal("Services", created.AppliesTo);
+        var json = await client.GetStringAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{created.Id}", TestContext.Current.CancellationToken);
+        Assert.Contains("\"appliesTo\":\"Services\"", json, StringComparison.Ordinal);
+
+        var vat = await ReadTaxRateAsync(await CreateTaxRateAsync(client, TenantId, "IVA general", 19));
+        Assert.Equal("All", vat.AppliesTo);
+    }
+
+    // El alcance no se edita, como el tipo: el PUT que trae otro responde 422 y no cambia nada.
+    [Fact]
+    public async Task UpdateWithAnotherScopeIs422Immutable()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        var created = await ReadTaxRateAsync(await PostTaxRateAsync(
+            client, new { name = "Retefuente bienes", percentage = 2.5m, type = "Retefuente", appliesTo = "Goods" }));
+
+        var response = await PutTaxRateAsync(
+            client, created.Id, new { name = "Retefuente bienes", percentage = 2.5m, appliesTo = "Services" });
+
+        using var problem = await AssertProblemCodeAsync(response, "catalog.tax_rate.applies_to_immutable");
+        Assert.True(problem.RootElement.GetProperty("errors").TryGetProperty("AppliesTo", out _));
+        var json = await client.GetStringAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{created.Id}", TestContext.Current.CancellationToken);
+        Assert.Contains("\"appliesTo\":\"Goods\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UpdateWithTheSameScopeOrWithoutItSucceeds()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        var created = await ReadTaxRateAsync(await PostTaxRateAsync(
+            client, new { name = "Retefuente servicios", percentage = 4m, type = "Retefuente", appliesTo = "Services" }));
+
+        var same = await PutTaxRateAsync(
+            client, created.Id, new { name = "Retefuente servicios", percentage = 6m, appliesTo = "Services" });
+        Assert.Equal(HttpStatusCode.OK, same.StatusCode);
+        Assert.Equal("Services", (await ReadTaxRateAsync(same)).AppliesTo);
+
+        var without = await PutTaxRateAsync(
+            client, created.Id, new { name = "Retefuente servicios", percentage = 3.5m });
+        Assert.Equal(HttpStatusCode.OK, without.StatusCode);
+        var updated = await ReadTaxRateAsync(without);
+        Assert.Equal("Services", updated.AppliesTo);
+        Assert.Equal(3.5m, updated.Percentage);
+    }
+
+    // Cambiar el alcance es crear otra tasa (spec 2026-11-18 §4.2): la misma Retefuente para bienes y para servicios
+    // tiene que poder existir, así que el índice único cuenta el alcance.
+    [Fact]
+    public async Task TheSameNameAndPercentageCanExistForGoodsAndServices()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var goods = await PostTaxRateAsync(
+            client, new { name = "Retefuente 4%", percentage = 4m, type = "Retefuente", appliesTo = "Goods" });
+        var services = await PostTaxRateAsync(
+            client, new { name = "Retefuente 4%", percentage = 4m, type = "Retefuente", appliesTo = "Services" });
+        var repeated = await PostTaxRateAsync(
+            client, new { name = "Retefuente 4%", percentage = 4m, type = "Retefuente", appliesTo = "Services" });
+
+        Assert.Equal(HttpStatusCode.Created, goods.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, services.StatusCode);
+        using var _ = await AssertProblemCodeAsync(repeated, "catalog.tax_rate.name_taken");
+    }
+
+    [Fact]
+    public async Task AVatRateWithAScopeIs422()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await PostTaxRateAsync(client, new { name = "IVA bienes", percentage = 19, appliesTo = "Goods" });
+
+        using var _ = await AssertProblemCodeAsync(response, "catalog.tax_rate.applies_to_invalid");
+        Assert.Empty(await ListAsync(client, TenantId));
+    }
+
     private Task<HttpResponseMessage> PostTaxRateAsync(HttpClient client, object body) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates", body, TestContext.Current.CancellationToken);

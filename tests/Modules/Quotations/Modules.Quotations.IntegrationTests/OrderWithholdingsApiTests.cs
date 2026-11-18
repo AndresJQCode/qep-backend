@@ -506,6 +506,68 @@ public sealed class OrderWithholdingsApiTests
         Assert.Equal(4_000m, fetched.Order.RetentionAmount);
     }
 
+    // Spec 2026-11-18 §4.2: un pedido con un bien (base 100.000) y un servicio (2 × 100.000). Cada tasa retiene sobre la base
+    // de su alcance, en el total guardado y en el desglose, y la de bienes en un pedido de sólo servicios no aplica. Las tasas
+    // van una a la vez porque «una por tipo» no deja dos Retefuente hasta la Tarea 9.
+    [Fact]
+    public async Task AMixedOrderWithholdsByScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var goods = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente compras 2,5 %", "Retefuente", 2.5m);
+        var services = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m);
+        await ExecuteSqlAsync(factory, $"UPDATE catalog.tax_rates SET applies_to = 'Goods' WHERE id = '{goods}'");
+        await ExecuteSqlAsync(factory, $"UPDATE catalog.tax_rates SET applies_to = 'Services' WHERE id = '{services}'");
+        var serviceId = await CreateUntaxedServiceAsync(setup.Client, setup.TenantId, 100_000m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [goods]);
+        OrderEditItemRequest[] mixedLines = [new(setup.ProductId, 1m), new(serviceId, 2m)];
+
+        var created = await CreateManualAsync(setup, clientId, setup.Account, mixedLines);
+
+        Assert.Equal(300_000m, created.Subtotal);
+        var goodsRow = Assert.Single(created.Withholdings);
+        Assert.Equal((goods, 100_000m, 2_500m), (goodsRow.TaxRateId, goodsRow.Base, goodsRow.Amount));
+        var goodsEntry = Assert.Single(created.WithholdingBreakdown);
+        Assert.Equal(("Goods", "Applied", 100_000m), (goodsEntry.AppliesTo, goodsEntry.Reason, goodsEntry.Base));
+
+        var onServices = await ReadDetailAsync(
+            await PutEditsAsync(setup, created, Edits(setup, withholdingTaxRateIds: [services], lines: mixedLines)));
+
+        var servicesRow = Assert.Single(onServices.Order.Withholdings);
+        Assert.Equal((services, 200_000m, 8_000m), (servicesRow.TaxRateId, servicesRow.Base, servicesRow.Amount));
+        Assert.Equal(8_000m, onServices.Order.RetentionAmount);
+        var servicesEntry = Assert.Single(onServices.Order.WithholdingBreakdown);
+        Assert.Equal(("Services", "Applied", 200_000m, 8_000m), (servicesEntry.AppliesTo, servicesEntry.Reason, servicesEntry.Base, servicesEntry.Amount));
+
+        var onlyServices = await ReadDetailAsync(await PutEditsAsync(
+            setup, onServices.Order, Edits(setup, withholdingTaxRateIds: [goods], lines: [new(serviceId, 2m)])));
+
+        Assert.Empty(onlyServices.Order.Withholdings);
+        Assert.Equal(0m, onlyServices.Order.RetentionAmount);
+        var noLines = Assert.Single(onlyServices.Order.WithholdingBreakdown);
+        Assert.Equal(("NoLinesOfScope", false, 0m), (noLines.Reason, noLines.Applies, noLines.Base));
+    }
+
+    /// <summary>Un servicio sin IVA y sin descuentos de escala: su precio es su base.</summary>
+    private static async Task<Guid> CreateUntaxedServiceAsync(HttpClient client, Guid tenantId, decimal price)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products",
+            new
+            {
+                name = "Instalación",
+                kind = "Service",
+                salesUnit = "Hour",
+                variants = new[] { new { code = "SRV-INST", pricing = Pricing(price, NoDiscountScales()) } },
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var body = await response.Content.ReadFromJsonAsync<ProductDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body.Id;
+    }
+
     private sealed record Setup(
         HttpClient Client,
         Guid TenantId,
@@ -575,14 +637,18 @@ public sealed class OrderWithholdingsApiTests
         return preview;
     }
 
+    private static Task<OrderResponse> CreateManualAsync(
+        Setup setup, Guid clientId, QuotationBillingAccountRequest account, decimal quantity = 1m) =>
+        CreateManualAsync(setup, clientId, account, [new OrderEditItemRequest(setup.ProductId, quantity)]);
+
     private static async Task<OrderResponse> CreateManualAsync(
-        Setup setup, Guid clientId, QuotationBillingAccountRequest account, decimal quantity = 1m)
+        Setup setup, Guid clientId, QuotationBillingAccountRequest account, IReadOnlyList<OrderEditItemRequest> lines)
     {
         var response = await setup.Client.PostAsJsonAsync(
             OrdersUrl(setup.TenantId),
             new CreateOrderRequest(
                 clientId, "Transferencia", null, false, null, null, account,
-                [new OrderEditItemRequest(setup.ProductId, quantity)], []),
+                [.. lines], []),
             TestContext.Current.CancellationToken);
         Assert.True(
             response.StatusCode == HttpStatusCode.Created,
@@ -594,9 +660,10 @@ public sealed class OrderWithholdingsApiTests
         Setup setup,
         IReadOnlyList<Guid>? withholdingTaxRateIds = null,
         QuotationBillingAccountRequest? billingAccount = null,
-        decimal quantity = 1m) =>
+        decimal quantity = 1m,
+        IReadOnlyList<OrderEditItemRequest>? lines = null) =>
         new(
-            [new OrderEditItemRequest(setup.ProductId, quantity)], null, null,
+            lines is null ? [new OrderEditItemRequest(setup.ProductId, quantity)] : [.. lines], null, null,
             WithholdingTaxRateIds: withholdingTaxRateIds,
             BillingAccount: billingAccount);
 

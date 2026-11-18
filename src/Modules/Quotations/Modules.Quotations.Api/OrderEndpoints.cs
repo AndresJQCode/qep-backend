@@ -299,7 +299,8 @@ public static class OrderEndpoints
         order.Source,
         order.ExternalReference,
         ShippingResponse.From(order.Shipping),
-        order.OrderDate);
+        order.OrderDate,
+        order.RequiresShipping);
 
     private static async Task<IResult> GetOrderAsync(
         Guid tenantId,

@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
@@ -115,6 +116,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? code,
         bool? isActive,
         bool? visibleInStore,
+        ProductKind? kind,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
@@ -124,6 +126,11 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         if (visibleInStore is not null)
         {
             source = source.Where(product => product.VisibleInStore == visibleInStore);
+        }
+
+        if (kind is { } wanted)
+        {
+            source = source.Where(product => product.Kind == wanted);
         }
 
         var (ordered, total) = await SearchQueryAsync(
@@ -141,6 +148,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 product.Description,
                 product.TaxRateId,
                 product.CategoryId,
+                product.Kind,
+                product.SalesUnit,
                 ImageFileId = product.Gallery
                     .OrderBy(image => image.Position)
                     .Select(image => (Guid?)image.FileId)
@@ -212,6 +221,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.Description,
                 row.TaxRateId,
                 row.CategoryId,
+                row.Kind,
+                row.SalesUnit,
                 row.ImageFileId,
                 variantStats.GetValueOrDefault(row.Id)?.Count ?? 0,
                 variantStats.GetValueOrDefault(row.Id) is { } stats

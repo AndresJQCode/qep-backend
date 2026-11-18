@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Catalog;
 using FluentValidation;
 using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
@@ -17,7 +18,9 @@ public sealed record UpdateProductCommand(
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
     IReadOnlyList<Guid>? DeletedVariantIds = null,
-    bool? VisibleInStore = null) : ICommand<ProductDto>, IProductWriteCommand;
+    bool? VisibleInStore = null,
+    ProductKind? Kind = null,
+    SalesUnit? SalesUnit = null) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Mismas reglas que el POST, por inclusión y no por copia. Ver ProductWriteRules. El precio puede
 // faltar en una variante: ProductVariantChanges lo hereda (la suya, o la de la variante de la que
@@ -167,7 +170,11 @@ public sealed class UpdateProductHandler(
             {
                 Description = command.Description,
                 TaxRateId = taxRateId,
-                CategoryId = categoryId
+                CategoryId = categoryId,
+                // null conserva el guardado, como VisibleInStore: un cliente viejo que no los manda
+                // no debe volver físico un servicio.
+                Kind = command.Kind ?? product.Kind,
+                SalesUnit = command.SalesUnit ?? product.SalesUnit
             },
             optionIds,
             InOriginalPositions(variants, body.Count, kept),

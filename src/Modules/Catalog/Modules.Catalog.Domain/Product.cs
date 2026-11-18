@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+
 namespace Modules.Catalog.Domain;
 
 /// <summary>
@@ -97,6 +99,16 @@ public sealed class Product
     public ProductCategoryId? CategoryId { get; private set; }
 
     /// <summary>
+    /// Producto o servicio (spec 2026-11-18 §3.1). Vive en el producto y no en la variante: una talla
+    /// o un color no cambian la naturaleza de lo que se vende. Cambiarlo afecta sólo las líneas
+    /// nuevas: cada línea de cotización o pedido congela el suyo al crearse.
+    /// </summary>
+    public ProductKind Kind { get; private set; }
+
+    /// <summary>La unidad en la que se vende (spec 2026-11-18 §3.2). No depende de <see cref="Kind"/>.</summary>
+    public SalesUnit SalesUnit { get; private set; }
+
+    /// <summary>
     /// Las opciones de la biblioteca del tenant (<see cref="OptionDefinition"/>) que arman las
     /// variantes, en orden; a lo sumo <see cref="MaxOptions"/>. Vacía en un producto sin opciones,
     /// que tiene exactamente una variante: la variante por defecto.
@@ -165,6 +177,7 @@ public sealed class Product
         var product = new Product(id, tenantId, NormalizeName(name), details, occurredAt);
         product.ReplaceGallery(galleryFileIds);
         product.ReplaceVariants([defaultVariant with { Id = id.Value }], optionCount: 0, isCreate: true);
+        product.EnsureServiceHasNoPackaging();
         return product;
     }
 
@@ -210,6 +223,7 @@ public sealed class Product
             variants.Select((variant, index) => variant with { Id = index == 0 ? id.Value : null }).ToArray(),
             optionIds.Count,
             isCreate: true);
+        product.EnsureServiceHasNoPackaging();
         return product;
     }
 
@@ -260,6 +274,7 @@ public sealed class Product
         // mismo guardado.
         _variants.RemoveAll(variant => deleted.Contains(variant.Id.Value));
         ReplaceVariants(variants, optionIds.Count, isCreate: false);
+        EnsureServiceHasNoPackaging();
         // null conserva el valor: el PUT reemplaza el recurso entero, pero la visibilidad la puede
         // cambiar también el lote, y un cliente viejo que no la manda no debe ocultar el producto.
         // Va en el mismo incremento de versión que el resto del guardado.
@@ -278,6 +293,25 @@ public sealed class Product
         Description = normalized.Description;
         TaxRateId = normalized.TaxRateId;
         CategoryId = normalized.CategoryId;
+        Kind = normalized.Kind;
+        SalesUnit = normalized.SalesUnit;
+    }
+
+    // Después de aplicar las variantes, porque los empaques son de cada una. El empaque es de
+    // mercancía (spec 2026-11-18 §3.1): un servicio no lo lleva, y pasar a servicio un producto con
+    // empaques exige vaciarlos en el mismo guardado. La clave del mapa es la que el formulario marca.
+    private void EnsureServiceHasNoPackaging()
+    {
+        if (Kind == ProductKind.Service && _variants.Exists(variant => variant.PackagingUnits.Count > 0))
+        {
+            throw new CatalogDomainException(
+                "catalog.product.packaging_not_allowed_for_service",
+                "A service cannot have packaging units.",
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    ["PackagingUnits"] = ["Un servicio no lleva empaques."]
+                });
+        }
     }
 
     private static void EnsureOptions(IReadOnlyList<Guid> optionIds)

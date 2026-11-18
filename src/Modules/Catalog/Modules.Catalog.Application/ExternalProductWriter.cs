@@ -177,7 +177,10 @@ public sealed class ExternalProductWriter(
             {
                 Description = product.Description,
                 TaxRateId = product.TaxRateId,
-                CategoryId = product.CategoryId
+                CategoryId = product.CategoryId,
+                // El tipo y la unidad tampoco los manda Shopify: se conservan.
+                Kind = product.Kind,
+                SalesUnit = product.SalesUnit
             },
             resolved.OptionIds,
             variants,

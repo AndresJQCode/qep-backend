@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Catalog.Domain;
 
 namespace Modules.Catalog.UnitTests;
@@ -927,5 +928,52 @@ public sealed class ProductTests
         Assert.False(product.ReplaceGalleryImage(previousFileId: null, Guid.CreateVersion7(), Now.AddMinutes(5)));
 
         Assert.Equal([advisorPhoto], product.Gallery.Select(image => image.FileId));
+    }
+
+    // Spec 2026-11-18 §3.1-§3.2: todo producto nace con el valor de hoy.
+    [Fact]
+    public void ANewProductIsPhysicalByUnit()
+    {
+        var product = NewProduct("Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing, Now);
+
+        Assert.Equal(ProductKind.Physical, product.Kind);
+        Assert.Equal(SalesUnit.Unit, product.SalesUnit);
+    }
+
+    // El empaque es de mercancía: un servicio no lo lleva (spec §3.1), y el 422 marca el campo.
+    [Fact]
+    public void AServiceWithPackagingUnitsIsRejected()
+    {
+        var pricing = ValidPricing with { PackagingUnits = [12] };
+
+        var error = Assert.Throws<CatalogDomainException>(() => NewProduct(
+            "Instalación",
+            "SRV-001",
+            new ProductDetails { Kind = ProductKind.Service, SalesUnit = SalesUnit.Hour },
+            pricing,
+            Now));
+
+        Assert.Equal("catalog.product.packaging_not_allowed_for_service", error.Code);
+        Assert.Equal(["PackagingUnits"], error.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void TurningAProductIntoAServiceRequiresEmptyPackaging()
+    {
+        var product = NewProduct(
+            "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing with { PackagingUnits = [12] }, Now);
+        var service = new ProductDetails { Kind = ProductKind.Service, SalesUnit = SalesUnit.Hour };
+
+        var error = Assert.Throws<CatalogDomainException>(() => UpdateDefault(
+            product, "Vela de soja", "VS-001", service, ValidPricing with { PackagingUnits = [12] }, Now.AddMinutes(1)));
+        Assert.Equal("catalog.product.packaging_not_allowed_for_service", error.Code);
+
+        var fresh = NewProduct(
+            "Vela de soja", "VS-001", ProductDetails.Empty, ValidPricing with { PackagingUnits = [12] }, Now);
+        UpdateDefault(fresh, "Vela de soja", "VS-001", service, ValidPricing, Now.AddMinutes(1));
+
+        Assert.Equal(ProductKind.Service, fresh.Kind);
+        Assert.Equal(SalesUnit.Hour, fresh.SalesUnit);
+        Assert.Empty(fresh.Variants.Single().PackagingUnits);
     }
 }

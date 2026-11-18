@@ -39,6 +39,12 @@ internal static class ExternallyManagedProducts
             errors[nameof(UpdateProductCommand.Name)] = [Message];
         }
 
+        // El tipo lo define la tienda (spec 2026-11-18 §3.1); null conserva el guardado, no es un cambio.
+        if (command.Kind is { } kind && kind != product.Kind)
+        {
+            errors[nameof(UpdateProductCommand.Kind)] = [Message];
+        }
+
         if (!(command.OptionIds ?? []).SequenceEqual(product.OptionIds))
         {
             errors[nameof(UpdateProductCommand.OptionIds)] = [Message];

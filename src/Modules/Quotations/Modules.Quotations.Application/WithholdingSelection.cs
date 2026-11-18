@@ -134,12 +134,15 @@ public static class WithholdingSelection
             rates.Add(candidate.Rate);
         }
 
-        // El mismo id dos veces también es dos del mismo tipo.
-        if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal).Any(group => group.Count() > 1))
+        // El mismo id dos veces también es dos del mismo tipo y alcance. Spec 2026-11-18 §4.3: del mismo tipo conviven sólo
+        // una de bienes y una de servicios.
+        if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal)
+            .Any(group => WithholdingScopes.Repeated(
+                [.. group.Select(rate => rate.AppliesTo)], TaxCountries.IsMunicipal(group.First().Country, group.Key))))
         {
             throw new QuotationsDomainException(
                 $"{codePrefix}.billing.withholding_type_repeated",
-                "Only one withholding tax rate per type can be selected.");
+                "Only one withholding tax rate per type and scope can be selected.");
         }
 
         // P6: un tipo sin id aceptado conserva lo que dejó la re-resolución, salvo que el asesor eligiera «Sin retención».

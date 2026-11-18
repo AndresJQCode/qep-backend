@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
@@ -73,6 +74,28 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             .Where(order => order.TenantId == tenantId && ids.Contains(order.Id))
             .Select(order => new { order.Id, order.OrderNumber })
             .ToDictionaryAsync(order => order.Id, order => order.OrderNumber, cancellationToken);
+    }
+
+    // La regla de Order.RequiresShipping en SQL (spec 2026-11-18 §5), como la de cotizaciones: la búsqueda del listado no
+    // trae las líneas, y cargarlas para esto sería toda la página de líneas para un booleano.
+    public async Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken)
+    {
+        if (orderIds.Count == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        var ids = orderIds.ToArray();
+        var found = await dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.TenantId == tenantId
+                && ids.Contains(order.Id)
+                && (!order.Items.Any() || order.Items.Any(item => item.Kind == ProductKind.Physical)))
+            .Select(order => order.Id)
+            .ToListAsync(cancellationToken);
+
+        return found.Select(id => id.Value).ToHashSet();
     }
 
     public Task<Order?> FindByIdAsync(

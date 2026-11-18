@@ -30,27 +30,22 @@ internal static class WithholdingCandidates
         ];
 
     /// <summary>
-    /// Un veredicto por tasa de la fuente, en su orden: primero los pasos 1–4 de <see cref="For"/> y, si los pasa, el
-    /// umbral de <see cref="DocumentTotals.ThresholdReason"/>. Las tasas de otro país no salen: nunca aplican a este
-    /// documento (spec retenciones por UVT §5.1).
+    /// Un veredicto por tasa de la fuente, en su orden: primero los pasos 1–4 de <see cref="For"/>, después si el
+    /// documento tiene líneas del alcance de la tasa y, al final, el umbral de <see cref="DocumentTotals.ThresholdReason"/>
+    /// sobre la base de ese alcance (<see cref="DocumentTotals.Evaluate"/>, la misma cuenta del total guardado). Las tasas
+    /// de otro país no salen: nunca aplican a este documento (spec retenciones por UVT §5.1).
     /// </summary>
-    /// <param name="productsSubtotal">El subtotal de los productos sin IVA: la base que se compara con el umbral.</param>
+    /// <param name="bases">Las bases del documento por alcance: el subtotal sin IVA de sus líneas, sin el envío.</param>
     public static IReadOnlyList<WithholdingVerdict> Explain(
         IEnumerable<WithholdingRate> source,
         bool billsToFinalConsumer,
         QuotationBillingAccount? billingAccount,
         string currency,
         Guid? operationCityId,
-        decimal productsSubtotal) =>
+        WithholdingBases bases) =>
         [
-            .. Gate(source, billsToFinalConsumer, billingAccount, currency, operationCityId).Select(gated =>
-            {
-                var reason = gated.Blocked ?? DocumentTotals.ThresholdReason(gated.Rate, productsSubtotal);
-                var amount = reason == WithholdingReason.Applied
-                    ? DocumentTotals.WithholdingAmount(gated.Rate, productsSubtotal)
-                    : 0m;
-                return new WithholdingVerdict(gated.Rate, reason, productsSubtotal, amount);
-            }),
+            .. Gate(source, billsToFinalConsumer, billingAccount, currency, operationCityId)
+                .Select(gated => DocumentTotals.Evaluate(gated.Rate, gated.Blocked, bases)),
         ];
 
     // Pasos 1–4: las tasas del país de la empresa, cada una con el motivo que la deja fuera del cálculo o null si entra.

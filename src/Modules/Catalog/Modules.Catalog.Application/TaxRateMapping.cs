@@ -22,7 +22,8 @@ internal static class TaxRateMapping
         taxRate.MinimumBase is null ? null : TaxCountries.Find(taxRate.Country)?.TaxUnitName,
         taxRate.Scope.ToString(),
         taxRate.CityId,
-        city is null ? null : new TaxRateCityDto(city.Id, city.Name, city.DepartmentId, city.DepartmentName));
+        city is null ? null : new TaxRateCityDto(city.Id, city.Name, city.DepartmentId, city.DepartmentName),
+        taxRate.AppliesTo.ToString());
 
     /// <summary>Una tasa con su municipio resuelto: los handlers que devuelven una sola tasa pasan por acá (P8).</summary>
     public static async Task<TaxRateDto> ToDtoAsync(

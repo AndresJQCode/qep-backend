@@ -134,7 +134,8 @@ public static class TaxRateEndpoints
                 request.Country ?? TaxCountries.Colombia.Country,
                 CountryExplicit: request.Country is not null,
                 request.MinimumBase,
-                request.CityId),
+                request.CityId,
+                CatalogEnumParsing.ParseOptional<WithholdingScope>(request.AppliesTo, nameof(request.AppliesTo))),
             cancellationToken);
 
         return Results.Created(
@@ -210,5 +211,6 @@ public static class TaxRateEndpoints
         taxRate.MinimumBaseUnit,
         taxRate.Scope,
         taxRate.CityId,
-        taxRate.City);
+        taxRate.City,
+        taxRate.AppliesTo);
 }

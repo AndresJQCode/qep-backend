@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Taxes;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -297,6 +298,61 @@ public sealed class QuotationWithholdingsTests
 
         Assert.Equal("quotation.billing.withholding_tax_rate_invalid", error.Code);
         Assert.Empty(quotation.BillingWithholdings);
+    }
+
+    // Spec 2026-11-18 §4.3: el agregado vuelve a exigir «una por tipo y alcance» al guardar los selectores.
+    [Fact]
+    public void GoodsAndServicesOfTheSameTypeAreAccepted()
+    {
+        var quotation = NewQuotation(billingAccount: ColombianAccount);
+        UseOwnBilling(quotation, ColombianAccount);
+        var goods = Retefuente with { AppliesTo = WithholdingScope.Goods };
+        var services = RetefuenteServicios with { AppliesTo = WithholdingScope.Services };
+
+        quotation.SetBillingWithholdings([goods, services], AdvisorId, Now);
+
+        Assert.Equal([goods, services], quotation.BillingWithholdings.Select(row => row.Rate));
+    }
+
+    // Spec 2026-11-18 §4.3: la ReteICA sigue con una por tipo aunque los alcances no se solapen.
+    [Fact]
+    public void TwoMunicipalRatesOfTheSameTypeAreRepeatedWhateverTheirScope()
+    {
+        var quotation = NewQuotation(billingAccount: ColombianAccount);
+        UseOwnBilling(quotation, ColombianAccount);
+        var goods = ReteIca with { AppliesTo = WithholdingScope.Goods };
+        var services = ReteIca with { TaxRateId = Guid.CreateVersion7(), AppliesTo = WithholdingScope.Services };
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.SetBillingWithholdings([goods, services], AdvisorId, Now));
+
+        Assert.Equal("quotation.billing.withholding_type_repeated", error.Code);
+    }
+
+    [Fact]
+    public void AllWithAnotherScopeIsRepeated()
+    {
+        var quotation = NewQuotation(billingAccount: ColombianAccount);
+        UseOwnBilling(quotation, ColombianAccount);
+
+        var error = Assert.Throws<QuotationsDomainException>(() => quotation.SetBillingWithholdings(
+            [Retefuente, RetefuenteServicios with { AppliesTo = WithholdingScope.Services }], AdvisorId, Now));
+
+        Assert.Equal("quotation.billing.withholding_type_repeated", error.Code);
+        Assert.Empty(quotation.BillingWithholdings);
+    }
+
+    [Fact]
+    public void TwoOfTheSameScopeAreRepeated()
+    {
+        var quotation = NewQuotation(billingAccount: ColombianAccount);
+        UseOwnBilling(quotation, ColombianAccount);
+
+        var error = Assert.Throws<QuotationsDomainException>(() => quotation.SetBillingWithholdings(
+            [Retefuente with { AppliesTo = WithholdingScope.Goods }, RetefuenteServicios with { AppliesTo = WithholdingScope.Goods }],
+            AdvisorId, Now));
+
+        Assert.Equal("quotation.billing.withholding_type_repeated", error.Code);
     }
 
     [Fact]

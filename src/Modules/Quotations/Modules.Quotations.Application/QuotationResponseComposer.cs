@@ -135,7 +135,8 @@ public sealed class QuotationResponseComposer(
             municipal.OperationCity,
             municipal.BillingCompanyCity,
             municipal.Entries,
-            ToBreakdownResponse(quotation.WithholdingBreakdown, taxUnits));
+            ToBreakdownResponse(quotation.WithholdingBreakdown, taxUnits),
+            quotation.RequiresShipping);
     }
 
     /// <summary>Los contactos de la empresa del cliente (spec 2026-11-10 §4.6), en una consulta por documento. Un cliente que no
@@ -220,7 +221,8 @@ public sealed class QuotationResponseComposer(
                 verdict.MinimumBaseUnit is not null && context.LatestYearByCountry.TryGetValue(verdict.Country, out var latest)
                     ? latest
                     : null,
-                verdict.Amount)),
+                verdict.Amount,
+                verdict.AppliesTo)),
         ];
 
     internal static bool IsOutdated(int? taxUnitYear, int? documentYear) =>
@@ -240,7 +242,8 @@ public sealed class QuotationResponseComposer(
         withholding.Amount,
         withholding.CatalogPercentage,
         withholding.PercentageOverridden,
-        withholding.CityId);
+        withholding.CityId,
+        withholding.AppliesTo);
 
     internal static WithholdingTaxRateResponse ToWithholdingTaxRateResponse(WithholdingTaxRateDto rate) =>
         new(rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.CatalogPercentage, rate.PercentageOverridden,
@@ -341,7 +344,10 @@ public sealed class QuotationResponseComposer(
                     item.DiscountPercentage,
                     item.DiscountOrigin,
                     product.Scales,
-                    globalScaleFloor));
+                    globalScaleFloor),
+            // Los de la línea, nunca los del catálogo de hoy (spec 2026-11-18 §3.4).
+            item.Kind,
+            item.SalesUnit);
     }
 
     /// <summary>

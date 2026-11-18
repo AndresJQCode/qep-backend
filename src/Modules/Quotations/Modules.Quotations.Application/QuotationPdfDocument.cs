@@ -176,7 +176,11 @@ public sealed record QuotationPdfLine(
     /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado.</summary>
     decimal DiscountedUnitPrice,
     /// <summary>Lo que se cobra por la línea entera, IVA adentro.</summary>
-    decimal LineTotal);
+    decimal LineTotal,
+    /// <summary>La unidad junto a la cantidad («horas», «servicio», «unidades»), ya en español y con el plural resuelto
+    /// (spec 2026-11-18 §6). Texto plano que la plantilla imprime como cadena. Null en todas las líneas de un documento
+    /// cuyas líneas son todas <c>Unit</c>: así el PDF de un tenant que no usa unidades sale idéntico al de antes.</summary>
+    string? Unit = null);
 
 /// <summary>
 /// Puerto hacia quien sabe dibujar un PDF. La implementación vive en Infrastructure porque

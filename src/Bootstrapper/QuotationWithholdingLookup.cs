@@ -190,6 +190,8 @@ internal sealed class QuotationWithholdingLookup(
             rate.CityId)
         {
             TaxUnitYear = taxUnit?.Year,
+            // Spec 2026-11-18 §4.2: el alcance decide la base de la tasa en el documento.
+            AppliesTo = rate.AppliesTo,
         };
     }
 

@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Taxes;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -1980,6 +1982,41 @@ public sealed class OrdersExportProcessorTests
         Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(1.104m), cells[1]));
     }
 
+    // Spec 2026-11-18 §4: con tasas por alcance (Retefuente de bienes y de servicios) el monto del tipo es la suma y su base
+    // no es el subtotal; la tarifa que sale es la efectiva sobre el subtotal del pedido, para que el ERP que la multiplique
+    // por el subtotal llegue al mismo monto. 1.000.000 de bienes al 2,5 % (25.000) y 500.000 de servicios al 4 % (20.000):
+    // 45.000 sobre 1.500.000 es 3 %.
+    [Fact]
+    public async Task RateOfAScopedTypeIsTheEffectiveRateOnTheOrderSubtotal()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var goods = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000031"), "Retefuente compras", "Retefuente", "CO", 2.5m, null, null, null)
+        { AppliesTo = WithholdingScope.Goods };
+        var services = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000032"), "Retefuente servicios", "Retefuente", "CO", 4m, null, null, null)
+        { AppliesTo = WithholdingScope.Services };
+        var order = NewRow(
+            "PED-2026-0001",
+            items: [(ProductId, 1m, 1_000_000m, 0m, 0), (OtherProductId, 1m, 500_000m, 0m, 0)],
+            kinds: [ProductKind.Physical, ProductKind.Service],
+            withholdings: [goods, services]);
+        Assert.Equal(45_000m, order.AppliedWithholdings.Sum(withholding => withholding.Amount));
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente", "Retefuente", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente_rate", "Tasa Retefuente", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.All(writer.Rows, cells =>
+        {
+            Assert.Equal(ExportCell.OfNumber(45_000m), cells[1]);
+            Assert.Equal(ExportCell.OfNumber(3m), cells[2]);
+        });
+    }
+
     // La tarifa es la efectiva, la que dio el monto: si el asesor la editó, sale la editada y no la del catálogo.
     [Fact]
     public async Task RateUsesTheOverriddenPercentage()
@@ -2872,7 +2909,9 @@ public sealed class OrdersExportProcessorTests
         // arma como una variante por defecto (variante y producto con el mismo id), como hasta ahora.
         Guid? ownerProductId = null,
         // Spec 2026-11-16: la fecha del pedido, si no es el día de `at`.
-        DateOnly? orderDate = null)
+        DateOnly? orderDate = null,
+        // Spec 2026-11-18: el tipo de cada línea de `items`, por índice; ausente, físico.
+        IReadOnlyList<ProductKind>? kinds = null)
     {
         var occurredAt = at ?? Now;
         var proofInputs = (proofs ?? [.. (publicKeys ?? []).Select(publicKey => (10_000m, publicKey))])
@@ -2888,8 +2927,9 @@ public sealed class OrdersExportProcessorTests
             billingAccount ?? DefaultBillingAccount,
             shipping ?? ShippingDetails.None,
             (items ?? DefaultItems)
-                .Select(item => new OrderLineInput(
-                    item.ProductId, ownerProductId ?? item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
+                .Select((item, index) => new OrderLineInput(
+                    item.ProductId, ownerProductId ?? item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage,
+                    Kind: kinds?.ElementAtOrDefault(index) ?? ProductKind.Physical))
                 .ToArray(),
             orderNotes,
             AdvisorId,

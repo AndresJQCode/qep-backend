@@ -70,6 +70,8 @@ internal sealed class QuotationProductPricingLookup(
                 pair.Variant.ToQuotationRefs(),
                 pair.Product.TaxRateId is { } id && taxPercentages.TryGetValue(id, out var percentage)
                     ? percentage
-                    : null));
+                    : null,
+                pair.Product.Kind,
+                pair.Product.SalesUnit));
     }
 }

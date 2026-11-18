@@ -41,6 +41,12 @@ public interface IOrderRepository
     Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken);
 
+    /// <summary>De los ids dados, cuáles requieren envío (spec 2026-11-18 §5), con la regla de
+    /// <see cref="Order.RequiresShipping"/>. Para el listado, que no trae las líneas. Un id que no es del tenant no
+    /// aparece.</summary>
+    Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken);
+
     /// <summary>El pedido externo con esta clave de idempotencia (spec de Shopify D-S23), o null. La clave es
     /// única por <c>(tenant, source)</c>: la misma clave en otra plataforma es otro pedido.</summary>
     Task<Order?> FindByExternalKeyAsync(
