@@ -69,7 +69,7 @@ internal sealed class ClaimedOutboxConsumer(
                     continue;
                 }
 
-                await process(new ClaimedMessage(services, dbContext, record, now), cancellationToken);
+                await process(new ClaimedMessage(services, dbContext, record, now, attempts.Value), cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -96,5 +96,6 @@ internal sealed class ClaimedOutboxConsumer(
     }
 }
 
-/// <summary>Un mensaje ya reclamado, con el scope en el que se procesa y el instante del reclamo.</summary>
-internal sealed record ClaimedMessage(IServiceProvider Services, PurchasesDbContext DbContext, PurchasesOutboxRecord Record, DateTimeOffset Now);
+/// <summary>Un mensaje ya reclamado, con el scope en el que se procesa, el instante del reclamo y los intentos contando éste.</summary>
+internal sealed record ClaimedMessage(
+    IServiceProvider Services, PurchasesDbContext DbContext, PurchasesOutboxRecord Record, DateTimeOffset Now, int Attempts);

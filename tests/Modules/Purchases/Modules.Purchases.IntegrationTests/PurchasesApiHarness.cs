@@ -5,10 +5,12 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Modules.Catalog.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Purchases.Application;
+using Modules.Purchases.Infrastructure.Messaging;
 using Modules.Suppliers.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -405,6 +407,20 @@ internal static class PurchasesApiHarness
                 services.AddSingleton<FakePurchaseOrderPdfRenderer>();
                 services.AddSingleton<IPurchaseOrderPdfRenderer>(provider =>
                     provider.GetRequiredService<FakePurchaseOrderPdfRenderer>());
+
+                // Mayorista fase 3 (revisión del bloque C, I1): el worker de los eventos del mayorista sondea solo y competiría
+                // con LinkedPurchasesHarness.ProcessEventsAsync, volviendo no deterministas las pruebas de eventos. Se saca el
+                // hosted service como en PipelineApiHarness; el procesador (singleton) sigue registrado. Es el único hosted
+                // service que consume quotations.order.wholesale-*; que esté registrado por tipo (y este filtro lo encuentre) lo
+                // amarra WholesaleOrderEventsProcessorTests.
+                var workers = services
+                    .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                        && descriptor.ImplementationType == typeof(WholesaleOrderEventsWorker))
+                    .ToList();
+                foreach (var descriptor in workers)
+                {
+                    services.Remove(descriptor);
+                }
             });
 
             if (configureServices is not null)

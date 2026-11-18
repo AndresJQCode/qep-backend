@@ -24,6 +24,14 @@ internal sealed partial class WholesaleOrderEventsProcessor(IServiceScopeFactory
     /// <summary>Desde qué intento una falla se loguea en Error: el primero que deja la espera de 5 minutos por delante.</summary>
     internal const int ErrorAfterAttempts = 3;
 
+    /// <summary>
+    /// Revisión del bloque C, M1: un <see cref="WholesaleEventOutcome.RetryLater"/> es normal unos minutos (el envío está
+    /// terminando de guardarse), así que va en Information. Pasado el intento 12 —unos 50 minutos con la curva: 5 s, 30 s y
+    /// diez de 5 minutos— la orden casi seguro quedó en borrador con el pedido ya creado (la ventana de D-8) y alguien tiene que
+    /// mirarla: sube a Warning. El mensaje sigue reintentándose; nunca se descarta.
+    /// </summary>
+    internal const int RetryLaterWarningAfterAttempts = 12;
+
     private static readonly IReadOnlyList<TimeSpan> RetryDelays =
         [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5)];
 
@@ -33,8 +41,14 @@ internal sealed partial class WholesaleOrderEventsProcessor(IServiceScopeFactory
     [LoggerMessage(Level = LogLevel.Warning, Message = "Outbox message {MessageId} ({EventName}) has a malformed payload; it is marked as processed without effect.")]
     private static partial void LogMalformed(ILogger logger, Guid messageId, string eventName);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Outbox message {MessageId} ({EventName}) is not ready for its purchase order; it is retried when its claim expires.")]
-    private static partial void LogRetryLater(ILogger logger, Guid messageId, string eventName);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Outbox message {MessageId} ({EventName}) is not ready for its purchase order on attempt {Attempt}; it is retried when its claim expires.")]
+    private static partial void LogRetryLater(ILogger logger, Guid messageId, string eventName, int attempt);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Outbox message {MessageId} ({EventName}) is still not ready for its purchase order on attempt {Attempt}; the order is probably a draft whose wholesale order already exists. It keeps being retried.")]
+    private static partial void LogRetryLaterTooLong(ILogger logger, Guid messageId, string eventName, int attempt);
+
+    internal static LogLevel RetryLaterLevel(int attempt) =>
+        attempt > RetryLaterWarningAfterAttempts ? LogLevel.Warning : LogLevel.Information;
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Purchases could not claim outbox message {MessageId}; it is retried on the next tick.")]
     private static partial void LogClaimFailed(ILogger logger, Exception exception, Guid messageId);
@@ -73,7 +87,15 @@ internal sealed partial class WholesaleOrderEventsProcessor(IServiceScopeFactory
 
         if (outcome == WholesaleEventOutcome.RetryLater)
         {
-            LogRetryLater(logger, record.Id, record.EventName);
+            if (RetryLaterLevel(message.Attempts) == LogLevel.Warning)
+            {
+                LogRetryLaterTooLong(logger, record.Id, record.EventName, message.Attempts);
+            }
+            else
+            {
+                LogRetryLater(logger, record.Id, record.EventName, message.Attempts);
+            }
+
             return;
         }
 
