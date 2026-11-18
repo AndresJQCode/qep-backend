@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Catalog;
 using FluentValidation;
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Builder;
@@ -149,12 +150,14 @@ public static class ProductEndpoints
         int page = 1,
         int pageSize = ProductPaging.DefaultPageSize,
         bool includeVariants = false,
-        string? visibleInStore = null)
+        string? visibleInStore = null,
+        string? kind = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListProductsQuery(
                 tenantId, search, name, code, isActive, page, pageSize, includeVariants,
-                ParseVisibleInStore(visibleInStore)),
+                ParseVisibleInStore(visibleInStore),
+                CatalogEnumParsing.ParseOptional<ProductKind>(kind, "kind")),
             cancellationToken);
 
         return Results.Ok(new ProductsResponse(
@@ -193,7 +196,9 @@ public static class ProductEndpoints
                 request.OptionIds,
                 request.Variants,
                 request.Gallery,
-                request.VisibleInStore),
+                request.VisibleInStore,
+                CatalogEnumParsing.ParseOptional<ProductKind>(request.Kind, nameof(request.Kind)),
+                CatalogEnumParsing.ParseOptional<SalesUnit>(request.SalesUnit, nameof(request.SalesUnit))),
             cancellationToken);
 
         return Results.Created(
@@ -221,7 +226,9 @@ public static class ProductEndpoints
                 request.Variants,
                 request.Gallery,
                 request.DeletedVariantIds,
-                request.VisibleInStore),
+                request.VisibleInStore,
+                CatalogEnumParsing.ParseOptional<ProductKind>(request.Kind, nameof(request.Kind)),
+                CatalogEnumParsing.ParseOptional<SalesUnit>(request.SalesUnit, nameof(request.SalesUnit))),
             cancellationToken);
 
         return Results.Ok(ToResponse(product));
@@ -319,6 +326,8 @@ public static class ProductEndpoints
         product.ImageUrl,
         product.TaxRateId,
         product.CategoryId,
+        product.Kind,
+        product.SalesUnit,
         product.Options,
         product.Variants,
         product.Gallery,

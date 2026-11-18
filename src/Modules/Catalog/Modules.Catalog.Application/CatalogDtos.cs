@@ -26,6 +26,8 @@ public sealed record ProductDto(
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    string Kind,
+    string SalesUnit,
     IReadOnlyList<ProductOptionResponse> Options,
     IReadOnlyList<ProductVariantResponse> Variants,
     IReadOnlyList<ProductGalleryImageResponse> Gallery,
@@ -53,6 +55,10 @@ public sealed record ProductResponse(
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    // Spec 2026-11-18 §3.3: "Physical" | "Service" y la unidad de venta ("Unit", "Hour"…), por nombre.
+    // La etiqueta la pone la pantalla, que tiene el diccionario.
+    string Kind,
+    string SalesUnit,
     // Las opciones del producto en su orden, con sus nombres ya resueltos de la biblioteca.
     IReadOnlyList<ProductOptionResponse> Options,
     // **Todas** las variantes en orden de presentación, activas e inactivas: el formulario edita
@@ -152,6 +158,9 @@ public sealed record ProductListItemDto(
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    // Por nombre, como en el detalle: la grilla y el selector distinguen productos de servicios.
+    string Kind,
+    string SalesUnit,
     int VariantCount,
     IReadOnlyDictionary<string, PriceRangeResponse> PriceRange,
     long Version,
@@ -266,6 +275,10 @@ public sealed record ProductsResponse(
 // Description/TaxRateId son opcionales, y en el PUT mandarlos en null los **limpia** — el verbo
 // reemplaza el recurso entero. Lo mismo OptionIds y Gallery: null es lista vacía.
 //
+// Kind y SalesUnit (spec 2026-11-18 §3.3) viajan por nombre ("Service", "Hour") y son opcionales:
+// ausentes en el POST son "Physical" y "Unit"; en el PUT conservan los guardados, como VisibleInStore.
+// Un nombre que no existe es 422 validation.failed.
+//
 // Con las variantes, Code y Pricing salieron del producto hacia cada variante, y ImageFileId hacia
 // Gallery (la primera foto es la principal). Un producto sin opciones manda una sola variante, sin
 // OptionValueIds.
@@ -277,7 +290,9 @@ public sealed record CreateProductRequest(
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
-    bool? VisibleInStore = null);
+    bool? VisibleInStore = null,
+    string? Kind = null,
+    string? SalesUnit = null);
 
 /// <summary>
 /// Una variante como la manda el formulario. En el PUT se empareja por <paramref name="Id"/>
@@ -360,7 +375,9 @@ public sealed record UpdateProductRequest(
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
     IReadOnlyList<Guid>? DeletedVariantIds = null,
-    bool? VisibleInStore = null);
+    bool? VisibleInStore = null,
+    string? Kind = null,
+    string? SalesUnit = null);
 
 // Scope viaja como texto ("National" | "Municipal"), como Behavior. CityId es null sólo en una tasa nacional; City trae el
 // municipio resuelto (backend for frontend): la lista de tasas pinta «Bogotá, D.C.» sin preguntarle a Geography. City es

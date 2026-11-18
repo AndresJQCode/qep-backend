@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Modules.Catalog.Domain;
 
@@ -73,6 +74,16 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         product.Property(value => value.ExternalSource)
             .HasColumnName("external_source")
             .HasMaxLength(Product.ExternalSourceMaxLength);
+        // Spec 2026-11-18 §3.1-§3.2: por nombre, text not null. El default de la base es el valor de
+        // todo producto de antes, y coincide con el default CLR: no hace falta sentinel.
+        product.Property(value => value.Kind)
+            .HasColumnName("kind")
+            .HasConversion<string>()
+            .HasDefaultValue(ProductKind.Physical);
+        product.Property(value => value.SalesUnit)
+            .HasColumnName("sales_unit")
+            .HasConversion<string>()
+            .HasDefaultValue(SalesUnit.Unit);
         // El predicado de las lecturas de la tienda: sólo los publicados y activos. Incluye el nombre
         // porque la tienda ordena por él; con sólo tenant_id EF lo fundiría con IX_products_tenant.
         product.HasIndex(value => new { value.TenantId, value.Name })
