@@ -152,6 +152,8 @@ public static class MultiReplicaInventory
             "Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveProcessor.cs:19 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
         new("Modules.Storage.Infrastructure.ProductImages.ProductImageReleaseWorker", WorkerClassification.Noisy,
             "Modules/Storage/Modules.Storage.Infrastructure/ProductImages/ProductImageReleaseProcessor.cs:19 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
+        new("Modules.Storage.Infrastructure.TemplateImages.TemplateHeaderImageReleaseWorker", WorkerClassification.Noisy,
+            "Modules/Storage/Modules.Storage.Infrastructure/TemplateImages/TemplateHeaderImageReleaseProcessor.cs:68 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
         new("Modules.Quotations.Infrastructure.Expiration.QuotationExpirationWorker", WorkerClassification.Noisy,
             "Modules/Quotations/Modules.Quotations.Infrastructure/Expiration/QuotationExpirationProcessor.cs:56-88 — barrido en los dos pods; Version es token de concurrencia y el segundo choca sin duplicar historial"),
 

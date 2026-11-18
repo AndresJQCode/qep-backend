@@ -15,6 +15,7 @@ using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
 using Modules.Storage.Infrastructure.ProductImages;
+using Modules.Storage.Infrastructure.TemplateImages;
 using Npgsql;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -506,6 +507,16 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
                     && descriptor.ImplementationType == typeof(ProductImageReleaseWorker))
                 .ToList();
             foreach (var descriptor in imageReleaseWorkers)
+            {
+                services.Remove(descriptor);
+            }
+
+            // Y el de las imágenes de encabezado de plantillas (spec 2026-11-17): TemplateHeaderImageReleaseTests corre el lote a mano.
+            var templateImageReleaseWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(TemplateHeaderImageReleaseWorker))
+                .ToList();
+            foreach (var descriptor in templateImageReleaseWorkers)
             {
                 services.Remove(descriptor);
             }
