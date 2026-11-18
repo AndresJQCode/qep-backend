@@ -53,6 +53,23 @@ public sealed class ChatbotMediaStoreTests
         Assert.Empty(_uploads.Opens);
     }
 
+    // Revisión del bloque A: el contrato HTTP promete validation.failed con errors.fileName para un nombre que Storage no acepta.
+    [Theory]
+    [InlineData("carpeta/lista.pdf")]
+    [InlineData(null)]
+    public async Task AStorageNameRejectionIsAValidationErrorOnFileName(string? fileName)
+    {
+        var name = fileName ?? new string('a', 300) + ".pdf";
+
+        var error = await Assert.ThrowsAsync<FluentValidation.ValidationException>(
+            () => NewStore().OpenUploadAsync(TenantId, name, "application/pdf", 1024, SixteenMegabytes, Ct));
+
+        var failure = Assert.Single(error.Errors);
+        Assert.Equal("fileName", failure.PropertyName);
+        Assert.False(string.IsNullOrWhiteSpace(failure.ErrorMessage));
+        Assert.Empty(_uploads.Opens);
+    }
+
     [Fact]
     public async Task CompletePublishesOnceAndReturnsThePublicUrl()
     {

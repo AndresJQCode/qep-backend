@@ -355,20 +355,41 @@ public sealed class StorageSystemUploadsTests
         Assert.Equal(1, fixture.Media.ShrinkCalls);
     }
 
+    // Revisión del bloque A: toda imagen de chatbot se recomprime, también la chica, para que el EXIF (GPS incluido) nunca llegue a la URL
+    // pública. Es lo que hace Mensajería con cada imagen que manda un asesor.
     [Fact]
-    public async Task AFourMegabyteChatbotImageIsKeptAsIs()
+    public async Task AFourMegabyteChatbotImageIsAlsoRecompressed()
     {
         var fixture = new Fixture();
-        var content = Bytes(4 * 1024 * 1024, fill: 0x10);
-        var session = await fixture.OpenChatbotMediaAsync("catalogo.png", "image/png", content);
+        var shrunk = Bytes(1024, fill: 0x7F);
+        fixture.Media.Shrunk = new ProcessedChatbotImage(shrunk, "image/jpeg", ".jpg");
+        var session = await fixture.OpenChatbotMediaAsync("catalogo.png", "image/png", Bytes(4 * 1024 * 1024, fill: 0x10));
 
         var result = await fixture.Uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.ChatbotMedia, TenantId, Ct);
 
         Assert.Equal(SystemUploadOutcome.Available, result.Outcome);
         var resource = Assert.Single(fixture.Repository.Items);
-        Assert.Equal(("catalogo.png", "image/png", (long)content.Length), (resource.Name, resource.MimeType, resource.SizeBytes));
-        Assert.Equal(content, await fixture.Storage.DownloadAsync(resource.StorageKey, Ct));
-        Assert.Equal(0, fixture.Media.ShrinkCalls);
+        Assert.Equal(("catalogo.jpg", "image/jpeg", (long)shrunk.Length), (resource.Name, resource.MimeType, resource.SizeBytes));
+        Assert.Equal(shrunk, await fixture.Storage.DownloadAsync(resource.StorageKey, Ct));
+        Assert.Equal(1, fixture.Media.ShrinkCalls);
+    }
+
+    // Revisión del bloque A: Meta no baja por link más de 5 MB; si ni comprimida cabe, es una imagen que no se puede mandar.
+    [Fact]
+    public async Task AShrunkImageStillOverFiveMegabytesIsRejected()
+    {
+        var fixture = new Fixture();
+        fixture.Media.Shrunk = new ProcessedChatbotImage(Bytes((5 * 1024 * 1024) + 1, fill: 0x7F), "image/jpeg", ".jpg");
+        var session = await fixture.OpenChatbotMediaAsync("mural.png", "image/png", Bytes(20 * 1024 * 1024, fill: 0x10));
+
+        var result = await fixture.Uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.ChatbotMedia, TenantId, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Rejected, result.Outcome);
+        var resource = Assert.Single(fixture.Repository.Items);
+        Assert.Equal(FileResourceStatus.Quarantined, resource.Status);
+        Assert.DoesNotContain("files/", resource.StorageKey, StringComparison.Ordinal);
+        var audit = Assert.Single(fixture.Audit.Entries);
+        Assert.Equal(("storage.file.rejected", "image_processing_failed", true), (audit.Action, audit.Outcome, audit.System));
     }
 
     [Fact]

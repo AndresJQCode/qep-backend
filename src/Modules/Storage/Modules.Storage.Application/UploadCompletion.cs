@@ -125,11 +125,12 @@ internal sealed class UploadCompletion(
             ? chatbotMediaProcessing.Matches(resource.Name, content.AsSpan(0, Math.Min(64, content.Length)))
             : contentInspector.Matches(resource.Name, resource.MimeType, content);
 
-    // Spec 2026-11-18: Meta no baja por link una imagen de más de 5 MB. Una imagen de chatbot por encima se comprime antes de promover.
+    // Spec 2026-11-18 y revisión del bloque A: toda imagen de chatbot se recomprime antes de promover, no sólo la de más de 5 MB (lo que Meta
+    // baja por link): así el EXIF, GPS incluido, nunca llega a la URL pública. Es lo que hace Mensajería con cada imagen de un asesor.
     private static bool NeedsShrinking(FileResource resource, byte[] content) =>
         resource.OwnerType is FileOwnerType.ChatbotMedia
         && resource.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
-        && content.LongLength > FileUploadPolicy.ChatbotMediaLinkImageMaxBytes;
+        && content.LongLength > 0;
 
     // La imagen comprimida reemplaza a la original en la misma clave de staging, como un comprobante (D7): de ahí sale a variantes y a
     // la promoción. Ilegible = cuarentena, igual que una imagen que el generador de variantes no puede leer.
@@ -141,7 +142,8 @@ internal sealed class UploadCompletion(
         CancellationToken cancellationToken)
     {
         var processed = await chatbotMediaProcessing.ShrinkAsync(content, cancellationToken);
-        if (processed is null)
+        // Una que ni comprimida cabe en los 5 MB de Meta no se podría mandar: se trata como una imagen que no se puede procesar.
+        if (processed is null || processed.Content.LongLength > FileUploadPolicy.ChatbotMediaLinkImageMaxBytes)
         {
             await QuarantineUnprocessableImageAsync(resource, actorId, now, cancellationToken);
             throw new StorageDomainException(

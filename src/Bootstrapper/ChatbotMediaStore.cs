@@ -10,7 +10,7 @@ namespace Bootstrapper;
 /// <summary>
 /// Spec 2026-11-18: el archivo de un bloque «Mensaje» de chatbot, sobre Storage. Es de dueño de sistema
 /// <see cref="FileOwnerType.ChatbotMedia"/> con el tenant como dueño: sube por <see cref="IStorageSystemUploads"/> (staging, sniffer de
-/// Mensajería, antivirus, compresión de una imagen grande) y no aparece en la consola de Storage. Se publica al completar con
+/// Mensajería, antivirus, recompresión de toda imagen) y no aparece en la consola de Storage. Se publica al completar con
 /// <see cref="FilePublication"/>, sin pasar por <c>PublishFileHandler</c> ni por sus permisos: lo autoriza
 /// <c>automations.chatbot.manage</c>, como la imagen de encabezado de una plantilla (<see cref="MessagingTemplateImageStore"/>). Toda
 /// lectura filtra por tenant y dueño: un id ajeno es el mismo «no existe».
@@ -44,11 +44,13 @@ internal sealed class ChatbotMediaStore(
     }
 
     // La política del chatbot ya revisó tipo y tope antes de llegar acá; si Storage igual rechaza la declaración (su tabla y la de
-    // Mensajería se separaron), el editor ve el código de Automations sobre su campo, no uno de Storage que no conoce. Un nombre inválido
-    // no se traduce: sigue siendo storage.file.name_*.
-    private static AutomationsDomainException? TranslateDeclarationRejection(StorageDomainException exception) =>
+    // Mensajería se separaron), el editor ve el código de Automations sobre su campo, no uno de Storage que no conoce. Un nombre que Storage
+    // no acepta (con ruta, o de más de 260) es validation.failed sobre fileName, como promete el contrato HTTP (revisión del bloque A).
+    private static Exception? TranslateDeclarationRejection(StorageDomainException exception) =>
         exception.Code switch
         {
+            "storage.file.name_invalid" => FileNameError("El nombre del archivo no es válido. Usa sólo el nombre, sin carpetas."),
+            "storage.file.name_too_long" => FileNameError("El nombre del archivo es demasiado largo."),
             "storage.file.type_not_allowed" or "storage.file.mime_mismatch" => new AutomationsDomainException(
                 AutomationsErrorCodes.MediaUnsupportedType,
                 "This file type cannot be sent by a chatbot.",
@@ -59,6 +61,9 @@ internal sealed class ChatbotMediaStore(
                 FieldError("sizeBytes", ChatbotMediaMessages.TooLarge)),
             _ => null,
         };
+
+    private static FluentValidation.ValidationException FileNameError(string message) =>
+        new([new FluentValidation.Results.ValidationFailure("fileName", message)]);
 
     public async Task<ChatbotMediaCompletion> CompleteAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
     {
