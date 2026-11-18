@@ -1,5 +1,7 @@
 using System.Globalization;
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
+using BuildingBlocks.Domain.Taxes;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -222,6 +224,83 @@ public sealed class DocumentTotalsTests
         Assert.Empty(totals.Withholdings);
         Assert.Equal(0m, totals.RetentionAmount);
         Assert.Equal(totals.Total, totals.NetTotal);
+    }
+
+    // Spec 2026-11-18 §4.2: un bien de 1.000.000 y un servicio de 500.000, sin IVA.
+    private static readonly LineAmountsView[] Mixed =
+    [
+        new(1_000_000m, 0m, 190_000m, ProductKind.Physical),
+        new(500_000m, 0m, 95_000m, ProductKind.Service),
+    ];
+
+    private static readonly WithholdingRate RetefuenteGoods =
+        Rate("Retefuente", 2.5m) with { AppliesTo = WithholdingScope.Goods };
+
+    private static readonly WithholdingRate RetefuenteServices =
+        Rate("Retefuente", 4m) with { AppliesTo = WithholdingScope.Services };
+
+    // Review Focus 1: cada tasa retiene sobre la base de su alcance, y el envío sigue fuera de toda base.
+    [Fact]
+    public void MixedDocumentWithholdsEachRateOnItsScopeBase()
+    {
+        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP", PriceRounding.LegacyFor("COP"));
+
+        var totals = DocumentTotals.Compute(Mixed, freight, appliesVatSurplus: false, [RetefuenteGoods, RetefuenteServices]);
+
+        Assert.Equal(1_500_000m, totals.Subtotal);
+        Assert.Equal(
+            [new AppliedWithholding(RetefuenteGoods, 1_000_000m, 25_000m), new AppliedWithholding(RetefuenteServices, 500_000m, 20_000m)],
+            totals.Withholdings);
+        Assert.Equal(45_000m, totals.RetentionAmount);
+        Assert.Equal(totals.Total - 45_000m, totals.NetTotal);
+    }
+
+    // Review Focus 2: con sólo tasas All el tipo de cada línea no importa; da lo mismo que si todas fueran bienes, que es
+    // como se calculaba antes de que la línea tuviera tipo.
+    [Fact]
+    public void AllScopeRatesReproduceTodaysTotals()
+    {
+        var all = Rate("Retefuente", 2.5m);
+        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP", PriceRounding.LegacyFor("COP"));
+        LineAmountsView[] untyped = [new(1_000_000m, 0m, 190_000m), new(500_000m, 0m, 95_000m)];
+
+        var mixed = DocumentTotals.Compute(Mixed, freight, appliesVatSurplus: false, [all]);
+        var today = DocumentTotals.Compute(untyped, freight, appliesVatSurplus: false, [all]);
+
+        Assert.Equal([new AppliedWithholding(all, 1_500_000m, 37_500m)], mixed.Withholdings);
+        Assert.Equal(37_500m, mixed.RetentionAmount);
+        Assert.Equal(today.Withholdings, mixed.Withholdings);
+        Assert.Equal(
+            (today.Subtotal, today.TaxAmount, today.Total, today.RetentionAmount, today.NetTotal, today.FreightSubtotal),
+            (mixed.Subtotal, mixed.TaxAmount, mixed.Total, mixed.RetentionAmount, mixed.NetTotal, mixed.FreightSubtotal));
+    }
+
+    [Fact]
+    public void AScopedRateWithoutLinesOfItsKindDoesNotApply()
+    {
+        var totals = DocumentTotals.Compute(
+            [new LineAmountsView(500_000m, 0m, 95_000m, ProductKind.Service)], FreightAmounts.Zero, appliesVatSurplus: false,
+            [RetefuenteGoods]);
+
+        Assert.Empty(totals.Withholdings);
+        Assert.Equal(0m, totals.RetentionAmount);
+    }
+
+    // Cada base se redondea igual que el subtotal del documento.
+    [Fact]
+    public void BasesAreRoundedLikeTheSubtotal()
+    {
+        var bases = WithholdingBases.From(
+        [
+            new LineAmountsView(0.004m, 0m, 0m, ProductKind.Physical),
+            new LineAmountsView(0.004m, 0m, 0m, ProductKind.Physical),
+            new LineAmountsView(10.005m, 0m, 0m, ProductKind.Service),
+        ]);
+
+        Assert.Equal(new WithholdingBases(All: 10.01m, Goods: 0.01m, Services: 10.01m), bases);
+        Assert.Equal(
+            (10.01m, 0.01m, 10.01m),
+            (bases.For(WithholdingScope.All), bases.For(WithholdingScope.Goods), bases.For(WithholdingScope.Services)));
     }
 
     [Fact]

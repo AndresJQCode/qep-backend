@@ -289,7 +289,7 @@ public sealed class Order
     public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
         DocumentWithholding.Explain(
             [.. _withholdings.OrderBy(withholding => withholding.Position)], BillsToFinalConsumer, BillingAccount, Currency,
-            OperationCityId, Subtotal);
+            OperationCityId, WithholdingBases.From(_items.Select(item => item.Amounts)));
 
     public decimal Subtotal { get; private set; }
 

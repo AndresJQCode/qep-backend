@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Taxes;
 using Modules.Quotations.Domain;
 using static Modules.Quotations.UnitTests.TestWithholdings;
 
@@ -68,7 +70,8 @@ public sealed class WithholdingVerdictTests
             _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
         };
 
-        var verdict = Assert.Single(WithholdingCandidates.Explain([rate], finalConsumer, account, currency, Bogota, subtotal));
+        var verdict = Assert.Single(
+            WithholdingCandidates.Explain([rate], finalConsumer, account, currency, Bogota, GoodsOnly(subtotal)));
 
         Assert.Equal((rate, expected, subtotal), (verdict.Rate, verdict.Reason, verdict.Base));
         Assert.Equal(expected == WithholdingReason.Applied, verdict.Applies);
@@ -79,7 +82,7 @@ public sealed class WithholdingVerdictTests
     public void MinimumBaseAmountIsTheThresholdOnlyWithAMinimumBase()
     {
         var verdicts = WithholdingCandidates.Explain(
-            [RetefuenteServicios, WithoutTaxUnit, RetefuenteCo], false, ColombianAccount, "COP", Bogota, 100_000m);
+            [RetefuenteServicios, WithoutTaxUnit, RetefuenteCo], false, ColombianAccount, "COP", Bogota, GoodsOnly(100_000m));
 
         Assert.Equal([199_196m, null, null], verdicts.Select(verdict => verdict.MinimumBaseAmount));
     }
@@ -88,7 +91,7 @@ public sealed class WithholdingVerdictTests
     public void FinalConsumerWinsOverThreshold()
     {
         var verdict = Assert.Single(
-            WithholdingCandidates.Explain([RetefuenteServicios], true, ColombianAccount, "COP", Bogota, 500_000m));
+            WithholdingCandidates.Explain([RetefuenteServicios], true, ColombianAccount, "COP", Bogota, GoodsOnly(500_000m)));
 
         Assert.Equal(WithholdingReason.FinalConsumer, verdict.Reason);
     }
@@ -97,7 +100,7 @@ public sealed class WithholdingVerdictTests
     public void OtherCountryRatesAreLeftOut()
     {
         var verdicts = WithholdingCandidates.Explain(
-            [RetefuenteMexico, RetefuenteCo], false, ColombianAccount, "COP", Bogota, 100_000m);
+            [RetefuenteMexico, RetefuenteCo], false, ColombianAccount, "COP", Bogota, GoodsOnly(100_000m));
 
         Assert.Equal(RetefuenteCo, Assert.Single(verdicts).Rate);
     }
@@ -117,7 +120,7 @@ public sealed class WithholdingVerdictTests
         WithholdingRate[] source = operationCityId is null ? [RetefuenteCo] : [ReteIcaBogota, RetefuenteCo];
 
         var candidates = WithholdingCandidates.For(source, false, ColombianAccount, "COP", operationCityId);
-        var explained = WithholdingCandidates.Explain(source, false, ColombianAccount, "COP", operationCityId, 0m)
+        var explained = WithholdingCandidates.Explain(source, false, ColombianAccount, "COP", operationCityId, GoodsOnly(0m))
             .Where(verdict => verdict.Reason is WithholdingReason.Applied
                 or WithholdingReason.BelowMinimumBase
                 or WithholdingReason.NoTaxUnitValue)
@@ -171,6 +174,104 @@ public sealed class WithholdingVerdictTests
             [(WithholdingReason.BelowMinimumBase, 0m), (WithholdingReason.Applied, 2_500m)],
             order.WithholdingVerdicts.Select(verdict => (verdict.Reason, verdict.Amount)));
     }
+
+    // Spec 2026-11-18 §4.2: un bien de 1.000.000 y un servicio de 500.000, sin IVA.
+    private static readonly WithholdingBases Mixed = WithholdingBases.From(
+    [
+        new LineAmountsView(1_000_000m, 0m, 190_000m, ProductKind.Physical),
+        new LineAmountsView(500_000m, 0m, 95_000m, ProductKind.Service),
+    ]);
+
+    private static readonly WithholdingBases ServicesOnly =
+        WithholdingBases.From([new LineAmountsView(500_000m, 0m, 95_000m, ProductKind.Service)]);
+
+    private static readonly WithholdingRate GoodsRate = RetefuenteCo with { AppliesTo = WithholdingScope.Goods };
+
+    private static readonly WithholdingRate ServicesRate =
+        new(Guid.CreateVersion7(), "Retefuente servicios 4 %", "Retefuente", "CO", 4m, null, null, null)
+        {
+            AppliesTo = WithholdingScope.Services,
+        };
+
+    [Fact]
+    public void MixedDocumentWithholdsEachRateOnItsScopeBase()
+    {
+        var verdicts = WithholdingCandidates.Explain([GoodsRate, ServicesRate], false, ColombianAccount, "COP", Bogota, Mixed);
+
+        Assert.Equal(
+            [
+                (GoodsRate, WithholdingReason.Applied, 1_000_000m, 25_000m),
+                (ServicesRate, WithholdingReason.Applied, 500_000m, 20_000m),
+            ],
+            verdicts.Select(verdict => (verdict.Rate, verdict.Reason, verdict.Base, verdict.Amount)));
+    }
+
+    [Fact]
+    public void AllScopeRatesReproduceTodaysTotals()
+    {
+        var verdict = Assert.Single(
+            WithholdingCandidates.Explain([RetefuenteCo], false, ColombianAccount, "COP", Bogota, Mixed));
+
+        Assert.Equal((WithholdingReason.Applied, 1_500_000m, 37_500m), (verdict.Reason, verdict.Base, verdict.Amount));
+    }
+
+    [Fact]
+    public void AGoodsRateOnAServicesOnlyDocumentIsNoLinesOfScope()
+    {
+        var verdict = Assert.Single(
+            WithholdingCandidates.Explain([GoodsRate], false, ColombianAccount, "COP", Bogota, ServicesOnly));
+
+        Assert.Equal((WithholdingReason.NoLinesOfScope, 0m, 0m), (verdict.Reason, verdict.Base, verdict.Amount));
+        Assert.False(verdict.Applies);
+    }
+
+    // 12 UVT x 50.000 = 600.000: los servicios suman 500.000 y no lo alcanzan, aunque el documento entero sume 1.500.000.
+    [Fact]
+    public void TheThresholdIsComparedWithTheScopeBase()
+    {
+        var withBase = ServicesRate with { MinimumBase = 12m, MinimumBaseUnit = "UVT", TaxUnitValue = 50_000m };
+
+        var verdict = Assert.Single(
+            WithholdingCandidates.Explain([withBase], false, ColombianAccount, "COP", Bogota, Mixed));
+
+        Assert.Equal(600_000m, withBase.Threshold);
+        Assert.Equal((WithholdingReason.BelowMinimumBase, 500_000m, 0m), (verdict.Reason, verdict.Base, verdict.Amount));
+    }
+
+    // El orden de los motivos (spec 2026-11-18 §4.2): primero los que descartan la tasa antes del cálculo, después
+    // NoLinesOfScope y al final el umbral.
+    [Fact]
+    public void FinalConsumerStillWinsOverNoLinesOfScope()
+    {
+        var finalConsumer = Assert.Single(
+            WithholdingCandidates.Explain([GoodsRate], true, ColombianAccount, "COP", Bogota, ServicesOnly));
+        var noTaxUnit = Assert.Single(WithholdingCandidates.Explain(
+            [GoodsRate with { MinimumBase = 4m, MinimumBaseUnit = "UVT", TaxUnitValue = null }], false, ColombianAccount,
+            "COP", Bogota, ServicesOnly));
+
+        Assert.Equal(WithholdingReason.FinalConsumer, finalConsumer.Reason);
+        Assert.Equal(WithholdingReason.NoLinesOfScope, noTaxUnit.Reason);
+    }
+
+    // La vista previa (veredictos) y el total guardado salen del mismo cálculo: nunca difieren.
+    [Fact]
+    public void QuotationVerdictsMatchThePersistedWithholdingsOnAMixedDocument()
+    {
+        var quotation = NewQuotation([GoodsRate, ServicesRate], subtotalWithVat: 1_190_000m);
+        quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 595_000m, 0m, 19, AdvisorId, Now,
+            ProductKind.Service);
+
+        Assert.Equal(
+            [(GoodsRate, 1_000_000m, 25_000m), (ServicesRate, 500_000m, 20_000m)],
+            quotation.WithholdingVerdicts.Select(verdict => (verdict.Rate, verdict.Base, verdict.Amount)));
+        Assert.Equal(
+            [(GoodsRate.TaxRateId, 1_000_000m, 25_000m), (ServicesRate.TaxRateId, 500_000m, 20_000m)],
+            quotation.AppliedWithholdings.Select(row => (row.TaxRateId, row.BaseAmount, row.Amount)));
+        Assert.Equal(45_000m, quotation.RetentionAmount);
+    }
+
+    private static WithholdingBases GoodsOnly(decimal subtotal) => new(subtotal, subtotal, 0m);
 
     private static readonly QuotationPartyDetails OwnBilling = new()
     {

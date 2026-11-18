@@ -206,7 +206,7 @@ public sealed class DocumentWithholding
         QuotationBillingAccount? billingAccount,
         string currency,
         Guid? operationCityId,
-        decimal productsSubtotal)
+        WithholdingBases bases)
     {
         var amounts = activeRows.ToDictionary(row => row.TaxRateId, row => row.Amount);
         return
@@ -214,7 +214,7 @@ public sealed class DocumentWithholding
             .. WithholdingCandidates
                 .Explain(
                     activeRows.Select(row => row.Rate), billsToFinalConsumer, billingAccount, currency, operationCityId,
-                    productsSubtotal)
+                    bases)
                 .Select(verdict => verdict with { Amount = amounts[verdict.Rate.TaxRateId] }),
         ];
     }

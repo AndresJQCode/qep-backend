@@ -413,7 +413,12 @@ public sealed class Quotation
     /// otro país no salen.</summary>
     public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
         DocumentWithholding.Explain(
-            [.. ActiveWithholdings], BillsToFinalConsumer, BillingAccount, Currency, OperationCityId, Subtotal);
+            [.. ActiveWithholdings], BillsToFinalConsumer, BillingAccount, Currency, OperationCityId,
+            WithholdingBases.From(LineAmounts));
+
+    /// <summary>Lo que cada línea aporta a los totales y a las bases de retención, con su tipo (spec 2026-11-18 §4.2).</summary>
+    private IEnumerable<LineAmountsView> LineAmounts =>
+        _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount, item.Kind));
 
     private WithholdingSource ActiveWithholdingSource =>
         Billing is not null ? WithholdingSource.Billing : WithholdingSource.Customer;
@@ -1485,7 +1490,7 @@ public sealed class Quotation
     {
         var activeSource = ActiveWithholdingSource;
         var totals = DocumentTotals.Compute(
-            _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
+            LineAmounts,
             FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
             WithholdingCandidates.For(

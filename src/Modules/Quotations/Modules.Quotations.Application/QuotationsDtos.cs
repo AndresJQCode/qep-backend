@@ -183,8 +183,9 @@ public sealed record WithholdingTaxRateDto(
 /// dominio (<c>WithholdingVerdict</c>); el frontend sólo pinta.
 /// </summary>
 /// <param name="Reason">El nombre de <c>WithholdingReason</c>: <c>Applied</c>, <c>BelowMinimumBase</c>,
-/// <c>NoTaxUnitValue</c>, <c>FinalConsumer</c>, <c>NoBillingCompany</c>, <c>CurrencyWithoutTax</c> u
-/// <c>OtherMunicipality</c>.</param>
+/// <c>NoTaxUnitValue</c>, <c>FinalConsumer</c>, <c>NoBillingCompany</c>, <c>CurrencyWithoutTax</c>,
+/// <c>OtherMunicipality</c> o <c>NoLinesOfScope</c> (spec 2026-11-18 §4.2: una tasa de bienes o de servicios sin líneas de
+/// ese tipo).</param>
 /// <param name="MinimumBaseAmount">El umbral en dinero; null sin base mínima o con base en UVT y sin valor cargado.</param>
 /// <param name="TaxUnitYear">El año de la UVT congelada; null sin unidad o en una fila anterior que no casó (§8.2).</param>
 /// <param name="Amount">Lo que guardó el último recálculo; 0 si no aplicó.</param>

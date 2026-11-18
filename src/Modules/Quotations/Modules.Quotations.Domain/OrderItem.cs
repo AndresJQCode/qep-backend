@@ -132,8 +132,8 @@ public sealed class OrderItem
 
     public decimal UnitPriceWithoutTax => Round(UnitPrice * 100m / (100m + TaxPercentage));
 
-    /// <summary>Lo que la línea aporta a <see cref="DocumentTotals"/>.</summary>
-    public LineAmountsView Amounts => new(Subtotal, DiscountAmount, TaxAmount);
+    /// <summary>Lo que la línea aporta a <see cref="DocumentTotals"/>; el tipo decide su base de retención.</summary>
+    public LineAmountsView Amounts => new(Subtotal, DiscountAmount, TaxAmount, Kind);
 
     internal static OrderItem Create(
         OrderItemId id,
