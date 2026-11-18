@@ -19,16 +19,54 @@ internal static class OrderPaymentProofResolver
 
     /// <param name="exceptProofId">El comprobante que se reemplaza con este archivo, o null para uno nuevo:
     /// reemplazar un comprobante con su propio archivo no lo cuenta como ya adjunto.</param>
-    public static async Task ResolveAsync(
+    public static Task ResolveAsync(
         IQuotationFileLookup lookup,
         IOrderRepository orders,
         Guid tenantId,
         Guid fileId,
         OrderPaymentProofId? exceptProofId,
+        CancellationToken cancellationToken) =>
+        ResolveManyAsync(lookup, orders, tenantId, [fileId], exceptProofId, cancellationToken);
+
+    /// <summary>
+    /// Los archivos de un cuerpo en dos lecturas, sin importar cuántos sean: una a Storage y, si alguno es un
+    /// comprobante v2, una de uso (consultas por request, fase 2). Las reglas y los códigos son los de siempre, y el
+    /// error es el del primer archivo que falla en el orden del cuerpo, como cuando se resolvían de a uno.
+    /// </summary>
+    public static async Task ResolveManyAsync(
+        IQuotationFileLookup lookup,
+        IOrderRepository orders,
+        Guid tenantId,
+        IReadOnlyCollection<Guid> fileIds,
+        OrderPaymentProofId? exceptProofId,
         CancellationToken cancellationToken)
     {
-        var file = await lookup.FindAsync(tenantId, fileId, cancellationToken);
+        if (fileIds.Count == 0)
+        {
+            return;
+        }
 
+        var files = await lookup.FindManyAsync(tenantId, fileIds, cancellationToken);
+        var proofFileIds = files.Values
+            .Where(file => file.TenantId == tenantId && file.IsAvailable && file.IsPaymentProof)
+            .Select(file => file.FileId)
+            .ToArray();
+        var inUse = proofFileIds.Length == 0
+            ? new HashSet<Guid>()
+            : await orders.ListPaymentProofFilesInUseAsync(proofFileIds, exceptProofId, cancellationToken);
+
+        // Un PaymentProof repetido en el mismo cuerpo es «ya adjunto»: el segundo sería otro comprobante con el mismo
+        // archivo, que es justo lo que D16 prohíbe, y la base todavía no lo ve.
+        var seen = new HashSet<Guid>();
+        foreach (var fileId in fileIds)
+        {
+            files.TryGetValue(fileId, out var file);
+            Ensure(file, fileId, tenantId, file is not null && file.IsPaymentProof && (inUse.Contains(fileId) || !seen.Add(fileId)));
+        }
+    }
+
+    private static void Ensure(QuotationFileRef? file, Guid fileId, Guid tenantId, bool alreadyAttached)
+    {
         // Mismo código para "no existe" y "es de otro tenant" -- la frontera de tenant no se
         // distingue desde afuera.
         if (file is null || file.TenantId != tenantId)
@@ -44,9 +82,7 @@ internal static class OrderPaymentProofResolver
         // referencia y no por movimiento: Storage registra una sola clave pública por archivo, así que un
         // segundo adjunto dejaría una copia que ningún retiro llega a borrar. Un archivo User (D13) no
         // tiene la regla: cada adjunto tiene su copia y su original sigue en el bucket privado.
-        if (!file.IsAvailable
-            || (file.IsPaymentProof
-                && await orders.IsPaymentProofFileInUseAsync(fileId, exceptProofId, cancellationToken)))
+        if (!file.IsAvailable || alreadyAttached)
         {
             throw new QuotationsDomainException(
                 "order.payment_proof.file_not_available",

@@ -175,6 +175,11 @@ internal sealed class StubQuotationFileLookup(string downloadUrl) : IQuotationFi
         Task.FromResult<QuotationFileRef?>(
             new QuotationFileRef(fileId, tenantId, "application/pdf", 1024, IsAvailable: true));
 
+    public Task<IReadOnlyDictionary<Guid, QuotationFileRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, QuotationFileRef>>(fileIds.Distinct().ToDictionary(
+            fileId => fileId, fileId => new QuotationFileRef(fileId, tenantId, "application/pdf", 1024, IsAvailable: true)));
+
     public Task<string> CreateDownloadUrlAsync(
         Guid tenantId, Guid fileId, string downloadFileName, CancellationToken cancellationToken)
     {
@@ -344,6 +349,10 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
             quotation.Items.Count > 0 && quotationIds.Contains(quotation.Id)
                 ? new HashSet<Guid> { quotation.Id.Value }
                 : []);
+
+    public Task<Quotation?> FindByExternalKeyAsync(
+        Guid tenantId, string externalKey, CancellationToken cancellationToken) =>
+        Task.FromResult<Quotation?>(null);
 
     public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
         Guid tenantId,
@@ -683,6 +692,10 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
                     quotation.Items.Count > 0 && quotationIds.Contains(quotation.Id))
                 .Select(quotation => quotation.Id.Value)
                 .ToHashSet());
+
+    public Task<Quotation?> FindByExternalKeyAsync(
+        Guid tenantId, string externalKey, CancellationToken cancellationToken) =>
+        Task.FromResult<Quotation?>(null);
 
     public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
         Guid tenantId,
@@ -1222,17 +1235,21 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     private IEnumerable<Order> Matching(IReadOnlyCollection<Guid>? clientIds) =>
         clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.ClientId));
 
-    /// <summary>Lo que responde <see cref="IsPaymentProofFileInUseAsync"/> (revisión final, I2).</summary>
+    /// <summary>Si <see cref="ListPaymentProofFilesInUseAsync"/> responde que todo archivo preguntado ya se usa (revisión final, I2).</summary>
     public bool PaymentProofFileInUse { get; set; }
 
-    /// <summary>Cada pregunta de si un archivo ya se usa: el archivo y el comprobante excluido.</summary>
+    /// <summary>Cada archivo por el que se preguntó si ya se usa, con el comprobante excluido.</summary>
     public List<(Guid FileId, OrderPaymentProofId? ExceptProofId)> PaymentProofFileQuestions { get; } = [];
 
-    public Task<bool> IsPaymentProofFileInUseAsync(
-        Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
+    /// <summary>Cuántas veces se preguntó: la razón del lote es que sea una sola.</summary>
+    public int PaymentProofFileBatches { get; private set; }
+
+    public Task<IReadOnlySet<Guid>> ListPaymentProofFilesInUseAsync(
+        IReadOnlyCollection<Guid> fileIds, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken)
     {
-        PaymentProofFileQuestions.Add((fileId, exceptProofId));
-        return Task.FromResult(PaymentProofFileInUse);
+        PaymentProofFileBatches++;
+        PaymentProofFileQuestions.AddRange(fileIds.Select(fileId => (fileId, exceptProofId)));
+        return Task.FromResult<IReadOnlySet<Guid>>(PaymentProofFileInUse ? fileIds.ToHashSet() : new HashSet<Guid>());
     }
 
     public void Add(Order order) { }

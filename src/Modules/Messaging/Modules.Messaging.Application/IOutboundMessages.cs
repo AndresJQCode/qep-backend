@@ -18,13 +18,15 @@ public sealed record OutboundApiKeyAuthor(Guid Id, string Name);
 /// <c>SentByChatbotId</c> (spec 2026-10-21 D-I3): si viene, el autor es un chatbot y el reclamo escribe <c>sent_by_kind = 2</c> con
 /// <c>SentByMemberId</c> nulo, como lo exigen los CHECK de la tabla.
 /// <c>SentByApiKey</c> (spec 2026-10-30 §4.4): si viene, el autor es una clave de API y el reclamo escribe <c>sent_by_kind = 4</c>. Un borrador lleva
-/// exactamente un autor: miembro, chatbot o clave.
+/// exactamente un autor: miembro, chatbot, agente o clave. <c>SentByAgentId</c> (spec 2026-10-29 §4.4): el autor es un agente de IA y el
+/// reclamo escribe <c>sent_by_kind = 3</c>.
 /// <c>Caption</c> (messaging-media-reply R11): el pie de una imagen o un documento, en <c>messages.caption</c> y no en
 /// <c>message_media</c>, como lo guarda la ingesta de los entrantes.</summary>
 public sealed record OutboundDraft(
     Guid MessageId, Guid ConversationId, Guid TenantId, Guid ConnectionId, Guid ClientId, string? Text, Guid? SentByMemberId,
     DateTimeOffset Now, Guid? ReplyToMessageId = null, string? ReplyToWamid = null, MessageKind Kind = MessageKind.Text, OutboundMedia? Media = null,
-    string? DetailsJson = null, string? Caption = null, Guid? SentByChatbotId = null, OutboundApiKeyAuthor? SentByApiKey = null);
+    string? DetailsJson = null, string? Caption = null, Guid? SentByChatbotId = null, OutboundApiKeyAuthor? SentByApiKey = null,
+    Guid? SentByAgentId = null);
 
 /// <summary>La fila que ya existía con ese <c>clientId</c> en la conversación (con <c>FOR UPDATE</c> en el reclamo).
 /// <c>Kind</c> y <c>MediaMimeType</c> (spec 2026-10-11 §6.5): la idempotencia devuelve la burbuja de audio con su
@@ -34,7 +36,7 @@ public sealed record OutboundDraft(
 public sealed record ExistingOutbound(
     Guid Id, MessageStatus Status, DateTimeOffset OccurredAt, Guid? SentByMemberId, string Text, Guid? ReplyToMessageId = null,
     MessageKind Kind = MessageKind.Text, string? MediaMimeType = null, string? DetailsJson = null, string? MediaFileName = null, string? Caption = null, Guid? SentByChatbotId = null,
-    int? FailureCode = null, Guid? SentByApiKeyId = null, string? SentByApiKeyName = null, bool RetryDisabled = false);
+    int? FailureCode = null, Guid? SentByApiKeyId = null, string? SentByApiKeyName = null, bool RetryDisabled = false, Guid? SentByAgentId = null);
 
 /// <summary>Spec 2026-10-30 §4.4: el mensaje de una clave de API con ese <c>clientId</c> en el tenant, para devolverlo al repetir el envío.
 /// <c>WaId</c> es el de la conversación; <c>FailureCode</c> distingue un <c>Failed</c> sin confirmar.</summary>

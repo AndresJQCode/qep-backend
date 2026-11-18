@@ -39,7 +39,8 @@ internal static class CompanyMapping
         company.CityName,
         company.CreatedAt,
         company.UpdatedAt,
-        withholdingTaxRates ?? []);
+        withholdingTaxRates ?? [],
+        company.ChargesVat);
 
     /// <summary>
     /// La version de una sola empresa: resuelve su ciudad y sus tasas municipales y arma el DTO. Para

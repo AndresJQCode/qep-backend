@@ -162,7 +162,7 @@ internal sealed class FakeCatalog : IStoreCatalogReader
 
 internal sealed class FakeBillingAccounts : IStoreBillingAccounts
 {
-    public List<(Guid CompanyId, string Bank, string Number, string Currency)> Validated { get; } = [];
+    public List<(Guid CompanyId, string? Bank, string? Number, string Currency)> Validated { get; } = [];
 
     /// <summary>Los números de cuenta que la «empresa» no tiene: la validación los rechaza.</summary>
     public HashSet<string> UnknownNumbers { get; } = [];
@@ -179,10 +179,10 @@ internal sealed class FakeBillingAccounts : IStoreBillingAccounts
     }
 
     public Task<StoreBillingAccount> ValidateAsync(
-        Guid tenantId, Guid companyId, string bankName, string accountNumber, string currency, CancellationToken cancellationToken)
+        Guid tenantId, Guid companyId, string? bankName, string? accountNumber, string currency, CancellationToken cancellationToken)
     {
         Validated.Add((companyId, bankName, accountNumber, currency));
-        return UnknownNumbers.Contains(accountNumber)
+        return accountNumber is not null && UnknownNumbers.Contains(accountNumber)
             ? throw new InvalidOperationException("quotation.billing.account_not_found")
             : Task.FromResult(new StoreBillingAccount(companyId, bankName, accountNumber, currency));
     }

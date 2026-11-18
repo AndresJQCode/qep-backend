@@ -572,6 +572,29 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   Shopify deja `variant` y `product` en `null` pero conserva el SKU: esa línea es de producto y nunca casa por nombre (los dos
   parsers y `ShopifyOrderImporter.CustomTitleOf` aplican la misma regla). El 409 sale sólo del índice
   (`ShopifyUnitOfWork` lo traduce por nombre): no lo muevas a una consulta previa en el handler.
+- **Todo camino que escriba en Catalog desde Shopify pasa por `ShopifyProductSync`** (spec 2026-11-17). Ahí van el candado de
+  producto `pg_advisory_xact_lock(20261118, hashtext('{conexión}:{producto}'))` y el `CatalogDbContext` enrolado en la transacción
+  de Shopify (`IShopifyCatalogWriter`): producto, opciones y vínculos se confirman juntos o no se confirman. Un rechazo de Catalog
+  deja la transacción abortada en Postgres; no se sigue usando: se descarta y lo siguiente va en otra (la importación corre cada
+  producto en su scope, `IShopifyProductSyncScope`). Escribir en Catalog desde otro lado deja dos productos cuando el webhook y la
+  importación llegan a la vez.
+- **Un producto con `external_source` rechaza en el `PUT` nombre, opciones, variantes, códigos y precios de lista** (422
+  `catalog.product.managed_externally` con `errors`): los manda Shopify. Un camino nuevo de edición en Catalog aplica
+  `ExternallyManagedProducts`, o la siguiente sincronización pisa lo que el asesor cambió. Desvincular
+  (`DELETE …/shopify/products/{id}/link`) es la salida.
+- **La imagen importada que no entra en la galería se libera explícitamente**, o queda un archivo `Available` de Storage para
+  siempre (la galería es lo que lo retiene). La imagen va después del commit del producto, fuera de su transacción.
+- **El perfil de la tienda (`shopProfile`) es un campo interno de la conexión con el correo y el teléfono del comerciante**
+  (spec 2026-11-17 onboarding §2). Nada lo loguea ni lo audita: un log nuevo del asistente lleva el id de la conexión y el tipo de
+  la excepción (`TheSetupNeverLogsTheShopEmailOrPhone`). Un campo nuevo de `ShopQuery` entra en `ShopifyShopProfile` de **los dos**
+  módulos (Integrations y Shopify, que no se ven) y en el mapeo campo por campo de `ShopifyConnectionDirectory` (Bootstrapper).
+- **`products_coverage`, `products_coverage_accepted_at` y `setup_history_*` no suben la `Version` de `shopify.stores`.** Son estado
+  del asistente, no configuración: si un camino nuevo del asistente la sube, el formulario de la tienda abierto recibe 412 al
+  guardar. Lo amarran `RecordingCoverageDoesNotBumpTheVersion` y `ThePutStillSucceedsAfterCoverageWasMeasured`.
+- **`POST …/setup/company` crea la empresa en la transacción de Companies y la asigna en la de Shopify.** Si la asignación pierde
+  por versión, el 412 trae `details.companyId` (`ShopifySetupCompanyConflictException`) y el reintento lo manda para sólo asignar.
+  No lo «arregles» borrando la empresa: una creación en otro módulo no se deshace, y el reintento por `companyId` es lo idempotente.
+  La versión se revisa **antes** de crear, para que un 412 común no deje empresas sueltas.
 - **`develop` no va a `main` sin el frontend de Shopify** (2026-10-18). `shopify` está en `DefaultForNewTenants`
   (`TenantModuleKey.cs`, decisión del owner del 2026-10-15) y en `Production` la app está configurada a la fuerza —sin ella
   el pod no arranca—, así que el catálogo de Integraciones de todo tenant nuevo trae la tarjeta Shopify con
@@ -617,12 +640,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   mano: no siguen solas a la migración) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
   (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que resuelven el checker real del contenedor y lo
   corren contra el esquema de las migraciones.
-- **`CustomerMergeReferences` escribe en ocho esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
-  quotations, pos, pipeline, messaging, billing, loans, support y shopify: es SQL crudo en Bootstrapper sobre
+- **`CustomerMergeReferences` escribe en nueve esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
+  quotations, pos, pipeline, messaging, billing, loans, support, ai y shopify: es SQL crudo en Bootstrapper sobre
   `quotations.quotations`/`orders.client_id`, `pos.sales.customer_id`,
   `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`, `messaging.conversations.customer_id`,
   `messaging.campaigns.audience_customer_ids`, `billing.services`/`charges`/`customer_profiles.customer_id`,
-  `loans.loans.customer_id`, `support.tickets.customer_id` (sin subir `version`, como el préstamo) y `shopify.orders.qep_customer_id`, sobre la
+  `loans.loans.customer_id`, `support.tickets.customer_id` (sin subir `version`, como el préstamo), `ai.tests.customer_id` (las pruebas
+  del playground de agentes de IA; las sesiones siguen a su conversación) y `shopify.orders.qep_customer_id`, sobre la
   conexión del `CustomersDbContext` para quedar dentro de su transacción. Renombrar una de esas columnas compila y la fusión
   responde 500 (`42703`); como todo es una transacción, no fusiona nada. Lo amarran `CustomerMergeReferencesTests` (réplicas
   hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
@@ -656,6 +680,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `QueueNames`, en `QueueMetricsSourceTests`, en el dashboard y en las reglas de alerta. La edad mira sólo `attempts = 0`, y la de
   `automation` repite el `NOT EXISTS` de `AutomationInbox.ClaimAsync`: si cambias el reclamo, cambia también la lectura. En una
   prueba, el registro del tenant deja eventos sin despachar en `platform.outbox_messages`: ciérralos antes de esperar una cola vacía.
+- **Los `reason` de `qep_webhook_discarded_total` son contrato con `migracion-k8s`** (spec 2026-11-16). `QepWebhookDiscarding`
+  los lee por nombre (`unknown_route`, `without_user_id`): renombrar uno en `WebhookDiscardReasons` compila, pasa las pruebas
+  de Messaging y deja la alerta muda. Un descarte nuevo de Meta (un `Log…Discarded` o `Log…Ignored` más en
+  `WebhookDeliveryProcessor`) llama `MessagingMetrics.RecordDiscarded` al lado del log, suma su motivo en
+  `WebhookDiscardReasons` y en `WebhookDiscardReasonsTests`, y decide si entra en la alerta. Si no suma, el descarte vuelve a
+  ser silencioso. Shopify todavía no cuenta (sin clientes conectados); los puntos están en el spec.
 - **Borrar una variante es explícito: `deletedVariantIds`. Omitirla del `PUT` responde `catalog.variant.missing_in_request`.**
   No lo «simplifiques» a «la que no viene se borra» (era lo que pedía el plan, y el spec §6 lo corrigió): la tabla de
   variantes llega a 2.048 filas y el formulario la pagina, así que una fila ausente puede ser una página que no se
@@ -853,8 +883,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `ApiScopeDefinition` en DI (la constante vive en el módulo dueño) y sus rutas cuelgan del grupo de `ExternalApiEndpoints`, que fija
   el esquema `ApiKey`; una ruta externa fuera de ese grupo no recibe ese esquema. Los `code` `external.*` son contrato público con
   los integradores: no se renombran.
-- **Un camino nuevo que lea autores de `messaging.messages` tiene que tratar `sent_by_kind = 4`** (clave de API; el 3 está reservado
-  para agentes IA). Ese autor no tiene `sent_by_member_id`: lleva `sent_by_api_key_id` y `sent_by_api_key_name`, así que un join al
+- **Un camino nuevo que lea autores de `messaging.messages` tiene que tratar `sent_by_kind = 4`** (clave de API; el 3 es el agente
+  de IA, en su propia entrada más abajo). Ese autor no tiene `sent_by_member_id`: lleva `sent_by_api_key_id` y `sent_by_api_key_name`, así que un join al
   miembro lo pierde en silencio. Y uno que muestre «primera respuesta» debe excluirlo: un envío automático de un sistema externo no
   es una respuesta de una persona.
 - **El indicador de escritura de WhatsApp marca el mensaje como leído para el contacto** (decisión del owner, 2026-10-31). Cloud API lo
@@ -889,6 +919,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   propia, atada por `DocumentTypesByCountryTests`; Customers (`IdentificationTypeParser`) y Quotations (`PartyFiscalTypesParser`) las atan sus pruebas de paridad. Customers y las
   partes de facturación comparan el tipo con **su propio** país en cada escritura (una fila guardada que no cumple se lee, pero no se puede volver a guardar igual); un país vacío
   en una parte es `CO`.
+- **La importación por Excel crea etiquetas en tipo oración y nunca las quita** (spec 2026-11-17). La celda «Etiquetas» se lee
+  una sola vez con `ExcelTagCell.Parse` (validador y handler), la etiqueta nueva se bautiza con `TagNameFormat.SentenceCase` y la
+  que ya existe conserva su nombre aunque el archivo la traiga con otras mayúsculas. Un camino nuevo que escriba etiquetas desde
+  un archivo pasa por esas dos funciones; y no «simplifiques» la celda a «reemplaza la lista»: la exportación escribe las
+  actuales, pero un archivo armado a mano borraría las que puso el asesor. Y `Direccion` dejó de ser obligatoria en el Excel
+  (`ca9ee15c`): es opcional en el formulario y en el dominio, y la regla vieja del importador sólo impedía cargar listas de
+  nombre y celular.
 - **`PosCustomerLookupTests.TheIdentificationTypesMatchTheCustomersModule` compara Pos con `AllowedFor("CO")`, igual que la importación de clientes por Excel y la de contratos de
   servicio.** Ensanchar Customers no ensancha a ninguno de ellos; si el owner lo quiere, es una decisión aparte.
 - **`MergeForStore` toma el país de la solicitud junto con su documento cuando el cliente no tiene documento** (la dirección sale de la solicitud y el teléfono conserva su E.164
@@ -1036,8 +1073,22 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `CachedBuyerSessionTests.LogoutWithACachedSessionRevokesTheRow`.
 - **Todo cambio que altere los permisos efectivos de un tenant llama `ITenantAccessVersion.BumpAsync` antes y después del guardado**
   (spec 2026-11-13, D-5). Roles, membresías (suspender, reactivar, quitar, activar, aceptar invitación), módulos y estado del tenant ya
-  lo hacen. Si un camino nuevo no lo llama, con `Valkey:Areas:Permissions` prendido la caché sirve los permisos de antes hasta 60 s: un
-  miembro suspendido sigue entrando, sin error. Lo amarra `CachedAuthorizationTests` (Tenancy).
+  lo hacen. Si un camino nuevo no lo llama, la caché sirve los permisos de antes hasta 60 s: un miembro suspendido sigue entrando, sin
+  error. **Desde el 2026-11-17 la caché existe también con el área apagada**: `MemoryPermissionCache` (por pod) decora a
+  `AuthorizationService` igual que la de Valkey, y la sesión tiene `MemorySessionCache` (15 min, con marca de revocación). Dos
+  consecuencias: (1) una prueba con auth real que cambie roles, módulos o estado del tenant por SQL o por `DbContext` directo, después
+  de que esa persona ya hizo un request al tenant, llama `BumpAsync` o ve el 200 de antes (`RealAuthenticationApiTests` lo hace en
+  `SetTenantStatusAsync` y en el apagado de Catalog); (2) con más de una réplica las dos áreas de Valkey tienen que estar prendidas,
+  y `MultiReplicaInventory.SharedStateSwitches` lo exige. Lo amarran `CachedAuthorizationTests` (Tenancy), `MemoryPermissionCacheTests`
+  y `MemorySessionCacheTests` (Bootstrapper.UnitTests) y `RequestQueryBudgetTests` (Tenancy), que cuenta los comandos SQL de un
+  request real: `GET /memberships?search=` eran 7 + N miembros (19 en producción, 3,27 s con la base en otro nodo) y ahora son 3 con la
+  caché caliente. Un lector nuevo de una lista de personas pide los correos por `IUserDirectory.GetEmailsAsync`, en lote, nunca
+  `GetEmailAsync` en un bucle. Dos exposiciones nuevas mientras las áreas de Valkey estén apagadas, donde antes el efecto era
+  inmediato: (3) durante un `RollingUpdate` con `maxSurge: 1` (`k8s/prod-deployment.yaml`) conviven dos pods por minutos, y una
+  suspensión o un cambio de roles aplicado en uno llega al otro en ≤ 60 s, y una revocación de sesión en ≤ ~5 min (el umbral de
+  toque de `SessionService` vuelve fallo toda entrada más vieja); (4) un runbook que cambie por SQL `tenancy.tenant_modules`, roles,
+  membresías o `identity.sessions` —prender `pos` con la fila de `tenant_modules`, por ejemplo— tiene efecto en el pod que ya corre
+  en ≤ 60 s (permisos) o ≤ 5 min (sesiones), no en el siguiente request.
 - **Una tabla de cola nueva entra al mapa de `QueueDoorbellInterceptor`** (`BuildingBlocks.Infrastructure`, `Tables`), con su cola en
   `DoorbellQueues`, y su worker espera con `doorbell.Listen(...)`. Sin eso el worker sólo se entera en la red de seguridad, no al
   insertar, y nada falla. El `DbContext` que mapee una de esas tablas lleva el interceptor: lo amarra
@@ -1046,8 +1097,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Un consumidor nuevo de `platform.outbox_messages` escucha `DoorbellQueues.Outbox`**, con `DoorbellQueues.SafetyNet(DoorbellQueues.Outbox)`,
   como `OutboxPublisherWorker` o `NotificationsDeliveryWorker`. Un timbre de `outbox` despierta a todos los oyentes del proceso; un
   consumidor que siga con su `Task.Delay` de antes funciona, pero no se entera del timbre.
-- **Un comando nuevo contra Valkey tiene que pasar la ACL de producción** (`~qep:* &qep:* +@all -@dangerous -@scripting`, DP-V4):
-  sin Lua (`EVAL`, `SCRIPT`), sin `KEYS`, `FLUSH*`, `INFO` ni `CONFIG`, y toda clave o canal con prefijo `qep:`. El gateway traga
+- **Un comando nuevo contra Valkey tiene que pasar la ACL de producción** (`~qep:* &qep:* +@all -@dangerous -@scripting +info`,
+  DP-V4; `+info` desde 2026-11-17): sin Lua (`EVAL`, `SCRIPT`), sin `KEYS`, `FLUSH*` ni `CONFIG`, y toda clave o canal con prefijo
+  `qep:`. `INFO` se permite sólo para el cliente, nunca desde el código: sin él, StackExchange.Redis detecta la réplica con un
+  `SET <guid> "" PX 1` fuera de `~qep:*` en cada chequeo de 60 s, y `ValkeyACLDenied` dispara todo el tiempo por ruido propio;
+  `CONFIG` sí se apaga en el `CommandMap` (`ValkeyConnection.BuildOptions`). Lo amarra `TheClientSendsNothingTheAclDenies`. El gateway traga
   un `NOPERM` como respaldo del área, así que en producción no se ve como error: se ve como
   `qep_valkey_fallbacks_total{area=…}` subiendo. Las primitivas de presencia y limitadores las cubre `ValkeyAclTests`; sesiones,
   permisos, timbres, líder del muestreador y compuerta del toque, `ValkeyAclCompatibilityTests` (las dos en `Bootstrapper.UnitTests`),
@@ -1206,6 +1260,121 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El saneador de HTML vive en `BuildingBlocks.Infrastructure/RichText` y lo comparten Soporte y Quotations.** La lista de
   etiquetas y esquemas existe una sola vez: ensancharla cambia lo que aceptan los documentos legales del portal **y** el PDF de
   cotizaciones, y el lector de bloques tiene que saber pintar toda etiqueta nueva o la plantilla la pierde en silencio.
+- **Un agente de IA nunca cae al otro proveedor** (plan 2026-11-12, C-20). El resolvedor toma el proveedor **de la versión de la
+  sesión**, no del borrador ni del tenant, y un error agotado del proveedor termina en traspaso, nunca en una llamada al otro. No
+  agregues un «respaldo» aunque el tenant tenga las dos conexiones: el historial del cliente iría a una cuenta que el tenant no eligió
+  para ese agente y le gastaría saldo sin aviso. El único respaldo es el de Anthropic **dentro** de Anthropic (C-9,
+  `server-side-fallback`). Lo amarra `AgentTurnRunnerTests.TheRunnerAsksTheResolverForTheProviderOfTheVersion`.
+- **El `issue` bloqueante de IA es por proveedor, no por tenant** (C-19). Clave rechazada, sin permiso o sin saldo pasan a
+  `NeedsAttention` **la conexión de ese proveedor** (`IAiProviderCredentials.MarkNeedsAttentionAsync`), y sus agentes dejan de tomar
+  conversaciones; los del otro proveedor siguen. El procesador de entrantes revisa la cuenta del proveedor **del agente** antes de abrir
+  sesión. Lo amarran `AgentTurnRunnerTests.AnAccountErrorLeavesTheIssueOnlyOnThatProvidersConnection` y
+  `AgentSessionProcessorTests.WithoutTheAgentsProviderAccountNoSessionOpensEvenIfTheOtherProviderIsConnected`. La saca una prueba
+  exitosa de la clave en Integraciones, no un reintento.
+- **Cuatro reglas de `ClaudeModelClient` que parecen simplificables y no lo son** (plan 2026-11-12). (1) **C-8:** herramientas con
+  `strict: true` y sin `tool_choice` forzado: en Opus 5.5 y Sonnet 5.5, `any` o `tool` responde 400. Por eso un `end_turn` con texto y
+  sin herramienta final se acepta como `send_reply` sin fuentes (`ToolsAreStrictSortedByNameAndNeverForced`,
+  `AnEndTurnWithTextComesBackAsASendReplyWithoutSources`). (2) **C-11:** la petición nunca termina en `assistant`, que es *prefill* y
+  responde 400; el saludo ya enviado va como mensaje `system` después del primer turno del cliente
+  (`TheGreetingIsASystemMessageAfterTheFirstCustomerTurnAndTheRequestNeverEndsInAssistant`). (3) **C-12:** el `system` es idéntico byte a
+  byte en la misma versión y lleva el único punto de caché; la fecha, la hora y la ventana van en `VolatileContext`, **después**
+  (`TheSystemPromptCarriesTheOnlyCachePointAndTheVolatileContextGoesAfterIt`). Un `DateTime.Now` en `AgentPromptBuilder` invalida el
+  caché en cada llamada sin ningún error; sólo lo delata `cache_read_input_tokens` en 0, que es lo que mide el eval. (4) **C-13:**
+  `MaxRetries = 0`: con los reintentos del SDK el tiempo real es el timeout por tres y el trabajo pasa su tope y su lease sin saberlo.
+  Reintenta el worker (`ModelJob.MaxAttempts`), igual para los dos proveedores.
+- **OpenAI va con `HttpClient` directo, sin su SDK, y con `store: false` explícito** (spec 2026-10-29 §9.1, O-2 y O-3). El SDK oficial
+  reintenta solo 408, 429 y 5xx hasta tres veces, que es justo lo que C-13 prohíbe; no lo «modernices» agregando el paquete. Y `store`
+  vale `true` si se omite: la conversación del cliente quedaría guardada en la cuenta del tenant (`ItKeepsNoStateOnTheProvider`). Al
+  comparar consumo: en OpenAI `input_tokens` **incluye** los leídos de caché y en Anthropic no; `ai.usage_records` los guarda como los
+  reporta cada proveedor, que es lo que se contrasta con su factura (O-7). `cache_creation_input_tokens` de OpenAI es `NULL`, no `0` (C-4).
+- **Una clave de proveedor de IA jamás se imprime**, ni al verificar que una conexión existe. Son BYOK: viven cifradas en `integrations`
+  (no en `user-secrets`, el ConfigMap ni el Secret), y en código viajan en `AiCredential`, cuyo `ToString` no la escribe. Los clientes
+  nombrados `ai.anthropic` y `ai.openai` van con `RemoveAllLoggers()`: el log de `HttpClient` escribiría el `Authorization`. Lo amarran
+  `AnthropicNoLeakTests` y `OpenAiNoLeakTests`, con el host en `Trace`. El eval (`Modules.Ai.Eval`) lee la clave sólo de
+  `QEP_EVAL_ANTHROPIC_API_KEY` / `QEP_EVAL_OPENAI_API_KEY`, de una cuenta de evaluación, y nunca la acepta por argumento. **El eval gasta
+  dinero real: no se corre sin el presupuesto aprobado por el owner** (README, «Agentes IA», «Eval»).
+- **La cola del bot se rutea por `bot_kind`, y una conexión sin ocupante no deja fila** (spec 2026-10-29 §6.1). El webhook decide en
+  `InboundIngestion.BotKindForAsync`: una conversación con el asistente `Active` sigue con el bot con que empezó
+  (`automation_bot_kind`); si no, la toma quien ocupa la conexión en `messaging.connection_bots`; sin ocupante **no se encola** (antes se
+  encolaba y el motor la marcaba `skipped`). El síntoma en una prueba que siembra la conversación sin sembrar el ocupante es un bot mudo
+  sin error (`AutomationInboxTests.WithoutAnOccupantTheInboundIsNotEnqueued`). Los agentes reclaman sólo `bot_kind = 2` y el motor de
+  chatbots sólo `1` (`AnAgentOccupantRoutesTheRowToTheAgentAndTheChatbotEngineDoesNotClaimIt`). Los valores de `BotKind` se guardan en
+  tres columnas: no se reordenan.
+- **`sent_by_kind = 3` es un agente de IA: lleva `sent_by_agent_id` y nunca miembro** (`CK_messages_sent_by_agent`,
+  `CK_messages_sent_by_kind IN (1,2,3,4)`). Un join al miembro lo pierde en silencio, igual que al `4`. Para «primera respuesta» cuenta
+  como un chatbot y nunca como asesor (`MessagingReportSource`); su nombre sale del mismo diccionario de los chatbots
+  (`IAutomationsChatbotNames`, que ahora lee también Ai). Un lector nuevo de autores decide qué hace con el 3 y con el 4.
+- **El `Down` de `AddAgentAutomation` (Messaging) sólo corre sobre una base sin agentes.** Con un mensaje `sent_by_kind = 3` o una
+  conversación de un agente, los CHECK viejos fallan y el `Down` se deshace entero. El rollback de los agentes es revertir el código, no
+  correr ese `Down`.
+- **El `Down` de `AddOpenAiProvider` borra las conexiones de `openai`, y con ellas sus secretos** (`CASCADE`), igual que el de
+  `AddAnthropicProvider` con las de `anthropic`: Postgres valida las filas al volver a poner el CHECK. Correrlo en producción le borra la
+  clave a cada tenant que la había conectado; tienen que volver a ponerla.
+- **El borrador de cotización de un agente no se duplica por el índice, no por la búsqueda previa** (spec 2026-10-29 D-A16). La clave es
+  `ai:{jobId}` en `quotations.quotations.external_key`, **del trabajo y no de la llamada**: el id de la llamada lo inventa el modelo y
+  cambia si el trabajo se retoma, y con él en la clave cada reintento creaba otro borrador (revisión final, hallazgo 1). Por la misma
+  razón el bucle corre a lo sumo una herramienta que escribe por respuesta (`AgentToolNames.Writes`); la segunda vuelve con
+  `one_write_per_response` (`CreateQuotationDraftToolTests.TwoDraftCallsInOneResponseCreateOneDraft`); `IX_quotations_tenant_external_key` (parcial) cierra la carrera y
+  `QuotationsUnitOfWork` lo traduce **por nombre de índice** a `quotation.quotation.external_key_taken`, que `ExternalQuotationService`
+  resuelve devolviendo la cotización que ganó (`AlreadyExisted`). Mismo patrón que `IX_orders_tenant_external_key`: no lo cambies por una
+  consulta en el servicio (`ExternalQuotationServiceTests.TheSameExternalKeyReturnsTheExistingQuotation`). Y un traspaso con borrador
+  escrito no lo descarta un turno nuevo del cliente: el trabajo siguiente crearía otro.
+- **La respuesta del modelo se guarda en el trabajo antes de enviar nada, y nunca se vuelve a pedir** (revisión final, hallazgo 2).
+  `AgentSessionJobProcessor` llama `ModelJob.RememberResult` apenas vuelve el bucle; un commit corto que falla, un proceso que muere o el
+  candado ocupado retoman con `result` y no pagan el modelo otra vez. El traspaso de Mensajería lanza `RequestConcurrencyException`
+  cuando un entrante sube `conversations.version` a la vez: el commit se deshace y el trabajo se reprograma por `IAiModelJobs.RetryHeldAsync`,
+  SQL directo para no guardar lo que quedó a medio cambiar en el contexto. Cada reclamo suma un intento, también los que no llaman al
+  modelo, así que el tope de reclamos es `ModelJob.MaxClaims` (10) y no `MaxAttempts`; pasado, traspaso `AgentFailed` con `job_timed_out`.
+  No lo bajes a `MaxAttempts`: unos pocos candados ocupados terminarían el turno. Y el worker mira que la conversación siga siendo del
+  agente **antes** de llamar al modelo (`AgentSessionProcessorTests.AJobIsDiscardedBeforeCallingTheModelWhenAPersonTookTheConversation`).
+- **El trabajo pendiente de una sesión se lee con `FOR UPDATE`** (`AgentSessionRepository.FindPendingJobAsync`, revisión final,
+  hallazgo 3). El reclamo del worker no toma el candado de la conversación; sin el candado de fila, el worker reclamaba el trabajo con el
+  `up_to_seq` viejo mientras el procesador de entrantes lo subía, y el turno nuevo del cliente quedaba sin respuesta. No lo cambies por un
+  `SingleOrDefaultAsync` (`AgentSessionJobRaceTests`).
+- **Una conversación `Active` de un agente sin sesión viva es del agente, y si no la puede retomar se traspasa** (revisión final,
+  hallazgo 4). Pasa cuando una persona se la devuelve: el siguiente entrante abre otra sesión sólo si el agente está `Active`, tiene versión
+  legible y la cuenta de su proveedor; si no (pausado, borrado, sin cuenta, módulo apagado) `AiInboxProcessor` la traspasa. Devolver
+  `null` sin traspaso la dejaba asignada a un agente que nunca contesta. Un trabajo cuyo agente se borró con la sesión viva (la carrera
+  con `DeleteAgentHandler`, que mira las sesiones sin el candado de la conversación) también termina en traspaso. Pausar un agente no
+  corta sus sesiones vivas (D-A6).
+- **La señal `ReleaseRun` lleva el `bot_kind` del bot que tenía la conversación antes del cambio** (revisión final, hallazgo 5).
+  `ReleaseRunSignal.EnqueueIfAssisted` recibe el `AutomationBotKind` leído **antes** (resolver lo borra) y el autoasignado lo devuelve en su
+  `RETURNING`. Con el default `1`, la señal de un agente la reclamaba el motor de chatbots y la sesión del agente seguía viva con su
+  trabajo pendiente. Un camino nuevo que encole la señal pasa el bot (`ConversationAutomationApiTests.TheSignalOfAnAgentConversationGoesToTheAgentQueue`).
+- **La causa de un traspaso vive en tres enums que se cambian juntos**: `HandoffCauseKind` del motor de chatbots (Automations), el de los
+  agentes (`Modules.Ai.Application.HandoffCauseKind`) y `AutomationHandoffKind` (Messaging), traducidos por nombre en Bootstrapper. Un
+  código de traspaso de agente nuevo tiene que pasar `AutomationHandoff.IsValidCode` o se guarda `null` sin error, y un proveedor nuevo
+  tiene que sobrevivir la limpieza del hilo. Los amarra `HandoffCauseKindParityTests` (Bootstrapper.UnitTests).
+- **Toda transición que saca una conversación de `Active` (o le cambia el bot) limpia `automation_delegation_id`** (spec 2026-11-17 agente
+  IA en chatbots, plan fase 2 B1.1). `CK_conversations_delegation` sólo admite la delegación con `automation_status = 'Active'` y
+  `automation_bot_kind = 2`: tomar, resolver, pausar, transferir o terminar sin pasar por la limpieza central de `Conversation` falla en la
+  base, no en el dominio. Un método nuevo que mueva el estado de automatización pasa por ella.
+- **La toma humana de una conversación delegada señala a los dos bots** (B1.3). `ReleaseRunSignal.EnqueueIfAssisted` recibe la delegación
+  leída **antes** del cambio, como el bot: con una viva encola `bot_kind = 2` (la sesión del agente termina) **y** `bot_kind = 1` (la corrida
+  que espera en el bloque se interrumpe), y marca la delegación `Interrupted` en el mismo guardado. Con una sola señal, el otro bot queda
+  esperando una vuelta que nunca llega. Las filas `Delegated` y `AgentReturned` de `automation_inbox` no tienen mensaje: todo lector nuevo
+  de la cola va con `LEFT JOIN` al mensaje.
+- **Los `Down` de la fase 2 de agentes no se corren en producción.** `AddBotDelegations` (Messaging) sólo sobre una base sin delegaciones
+  vivas: con una, la conversación queda en `bot_kind = 2` sin agente que la devuelva. `AddChatbotBlockSessions` (Ai) falla con sesiones
+  `Returned` (el CHECK viejo no las admite) y se deshace entero. `AddCopilot` (Ai) falla con trabajos o consumo del copiloto (`agent_id`
+  nulo); borrarlos antes pierde el consumo pagado. `AddCopilotModuleKey` (Tenancy) falla si algún tenant ya tiene `copilot`. El rollback es
+  revertir el código con los módulos `ai` y `copilot` apagados.
+- **Sólo `CopilotToolExecutor` crea un `DelegatedExecutionContext`** (spec 2026-11-17 copiloto D-C3, plan C2.4). `IExecutionContext` sale
+  de una fábrica scoped: el delegado si el scope lo trae, el de HTTP si no. Abrir un scope delegado en otro lugar haría correr código como
+  un miembro que no pidió nada; lo amarra `CompositionRootTests` leyendo el IL. Ninguna herramienta del copiloto corre con
+  `AiServicePrincipal`.
+- **Las herramientas del copiloto sólo despachan consultas, y la misma del endpoint** (D-C4). `CopilotToolsTests` (ArchitectureTests) lee
+  el IL de `Bootstrapper.Copilot`: ningún `IRequestDispatcher.SendAsync`, ningún `ICommand<>`, nada de Integrations ni consultas
+  `Operator*`, y cada herramienta despacha algún `IQuery<>`. Una herramienta nueva usa la constante de permiso del módulo (no un texto
+  copiado), el módulo de su endpoint, esquema estricto, tope de 20 filas con `total`/`truncated`, y un `kind` de cita que el frontend
+  sepa enrutar (`citationRoute`; `charge` no tiene pantalla y sale como cita sin enlace). El tenant sale del hilo, nunca de un argumento.
+- **La garantía de permisos del copiloto es la de un request, no instantánea** (D-C3). Cada llamada a una herramienta resuelve los
+  permisos del miembro, pero con `Valkey:Areas:Permissions` prendido pasa por `CachedAuthorizationService`: lo que sube la versión de
+  acceso del tenant se ve en la llamada siguiente; lo que no, en ≤ 60 s.
+- **El texto del copiloto vive sólo en el hilo** (D-C13). Preguntas y respuestas están en `ai.copilot_messages` (y la respuesta ya pagada
+  en `model_jobs.result` hasta su commit); nunca en logs, auditoría ni `tool_calls`. La auditoría (`ai.copilot.settings_updated`,
+  `ai.copilot.thread_deleted`) es de metadatos: `IAiAuditRecorder.RecordCopilot` no tiene parámetro de texto libre. Borrar un hilo
+  guarda su auditoría en la misma transacción del borrado (`CopilotRepository.DeleteThreadAsync`). Lo amarra `CopilotNoLeakTests`.
 
 ## Verificación
 
@@ -1215,7 +1384,9 @@ Los comandos (`restore` / `format` / `build` / `test`) están en
 - **Borrar clientes escribe en muchos esquemas por nombre** (spec 2026-11-10; `src/Bootstrapper/CustomerDeletionReferences.cs`, igual que
   `CustomerMergeReferences`). Toca `messaging` (conversaciones y todo lo que cuelga: mensajes, adjuntos, mensajes programados,
   `automation_inbox`, destinatarios de campañas con `customer_id` en `NULL`, `audience_customer_ids`), `automations`
-  (`conversation_runs`, `run_units`, `http_calls`), `pipeline` (`deals`, `deal_stage_history`, `deal_quotations`, `deal_orders`,
+  (`conversation_runs`, `run_units`, `http_calls`), `ai` (`sessions`, `turns`, `model_jobs` y `tool_calls` de sus conversaciones, y las
+  `tests` del playground que fijaron al cliente con sus trabajos; `tool_calls` guarda sus pedidos y cotizaciones, y `usage_records` se
+  queda porque es el consumo pagado), `pipeline` (`deals`, `deal_stage_history`, `deal_quotations`, `deal_orders`,
   `triage_decisions`; `origin_conversation_id` de otros negocios a `NULL`), `pos.sales`, `shopify.orders`, `billing.customer_profiles`
   y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
   `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado

@@ -20,4 +20,12 @@ internal sealed class AutomationInboxRecord
 
     /// <summary>Spec 2026-11-03: <see cref="Modules.Messaging.Application.AutomationInboxKinds"/>; las filas anteriores son <c>Engine</c>.</summary>
     public string Kind { get; set; } = Modules.Messaging.Application.AutomationInboxKinds.Engine;
+
+    /// <summary>Spec 2026-10-29 §6.1: qué procesador la reclama (smallint de <see cref="Domain.BotKind"/>: 1 el motor de chatbots, 2 el de
+    /// agentes). Las filas anteriores son de chatbot.</summary>
+    public short BotKind { get; set; } = (short)Domain.BotKind.Chatbot;
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: la delegación de una fila <c>Delegated</c> o <c>AgentReturned</c>; <c>null</c> en
+    /// las demás (<c>CK_automation_inbox_delegation</c>).</summary>
+    public Guid? DelegationId { get; set; }
 }

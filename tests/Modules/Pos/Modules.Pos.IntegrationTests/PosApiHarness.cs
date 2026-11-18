@@ -223,7 +223,8 @@ internal static class PosApiHarness
 
     internal sealed record CompanyRef(Guid Id, string Name, string TaxId);
 
-    public static async Task<CompanyRef> CreateCompanyAsync(HttpClient client, Guid tenantId)
+    /// <param name="chargesVat">Spec 2026-11-17 §5.1: si la empresa cobra IVA; la caja lo congela al abrir (R4).</param>
+    public static async Task<CompanyRef> CreateCompanyAsync(HttpClient client, Guid tenantId, bool chargesVat = true)
     {
         var cityId = await EnsureCityIdAsync(client);
         var taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2";
@@ -236,6 +237,7 @@ internal static class PosApiHarness
                 {
                     new { bankName = "Bancolombia", accountNumber = $"{Random.Shared.Next(100000000, 999999999)}", currency = "COP" },
                 },
+                chargesVat,
                 taxId,
                 country = "CO",
                 documentType = "NIT",

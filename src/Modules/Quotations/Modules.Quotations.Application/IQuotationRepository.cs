@@ -92,6 +92,11 @@ public interface IQuotationRepository
         IReadOnlyCollection<QuotationId> quotationIds,
         CancellationToken cancellationToken);
 
+    /// <summary>La cotización que creó una integración con esa clave (spec 2026-10-29 §8.3), sin rastreo, o <c>null</c>.
+    /// Sólo ve el tenant pedido.</summary>
+    Task<Quotation?> FindByExternalKeyAsync(
+        Guid tenantId, string externalKey, CancellationToken cancellationToken);
+
     /// <summary>El número de cada cotización, por id, en una sola consulta: lo que la lista de pedidos
     /// muestra como enlace a la cotización de origen (spec 2026-10-15 §6.1).</summary>
     Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(

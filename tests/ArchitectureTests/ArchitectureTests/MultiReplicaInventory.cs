@@ -1,4 +1,4 @@
-namespace ArchitectureTests;
+﻿namespace ArchitectureTests;
 
 /// <summary>
 /// Cómo convive un hosted service con otro pod que corre el mismo código (spec 2026-10-29, D-6, y la decisión P3 del plan
@@ -108,6 +108,12 @@ public static class MultiReplicaInventory
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyRepositories.cs:199-202 — lease por tienda (reconcile_lease_until)"),
         new("Modules.Shopify.Infrastructure.Workers.ShopifyOrderPushWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyOrderPushQueue.cs:36-39 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por envío"),
+        new("Modules.Shopify.Infrastructure.Workers.ShopifyProductImportWorker", WorkerClassification.Claimed,
+            "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyProductImportQueue.cs:27-32 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por importación"),
+        new("Modules.Ai.Infrastructure.AiInboxWorker", WorkerClassification.Claimed,
+            "Modules/Messaging/Modules.Messaging.Infrastructure/Persistence/AutomationInbox.cs:45 — FOR UPDATE SKIP LOCKED con lease, filas bot_kind = 2 (adaptador Bootstrapper/AiConversations.cs:194); los barridos cierran cada sesión bajo pg_try_advisory_xact_lock(ConversationBotLock) y FOR UPDATE de la sesión (Modules/Ai/Modules.Ai.Application/AiSessionSweeper.cs:60-66), así que el segundo pod no encuentra nada; el de delegaciones huérfanas (spec 2026-11-17 §6.5) es una sola sentencia: UPDATE con FOR UPDATE SKIP LOCKED y status = 'Live', que en la misma encola la señal ReleaseRun de cada interrumpida (Bootstrapper/AiDelegationSweep.cs:26-55); la retención del copiloto (CopilotRetentionSweeper) borra cada hilo con DELETE … RETURNING y FOR UPDATE SKIP LOCKED y audita sólo lo que borró, y el registro de preguntas con un DELETE por corte (Modules/Ai/Modules.Ai.Infrastructure/Persistence/CopilotRepository.cs, DeleteThreadAsync y DeleteQuestionsBeforeAsync)"),
+        new("Modules.Ai.Infrastructure.AiModelWorker", WorkerClassification.Claimed,
+            "Modules/Ai/Modules.Ai.Infrastructure/Persistence/AiRunPersistence.cs:64-75 — FOR UPDATE SKIP LOCKED y lease_until (LeaseMinutes, mayor que el tope de 120 s del trabajo)"),
         // Un solo hosted drena en secuencia los trece consumidores de correo (spec 2026-11-13, D-7); cada uno reclama igual que antes.
         new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
 
@@ -146,6 +152,8 @@ public static class MultiReplicaInventory
             "Modules/Storage/Modules.Storage.Infrastructure/PaymentProofs/PaymentProofMoveProcessor.cs:19 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
         new("Modules.Storage.Infrastructure.ProductImages.ProductImageReleaseWorker", WorkerClassification.Noisy,
             "Modules/Storage/Modules.Storage.Infrastructure/ProductImages/ProductImageReleaseProcessor.cs:19 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
+        new("Modules.Storage.Infrastructure.TemplateImages.TemplateHeaderImageReleaseWorker", WorkerClassification.Noisy,
+            "Modules/Storage/Modules.Storage.Infrastructure/TemplateImages/TemplateHeaderImageReleaseProcessor.cs:68 — anti-join contra el inbox sin reclamar; el que pierde choca con la clave del inbox"),
         new("Modules.Quotations.Infrastructure.Expiration.QuotationExpirationWorker", WorkerClassification.Noisy,
             "Modules/Quotations/Modules.Quotations.Infrastructure/Expiration/QuotationExpirationProcessor.cs:56-88 — barrido en los dos pods; Version es token de concurrencia y el segundo choca sin duplicar historial"),
 
@@ -182,6 +190,13 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/RateLimiting/SharedRateLimitPartitions.cs:33-45 — con Valkey:Areas:RateLimiting la ventana se cuenta en Valkey y cae a memoria si falla"),
         new("Bootstrapper.Realtime.LocalRealtimePresence", StateClassification.SharedWithLocalFallback,
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:147-165 — con Valkey:Areas:Presence el hub global escribe «está respondiendo» en qep:rt:presence:{tenantId}:{topic} y esto queda de respaldo local"),
+        // Las cachés del pod que rigen con el área apagada (menos viajes a la base por request, 2026-11-17): con dos pods, un bump
+        // o una revocación en uno no invalida al otro hasta que la entrada venza (60 s / 15 min). Con el área prendida se
+        // registran los adaptadores de Valkey y éstas no se registran.
+        new("Bootstrapper.Valkey.Permissions.MemoryPermissionCache", StateClassification.SharedWithLocalFallback,
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:126-135 — con Valkey:Areas:Permissions la entrada y la versión de acceso viven en qep:perm:* y qep:tenantver:*; apagada, en este MemoryCache y su contador por tenant"),
+        new("Bootstrapper.Valkey.Sessions.MemorySessionCache", StateClassification.SharedWithLocalFallback,
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:107-114 — con Valkey:Areas:Sessions la entrada y la marca de revocación viven en qep:sess:*; apagada, en este MemoryCache"),
 
         new("Bootstrapper.ApiKeys.ExternalApiCallLogChannel", StateClassification.PerPodByDesign,
             "Bootstrapper/ApiKeys/ExternalApiCallLogChannel.cs:21 — Channel.CreateBounded por pod; lo no escrito se pierde con SIGKILL, igual que con un pod"),
@@ -189,6 +204,8 @@ public static class MultiReplicaInventory
             "Api/WebTelemetryMetrics.cs:23 — HashSet de rutas que acota la cardinalidad del histograma a 256 (MaxRoutes) por pod; cada pod publica sus métricas"),
         new("Bootstrapper.Observability.QueueGauges", StateClassification.PerPodByDesign,
             "Bootstrapper/Observability/QueueGauges.cs:20 — la última lectura del pod; el dashboard agrega con max/avg"),
+        new("Bootstrapper.Observability.WebhookArrivalGauge", StateClassification.PerPodByDesign,
+            "Bootstrapper/Observability/WebhookArrivalGauge.cs:16 — la última lectura del pod (hora del último webhook); el dashboard agrega con max"),
         new("Bootstrapper.Valkey.ValkeyConnection", StateClassification.PerPodByDesign,
             "Bootstrapper/Valkey/ValkeyConnection.cs:31 — el multiplexer de cada pod"),
         new("Bootstrapper.Valkey.ValkeyQueueDoorbell", StateClassification.PerPodByDesign,
@@ -201,6 +218,10 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookRouting.cs:12 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
         new("Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus", StateClassification.PerPodByDesign,
             "Modules/Automations/Modules.Automations.Infrastructure/Engine/AutomationsModuleStatus.cs:14 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
+        new("Modules.Ai.Infrastructure.AiModuleStatus", StateClassification.PerPodByDesign,
+            "Modules/Ai/Modules.Ai.Infrastructure/AiInboxWorker.cs:15-29 — IMemoryCache de 60 s, como AutomationsModuleStatus; el retraso de un minuto ya existe con un pod"),
+        new("Modules.Ai.Infrastructure.AiInboxWorker", StateClassification.PerPodByDesign,
+            "Modules/Ai/Modules.Ai.Infrastructure/AiInboxWorker.cs:43-44 — la hora del próximo barrido de cada pod; dos pods barren dos veces y el segundo no cierra nada (AiSessionSweeper.cs:60-66)"),
         new("Modules.Authorization.Application.ModuleEntitlementMask", StateClassification.PerPodByDesign,
             "Modules/Authorization/Modules.Authorization.Application/ModuleEntitlementMask.cs:17 — tabla inmutable armada de los permisos registrados; igual en cada pod"),
         new("Modules.Authorization.Application.RoleCatalog", StateClassification.PerPodByDesign,
@@ -231,6 +252,8 @@ public static class MultiReplicaInventory
         ["Modules.Messaging.Application.MessagingPresence"] = "Valkey__Areas__Presence",
         ["Bootstrapper.ApiKeys.ApiKeyRateLimiter"] = "Valkey__Areas__RateLimiting",
         ["Bootstrapper.Realtime.LocalRealtimePresence"] = "Valkey__Areas__Presence",
+        ["Bootstrapper.Valkey.Permissions.MemoryPermissionCache"] = "Valkey__Areas__Permissions",
+        ["Bootstrapper.Valkey.Sessions.MemorySessionCache"] = "Valkey__Areas__Sessions",
     };
 
     /// <summary>

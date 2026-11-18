@@ -228,6 +228,64 @@ public sealed class StorageSystemUploadsTests
         Assert.Equal(("storage.file.uploaded", "success", false), (audit.Action, audit.Outcome, audit.System));
     }
 
+    // Productos desde Shopify (spec 2026-11-17 P1): la imagen de un producto la sube el servidor, sin navegador ni URL firmada, por
+    // el mismo pipeline. Queda Available en files/, auditada como sistema.
+    [Fact]
+    public async Task StoringAProductImageLeavesItAvailable()
+    {
+        var fixture = new Fixture();
+        var productId = Guid.CreateVersion7();
+
+        var stored = await fixture.Uploads.StoreAsync(
+            TenantId, FileOwnerType.Product, productId, " foto.jpg ", "image/jpeg", PdfBytes, 10 * 1024 * 1024, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Available, stored.Outcome);
+        var resource = Assert.Single(fixture.Repository.Items);
+        Assert.Equal(stored.FileId, resource.Id.Value);
+        Assert.Equal((FileResourceStatus.Available, FileOwnerType.Product, productId, "foto.jpg"),
+            (resource.Status, resource.OwnerType, resource.OwnerId, resource.Name));
+        Assert.StartsWith("files/", resource.StorageKey, StringComparison.Ordinal);
+        var audit = Assert.Single(fixture.Audit.Entries);
+        Assert.Equal(("storage.file.uploaded", "success", true), (audit.Action, audit.Outcome, audit.System));
+    }
+
+    [Fact]
+    public async Task StoringAMismatchedContentIsRejected()
+    {
+        var fixture = new Fixture(contentMatches: false);
+
+        var stored = await fixture.Uploads.StoreAsync(
+            TenantId, FileOwnerType.Product, Guid.CreateVersion7(), "foto.jpg", "image/jpeg", PdfBytes, 10 * 1024 * 1024, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Rejected, stored.Outcome);
+        Assert.Equal(FileResourceStatus.Quarantined, Assert.Single(fixture.Repository.Items).Status);
+    }
+
+    [Fact]
+    public async Task StoringMoreThanTheGivenMaxIsRejectedBeforeAnything()
+    {
+        var fixture = new Fixture();
+
+        var error = await Assert.ThrowsAsync<StorageDomainException>(() => fixture.Uploads.StoreAsync(
+            TenantId, FileOwnerType.Product, Guid.CreateVersion7(), "foto.jpg", "image/jpeg", PdfBytes, PdfBytes.Length - 1, Ct));
+
+        Assert.Equal("storage.file.size_invalid", error.Code);
+        Assert.Empty(fixture.Repository.Items);
+        Assert.Empty(fixture.Storage.Keys);
+    }
+
+    // La subida de servidor es para dueños que la consola ve; los del sistema tienen su propio camino con secreto (OpenAsync).
+    [Fact]
+    public async Task StoringASystemOwnedTypeThrows()
+    {
+        var fixture = new Fixture();
+
+        await Assert.ThrowsAsync<ArgumentException>(() => fixture.Uploads.StoreAsync(
+            TenantId, FileOwnerType.SupportTicket, Guid.NewGuid(), "acta.pdf", "application/pdf", PdfBytes, 1024, Ct));
+
+        Assert.Empty(fixture.Repository.Items);
+    }
+
     // Revisión final (triage 13): el puerto sin miembro sólo firma archivos de un dueño del sistema (SystemOwnedFiles). Un archivo
     // disponible de la consola, del mismo tenant, es 404 como uno que no existe.
     [Fact]

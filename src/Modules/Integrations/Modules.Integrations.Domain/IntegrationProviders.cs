@@ -56,6 +56,11 @@ public static class ShopifyFieldKeys
     public const string RefreshTokenExpiresAt = "refreshTokenExpiresAt";
     public const string AccessToken = "accessToken";
     public const string RefreshToken = "refreshToken";
+
+    /// <summary>Spec 2026-11-17 §2 (plan D1): el perfil de la tienda (correo, moneda, dirección de facturación…) como JSON
+    /// compacto. Interno: lleva datos personales del comerciante y no sale en la respuesta de la conexión. Lo escriben el
+    /// enlace y el probador; lo lee el asistente de configuración del módulo <c>shopify</c>.</summary>
+    public const string ShopProfile = "shopProfile";
 }
 
 /// <summary>Spec 2026-10-21 D-H1. Todos son campos que escribe una persona; <see cref="ApiKey"/> es el único secreto.
@@ -70,6 +75,12 @@ public static class ExternalApiFieldKeys
 
 /// <summary>Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant, el único campo.</summary>
 public static class AnthropicFieldKeys
+{
+    public const string ApiKey = "apiKey";
+}
+
+/// <summary>Spec 2026-10-29 §4.5: la clave de la cuenta de OpenAI del tenant, el único campo.</summary>
+public static class OpenAiFieldKeys
 {
     public const string ApiKey = "apiKey";
 }
@@ -264,6 +275,11 @@ public static class IntegrationProviders
                 ShopifyFieldKeys.RefreshToken, "Token de refresco", FieldKind.Secret,
                 required: false, maxLength: 2048, pattern: null,
                 invalidMessage: "El token de refresco que devolvió Shopify no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                // 4096 es ShopifyShopProfile.FieldMaxLength (Integrations.Application, que el dominio no ve): cámbialos juntos.
+                ShopifyFieldKeys.ShopProfile, "Perfil de la tienda", FieldKind.Text,
+                required: false, maxLength: 4096, pattern: null,
+                invalidMessage: "El perfil que devolvió Shopify no tiene una forma válida.", isInternal: true, isPrivate: true),
         ],
         DefaultMaxConnections,
         onboarding: ProviderOnboarding.ShopifyOAuth);
@@ -303,14 +319,14 @@ public static class IntegrationProviders
         requiresTenantEnablement: false);
 
     /// <summary>Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant (BYOK, owner 2026-11-12), que consumen los agentes
-    /// IA. Una por tenant y sin habilitación por tenant: todo tenant con <c>ai</c> puede conectarla (P-16). El patrón sólo exige texto
+    /// IA y el copiloto (spec 2026-11-17, D-C2). Una por tenant y sin habilitación por tenant: todo tenant con <c>ai</c> o <c>copilot</c> puede conectarla (P-16). El patrón sólo exige texto
     /// imprimible sin espacios: el formato de las claves es de Anthropic y lo juzga el probador, no el catálogo. La pantalla ve los
     /// últimos 4 caracteres (D-A23).</summary>
     public static readonly IntegrationProvider Anthropic = new(
         "anthropic",
         "Anthropic (Claude)",
         IntegrationCategory.Ai,
-        [TenantModuleKeys.Ai],
+        [TenantModuleKeys.Ai, TenantModuleKeys.Copilot],
         [
             new FieldDefinition(
                 AnthropicFieldKeys.ApiKey, "Clave de API", FieldKind.Secret,
@@ -322,7 +338,26 @@ public static class IntegrationProviders
         onboarding: ProviderOnboarding.Form,
         requiresTenantEnablement: false);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic];
+    /// <summary>Spec 2026-10-29 §4.5 y plan 2026-11-12, C-1: la clave de la cuenta de OpenAI del tenant (BYOK), con la misma forma que la
+    /// de Anthropic. Llega con su adaptador (Tarea 6): un proveedor que nadie puede usar no se ofrece. Lo prueba <c>GET /v1/models</c>
+    /// (spec §9.1, O-10).</summary>
+    public static readonly IntegrationProvider OpenAi = new(
+        "openai",
+        "OpenAI",
+        IntegrationCategory.Ai,
+        [TenantModuleKeys.Ai, TenantModuleKeys.Copilot],
+        [
+            new FieldDefinition(
+                OpenAiFieldKeys.ApiKey, "Clave de API", FieldKind.Secret,
+                required: true, maxLength: 256, pattern: @"^[\x21-\x7E]{1,256}\z",
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla.",
+                revealSuffix: 4),
+        ],
+        maxConnections: 1,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic, OpenAi];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>

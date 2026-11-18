@@ -70,7 +70,7 @@ public sealed class AutomationEnginePersistenceTests
             "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = NULL WHERE id = @id",
             ("id", conversationId)));
 
-        Assert.Equal("CK_conversations_automation_chatbot", error.ConstraintName);
+        Assert.Equal("CK_conversations_automation_bot", error.ConstraintName);
     }
 
     [Fact]

@@ -18,7 +18,9 @@ public interface IShopifyAdminGateway
     /// no sirve y sólo lo arregla volver a abrir la app.</summary>
     Task<ShopifyTokenGrant> RefreshTokenAsync(string shop, string refreshToken, CancellationToken cancellationToken);
 
-    /// <summary><c>{ shop { id name myshopifyDomain } }</c> por GraphQL, con <c>X-Shopify-Access-Token</c>.</summary>
+    /// <summary><c>{ shop { id name myshopifyDomain … billingAddress { … } } }</c> por GraphQL, con
+    /// <c>X-Shopify-Access-Token</c>. Trae también el perfil de la tienda (spec 2026-11-17 §2): un campo del perfil ausente
+    /// o de otro tipo es <c>null</c>, nunca <see cref="ShopifyGatewayFailure.Invalid"/>; sólo el <c>id</c> lo es.</summary>
     Task<ShopifyShopInfo> GetShopAsync(string shop, string accessToken, CancellationToken cancellationToken);
 
     /// <summary>Las suscripciones de la app en esa tienda (<c>webhookSubscriptions</c>), para no duplicar un topic.</summary>
@@ -42,7 +44,9 @@ public sealed record ShopifyTokenGrant(
 }
 
 /// <param name="Id">El id numérico de la tienda (el final de <c>gid://shopify/Shop/{id}</c>), como lo traen los webhooks.</param>
-public sealed record ShopifyShopInfo(string Id, string Name, string Domain);
+/// <param name="Profile">Spec 2026-11-17 §2: el perfil de la tienda; <c>null</c> si Shopify no devolvió ninguno de sus
+/// campos. Lleva correo y teléfono: no va a logs.</param>
+public sealed record ShopifyShopInfo(string Id, string Name, string Domain, ShopifyShopProfile? Profile = null);
 
 /// <param name="Topic">El enum de GraphQL (<c>ORDERS_CREATE</c>), no el de REST (<c>orders/create</c>).</param>
 public sealed record ShopifyWebhookSubscription(string Id, string Topic, Uri? CallbackUrl);

@@ -382,6 +382,12 @@ namespace Modules.Automations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("connection_id");
 
+                    b.Property<short>("ConsecutiveDelegations")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)0)
+                        .HasColumnName("consecutive_delegations");
+
                     b.Property<string>("ConsentPromptJson")
                         .HasColumnType("jsonb")
                         .HasColumnName("consent_prompt");

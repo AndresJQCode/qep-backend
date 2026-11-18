@@ -60,4 +60,20 @@ public static class ShopifyAuditActions
     /// <summary>Owner 2026-11-14: alguien soltó los envíos retenidos de una tienda. Recurso: la conexión; detalle:
     /// <c>{ "released": n }</c>. Sin envíos retenidos no se audita nada.</summary>
     public const string StorePushesReleased = "shopify.store.pushes_released";
+
+    /// <summary>Spec 2026-11-17 §7: alguien pidió traer los productos de una tienda. Recurso: la importación; detalle: la conexión y
+    /// el modo.</summary>
+    public const string ProductImportRequested = "shopify.products.import_requested";
+
+    public const string ProductImportResourceType = "shopify_product_import";
+
+    /// <summary>Spec 2026-11-17 §5.5: alguien desvinculó un producto de Shopify y quedó propio de QEP. Recurso: el producto de
+    /// Catalog; detalle: las conexiones y cuántos vínculos se quitaron.</summary>
+    public const string ProductUnlinked = "shopify.products.unlinked";
+
+    public const string ProductResourceType = "product";
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4.2: alguien eligió «Seguir así» con la cobertura del catálogo. Recurso: la conexión
+    /// (<see cref="ConnectionResourceType"/>); detalle: <c>[]</c>.</summary>
+    public const string ProductsCoverageAccepted = "shopify.products.coverage_accepted";
 }

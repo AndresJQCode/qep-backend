@@ -69,6 +69,32 @@ public sealed class ProductApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // Productos desde Shopify (spec 2026-11-17 §5.4): un producto creado por la consola es propio
+    // de QEP, y el detalle lo dice con externalSource en null para que la pantalla no bloquee nada.
+    [Fact]
+    public async Task TheDetailReturnsExternalSourceNull()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(
+            factory, SubjectId, TenantId, CatalogPermissions.ProductRead, CatalogPermissions.ProductManage);
+
+        var created = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products",
+            ProductBodies.Create("Vela de soja", "VS-001"),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var product = await created.Content.ReadFromJsonAsync<ProductResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(product);
+
+        var detail = await client.GetFromJsonAsync<ProductResponse>(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{product.Id}",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail);
+        Assert.Null(detail.ExternalSource);
+    }
+
     // El stub de desarrollo concede sólo los defaults de tenancy cuando X-Permissions no está
     // (DevelopmentAuthenticationHandler.ResolvePermissions), así que un permiso de catalog hay
     // que pedirlo explícitamente. Pasarlo por prueba mantiene cada 403 atribuible: sin esto,

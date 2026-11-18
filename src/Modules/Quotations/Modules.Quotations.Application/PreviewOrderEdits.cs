@@ -123,13 +123,14 @@ public sealed class PreviewOrderEditsHandler(
         // no muestre una retención que el guardado rechazaría.
         await OrderWithholdingEdits.ApplyAsync(
             order, query,
-            new OrderWithholdingEditsContext(companyLookup, withholdingLookup, geographyLookup, tenantClock, query.TenantId),
+            new OrderWithholdingEditsContext(
+                companyLookup, withholdingLookup, geographyLookup, tenantClock, query.TenantId, shippingResolver),
             updatedBy, now, cancellationToken);
 
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
         var shipping = await shippingResolver.ResolveAsync(
             query.TenantId, query.Shipping, order.ShippingDetails, order.IsStorePickup, order.Currency,
-            "order.order", cancellationToken);
+            order.ChargesVat, "order.order", cancellationToken);
         if (shipping is not null && shipping != order.ShippingDetails)
         {
             order.SetShipping(shipping, updatedBy, now);

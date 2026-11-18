@@ -138,6 +138,7 @@ internal sealed class ClosedXmlCustomerImportTemplateBuilder : ICustomerImportTe
         Write(CustomerImportColumns.Retefuente, row.Retefuente);
         Write(CustomerImportColumns.VatSurplus, row.VatSurplus);
         Write(CustomerImportColumns.Company, row.CompanyIdentificationNumber);
+        Write(CustomerImportColumns.Tags, row.Tags);
     }
 
     private static void BuildReferenceSheet(

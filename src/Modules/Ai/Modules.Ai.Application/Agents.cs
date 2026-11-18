@@ -42,6 +42,9 @@ public static class AgentLimits
     /// <summary>Como los chatbots: cuántas conexiones puede atender un agente.</summary>
     public const int MaxConnections = 10;
 
+    /// <summary>El cuerpo de importar un agente: un <c>config</c> con todos sus topes llenos cabe de sobra.</summary>
+    public const int ImportBodyMaxBytes = 1024 * 1024;
+
     /// <summary>§4.7: <c>draft_saved</c> se audita como máximo una vez por minuto, como Automations.</summary>
     public static readonly TimeSpan DraftAuditInterval = TimeSpan.FromMinutes(1);
 }
@@ -85,59 +88,88 @@ public sealed class UpdateAgentValidator : AbstractValidator<UpdateAgentCommand>
 /// guarda; lo que falta para publicar (instrucciones vacías, un miembro que ya no responde) se guarda y vuelve como problema (D-A7).</summary>
 public sealed class SaveAgentDraftValidator : AbstractValidator<SaveAgentDraftCommand>
 {
-    public SaveAgentDraftValidator()
+    public SaveAgentDraftValidator() =>
+        RuleFor(command => command.Config).NotNull().SetValidator(new AgentConfigFieldsValidator());
+}
+
+/// <summary>Los topes de cada campo del <c>config</c>, los mismos al guardar el borrador y al importar un agente. Quien lo usa con
+/// <c>SetValidator</c> antepone su propiedad a las claves (<c>Config.Faq[3].Answer</c>), que el editor mapea a campo.</summary>
+public sealed class AgentConfigFieldsValidator : AbstractValidator<AgentConfig>
+{
+    public AgentConfigFieldsValidator()
     {
-        RuleFor(command => command.Config).NotNull();
-        When(command => command.Config is not null, () =>
+        RuleFor(config => config.Instructions).NotNull().MaximumLength(AgentConfig.InstructionsMaxLength);
+        RuleFor(config => config.Tone).Must(tone => AgentConfig.Tones.Contains(tone))
+            .WithMessage($"Tone must be one of {string.Join(", ", AgentConfig.Tones)}.");
+        RuleFor(config => config.Greeting).MaximumLength(AgentConfig.GreetingMaxLength);
+        RuleFor(config => config.Trigger).Must(trigger => AgentConfig.Triggers.Contains(trigger))
+            .WithMessage($"Trigger must be one of {string.Join(", ", AgentConfig.Triggers)}.");
+        RuleFor(config => config.Faq)
+            .NotNull()
+            .Must(faq => faq.Count <= AgentConfig.MaxFaq)
+            .WithMessage($"At most {AgentConfig.MaxFaq} questions are allowed.")
+            .Must(faq => faq.Where(entry => entry is not null).Select(entry => entry.Id).Distinct(StringComparer.Ordinal).Count() == faq.Count)
+            .WithMessage("Each question needs its own id.");
+        RuleForEach(config => config.Faq).ChildRules(entry =>
         {
-            RuleFor(command => command.Config.Instructions).NotNull().MaximumLength(AgentConfig.InstructionsMaxLength);
-            RuleFor(command => command.Config.Tone).Must(tone => AgentConfig.Tones.Contains(tone))
-                .WithMessage($"Tone must be one of {string.Join(", ", AgentConfig.Tones)}.");
-            RuleFor(command => command.Config.Greeting).MaximumLength(AgentConfig.GreetingMaxLength);
-            RuleFor(command => command.Config.Trigger).Must(trigger => AgentConfig.Triggers.Contains(trigger))
-                .WithMessage($"Trigger must be one of {string.Join(", ", AgentConfig.Triggers)}.");
-            RuleFor(command => command.Config.Faq)
-                .NotNull()
-                .Must(faq => faq.Count <= AgentConfig.MaxFaq)
-                .WithMessage($"At most {AgentConfig.MaxFaq} questions are allowed.")
-                .Must(faq => faq.Where(entry => entry is not null).Select(entry => entry.Id).Distinct(StringComparer.Ordinal).Count() == faq.Count)
-                .WithMessage("Each question needs its own id.");
-            RuleForEach(command => command.Config.Faq).ChildRules(entry =>
-            {
-                entry.RuleFor(value => value.Id).NotEmpty().MaximumLength(AgentConfig.FaqIdMaxLength);
-                entry.RuleFor(value => value.Question).NotEmpty().MaximumLength(AgentConfig.FaqQuestionMaxLength);
-                entry.RuleFor(value => value.Answer).NotEmpty().MaximumLength(AgentConfig.FaqAnswerMaxLength);
-            }).When(command => command.Config.Faq is not null);
-            RuleFor(command => command.Config.Tools).NotNull();
-            RuleFor(command => command.Config.Handoff).NotNull();
-            When(command => command.Config.Handoff is not null, () =>
-            {
-                RuleFor(command => command.Config.Handoff.Destination).Must(destination => AgentHandoff.Destinations.Contains(destination))
-                    .WithMessage("Destination must be unassigned or member.");
-                RuleFor(command => command.Config.Handoff.Message).MaximumLength(AgentHandoff.MessageMaxLength);
-                RuleFor(command => command.Config.Handoff.MaxRepliesWithoutHuman)
-                    .InclusiveBetween(AgentHandoff.MinRepliesWithoutHuman, AgentHandoff.MaxRepliesWithoutHumanLimit);
-                RuleFor(command => command.Config.Handoff.MaxConsecutiveFailures)
-                    .InclusiveBetween(AgentHandoff.MinConsecutiveFailures, AgentHandoff.MaxConsecutiveFailuresLimit);
-            });
-            RuleFor(command => command.Config.Model).NotNull();
-            When(command => command.Config.Model is not null, () =>
-            {
-                RuleFor(command => command.Config.Model.Provider).NotEmpty().MaximumLength(AgentModelRef.ProviderMaxLength);
-                RuleFor(command => command.Config.Model.Id).NotEmpty().MaximumLength(AgentModelRef.IdMaxLength);
-            });
+            entry.RuleFor(value => value.Id).NotEmpty().MaximumLength(AgentConfig.FaqIdMaxLength);
+            entry.RuleFor(value => value.Question).NotEmpty().MaximumLength(AgentConfig.FaqQuestionMaxLength);
+            entry.RuleFor(value => value.Answer).NotEmpty().MaximumLength(AgentConfig.FaqAnswerMaxLength);
+        }).When(config => config.Faq is not null);
+        RuleFor(config => config.Tools).NotNull();
+        RuleFor(config => config.Handoff).NotNull();
+        When(config => config.Handoff is not null, () =>
+        {
+            RuleFor(config => config.Handoff.Destination).Must(destination => AgentHandoff.Destinations.Contains(destination))
+                .WithMessage("Destination must be unassigned or member.");
+            RuleFor(config => config.Handoff.Message).MaximumLength(AgentHandoff.MessageMaxLength);
+            RuleFor(config => config.Handoff.MaxRepliesWithoutHuman)
+                .InclusiveBetween(AgentHandoff.MinRepliesWithoutHuman, AgentHandoff.MaxRepliesWithoutHumanLimit);
+            RuleFor(config => config.Handoff.MaxConsecutiveFailures)
+                .InclusiveBetween(AgentHandoff.MinConsecutiveFailures, AgentHandoff.MaxConsecutiveFailuresLimit);
+        });
+        RuleFor(config => config.Model).NotNull();
+        When(config => config.Model is not null, () =>
+        {
+            RuleFor(config => config.Model.Provider).NotEmpty().MaximumLength(AgentModelRef.ProviderMaxLength);
+            RuleFor(config => config.Model.Id).NotEmpty().MaximumLength(AgentModelRef.IdMaxLength);
+        });
+        // P-4: la cuenta de cobro del borrador viaja entera; los topes son los de Quotations, que además la verifica al crear.
+        When(config => config.QuotationDraft?.BillingAccount is not null, () =>
+        {
+            RuleFor(config => config.QuotationDraft!.BillingAccount!.CompanyId).NotEmpty();
+            RuleFor(config => config.QuotationDraft!.BillingAccount!.BankName)
+                .NotEmpty().MaximumLength(AgentBillingAccount.BankNameMaxLength);
+            RuleFor(config => config.QuotationDraft!.BillingAccount!.AccountNumber)
+                .NotEmpty().MaximumLength(AgentBillingAccount.AccountNumberMaxLength);
+            RuleFor(config => config.QuotationDraft!.BillingAccount!.Currency)
+                .NotEmpty().Length(AgentBillingAccount.CurrencyLength);
         });
     }
 }
 
+/// <summary>Spec §5 y plan 2026-11-12 Tarea 9: la lista con el consumo del mes por proveedor (C-4) y la actividad del día, en el reloj del
+/// tenant.</summary>
 public sealed class ListAgentsHandler(
-    IExecutionContext executionContext, ITenantModules tenantModules, IAgentRepository agents, AgentEditorBuilder builder)
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    IAgentRepository agents,
+    AgentEditorBuilder builder,
+    IAgentActivityReader activity,
+    ITenantClock tenantClock,
+    IAiChatbotUsage chatbotUsage)
     : IQueryHandler<ListAgentsQuery, AgentListResponse>
 {
     public async Task<AgentListResponse> HandleAsync(ListAgentsQuery query, CancellationToken cancellationToken)
     {
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AiPermissions.AgentRead, cancellationToken);
-        return await builder.BuildListAsync(query.TenantId, await agents.ListAsync(query.TenantId, query.Search, cancellationToken), cancellationToken);
+        var window = AgentActivityWindows.For(await tenantClock.GetAsync(query.TenantId, cancellationToken));
+        return await builder.BuildListAsync(
+            query.TenantId,
+            await agents.ListAsync(query.TenantId, query.Search, cancellationToken),
+            await activity.SummarizeAsync(query.TenantId, window, cancellationToken),
+            await chatbotUsage.ListByAgentAsync(query.TenantId, cancellationToken),
+            cancellationToken);
     }
 }
 
@@ -374,12 +406,15 @@ public sealed class ResumeAgentHandler(
     }
 }
 
-/// <summary>Borra el agente con sus versiones y conexiones, y libera la ocupación en el mismo commit. El 409 <c>has_live_sessions</c> del
-/// spec llega con las sesiones (plan 2026-11-12, Tarea 7): hoy no hay sesiones que cuidar.</summary>
+/// <summary>Borra el agente con sus versiones y conexiones, y libera la ocupación en el mismo commit. Con sesiones vivas responde 409
+/// <c>ai.agent.has_live_sessions</c> (§4.7, §6.4); si no, con un chatbot publicado que lo usa, 409 <c>ai.agent.in_use_by_chatbots</c>
+/// (spec 2026-11-17 D-B18).</summary>
 public sealed class DeleteAgentHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IAgentRepository agents,
+    IAgentSessionRepository sessions,
+    IAiChatbotUsage chatbotUsage,
     IAiUnitOfWork unitOfWork,
     IAiAuditRecorder audit,
     IClock clock)
@@ -390,6 +425,20 @@ public sealed class DeleteAgentHandler(
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.AgentManage, cancellationToken);
         var agent = await agents.FindAsync(command.TenantId, command.AgentId, cancellationToken) ?? throw AiNotFound.Agent(command.AgentId);
         AiVersions.Ensure(agent.Version, command.Version);
+        // Una sesión viva termina con su versión (D-A5); borrar el agente la dejaría sin versión a mitad de la conversación.
+        if (await sessions.HasLiveSessionsAsync(command.TenantId, agent.Id, cancellationToken))
+        {
+            throw new ResourceConflictException(
+                AiErrorCodes.AgentHasLiveSessions, "El agente todavía atiende conversaciones. Pausa el agente y espera a que terminen para borrarlo.");
+        }
+
+        // D-B18: un bloque publicado que lo nombra saldría por error en cada corrida. Una publicación del chatbot que se cruce con este
+        // borrado no la frena nada: el bloque sale por error con agent_unavailable (D-B18), que es lo mismo que con el agente pausado.
+        if ((await chatbotUsage.ListByAgentAsync(command.TenantId, cancellationToken)).GetValueOrDefault(agent.Id) is { Count: > 0 } chatbots)
+        {
+            throw new AgentInUseByChatbotsException(chatbots);
+        }
+
         agents.Remove(agent);
         audit.Record(command.TenantId, executionContext.SubjectId, AiAuditActions.AgentDeleted, agent.Id, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);

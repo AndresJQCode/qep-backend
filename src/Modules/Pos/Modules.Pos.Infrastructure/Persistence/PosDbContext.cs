@@ -53,6 +53,12 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         session.Property(value => value.CompanyDocumentType).HasColumnName("company_document_type").HasMaxLength(16).IsRequired();
         session.Property(value => value.CompanyAddress).HasColumnName("company_address").HasMaxLength(200);
         session.Property(value => value.CompanyPhone).HasColumnName("company_phone").HasMaxLength(32);
+        // Spec 2026-11-17 R4. Sin el sentinel EF omite el false del INSERT y la base guarda true (precedente
+        // stores.show_prices): la caja de una empresa sin IVA volvería a cobrarlo.
+        session.Property(value => value.CompanyChargesVat)
+            .HasColumnName("company_charges_vat")
+            .HasDefaultValue(true)
+            .HasSentinel(true);
         session.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
         session.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(10);
         session.Property(value => value.OpeningFloat).HasColumnName("opening_float").HasPrecision(14, 2);

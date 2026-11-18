@@ -71,6 +71,72 @@ public sealed class ShopifySyncApiTests
             list.RootElement.GetProperty("variables").GetProperty("query").GetString());
     }
 
+    // Spec 2026-11-17 (onboarding) §7: source=setup no cambia la respuesta; los ids en espera son para el resumen y no viajan.
+    [Fact]
+    public async Task TheSyncResponseKeepsItsShape()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var shopify = new FakeShopifyAdmin().WithOrder(Shop, GraphQlFixture("taxes-included"));
+        using var factory = shopify.Factory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await world.ConfigureStoreAsync(factory);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderManage);
+
+        var response = await client.PostAsync($"{SyncRoute(world.TenantId, world.ConnectionId)}?source=setup", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        Assert.Equal(
+            ["cancelled", "durationMs", "fetched", "ignored", "imported", "waiting"],
+            body.Select(pair => pair.Key).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task AnUnknownSourceIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var shopify = new FakeShopifyAdmin();
+        using var factory = shopify.Factory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await world.ConfigureStoreAsync(factory);
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderManage);
+
+        var response = await client.PostAsync($"{SyncRoute(world.TenantId, world.ConnectionId)}?source=wizard", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.NotNull((await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["errors"]!["source"]);
+        Assert.Empty(shopify.Requests);
+    }
+
+    [Fact]
+    public async Task AfterASetupSyncTheHistoryStepIsDone()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        var shopify = new FakeShopifyAdmin().WithOrder(Shop, GraphQlFixture("taxes-included"));
+        using var factory = shopify.Factory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await world.ConfigureStoreAsync(factory, historyDays: 7);
+        using var client = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.TenantId, OrdersPermissions.OrderManage, ShopifyPermissions.ConnectionRead, ShopifyPermissions.ConnectionManage);
+        var version = await ScalarAsync<long>(connectionString, "SELECT version FROM shopify.stores WHERE connection_id = @c", ("c", world.ConnectionId));
+
+        (await client.PostAsync($"{SyncRoute(world.TenantId, world.ConnectionId)}?source=setup", content: null, Ct)).EnsureSuccessStatusCode();
+
+        var setup = (await client.GetFromJsonAsync<JsonObject>(
+            $"/api/v1/tenants/{world.TenantId}/shopify/stores/{world.ConnectionId}/setup", Ct))!;
+        var history = setup["steps"]!.AsArray().Single(step => step!["key"]!.GetValue<string>() == "history")!;
+        Assert.Equal("Done", history["status"]!.GetValue<string>());
+        var lastRun = setup["history"]!["lastRun"]!;
+        Assert.Equal((7, 1, 1), (lastRun["days"]!.GetValue<int>(), lastRun["fetched"]!.GetValue<int>(), lastRun["imported"]!.GetValue<int>()));
+        Assert.Empty(lastRun["waiting"]!.AsArray());
+        // Guardar el resumen no sube la versión: el formulario abierto de la tienda guarda sin 412.
+        Assert.Equal(version, await ScalarAsync<long>(
+            connectionString, "SELECT version FROM shopify.stores WHERE connection_id = @c", ("c", world.ConnectionId)));
+    }
+
     [Fact]
     public async Task SyncWhileRunningReturns409()
     {

@@ -98,10 +98,10 @@ public sealed class Order
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
-        // La misma regla que Quotation: la cuenta fija la moneda y, sin ella, manda la del encabezado, que
-        // Application llena con la moneda por defecto del tenant. Sólo el cálculo previo llega acá sin cuenta, o con una
-        // cuenta pendiente (sólo la empresa, spec 2026-11-16), que tampoco fija la moneda.
-        Currency = BillingAccount is { IsPending: false } account ? account.Currency : header.Currency;
+        // La misma regla que Quotation: la cuenta fija la moneda y, sin ella, manda la del encabezado. Sin cuenta
+        // bancaria (empresa sola, spec 2026-11-17 R3) la moneda la decide quien llama: la por defecto del tenant en un
+        // pedido manual, la de la cotización al convertir, la de la tienda o la del pedido de origen.
+        Currency = BillingAccount is { HasBankAccount: true } account ? account.Currency : header.Currency;
         Status = OrderStatus.Open;
         FulfillmentStatus = OrderFulfillmentStatus.NotPrepared;
         // Null = lo calculan los comprobantes, que se agregan después (ver CalculatedPaymentStatus).
@@ -201,8 +201,51 @@ public sealed class Order
 
     /// <summary>Null sólo en un cálculo previo (<see cref="Preview"/>): la pantalla de «Nuevo pedido» precia
     /// la línea antes de que se elija la empresa que factura. Un pedido guardado siempre la tiene:
-    /// <see cref="FromQuotation"/>, <see cref="CreateManual"/> y <see cref="CreateExternal"/> la exigen.</summary>
+    /// <see cref="FromQuotation"/>, <see cref="CreateManual"/> y <see cref="CreateExternal"/> la exigen. Desde el spec
+    /// 2026-11-17 (R3) puede ser sólo la empresa, con banco y número nulos.</summary>
     public QuotationBillingAccount? BillingAccount { get; private set; }
+
+    /// <summary>
+    /// Si lo que emite este pedido lleva IVA (spec 2026-11-17 §5.2): el de la empresa congelado con la cuenta. No se
+    /// relee de la empresa: un pedido emitido no cambia de IVA porque la empresa cambie después.
+    /// </summary>
+    public bool ChargesVat => BillingAccount?.ChargesVat ?? true;
+
+    /// <summary>
+    /// Si aplicar esa cuenta (<see cref="ApplyBillingContext"/>) vuelve a gravar el envío (spec 2026-11-17, R2): hoy sin
+    /// IVA, con IVA después, con un envío cobrado con valor en COP. Una cuenta null conserva la que hay, y la misma empresa
+    /// conserva su IVA congelado, así que ninguna de las dos cambia nada. Si dice que sí, el handler lee la tasa del envío del tenant (puede faltar:
+    /// <c>order.order.freight_tax_rate_missing</c>) y la pasa.
+    /// </summary>
+    public bool NeedsFreightTaxRateFor(QuotationBillingAccount? billingAccount) =>
+        billingAccount is not null
+        && billingAccount.CompanyId != BillingAccount?.CompanyId
+        && !ChargesVat
+        && billingAccount.ChargesVat
+        && FreightChargeMode == Domain.FreightChargeMode.Charged
+        && FreightAmount > 0
+        && QuotationItem.ItemizesTaxIn(Currency);
+
+    private void ApplyChargesVat(int? freightTaxPercentageWithVat, DateTimeOffset occurredAt)
+    {
+        foreach (var item in _items)
+        {
+            item.ApplyChargesVat(ChargesVat, Currency, PriceRounding, occurredAt);
+        }
+
+        if (!ChargesVat)
+        {
+            FreightTaxPercentage = 0;
+        }
+        else if (FreightChargeMode == Domain.FreightChargeMode.Charged
+            && FreightAmount > 0
+            && QuotationItem.ItemizesTaxIn(Currency))
+        {
+            FreightTaxPercentage = freightTaxPercentageWithVat
+                ?? throw new InvalidOperationException(
+                    "Turning VAT on with a charged freight needs the tenant freight tax rate (NeedsFreightTaxRateFor).");
+        }
+    }
 
     /// <summary>
     /// El municipio de la operación (spec ReteICA por empresa §7.5), el mismo concepto que en la cotización: decide qué
@@ -415,7 +458,7 @@ public sealed class Order
         {
             throw new QuotationsDomainException(
                 "quotation.billing.account_required",
-                "A quotation must have a billing account before it can be converted to an order.");
+                "A quotation must have a billing company before it can be converted to an order.");
         }
 
         var header = new OrderHeader(
@@ -450,9 +493,10 @@ public sealed class Order
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var item in quotation.Items.OrderBy(item => item.Position))
         {
+            // La tasa del producto y la cuenta (con su IVA) se copian tal cual: no se relee la empresa (R2).
             var copy = OrderItem.Create(
                 OrderItemId.New(), order.Id, item.VariantId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage,
-                item.TaxPercentage, order._items.Count + 1, order.Currency, order.PriceRounding, occurredAt);
+                item.ProductTaxRate, order.ChargesVat, order._items.Count + 1, order.Currency, order.PriceRounding, occurredAt);
             copy.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, order.Currency, order.PriceRounding, occurredAt);
             if (item.ProductCode is not null)
             {
@@ -869,15 +913,24 @@ public sealed class Order
         QuotationBillingAccount? billingAccount,
         MunicipalContext municipal,
         MemberId updatedBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        int? freightTaxPercentageWithVat = null)
     {
         ArgumentNullException.ThrowIfNull(municipal);
         EnsureEditable("The billing account and the operation city can only change while the order is editable.");
         var previousCompanyId = BillingAccount?.CompanyId;
+        var chargedVat = ChargesVat;
         var accountChanged = false;
         if (billingAccount is not null)
         {
             var normalized = billingAccount.Normalized();
+            // El IVA es la foto de la empresa al elegirla (spec 2026-11-17 §5.2): reenviar la misma empresa no lo relee,
+            // aunque la empresa lo haya cambiado después. Sólo otra empresa trae el suyo.
+            if (BillingAccount is { } current && current.CompanyId == normalized.CompanyId)
+            {
+                normalized = normalized with { ChargesVat = current.ChargesVat };
+            }
+
             // El municipio de la empresa no cuenta: una cuenta anterior a este trabajo lo completa en silencio.
             accountChanged = normalized with { CityId = BillingAccount?.CityId } != BillingAccount;
             if (accountChanged
@@ -889,6 +942,12 @@ public sealed class Order
             }
 
             BillingAccount = normalized;
+        }
+
+        // R2: otra empresa con otro IVA rehace las líneas y el envío. Touch, más abajo, rehace los totales.
+        if (chargedVat != ChargesVat)
+        {
+            ApplyChargesVat(freightTaxPercentageWithVat, occurredAt);
         }
 
         var cityAfter = MunicipalReResolver.HasMunicipalTypes(BillingAccount?.Country) ? municipal.OperationCityId : null;
@@ -1042,8 +1101,9 @@ public sealed class Order
                 "La variante ya está en el pedido.");
         }
 
+        // taxPercentage es la tasa del producto; la línea aplica el IVA de la empresa (spec 2026-11-17, R1).
         var item = OrderItem.Create(
-            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, ChargesVat,
             _items.Count + 1, Currency, PriceRounding, occurredAt);
         if (origin != QuotationDiscountOrigin.Own)
         {
@@ -1068,7 +1128,8 @@ public sealed class Order
         DateTimeOffset occurredAt)
     {
         EnsureEditable("Products can only be edited while the order is editable.");
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, PriceRounding, occurredAt);
+        FindItem(itemId).UpdateQuantity(
+            quantity, discountPercentage, taxPercentage, ChargesVat, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -1133,7 +1194,9 @@ public sealed class Order
         CarrierName = shipping.CarrierName;
         FreightChargeMode = shipping.ChargeMode;
         FreightAmount = shipping.FreightAmount;
-        FreightTaxPercentage = shipping.FreightTaxPercentage;
+        // Una empresa sin IVA no cobra IVA en el envío (spec 2026-11-17 §5.2): defensa para los pedidos externos y de la
+        // tienda, que traen su envío armado.
+        FreightTaxPercentage = ChargesVat ? shipping.FreightTaxPercentage : 0;
         CashOnDelivery = shipping.CashOnDelivery;
     }
 
@@ -2004,7 +2067,7 @@ public sealed class Order
         return lines
             .Select((line, index) => OrderItem.Create(
                 OrderItemId.New(), Id, line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
-                line.TaxPercentage, index + 1, Currency, PriceRounding, occurredAt))
+                line.TaxPercentage, ChargesVat, index + 1, Currency, PriceRounding, occurredAt))
             .ToArray();
     }
 
@@ -2031,8 +2094,8 @@ public sealed class Order
             if (_items.FirstOrDefault(item => item.VariantId == candidate.VariantId) is { } kept)
             {
                 kept.ApplyExternal(
-                    input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, index + 1, Currency,
-                    PriceRounding, occurredAt);
+                    input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, ChargesVat, index + 1,
+                    Currency, PriceRounding, occurredAt);
                 if (input.Product is { } snapshot)
                 {
                     kept.CaptureProduct(snapshot);

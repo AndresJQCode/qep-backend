@@ -41,6 +41,13 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.QuickReplyShortcutTaken, "Another quick reply in this tenant already uses that shortcut.", exception);
         }
+        // Revisión de la rama, hallazgo 3: dos delegaciones vivas de una conversación. La de dominio y no un 23505 crudo: el motor de chatbots
+        // la atiende como cualquier cambio que la conversación ya no admite (la corrida termina Interrupted) en vez de reintentar la fila.
+        catch (DbUpdateException exception) when (IsLiveDelegationConflict(exception))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.DelegationLiveExists, "The conversation already has a live delegation to an agent.", exception);
+        }
         // Spec 2026-10-15 §3.3 y D-R11: 409 y no 422, como customers.tag.name_taken. Es un choque con lo que ya existe —el resolver
         // reintenta y lo reutiliza; el renombrar elige otro nombre—, por eso ResourceConflictException y no un error de dominio.
         catch (DbUpdateException exception)
@@ -77,6 +84,12 @@ internal static class MessagingSaveChanges
         {
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateNameTaken, "Another template of this connection already uses that name in that language.", exception);
+        }
+        // Spec 2026-11-17 (fix round 2 del bloque C): una imagen de encabezado por plantilla. La creación que pierde la carrera es
+        // header_image_rejected sobre el campo, como el rechazo de antes de publicar.
+        catch (DbUpdateException exception) when (IsHeaderImageTaken(exception))
+        {
+            throw HeaderImageTaken(exception);
         }
         // Fix de la Task 8: dos primeros aprovisionamientos de la plantilla de cotización a la vez. El que pierde es quotation_exists (422):
         // la versión que alcanzó a crear en Meta queda allá y el siguiente refresco la trae como External.
@@ -165,15 +178,42 @@ internal static class MessagingSaveChanges
         }
     }
 
+    /// <summary>Por nombre de índice, como el resto: otro 23505 de <c>message_templates</c> no es una imagen tomada.</summary>
+    internal static bool IsHeaderImageTaken(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres
+        && postgres.SqlState == PostgresErrorCodes.UniqueViolation
+        && string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateHeaderImageIndex, StringComparison.Ordinal);
+
+    /// <summary>El error del campo de la imagen (el mismo que el rechazo de antes de publicar), con la violación como causa.</summary>
+    internal static MessagingDomainException HeaderImageTaken(DbUpdateException exception) =>
+        new(
+            MessagingErrorCodes.TemplateHeaderImageRejected,
+            "The header image already belongs to another template.",
+            new Dictionary<string, string[]>(StringComparer.Ordinal) { ["headerImageFileId"] = [TemplateMessages.HeaderImage] },
+            exception);
+
+    /// <summary>Hallazgo 3: por nombre de índice, como el resto; un 23505 de otro índice de la tabla no es este choque.</summary>
+    internal static bool IsLiveDelegationConflict(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres
+        && postgres.SqlState == PostgresErrorCodes.UniqueViolation
+        && string.Equals(postgres.ConstraintName, MessagingDbContext.BotDelegationLiveIndex, StringComparison.Ordinal);
+
     /// <summary>
     /// La sincronización que perdió deja sus filas del espejo pendientes en el contexto, y el catálogo atrapa el 412 del llenado implícito
     /// y sigue (<c>MirroredTemplateCatalog</c>). Sin soltarlas, el siguiente <c>SaveChanges</c> del mismo request (el de la campaña que
     /// se estaba creando) las volvería a insertar y chocaría otra vez. Sólo se sueltan las del espejo: lo demás pendiente es del handler.
+    /// <para>Revisión final (spec 2026-11-17): también los avisos de liberación de la imagen de encabezado que la sincronización agregó al
+    /// eliminar filas. Van con la eliminación: si ésta se suelta y el aviso no, el siguiente guardado liberaría la imagen de una fila que
+    /// sigue existiendo.</para>
     /// </summary>
-    private static void DiscardMirrorChanges(MessagingDbContext dbContext)
+    internal static void DiscardMirrorChanges(MessagingDbContext dbContext)
     {
         foreach (var entry in dbContext.ChangeTracker.Entries()
-                     .Where(entry => entry.Entity is MessageTemplate or TemplateMirrorSyncRecord)
+                     .Where(entry => entry.Entity is MessageTemplate or TemplateMirrorSyncRecord
+                         || (entry.State == EntityState.Added && entry.Entity is MessagingOutboxRecord
+                         {
+                             EventName: MessagingIntegrationEvents.TemplateHeaderImageReleased,
+                         }))
                      .ToList())
         {
             entry.State = EntityState.Detached;

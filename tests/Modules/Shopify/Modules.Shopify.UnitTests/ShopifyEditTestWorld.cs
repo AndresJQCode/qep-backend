@@ -50,7 +50,7 @@ internal sealed class ShopifyEditTestWorld
 
     public ShopifyEditPlanner Planner =>
         new(
-            new ShopifyLineResolver(World.Products, World.CustomLines),
+            new ShopifyLineResolver(World.Products, World.CustomLines, World.ProductLinks),
             new ShopifyShippingResolver(World.Shipping),
             World.Resolver,
             World.Customers,

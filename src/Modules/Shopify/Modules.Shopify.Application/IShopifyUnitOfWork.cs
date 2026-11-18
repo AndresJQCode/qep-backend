@@ -21,6 +21,23 @@ public interface IShopifyUnitOfWork
     /// guardó antes y la lista la ve, o el worker relee el sinónimo después y ve la ciudad nueva.
     /// </summary>
     Task LockCitySynonymAsync(Guid synonymId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-17 (Review Focus 1): <c>pg_advisory_xact_lock(20261118, hashtext('{connectionId}:{shopifyProductId}'))</c>.
+    /// Exige una transacción abierta. Serializa el webhook y la importación del mismo producto: el segundo lee los vínculos que
+    /// dejó el primero y no crea otro producto. El índice <c>IX_product_links_connection_shopify_variant</c> es la red.
+    /// </summary>
+    Task LockProductAsync(Guid connectionId, long shopifyProductId, CancellationToken cancellationToken);
+}
+
+/// <summary>La clave de dos partes del candado de producto (20261117 ya es de <c>CompanyDefaultTaxRates</c>).</summary>
+public static class ShopifyProductLock
+{
+    public const int Namespace = 20261118;
+
+    /// <summary>El texto que entra en <c>hashtext</c>.</summary>
+    public static string Key(Guid connectionId, long shopifyProductId) =>
+        string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{connectionId}:{shopifyProductId}");
 }
 
 /// <summary>Se confirma con <see cref="CommitAsync"/>; disponerla sin commit hace rollback, que además suelta los candados

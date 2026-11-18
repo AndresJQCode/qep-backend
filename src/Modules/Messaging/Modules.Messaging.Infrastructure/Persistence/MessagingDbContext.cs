@@ -51,20 +51,40 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>I-2 (D-A5): una resuelta no la atiende nadie. Sólo <c>Resolve()</c> lo garantiza en el código; el CHECK es la red.</summary>
     public const string AutomationResolvedCheck = "status <> 'Resolved' OR automation_status = 'None'";
 
-    /// <summary>Spec 2026-10-21 §4.2: un asistente en curso (o pausado) siempre sabe qué chatbot es.</summary>
-    public const string AutomationChatbotCheck = "automation_status = 'None' OR automation_chatbot_id IS NOT NULL";
+    /// <summary>Spec 2026-10-29 §4.4 (reemplaza <c>CK_conversations_automation_chatbot</c>): un asistente en curso (o pausado) siempre sabe qué
+    /// bot es, y es uno solo: un chatbot o un agente de IA.</summary>
+    public const string AutomationBotCheck =
+        "automation_status = 'None' "
+        + "OR (automation_bot_kind = 1 AND automation_chatbot_id IS NOT NULL AND automation_agent_id IS NULL) "
+        + "OR (automation_bot_kind = 2 AND automation_agent_id IS NOT NULL AND automation_chatbot_id IS NULL)";
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: una delegación viva sólo con el asistente activo y en manos de un agente. Toda
+    /// transición que saca la conversación de <c>Active</c> tiene que limpiarla (<c>Conversation.LeaveDelegation</c> y la autoasignación por
+    /// SQL), o este CHECK la rechaza.</summary>
+    public const string DelegationCheck =
+        "automation_delegation_id IS NULL OR (automation_status = 'Active' AND automation_bot_kind = 2)";
+
+    /// <summary>Spec 2026-11-17 §5.3: un resultado si y sólo si se devolvió.</summary>
+    public const string BotDelegationResultCheck = "(status = 'Returned') = (result IS NOT NULL)";
+
+    /// <summary>Spec 2026-11-17 §5.3: las filas de la delegación (al agente y de vuelta al chatbot) llevan su delegación; las demás no.</summary>
+    public const string AutomationInboxDelegationCheck = "(kind IN ('Delegated','AgentReturned')) = (delegation_id IS NOT NULL)";
 
     /// <summary>Spec 2026-10-26 §3.1: el bloqueo son tres columnas que se escriben y se borran juntas.</summary>
     public const string BlockCheck =
         "(blocked_at IS NULL AND blocked_by_member_id IS NULL AND blocked_wa_id IS NULL) OR (blocked_at IS NOT NULL AND blocked_by_member_id IS NOT NULL AND blocked_wa_id IS NOT NULL)";
 
-    public const string SentByKindCheck = "sent_by_kind IN (1,2,4)";
+    /// <summary>Spec 2026-10-29 §4.4: el 3 es un agente de IA.</summary>
+    public const string SentByKindCheck = "sent_by_kind IN (1,2,3,4)";
 
     /// <summary>El autor es chatbot si y sólo si hay chatbot.</summary>
     public const string SentByChatbotCheck = "(sent_by_kind = 2) = (sent_by_chatbot_id IS NOT NULL)";
 
-    /// <summary>Un mensaje del chatbot o de una clave de API no lleva miembro.</summary>
-    public const string SentByOneCheck = "sent_by_kind NOT IN (2,4) OR sent_by_member_id IS NULL";
+    /// <summary>Spec 2026-10-29 §4.4: el autor es un agente si y sólo si hay agente.</summary>
+    public const string SentByAgentCheck = "(sent_by_kind = 3) = (sent_by_agent_id IS NOT NULL)";
+
+    /// <summary>Sólo un mensaje de un miembro lleva miembro: el del chatbot, el del agente y el de una clave de API no.</summary>
+    public const string SentByOneCheck = "sent_by_kind = 1 OR sent_by_member_id IS NULL";
 
     /// <summary>Spec 2026-10-30 §4.4: el autor es una clave si y sólo si hay clave, y el id y el nombre se escriben juntos.</summary>
     public const string SentByApiKeyCheck =
@@ -78,6 +98,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     /// <summary>Spec 2026-10-12 §3.4: <c>MessagingUnitOfWork</c> discrimina por este nombre para responder <c>shortcut_taken</c>.</summary>
     public const string QuickReplyShortcutIndex = "IX_quick_replies_tenant_shortcut";
+
+    /// <summary>Spec 2026-11-17 §5.3 y revisión de la rama, hallazgo 3: una sola delegación viva por conversación. <c>MessagingSaveChanges</c>
+    /// discrimina por este nombre para responder <c>messaging.automation.delegation_live_exists</c>.</summary>
+    public const string BotDelegationLiveIndex = "IX_bot_delegations_live";
 
     /// <summary>Spec 2026-10-29: el mismo tope que <c>QuickReplyOrder.MaxItems</c> (500).</summary>
     public const string QuickReplyOrderCapCheck = "cardinality(quick_reply_ids) <= 500";
@@ -109,6 +133,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     public const string MessageTemplateMetaIdIndex = "UX_message_templates_meta_id";
 
     public const string MessageTemplateNameLanguageIndex = "UX_message_templates_name_language";
+
+    /// <summary>Spec 2026-11-17 (fix round 2 del bloque C): una imagen de encabezado pertenece a una sola plantilla. Parcial sobre
+    /// <c>header_image_file_id IS NOT NULL</c>. Dos creaciones con el mismo archivo a la vez: la que pierde choca acá, el guardado lo traduce
+    /// a <c>header_image_rejected</c> y su compensación ve la fila de la ganadora y no libera la imagen.</summary>
+    public const string MessageTemplateHeaderImageIndex = "UX_message_templates_header_image";
 
     /// <summary>Fix de la Task 8 (spec 2026-10-14 §4.5): una sola <c>Quotation</c> por conexión. Parcial sobre <c>kind = 'Quotation'</c>,
     /// que se guarda como texto (<c>CK_message_templates_kind</c>). Dos primeros aprovisionamientos a la vez chocan acá y la unidad de
@@ -184,6 +213,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-21 §4.2: la cola del motor de chatbots.</summary>
     internal DbSet<AutomationInboxRecord> AutomationInbox => Set<AutomationInboxRecord>();
 
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3.</summary>
+    public DbSet<BotDelegation> BotDelegations => Set<BotDelegation>();
+
     /// <summary>Spec 2026-10-29 §4.3: quién atiende cada conexión, chatbot o agente.</summary>
     internal DbSet<ConnectionBotRecord> ConnectionBots => Set<ConnectionBotRecord>();
 
@@ -211,6 +243,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureResolutionReason(modelBuilder);
         ConfigureBusinessHours(modelBuilder);
         ConfigureAutomationInbox(modelBuilder);
+        ConfigureBotDelegation(modelBuilder);
         ConfigureConnectionBots(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
@@ -236,8 +269,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_conversations_automation_reason", AutomationReasonCheck);
             table.HasCheckConstraint("CK_conversations_automation_assignment", AutomationAssignmentCheck);
             table.HasCheckConstraint("CK_conversations_automation_resolved", AutomationResolvedCheck);
-            table.HasCheckConstraint("CK_conversations_automation_chatbot", AutomationChatbotCheck);
+            table.HasCheckConstraint("CK_conversations_automation_bot", AutomationBotCheck);
             table.HasCheckConstraint("CK_conversations_block", BlockCheck);
+            table.HasCheckConstraint("CK_conversations_delegation", DelegationCheck);
         });
         conversation.HasKey(value => value.Id);
         conversation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -285,6 +319,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.AutomationPausedByMemberId).HasColumnName("automation_paused_by_member_id");
         conversation.Property(value => value.AutomationPauseReason).HasColumnName("automation_pause_reason").HasConversion<string>().HasMaxLength(32);
         conversation.Property(value => value.AutomationChatbotId).HasColumnName("automation_chatbot_id");
+        // Spec 2026-10-29 §4.4: smallint con los valores de BotKind (1 Chatbot, 2 Agent); el agente es referencia blanda a Ai.
+        conversation.Property(value => value.AutomationBotKind).HasColumnName("automation_bot_kind").HasColumnType("smallint")
+            .HasConversion<short?>();
+        conversation.Property(value => value.AutomationAgentId).HasColumnName("automation_agent_id");
         conversation.Property(value => value.AutomationStep).HasColumnName("automation_step").HasMaxLength(120);
         conversation.Property(value => value.AutomationResumedAt).HasColumnName("automation_resumed_at");
         // Spec 2026-10-26 §3.1: el bloqueo del contacto. blocked_by_member_id es referencia blanda a la membresía (sin FK, como
@@ -300,6 +338,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.Imported).HasColumnName("imported").HasDefaultValue(false).HasSentinel(false);
         conversation.Property(value => value.StartedByEcho).HasColumnName("started_by_echo").HasDefaultValue(false).HasSentinel(false);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
+        // Spec 2026-11-17 §5.3: referencia a messaging.bot_delegations, sin FK como el resto de referencias del asistente (borrar una
+        // conversación borra sus delegaciones a mano, CustomerDeletionReferences).
+        conversation.Property(value => value.AutomationDelegationId).HasColumnName("automation_delegation_id");
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
         // y el segundo pisa el filtro del primero.
@@ -350,6 +391,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_messages_event_shape", EventShapeCheck);
             table.HasCheckConstraint("CK_messages_sent_by_kind", SentByKindCheck);
             table.HasCheckConstraint("CK_messages_sent_by_chatbot", SentByChatbotCheck);
+            table.HasCheckConstraint("CK_messages_sent_by_agent", SentByAgentCheck);
             table.HasCheckConstraint("CK_messages_sent_by_one", SentByOneCheck);
             table.HasCheckConstraint("CK_messages_sent_by_api_key", SentByApiKeyCheck);
         });
@@ -376,6 +418,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         message.Property(value => value.SentByChatbotId).HasColumnName("sent_by_chatbot_id");
         message.Property(value => value.SentByApiKeyId).HasColumnName("sent_by_api_key_id");
         message.Property(value => value.SentByApiKeyName).HasColumnName("sent_by_api_key_name").HasMaxLength(80);
+        message.Property(value => value.SentByAgentId).HasColumnName("sent_by_agent_id");
         message.Property(value => value.ReplyToMessageId).HasColumnName("reply_to_message_id");
         message.Property(value => value.ReplyToWamid).HasColumnName("reply_to_wamid");
         message.Property(value => value.FailureCode).HasColumnName("failure_code");
@@ -621,7 +664,12 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     private static void ConfigureAutomationInbox(ModelBuilder modelBuilder)
     {
         var inbox = modelBuilder.Entity<AutomationInboxRecord>();
-        inbox.ToTable("automation_inbox", Schema, table => table.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')"));
+        inbox.ToTable("automation_inbox", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun','Delegated','AgentReturned')");
+            table.HasCheckConstraint("CK_automation_inbox_bot_kind", "bot_kind IN (1,2)");
+            table.HasCheckConstraint("CK_automation_inbox_delegation", AutomationInboxDelegationCheck);
+        });
         inbox.HasKey(value => value.MessageId);
         inbox.Property(value => value.MessageId).HasColumnName("message_id").ValueGeneratedNever();
         inbox.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -636,6 +684,45 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         inbox.Property(value => value.Kind).HasColumnName("kind").HasMaxLength(16).HasDefaultValue(Modules.Messaging.Application.AutomationInboxKinds.Engine);
         inbox.HasIndex(value => value.NextAttemptAt, "IX_automation_inbox_pending").HasFilter("processed_at IS NULL");
         inbox.HasIndex(value => new { value.ConversationId, value.CreatedAt }, "IX_automation_inbox_conversation").HasFilter("processed_at IS NULL");
+        // Spec 2026-10-29 §6.1: cada procesador reclama sólo las suyas.
+        inbox.Property(value => value.BotKind).HasColumnName("bot_kind").HasDefaultValue((short)BotKind.Chatbot);
+        inbox.HasIndex(value => new { value.BotKind, value.NextAttemptAt }, "IX_automation_inbox_pending_kind").HasFilter("processed_at IS NULL");
+        // Spec 2026-11-17 §5.3: la delegación de una fila Delegated o AgentReturned. Columna propia y no message_id (como pide el spec)
+        // porque message_id es la llave: las dos filas de una misma delegación chocarían. Una sola fila de cada tipo por delegación.
+        inbox.Property(value => value.DelegationId).HasColumnName("delegation_id");
+        inbox.HasIndex(value => new { value.DelegationId, value.Kind }, "IX_automation_inbox_delegation")
+            .IsUnique().HasFilter("delegation_id IS NOT NULL");
+    }
+
+    /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.3: chatbot, corrida, bloque y agente son referencias blandas a Automations y a
+    /// Ai; la conversación y la conexión, a este esquema sin FK, como <c>automation_inbox</c> (el borrado de clientes la limpia a mano).</summary>
+    private static void ConfigureBotDelegation(ModelBuilder modelBuilder)
+    {
+        var delegation = modelBuilder.Entity<BotDelegation>();
+        delegation.ToTable("bot_delegations", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_bot_delegations_status", "status IN ('Live','Returned','Interrupted')");
+            table.HasCheckConstraint("CK_bot_delegations_result", BotDelegationResultCheck);
+        });
+        delegation.HasKey(value => value.Id);
+        delegation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        delegation.Property(value => value.TenantId).HasColumnName("tenant_id");
+        delegation.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        delegation.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        delegation.Property(value => value.ChatbotId).HasColumnName("chatbot_id");
+        delegation.Property(value => value.RunId).HasColumnName("run_id");
+        delegation.Property(value => value.NodeId).HasColumnName("node_id").HasMaxLength(BotDelegation.NodeIdMaxLength);
+        delegation.Property(value => value.AgentId).HasColumnName("agent_id");
+        delegation.Property(value => value.LastInboundMessageId).HasColumnName("last_inbound_message_id");
+        delegation.Property(value => value.Brief).HasColumnName("brief").HasColumnType("jsonb");
+        delegation.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        delegation.Property(value => value.Result).HasColumnName("result").HasColumnType("jsonb");
+        delegation.Property(value => value.StartedAt).HasColumnName("started_at");
+        delegation.Property(value => value.EndedAt).HasColumnName("ended_at");
+        // Nunca dos vivas de una conversación: la carrera de dos bloques se resuelve en la base.
+        delegation.HasIndex(value => value.ConversationId, BotDelegationLiveIndex).IsUnique().HasFilter("status = 'Live'");
+        // El borrado de clientes y el barrido de huérfanas buscan por conversación.
+        delegation.HasIndex(value => new { value.TenantId, value.ConversationId }, "IX_bot_delegations_tenant_conversation");
     }
 
     /// <summary>Spec 2026-10-29 §4.3: la clave primaria es la conexión, así que una conexión tiene un solo bot.</summary>
@@ -730,11 +817,16 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.Property(value => value.Status).HasColumnName("status").HasMaxLength(MessageTemplateStatuses.MaxLength);
         template.Property(value => value.StatusReason).HasColumnName("status_reason").HasMaxLength(MessageTemplate.StatusReasonMaxLength);
         template.Property(value => value.ComponentsJson).HasColumnName("components").HasColumnType("jsonb");
-        template.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16);
+        template.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(MessageTemplate.KindMaxLength);
         template.Property(value => value.CreatedByMemberId).HasColumnName("created_by_member_id");
         template.Property(value => value.CreatedAt).HasColumnName("created_at");
         template.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         template.Property(value => value.SyncedAt).HasColumnName("synced_at");
+        // Spec 2026-11-17: la imagen fija del encabezado; nulas en toda plantilla sin una.
+        template.Property(value => value.HeaderImageFileId).HasColumnName("header_image_file_id");
+        template.Property(value => value.HeaderImageUrl).HasColumnName("header_image_url").HasMaxLength(MessageTemplate.HeaderImageUrlMaxLength);
+        template.HasIndex(value => value.HeaderImageFileId, MessageTemplateHeaderImageIndex).IsUnique()
+            .HasFilter("header_image_file_id IS NOT NULL");
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.MetaTemplateId }, MessageTemplateMetaIdIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Name, value.Language }, MessageTemplateNameLanguageIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
@@ -815,7 +907,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         outbox.Property(value => value.Id).HasColumnName("id");
         outbox.Property(value => value.EventName).HasColumnName("event_name");
         outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
         outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
+        outbox.Property(value => value.LastError).HasColumnName("last_error");
     }
 
     private static void ConfigureTemplateMirrorSync(ModelBuilder modelBuilder)
@@ -864,5 +960,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         delivery.Property(value => value.Provider).HasColumnName("provider").HasMaxLength(16).HasDefaultValue("whatsapp");
         delivery.HasIndex(value => value.BodySha256).IsUnique().HasDatabaseName("IX_webhook_deliveries_body_sha256");
         delivery.HasIndex(value => value.Id).HasDatabaseName("IX_webhook_deliveries_pending").HasFilter("processed_at IS NULL");
+        // Spec 2026-11-16: la hora del último webhook por proveedor (WebhookArrivalSource, cada 15 s). Sin él, un proveedor sin
+        // filas recorre la tabla entera.
+        delivery.HasIndex(value => new { value.Provider, value.Id }).HasDatabaseName("IX_webhook_deliveries_provider_id");
     }
 }

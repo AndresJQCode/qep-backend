@@ -33,6 +33,7 @@ public sealed class ShopifyOrderImporter(
     ShopifyCustomerResolver customers,
     IShopifyProductLookup products,
     IShopifyCustomLineMappingRepository customLines,
+    IShopifyProductLinkRepository productLinks,
     IShopifyShippingLookup shipping,
     IShopifyOrderWriter orders,
     IShopifyOrderChangeReaction changes,
@@ -116,18 +117,35 @@ public sealed class ShopifyOrderImporter(
             return Wait(row, ShopifyWaitReasons.AdvisorInactive, null, now);
         }
 
-        var account = await billingAccounts.FindAsync(
-            tenantId, billing.CompanyId, billing.BankName, billing.AccountNumber, cancellationToken);
-        if (account is null)
-        {
-            return Wait(row, ShopifyWaitReasons.BillingAccountMissing, null, now);
-        }
-
         var orderCurrency = snapshot.Currency.Trim().ToUpperInvariant();
-        var billingCurrency = account.Currency.Trim().ToUpperInvariant();
-        if (!string.Equals(orderCurrency, billingCurrency, StringComparison.Ordinal))
+        ShopifyBillingAccountRef account;
+        if (billing.BankName is { } bankName && billing.AccountNumber is { } accountNumber)
         {
-            return Wait(row, ShopifyWaitReasons.CurrencyMismatch, new { orderCurrency, billingCurrency }, now);
+            var matched = await billingAccounts.FindAsync(tenantId, billing.CompanyId, bankName, accountNumber, cancellationToken);
+            if (matched is null)
+            {
+                return Wait(row, ShopifyWaitReasons.BillingAccountMissing, null, now);
+            }
+
+            var billingCurrency = matched.Currency.Trim().ToUpperInvariant();
+            if (!string.Equals(orderCurrency, billingCurrency, StringComparison.Ordinal))
+            {
+                return Wait(row, ShopifyWaitReasons.CurrencyMismatch, new { orderCurrency, billingCurrency }, now);
+            }
+
+            account = matched;
+        }
+        else
+        {
+            // Spec 2026-11-17 §4.4 (R7): sin cuenta sólo se pide la empresa, y una que ya no está espera con el mismo motivo. No
+            // hay moneda de cuenta contra la cual comparar: el pedido entra en la suya.
+            var company = await billingAccounts.FindCompanyAsync(tenantId, billing.CompanyId, cancellationToken);
+            if (company is null)
+            {
+                return Wait(row, ShopifyWaitReasons.BillingAccountMissing, null, now);
+            }
+
+            account = new ShopifyBillingAccountRef(company.CompanyId, null, null, orderCurrency, company.ChargesVat);
         }
 
         var found = await customers.FindAsync(store, row, snapshot, cancellationToken);
@@ -136,14 +154,16 @@ public sealed class ShopifyOrderImporter(
             return Wait(row, ShopifyWaitReasons.CustomerInactive, new { customerId = found.Id }, now);
         }
 
-        var (lines, unmatchedSkus, unmatchedTitles) = await ResolveLinesAsync(tenantId, row.ConnectionId, snapshot, orderCurrency, cancellationToken);
+        // Spec 2026-11-17 §5 (R7): una empresa sin IVA precia líneas y envío al 0 %; el pedido congela el mismo valor.
+        var (lines, unmatchedSkus, unmatchedTitles) = await ResolveLinesAsync(
+            tenantId, row.ConnectionId, snapshot, orderCurrency, account.ChargesVat, cancellationToken);
         if (unmatchedSkus.Count > 0 || unmatchedTitles.Count > 0)
         {
             // Las dos llaves siempre, en este orden: la bandeja lee las dos (spec 2026-11-13).
             return Wait(row, ShopifyWaitReasons.ProductUnmatched, new { skus = unmatchedSkus, customTitles = unmatchedTitles }, now);
         }
 
-        var shippingResult = await ShippingAsync(tenantId, snapshot, orderCurrency, cancellationToken);
+        var shippingResult = await ShippingAsync(tenantId, snapshot, orderCurrency, account.ChargesVat, cancellationToken);
         if (shippingResult.WaitReason is { } shippingWait)
         {
             return Wait(
@@ -248,8 +268,8 @@ public sealed class ShopifyOrderImporter(
     /// <summary>§6.2.2: las líneas, con la regla de <see cref="ShopifyLineResolver"/> (la misma del planificador de cambios). El
     /// <c>wait_detail</c> es <c>{"skus":[…],"customTitles":[…]}</c>.</summary>
     private Task<(IReadOnlyList<ShopifyOrderLineDraft> Lines, IReadOnlyList<string?> UnmatchedSkus, IReadOnlyList<string> UnmatchedTitles)> ResolveLinesAsync(
-        Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken) =>
-        new ShopifyLineResolver(products, customLines).ResolveAsync(tenantId, connectionId, snapshot, currency, cancellationToken);
+        Guid tenantId, Guid connectionId, ShopifyOrderSnapshot snapshot, string currency, bool chargesVat, CancellationToken cancellationToken) =>
+        new ShopifyLineResolver(products, customLines, productLinks).ResolveAsync(tenantId, connectionId, snapshot, currency, chargesVat, cancellationToken);
 
     /// <summary>D-S23: la clave externa del pedido, <c>"{shopId}:{shopifyOrderId}"</c>. Con el shopId y no con la conexión, para
     /// que borrar y volver a enlazar la tienda no duplique pedidos. La usa también §6.3 (<see cref="ShopifyOrderChanges"/>).</summary>
@@ -261,8 +281,8 @@ public sealed class ShopifyOrderImporter(
 
     /// <summary>§6.2.2 pasos 4 y 5, con la regla de <see cref="ShopifyShippingResolver"/> (la misma del planificador de cambios).</summary>
     private Task<ShopifyShippingResult> ShippingAsync(
-        Guid tenantId, ShopifyOrderSnapshot snapshot, string currency, CancellationToken cancellationToken) =>
-        new ShopifyShippingResolver(shipping).ResolveAsync(tenantId, snapshot, currency, cancellationToken);
+        Guid tenantId, ShopifyOrderSnapshot snapshot, string currency, bool chargesVat, CancellationToken cancellationToken) =>
+        new ShopifyShippingResolver(shipping).ResolveAsync(tenantId, snapshot, currency, chargesVat, cancellationToken);
 
     /// <summary>§6.2.3 paso 2 (H25): la dirección de Shopify es la parte de envío sólo si queda completa: nombre, teléfono,
     /// dirección, departamento y ciudad. El nombre y el teléfono, si la dirección no los trae, salen del comprador; el correo es

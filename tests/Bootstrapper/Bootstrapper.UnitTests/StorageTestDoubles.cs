@@ -111,9 +111,15 @@ internal sealed class RecordingStorageAuditPublisher : IStorageAuditPublisher
 {
     public List<string> Actions { get; } = [];
 
+    /// <summary>Quién hizo cada acción de miembro: <c>(action, actorId)</c>.</summary>
+    public List<(string Action, Guid ActorId)> ByActor { get; } = [];
+
     public void Publish(
-        Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
+    {
         Actions.Add(action);
+        ByActor.Add((action, actorId));
+    }
 
     public void PublishSystem(
         Guid? tenantId, string action, string resourceType, string resourceId, string outcome, DateTimeOffset occurredAt) =>
@@ -132,4 +138,97 @@ internal sealed class AllowAllExecutionContext(Guid tenantId) : IExecutionContex
 internal sealed class FixedClock(DateTimeOffset now) : IClock
 {
     public DateTimeOffset UtcNow { get; } = now;
+}
+
+/// <summary>Las subidas sin miembro de Storage, en memoria: cada archivo recuerda su dueño y cómo termina al completar. Un par
+/// (tenant, tipo de dueño, dueño) que no casa es <see cref="SystemUploadOutcome.NotFound"/>, como en <c>StorageSystemUploads</c>.</summary>
+internal sealed class FakeStorageSystemUploads : IStorageSystemUploads
+{
+    public sealed record Opened(
+        Guid TenantId, FileOwnerType OwnerType, Guid OwnerId, string Name, string MimeType, long SizeBytes, long MaxSizeBytes);
+
+    private sealed record Seeded(Guid TenantId, FileOwnerType OwnerType, Guid OwnerId, SystemUploadOutcome Outcome, SystemFileInfo Info);
+
+    private readonly Dictionary<Guid, Seeded> _files = [];
+
+    public List<Opened> Opens { get; } = [];
+
+    public SystemUploadSession Session { get; } = new(
+        Guid.CreateVersion7(),
+        new Uri("https://r2.example.co/staging/banner?signature=abc"),
+        new Dictionary<string, string>(StringComparer.Ordinal) { ["Content-Type"] = "image/png", ["If-None-Match"] = "*" });
+
+    /// <summary>Un archivo que, al completarse, termina en <paramref name="outcome"/>.</summary>
+    public Guid Seed(
+        Guid tenantId, FileOwnerType ownerType, Guid ownerId, SystemUploadOutcome outcome, string mimeType = "image/png", long sizeBytes = 2048)
+    {
+        var fileId = Guid.CreateVersion7();
+        _files[fileId] = new Seeded(tenantId, ownerType, ownerId, outcome, new SystemFileInfo(fileId, "banner.png", mimeType, sizeBytes));
+        return fileId;
+    }
+
+    public Task<SystemUploadSession> OpenAsync(
+        Guid tenantId, FileOwnerType ownerType, Guid ownerId, string name, string mimeType, long sizeBytes, long maxSizeBytes,
+        CancellationToken cancellationToken)
+    {
+        // La misma declaración que valida StorageSystemUploads.OpenAsync: un nombre que no casa con su tipo no abre nada.
+        FileUploadPolicy.ValidateDeclaration(name, mimeType, sizeBytes, maxSizeBytes);
+        Opens.Add(new Opened(tenantId, ownerType, ownerId, name, mimeType, sizeBytes, maxSizeBytes));
+        return Task.FromResult(Session);
+    }
+
+    public Task<SystemUploadResult> CompleteAsync(
+        Guid tenantId, Guid fileId, FileOwnerType ownerType, Guid ownerId, CancellationToken cancellationToken) =>
+        Task.FromResult(new SystemUploadResult(Find(tenantId, fileId, ownerType, ownerId)?.Outcome ?? SystemUploadOutcome.NotFound));
+
+    public Task<SystemFileInfo?> FindAvailableAsync(
+        Guid tenantId, Guid fileId, FileOwnerType ownerType, Guid ownerId, CancellationToken cancellationToken) =>
+        Task.FromResult(Find(tenantId, fileId, ownerType, ownerId) is { Outcome: SystemUploadOutcome.Available } file ? file.Info : null);
+
+    public Task<Uri> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<SystemStoredFile> StoreAsync(
+        Guid tenantId, FileOwnerType ownerType, Guid ownerId, string name, string mimeType, byte[] content, long maxSizeBytes,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    private Seeded? Find(Guid tenantId, Guid fileId, FileOwnerType ownerType, Guid ownerId) =>
+        _files.TryGetValue(fileId, out var file) && file.TenantId == tenantId && file.OwnerType == ownerType && file.OwnerId == ownerId
+            ? file
+            : null;
+}
+
+/// <summary>El bucket privado, sólo para leer bytes: <see cref="DownloadAsync"/> devuelve lo sembrado por clave.</summary>
+internal sealed class BytesObjectStorage : IObjectStorage
+{
+    public Dictionary<string, byte[]> Objects { get; } = new(StringComparer.Ordinal);
+
+    public Task<byte[]> DownloadAsync(string key, CancellationToken cancellationToken) =>
+        Objects.TryGetValue(key, out var bytes) ? Task.FromResult(bytes) : throw new InvalidOperationException($"No object at '{key}'.");
+
+    public Task<Uri> CreatePresignedUploadUrlAsync(string key, string contentType, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<Uri> CreatePresignedDownloadUrlAsync(string key, string? downloadFileName, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<Uri> CreatePresignedDownloadUrlAsync(
+        string key, TimeSpan expiry, string? downloadFileName, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<StoredObject?> StatAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task DeleteAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task PromoteAsync(string sourceKey, string destinationKey, string expectedChecksum, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task UploadAsync(string key, byte[] content, string contentType, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task UploadAsync(string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) => throw new NotSupportedException();
 }

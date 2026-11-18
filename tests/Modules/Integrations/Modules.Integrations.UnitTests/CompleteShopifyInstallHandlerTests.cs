@@ -489,8 +489,13 @@ internal sealed class FakeShopifyAdminGateway : IShopifyAdminGateway
         ThrowIfFailing("shop");
         LastShopRead = (shop, accessToken);
         Tokens.Add(accessToken);
-        return Task.FromResult(new ShopifyShopInfo("12345678", ShopName, shop));
+        return Task.FromResult(new ShopifyShopInfo("12345678", ShopName, shop, Profile));
     }
+
+    /// <summary>El perfil que devuelve la lectura de la tienda (spec 2026-11-17 §2).</summary>
+    public ShopifyShopProfile? Profile { get; set; } = new(
+        "dueno@mitienda.co", null, "COP", "America/Bogota", true,
+        new ShopifyShopAddress("Mi Tienda SAS", "Calle 10 # 43-12", null, "Medellín", "Antioquia", "ANT", null, "CO", "+573001112233"));
 
     public Task<IReadOnlyList<ShopifyWebhookSubscription>> ListWebhooksAsync(string shop, string token, CancellationToken cancellationToken)
     {

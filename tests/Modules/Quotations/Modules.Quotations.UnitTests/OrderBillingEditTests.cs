@@ -133,6 +133,50 @@ public sealed class OrderBillingEditTests
         Assert.Equal("order.order.not_editable", error.Code);
     }
 
+    // Spec 2026-11-17 §4.2: si la cuenta se puede quitar en la empresa, se puede quitar en el pedido. La moneda no cambia.
+    [Fact]
+    public void AnOrderCanDropItsBankAccount()
+    {
+        var order = NewOrder();
+        var account = order.BillingAccount!;
+
+        order.ApplyBillingContext(
+            account with { BankName = null, AccountNumber = null }, MunicipalContext.None, Advisor, Now);
+
+        Assert.Null(order.BillingAccount!.BankName);
+        Assert.Null(order.BillingAccount.AccountNumber);
+        Assert.Equal(account.CompanyId, order.BillingAccount.CompanyId);
+        Assert.Equal("COP", order.Currency);
+    }
+
+    [Fact]
+    public void AnOrderWithoutBankAccountCanTakeOneInItsCurrency()
+    {
+        var order = NewOrder();
+        var account = order.BillingAccount!;
+        order.ApplyBillingContext(
+            account with { BankName = null, AccountNumber = null }, MunicipalContext.None, Advisor, Now);
+
+        order.ApplyBillingContext(account, MunicipalContext.None, Advisor, Now);
+
+        Assert.Equal("Bancolombia", order.BillingAccount!.BankName);
+        Assert.Equal("7542", order.BillingAccount.AccountNumber);
+    }
+
+    [Fact]
+    public void AnOrderWithoutBankAccountRejectsAnAccountInAnotherCurrency()
+    {
+        var order = NewOrder();
+        var account = order.BillingAccount!;
+        order.ApplyBillingContext(
+            account with { BankName = null, AccountNumber = null }, MunicipalContext.None, Advisor, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() => order.ApplyBillingContext(
+            account with { Currency = "USD" }, MunicipalContext.None, Advisor, Now));
+
+        Assert.Equal("order.billing.currency_change_not_allowed", error.Code);
+    }
+
     [Fact]
     public void TheSameBillingIsANoOp()
     {

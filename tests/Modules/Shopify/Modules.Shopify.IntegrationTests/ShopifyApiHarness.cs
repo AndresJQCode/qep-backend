@@ -159,7 +159,8 @@ internal static class ShopifyApiHarness
                             || descriptor.ImplementationType == typeof(ShopifyReconcileWorker)
                             || descriptor.ImplementationType == typeof(CitySynonymEventsWorker)
                             || descriptor.ImplementationType == typeof(ShopifyCityCorrectionWorker)
-                            || descriptor.ImplementationType == typeof(ShopifyOrderPushWorker)))
+                            || descriptor.ImplementationType == typeof(ShopifyOrderPushWorker)
+                            || descriptor.ImplementationType == typeof(ShopifyProductImportWorker)))
                     .ToArray())
                 {
                     services.Remove(worker);
@@ -325,7 +326,8 @@ internal static class ShopifyApiHarness
     /// <c>token_expired</c>.
     /// </summary>
     public static async Task<Guid> LinkStoreAsync(
-        WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token", string shopId = "954889", string name = "Mi tienda")
+        WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token", string shopId = "954889", string name = "Mi tienda",
+        string scopes = "read_orders,read_customers")
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -339,7 +341,7 @@ internal static class ShopifyApiHarness
             {
                 [ShopifyFieldKeys.ShopDomain] = shop,
                 [ShopifyFieldKeys.ShopId] = shopId,
-                [ShopifyFieldKeys.Scopes] = "read_orders,read_customers",
+                [ShopifyFieldKeys.Scopes] = scopes,
                 [ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
                 [ShopifyFieldKeys.RefreshTokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
             },
@@ -553,11 +555,12 @@ internal sealed record ShopifyWorld(
 {
     public Guid TenantId => Tenant.TenantId;
 
-    public static async Task<ShopifyWorld> ArrangeAsync(WebApplicationFactory<Program> factory, string connectionString)
+    public static async Task<ShopifyWorld> ArrangeAsync(
+        WebApplicationFactory<Program> factory, string connectionString, string scopes = "read_orders,read_customers")
     {
         var tenant = await ShopifyApiHarness.RegisterTenantAsync(factory);
         await ShopifyApiHarness.EnableShopifyAsync(connectionString, tenant.TenantId);
-        var connectionId = await ShopifyApiHarness.LinkStoreAsync(factory, tenant.TenantId, tenant.OwnerUserId);
+        var connectionId = await ShopifyApiHarness.LinkStoreAsync(factory, tenant.TenantId, tenant.OwnerUserId, scopes: scopes);
         var advisor = await ShopifyApiHarness.InviteActiveAdvisorAsync(factory, connectionString, tenant);
         var company = await ShopifyApiHarness.CreateCompanyAsync(tenant.Seeder, tenant.TenantId);
         var classification = await ShopifyApiHarness.CreateClassificationAsync(tenant.Seeder, tenant.TenantId);

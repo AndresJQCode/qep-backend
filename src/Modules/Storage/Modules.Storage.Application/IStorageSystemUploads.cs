@@ -37,7 +37,29 @@ public interface IStorageSystemUploads
     /// auditoría son de quien llama. Un archivo de otro tenant, que no está <c>Available</c> o cuyo dueño no es del sistema
     /// (<see cref="Modules.Storage.Domain.SystemOwnedFiles"/>) es 404.</summary>
     Task<Uri> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Subida de servidor (productos desde Shopify, spec 2026-11-17 P1): quien llama ya tiene los bytes, así que no hay URL firmada
+    /// ni navegador. Valida la declaración con <see cref="FileUploadPolicy"/> y el tope de quien llama, crea el recurso, sube el
+    /// objeto a staging y completa por el mismo núcleo que la consola, con auditoría de sistema. Sólo para dueños que la consola ve
+    /// (un dueño de <see cref="SystemOwnedFiles"/> es <see cref="ArgumentException"/>: el suyo es <see cref="OpenAsync"/>, atado a
+    /// un secreto). Lanza <c>StorageDomainException</c> si la declaración no pasa; el contenido rechazado vuelve como
+    /// <see cref="SystemUploadOutcome.Rejected"/>, ya en cuarentena.
+    /// </summary>
+    Task<SystemStoredFile> StoreAsync(
+        Guid tenantId,
+        FileOwnerType ownerType,
+        Guid ownerId,
+        string name,
+        string mimeType,
+        byte[] content,
+        long maxSizeBytes,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>El archivo que dejó una subida de servidor y cómo terminó (<see cref="SystemUploadOutcome.Available"/> o
+/// <see cref="SystemUploadOutcome.Rejected"/>).</summary>
+public sealed record SystemStoredFile(Guid FileId, SystemUploadOutcome Outcome);
 
 /// <summary>La sesión abierta. <see cref="Headers"/> son los que el navegador tiene que mandar en el PUT: van firmados.</summary>
 public sealed record SystemUploadSession(Guid FileId, Uri UploadUrl, IReadOnlyDictionary<string, string> Headers);

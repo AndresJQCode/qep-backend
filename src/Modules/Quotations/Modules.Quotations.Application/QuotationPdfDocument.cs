@@ -146,8 +146,10 @@ public sealed record QuotationPdfBillingAccount(
     /// documento no inventa un renglón que no tiene qué decir.</summary>
     string CompanyAddress,
     string CompanyPhone,
-    string BankName,
-    string AccountNumber,
+    /// <summary>Null, junto con <see cref="AccountNumber"/>, en una empresa sin cuenta (spec 2026-11-17 §4.2): el membrete
+    /// sigue y el bloque de pago no se pinta.</summary>
+    string? BankName,
+    string? AccountNumber,
     string Currency);
 
 /// <summary>

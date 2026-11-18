@@ -236,6 +236,9 @@ internal static class MessagingApiHarness
         /// <summary>Lo que sale hacia Graph —desde Integrations y desde Messaging— lo ve este handler.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
 
+        /// <summary>Spec 2026-11-17: la imagen del encabezado de plantilla no pasa por Storage ni por R2 en estas pruebas.</summary>
+        public FakeTemplateImageStore TemplateImages { get; } = new();
+
         public override async ValueTask DisposeAsync()
         {
             StartedHosts.TryRemove(this, out _);
@@ -262,6 +265,11 @@ internal static class MessagingApiHarness
             // Pinned, never inherited: the developer's user-secrets may turn the seed on.
             builder.UseSetting("Seed:Enabled", "false");
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
+            // An empty endpoint does not turn the export off: QepObservability always registers the OTLP exporters, which fall back to
+            // localhost:4317. Nothing listens there, so every host spent ~8 s of its dispose flushing traces and metrics into a refused
+            // connection (80% of a typical test), while each live host's listeners also processed every other host's activities and
+            // instruments, which are process-wide. No test here reads the SDK; the metric tests use their own MeterListener.
+            builder.UseSetting("OTEL_SDK_DISABLED", "true");
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
@@ -303,6 +311,10 @@ internal static class MessagingApiHarness
 
             builder.ConfigureTestServices(services =>
             {
+                // Last registered, first stopped: frees the rate limiter that would otherwise keep this host alive (see the class).
+                services.AddHostedService<RateLimiterRelease>();
+                services.RemoveAll<IMessagingTemplateImageStore>();
+                services.AddSingleton<IMessagingTemplateImageStore>(TemplateImages);
                 services.AddHttpClient(IntegrationsGraphClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphClientName)
@@ -807,11 +819,11 @@ internal static class MessagingApiHarness
     }
 
     /// <summary>Spec 2026-10-21: deja la conversación abierta y sin asesor con el asistente activo (el motor de bots llega después). Desde
-    /// <c>CK_conversations_automation_chatbot</c> una conversación activa necesita su chatbot.</summary>
+    /// <c>CK_conversations_automation_bot</c> (spec 2026-10-29 §4.4) una conversación activa necesita su chatbot y su tipo de bot.</summary>
     public static async Task ActivateAutomationAsync(string connectionString, Guid conversationId, Guid chatbotId) =>
         Assert.Equal(1, await ExecuteAsync(
             connectionString,
-            "UPDATE messaging.conversations SET automation_status='Active', automation_started_at=now(), automation_chatbot_id=@chatbotId, version=version+1, updated_at=now() WHERE id=@id AND status='Open' AND assigned_member_id IS NULL",
+            "UPDATE messaging.conversations SET automation_status='Active', automation_started_at=now(), automation_chatbot_id=@chatbotId, automation_bot_kind=1, version=version+1, updated_at=now() WHERE id=@id AND status='Open' AND assigned_member_id IS NULL",
             ("id", conversationId), ("chatbotId", chatbotId)));
 
     /// <summary>Un proveedor de logs más: LoggerFactory recibe todos los ILoggerProvider registrados.</summary>

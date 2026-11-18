@@ -373,8 +373,10 @@ public sealed record CustomerImportRowData(
     /// romper al frontend que reenvía la fila; viaja siempre <c>null</c> y se ignora al recibirlo.</summary>
     string? ReteIca,
     string? VatSurplus,
-    /// <summary>Spec 2026-11-10 A22: el valor de la columna «Empresa» tal como vino. Último y opcional: el frontend viejo no lo manda.</summary>
-    string? CompanyIdentificationNumber = null);
+    /// <summary>Spec 2026-11-10 A22: el valor de la columna «Empresa» tal como vino. Opcional: el frontend viejo no lo manda.</summary>
+    string? CompanyIdentificationNumber = null,
+    /// <summary>Spec 2026-11-17: la celda «Etiquetas» tal como vino, para que la fila a corregir la conserve. Última y opcional.</summary>
+    string? Tags = null);
 
 /// <summary>
 /// Una fila que NO se importo, con lo que la persona que subio el archivo necesita para

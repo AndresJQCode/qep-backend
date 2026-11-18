@@ -16,9 +16,11 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
     /// para terminar antes de que otra réplica retome la fila.</summary>
     internal static readonly TimeSpan[] Leases = [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(10)];
 
-    public async Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AutomationInboxItem>> ClaimAsync(
+        DateTimeOffset now, int batch, BotKind botKind, CancellationToken cancellationToken)
     {
         var leases = Leases;
+        var kind = (short)botKind;
         // Una fila que ya gastó sus intentos y cuyo lease venció es un worker que se cayó o se colgó sin llamar a RetryLaterAsync:
         // se cierra acá, o se reclamaría para siempre y frenaría su conversación. Con el lease vigente todavía puede estar en curso.
         await dbContext.Database.ExecuteSqlAsync(
@@ -28,13 +30,15 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             """, cancellationToken);
         // El NOT EXISTS mira también las filas en lease: una pendiente más vieja de la misma conversación frena a las demás hasta que se
         // cierre. created_at es distinto y creciente por mensaje (el procesador del webhook suma un microsegundo por posición); message_id sólo desempata filas de entregas distintas con el mismo instante.
+        // Spec 2026-10-29 §6.1: cada procesador reclama sólo su bot_kind, pero el NOT EXISTS mira todas las filas, de cualquier bot: un
+        // cambio de bot en la conexión no adelanta mensajes de la misma conversación.
         return await dbContext.Database.SqlQuery<AutomationInboxItem>(
             $"""
             UPDATE messaging.automation_inbox AS inbox
                SET next_attempt_at = {now} + ({leases})[LEAST(inbox.attempts + 1, cardinality({leases}))],
                    attempts = inbox.attempts + 1
               FROM (SELECT i.message_id FROM messaging.automation_inbox AS i
-                     WHERE i.processed_at IS NULL AND i.next_attempt_at <= {now}
+                     WHERE i.processed_at IS NULL AND i.bot_kind = {kind} AND i.next_attempt_at <= {now}
                        AND NOT EXISTS (SELECT 1 FROM messaging.automation_inbox AS o
                                         WHERE o.conversation_id = i.conversation_id AND o.processed_at IS NULL
                                           AND (o.created_at, o.message_id) < (i.created_at, i.message_id))
@@ -42,7 +46,7 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
              WHERE inbox.message_id = pending.message_id
             RETURNING inbox.message_id AS "MessageId", inbox.tenant_id AS "TenantId", inbox.connection_id AS "ConnectionId",
                       inbox.conversation_id AS "ConversationId", inbox.opened AS "Opened", inbox.created_at AS "CreatedAt",
-                      inbox.attempts::int AS "Attempts", inbox.kind AS "Kind"
+                      inbox.attempts::int AS "Attempts", inbox.kind AS "Kind", inbox.delegation_id AS "DelegationId"
             """).ToListAsync(cancellationToken);
     }
 
@@ -131,12 +135,14 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             Kind = AutomationInboxKinds.Engine,
         });
 
-    public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now) =>
-        dbContext.AutomationInbox.Add(NewReleaseRun(tenantId, connectionId, conversationId, now));
+    public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, BotKind botKind, DateTimeOffset now) =>
+        dbContext.AutomationInbox.Add(NewReleaseRun(tenantId, connectionId, conversationId, botKind, now));
 
     /// <summary>La fila de la señal de soltar, armada en un solo lugar para quien la agregue sin pasar por el puerto (el repositorio de
-    /// conversaciones). Id propio: no respalda a ningún mensaje.</summary>
-    internal static AutomationInboxRecord NewReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now) => new()
+    /// conversaciones). Id propio: no respalda a ningún mensaje. Lleva el <c>bot_kind</c> del bot que tenía la conversación: sin él, la de
+    /// un agente la reclamaba el motor de chatbots y la sesión del agente no se cerraba.</summary>
+    internal static AutomationInboxRecord NewReleaseRun(
+        Guid tenantId, Guid connectionId, Guid conversationId, BotKind botKind, DateTimeOffset now) => new()
     {
         MessageId = Guid.CreateVersion7(),
         TenantId = tenantId,
@@ -146,7 +152,52 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
         CreatedAt = now,
         NextAttemptAt = now,
         Kind = AutomationInboxKinds.ReleaseRun,
+        BotKind = (short)botKind,
     };
+
+    public void EnqueueDelegated(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+        dbContext.AutomationInbox.Add(NewDelegationRow(
+            tenantId, connectionId, conversationId, delegationId, AutomationInboxKinds.Delegated, BotKind.Agent, now));
+
+    public void EnqueueAgentReturned(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
+        dbContext.AutomationInbox.Add(NewDelegationRow(
+            tenantId, connectionId, conversationId, delegationId, AutomationInboxKinds.AgentReturned, BotKind.Chatbot, now));
+
+    /// <summary>Spec 2026-11-17 §5.3: id propio (no el de la delegación, como dice el spec: <c>message_id</c> es la llave y las dos filas de
+    /// una delegación chocarían) y la delegación en <c>delegation_id</c>.</summary>
+    private static AutomationInboxRecord NewDelegationRow(
+        Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, string kind, BotKind botKind, DateTimeOffset now) => new()
+    {
+        MessageId = Guid.CreateVersion7(),
+        TenantId = tenantId,
+        ConnectionId = connectionId,
+        ConversationId = conversationId,
+        Opened = false,
+        CreatedAt = now,
+        NextAttemptAt = now,
+        Kind = kind,
+        BotKind = (short)botKind,
+        DelegationId = delegationId,
+    };
+
+    // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Ninguna de esas filas está en lease: el reclamo sólo entrega la más
+    // vieja pendiente de la conversación, y ésa es la que procesa quien llama (exceptMessageId) o una del otro bot que espera el candado.
+    public async Task<DateTimeOffset?> ReassignPendingEngineAsync(
+        Guid tenantId, Guid conversationId, BotKind target, Guid? exceptMessageId, CancellationToken cancellationToken)
+    {
+        var kind = (short)target;
+        var except = exceptMessageId ?? Guid.Empty;
+        var rows = await dbContext.Database.SqlQuery<DateTimeOffset?>(
+            $"""
+            WITH moved AS (
+                UPDATE messaging.automation_inbox SET bot_kind = {kind}
+                 WHERE conversation_id = {conversationId} AND tenant_id = {tenantId} AND processed_at IS NULL
+                   AND kind = 'Engine' AND bot_kind <> {kind} AND message_id <> {except}
+                RETURNING created_at)
+            SELECT MIN(created_at) AS "Value" FROM moved
+            """).ToListAsync(cancellationToken);
+        return rows.Count == 0 ? null : rows[0];
+    }
 
     // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Lo que distingue a la manual es que es Engine y su id no está en messages.
     public async Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)

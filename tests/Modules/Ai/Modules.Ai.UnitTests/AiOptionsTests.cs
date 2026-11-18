@@ -135,9 +135,36 @@ public sealed class AiOptionsTests
         Assert.Contains(options.Validate(), failure => failure.Contains("available", StringComparison.Ordinal));
     }
 
-    // Plan 2026-11-12, Tarea 6: hasta que exista el adaptador de OpenAI sus modelos están en la lista sin poder elegirse.
+    // Un proveedor que no es el predeterminado puede tener todos sus modelos sin poder elegirse (retirados, por ejemplo).
     [Fact]
     public void AnotherProviderMayHaveEveryModelUnavailable() => Assert.Empty(Valid().Validate());
+
+    // Spec §9.1, O-6: en OpenAI el esfuerzo es opcional (sin él, el default del modelo), pero si viene tiene que ser uno de la API.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("none")]
+    [InlineData("minimal")]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    [InlineData("xhigh")]
+    [InlineData("max")]
+    public void AnOpenAiEffortIsOptionalOrOneOfTheApiLevels(string? effort)
+    {
+        var options = Valid();
+        options.Providers["openai"].Models[0].Effort = effort;
+
+        Assert.Empty(options.Validate());
+    }
+
+    [Fact]
+    public void AnUnknownOpenAiEffortFails()
+    {
+        var options = Valid();
+        options.Providers["openai"].Models[0].Effort = "turbo";
+
+        Assert.Contains(options.Validate(), failure => failure.Contains("Ai:Providers:openai:Models:0:Effort", StringComparison.Ordinal));
+    }
 
     internal static AiOptions Valid() => new()
     {

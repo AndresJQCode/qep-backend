@@ -661,6 +661,229 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyProductImport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempts");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<int>("Created")
+                        .HasColumnType("integer")
+                        .HasColumnName("created");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Cursor")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("cursor");
+
+                    b.Property<int>("Done")
+                        .HasColumnType("integer")
+                        .HasColumnName("done");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_code");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_until");
+
+                    b.Property<int>("Matched")
+                        .HasColumnType("integer")
+                        .HasColumnName("matched");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("mode");
+
+                    b.Property<Guid>("RequestedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("requested_by");
+
+                    b.Property<Guid>("RequestedBySubjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("requested_by_subject_id");
+
+                    b.Property<int>("Skipped")
+                        .HasColumnType("integer")
+                        .HasColumnName("skipped");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<int>("Total")
+                        .HasColumnType("integer")
+                        .HasColumnName("total");
+
+                    b.Property<int>("WithoutSku")
+                        .HasColumnType("integer")
+                        .HasColumnName("without_sku");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_product_imports_connection_live")
+                        .HasFilter("status IN ('Pending','Running')");
+
+                    b.HasIndex("ConnectionId", "CreatedAt")
+                        .HasDatabaseName("IX_product_imports_connection_created");
+
+                    b.HasIndex("Status", "LeaseUntil")
+                        .HasDatabaseName("IX_product_imports_status_lease");
+
+                    b.ToTable("product_imports", "shopify", t =>
+                        {
+                            t.HasCheckConstraint("CK_product_imports_mode", "mode IN ('All','Missing')");
+
+                            t.HasCheckConstraint("CK_product_imports_status", "status IN ('Pending','Running','Done','Failed')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyProductImportIssue", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("code");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("ImportId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("import_id");
+
+                    b.Property<long>("ShopifyProductId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("shopify_product_id");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("title");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ImportId", "CreatedAt")
+                        .HasDatabaseName("IX_product_import_issues_import");
+
+                    b.ToTable("product_import_issues", "shopify");
+                });
+
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyProductLink", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("ImageFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("image_file_id");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("origin");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<long?>("ShopifyImageId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("shopify_image_id");
+
+                    b.Property<long>("ShopifyProductId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("shopify_product_id");
+
+                    b.Property<DateTimeOffset?>("ShopifyUpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("shopify_updated_at");
+
+                    b.Property<long>("ShopifyVariantId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("shopify_variant_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId", "ProductId")
+                        .HasDatabaseName("IX_product_links_connection_product");
+
+                    b.HasIndex("ConnectionId", "ShopifyProductId")
+                        .HasDatabaseName("IX_product_links_connection_shopify_product");
+
+                    b.HasIndex("ConnectionId", "ShopifyVariantId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_product_links_connection_shopify_variant");
+
+                    b.HasIndex("ConnectionId", "VariantId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_product_links_connection_variant");
+
+                    b.ToTable("product_links", "shopify", t =>
+                        {
+                            t.HasCheckConstraint("CK_product_links_origin", "origin IN ('Imported','MatchedBySku')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Shopify.Domain.ShopifyStore", b =>
                 {
                     b.Property<Guid>("ConnectionId")
@@ -716,9 +939,29 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_reconciled_at");
 
+                    b.Property<string>("ProductsCoverage")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("products_coverage");
+
+                    b.Property<DateTimeOffset?>("ProductsCoverageAcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("products_coverage_accepted_at");
+
+                    b.Property<DateTimeOffset?>("ProductsSyncedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("products_synced_at");
+
                     b.Property<DateTimeOffset?>("ReconcileLeaseUntil")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("reconcile_lease_until");
+
+                    b.Property<DateTimeOffset?>("SetupHistoryRanAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("setup_history_ran_at");
+
+                    b.Property<string>("SetupHistorySummary")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("setup_history_summary");
 
                     b.Property<string>("ShopDomain")
                         .HasMaxLength(255)
@@ -915,6 +1158,15 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Modules.Shopify.Domain.ShopifyProductImportIssue", b =>
+                {
+                    b.HasOne("Modules.Shopify.Domain.ShopifyProductImport", null)
+                        .WithMany()
+                        .HasForeignKey("ImportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Shopify.Domain.ShopifyStore", b =>
                 {
                     b.OwnsOne("Modules.Shopify.Domain.ShopifyBillingAccount", "Billing", b1 =>
@@ -923,13 +1175,11 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                                 .HasColumnType("uuid");
 
                             b1.Property<string>("AccountNumber")
-                                .IsRequired()
                                 .HasMaxLength(32)
                                 .HasColumnType("character varying(32)")
                                 .HasColumnName("billing_account_number");
 
                             b1.Property<string>("BankName")
-                                .IsRequired()
                                 .HasMaxLength(120)
                                 .HasColumnType("character varying(120)")
                                 .HasColumnName("billing_bank_name");

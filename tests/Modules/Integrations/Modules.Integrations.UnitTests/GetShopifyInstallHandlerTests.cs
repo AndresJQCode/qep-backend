@@ -29,7 +29,16 @@ public sealed class GetShopifyInstallHandlerTests
         public FakeRolePermissionChecker Roles { get; } = new();
 
         public GetShopifyInstallHandler Handler() =>
-            new(Installs, ActiveTenants, Roles, Integrations.Modules, Integrations.Context(), Integrations.Clock);
+            new(Installs, ActiveTenants, Roles, Integrations.Modules, Integrations.Repository, Integrations.Context(), Integrations.Clock);
+
+        /// <summary>Una conexión de <paramref name="providerKey"/> en <paramref name="tenantId"/> con esos campos.</summary>
+        public void SeedConnection(Guid tenantId, string name, IReadOnlyDictionary<string, string> fields, string providerKey = "shopify")
+        {
+            var provider = IntegrationProviders.Parse(providerKey)!;
+            Integrations.Repository.Connections.Add(IntegrationConnection.Create(
+                provider, tenantId, name, fields, new Dictionary<string, string>(), Integrations.Protector.Protect, Integrations.MemberId,
+                IntegrationsTestBed.Now));
+        }
 
         public ShopifyInstall Seed(bool exchange = true, Guid? tenantId = null, Guid? memberId = null)
         {
@@ -106,12 +115,85 @@ public sealed class GetShopifyInstallHandlerTests
         Assert.Equal(bed.Integrations.TenantId, response.InitiatedTenantId);
         Assert.Equal(
             [
-                new ShopifyInstallTenantResponse(bed.Integrations.TenantId, "Acme", CanLink: true, ModuleEnabled: true),
-                new ShopifyInstallTenantResponse(advisorTenant, "Beta", CanLink: false, ModuleEnabled: true),
-                new ShopifyInstallTenantResponse(moduleOffTenant, "Gamma", CanLink: true, ModuleEnabled: false),
+                (bed.Integrations.TenantId, "Acme", true, true),
+                (advisorTenant, "Beta", false, true),
+                (moduleOffTenant, "Gamma", true, false),
             ],
-            response.Tenants);
+            response.Tenants.Select(tenant => (tenant.TenantId, tenant.Name, tenant.CanLink, tenant.ModuleEnabled)));
+        Assert.All(response.Tenants, tenant => Assert.Empty(tenant.ConnectedShops));
         Assert.Equal(bed.Integrations.SubjectId, bed.ActiveTenants.LastUserId);
+    }
+
+    // Spec 2026-11-17 §3: cada tenant trae sus tiendas Shopify ya conectadas, para que nadie cruce tiendas por error.
+    [Fact]
+    public async Task ATenantWithAShopListsIt()
+    {
+        var bed = new Bed();
+        var install = bed.Seed();
+        bed.ActiveTenants.Tenants.Add(new ActiveTenantSummary(bed.Integrations.TenantId, "Acme", ["admin"]));
+        bed.Roles.Granting["admin"] = IntegrationsPermissions.ConnectionManage;
+        bed.SeedConnection(bed.Integrations.TenantId, "Tienda del norte", new Dictionary<string, string>
+        {
+            [ShopifyFieldKeys.ShopDomain] = "norte.myshopify.com",
+            [ShopifyFieldKeys.ShopName] = "Norte",
+        });
+        // Sin shopName se muestra el nombre de la conexión; orden por nombre sin mayúsculas.
+        bed.SeedConnection(bed.Integrations.TenantId, "alfa", new Dictionary<string, string>
+        {
+            [ShopifyFieldKeys.ShopDomain] = "alfa.myshopify.com",
+        });
+        // De otro tenant: no aparece.
+        bed.SeedConnection(Guid.NewGuid(), "Ajena", new Dictionary<string, string>
+        {
+            [ShopifyFieldKeys.ShopDomain] = "ajena.myshopify.com",
+            [ShopifyFieldKeys.ShopName] = "Ajena",
+        });
+
+        var response = await bed.Handler().HandleAsync(new GetShopifyInstallQuery(install.Id), Ct);
+
+        var tenant = Assert.Single(response.Tenants);
+        Assert.Equal(
+            [new ShopifyConnectedShopResponse("alfa", "alfa.myshopify.com"), new ShopifyConnectedShopResponse("Norte", "norte.myshopify.com")],
+            tenant.ConnectedShops);
+    }
+
+    // Plan D10: quien no administra integraciones en ese tenant no necesita ver sus tiendas.
+    [Fact]
+    public async Task ATenantWithoutLinkPermissionGetsAnEmptyList()
+    {
+        var bed = new Bed();
+        var install = bed.Seed();
+        bed.ActiveTenants.Tenants.Add(new ActiveTenantSummary(bed.Integrations.TenantId, "Acme", ["advisor"]));
+        bed.SeedConnection(bed.Integrations.TenantId, "Norte", new Dictionary<string, string>
+        {
+            [ShopifyFieldKeys.ShopDomain] = "norte.myshopify.com",
+        });
+
+        var response = await bed.Handler().HandleAsync(new GetShopifyInstallQuery(install.Id), Ct);
+
+        var tenant = Assert.Single(response.Tenants);
+        Assert.False(tenant.CanLink);
+        Assert.NotNull(tenant.ConnectedShops);
+        Assert.Empty(tenant.ConnectedShops);
+    }
+
+    [Fact]
+    public async Task OtherProvidersAreNotListed()
+    {
+        var bed = new Bed();
+        var install = bed.Seed();
+        bed.ActiveTenants.Tenants.Add(new ActiveTenantSummary(bed.Integrations.TenantId, "Acme", ["admin"]));
+        bed.Roles.Granting["admin"] = IntegrationsPermissions.ConnectionManage;
+        // Sólo las conexiones shopify son tiendas.
+        bed.SeedConnection(
+            bed.Integrations.TenantId,
+            "WhatsApp",
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.PhoneNumberId] = "123456", [WhatsAppCloudFieldKeys.WabaId] = "654321" },
+            IntegrationProviders.WhatsAppCloud.Key);
+
+        var response = await bed.Handler().HandleAsync(new GetShopifyInstallQuery(install.Id), Ct);
+
+        Assert.Empty(Assert.Single(response.Tenants).ConnectedShops);
     }
 
     // Sin tenants: la pantalla ofrece /register; la lista viaja vacía, no ausente.

@@ -8,8 +8,9 @@ namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
 /// Spec 2026-11-16 withholdings by company: the four previews take <c>billingCompanyId</c> and, without a bank account,
-/// paint the withholdings that company produces — the same ones the full account of that company paints — while the
-/// response keeps <c>billingAccount: null</c> and readiness treats the account as absent.
+/// paint the withholdings that company produces — the same ones the full account of that company paints. Since the spec
+/// 2026-11-17 (R3) a company without its account is a real, saveable state: the response answers the company with
+/// <c>bankName</c> and <c>accountNumber</c> null, and readiness only needs the company.
 ///
 /// Fixture: a CO company in the first seeded city («Bogotá» in the names) with «ReteICA Bogotá» 0,966 % assigned and a COP
 /// account, a customer who is a withholding agent there, a product of 119.000 with 19 % VAT inside, tenant default COP.
@@ -26,7 +27,7 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
             fx, NewQuotationBody(fx, account: null) with { BillingCompanyId = fx.BogotaAccount.CompanyId }));
         var withAccount = await ReadQuotationAsync(await PostNewQuotationPreviewAsync(fx, NewQuotationBody(fx, fx.BogotaAccount)));
 
-        Assert.Null(companyOnly.BillingAccount);
+        AssertCompanyWithoutBank(fx, companyOnly.BillingAccount);
         Assert.NotNull(withAccount.BillingAccount);
         Assert.Equal("COP", companyOnly.Currency);
         Assert.Equal(fx.ReteIcaBogota, Assert.Single(companyOnly.Withholdings).TaxRateId);
@@ -35,8 +36,9 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
         AssertSameWithholdings(withAccount, companyOnly);
     }
 
+    // Spec 2026-11-17 §4.2: converting needs the company, not the account.
     [Fact]
-    public async Task NewQuotationPreviewWithCompanyOnlyIsNotConvertible()
+    public async Task NewQuotationPreviewWithCompanyOnlyIsConvertible()
     {
         var fx = await SetUpAsync();
 
@@ -44,9 +46,8 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
             fx, NewQuotationBody(fx, account: null) with { BillingCompanyId = fx.BogotaAccount.CompanyId }));
         var withAccount = await ReadQuotationAsync(await PostNewQuotationPreviewAsync(fx, NewQuotationBody(fx, fx.BogotaAccount)));
 
-        // Control: the same body with the account is convertible, so only the missing account blocks it.
         Assert.True(withAccount.CanBeConvertedToOrder);
-        Assert.False(companyOnly.CanBeConvertedToOrder);
+        Assert.True(companyOnly.CanBeConvertedToOrder);
     }
 
     [Fact]
@@ -94,13 +95,13 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
             fx, draft, EditsBody(draft, account: null) with { BillingCompanyId = fx.BogotaAccount.CompanyId }));
         var withAccount = await ReadQuotationAsync(await PostQuotationPreviewAsync(fx, draft, EditsBody(draft, fx.BogotaAccount)));
 
-        Assert.Null(companyOnly.BillingAccount);
+        AssertCompanyWithoutBank(fx, companyOnly.BillingAccount);
         Assert.Equal("COP", companyOnly.Currency);
         Assert.Equal(fx.ReteIcaBogota, Assert.Single(companyOnly.Withholdings).TaxRateId);
         Assert.Equal(fx.Bogota.CityId, companyOnly.OperationCity?.Id);
         Assert.Equal(fx.Bogota.CityId, companyOnly.BillingCompanyCity?.Id);
         AssertSameWithholdings(withAccount, companyOnly);
-        Assert.False(companyOnly.CanBeConvertedToOrder);
+        Assert.True(companyOnly.CanBeConvertedToOrder);
     }
 
     [Fact]
@@ -112,8 +113,8 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
             fx, NewOrderBody(fx, account: null) with { BillingCompanyId = fx.BogotaAccount.CompanyId }));
         var withAccount = await ReadOrderAsync(await PostNewOrderPreviewAsync(fx, NewOrderBody(fx, fx.BogotaAccount)));
 
-        Assert.Null(companyOnly.BillingAccount);
-        Assert.Null(companyOnly.Order.BillingAccount);
+        AssertCompanyWithoutBank(fx, companyOnly.BillingAccount);
+        Assert.Null(companyOnly.Order.BillingAccount?.BankName);
         Assert.NotNull(withAccount.BillingAccount);
         Assert.Equal("COP", companyOnly.Order.Currency);
         Assert.Equal(fx.ReteIcaBogota, Assert.Single(companyOnly.Order.Withholdings).TaxRateId);
@@ -145,8 +146,9 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
                     medellin.CompanyId, medellin.BankName, medellin.AccountNumber, medellin.Currency),
             }));
 
-        Assert.Null(companyOnly.BillingAccount);
-        Assert.Null(companyOnly.Order.BillingAccount);
+        Assert.Equal(medellin.CompanyId, companyOnly.BillingAccount?.CompanyId);
+        Assert.Null(companyOnly.BillingAccount?.BankName);
+        Assert.Null(companyOnly.Order.BillingAccount?.AccountNumber);
         Assert.Equal(medellinRate, Assert.Single(companyOnly.Order.Withholdings).TaxRateId);
         Assert.Equal(fx.Medellin.CityId, companyOnly.OperationCity?.Id);
         Assert.Equal(fx.Medellin.CityId, companyOnly.BillingCompanyCity?.Id);
@@ -196,8 +198,8 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
             }));
 
         Assert.Equal("USD", preview.Order.Currency);
-        Assert.Null(preview.BillingAccount);
-        Assert.Null(preview.Order.BillingAccount);
+        AssertCompanyWithoutBank(fx, preview.BillingAccount);
+        Assert.Equal("USD", preview.Order.BillingAccount?.Currency);
         // The company's rates are explained, not applied: CO withholdings do not retain on a USD document.
         var row = Assert.Single(preview.Order.WithholdingBreakdown);
         Assert.Equal((fx.ReteIcaBogota, false, "CurrencyWithoutTax"), (row.TaxRateId, row.Applies, row.Reason));
@@ -224,16 +226,16 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
             fx, draft, EditsBody(draft, account: null) with { BillingCompanyId = fx.BogotaAccount.CompanyId }));
 
         Assert.Equal("USD", preview.Currency);
-        Assert.Null(preview.BillingAccount);
+        AssertCompanyWithoutBank(fx, preview.BillingAccount);
         var row = Assert.Single(preview.WithholdingBreakdown);
         Assert.Equal((fx.ReteIcaBogota, false, "CurrencyWithoutTax"), (row.TaxRateId, row.Applies, row.Reason));
         Assert.Empty(preview.Withholdings);
         Assert.Equal(0m, preview.RetentionAmount);
     }
 
-    // IsPending is [JsonIgnore] on the DTO and the composers null the account; this pins the wire contract of all four.
+    // Spec 2026-11-17 §6: the four previews answer the company with bankName and accountNumber null, never a hidden flag.
     [Fact]
-    public async Task NoCompanyOnlyPreviewAnswersIsPending()
+    public async Task EveryCompanyOnlyPreviewAnswersTheCompanyWithNullBankFields()
     {
         var fx = await SetUpAsync();
         var order = await CreateOrderAsync(fx);
@@ -260,7 +262,20 @@ public sealed class BillingCompanyPreviewApiTests(SharedQuotationsHost sharedHos
             var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
             Assert.True(response.StatusCode == HttpStatusCode.OK, $"{(int)response.StatusCode} {text}");
             Assert.DoesNotContain("isPending", text, StringComparison.OrdinalIgnoreCase);
+            using var body = JsonDocument.Parse(text);
+            var account = body.RootElement.GetProperty("billingAccount");
+            Assert.Equal(company, account.GetProperty("companyId").GetGuid());
+            Assert.Equal(JsonValueKind.Null, account.GetProperty("bankName").ValueKind);
+            Assert.Equal(JsonValueKind.Null, account.GetProperty("accountNumber").ValueKind);
         }
+    }
+
+    private static void AssertCompanyWithoutBank(Fixture fx, QuotationBillingResponse? account)
+    {
+        Assert.NotNull(account);
+        Assert.Equal(fx.BogotaAccount.CompanyId, account.CompanyId);
+        Assert.Null(account.BankName);
+        Assert.Null(account.AccountNumber);
     }
 
     // ---- Fixture ----

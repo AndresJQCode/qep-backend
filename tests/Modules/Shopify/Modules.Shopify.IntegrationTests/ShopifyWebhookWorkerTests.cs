@@ -438,6 +438,49 @@ public sealed class ShopifyWebhookWorkerTests
         Assert.Equal(Shop, await ScalarAsync<string>(connectionString, "SELECT shop_domain FROM shopify.stores"));
     }
 
+    // Spec 2026-11-17 §6, delete: con el host real (directorio de conexiones, Catalog), un products/delete firmado de una tienda que
+    // ya importó desactiva el producto importado, deja los vínculos y cierra la entrega sin error.
+    [Fact]
+    public async Task DeleteDeactivatesAnImportedProduct()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString, "read_orders,read_customers,read_products");
+        await world.ConfigureStoreAsync(factory);
+        await ExecuteAsync(connectionString, "UPDATE shopify.stores SET products_synced_at = now() WHERE connection_id = @c", ("c", world.ConnectionId));
+        var context = new ShopifyProductSyncContext(
+            new ShopifyConnectionRef(world.TenantId, world.ConnectionId, "954889", Shop, true, "shpat_sentinel_token"),
+            new ShopifyPricingContext(
+                "COP", true, true, new BuildingBlocks.Domain.Pricing.PriceRounding(0, BuildingBlocks.Domain.Pricing.PriceRoundingMode.Nearest),
+                new ShopifyDefaultTaxRates(null, null)),
+            Guid.Empty,
+            ShopifySyncTrigger.Webhook);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var created = await scope.ServiceProvider.GetRequiredService<ShopifyProductSync>().ApplyAsync(
+                context,
+                new ShopifyProductSnapshot(
+                    7001L, "Termo", ShopifyProductStatus.Active, DateTimeOffset.UtcNow.AddMinutes(-5), [],
+                    [new ShopifyVariantSnapshot(70011L, "TERMO-1", null, 40_000m, true, [])], null),
+                Ct);
+            Assert.Equal(ShopifyProductOutcomeKind.Created, created.Kind);
+        }
+
+        using var client = factory.CreateClient();
+        await PostWebhookAsync(client, "products/delete", "wh-product-delete", System.Text.Encoding.UTF8.GetBytes("""{"id":7001}"""));
+        await DrainAsync(factory);
+
+        Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-product-delete"));
+        Assert.False(await ScalarAsync<bool>(
+            connectionString,
+            "SELECT p.is_active FROM catalog.products p JOIN shopify.product_links l ON l.product_id = p.id WHERE l.connection_id = @c LIMIT 1",
+            ("c", world.ConnectionId)));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM shopify.product_links WHERE connection_id = @c", ("c", world.ConnectionId)));
+        world.Tenant.Seeder.Dispose();
+    }
+
     private static byte[] Refunded()
     {
         var node = JsonNode.Parse(OrderFixture("taxes-included"))!;

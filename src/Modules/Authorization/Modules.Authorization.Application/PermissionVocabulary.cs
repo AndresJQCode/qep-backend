@@ -34,6 +34,8 @@ public static class PermissionVocabulary
         ["discount"] = "Dar descuentos",
         ["customer"] = "Elegir cliente",
         ["operate"] = "Abrir y cerrar",
+        // Spec 2026-11-17 (copiloto): usar el chat no es «Ver» —no da acceso a ningún dato— y gasta saldo del tenant.
+        ["use"] = "Usar",
     };
 
     /// <summary>

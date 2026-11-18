@@ -4,33 +4,30 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// The composers look the billing company up only to fill the billing block of the response, and a pending account (spec
-/// 2026-11-16 withholdings by company, previews only) is never answered there. So a preview with only the company does
-/// not query Companies: the lookup would be thrown away. The municipal explanation reads the account's own city, not the
-/// company.
+/// Una empresa sin cuenta (spec 2026-11-17, R3) ya no es un estado de vista previa que se esconde: se guarda y se responde
+/// con la empresa y banco y número nulos (la pantalla pinta «Pago: por definir»). Los composers buscan la empresa para su
+/// razón social, con o sin cuenta.
 /// </summary>
-public sealed class PendingBillingAccountComposerTests
+public sealed class CompanyWithoutBankAccountComposerTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
     private static readonly Guid ClientId = Guid.CreateVersion7();
     private static readonly MemberId AdvisorId = new(Guid.CreateVersion7());
     private static readonly DateTimeOffset Now = new(2026, 11, 16, 12, 0, 0, TimeSpan.Zero);
 
-    private static readonly QuotationBillingAccount Pending = new()
+    private static readonly QuotationBillingAccount WithoutBank = new()
     {
         CompanyId = Guid.CreateVersion7(),
-        BankName = string.Empty,
-        AccountNumber = string.Empty,
+        BankName = null,
+        AccountNumber = null,
         Currency = "COP",
         Country = "CO",
-        IsPending = true,
     };
 
-    private static readonly QuotationBillingAccount Complete = Pending with
+    private static readonly QuotationBillingAccount Complete = WithoutBank with
     {
         BankName = "Bancolombia",
         AccountNumber = "12345678",
-        IsPending = false,
     };
 
     private static StubQuotationCustomerLookup Customers() => new(new QuotationCustomerRef(
@@ -84,12 +81,15 @@ public sealed class PendingBillingAccountComposerTests
     }
 
     [Fact]
-    public async Task AQuotationWithAPendingAccountDoesNotLookTheCompanyUp()
+    public async Task AQuotationWithoutBankAnswersTheCompanyWithNullBankFields()
     {
-        var (response, lookups) = await ComposeQuotationAsync(Pending);
+        var (response, lookups) = await ComposeQuotationAsync(WithoutBank);
 
-        Assert.Equal(0, lookups);
-        Assert.Null(response.BillingAccount);
+        Assert.Equal(1, lookups);
+        Assert.NotNull(response.BillingAccount);
+        Assert.Equal(WithoutBank.CompanyId, response.BillingAccount.CompanyId);
+        Assert.Null(response.BillingAccount.BankName);
+        Assert.Null(response.BillingAccount.AccountNumber);
     }
 
     [Fact]
@@ -101,12 +101,14 @@ public sealed class PendingBillingAccountComposerTests
     }
 
     [Fact]
-    public async Task AnOrderWithAPendingAccountDoesNotLookTheCompanyUp()
+    public async Task AnOrderWithoutBankAnswersTheCompanyWithNullBankFields()
     {
-        var (response, lookups) = await ComposeOrderAsync(Pending);
+        var (response, lookups) = await ComposeOrderAsync(WithoutBank);
 
-        Assert.Equal(0, lookups);
-        Assert.Null(response.BillingAccount);
+        Assert.Equal(1, lookups);
+        Assert.NotNull(response.BillingAccount);
+        Assert.Null(response.BillingAccount.BankName);
+        Assert.Null(response.BillingAccount.AccountNumber);
     }
 
     [Fact]

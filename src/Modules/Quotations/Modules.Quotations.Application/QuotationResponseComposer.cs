@@ -46,10 +46,9 @@ public sealed class QuotationResponseComposer(
             tenantId, [quotation.AdvisorId], cancellationToken);
         var advisor = advisors.GetValueOrDefault(quotation.AdvisorId);
 
-        // Sólo cuando la cotización eligió cuenta: una consulta más por pantalla, y ninguna en
-        // el caso normal de un borrador recién creado. A pending account (previews only) is never answered, and the company
-        // feeds nothing else here (the municipal explanation reads the account's own city), so it is not looked up.
-        var company = quotation.BillingAccount is { IsPending: false } billing
+        // Sólo cuando la cotización eligió empresa (con o sin cuenta): una consulta más por pantalla, y ninguna en el
+        // caso normal de un borrador recién creado.
+        var company = quotation.BillingAccount is { } billing
             ? await companyLookup.FindAsync(tenantId, billing.CompanyId, cancellationToken)
             : null;
 
@@ -375,11 +374,11 @@ public sealed class QuotationResponseComposer(
     // La empresa que no resuelve deja el bloque con la cuenta guardada y sin razón social, por
     // el mismo motivo que el cliente: la cotización es histórica y tiene que poder leerse aunque
     // la empresa se haya borrado. Lo que se muestra es lo que se congeló, no lo que hay hoy.
-    // A pending account (company without account, previews only — spec 2026-11-16) is never answered: showing an account
-    // that was never chosen is the anti-goal; its company already reaches the screen through the withholding fields.
+    // Una empresa sin cuenta (spec 2026-11-17, R3) se responde con la empresa y banco y número nulos: la pantalla pinta
+    // «Pago: por definir».
     internal static QuotationBillingResponse? ToBillingResponse(
         QuotationBillingAccountDto? account, QuotationCompanyRef? company) =>
-        account is null or { IsPending: true }
+        account is null
             ? null
             : new QuotationBillingResponse(
                 account.CompanyId,
@@ -390,7 +389,8 @@ public sealed class QuotationResponseComposer(
                 company?.Phone,
                 account.BankName,
                 account.AccountNumber,
-                account.Currency);
+                account.Currency,
+                account.ChargesVat);
 
     // Field-by-field copy: the computation is QuotationMinimumPurchase.DescribeFor, the single
     // source of truth.

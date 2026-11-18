@@ -60,9 +60,13 @@ internal sealed partial class ServiceContractsMetaWhatsAppSender(
     public async Task<IReadOnlyList<ServiceContractsConnectionDto>> ListConnectionsAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         var listed = new List<ServiceContractsConnectionDto>();
+        // Las resueltas en una sola lectura, no una por conexión. La lista de activas se sigue pidiendo aparte porque las
+        // resueltas omiten la que tiene un secreto que no descifra, y esa tiene que salir como connection_unavailable.
+        var resolvedById = (await connections.ListResolvedActiveAsync(tenantId, IntegrationProviders.WhatsAppCloud.Key, cancellationToken))
+            .ToDictionary(connection => connection.Id);
         foreach (var summary in await connections.ListActiveAsync(tenantId, IntegrationProviders.WhatsAppCloud.Key, cancellationToken))
         {
-            var resolved = (await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection;
+            var resolved = resolvedById.GetValueOrDefault(summary.Id);
             if (resolved is null)
             {
                 listed.Add(new ServiceContractsConnectionDto(summary.Id, summary.Name, null, false, "connection_unavailable"));

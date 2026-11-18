@@ -103,8 +103,12 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
     public static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
-    /// <summary>El canje y la lectura de la tienda de una instalación sana de <paramref name="shop"/>. El token expira (spec
-    /// 2026-11-12): 1 hora, con un refresh token de 90 días.</summary>
+    /// <summary>El correo del comerciante que trae el perfil de la tienda (spec 2026-11-17 §2): las pruebas verifican que no
+    /// sale en la respuesta de la conexión.</summary>
+    public const string ProfileEmail = "dueno-SENTINEL@mitienda.co";
+
+    /// <summary>El canje y la lectura de la tienda de una instalación sana de <paramref name="shop"/>, con su perfil. El token
+    /// expira (spec 2026-11-12): 1 hora, con un refresh token de 90 días.</summary>
     public void ScriptHappyInstall(
         string shop,
         string accessToken,
@@ -121,7 +125,12 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
         Respond(
             $"^{Regex.Escape(shop)}/admin/api/[0-9-]+/graphql\\.json$",
             HttpStatusCode.OK,
-            $$$$"""{"data":{"shop":{"id":"gid://shopify/Shop/12345678","name":"{{{{name}}}}","myshopifyDomain":"{{{{shop}}}}"}}}""");
+            $$$$$"""
+            {"data":{"shop":{"id":"gid://shopify/Shop/12345678","name":"{{{{{name}}}}}","myshopifyDomain":"{{{{{shop}}}}}",
+            "email":"{{{{{ProfileEmail}}}}}","contactEmail":null,"currencyCode":"COP","ianaTimezone":"America/Bogota","taxesIncluded":true,
+            "billingAddress":{"company":"Mi Tienda SAS","address1":"Calle 10 # 43-12","address2":null,"city":"Medellín",
+            "province":"Antioquia","provinceCode":"ANT","zip":"050021","countryCodeV2":"CO","phone":"+573001112233"}}}}
+            """);
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

@@ -92,7 +92,8 @@ public sealed record StoreContactDto(
 
 public sealed record StoreCurrencyDto(string Currency, StoreBillingAccountDto BillingAccount);
 
-public sealed record StoreBillingAccountDto(Guid CompanyId, string BankName, string AccountNumber, string Currency);
+/// <summary>Banco y número en null es una empresa sin cuenta (spec 2026-11-17 §4.3).</summary>
+public sealed record StoreBillingAccountDto(Guid CompanyId, string? BankName, string? AccountNumber, string Currency);
 
 public sealed record StoreFeaturedCategoryDto(Guid Id, string Name);
 

@@ -132,8 +132,10 @@ internal static class CatalogVariantReads
         variant.Prices.ToDictionary(price => price.Currency, price => price.Amount);
 
     /// <summary>
-    /// El porcentaje de cada tasa que usan esos productos, una lectura por tasa distinta. Una tasa
-    /// que ya no existe no aparece: quien llama decide si eso es null o 0.
+    /// El porcentaje de cada tasa que usan esos productos: una lectura por request, no por tasa; las
+    /// tasas de un tenant son un puñado (<c>CustomerTaxRateLookup.cs:22-23</c>), así que se lee el
+    /// tenant entero y se filtra en memoria. Una tasa que ya no existe no aparece: quien llama decide
+    /// si eso es null o 0.
     /// </summary>
     public static async Task<IReadOnlyDictionary<TaxRateId, int>> LoadTaxPercentagesAsync(
         ITaxRateRepository taxRates,
@@ -141,20 +143,19 @@ internal static class CatalogVariantReads
         IEnumerable<Product> products,
         CancellationToken cancellationToken)
     {
-        var percentages = new Dictionary<TaxRateId, int>();
-        foreach (var taxRateId in products
+        var wanted = products
             .Where(product => product.TaxRateId.HasValue)
             .Select(product => product.TaxRateId!.Value)
-            .Distinct())
+            .ToHashSet();
+        if (wanted.Count == 0)
         {
-            var taxRate = await taxRates.FindAsync(tenantId, taxRateId, cancellationToken);
-            if (taxRate is not null)
-            {
-                percentages[taxRateId] = taxRate.VatPercentage;
-            }
+            return new Dictionary<TaxRateId, int>();
         }
 
-        return percentages;
+        var rates = await taxRates.ListAsync(tenantId, cancellationToken);
+        return rates
+            .Where(rate => wanted.Contains(rate.Id))
+            .ToDictionary(rate => rate.Id, rate => rate.VatPercentage);
     }
 
     /// <summary>Las variantes pedidas, cada una con su producto. Un id que ningún producto del lote

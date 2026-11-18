@@ -218,6 +218,35 @@ public sealed class StorePersistenceTests
         Assert.Equal(cop.BillingAccount, found.BillingAccountFor("COP"));
     }
 
+    // Spec 2026-11-17 §4.3: la empresa sin cuenta se guarda con banco y número en NULL y se relee igual.
+    [Fact]
+    public async Task ACurrencyWithoutAccountRoundTrips()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var company = Guid.NewGuid();
+        var withoutAccount = new StoreCurrency("COP", new StoreBillingAccount(company, null, null, "COP"));
+        await SaveStoreAsync(factory, ConfiguredStore(Tenant, currencies: [withoutAccount]));
+
+        var account = (await ReloadStoreAsync(factory, Tenant)).BillingAccountFor("COP");
+
+        Assert.NotNull(account);
+        Assert.Equal(company, account.CompanyId);
+        Assert.Null(account.BankName);
+        Assert.Null(account.AccountNumber);
+        Assert.Equal("COP", account.Currency);
+        Assert.Equal(
+            1L,
+            await ScalarAsync(
+                factory,
+                $"""
+                SELECT count(*) AS "Value" FROM store.store_currencies
+                WHERE tenant_id = {Tenant} AND billing_bank_name IS NULL AND billing_account_number IS NULL
+                """));
+    }
+
     [Fact]
     public async Task ReplacingTheCurrenciesLeavesOnlyTheNewList()
     {

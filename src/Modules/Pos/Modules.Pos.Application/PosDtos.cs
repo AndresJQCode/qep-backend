@@ -77,7 +77,7 @@ public sealed record PosPage<T>(IReadOnlyList<T> Items, int Page, int PageSize, 
 /// <param name="Code">El <c>Code</c> de la variante.</param>
 /// <param name="Barcode">El código de barras de la variante, si tiene.</param>
 /// <param name="Name">El nombre visible ya armado («Camiseta – M / Azul»; el del producto si no tiene opciones). El carrito y el ticket lo pintan tal cual: el frontend no concatena.</param>
-/// <param name="TaxPercentage">Siempre presente: 0 sin tasa o con tasa inexistente (PosProductRef.TaxPercentage es int), igual que el tipo del frontend. Sólo la línea NotFound del preview lo lleva en null.</param>
+/// <param name="TaxPercentage">Siempre presente: 0 sin tasa o con tasa inexistente (PosProductRef.TaxPercentage es int), igual que el tipo del frontend. Sólo la línea NotFound del preview lo lleva en null. Es la tasa con que cobra la caja abierta: 0 en una caja de empresa sin IVA (spec 2026-11-17 R4).</param>
 /// <param name="UnsellableReason">Inactive, PriceMissing o NotFound (este último sólo en el preview). Un producto no vendible se muestra marcado en vez de esconderse: el cajero escanearía un código existente y vería "no existe".</param>
 public sealed record PosProductResponse(
     Guid VariantId,

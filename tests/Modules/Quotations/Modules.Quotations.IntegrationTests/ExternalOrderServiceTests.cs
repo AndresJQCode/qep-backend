@@ -952,7 +952,9 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         Assert.NotNull(state);
         Assert.Equal((order.OrderId, OrderStatus.Open, true, false, false), (state.OrderId, state.Status, state.IsEditable, state.IsPrepared, state.IsInvoiced));
         Assert.Equal((OrderPaymentStatus.PaymentPending, setup.ClientId, "COP", false), (state.PaymentStatus, state.ClientId, state.Currency, state.IsStorePickup));
+        // La tasa de la línea es la del producto (spec 2026-11-17 R1), y el IVA del pedido viaja aparte (R7).
         Assert.Equal(new ExternalOrderLineState(setup.ProductId, setup.ProductId, 2m, 11_900m, 0m, 19), Assert.Single(state.Lines));
+        Assert.True(state.ChargesVat);
         Assert.Equal(ShippingDetails.None, state.Shipping);
         Assert.Equal(Party(), state.ShippingParty);
         Assert.Null(state.ShippingCountry);
@@ -1202,7 +1204,7 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
 
     // La membresía activa del owner, por el puerto de Tenancy: el roster HTTP exige un permiso que
     // ManagerPermissions no concede, y lo que se prueba acá no es ese endpoint.
-    private static async Task<Guid> OwnerMembershipIdAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)
+    internal static async Task<Guid> OwnerMembershipIdAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)
     {
         using var scope = factory.Services.CreateScope();
         var directory = scope.ServiceProvider.GetRequiredService<IMembershipDirectory>();

@@ -1,0 +1,106 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Modules.Ai.Application;
+using static Modules.Ai.IntegrationTests.AiApiHarness;
+
+namespace Modules.Ai.IntegrationTests;
+
+/// <summary>
+/// Plan 2026-11-12, Review Focus 2 y D-A29: con el host en <c>Trace</c> (el nivel en que <see cref="HttpClient"/> registra headers, como
+/// <c>TheKeyNeverAppearsInLogsAuditOrHttpCalls</c> de Automations), ni la clave de Anthropic del tenant ni el texto del cliente aparecen en
+/// los logs, en la auditoría, en las tablas de ejecución de <c>ai</c> ni en las trazas (el SDK en <c>metadata_only</c>). La única copia del
+/// texto es la transcripción de la prueba (<c>ai.tests.transcript</c>), que es justamente lo que el playground muestra.
+/// </summary>
+public sealed class AnthropicNoLeakTests
+{
+    private const string CustomerText = "mi cédula es 1012345678 SENTINEL-CLIENTE";
+
+    [Fact]
+    public async Task TheKeyAndTheCustomerTextNeverAppearInLogsAuditAiTablesOrSpans()
+    {
+        await using var database = await StartDatabaseAsync();
+        var logs = new CapturingLoggerProvider();
+        var spans = new ConcurrentQueue<string>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                spans.Enqueue(activity.DisplayName);
+                foreach (var tag in activity.TagObjects)
+                {
+                    spans.Enqueue($"{tag.Key}={tag.Value}");
+                }
+
+                foreach (var @event in activity.Events)
+                {
+                    spans.Enqueue(@event.Name);
+                    foreach (var tag in @event.Tags)
+                    {
+                        spans.Enqueue($"{tag.Key}={tag.Value}");
+                    }
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var anthropic = new FakeAnthropicMessagesHandler(AnthropicTestKey);
+        anthropic.Enqueue(FakeAnthropicMessagesHandler.ToolUse("toolu_01", "search_catalog", """{"query":"jabón","limit":2}"""));
+        anthropic.Enqueue(FakeAnthropicMessagesHandler.EndTurn("Con gusto te ayudo."));
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(),
+            services =>
+            {
+                AgentPlaygroundApiTests.UseFakeAnthropic(services, anthropic);
+                services.AddSingleton<ILoggerProvider>(logs);
+            },
+            new Dictionary<string, string>
+            {
+                ["Logging:LogLevel:Default"] = "Trace",
+                ["Logging:LogLevel:Microsoft"] = "Trace",
+                ["Logging:LogLevel:Microsoft.AspNetCore"] = "Trace",
+                ["Logging:LogLevel:System"] = "Trace",
+                ["Logging:LogLevel:System.Net.Http"] = "Trace",
+            });
+        await SeedTenantAsync(factory);
+        await SeedAnthropicConnectionAsync(factory);
+        using var client = CreateClient(factory, permissions: [AiPermissions.AgentRead, AiPermissions.AgentManage]);
+        var agentId = await AgentPlaygroundApiTests.DraftAgentAsync(client);
+        var opened = await SendAsync(client, HttpMethod.Post, $"{AiUrl()}/agents/{agentId}/tests");
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        var testId = (await JsonAsync(opened)).GetProperty("id").GetGuid();
+
+        var sent = await SendAsync(client, HttpMethod.Post, $"{AiUrl()}/tests/{testId}/messages", new { text = CustomerText });
+        Assert.Equal(HttpStatusCode.Accepted, sent.StatusCode);
+        var test = await AgentPlaygroundApiTests.WaitUntilAnsweredAsync(client, testId);
+        Assert.Equal("agent", test.GetProperty("transcript").EnumerateArray().Last().GetProperty("role").GetString());
+
+        // Sanidad: la prueba de verdad pasó por el adaptador y por el log en Trace.
+        Assert.Equal(2, anthropic.Requests.Count);
+        Assert.NotEmpty(logs.Lines);
+        Assert.Contains(spans, span => span.Contains("anthropic", StringComparison.OrdinalIgnoreCase)
+            || span.Contains("claude", StringComparison.OrdinalIgnoreCase));
+
+        foreach (var needle in new[] { AnthropicTestKey, "SENTINEL-CLIENTE", "1012345678" })
+        {
+            Assert.False(logs.Lines.Any(line => line.Contains(needle, StringComparison.Ordinal)), $"A log line carries «{Mask(needle)}».");
+            Assert.False(spans.Any(span => span.Contains(needle, StringComparison.Ordinal)), $"A span carries «{Mask(needle)}».");
+            Assert.Equal(0L, await CountAsync(database.GetConnectionString(), "audit.entries", needle));
+            Assert.Equal(0L, await CountAsync(database.GetConnectionString(), "ai.usage_records", needle));
+            Assert.Equal(0L, await CountAsync(database.GetConnectionString(), "ai.tool_calls", needle));
+            Assert.Equal(0L, await CountAsync(database.GetConnectionString(), "ai.model_jobs", needle));
+            Assert.Equal(0L, await CountAsync(database.GetConnectionString(), "ai.agents", needle));
+        }
+
+        Assert.Equal(0L, await CountAsync(database.GetConnectionString(), "ai.tests", AnthropicTestKey));
+    }
+
+    private static Task<long> CountAsync(string connectionString, string table, string needle) =>
+        ScalarAsync<long>(connectionString, $"SELECT count(*) FROM {table} AS row WHERE row::text LIKE '%' || @needle || '%'", ("needle", needle));
+
+    // El mensaje de una prueba roja tampoco imprime el centinela entero.
+    private static string Mask(string value) => value.Length <= 6 ? "***" : $"{value[..4]}***";
+}

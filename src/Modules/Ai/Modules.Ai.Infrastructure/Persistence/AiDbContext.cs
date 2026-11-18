@@ -32,6 +32,26 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
 
     public DbSet<AgentConnection> AgentConnections => Set<AgentConnection>();
 
+    public DbSet<AgentTest> Tests => Set<AgentTest>();
+
+    public DbSet<ModelJob> ModelJobs => Set<ModelJob>();
+
+    public DbSet<AgentSession> Sessions => Set<AgentSession>();
+
+    public DbSet<AgentTurn> Turns => Set<AgentTurn>();
+
+    public DbSet<CopilotSettings> CopilotSettings => Set<CopilotSettings>();
+
+    public DbSet<CopilotThread> CopilotThreads => Set<CopilotThread>();
+
+    public DbSet<CopilotMessage> CopilotMessages => Set<CopilotMessage>();
+
+    internal DbSet<CopilotQuestionRow> CopilotQuestions => Set<CopilotQuestionRow>();
+
+    internal DbSet<ToolCallRow> ToolCalls => Set<ToolCallRow>();
+
+    internal DbSet<UsageRecordRow> UsageRecords => Set<UsageRecordRow>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -39,6 +59,8 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
         ConfigureAgent(modelBuilder);
         ConfigureVersion(modelBuilder);
         ConfigureConnection(modelBuilder);
+        AiRunModel.Configure(modelBuilder);
+        CopilotModel.Configure(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
 

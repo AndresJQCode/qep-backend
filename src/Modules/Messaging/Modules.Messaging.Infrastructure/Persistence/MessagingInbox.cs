@@ -18,7 +18,9 @@ internal sealed class MessagingInboxMessage
     public int Attempts { get; set; }
 }
 
-// Proyección de sólo lectura del outbox de plataforma, consumida independiente por este módulo.
+// Proyección del outbox de plataforma (Tenancy es dueño de la tabla, ExcludeFromMigrations). Los consumidores del módulo la leen y, desde el
+// plan 2026-11-17 (Task 8), TemplateHeaderImageReleasePublisher también escribe en ella, en la transacción de la plantilla: por eso lleva
+// correlation_id y attempts, que la tabla tiene NOT NULL (InitialPlatform), además de las columnas de proceso, como CatalogOutboxMessage.
 internal sealed class MessagingOutboxRecord
 {
     public Guid Id { get; init; }
@@ -27,7 +29,15 @@ internal sealed class MessagingOutboxRecord
 
     public string PayloadJson { get; init; } = "{}";
 
+    public string CorrelationId { get; init; } = string.Empty;
+
     public DateTimeOffset OccurredAt { get; init; }
+
+    public DateTimeOffset? ProcessedAt { get; init; }
+
+    public int Attempts { get; init; }
+
+    public string? LastError { get; init; }
 }
 
 /// <summary>

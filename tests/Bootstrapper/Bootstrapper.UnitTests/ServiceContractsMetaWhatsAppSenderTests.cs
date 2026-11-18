@@ -141,6 +141,22 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
             connections);
     }
 
+    // Consultas por request: con la base en otro nodo, resolver cada conexión de la lista es un viaje por fila. La lista y las
+    // resueltas son dos lecturas, sin importar cuántas conexiones haya.
+    [Fact]
+    public async Task ListConnectionsResolvesThemInOneReadNotOnePerConnection()
+    {
+        var rig = new Rig();
+        rig.Integrations.WithMeta(Guid.CreateVersion7(), "Línea 1", null);
+        rig.Integrations.WithMeta(Guid.CreateVersion7(), "Línea 2", null);
+        rig.Integrations.WithMeta(Guid.CreateVersion7(), "Línea 3", null, resolves: false);
+
+        var connections = await rig.Sender.ListConnectionsAsync(TenantId, Ct);
+
+        Assert.Equal(3, connections.Count);
+        Assert.Equal((1, 0), (rig.Integrations.ListResolvedCalls, rig.Integrations.ResolveCalls));
+    }
+
     private sealed class Rig
     {
         public Rig()
@@ -214,14 +230,38 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
             return this;
         }
 
-        public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-            Task.FromResult(tenantId == TenantId && resolved.GetValueOrDefault(connectionId) is { } connection
+        public int ResolveCalls { get; private set; }
+
+        public int ListResolvedCalls { get; private set; }
+
+        public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+        {
+            ResolveCalls++;
+            return Task.FromResult(tenantId == TenantId && resolved.GetValueOrDefault(connectionId) is { } connection
                 ? ConnectionResolution.Resolved(connection)
                 : ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null));
+        }
 
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<ConnectionSummary>>(
                 tenantId == TenantId ? active.Where(summary => summary.ProviderKey == providerKey).ToList() : []);
+
+        // Como el real: las mismas activas, en el mismo orden, sin la que no se resuelve (un secreto que no descifra).
+        public Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken)
+        {
+            ListResolvedCalls++;
+            return Task.FromResult<IReadOnlyList<ResolvedConnection>>(
+                tenantId == TenantId
+                    ? active
+                        .Where(summary => summary.ProviderKey == providerKey && resolved.ContainsKey(summary.Id))
+                        .Select(summary => resolved[summary.Id])
+                        .ToList()
+                    : []);
+        }
+
+        public Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+            Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

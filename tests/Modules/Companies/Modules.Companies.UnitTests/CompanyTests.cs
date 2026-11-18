@@ -194,7 +194,8 @@ public sealed class CompanyTests
             CityId,
             null,
             CompanyContactInfo.Empty,
-            Now.AddMinutes(5));
+            Now.AddMinutes(5),
+            chargesVat: true);
 
         Assert.Null(company.Phone);
         Assert.Null(company.Email);
@@ -207,7 +208,7 @@ public sealed class CompanyTests
         var company = Create();
         var later = Now.AddMinutes(5);
 
-        company.Update("Otro", Accounts("CTA-2"), "900-2", "CO", CompanyDocumentType.Nit, CityId, null, CompanyContactInfo.Empty, later);
+        company.Update("Otro", Accounts("CTA-2"), "900-2", "CO", CompanyDocumentType.Nit, CityId, null, CompanyContactInfo.Empty, later, chargesVat: true);
 
         Assert.Equal(2, company.Version);
         Assert.Equal(later, company.UpdatedAt);
@@ -231,7 +232,8 @@ public sealed class CompanyTests
             CityId,
             null,
             CompanyContactInfo.Empty,
-            Now.AddMinutes(5)));
+            Now.AddMinutes(5),
+            chargesVat: true));
 
         Assert.Equal("Andes", company.Name);
         Assert.Equal(1, company.Version);
@@ -245,7 +247,7 @@ public sealed class CompanyTests
 
         var exception = Assert.Throws<CompaniesDomainException>(
             () => company.Update(
-                "Otro", Accounts("CTA-2"), "900-2", "CO", CompanyDocumentType.Nit, CityId, null, CompanyContactInfo.Empty, Now));
+                "Otro", Accounts("CTA-2"), "900-2", "CO", CompanyDocumentType.Nit, CityId, null, CompanyContactInfo.Empty, Now, chargesVat: true));
 
         Assert.Equal("companies.company.inactive", exception.Code);
     }
@@ -281,7 +283,7 @@ public sealed class CompanyTests
 
         company.Activate(Now.AddMinutes(1));
         company.Update(
-            "Otro", Accounts("CTA-2"), "900-2", "CO", CompanyDocumentType.Nit, CityId, null, CompanyContactInfo.Empty, Now.AddMinutes(2));
+            "Otro", Accounts("CTA-2"), "900-2", "CO", CompanyDocumentType.Nit, CityId, null, CompanyContactInfo.Empty, Now.AddMinutes(2), chargesVat: true);
 
         Assert.True(company.IsActive);
         Assert.Equal("Otro", company.Name);
@@ -412,7 +414,7 @@ public sealed class CompanyTests
 
         company.Update(
             "Andes", Accounts(), "123", "US", CompanyDocumentType.TaxId, CityId, "Miami",
-            CompanyContactInfo.Empty, Now.AddMinutes(5));
+            CompanyContactInfo.Empty, Now.AddMinutes(5), chargesVat: true);
 
         Assert.Equal("US", company.Country);
         Assert.Null(company.CityId);
@@ -426,7 +428,7 @@ public sealed class CompanyTests
 
         Fails(() => company.Update(
             "Otro", Accounts(), "123", "ES", CompanyDocumentType.Nit, null, "Madrid",
-            CompanyContactInfo.Empty, Now.AddMinutes(5)));
+            CompanyContactInfo.Empty, Now.AddMinutes(5), chargesVat: true));
 
         Assert.Equal("CO", company.Country);
         Assert.Equal(CompanyDocumentType.Nit, company.DocumentType);
@@ -467,6 +469,29 @@ public sealed class CompanyTests
         Assert.Equal(new HashSet<Guid> { b, c }, company.WithholdingTaxRateIds.ToHashSet());
         Assert.Equal(version + 1, company.Version);
         Assert.Equal(Now.AddMinutes(2), company.UpdatedAt);
+    }
+
+    // Spec 2026-11-17 §5.1: toda empresa cobra IVA salvo que se diga lo contrario, para que nada
+    // cambie a quien ya opera ni a un frontend que todavía no manda el campo.
+    [Fact]
+    public void ACompanyChargesVatByDefault()
+    {
+        var company = Create();
+
+        Assert.True(company.ChargesVat);
+    }
+
+    [Fact]
+    public void UpdateCanTurnVatOff()
+    {
+        var company = Create();
+
+        company.Update(
+            "Andes", Accounts(), "900-1", "CO", CompanyDocumentType.Nit, CityId, null,
+            CompanyContactInfo.Empty, Now.AddMinutes(5), chargesVat: false);
+
+        Assert.False(company.ChargesVat);
+        Assert.Equal(2, company.Version);
     }
 
     [Fact]

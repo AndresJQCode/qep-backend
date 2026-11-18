@@ -45,6 +45,39 @@ public sealed class ValkeyAclTests(ValkeyAclServer server) : IClassFixture<Valke
         await mux.GetSubscriber().PublishAsync(RedisChannel.Literal("qep:wake:probe"), "");
     }
 
+    // ValkeyACLDenied (2026-11-17) disparaba todo el tiempo: el cliente mandaba INFO y CONFIG al conectar y en cada chequeo
+    // de configuración (ConfigCheckSeconds, 60 s), y -@dangerous los rechaza. El ruido tapa la señal de seguridad: con las
+    // opciones del backend y la ACL de producción (con +info), conectar, usar y reconfigurar no deja nada en ACL LOG.
+    // Sin +info la prueba vuelve a fallar, con un SET sobre una clave binaria: es la sonda de réplica del cliente.
+    [Fact]
+    public async Task TheClientSendsNothingTheAclDenies()
+    {
+        await using var auditor = await ConnectionMultiplexer.ConnectAsync(
+            ValkeyTestServer.AuditorConnectionString(server.Container));
+        var auditorDb = auditor.GetDatabase();
+        await auditorDb.ExecuteAsync("ACL", "LOG", "RESET");
+
+        await using (var mux = await ConnectionMultiplexer.ConnectAsync(
+            ValkeyConnection.BuildOptions(ValkeyTestServer.ConnectionString(server.Container, asQep: true))))
+        {
+            var db = mux.GetDatabase();
+            await db.StringIncrementAsync("qep:noise:probe");
+            await db.KeyExpireAsync("qep:noise:probe", TimeSpan.FromSeconds(61), ExpireWhen.HasNoExpiry);
+            await mux.GetSubscriber().PublishAsync(RedisChannel.Literal("qep:wake:noise"), "");
+
+            // Lo mismo que hace el chequeo periódico de configuración.
+            Assert.True(await mux.ConfigureAsync());
+            Assert.True(mux.IsConnected);
+        }
+
+        var entries = (RedisResult[])(await auditorDb.ExecuteAsync("ACL", "LOG"))!;
+        var denied = entries
+            .Select(entry => entry.ToDictionary())
+            .Select(entry => $"{entry["username"]}:{entry["reason"]}:{entry["object"]} [{entry["client-info"]}]")
+            .ToList();
+        Assert.True(denied.Count == 0, "ACL LOG: " + string.Join(", ", denied));
+    }
+
     // Prueba que la anterior no pasa por vacía: la ACL de verdad está cargada.
     [Fact]
     public async Task TheAclIsReallyLoaded()

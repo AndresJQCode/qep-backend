@@ -128,9 +128,14 @@ public sealed class LinkShopifyStoreHandler(
                 IntegrationsErrorCodes.LimitReached, $"A tenant can have at most {provider.MaxConnections} connections of this provider.");
         }
 
+        // Spec 2026-11-17 §2 (plan D1): el perfil de la tienda, para que el asistente sugiera la empresa apenas se enlaza. De
+        // mejor esfuerzo: si Shopify no responde, se enlaza igual y se conserva el del reenlace; el probador lo refresca.
+        var profile = await ReadProfileAsync(shopDomain, accessToken, cancellationToken);
+
         // Local sin túnel no hay URL pública: no se registra nada y la conciliación cubre (D-S17, §4.2).
         ShopifyWebhookRegistrationResult? registration = shopifyApp.WebhookCallbackUrl is { } callback
-            ? await ShopifyWebhookRegistration.EnsureAsync(gateway, shopDomain, accessToken, callback, cancellationToken)
+            ? await ShopifyWebhookRegistration.EnsureAsync(
+                gateway, shopDomain, accessToken, callback, ShopifyWebhookTopics.ParseScopes(install.Scopes), cancellationToken)
             : null;
 
         var fields = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -153,6 +158,15 @@ public sealed class LinkShopifyStoreHandler(
         else if (registration is null && existing?.Fields.TryGetValue(ShopifyFieldKeys.WebhookSubscriptionIds, out var kept) == true)
         {
             fields[ShopifyFieldKeys.WebhookSubscriptionIds] = kept;
+        }
+
+        if (profile is not null)
+        {
+            fields[ShopifyFieldKeys.ShopProfile] = profile.Serialize();
+        }
+        else if (existing?.Fields.TryGetValue(ShopifyFieldKeys.ShopProfile, out var keptProfile) == true)
+        {
+            fields[ShopifyFieldKeys.ShopProfile] = keptProfile;
         }
 
         var secrets = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -313,6 +327,20 @@ public sealed class LinkShopifyStoreHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return (current, grant.AccessToken, grant.RefreshToken);
+    }
+
+    /// <summary>El perfil de la tienda, o <c>null</c> si Shopify no respondió o no devolvió ninguno de sus campos. Ninguna
+    /// falla de Shopify tumba el enlace por esto, y nada del perfil va a logs: lleva correo y teléfono.</summary>
+    private async Task<ShopifyShopProfile?> ReadProfileAsync(string shopDomain, string accessToken, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await gateway.GetShopAsync(shopDomain, accessToken, cancellationToken)).Profile;
+        }
+        catch (ShopifyGatewayException)
+        {
+            return null;
+        }
     }
 
     /// <summary>La transacción del reenlace, si se abrió (D3): se dispone al salir del handler, después de guardar.</summary>

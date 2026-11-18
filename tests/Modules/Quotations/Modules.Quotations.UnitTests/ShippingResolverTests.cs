@@ -56,10 +56,24 @@ public sealed class ShippingResolverTests
         ShippingRequest? request,
         ShippingDetails? current = null,
         bool isStorePickup = false,
-        string currency = "COP") =>
+        string currency = "COP",
+        bool chargesVat = true) =>
         resolver.ResolveAsync(
-            TenantId, request, current ?? ShippingDetails.None, isStorePickup, currency, Prefix,
+            TenantId, request, current ?? ShippingDetails.None, isStorePickup, currency, chargesVat, Prefix,
             TestContext.Current.CancellationToken);
+
+    // Spec 2026-11-17 §5.2: una empresa sin IVA va al 0 % sin leer la tasa del tenant (nunca freight_tax_rate_missing).
+    [Fact]
+    public async Task ACompanyWithoutVatChargesFreightAtZeroWithoutReadingTheTenantRate()
+    {
+        var (resolver, _) = Resolver(taxRateMustNotBeRead: true, configureRate: false);
+
+        var shipping = await ResolveAsync(
+            resolver, new ShippingRequest(null, "Charged", 15000m, false), chargesVat: false);
+
+        Assert.NotNull(shipping);
+        Assert.Equal(0, shipping.FreightTaxPercentage);
+    }
 
     [Fact]
     public async Task PickupClearsEverything()
@@ -296,7 +310,7 @@ public sealed class ShippingResolverTests
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             resolver.ResolveAsync(
-                TenantId, new ShippingRequest(null, "Free", 0m, false), ShippingDetails.None, false, "COP", prefix,
+                TenantId, new ShippingRequest(null, "Free", 0m, false), ShippingDetails.None, false, "COP", true, prefix,
                 TestContext.Current.CancellationToken));
 
         Assert.Equal($"{prefix}.freight_charge_mode_disabled", error.Code);

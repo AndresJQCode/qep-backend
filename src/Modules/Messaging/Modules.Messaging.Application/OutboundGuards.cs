@@ -210,15 +210,16 @@ internal sealed class OutboundGuards(
     public async Task<MessageDto> ToDtoAsync(Guid tenantId, MessageRow row, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(row);
-        var names = row.SentByChatbotId is null && row.SentByMemberId is { } member
+        // Un mensaje de chatbot o de agente de IA no tiene miembro (spec 2026-10-29 §4.4): su nombre sale del mismo diccionario de bots.
+        var names = row.SentByChatbotId is null && row.SentByAgentId is null && row.SentByMemberId is { } member
             ? await memberNames.FindAsync(tenantId, [member], cancellationToken)
             : new Dictionary<Guid, string>();
         // §5.1: repetir un clientId devuelve el replyTo guardado, aunque el cuerpo traiga otro.
         var targets = row.ReplyToMessageId is { } quoted
             ? await messages.FindReplyTargetsAsync(tenantId, [quoted], cancellationToken)
             : new Dictionary<Guid, ReplyTargetRow>();
-        var chatbots = row.SentByChatbotId is { } chatbot
-            ? await chatbotNames.ResolveAsync(tenantId, [chatbot], cancellationToken)
+        var chatbots = (row.SentByChatbotId ?? row.SentByAgentId) is { } bot
+            ? await chatbotNames.ResolveAsync(tenantId, [bot], cancellationToken)
             : null;
         return MessageMapping.ToDto(row, tenantId, names, targets, chatbotNames: chatbots);
     }
@@ -234,6 +235,6 @@ internal sealed class OutboundGuards(
             isTemplate ? existing.DetailsJson : null,
             existing.Status, null, existing.OccurredAt, existing.SentByMemberId, clientId,
             existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, existing.MediaFileName) : null, existing.ReplyToMessageId, existing.SentByChatbotId,
-            SentByApiKeyId: existing.SentByApiKeyId, SentByApiKeyName: existing.SentByApiKeyName);
+            SentByApiKeyId: existing.SentByApiKeyId, SentByApiKeyName: existing.SentByApiKeyName, SentByAgentId: existing.SentByAgentId);
     }
 }

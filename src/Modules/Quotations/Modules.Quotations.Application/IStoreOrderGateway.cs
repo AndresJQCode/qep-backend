@@ -169,11 +169,13 @@ public sealed class StoreOrderGateway(
         var customer = await customerLookup.FindAsync(draft.TenantId, draft.ClientId, cancellationToken);
         OrderCustomerEligibility.Ensure(customer, draft.TenantId, draft.ClientId, allowIncomplete: true);
         // La cuenta es la entrada de la tienda para la moneda del pedido: de ella sale la moneda del pedido
-        // y con ella se precian las líneas, nunca con una moneda aparte que pudiera discrepar.
+        // y con ella se precian las líneas, nunca con una moneda aparte que pudiera discrepar. Sin cuenta bancaria (spec
+        // 2026-11-17, R3) la moneda es la de la tienda, que viaja en la cuenta del borrador.
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
-                companyLookup, draft.TenantId, draft.BillingAccount, cancellationToken)
+                companyLookup, draft.TenantId, draft.BillingAccount, draft.BillingAccount.Currency ?? string.Empty,
+                cancellationToken)
             ?? throw new QuotationsDomainException(
-                "order.billing.account_required", "An order needs a billing account.");
+                "order.billing.account_required", "An order needs a billing company.");
 
         var lines = await drafts.PriceLinesAsync(
             draft.TenantId, MergeRepeated(draft.Lines), billingAccount.Currency, draft.IsRetail, cancellationToken);

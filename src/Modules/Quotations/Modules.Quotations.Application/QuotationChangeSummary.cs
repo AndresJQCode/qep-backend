@@ -32,6 +32,13 @@ public static class QuotationChangeSummary
             ? $"Cotización creada en {currency}."
             : $"Cotización creada para {clientName}, en {currency}.");
 
+    /// <summary>El borrador que crea un agente IA (spec 2026-10-29 §8.2): sin persona detrás, así que la fila no lleva miembro y el
+    /// texto dice de dónde salió.</summary>
+    public static string CreatedByAgent(string? clientName, string currency) =>
+        Trim(clientName is null
+            ? $"Borrador creado por un agente IA en {currency}."
+            : $"Borrador creado por un agente IA para {clientName}, en {currency}.");
+
     public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
         Trim($"Agregó {productName} x{format.Number(quantity)}.");
 
@@ -52,6 +59,9 @@ public static class QuotationChangeSummary
 
     public static string Resent(string? contactName = null) =>
         contactName is null ? "Reenviada al cliente con su PDF." : Trim($"Reenviada a {contactName} con su PDF.");
+
+    /// <summary>Sin destinatario ni PDF: QEP no mandó nada, sólo anota lo que dice el asesor.</summary>
+    public static string MarkedSent() => "Marcada como enviada por fuera de QEP.";
 
     /// <summary>
     /// Un intento de envío que falló, contado para quien vende y no para quien programa.
@@ -323,9 +333,13 @@ public static class QuotationChangeSummary
     /// número completo repetido en cada fila.
     /// </summary>
     private static string MaskAccount(QuotationBillingAccountSummary account) =>
-        account.AccountNumber.Length <= 4
-            ? $"{account.BankName} {account.Currency}"
-            : $"{account.BankName} ···{account.AccountNumber[^4..]} {account.Currency}";
+        account.AccountNumber switch
+        {
+            // Empresa sin cuenta (spec 2026-11-17, R3).
+            null => $"sin cuenta {account.Currency}",
+            { Length: <= 4 } => $"{account.BankName} {account.Currency}",
+            var number => $"{account.BankName} ···{number[^4..]} {account.Currency}",
+        };
 
     /// <summary>Varias frases en una sola fila del historial, recortada al ancho de la columna.</summary>
     public static string Combine(IEnumerable<string> parts) => Trim(string.Join(" ", parts));
@@ -406,6 +420,6 @@ public sealed record QuotationHeaderSnapshot(
 /// comparación entre antes y después sea por valor, y para que el enmascarado tenga sus partes
 /// separadas en vez de un texto ya armado.</summary>
 public sealed record QuotationBillingAccountSummary(
-    string BankName,
-    string AccountNumber,
+    string? BankName,
+    string? AccountNumber,
     string Currency);

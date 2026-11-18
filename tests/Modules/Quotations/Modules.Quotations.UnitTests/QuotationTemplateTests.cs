@@ -162,6 +162,20 @@ public sealed partial class QuotationTemplateTests
         Assert.DoesNotContain(PaymentBox, text, StringComparison.Ordinal);
     }
 
+    // Spec 2026-11-17 §4.2: una empresa sin cuenta conserva el membrete, pero no hay bloque de pago que pintar.
+    [Fact]
+    public async Task TheTemplateOmitsThePaymentBlockWithoutBank()
+    {
+        var complete = Complete();
+        var text = await RenderedTextAsync(complete with
+        {
+            BillingAccount = complete.BillingAccount! with { BankName = null, AccountNumber = null },
+        });
+
+        Assert.DoesNotContain("Cuenta para el pago", text, StringComparison.Ordinal);
+        Assert.Contains(complete.BillingAccount!.CompanyName, text, StringComparison.Ordinal);
+    }
+
     // El aviso ya no depende de la cuenta (decisión 4): sin cuenta y sin recuadro, sale solo.
     [Fact]
     public async Task PaymentNoticePrintsWithoutBillingAccount()

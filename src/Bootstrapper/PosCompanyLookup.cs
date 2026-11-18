@@ -17,5 +17,7 @@ internal sealed class PosCompanyLookup(ICompanyRepository companies) : IPosCompa
             : null;
 
     private static PosCompanyRef ToRef(Company company) =>
-        new(company.Id.Value, company.Name, company.TaxId, company.DocumentType.ToWire(), company.Address, company.Phone, company.IsActive);
+        new(
+            company.Id.Value, company.Name, company.TaxId, company.DocumentType.ToWire(), company.Address, company.Phone,
+            company.IsActive, company.ChargesVat);
 }

@@ -12,4 +12,11 @@ public static class StorageSubscribedEvents
     /// Payload: <c>{ "tenantId": "&lt;guid&gt;", "fileIds": ["&lt;guid&gt;", …] }</c>.
     /// </summary>
     public const string ProductImagesReleased = "catalog.product.images-released.v1";
+
+    /// <summary>
+    /// Spec 2026-11-17: la imagen fija del encabezado de una plantilla de WhatsApp que Messaging soltó (se borró la plantilla, el refresco
+    /// la eliminó, o una creación falló sin poder liberarla). Payload: <c>{ "tenantId": "&lt;guid&gt;", "fileId": "&lt;guid&gt;" }</c>.
+    /// La paridad con Messaging la amarra <c>TemplateHeaderImageReleaseEventParityTests</c>.
+    /// </summary>
+    public const string TemplateHeaderImageReleased = "messaging.template.header-image-released.v1";
 }

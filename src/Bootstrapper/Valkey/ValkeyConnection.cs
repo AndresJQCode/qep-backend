@@ -40,6 +40,14 @@ internal sealed partial class ValkeyConnection(
     /// <c>__Booksleeve_MasterChanged</c>, que queda fuera de <c>&amp;qep:*</c>; sin <c>TieBreaker</c> no lee la clave
     /// <c>__Booksleeve_TieBreak</c>, que queda fuera de <c>~qep:*</c>. <c>AbortOnConnectFail = false</c>: el host arranca
     /// aunque Valkey no esté, y el cliente sigue reintentando.
+    ///
+    /// <c>CONFIG</c> queda fuera del <c>CommandMap</c> y la ACL de <c>qep</c> lleva <c>+info</c> (2026-11-17). Los dos son
+    /// <c>@dangerous</c> y el cliente los mandaba al conectar y en cada chequeo de configuración (<c>ConfigCheckSeconds</c>,
+    /// 60 s); la ACL los rechazaba —el cliente seguía con sus valores por defecto— pero cada rechazo entraba a
+    /// <c>ACL LOG</c> y dejaba <c>ValkeyACLDenied</c> disparada todo el tiempo, tapando los rechazos que sí importan.
+    /// <c>CONFIG</c> se apaga sin consecuencias. <c>INFO</c> no: sin él, StackExchange.Redis detecta la réplica con un
+    /// <c>SET &lt;guid&gt; "" PX 1</c> sobre una clave fuera de <c>~qep:*</c>, y el ruido sólo cambia de forma. Por eso el
+    /// permiso. Lo amarra <c>ValkeyAclTests.TheClientSendsNothingTheAclDenies</c>.
     /// </summary>
     internal static ConfigurationOptions BuildOptions(string connectionString)
     {
@@ -47,6 +55,7 @@ internal sealed partial class ValkeyConnection(
         options.AbortOnConnectFail = false;
         options.ConfigurationChannel = string.Empty;
         options.TieBreaker = string.Empty;
+        options.CommandMap = CommandMap.Create(new HashSet<string> { "CONFIG" }, available: false);
         return options;
     }
 

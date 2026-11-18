@@ -21,7 +21,10 @@ internal sealed partial class ShopifyAdminGateway(
 {
     public const string HttpClientName = "integrations.shopify-admin";
 
-    internal const string ShopQuery = "{ shop { id name myshopifyDomain } }";
+    // Spec 2026-11-17 §2: el perfil de la tienda viaja en la misma consulta.
+    internal const string ShopQuery =
+        "{ shop { id name myshopifyDomain email contactEmail currencyCode ianaTimezone taxesIncluded "
+        + "billingAddress { company address1 address2 city province provinceCode zip countryCodeV2 phone } } }";
 
     internal const string WebhooksQuery = "{ webhookSubscriptions(first: 50) { edges { node { id topic uri } } } }";
 
@@ -151,8 +154,50 @@ internal sealed partial class ShopifyAdminGateway(
             throw Invalid("shop", "shop_id_unusable");
         }
 
-        return new ShopifyShopInfo(id, ReadString(node, "name") ?? string.Empty, ReadString(node, "myshopifyDomain") ?? shop);
+        return new ShopifyShopInfo(
+            id, ReadString(node, "name") ?? string.Empty, ReadString(node, "myshopifyDomain") ?? shop, ReadProfile(node));
     }
+
+    /// <summary>El perfil de la tienda, campo por campo: uno ausente o de otro tipo es <c>null</c>. Sin ningún campo, no hay
+    /// perfil. Los textos sólo se aceptan como string: un número en <c>phone</c> no es un teléfono que valga guardar.</summary>
+    private static ShopifyShopProfile? ReadProfile(JsonElement shop)
+    {
+        ShopifyShopAddress? address = null;
+        if (shop.TryGetProperty("billingAddress", out var billing) && billing.ValueKind == JsonValueKind.Object)
+        {
+            address = new ShopifyShopAddress(
+                ReadText(billing, "company"),
+                ReadText(billing, "address1"),
+                ReadText(billing, "address2"),
+                ReadText(billing, "city"),
+                ReadText(billing, "province"),
+                ReadText(billing, "provinceCode"),
+                ReadText(billing, "zip"),
+                ReadText(billing, "countryCodeV2"),
+                ReadText(billing, "phone"));
+            if (address == new ShopifyShopAddress(null, null, null, null, null, null, null, null, null))
+            {
+                address = null;
+            }
+        }
+
+        bool? taxesIncluded = shop.TryGetProperty("taxesIncluded", out var taxes) && taxes.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? taxes.GetBoolean()
+            : null;
+        var profile = new ShopifyShopProfile(
+            ReadText(shop, "email"),
+            ReadText(shop, "contactEmail"),
+            ReadText(shop, "currencyCode"),
+            ReadText(shop, "ianaTimezone"),
+            taxesIncluded,
+            address);
+        return profile == new ShopifyShopProfile(null, null, null, null, null, null) ? null : profile;
+    }
+
+    private static string? ReadText(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() is { Length: > 0 } text ? text : null
+            : null;
 
     public async Task<IReadOnlyList<ShopifyWebhookSubscription>> ListWebhooksAsync(string shop, string token, CancellationToken cancellationToken)
     {

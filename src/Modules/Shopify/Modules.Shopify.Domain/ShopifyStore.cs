@@ -67,6 +67,22 @@ public sealed class ShopifyStore
     /// <summary>§5.3: una corrida no se solapa con otra de la misma tienda.</summary>
     public DateTimeOffset? ReconcileLeaseUntil { get; private set; }
 
+    /// <summary>Spec 2026-11-17 §5.2: cuándo terminó <c>Done</c> la última importación de productos. Desde ahí los webhooks
+    /// <c>products/*</c> crean, actualizan y desactivan (§6); sin ella se ignoran.</summary>
+    public DateTimeOffset? ProductsSyncedAt { get; private set; }
+
+    /// <summary>Spec 2026-11-17 (onboarding) §7 H7: la última medición de la cobertura del catálogo; nula si nunca se midió.</summary>
+    public ShopifyProductsCoverage? ProductsCoverage { get; private set; }
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4.2: cuándo alguien eligió «Seguir así» con la cobertura que había.</summary>
+    public DateTimeOffset? ProductsCoverageAcceptedAt { get; private set; }
+
+    /// <summary>Spec 2026-11-17 (onboarding) §4.2: cuándo corrió la última sincronización desde el asistente.</summary>
+    public DateTimeOffset? SetupHistoryRanAt { get; private set; }
+
+    /// <summary>El resumen de esa corrida, para el paso <c>history</c> del asistente.</summary>
+    public ShopifySetupHistorySummary? SetupHistorySummary { get; private set; }
+
     /// <summary>Concurrencia optimista con <c>If-Match</c> en el <c>PUT</c>.</summary>
     public long Version { get; private set; }
 
@@ -86,6 +102,47 @@ public sealed class ShopifyStore
         }
 
         ShopDomain = normalized;
+    }
+
+    /// <summary>Anota que el catálogo de la tienda ya se trajo. No sube <see cref="Version"/>: no es configuración del asesor, y
+    /// un 412 por esto le rompería el formulario abierto.</summary>
+    public void MarkProductsSynced(DateTimeOffset now) => ProductsSyncedAt = now;
+
+    // Los tres que siguen son estado del asistente, no configuración del asesor: si subieran Version, el formulario abierto de
+    // la tienda recibiría 412 al guardar (spec 2026-11-17 onboarding, Review Focus 2 del plan).
+
+    /// <summary>Guarda la última medición de la cobertura. No sube <see cref="Version"/>.</summary>
+    public void RecordProductsCoverage(ShopifyProductsCoverage coverage)
+    {
+        ArgumentNullException.ThrowIfNull(coverage);
+        ProductsCoverage = coverage;
+    }
+
+    /// <summary>«Seguir así»: acepta la cobertura que hay. Idempotente: conserva el primer instante. No sube
+    /// <see cref="Version"/>.</summary>
+    public void AcceptProductsCoverage(DateTimeOffset now) => ProductsCoverageAcceptedAt ??= now;
+
+    /// <summary>Guarda el resumen de la sincronización corrida desde el asistente y su hora. No sube <see cref="Version"/>.</summary>
+    public void RecordSetupHistory(ShopifySetupHistorySummary summary)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        SetupHistorySummary = summary;
+        SetupHistoryRanAt = summary.RanAt;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 (onboarding) §4.2: asigna la empresa (y la cuenta, si viene) sin tocar el resto de la configuración: el
+    /// asesor y los compradores se guardan después, con el <c>PUT</c>. Banco y número van los dos o ninguno
+    /// (<see cref="ArgumentException"/> si viene uno solo). Sube <see cref="Version"/>: es configuración, y el <c>PUT</c> que
+    /// venga después tiene que traer la versión nueva.
+    /// </summary>
+    public void AssignBilling(ShopifyBillingAccount billing, Guid updatedBy, DateTimeOffset now)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(updatedBy, Guid.Empty);
+        Billing = ValidatedBilling(billing);
+        UpdatedBy = updatedBy;
+        UpdatedAt = now;
+        Version++;
     }
 
     /// <summary>
@@ -147,6 +204,8 @@ public sealed class ShopifyStore
         Version++;
     }
 
+    /// <summary>Con asesor y con <see cref="Billing"/>, que siempre lleva la empresa aunque no tenga cuenta bancaria (spec
+    /// 2026-11-17 §4.4).</summary>
     public bool IsConfigured => AdvisorMembershipId is not null && Billing is not null;
 
     /// <summary>La fila vacía. <paramref name="linkedAt"/> es el momento del enlace: la conciliación arranca ahí y no trae
@@ -165,7 +224,7 @@ public sealed class ShopifyStore
         };
     }
 
-    private static string Required(string value, int maxLength, string parameterName)
+    private static string Required(string? value, int maxLength, string parameterName)
     {
         var trimmed = value?.Trim();
         return string.IsNullOrEmpty(trimmed) || trimmed.Length > maxLength
@@ -197,6 +256,13 @@ public sealed class ShopifyStore
             throw new ArgumentException("The billing currency must be a three-letter ISO 4217 code.", nameof(billing));
         }
 
+        // Banco y número en blanco los dos es la empresa sin cuenta (spec 2026-11-17 §4.4): se guardan en null. Uno solo es un
+        // dato a medias, y el validador del PUT ya lo atajó.
+        if (string.IsNullOrWhiteSpace(billing.BankName) && string.IsNullOrWhiteSpace(billing.AccountNumber))
+        {
+            return billing with { BankName = null, AccountNumber = null, Currency = currency.ToUpperInvariant() };
+        }
+
         return billing with
         {
             BankName = Required(billing.BankName, ShopifyBillingAccount.BankNameMaxLength, nameof(billing)),
@@ -207,8 +273,9 @@ public sealed class ShopifyStore
 }
 
 /// <summary>La empresa y la cuenta a la que se cobran los pedidos de la tienda; copia, como <c>QuotationBillingAccount</c>, con sus
-/// mismos anchos (los de <c>companies.company_bank_accounts</c>).</summary>
-public sealed record ShopifyBillingAccount(Guid CompanyId, string BankName, string AccountNumber, string Currency)
+/// mismos anchos (los de <c>companies.company_bank_accounts</c>). Banco y número en null los dos es una empresa sin cuenta (spec
+/// 2026-11-17 §4.4): la moneda sigue siendo la de la tienda, pero el importador ya no la compara con la del pedido.</summary>
+public sealed record ShopifyBillingAccount(Guid CompanyId, string? BankName, string? AccountNumber, string Currency)
 {
     public const int BankNameMaxLength = 120;
     public const int AccountNumberMaxLength = 32;

@@ -65,6 +65,15 @@ internal sealed class ShopifyProductLookup(IProductRepository products, ITaxRate
         return found;
     }
 
+    public Task<IReadOnlySet<string>> FindExistingCodesAsync(
+        Guid tenantId, IReadOnlyCollection<string> codes, CancellationToken cancellationToken) =>
+        codes.Count == 0
+            ? Task.FromResult<IReadOnlySet<string>>(new HashSet<string>(StringComparer.Ordinal))
+            : products.FindExistingCodesAsync(tenantId, codes, cancellationToken);
+
+    public Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        products.CountActiveAsync(tenantId, cancellationToken);
+
     // Sin tasa, o con una inexistente, cotiza con 0 % (QuotationProductPricingResolver); una lectura por tasa distinta.
     private async Task<int> PercentageOfAsync(
         Guid tenantId, Product product, Dictionary<TaxRateId, int> cache, CancellationToken cancellationToken)

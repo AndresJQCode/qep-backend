@@ -41,7 +41,8 @@ public sealed class QueueSamplerWorkerTests(ValkeyPlainServer server) : IClassFi
         var factory = provider.GetRequiredService<IMeterFactory>();
         var gauges = new QueueGauges(factory, new FixedNowClock());
         var worker = new QueueSamplerWorker(
-            provider.GetRequiredService<IServiceScopeFactory>(), gauges, LeaderHarness.WithValkeyOff(), NullLogger<QueueSamplerWorker>.Instance);
+            provider.GetRequiredService<IServiceScopeFactory>(), gauges, new WebhookArrivalGauge(factory, new FixedNowClock()),
+            LeaderHarness.WithValkeyOff(), NullLogger<QueueSamplerWorker>.Instance);
 
         var queues = new HashSet<string>();
         using var listener = new MeterListener();
@@ -141,9 +142,56 @@ public sealed class QueueSamplerWorkerTests(ValkeyPlainServer server) : IClassFi
             .AddMetrics()
             .AddScoped<IQueueMetricsSource>(_ => source)
             .BuildServiceProvider();
-        var gauges = new QueueGauges(provider.GetRequiredService<IMeterFactory>(), new FixedNowClock());
+        var factory = provider.GetRequiredService<IMeterFactory>();
+        var gauges = new QueueGauges(factory, new FixedNowClock());
         return new QueueSamplerWorker(
-            provider.GetRequiredService<IServiceScopeFactory>(), gauges, leadership, NullLogger<QueueSamplerWorker>.Instance);
+            provider.GetRequiredService<IServiceScopeFactory>(), gauges, new WebhookArrivalGauge(factory, new FixedNowClock()), leadership,
+            NullLogger<QueueSamplerWorker>.Instance);
+    }
+
+    // Spec 2026-11-16: la hora del último webhook sale en la misma vuelta que las colas.
+    [Fact]
+    public async Task TheLastWebhookIsRecordedInTheSameRound()
+    {
+        var receivedAt = new DateTimeOffset(2026, 11, 16, 15, 0, 0, TimeSpan.Zero);
+        using var provider = new ServiceCollection()
+            .AddMetrics()
+            .AddScoped<IQueueMetricsSource>(_ => new FakeSource(null))
+            .AddScoped<IWebhookArrivalSource>(_ => new FixedArrivals(receivedAt))
+            .BuildServiceProvider();
+        var factory = provider.GetRequiredService<IMeterFactory>();
+        var worker = new QueueSamplerWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(), new QueueGauges(factory, new FixedNowClock()),
+            new WebhookArrivalGauge(factory, new FixedNowClock()), LeaderHarness.WithValkeyOff(), NullLogger<QueueSamplerWorker>.Instance);
+
+        var values = new List<double>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (ReferenceEquals(instrument.Meter.Scope, factory) && instrument.Name == "qep.webhook.last_received")
+            {
+                l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, value, _, _) =>
+        {
+            lock (values)
+            {
+                values.Add(value);
+            }
+        });
+        listener.Start();
+
+        await worker.SampleAsync(TestContext.Current.CancellationToken);
+        listener.RecordObservableInstruments();
+
+        Assert.Equal(receivedAt.ToUnixTimeSeconds(), Assert.Single(values));
+    }
+
+    private sealed class FixedArrivals(DateTimeOffset receivedAt) : IWebhookArrivalSource
+    {
+        public Task<IReadOnlyDictionary<string, DateTimeOffset>> ReadLastReceivedAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<string, DateTimeOffset>>(new Dictionary<string, DateTimeOffset> { ["whatsapp"] = receivedAt });
     }
 
     private sealed class CountingSource : IQueueMetricsSource

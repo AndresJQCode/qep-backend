@@ -208,6 +208,70 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
                 .ToListAsync(cancellationToken);
     }
 
+    // Spec 2026-11-17 (onboarding), plan D11. Dos lecturas: los conteos por motivo y la muestra de SKU de product_unmatched. El
+    // jsonb_typeof protege de un wait_detail sin el arreglo (jsonb_array_elements_text falla con otro tipo).
+    public async Task<IReadOnlyList<ShopifyWaitingGroup>> SummarizeWaitingAsync(
+        Guid tenantId, Guid connectionId, IReadOnlyCollection<long>? shopifyOrderIds, CancellationToken cancellationToken)
+    {
+        var waiting = nameof(ShopifyImportState.Waiting);
+        var all = shopifyOrderIds is null;
+        var ids = shopifyOrderIds?.ToArray() ?? [];
+        if (!all && ids.Length == 0)
+        {
+            return [];
+        }
+
+        var counts = await dbContext.Database.SqlQuery<WaitingRow>(
+            $"""
+            SELECT wait_reason AS "Reason", count(*)::int AS "Count"
+            FROM shopify.orders
+            WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND import_state = {waiting}
+              AND wait_reason IS NOT NULL
+              AND ({all} OR shopify_order_id = ANY({ids}))
+            GROUP BY wait_reason
+            """).ToListAsync(cancellationToken);
+        if (counts.Count == 0)
+        {
+            return [];
+        }
+
+        var unmatched = ShopifyWaitReasons.ProductUnmatched;
+        IReadOnlyList<string> sample = counts.Any(row => row.Reason == unmatched)
+            ? await dbContext.Database.SqlQuery<string>(
+                $"""
+                SELECT DISTINCT skus.sku AS "Value"
+                FROM shopify.orders
+                CROSS JOIN LATERAL jsonb_array_elements_text(
+                  CASE WHEN jsonb_typeof(wait_detail -> 'skus') = 'array' THEN wait_detail -> 'skus' ELSE '[]'::jsonb END) AS skus(sku)
+                WHERE tenant_id = {tenantId} AND connection_id = {connectionId} AND import_state = {waiting}
+                  AND wait_reason = {unmatched}
+                  AND ({all} OR shopify_order_id = ANY({ids}))
+                  AND skus.sku IS NOT NULL AND skus.sku <> ''
+                ORDER BY skus.sku
+                LIMIT 5
+                """).ToListAsync(cancellationToken)
+            : [];
+
+        return counts
+            .OrderByDescending(row => row.Count)
+            .ThenBy(row => row.Reason, StringComparer.Ordinal)
+            .Select(row => new ShopifyWaitingGroup(row.Reason, row.Count, row.Reason == unmatched ? sample : []))
+            .ToArray();
+    }
+
+    public Task<int> CountImportedSinceAsync(Guid tenantId, Guid connectionId, DateTimeOffset since, CancellationToken cancellationToken) =>
+        dbContext.Orders.AsNoTracking().CountAsync(
+            row => row.TenantId == tenantId && row.ConnectionId == connectionId && row.ImportedAt >= since,
+            cancellationToken);
+
+    // El resultado de SqlQuery: EF lo llena por nombre de columna.
+    private sealed class WaitingRow
+    {
+        public string Reason { get; init; } = string.Empty;
+
+        public int Count { get; init; }
+    }
+
     // El resultado de SqlQuery: EF lo llena por nombre de columna.
     private sealed class CountsRow
     {

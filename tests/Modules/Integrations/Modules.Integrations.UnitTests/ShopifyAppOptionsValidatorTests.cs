@@ -16,7 +16,12 @@ public sealed class ShopifyAppOptionsValidatorTests
     // Spec 2026-11-14: la corrección del asesor escribe en Shopify (orderUpdate), que pide write_orders.
     [Fact]
     public void DefaultScopesAskForWriteOrders() =>
-        Assert.Equal("read_orders,write_orders,read_customers", ShopifyAppOptions.DefaultScopes);
+        Assert.Contains("write_orders", ShopifyAppOptions.DefaultScopes.Split(','));
+
+    // Spec 2026-11-17 §5.1: la importación de productos y los products/* piden read_products desde la instalación.
+    [Fact]
+    public void TheDefaultScopesIncludeReadProducts() =>
+        Assert.Equal("read_orders,write_orders,read_customers,read_products", ShopifyAppOptions.DefaultScopes);
 
     private static ShopifyAppOptions Complete() => new()
     {
@@ -166,7 +171,7 @@ public sealed class ShopifyAppOptionsValidatorTests
         Assert.Null(settings.ClientSecret);
         Assert.Null(settings.WebhookCallbackUrl);
         Assert.Equal("2026-10", settings.ApiVersion);
-        Assert.Equal(["read_orders", "write_orders", "read_customers"], settings.Scopes);
+        Assert.Equal(["read_orders", "write_orders", "read_customers", "read_products"], settings.Scopes);
         Assert.False(settings.IsRedirectAllowed(new Uri("http://localhost:3002/shopify/callback")));
     }
 }

@@ -247,7 +247,8 @@ public sealed class ShopifyEditPlanner(
         ShopifyGroupDiff diff,
         CancellationToken cancellationToken)
     {
-        var result = await shipping.ResolveAsync(row.TenantId, incoming, order.Currency, cancellationToken);
+        // Spec 2026-11-17 R7: con el IVA congelado del pedido, no con el de la empresa hoy.
+        var result = await shipping.ResolveAsync(row.TenantId, incoming, order.Currency, order.ChargesVat, cancellationToken);
         if (result.WaitReason is { } reason)
         {
             return (Conflict(diff, reason), null);
@@ -277,7 +278,7 @@ public sealed class ShopifyEditPlanner(
     {
         // Plan D5: las líneas de QEP no guardan el id de la línea de Shopify, así que se vuelven a emparejar todas.
         var (resolved, unmatchedSkus, unmatchedTitles) = await lines.ResolveAsync(
-            row.TenantId, row.ConnectionId, incoming, order.Currency, cancellationToken);
+            row.TenantId, row.ConnectionId, incoming, order.Currency, order.ChargesVat, cancellationToken);
         if (unmatchedSkus.Count > 0 || unmatchedTitles.Count > 0)
         {
             return (Apply(diff), null, ShopifyEditReasons.ProductUnmatched);

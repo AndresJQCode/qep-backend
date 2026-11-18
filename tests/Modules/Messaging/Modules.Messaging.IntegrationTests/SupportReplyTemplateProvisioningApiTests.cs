@@ -112,7 +112,7 @@ public sealed class SupportReplyTemplateProvisioningApiTests
             dbContext.MessageTemplates.Add(MessageTemplate.Pending(
                 f.Tenant.TenantId, f.ConnectionId, "500", OrderTemplateDefinition.Name, OrderTemplateDefinition.Language, OrderTemplateDefinition.Category,
                 TemplateComponentsBuilder.Named, MessageTemplateStatuses.Approved,
-                TemplateComponentsBuilder.Components(OrderTemplateDefinition.Draft(OrderTemplateDefinition.Name, OrderTemplateDefinition.BaseBody), "4::handle").ToJsonString(),
+                TemplateComponentsBuilder.Components(OrderTemplateDefinition.Draft(OrderTemplateDefinition.Name, OrderTemplateDefinition.BaseBody), TemplateMediaHeader.Document("4::handle")).ToJsonString(),
                 MessageTemplateKind.Order, null, DateTimeOffset.UtcNow));
             await dbContext.SaveChangesAsync(Ct);
         }

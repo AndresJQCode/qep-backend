@@ -672,4 +672,33 @@ public sealed class QuotationsDbContextMappingTests
 
         Assert.False(context.Database.HasPendingModelChanges());
     }
+
+    /// <summary>
+    /// Revisión del spec 2026-11-17: <c>quotations.billing_company_charges_vat</c> es nullable y un pod sin la columna la deja en
+    /// <c>NULL</c> en una cotización con empresa. La propiedad mapeada es <c>bool?</c> y su setter —el que usa EF al
+    /// materializar— lee el <c>NULL</c> como «cobra IVA»; un <c>bool</c> mapeado directo lanzaba.
+    /// </summary>
+    [Fact]
+    public void TheQuotationChargesVatColumnReadsNullAsTrue()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var billing = context.Model.FindEntityType(typeof(Quotation))!
+            .FindNavigation(nameof(Quotation.BillingAccount))!.TargetEntityType;
+        var property = billing.GetProperties().Single(p => p.GetColumnName() == "billing_company_charges_vat");
+        var account = new QuotationBillingAccount
+        {
+            CompanyId = Guid.NewGuid(),
+            BankName = null,
+            AccountNumber = null,
+            Currency = "COP",
+            ChargesVat = false,
+        };
+
+        Assert.Equal(typeof(bool?), property.ClrType);
+        Assert.True(property.IsNullable);
+        Assert.Equal(false, property.GetGetter().GetClrValue(account));
+        property.PropertyInfo!.SetValue(account, null);
+
+        Assert.True(account.ChargesVat);
+    }
 }

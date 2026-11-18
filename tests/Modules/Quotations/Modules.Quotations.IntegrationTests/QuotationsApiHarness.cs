@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -56,6 +57,45 @@ internal static class QuotationsApiHarness
     public static async Task<OrderResponse?> ReadConvertedOrderAsync(
         this HttpContent content, CancellationToken cancellationToken) =>
         (await content.ReadFromJsonAsync<OrderDetailResponse>(cancellationToken))?.Order;
+
+    /// <summary>
+    /// Las sentencias SQL de un solo request, en el orden en que terminaron. El <c>ActivityListener</c> es global al
+    /// proceso, las clases de prueba corren en paralelo y en el mismo host hay workers leyendo la base: lo único que
+    /// separa el request de todo eso es su traza, que entra por el header <c>traceparent</c> y que comparten todos sus
+    /// spans. Filtrar por base o por host contaría también a los workers. Es lo mismo que ve Tempo en producción.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> StatementsOfAsync(HttpClient client, HttpRequestMessage request)
+    {
+        var traceId = ActivityTraceId.CreateRandom();
+        var statements = new ConcurrentQueue<string>();
+
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name is "Npgsql" or "Microsoft.AspNetCore",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+                options.TraceId == traceId
+                    ? ActivitySamplingResult.AllDataAndRecorded
+                    : ActivitySamplingResult.None,
+            ActivityStopped = activity =>
+            {
+                if (activity.Source.Name == "Npgsql" && activity.TraceId == traceId)
+                {
+                    statements.Enqueue(activity.GetTagItem("db.query.text")?.ToString() ?? activity.DisplayName);
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        request.Headers.Add("traceparent", $"00-{traceId}-{ActivitySpanId.CreateRandom()}-01");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        // Sin esto, una traza que dejara de propagarse daría 0 sentencias y toda comparación pasaría sin medir nada.
+        Assert.NotEmpty(statements);
+
+        return statements.ToArray();
+    }
 
     /// <summary>Spec 2026-11-16: mueve la fecha de un pedido abierto con el guardado de «Editar pedido», con las mismas
     /// líneas y la versión que tiene ahora. Devuelve el detalle guardado.</summary>
@@ -598,6 +638,21 @@ internal static class QuotationsApiHarness
             INSERT INTO companies.company_withholding_tax_rates (company_id, tax_rate_id, tenant_id)
             VALUES ({companyId}, {taxRateId}, {tenantId})
             """,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Deja al tenant sin tasa de IVA del envío. Desde el spec 2026-11-17 §5.3, crear una empresa colombiana con IVA por la
+    /// API (<see cref="CreateCompanyWithBankAccountAsync"/>, <see cref="CreateSentQuotationAsync"/>) fija la de 19 %: la
+    /// prueba que necesita el tenant sin ella la borra después de crear la empresa. Por SQL, para no pedir el permiso de
+    /// ajustes del tenant.
+    /// </summary>
+    public static async Task ClearFreightTaxRateAsync(QepApiFactory factory, Guid tenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"UPDATE quotations.tenant_quotation_settings SET freight_tax_rate_id = NULL WHERE tenant_id = {tenantId}",
             TestContext.Current.CancellationToken);
     }
 

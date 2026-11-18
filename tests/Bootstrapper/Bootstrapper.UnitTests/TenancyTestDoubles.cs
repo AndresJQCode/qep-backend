@@ -80,8 +80,29 @@ internal sealed class InMemoryMembershipRepository(params Membership[] membershi
     public void Remove(Membership membership) => throw new NotSupportedException();
 }
 
+/// <summary>Los correos que siembra la prueba. Cuenta las lecturas de a uno y las de lote por separado, para que una prueba
+/// afirme que un adaptador de lista resuelve los correos en un solo viaje.</summary>
 internal sealed class StubUserDirectory(IReadOnlyDictionary<Guid, string> emails) : IUserDirectory
 {
-    public Task<string?> GetEmailAsync(Guid userId, CancellationToken cancellationToken) =>
-        Task.FromResult(emails.TryGetValue(userId, out var email) ? email : null);
+    public int GetEmailCalls { get; private set; }
+
+    public int GetEmailsCalls { get; private set; }
+
+    public Task<string?> GetEmailAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        GetEmailCalls++;
+        return Task.FromResult(emails.TryGetValue(userId, out var email) ? email : null);
+    }
+
+    // Propio y no el de la interfaz, que itera llamando GetEmailAsync: así el contador de a uno no cuenta las del lote.
+    public Task<IReadOnlyDictionary<Guid, string>> GetEmailsAsync(
+        IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken)
+    {
+        GetEmailsCalls++;
+        IReadOnlyDictionary<Guid, string> found = userIds
+            .Distinct()
+            .Where(emails.ContainsKey)
+            .ToDictionary(userId => userId, userId => emails[userId]);
+        return Task.FromResult(found);
+    }
 }

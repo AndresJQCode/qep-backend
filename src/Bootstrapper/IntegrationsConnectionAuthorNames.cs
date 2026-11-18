@@ -24,11 +24,17 @@ internal sealed class IntegrationsConnectionAuthorNames(IMembershipRepository me
 
         var scoped = await memberships.ListByIdsAsync(
             new TenantId(tenantId), memberIds.Select(id => new MembershipId(id)).ToArray(), cancellationToken);
+        // Un solo viaje a Identity por los correos de quienes no tienen nombre, como MessagingMemberNames.
+        var emails = await users.GetEmailsAsync(
+            scoped.Where(membership => string.IsNullOrWhiteSpace(membership.DisplayName))
+                .Select(membership => membership.UserId)
+                .ToList(),
+            cancellationToken);
         foreach (var membership in scoped)
         {
             var name = !string.IsNullOrWhiteSpace(membership.DisplayName)
                 ? membership.DisplayName
-                : await users.GetEmailAsync(membership.UserId, cancellationToken);
+                : emails.GetValueOrDefault(membership.UserId);
             if (!string.IsNullOrWhiteSpace(name))
             {
                 names[membership.Id.Value] = name;

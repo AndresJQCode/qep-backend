@@ -17,6 +17,9 @@ public sealed record TemplateButtonDto(string Type, string Text, string? Url, st
 /// <c>Positional</c>. Spec 2026-11-13: <c>HeaderMedia</c> es el formato del encabezado multimedia (<see cref="TemplateHeaderMedia"/>) y
 /// <c>SendableWithHeaderMedia</c> dice si la plantilla se podría enviar con ese encabezado (sólo la API externa lo manda). No cambian
 /// <c>Sendable</c> ni <c>UnsupportedReason</c>.
+/// <para>Spec 2026-11-17 (BFF): <c>HeaderImageUrl</c> es la imagen fija que QEP guardó al crear la plantilla. Viaja para que el compositor
+/// la muestre de vista previa; el frontend nunca la manda, porque el chat, «Nueva conversación» y las campañas la ponen solos al enviar.
+/// Con ella una plantilla de encabezado <c>IMAGE</c> es <c>Sendable</c>. <c>null</c> = sin imagen guardada.</para>
 /// </summary>
 public sealed record MessageTemplateDto(
     string Name,
@@ -31,7 +34,8 @@ public sealed record MessageTemplateDto(
     bool Sendable,
     string? UnsupportedReason,
     string? HeaderMedia = null,
-    bool SendableWithHeaderMedia = false);
+    bool SendableWithHeaderMedia = false,
+    string? HeaderImageUrl = null);
 
 /// <summary>Lo que <see cref="TemplateDetailsJson.Serialize"/> guardó de un envío de plantilla: nombre, idioma y valores. Spec 2026-10-30 §6.3:
 /// un reintento con el mismo <c>clientId</c> compara contra esto. Spec 2026-11-13: <c>Header</c> es el encabezado por enlace, si lo hubo.</summary>
@@ -286,8 +290,12 @@ public static partial class TemplateCatalog
     /// Spec 2026-10-14 D-T8: una fila del espejo, normalizada igual que un elemento del listado de Meta. Se arma el objeto que Meta
     /// devolvería (nombre, idioma, categoría, formato y <c>components</c>) y se pasa por el mismo <see cref="Parse"/>: una sola copia de
     /// las reglas. Unos <c>components</c> ilegibles cuentan como vacíos.
+    /// <para>Spec 2026-11-17: con <paramref name="headerImageUrl"/> (la imagen fija guardada en la fila), una plantilla cuyo único
+    /// impedimento es un encabezado <c>IMAGE</c> pasa a ser enviable y lleva la URL. Un video, un documento o cualquier otro motivo no se
+    /// destraban: la URL se ignora.</para>
     /// </summary>
-    public static MessageTemplateDto FromStored(string name, string language, string category, string parameterFormat, string componentsJson)
+    public static MessageTemplateDto FromStored(
+        string name, string language, string category, string parameterFormat, string componentsJson, string? headerImageUrl = null)
     {
         ArgumentNullException.ThrowIfNull(componentsJson);
         var raw = new JsonObject
@@ -309,7 +317,18 @@ public static partial class TemplateCatalog
 
         raw["components"] = components is JsonArray array ? array : new JsonArray();
         using var document = JsonDocument.Parse(raw.ToJsonString());
-        return Parse(document.RootElement, name, language);
+        var parsed = Parse(document.RootElement, name, language);
+        return headerImageUrl is not null && parsed is { HeaderMedia: TemplateHeaderMedia.Image, SendableWithHeaderMedia: true }
+            ? parsed with { Sendable = true, UnsupportedReason = null, HeaderImageUrl = headerImageUrl }
+            : parsed;
+    }
+
+    /// <summary>Spec 2026-11-17: el encabezado que el chat, «Nueva conversación» y las campañas mandan solos: la imagen fija guardada, por
+    /// enlace. <c>null</c> sin imagen. La API externa no lo usa: manda el enlace de quien llama.</summary>
+    public static TemplateHeader? StoredHeaderOf(MessageTemplateDto template)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        return template.HeaderImageUrl is { } url ? TemplateHeader.ByLink(TemplateHeaderMedia.ToMetaType(TemplateHeaderMedia.Image), url, null) : null;
     }
 
     /// <summary>

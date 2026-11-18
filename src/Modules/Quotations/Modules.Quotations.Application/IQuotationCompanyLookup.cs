@@ -36,7 +36,9 @@ public sealed record QuotationCompanyRef(
     IReadOnlyCollection<QuotationCompanyAccountRef> BankAccounts,
     /// <summary>Municipio de la empresa (Geography). La cotización y el pedido lo congelan con la cuenta: es el
     /// municipio de la operación por defecto (spec ReteICA por empresa §7.5, A6).</summary>
-    Guid? CityId = null);
+    Guid? CityId = null,
+    /// <summary>Si la empresa cobra IVA (spec 2026-11-17 §5.1). La cotización y el pedido lo congelan con la cuenta.</summary>
+    bool ChargesVat = true);
 
 public sealed record QuotationCompanyAccountRef(
     string BankName,

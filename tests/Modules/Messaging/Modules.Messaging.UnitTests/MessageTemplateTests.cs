@@ -196,4 +196,68 @@ public sealed class MessageTemplateTests
     [InlineData("qep_pedidos", false)]
     [InlineData("pedido", false)]
     public void TheOrderNameAndItsPrefixAreReserved(string name, bool reserved) => Assert.Equal(reserved, MessageTemplateName.IsReserved(name));
+    // Spec 2026-11-17: la imagen fija del encabezado es dato de QEP, no de Meta.
+    private const string ImageUrl = "https://public.test/imagen.png";
+
+    [Fact]
+    public void AttachHeaderImageStoresIdAndUrl()
+    {
+        var template = Pending();
+        var fileId = Guid.CreateVersion7();
+        var later = Now.AddMinutes(1);
+
+        template.AttachHeaderImage(fileId, ImageUrl, later);
+
+        Assert.Equal((fileId, ImageUrl, later), (template.HeaderImageFileId, template.HeaderImageUrl, template.UpdatedAt));
+    }
+
+    [Fact]
+    public void ATemplateStartsWithoutAHeaderImage()
+    {
+        Assert.Equal((null, null), (Pending().HeaderImageFileId, Pending().HeaderImageUrl));
+        Assert.Equal((null, null), (External().HeaderImageFileId, External().HeaderImageUrl));
+    }
+
+    [Fact]
+    public void AttachHeaderImageRejectsAnEmptyIdABlankUrlAndATooLongUrl()
+    {
+        Assert.Throws<ArgumentException>(() => Pending().AttachHeaderImage(Guid.Empty, ImageUrl, Now));
+        Assert.Throws<ArgumentException>(() => Pending().AttachHeaderImage(Guid.CreateVersion7(), " ", Now));
+        Assert.Throws<ArgumentException>(() =>
+            Pending().AttachHeaderImage(Guid.CreateVersion7(), "https://x.test/" + new string('a', MessageTemplate.HeaderImageUrlMaxLength), Now));
+    }
+
+    [Fact]
+    public void AHeaderImageIsAttachedOnlyOnce()
+    {
+        var template = Pending();
+        template.AttachHeaderImage(Guid.CreateVersion7(), ImageUrl, Now);
+
+        Assert.Throws<ArgumentException>(() => template.AttachHeaderImage(Guid.CreateVersion7(), "https://public.test/otra.png", Now));
+    }
+
+    // Review Focus 2: el refresco reescribe components, y el header_handle de Meta no es nuestra URL.
+    [Fact]
+    public void SyncFromKeepsTheHeaderImage()
+    {
+        var template = Pending();
+        var fileId = Guid.CreateVersion7();
+        template.AttachHeaderImage(fileId, ImageUrl, Now);
+
+        template.SyncFrom("APPROVED", null, "MARKETING", "NAMED", "[]", Now.AddHours(1));
+
+        Assert.Equal((fileId, ImageUrl), (template.HeaderImageFileId, template.HeaderImageUrl));
+    }
+
+    [Fact]
+    public void ApplyStatusKeepsTheHeaderImage()
+    {
+        var template = Pending();
+        var fileId = Guid.CreateVersion7();
+        template.AttachHeaderImage(fileId, ImageUrl, Now);
+
+        template.ApplyStatus("REJECTED", "INVALID_FORMAT", Now.AddHours(1));
+
+        Assert.Equal((fileId, ImageUrl), (template.HeaderImageFileId, template.HeaderImageUrl));
+    }
 }

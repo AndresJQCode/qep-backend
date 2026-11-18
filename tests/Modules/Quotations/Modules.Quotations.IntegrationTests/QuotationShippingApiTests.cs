@@ -251,6 +251,8 @@ public sealed class QuotationShippingApiTests(SharedQuotationsHost sharedHost) :
         var (tenantId, _, client) = await RegisterTenantAsync(factory, Permissions);
         using var _ = client;
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
+        // La empresa de la cotización enviada siembra la tasa del envío (spec 2026-11-17 §5.3): se quita para probar sin ella.
+        await ClearFreightTaxRateAsync(factory, tenantId);
 
         using var response = await PutAsync(
             client, tenantId, quotation, RequestFor(quotation, productId, new ShippingRequest(null, "Charged", 15000m, false)));

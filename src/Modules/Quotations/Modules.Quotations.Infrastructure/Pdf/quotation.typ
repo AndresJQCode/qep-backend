@@ -182,7 +182,9 @@
 #let proceso = if data.sections == none { none } else { data.sections.deliveryProcess }
 // El tenant decide por tipo de documento si salen las líneas de la cuenta para el pago (spec 2026-11-16 pdf-payment-account).
 #let mostrar-cuenta = data.sections != none and data.sections.showPaymentAccount
-#let cuenta-visible = data.billingAccount != none and mostrar-cuenta
+// Una empresa sin cuenta (spec 2026-11-17 §4.2) trae `bankName` en `none`: no hay a dónde pagar y el bloque no sale; el
+// membrete sigue.
+#let cuenta-visible = data.billingAccount != none and data.billingAccount.bankName != none and mostrar-cuenta
 
 // ---------------------------------------------------------------------------- página
 

@@ -1037,6 +1037,11 @@ máscara de permisos del módulo apagado ya los descarta antes, y las rutas púb
   rechaza, incompleto. El recibo trae el id y el número del pedido (el consecutivo de pedidos del tenant). El detalle
   (`GET /orders/{orderId}`) ya no trae `storeRequest`; `GET /orders?source=Store` los filtra. El consentimiento del visitante queda en
   `store.order_consents`, una fila por pedido.
+- **Moneda y empresa (spec 2026-11-17 §4.3):** cada moneda de la tienda elige la empresa emisora; la cuenta bancaria es opcional.
+  En `PUT /settings`, banco y número de cuenta van los dos o ninguno (`422 validation.failed` con un solo). Sin cuenta, el pedido sale
+  en la moneda de la tienda con `billingAccount.bankName` y `accountNumber` en `null`, y la tienda no muestra instrucciones de pago.
+  `GET /settings/billing-accounts` ofrece, además de cada cuenta, una fila por empresa activa sin cuenta (`bankName`, `accountNumber`
+  y `currency` en `null`). Si la empresa no cobra IVA, el checkout cobra el precio de lista (líneas al 0 %).
 
 ### Secretos
 
@@ -1704,9 +1709,12 @@ mismas reglas que la cotización. `quotationId` es opcional y `source` dice de d
 - `Manual`: `POST /orders` crea un pedido sin cotización desde la pantalla, con el mismo cuerpo que
   una cotización más los comprobantes (un `paymentStatus` en el cuerpo se ignora: el pago lo calcula
   el sistema); `POST /orders/preview` lo calcula sin
-  guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant (crear
-  sí la exige). Exige cliente completo con CUC, como convertir. Permiso
-  `quotations.order.manage`.
+  guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant. Crear
+  exige la **empresa** emisora, no la cuenta (spec 2026-11-17 §4.2): `billingAccount` con `companyId` y
+  `bankName`/`accountNumber` en `null` es una empresa sin cuenta, y el pedido sale en la moneda por
+  defecto del tenant (el `currency` de ese cuerpo se ignora; elegir una cuenta es la forma de cambiarla).
+  Banco y número van los dos o ninguno. Sin empresa sigue siendo `order.billing.account_required`.
+  Exige cliente completo con CUC, como convertir. Permiso `quotations.order.manage`.
 - Integraciones (`Shopify`): sin sesión HTTP, por `IExternalOrderWriter`; acepta un cliente
   incompleto y lleva `externalReference` (`#1001`).
 
@@ -1715,6 +1723,31 @@ Todos nacen `Open` y publican `quotations.order.created.v1` con `source` y `quot
 del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?source=`), el
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
+
+#### Empresa sin cuenta e IVA por empresa
+
+Spec `docs/superpowers/specs/2026-11-17-reglas-de-empresa-design.md`. Una empresa puede no tener cuentas
+bancarias (`bankAccounts: []`) y dice si cobra IVA (`chargesVat`; ausente en el `POST` es `true`, ausente
+en el `PUT` conserva el guardado).
+
+- **Cuenta de cobro.** Cotizaciones y pedidos exigen la empresa para enviar, convertir y crear; la cuenta
+  es opcional. Sin ella, `billingAccount.bankName` y `billingAccount.accountNumber` viajan en `null` en el
+  detalle, la lista y las vistas previas, el PDF omite el bloque de pago y las celdas de forma de pago del
+  Excel del ERP quedan vacías. «Pago: por definir» lo pinta el frontend.
+- **IVA.** El documento congela `billingAccount.chargesVat` de su empresa al elegirla
+  (`billing_company_charges_vat`). Con `false`, cada línea y el envío van al 0 %: el cliente paga el precio
+  de lista y el envío nunca pide la tasa del tenant (`freight_tax_rate_missing`). La línea guarda la tasa
+  del producto (`product_tax_percentage`) y la efectiva (`tax_percentage`), así que cambiar la empresa de un
+  documento editable rehace las dos sin volver a Catalog; volver a una empresa con IVA con el envío cobrado
+  sí pide la tasa del envío. Cambiar la empresa después no toca los documentos ya emitidos. En POS, la caja
+  congela `company_charges_vat` al abrirse.
+- **Tasas por defecto.** Crear una empresa colombiana que cobra IVA, o pasar una a «cobra IVA» en Colombia,
+  siembra «IVA 19 %», «IVA 5 %» y «Exento» si el tenant no tiene ninguna tasa de IVA activa de `CO`, y fija
+  la de 19 % como tasa del envío si estaba vacía (`CompanyDefaultTaxRates`, en Bootstrapper, bajo un
+  advisory lock por tenant). Salta la que ya exista con el mismo nombre y porcentaje, activa o no. Corre
+  después de guardar la empresa: si falla, queda un `Warning` y la empresa se guarda igual. Una prueba de
+  integración que necesite el tenant sin tasa del envío la borra después de crear la empresa
+  (`QuotationsApiHarness.ClearFreightTaxRateAsync`).
 
 #### Cuenta de comprador del pedido
 
@@ -2316,6 +2349,27 @@ que crea `IX_customers_tenant_identification_normalized` sobre `(tenant_id, <exp
 No es único. Si la expresión de la consulta y la del índice difieren en un carácter, Postgres no usa el índice y la consulta
 recorre la tabla; `TheMatchQueryUsesTheNormalizedIndex` lo amarra.
 
+### Clientes: importación por Excel y etiquetas
+
+`POST …/customers/import` (`customers.customer.import`) lee la primera hoja por **nombre de cabecera**, no por posición. Las trece
+columnas de `CustomerImportColumns.Ordered` son obligatorias en la cabecera (un archivo sin alguna se rechaza entero); después van
+las opcionales, que un archivo viejo puede no traer: «Empresa» y «Etiquetas». La plantilla (`GET …/customers/import/template`), el
+archivo de filas a corregir y la exportación escriben las mismas cabeceras, en el mismo orden, así que un exportado se corrige y se
+vuelve a subir.
+
+- **Qué exige una fila que crea.** `Nombre` y `Telefono` siempre. Documento (tipo y número) y Departamento + Ciudad sólo si la
+  política del tenant los pide al guardar (`CustomerFieldPolicy`); sin ellos el cliente nace `Incomplete`. `Direccion` es
+  opcional (spec 2026-11-17): sin calle el cliente nace sin domicilio y sin libreta, como en el formulario. Una lista de
+  contactos con sólo nombre y celular entra, con la política relajada.
+- **`Etiquetas`** (spec 2026-11-17): varios nombres separados por `;` (`Evento macel; VIP`). Cada nombre casa sin distinguir
+  mayúsculas con las etiquetas del tenant; la que no existe **se crea**, en gris y en tipo oración (`evento MACEL` →
+  `Evento macel`, `TagNameFormat.SentenceCase`); la que existe conserva su nombre. La celda **suma y nunca quita**: en una fila
+  de actualización (con `Cuc`) el cliente conserva las que tenía. Los errores son de fila, con `field: "Tags"` (el mismo `PropertyName` del validador):
+  `customers.import.row.tag_name_too_long` (más de 40 caracteres), `customers.import.row.tag_limit_per_customer` (el cliente
+  quedaría con más de 20) y `customers.import.row.tag_limit_reached` (crearla pasaría las 100 del tenant). Una fila con error de
+  etiquetas no se importa, y una etiqueta nueva que sólo esa fila pedía no se crea. La auditoría del import lleva `tagsCreated=N`
+  en su `resourceId`, y cada etiqueta creada publica `customers.tag.created` como la pantalla.
+
 ### Clientes: fusión
 
 Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se puede deshacer**.
@@ -2639,6 +2693,13 @@ ya pasa (`maxSurge: 1`); con dos, son dos pods viejos contra el esquema nuevo. P
    «Despliegue»). El PDB no lo impide: sólo frena desalojos, no un `scale` ni un `Recreate`.
 3. **El handoff de cada spec dice si su migración es aditiva.** Si no lo dice, asume que no.
 
+**Precedente no aditivo: reglas de empresa (spec 2026-11-17, R5).** Las cinco migraciones (`AddCompanyChargesVat`,
+`OptionalBillingAccountAndChargesVat`, `OptionalStoreBillingAccount`, `OptionalShopifyStoreBillingAccount`,
+`AddCashSessionCompanyChargesVat`) se despliegan **con corte**. Las columnas nuevas son aditivas, pero relajar a nullable el
+banco y el número de la cuenta de un pedido no lo es: un pod viejo materializa el pedido sin cuenta y el Excel del ERP
+revienta, recalcula con IVA un documento sin IVA y rechaza `bankAccounts: []`. El `Down` de la de Quotations falla si ya hay
+pedidos sin cuenta: no se corre después de emitir uno.
+
 **El candado de arranque.** Las 26 inicializaciones (migraciones de cada módulo y siembras) y `RunQepSeedAsync` corren
 dentro de `RunUnderStartupLockAsync` (`src/Api/Program.cs`, `src/Bootstrapper/Startup/StartupLock.cs`): una
 transacción sobre una conexión propia, directa a Postgres y sin pool, que toma `pg_advisory_xact_lock(20261113, 1)`.
@@ -2727,11 +2788,29 @@ la cola esté vacía.
 | `qep.queue.retrying`        | —      | `queue`   | De esas, las que ya se intentaron al menos una vez y reintentan                                       |
 | `qep.queue.oldest_age`      | s      | `queue`   | Edad de la pendiente más vieja que nadie ha intentado (`attempts = 0`)                                |
 | `qep.messaging.inbound.lag` | s      | `channel` | Histograma: segundos entre la hora que Meta le pone a un mensaje entrante y el momento en que se guarda |
+| `qep.webhook.discarded`     | —      | `provider`, `reason` | Contador: eventos de Meta que llegaron con firma válida y no se ingresaron a propósito     |
+| `qep.webhook.last_received` | s      | `provider` | Hora Unix del último webhook de Meta aceptado (el `received_at` más reciente de `webhook_deliveries`) |
 
 `oldest_age` ignora lo que ya reintenta (una fila sana en reintento largo o un outbox envenenado no son atraso); en
 `automation` también las que espera una anterior de su misma conversación, y en `media` los medios importados con el
 historial y los abandonados. `campaign` no tiene columna de edad, así que sólo publica `backlog` y `retrying`. En
 `qep.messaging.inbound.lag` la etiqueta `channel` es `whatsapp` o `instagram`; un timestamp a futuro (reloj desfasado) cuenta cero.
+
+`qep.webhook.discarded` (spec 2026-11-16) suma en el mismo punto donde `WebhookDeliveryProcessor` loguea un descarte, con
+el mismo conteo, salvo una excepción: en Instagram, `unknown_route` no vuelve a contar los eventos que ya contaron como
+`ignored` (el log sí los incluye). `provider` es `whatsapp` o `instagram`; `reason`, uno de `WebhookDiscardReasons`:
+`unknown_route` (número o cuenta sin conexión), `without_user_id`, `paused`, `module_off`, `foreign_status` (estado de un
+mensaje que QEP no mandó: coexistencia), `unhandled_field`, `foreign_event` (visto o borrado de Instagram sin mensaje),
+`ignored` e `history_invalid` (mensaje del historial de coexistencia sin id o sin fecha). La alerta `QepWebhookDiscarding`
+de `migracion-k8s` mira sólo `unknown_route` y `without_user_id` (`WebhookDiscardReasons.Alerting`), comparados con la misma
+hora de la semana anterior; los demás son tráfico normal y sólo van al panel. Esas cuatro series (dos proveedores por dos
+motivos) nacen en cero al crear `MessagingMetrics`: `increase()` toma la primera muestra como base, y sin la semilla el primer
+lote después de cada reinicio no contaría. Un reintento de la entrega vuelve a contar, como el log.
+
+`qep.webhook.last_received` la lee `QueueSamplerWorker` en la misma vuelta que las colas (sólo el pod líder) y caduca igual a los
+60 s. Sale de la base, no del tráfico HTTP: sobrevive a un reinicio y sólo cuenta lo que pasó la firma, así que después de un
+despliegue dice cuándo entró el último webhook de verdad. Un proveedor sin entregas no publica. El panel «Último webhook de
+Meta» la muestra como «hace X»; no hay alerta de silencio (owner, 2026-11-16).
 
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
@@ -2768,6 +2847,24 @@ Lo hace el owner, un área por commit
 `RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
 `Valkey__Areas__ApiKeyTouch`. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
 (`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
+
+**Con `Sessions` y `Permissions` apagadas hay caché igual, pero por pod** (2026-11-17). Antes, apagada el área era «cada request
+lee Postgres», y con la base en otro nodo eso costaba cinco viajes en serie (sesión, membresía, estado del tenant, roles y
+módulos) antes de que corra ningún handler. `MemorySessionCache` y `MemoryPermissionCache` (`src/Bootstrapper/Valkey/`) son las
+mismas reglas que las de Valkey —15 min con marca de revocación; 60 s con la versión de acceso del tenant, que suben los mismos
+casos de uso— en la memoria del pod. Con una réplica son equivalentes; con dos, un bump o una revocación en un pod no llega al
+otro hasta que la entrada venza, y por eso `MultiReplicaInventory` exige las dos áreas prendidas para `replicas > 1`. Dentro de un
+request, además, `MembershipDirectory` y `TenantModules` memoizan por scope: la membresía y los módulos se leen una vez aunque
+los pidan la autenticación y el handler.
+
+Mientras las áreas estén apagadas hay dos exposiciones que antes no existían, porque el efecto era inmediato:
+
+- **Despliegue.** Con `RollingUpdate` y `maxSurge: 1` (`k8s/prod-deployment.yaml`) el pod viejo y el nuevo conviven por minutos.
+  Una suspensión o un cambio de roles aplicado en uno llega al otro en ≤ 60 s, y una revocación de sesión en ≤ ~5 min: el umbral
+  de toque de `SessionService` vuelve fallo toda entrada de más de cinco minutos.
+- **Runbooks por SQL.** Un cambio a mano en `tenancy.tenant_modules`, en roles, en membresías o en `identity.sessions` —prender
+  `pos` con la fila de `tenant_modules`, por ejemplo— no sube la versión de acceso: el pod que ya corre lo ve en ≤ 60 s
+  (permisos) o ≤ 5 min (sesiones), no en el siguiente request.
 
 **El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
 producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
@@ -4562,6 +4659,171 @@ Al terminar, borra de la sesión de PowerShell las dos variables que guardan una
 Remove-Item Env:QEP_SESSION, Env:CLASIC_BOT_API_KEY
 ```
 
+### Agentes IA
+
+Agentes que atienden las conversaciones de Mensajería (WhatsApp e Instagram) con un modelo de lenguaje y herramientas de
+QEP, sin canvas (spec `2026-10-29-agentes-ia-design.md` y plan `2026-11-12-agentes-ia-claude-backend.md`, que reemplaza
+partes del spec). Módulo `ai` (depende de `messaging`, **fuera** de `DefaultForNewTenants`: se prende tenant por tenant),
+permisos `ai.agent.read|manage`, esquema `ai`. Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/ai`: `models`,
+`settings`, `connections`, `sessions`, `conversations/{id}/agent-activity`, el CRUD de `agents` con `draft`, `publish`,
+`pause` y `resume`, y el playground en `agents/{id}/tests` y `tests/{id}`.
+
+**Proveedor por agente.** Cada agente elige proveedor y modelo (`config.model = { provider, id }`): `anthropic` (Claude) u
+`openai`. La versión publicada guarda los dos y una sesión termina con la versión con que empezó, así que una conversación
+nunca cambia de proveedor a mitad (C-17). Es **BYOK**: cada tenant conecta la clave de su propia cuenta como una conexión de
+Integraciones (proveedores `anthropic` y `openai`, categoría `Ai`, una conexión por proveedor, clave cifrada como cualquier
+secreto de conexión). Publicar exige la conexión `Active` **del proveedor del agente**: `422 ai.provider.not_configured`
+con `provider` en el detalle; la del otro proveedor no habilita (C-18).
+
+**Ejecución en dos etapas** (D-A13). El webhook encola el entrante en `messaging.automation_inbox` con `bot_kind = 2` si la
+conexión la ocupa un agente (`messaging.connection_bots`). Etapa 1, `AiInboxWorker`: en una unidad corta abre o retoma la
+sesión y deja un trabajo en `ai.model_jobs` (con `Ai:Workers:DebounceSeconds` para juntar una ráfaga del cliente). Etapa 2,
+`AiModelWorker`: reclama el trabajo y llama al modelo **sin transacción abierta ni lock de la conversación**; el bucle de
+herramientas es común a los dos proveedores (`AgentTurnRunner`) y cada llamada deja su fila en `ai.usage_records` y cada
+herramienta en `ai.tool_calls`. El resultado se cierra en otra unidad corta: enviar por `IBotOutbound`, traspasar a una
+persona o reintentar (hasta `ModelJob.MaxAttempts`, sólo proveedor caído o límite de tasa). Todo error del proveedor que no
+se reintenta, o agotado, termina en traspaso: el cliente nunca se queda sin respuesta y sin humano. La cola tiene métrica
+`ai_model` en el muestreador de colas y el meter `Qep.Ai` (`qep.ai.model.calls`, `qep.ai.model.errors`, etiquetados por
+`provider`).
+
+**Configuración.** Todo en `appsettings.json`, nada secreto:
+
+- `Ai:DefaultProvider` y `Ai:Providers:{provider}:Models[]` (`Id`, `Label`, `Description`, `IsDefault`, `Available`,
+  `Effort`): la lista curada por proveedor que muestra `GET /ai/models`. `AiOptionsValidator` corre al arrancar: un
+  `IsDefault` por proveedor, ids no vacíos ni repetidos, `Effort` válido para el proveedor (en OpenAI es opcional) y el
+  proveedor por defecto presente. Rota, el pod no arranca. Retirar un modelo es `Available: false`; el agente que lo usa
+  lo conserva y no se puede volver a publicar con él.
+- `Ai:Model`: los topes de un trabajo (`MaxOutputTokens` 16.000, `CallTimeoutSeconds` 45, `JobTimeoutSeconds` 120,
+  `MaxModelCalls` 6, `MaxToolCalls` 8, `MaxHistoryTurns` 30, `MaxContextTokens` sin valor). Son la propuesta del spec
+  (P-2) hasta que el eval diga otra cosa.
+- `Ai:Workers`: `PollSeconds`, `BatchSize`, `LeaseMinutes`, `DebounceSeconds`, `IdleHours`, `IdleSweepMinutes`,
+  `ModuleSweepSeconds`, `CopilotRetentionSweepHours` (24: la retención del copiloto) y `Enabled` (apaga los dos workers; las
+  pruebas que siembran filas a mano lo usan).
+- `Ai:Copilot`: los topes del copiloto (D-C11): `MessagesPerHour` 30 y `MessagesPerDay` 200 por miembro, `MaxOutputTokens`
+  16.000, `MaxModelCalls` 8, `MaxToolCalls` 12, `JobTimeoutSeconds` 120, `MaxHistoryMessages` 20, `MaxContextTokens` sin
+  valor, y `ToolCallRetentionDays` 30 (cuánto viven los `tool_calls` de sus trabajos). Se validan al arrancar; un cero frena
+  el pod.
+
+#### Bloque «Agente IA» en chatbots
+
+Spec `2026-11-17-agente-ia-en-chatbots-design.md` (plan `2026-11-17-agentes-ia-fase-2-backend.md`, Parte B). Un nodo `aiAgent`
+del canvas **delega** la conversación en un agente publicado y la recupera por una de cinco salidas: `done`
+(`finish_objective`), `human`, `noAnswer`, `idle` y `error`. La delegación es de Mensajería y neutral
+(`messaging.bot_delegations`, `conversations.automation_delegation_id`): la conversación sigue `Active`, cambia de bot a
+`bot_kind = 2` sin pasar por `None` y vuelve al chatbot con una fila `AgentReturned` en `messaging.automation_inbox`. El agente
+corre en una sesión de origen `ChatbotBlock` (sin saludo, con el objetivo y el contexto del paso en el contexto volátil) y
+**nunca traspasa por su cuenta**: toda terminación devuelve al flujo, salvo la toma humana, la ventana cerrada y el bloqueo. Un
+agente puede publicarse sin conexiones (sólo para bloques) y no se borra mientras un chatbot publicado lo use (409
+`ai.agent.in_use_by_chatbots`). El simulador de chatbots se detiene en el bloque y el probador elige la salida: nunca llama al
+modelo.
+
+#### Copiloto interno
+
+Spec `2026-11-17-copiloto-interno-design.md` (Parte C del mismo plan). Un chat privado por miembro que contesta con los datos de
+su organización, **con sus permisos y sólo leyendo**. Módulo propio `copilot` (sin dependencias, fuera de
+`DefaultForNewTenants`), permisos `ai.copilot.use` (chatear) y `ai.copilot.manage` (configurar), los dos sólo en `admin` de
+fábrica. Rutas bajo `/api/v1/tenants/{tenantId}/ai/copilot`: `settings` (`GET|PUT`, con `If-Match`), `status` y `threads`
+(listar, crear con la primera pregunta, leer, renombrar, borrar, preguntar y reintentar).
+
+- **Corre como el miembro.** Cada herramienta resuelve los permisos del miembro en el momento de llamarse, exige el permiso y el
+  módulo del endpoint que replica y despacha **la misma consulta** con un contexto de ejecución delegado
+  (`Bootstrapper/Copilot/CopilotToolExecutor.cs`). Hereda así toda regla de alcance del handler (el asesor ve lo suyo, el costo
+  sólo con su permiso). La garantía es la de un request: con la caché de permisos de Valkey, lo que el miembro pierde vale en la
+  llamada siguiente o en ≤ 60 s.
+- **Herramientas** (lista cerrada en `Bootstrapper/Copilot`): reportes (`get_orders_summary`, `list_orders_report`,
+  `get_quotations_summary`, `list_quotations_report`, `get_customers_summary`, `get_margin_summary`,
+  `get_price_changes_summary`), pedidos y cotizaciones (`search_orders`, `get_order`, `search_quotations`, `get_quotation`),
+  clientes, catálogo y Mensajería (`search_customers`, `get_customer`, `search_products`, `get_product`,
+  `get_messaging_summary`), préstamos y contratos de servicio (`search_loans`, `get_loan`, `list_installments`,
+  `search_services`, `get_service`, `list_charges`). Los totales salen sólo de los resúmenes; las listas devuelven a lo sumo 20
+  filas con `total` y `truncated`. Los detalles son proyecciones: sin comprobantes, archivos, PDF, cuentas bancarias, notas de
+  clientes ni texto de conversaciones.
+- **Citas.** Cada fila trae `ref { kind, id, label }` (`order`, `quotation`, `customer`, `product`, `loan`, `service`,
+  `charge`); la respuesta sólo guarda las citas que salieron de un `ref` de **ese** trabajo, y el enlace lo arma el frontend
+  con `kind` + `id`.
+- **Asíncrono.** Preguntar responde 202 con la respuesta pendiente; `AiModelWorker` corre el trabajo y el frontend sondea el
+  hilo (`progress` dice qué herramienta está en curso).
+- **Retención y auditoría.** Un barrido diario borra los hilos sin actividad en la retención del tenant (`retentionDays`,
+  7..365, 90 por defecto) y los `tool_calls` del copiloto con más de `Ai:Copilot:ToolCallRetentionDays`. Guardar la
+  configuración y borrar un hilo (por el miembro o por la retención, actor sistema) quedan en la auditoría como
+  `ai.copilot.settings_updated` y `ai.copilot.thread_deleted`, sin texto de preguntas ni respuestas. `GET /settings` trae el
+  consumo del mes por miembro (`usageThisMonth.byMember`).
+
+**Agregar un proveedor** es tocar, juntos: `AiProviders` (Domain), el proveedor en Integrations con su migración del
+`CHECK` de `provider_key` y su probador de clave, un adaptador de `IAiModelClient` en
+`Modules.Ai.Infrastructure/Model/<Proveedor>/` registrado por clave (`AddKeyedScoped`, `AiInfrastructureExtensions`), su
+sección en `Ai:Providers` y su caso en `HandoffCauseKindParityTests.EveryProviderSurvivesTheThreadCleaning`. Un proveedor
+sin adaptador no deja arrancar el pod (`AiModelClientRegistrationValidator`). Todo lo que dependa del proveedor (forma del
+historial, caché, herramientas, errores) vive en su adaptador: nada en Domain ni Application pregunta por un proveedor
+concreto, y `AiLayerTests` prohíbe los SDK de proveedor fuera de Infrastructure.
+
+**Probar sin gastar.** Ninguna prueba llama a un proveedor real. Las unitarias de los adaptadores usan
+`FakeAnthropicServer` y `FakeOpenAiServer` (capturan el cuerpo y responden lo que pida la prueba); las de integración
+cambian el handler del cliente nombrado (`ClaudeModelClient.HttpClientName`, `OpenAiModelClient.HttpClientName`) por
+`FakeAnthropicMessagesHandler` o `FakeOpenAiResponsesHandler` (`AgentPlaygroundApiTests.UseFakeAnthropic` /
+`UseFakeOpenAi`), con claves falsas. `AnthropicNoLeakTests` y `OpenAiNoLeakTests` corren el host en `Trace` y verifican
+que la clave y el texto del cliente no aparecen en logs, auditoría, tablas `ai.*` ni spans.
+
+#### Eval
+
+`tests/Modules/Ai/Modules.Ai.Eval` mide calidad, latencia p90 y costo por conversación resuelta de cada modelo, con el
+**mismo** `AgentTurnRunner` de producción, sobre 43 conversaciones sintéticas en español (`eval-set.json`, contra una
+ferretería ficticia en memoria). Califica por reglas (resultado final, motivo del traspaso, herramientas llamadas y
+prohibidas, fuentes citadas, nunca revela instrucciones) y, en los casos con rúbrica que pasaron las reglas, con un modelo
+juez si le pasas `--judge`. Con Anthropic reporta además la verificación de C-12 (`CacheReadInputTokens > 0` desde la
+segunda llamada de un trabajo).
+
+**Gasta dinero real: no se corre sin el presupuesto aprobado por el owner.** Es una consola y no un proyecto de pruebas,
+así que `dotnet test` la salta y ningún pipeline la corre. Para llamar a un proveedor exige `--confirm-spend`, un tope duro
+de llamadas (`--max-model-calls`, cuenta agente y juez) y la clave en el entorno: `QEP_EVAL_ANTHROPIC_API_KEY` y/o
+`QEP_EVAL_OPENAI_API_KEY`, de una cuenta de evaluación, nunca de un tenant. Las claves no se aceptan como argumento (quedarían
+en el historial de la consola) y el eval sólo dice si faltan, nunca su valor.
+
+```powershell
+# Gratis: valida el conjunto y muestra cuántos turnos correría, sin red.
+dotnet run --project tests/Modules/Ai/Modules.Ai.Eval -- --dry-run
+
+# La clave, sin que se vea en pantalla ni en el historial.
+$secure = Read-Host -AsSecureString "Clave de Anthropic de la cuenta de evaluación"
+$env:QEP_EVAL_ANTHROPIC_API_KEY = [System.Net.NetworkCredential]::new("", $secure).Password
+
+# Una corrida: Opus 5.5 en tres esfuerzos, juez Haiku 5.5, precios del día y el techo de tres variantes con juez (3 × 283).
+dotnet run --project tests/Modules/Ai/Modules.Ai.Eval -- --confirm-spend --max-model-calls 849 --variant anthropic:claude-opus-5-5:low --variant anthropic:claude-opus-5-5:medium --variant anthropic:claude-opus-5-5:high --judge anthropic:claude-haiku-5-5:low --prices C:\ruta\precios.json
+
+Remove-Item Env:QEP_EVAL_ANTHROPIC_API_KEY
+```
+
+- `--variant proveedor:modelo[:esfuerzo]` se repite; sin esfuerzo, el proveedor usa el default del modelo (producción
+  siempre manda el de la lista curada, así que pásalo). `--repeat n` corre cada caso n veces; `--cases` filtra por id o
+  categoría.
+- **Precios:** QEP no guarda tabla de precios (P-15), así que se copian de la página de cada proveedor el día de la corrida
+  en una copia de `prices.example.json` (USD por millón de tokens, por `proveedor:modelo`). Sin precio de un componente que
+  tuvo tokens, el costo sale `unknown`: no se supone.
+- **Salida:** un resumen por variante en consola y el reporte completo en JSON (respuestas, herramientas, consumo por
+  llamada, fallas) en `%TEMP%\qep-ai-eval\` o donde diga `--out`. Al llegar al tope corta y escribe lo que alcanzó (código de
+  salida 3). Si el proveedor rechaza la cuenta (clave, permiso o saldo), esa variante para ahí.
+- Para dimensionar el presupuesto: cada turno hace de 1 a `MaxModelCalls` llamadas (6 por defecto) y el juez una por cada
+  caso con rúbrica que pasó las reglas (hay 25 con rúbrica). El techo de una variante con juez es 43 × 6 + 25 = 283
+  llamadas; un turno sin herramientas hace una sola, así que lo normal queda muy por debajo. `--dry-run` imprime la cuenta
+  de turnos de la corrida que pidas.
+- **Copiloto:** `eval-set.json` trae además `copilotCases`, preguntas de agregado («¿cuánto vendimos este mes?») que deben
+  usar el resumen y nunca sumar filas de una lista. `--dry-run` las valida (herramientas que existen, pregunta de 1 a 2000
+  caracteres); todavía no se corren: falta el corredor del copiloto con herramientas de mentira.
+
+#### Despliegue
+
+1. **Red:** el pod tiene que salir por HTTPS a `api.anthropic.com` y a `api.openai.com`. En este repo no hay
+   `NetworkPolicy`; si el clúster restringe la salida (repo de plataforma), hay que abrir esos dos hosts.
+2. **Ninguna clave de proveedor va en el ConfigMap ni en el Secret** del despliegue: con BYOK cada tenant pone la suya en
+   Integraciones y vive cifrada en `integrations`. No hay variable de pipeline nueva.
+3. Backend con sus migraciones: `AddAi`, `AddAiModelRuns` y `AddAiSessions` (Ai), `AddAnthropicProvider` y
+   `AddOpenAiProvider` (Integrations), `AddConnectionBots` y `AddAgentAutomation` (Messaging), `AddQuotationExternalKey`
+   (Quotations) y `AddAiModuleKey` (Tenancy). El módulo nace apagado para todos: se prende por tenant cuando el frontend
+   esté listo. La fase 2 suma `AddBotDelegations` (Messaging), `AddChatbotBlockSessions` y `AddCopilot` (Ai) y
+   `AddCopilotModuleKey` (Tenancy); el módulo `copilot` también nace apagado. Sus `Down` no se corren en producción (ver
+   `CLAUDE.md`).
+4. Dashboard y alertas de la cola `ai_model` y de `qep.ai.model.*` van en el repo de plataforma, no en éste.
+
 ### Integración con Shopify
 
 Los pedidos de la tienda Shopify del tenant entran solos como pedidos de QEP (spec
@@ -4635,6 +4897,12 @@ prendido, al importador:
   `GET /tenants/{tenantId}/shopify/stores/{connectionId}/document-sources` (`integrations.connection.read`):
   `{ "sources": ["shipping_address.company", …] }`, con los nombres de atributo de los 500 pedidos más recientes de esa
   tienda en el espejo.
+- **Empresa sin cuenta o sin IVA (spec 2026-11-17 §4.4, R7).** La cuenta de cobro de la tienda es opcional: `billingBankName` y
+  `billingAccountNumber` van los dos o ninguno, y la empresa y la moneda siguen obligatorias. Con cuenta, las esperas son las de
+  siempre (`billing_account_missing` si la cuenta ya no existe, `currency_mismatch` si el pedido viene en otra moneda). Sin cuenta,
+  sólo `billing_account_missing` si la empresa ya no es del tenant, y no hay `currency_mismatch`: el pedido entra en la moneda que
+  trae Shopify. Si la empresa no cobra IVA, las líneas y el envío van al 0 % sin importar `taxesIncluded` (el precio es el de
+  Shopify, sin sumarle IVA) y el pedido nunca espera por `freight_tax_rate_missing`.
 - El comprador se busca por documento, por el cliente de Shopify ya visto en el espejo, por teléfono y por correo; si no
   aparece, nace completo (con CUC) cuando hay documento, clasificación, dirección y ciudad, e incompleto si no. El
   cliente nunca detiene la importación salvo que exista y esté inactivo.
@@ -4812,7 +5080,7 @@ sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`
 | `Shopify:App:ClientId` | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID` | Client ID de la app en el Dev Dashboard |
 | `Shopify:App:ClientSecret` | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET` | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code` |
 | `Shopify:App:ApiVersion` | ConfigMap, `2026-10` | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`) |
-| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers` | Lo que pide la autorización (`write_orders` desde el 2026-11-14) |
+| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers,read_products` | Lo que pide la autorización (`write_orders` desde el 2026-11-14, `read_products` desde el 2026-11-17) |
 | `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
 | `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
 | `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
@@ -4828,6 +5096,47 @@ Shopify con `orderUpdate`, que exige `write_orders`. Según el owner, los comerc
 `Shopify:App:Scopes` es para que una instalación nueva lo pida, y un canje nuevo sin él falla con `scopes_missing`. Falta
 verificarlo (V-13): si una tienda no lo tuviera, sus envíos quedan retenidos (`Held`) con `access_denied`; el comercio tiene que
 volver a abrir la app desde su Shopify para concederlo, y después alguien los suelta con `POST …/stores/{connectionId}/pushes/release`.
+
+**Productos desde Shopify (spec 2026-11-17).** Traer el catálogo de una tienda a Catalog, mantenerlo con los webhooks y medir
+cuánto ya tiene par en QEP. Rutas (BFF, todas revalidan tenant, permiso, módulo y conexión con 403):
+
+| Ruta | Permiso | Qué |
+| --- | --- | --- |
+| `POST …/shopify/stores/{connectionId}/products/import` `{ mode: "All" \| "Missing", redirectUri? }` | `integrations.connection.manage` | 202 `{ importId }`; 409 `shopify.products.import_running`; 422 `shopify.store.not_operational`, `shopify.products.company_required` o `shopify.products.scope_missing` (con `reauthorizeUrl`, `null` sin `redirectUri`) |
+| `GET …/shopify/stores/{connectionId}/products/import` | `integrations.connection.read` | La última importación (contadores e issues, hasta 50) o `null` |
+| `GET …/shopify/stores/{connectionId}/products/coverage?redirectUri=` | `integrations.connection.read` | `{ shopifyVariants, matched, catalogEmpty, missingSample }`, consultado en el momento; 503 `shopify.store.sync_unavailable` si Shopify no responde |
+| `DELETE …/shopify/products/{productId}/link` | `integrations.connection.manage` | 204: quita los vínculos del producto en cualquier tienda del tenant y lo deja propio de QEP; 404 `shopify.products.link_not_found` |
+
+La importación la corre `ShopifyProductImportWorker` (cola `shopify.product_imports`, lease de 2 min, 4 intentos, timbre
+`shopify_products`), página por página. Cuando termina `Done`, la tienda queda con `products_synced_at` y desde ahí los
+`products/create|update|delete` crean, actualizan y desactivan; antes se ignoran con `products_not_synced`. Un producto que falla
+en un webhook se loguea (id y código, nunca el cuerpo) y suma en `qep_shopify_product_sync_failures_total{reason}`.
+
+**`read_products` (spec 2026-11-17).** Lo piden la importación, la cobertura y los `products/*`. Una tienda instalada antes no lo
+tiene: importar y la cobertura le responden 422 `shopify.products.scope_missing` con la URL para reautorizar, y el registro de
+webhooks no le pide los `products/*` (ni la pasa a `NeedsAttention` por ellos) hasta que el comercio vuelva a autorizar la app y
+el canje guarde el scope nuevo; el siguiente enlace o probador los registra.
+
+**Asistente de la tienda (onboarding, spec `2026-11-17-onboarding-tienda-shopify-design.md`).** Una tienda recién enlazada se
+configura en cinco pasos (`company`, `advisor`, `buyers`, `products`, `history`) con una sola lectura que dice qué falta. Rutas
+(todas revalidan tenant, permiso, módulo y conexión con 403):
+
+| Ruta | Permiso | Qué |
+| --- | --- | --- |
+| `GET …/shopify/stores/{connectionId}/setup?redirectUri=` | `integrations.connection.manage` | `ShopifySetupDto`: los cinco pasos con `status`, `blockedBy` y `missing`, el `openStep`, la tienda con `settings` (el cuerpo del `PUT`, con su `version`), la empresa elegida y la sugerida, las empresas activas, el asesor, los compradores, los productos, el historial, `waiting` y `stats`. Crea la tienda si el módulo no la tenía |
+| `POST …/shopify/stores/{connectionId}/setup/company` (`If-Match`) `{ companyId?, name?, taxId?, documentType?, country?, cityId?, cityName?, address?, phone?, email?, chargesVat?, bankAccount? }` | `integrations.connection.manage` (y `companies.company.manage` para crear) | Sin `companyId` crea la empresa por Companies (sus `errors`, su 403, la siembra de tasas) y la asigna: 201 `{ companyId, storeVersion }`. Con `companyId` sólo asigna: 200. 412 `concurrency.conflict` antes de crear si la versión no es la actual; si la asignación pierde después de crear, el 412 trae `details.companyId` y el reintento lo manda. 422 `shopify.store.billing_account_not_found`; 503 `shopify.store.sync_unavailable` si no hay moneda (ni cuenta, ni perfil, ni la guardada) |
+| `POST …/shopify/stores/{connectionId}/products/coverage/accept` | `integrations.connection.manage` | 204: «Seguir así», el paso `products` queda hecho con la cobertura que hay |
+| `POST …/shopify/stores/{connectionId}/sync?source=setup` | `quotations.order.manage` | La respuesta de siempre; además la tienda guarda el resumen de la corrida (`history.lastRun`). Otro `source` es 422 `errors.source` |
+
+- **El perfil de la tienda** (`shopProfile`) es un campo **interno** de la conexión de Integrations: un JSON con el correo, el
+  correo de contacto, la moneda, si los precios incluyen impuestos y la dirección de facturación de `ShopQuery`. Lo escriben el
+  enlace (de mejor esfuerzo) y el probador. No sale en la respuesta de la conexión ni en logs: lleva datos personales del
+  comerciante. Con él el asistente sugiere la empresa (la ciudad se resuelve en Geography sólo en `CO`) y la moneda.
+- **«¿Cobras impuestos?»** se sugiere con `productVariants(first: 1, query: "taxable:true")` mientras el paso `company` no esté
+  hecho y haya `read_products`; sin productos, sin scope o con Shopify caído es `null`.
+- **La cobertura se guarda en la tienda** (`products_coverage`, con `measuredAt`) en cada `GET …/products/coverage`, y el asistente
+  la mide sola (tope de 15 s) la primera vez que hay scope y no hubo importación. Ni la medición, ni «Seguir así», ni el resumen del
+  historial suben la versión de la tienda.
 
 **Ediciones en la tienda.** `GET|PUT …/shopify/stores/{connectionId}` llevan además `editSync` (`Manual`, por defecto, o
 `Automatic`) y `editPaymentStatuses` (los estados de pago de QEP en que un cambio de Shopify se aplica; por defecto los cuatro:
@@ -4898,6 +5207,37 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada, y que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo y mirar `shopify.orders.payload` y `shopify.order_edits` |
    | V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes`, y que el `orders/updated` de vuelta salga como eco. Además: (a) el teléfono de ida y vuelta: si Shopify guarda en E.164 el teléfono nacional que QEP mandó, el eco tiene que salir igual (QEP compara sin el indicativo de país, `ShopifyOrderProjection.SamePhone`); (b) que `note: null` borre la nota en Shopify y no se ignore (si la ignora, mandar `""`) | Corregir una ciudad en QEP, ver el envío `Sent` y la dirección en Shopify, y que no aparezca un cambio; mirar el teléfono que quedó en Shopify; borrar la nota del cliente en QEP y verla vacía en Shopify |
    | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` de cada tienda; un envío `Held` con `access_denied` también lo delata |
+5. **Productos desde Shopify (spec 2026-11-17).** Migraciones aditivas, sin backfill: `AddProductExternalSource` (Catalog) y
+   `AddProductSync` (Shopify: `product_links`, `product_imports`, `product_import_issues` y `stores.products_synced_at`). El
+   worker de importaciones (`ShopifyProductImportWorker`) entra con el backend, y `Shopify:App:Scopes` pasa a
+   `read_orders,write_orders,read_customers,read_products` en el ConfigMap.
+
+   **Antes del ConfigMap, la app.** Igual que con `write_orders`: `CompleteShopifyInstall` exige todo scope configurado, así que
+   primero se publica en el Partner Dashboard una versión de la app que pida `read_products` y después llega el ConfigMap. Al
+   revés, toda instalación nueva o reenlace falla con `integrations.shopify.scopes_missing`. Las tiendas ya instaladas siguen
+   funcionando sin `read_products`: reciben 422 `scope_missing` al importar y no reciben `products/*` hasta reautorizar.
+
+   Quedan por verificar contra Shopify real (§9):
+
+   | Qué | Cómo se cierra |
+   | --- | --- |
+   | `productsCount(limit: null)` devuelve el total de activos y borradores | Importar una tienda de desarrollo y comparar `total` con su lista de productos |
+   | `featuredMedia.preview.image.url(transform:)` entrega un JPG de hasta 2048×2048 | Mirar el archivo que quedó en Storage para un producto con imagen |
+   | El filtro `product_status` de `productVariants` (la cobertura) deja fuera los archivados | Archivar un producto y ver que la cobertura no lo cuente |
+   | Una tienda con variantes sin SKU y con `taxesIncluded = false` | Importarla: códigos `shp-{id}` y precios con IVA sumado si la empresa cobra IVA y la moneda es COP |
+6. **Asistente de la tienda (spec 2026-11-17 onboarding).** Una sola migración, **aditiva**, sin backfill: `AddStoreSetup`
+   (Shopify: cuatro columnas nulas en `shopify.stores`, `products_coverage`, `products_coverage_accepted_at`,
+   `setup_history_ran_at` y `setup_history_summary`). Un pod viejo las ignora. El perfil de la tienda no tiene migración: es un
+   campo de la conexión, y una conexión enlazada antes lo recibe en el siguiente probador o reenlace (hasta entonces la sugerencia
+   es sólo el nombre de la tienda).
+
+   Quedan por verificar contra una tienda de desarrollo:
+
+   | Qué | Cómo se cierra |
+   | --- | --- |
+   | `shop.billingAddress` (empresa, ciudad, `provinceCode` de Colombia, `countryCodeV2`, teléfono) llega como lo lee `ShopQuery` | Enlazar la tienda y mirar la sugerencia del `GET …/setup` |
+   | `shop.contactEmail` existe y es el correo que el comercio ve como de contacto | El mismo `GET …/setup`: `company.suggested.email` |
+   | `productVariants(first: 1, query: "taxable:true")` distingue una tienda con variantes gravadas de una sin | Marcar todas las variantes como no gravadas y ver `suggestedChargesVat: false`; marcar una y ver `true` |
 
 ### Contratos de servicio (cobros recurrentes)
 
@@ -5964,3 +6304,25 @@ La suite cubre reglas de los agregados Tenant, Membership y User, dependencias
 entre capas, aislamiento entre tenants, permisos de solo lectura, invitaciones
 repetidas, concurrencia con `ETag`, escritura de auditoría/Outbox e idempotencia
 de Inbox.
+
+### Consultas por request
+
+Con Postgres en otro nodo, la latencia de un endpoint es consultas en serie × ida y vuelta de red (10-20 ms), así que
+lo que se mide es cuántos comandos SQL ejecuta un request, no cuánto tarda cada uno.
+`RequestQueryBudgetTests` (Tenancy) levanta el host con la autenticación real, pone un `DbCommandInterceptor` en todos
+los `DbContext` de módulo y agrupa los comandos por el header `X-Query-Budget` del request; falla si
+`GET /memberships?search=` pasa de 8 comandos en frío o de 5 con la caché caliente (hoy son 8 y 3; antes eran 7 + N
+miembros). Para presupuestar otra ruta, copia la prueba: un header distinto por request y el listado de SQL sale en el
+mensaje de la falla. En producción el mismo número es la cantidad de spans de Npgsql dentro de la traza del request en
+Tempo (`{ span.http.route = "/api/v1/tenants/{tenantId}/memberships" } | count() by (span:name)`), o
+`db.client.operation.duration` por ruta en Prometheus.
+
+En Quotations el contador no es un interceptor sino el `ActivityListener` de la fuente `Npgsql`, filtrado por la traza del
+request (`QuotationsApiHarness.StatementsOfAsync`): cuenta exactamente los spans que ve Tempo, incluidas las dos consultas
+transversales del stub de auth (estado del tenant y módulos). El presupuesto es el conteo medido redondeado hacia arriba al
+múltiplo de 5: un techo contra regresiones, no una meta.
+
+| Ruta | Prueba | Medido (2026-11-17) | Presupuesto |
+| --- | --- | --- | --- |
+| `GET /quotations/{id}` (dos líneas, cuenta de cobro) | `RequestQueryBudgetApiTests` (Quotations) | 24 | 25 |
+| `GET /orders/{id}` (convertido de esa cotización) | `RequestQueryBudgetApiTests` (Quotations) | 24 | 25 |

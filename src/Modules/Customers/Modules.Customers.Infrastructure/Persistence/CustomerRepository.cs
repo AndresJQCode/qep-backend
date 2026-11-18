@@ -353,6 +353,10 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             // el DTO la devuelve entera, y sin las filas viejas en el change tracker un borrado no
             // se veria. Mismo criterio que QuotationRepository con Items.
             .Include(customer => customer.Addresses)
+            // Tres colecciones (direcciones y las dos owned) en un solo viaje, a propósito: pocas filas por cliente, y
+            // con Postgres en otro nodo cada consulta extra cuesta más que las repeticiones del JOIN. Explícito para que
+            // EF no avise 20504 en cada /customers/{id}.
+            .AsSingleQuery()
             .SingleOrDefaultAsync(
                 customer => customer.TenantId == tenantId && customer.Id == customerId,
                 cancellationToken);

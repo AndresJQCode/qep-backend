@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -44,6 +45,8 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyCityCorrectionRepository, ShopifyCityCorrectionRepository>();
         services.AddScoped<IShopifyCityCorrectionJobRepository, ShopifyCityCorrectionJobRepository>();
         services.AddScoped<IShopifyCustomLineMappingRepository, ShopifyCustomLineMappingRepository>();
+        services.AddScoped<IShopifyProductLinkRepository, ShopifyProductLinkRepository>();
+        services.AddScoped<IShopifyProductImportRepository, ShopifyProductImportRepository>();
         services.AddSingleton<IShopifyOrderPayloadParser, ShopifyOrderPayloadParser>();
 
         // §5.3: la conciliación. El cliente GraphQL es scoped (lleva el estado del balde de Shopify de una corrida) y su
@@ -57,6 +60,19 @@ public static class ShopifyInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => ShopifyGraphQlClient.CreatePrimaryHandler())
             .RemoveAllLoggers();
         services.AddScoped<IShopifyOrdersSource, ShopifyGraphQlClient>();
+        // Spec 2026-11-17 §5.2: el catálogo, con el mismo transporte (y su propio balde por scope).
+        services.AddScoped<IShopifyProductsSource, ShopifyProductsClient>();
+        services.AddSingleton<IShopifyProductPayloadParser, ShopifyProductPayloadParser>();
+        // La imagen destacada: sólo el CDN de Shopify, sin redirecciones ni loggers (la query de la URL lleva la firma del CDN).
+        services.AddHttpClient(ShopifyImageFetcher.HttpClientName, ShopifyImageFetcher.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => ShopifyImageFetcher.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddScoped<IShopifyImageFetcher, ShopifyImageFetcher>();
+        // El IMeterFactory es el del host, como el de MessagingMetrics.
+        services.AddSingleton<IShopifyProductSyncMetrics, ShopifyMetrics>();
+        // Spec 2026-11-17: un producto de Shopify aplicado a Catalog (importación y webhooks). Sus puertos de Catalog y Storage los
+        // registra Bootstrapper.
+        services.AddScoped<ShopifyProductSync>();
         services.AddScoped<IShopifyReconcileLeases, ShopifyReconcileLeases>();
         return services;
     }
@@ -76,6 +92,11 @@ public static class ShopifyInfrastructureExtensions
         // Spec 2026-11-14 §3: la detección de ediciones, con el mismo patrón (Bootstrapper registra ShopifyOrderEdits antes).
         services.TryAddScoped<IShopifyOrderEditDetector, NoShopifyOrderEditDetector>();
         services.AddScoped<ShopifyOrderIngestion>();
+        // Spec 2026-11-17 §6: los products/*. TryAdd porque AddShopifyProductSync registra lo mismo; depende además de
+        // IShopifyCatalogWriter e IShopifyBillingAccounts (Bootstrapper) y de ITenantPriceRounding (Tenancy).
+        services.TryAddScoped<ShopifyProductPricingResolver>();
+        services.TryAddScoped<IShopifyProductSyncScope, ShopifyProductSyncScope>();
+        services.TryAddScoped<ShopifyProductWebhooks>();
         services.AddScoped<ShopifyWebhookDeliveryProcessor>();
         // §5.3: la conciliación y «Sincronizar ahora» pasan cada pedido por la misma ingesta; necesitan también
         // IShopifyConnectionHealth e IShopifyApiVersion, de Bootstrapper.
@@ -123,6 +144,31 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyOrderPushQueue, ShopifyOrderPushQueue>();
         services.AddScoped<ShopifyOrderPushProcessor>();
         services.AddHostedService<ShopifyOrderPushWorker>();
+        return services;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 §5.2: la importación de productos y su worker. El procesador y la regla de precios dependen de
+    /// <see cref="IShopifyConnectionDirectory"/>, <see cref="IShopifyBillingAccounts"/>, <see cref="IShopifyCatalogWriter"/> (Bootstrapper)
+    /// y de <c>ITenantPriceRounding</c> (Tenancy): Bootstrapper lo llama después de esos registros. Las pruebas quitan el worker y lo
+    /// corren a mano (<c>DrainAsync</c>).
+    /// </summary>
+    public static IServiceCollection AddShopifyProductSync(this IServiceCollection services)
+    {
+        services.TryAddScoped<ShopifyProductPricingResolver>();
+        services.TryAddScoped<IShopifyProductSyncScope, ShopifyProductSyncScope>();
+        services.AddScoped<IShopifyProductImportQueue, ShopifyProductImportQueue>();
+        services.AddScoped<ShopifyProductImportProcessor>();
+        services.AddHostedService<ShopifyProductImportWorker>();
+        // §7: importar, ver la importación, la cobertura y desvincular. El validador entra con AddValidatorsFromAssemblyContaining
+        // (mismo ensamblado que UpdateShopifyStoreValidator).
+        services.AddScoped<ICommandHandler<StartShopifyProductImportCommand, ShopifyProductImportStarted>, StartShopifyProductImportHandler>();
+        services.AddScoped<IQueryHandler<GetShopifyProductImportQuery, ShopifyProductImportDto?>, GetShopifyProductImportHandler>();
+        services.AddScoped<ShopifyProductCoverageCalculator>();
+        services.AddScoped<IQueryHandler<GetShopifyProductCoverageQuery, ShopifyProductCoverageDto>, GetShopifyProductCoverageHandler>();
+        // Spec 2026-11-17 (onboarding) §4.2: «Seguir así».
+        services.AddScoped<ICommandHandler<AcceptShopifyProductCoverageCommand, bool>, AcceptShopifyProductCoverageHandler>();
+        services.AddScoped<ICommandHandler<UnlinkShopifyProductCommand, bool>, UnlinkShopifyProductHandler>();
         return services;
     }
 

@@ -265,6 +265,21 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
             return Task.FromResult<IReadOnlyList<ConnectionSummary>>(active.Where(summary => summary.ProviderKey == providerKey).ToList());
         }
 
+        // Como el real: la que no se resuelve no viene.
+        public Task<IReadOnlyList<ResolvedConnection>> ListResolvedActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken)
+        {
+            Listed.Add((tenantId, providerKey));
+            return Task.FromResult<IReadOnlyList<ResolvedConnection>>(tenantId == TenantId
+                ? [.. active.Where(summary => summary.ProviderKey == providerKey)
+                    .Select(summary => resolved.GetValueOrDefault(summary.Id))
+                    .OfType<ResolvedConnection>()]
+                : []);
+        }
+
+        public Task<IReadOnlyList<ConnectionListing>> ListByProvidersAsync(
+            Guid tenantId, IReadOnlyCollection<string> providerKeys, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }

@@ -39,6 +39,16 @@ public sealed class CashSession
     public string? CompanyPhone { get; private set; }
 
     /// <summary>
+    /// Si la empresa cobraba IVA al abrir (spec 2026-11-17 R4). La tasa efectiva de cada línea es
+    /// <c>CompanyChargesVat ? tasa del producto : 0</c>, en la vista previa y en la venta. Una caja abierta
+    /// antes de la columna la tiene en <c>true</c>: así vendía.
+    /// </summary>
+    public bool CompanyChargesVat { get; private set; } = true;
+
+    /// <summary>La tasa con que esta caja cobra un producto de <paramref name="productTaxPercentage"/>.</summary>
+    public int EffectiveTaxPercentage(int productTaxPercentage) => CompanyChargesVat ? productTaxPercentage : 0;
+
+    /// <summary>
     /// La moneda por defecto del tenant al abrir, congelada: si el tenant la cambia con la caja
     /// abierta, esta caja sigue vendiendo en la suya y sólo la siguiente toma la nueva.
     /// </summary>
@@ -111,6 +121,7 @@ public sealed class CashSession
             CompanyDocumentType = company.DocumentType,
             CompanyAddress = company.Address,
             CompanyPhone = company.Phone,
+            CompanyChargesVat = company.ChargesVat,
             // Already a catalogue code: OpenCashSessionHandler runs Currencies.Normalize.
             Currency = currency,
             Status = CashSessionStatus.Open,

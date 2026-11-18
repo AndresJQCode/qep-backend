@@ -59,6 +59,21 @@ internal sealed class ShopifyUnitOfWork(ShopifyDbContext dbContext) : IShopifyUn
             throw new RequestConcurrencyException(
                 "concurrency.conflict", "The city correction was written by another process meanwhile; reload it.", exception);
         }
+        // Spec 2026-11-17 §3: el webhook y la importación vincularon la misma variante (de Shopify o de QEP) a la vez. Ganó el
+        // otro: el perdedor descarta, relee los vínculos y sigue con los del ganador.
+        catch (DbUpdateException exception) when (
+            IsUniqueViolation(exception, ShopifyDbContext.ProductLinkShopifyVariantIndex)
+            || IsUniqueViolation(exception, ShopifyDbContext.ProductLinkVariantIndex))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict", "The Shopify variant was linked by another process meanwhile; reload it.", exception);
+        }
+        // Spec 2026-11-17 §5.2: una importación viva por tienda. No se reintenta: es el 409 del POST.
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception, ShopifyDbContext.ProductImportLiveIndex))
+        {
+            throw new ResourceConflictException(
+                ShopifyErrorCodes.ProductsImportRunning, "A product import of this store is already running.", exception);
+        }
     }
 
     public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
@@ -78,6 +93,19 @@ internal sealed class ShopifyUnitOfWork(ShopifyDbContext dbContext) : IShopifyUn
         // candado tomado desde SQL crudo con esa expresión es el mismo candado.
         var key = $"shopify.city-synonym:{synonymId}";
         return dbContext.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", cancellationToken);
+    }
+
+    public Task LockProductAsync(Guid connectionId, long shopifyProductId, CancellationToken cancellationToken)
+    {
+        // Fuera de una transacción el candado se soltaría al terminar la sentencia y no serializaría nada.
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("LockProductAsync requires an open transaction (BeginTransactionAsync).");
+        }
+
+        var key = ShopifyProductLock.Key(connectionId, shopifyProductId);
+        return dbContext.Database.ExecuteSqlAsync(
+            $"SELECT pg_advisory_xact_lock({ShopifyProductLock.Namespace}, hashtext({key}))", cancellationToken);
     }
 
     private static bool IsUniqueViolation(DbUpdateException exception, string constraintName) =>

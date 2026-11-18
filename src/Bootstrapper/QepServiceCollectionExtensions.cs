@@ -1,4 +1,5 @@
 using Bootstrapper.Authentication;
+using Bootstrapper.Copilot;
 using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
 using Bootstrapper.Realtime;
@@ -88,7 +89,8 @@ public static class QepServiceCollectionExtensions
         services.AddHttpContextAccessor();
         services.AddScoped<IClaimsTransformation, ExternalClaimsTransformation>();
         services.AddScoped<IClock, BuildingBlocks.Infrastructure.SystemClock>();
-        services.AddScoped<IExecutionContext, HttpExecutionContext>();
+        // Plan fase 2, C2.4: el de los claims del request, salvo en un scope del ejecutor del copiloto, que trae el del miembro.
+        services.AddQepExecutionContext();
         // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
         services.AddScoped<IApiCaller, HttpApiCaller>();
         services.AddScoped<IExternalCallNotes, HttpExternalCallNotes>();
@@ -898,6 +900,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<SendQuotationCommand, QuotationDto>,
             SendQuotationHandler>();
         services.AddScoped<
+            ICommandHandler<MarkQuotationSentCommand, QuotationDto>,
+            MarkQuotationSentHandler>();
+        services.AddScoped<
             ICommandHandler<VoidQuotationCommand, QuotationDto>,
             VoidQuotationHandler>();
         services.AddScoped<
@@ -984,6 +989,9 @@ public static class QepServiceCollectionExtensions
         // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
         // consume; ningún consumidor referencia Modules.Quotations.Application.
         services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
+        // Spec 2026-10-29 §8.3: el borrador de cotización sin sesión que pide un agente IA (create_quotation_draft); Ai lo
+        // consume por un adaptador (AiQuotationDrafts).
+        services.AddScoped<IExternalQuotationWriter, ExternalQuotationService>();
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
@@ -1151,6 +1159,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>, ListTemplatesHandler>();
         services.AddScoped<ICommandHandler<SendTemplateMessageCommand, MessageDto>, SendTemplateMessageHandler>();
         services.AddScoped<ICommandHandler<StartConversationCommand, StartConversationResult>, StartConversationHandler>();
+        // Spec 2026-11-17: abrir la conversación del cliente sin enviar. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<OpenCustomerConversationCommand, OpenCustomerConversationResult>, OpenCustomerConversationHandler>();
         // Messaging (spec 2026-10-11 §6.2): campañas. Cada handler a mano: sin registro, 500.
         services.AddScoped<IQueryHandler<ListCampaignsQuery, CampaignPageDto<CampaignSummaryDto>>, ListCampaignsHandler>();
         services.AddScoped<IQueryHandler<GetCampaignQuery, CampaignDetailDto>, GetCampaignHandler>();
@@ -1203,6 +1213,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();
         // Messaging (spec 2026-10-14 §4.3): crear una plantilla libre y mandarla a aprobación.
         services.AddScoped<ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>, CreateTemplateHandler>();
+        // Spec 2026-11-17: la sesión de subida de la imagen del encabezado; el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<CreateTemplateHeaderImageSessionCommand, TemplateHeaderImageSessionDto>, CreateTemplateHeaderImageSessionHandler>();
         // Messaging (spec 2026-10-14 §4.3): aprovisionar, adoptar o reintentar la plantilla de cotización de una conexión.
         services.AddScoped<ICommandHandler<ProvisionQuotationTemplateCommand, ManagedTemplateDto>, ProvisionQuotationTemplateHandler>();
         services.AddScoped<ICommandHandler<ProvisionBillingTemplatesCommand, IReadOnlyList<ManagedTemplateDto>>, ProvisionBillingTemplatesHandler>();
@@ -1379,19 +1391,66 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-29 §5: los agentes. Los validadores entran con AddValidatorsFromAssemblyContaining.
         services.AddScoped<IQueryHandler<ListAgentsQuery, AgentListResponse>, ListAgentsHandler>();
         services.AddScoped<IQueryHandler<GetAgentQuery, AgentEditorDto>, GetAgentHandler>();
+        services.AddScoped<IQueryHandler<ExportAgentQuery, AgentExportDto>, ExportAgentHandler>();
         services.AddScoped<IQueryHandler<ListAiConnectionsQuery, IReadOnlyList<AiConnectionDto>>, ListAiConnectionsHandler>();
         services.AddScoped<ICommandHandler<CreateAgentCommand, AgentEditorDto>, CreateAgentHandler>();
+        services.AddScoped<ICommandHandler<ImportAgentCommand, AgentEditorDto>, ImportAgentHandler>();
         services.AddScoped<ICommandHandler<UpdateAgentCommand, AgentEditorDto>, UpdateAgentHandler>();
         services.AddScoped<ICommandHandler<SaveAgentDraftCommand, AgentDraftSavedDto>, SaveAgentDraftHandler>();
         services.AddScoped<ICommandHandler<PublishAgentCommand, AgentEditorDto>, PublishAgentHandler>();
         services.AddScoped<ICommandHandler<PauseAgentCommand, AgentEditorDto>, PauseAgentHandler>();
         services.AddScoped<ICommandHandler<ResumeAgentCommand, AgentEditorDto>, ResumeAgentHandler>();
         services.AddScoped<ICommandHandler<DeleteAgentCommand, bool>, DeleteAgentHandler>();
+        // Plan 2026-11-12 Tarea 9: el historial de sesiones y la actividad del agente en una conversación.
+        services.AddScoped<IQueryHandler<ListAgentSessionsQuery, AgentSessionListResponse>, ListAgentSessionsHandler>();
+        services.AddScoped<IQueryHandler<GetConversationAgentActivityQuery, AgentActivityDto>, GetConversationAgentActivityHandler>();
+        // Spec 2026-10-29 §7: el playground.
+        services.AddScoped<ICommandHandler<CreateAgentTestCommand, AgentTestDto>, CreateAgentTestHandler>();
+        services.AddScoped<ICommandHandler<SendAgentTestMessageCommand, AgentTestDto>, SendAgentTestMessageHandler>();
+        services.AddScoped<IQueryHandler<GetAgentTestQuery, AgentTestDto>, GetAgentTestHandler>();
+        services.AddScoped<ICommandHandler<DeleteAgentTestCommand, bool>, DeleteAgentTestHandler>();
+        // Spec 2026-11-17 (copiloto) §8: configuración y estado.
+        services.AddScoped<IQueryHandler<GetCopilotSettingsQuery, CopilotSettingsDto>, GetCopilotSettingsHandler>();
+        services.AddScoped<ICommandHandler<UpdateCopilotSettingsCommand, CopilotSettingsDto>, UpdateCopilotSettingsHandler>();
+        services.AddScoped<IQueryHandler<GetCopilotStatusQuery, CopilotStatusDto>, GetCopilotStatusHandler>();
+        // Spec 2026-11-17 (copiloto) §8: los hilos privados del miembro.
+        services.AddScoped<IQueryHandler<ListCopilotThreadsQuery, CopilotThreadPage>, ListCopilotThreadsHandler>();
+        services.AddScoped<IQueryHandler<GetCopilotThreadQuery, CopilotThreadDto>, GetCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<CreateCopilotThreadCommand, CopilotThreadDto>, CreateCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<SendCopilotMessageCommand, CopilotThreadDto>, SendCopilotMessageHandler>();
+        services.AddScoped<ICommandHandler<RetryCopilotMessageCommand, CopilotThreadDto>, RetryCopilotMessageHandler>();
+        services.AddScoped<ICommandHandler<RenameCopilotThreadCommand, CopilotThreadDto>, RenameCopilotThreadHandler>();
+        services.AddScoped<ICommandHandler<DeleteCopilotThreadCommand, bool>, DeleteCopilotThreadHandler>();
         services.AddValidatorsFromAssemblyContaining<CreateAgentValidator>();
+        // Spec 2026-10-29 §8.3: las fuentes de las herramientas de lectura y las respuestas rápidas, por adaptadores sobre Catalog,
+        // Quotations y Mensajería (Ai no ve ninguno de los tres).
+        services.AddScoped<IAiCatalogSearch, AiCatalogSearch>();
+        // Spec 2026-11-17 (copiloto) D-C3: las herramientas del copiloto corren como el miembro, sobre las consultas de otros módulos.
+        services.AddCopilotTools();
+        services.AddScoped<IAiOrderStatusReader, AiOrderStatusReader>();
+        services.AddScoped<IAiQuickReplies, AiQuickReplies>();
+        // Spec 2026-10-29 §8.3 y P-4: create_quotation_draft escribe en Quotations y valida la asesora del agente, por adaptadores.
+        services.AddScoped<IAiQuotationDrafts, AiQuotationDrafts>();
+        services.AddScoped<IAiQuotationAdvisors, AiQuotationAdvisors>();
+        // Plan 2026-11-17 A3: las cuentas de cobro del editor del agente, con la regla de la tienda (ActiveBillingAccountOptions).
+        services.AddScoped<IAiQuotationBillingAccounts, AiQuotationBillingAccounts>();
         // Spec 2026-10-29 D-A3 y §4.3: conexiones, miembros y la ocupación neutral, por adaptadores (Ai no ve Mensajería).
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();
+        // Spec 2026-11-17 (copiloto) D-C12, plan C3.4: nombres por id de usuario para el consumo por miembro y el contexto volátil.
+        services.AddScoped<ICopilotMemberNames, CopilotMemberNames>();
         services.AddScoped<IAgentConnectionSlots, AgentConnectionSlots>();
+        // Spec 2026-11-17 D-B18: qué chatbots publicados usan cada agente (SQL sobre automations; Ai no ve Automations).
+        services.AddScoped<IAiChatbotUsage, AiChatbotUsage>();
+        services.AddScoped<IAiChatbotNames, AiChatbotNames>();
+        // Spec 2026-11-17 §6.5: el barrido de delegaciones huérfanas de Mensajería, que corre el worker de Ai.
+        services.AddScoped<IAiDelegationSweep, AiDelegationSweep>();
+        // Spec 2026-10-29 §6.1–§6.6 (plan 2026-11-12, Tarea 7): la cola, la conversación, el envío y el horario de los agentes en canales
+        // reales, por adaptadores sobre Mensajería.
+        services.AddScoped<IAiInbox, AiInbox>();
+        services.AddScoped<IAiConversations, AiConversations>();
+        services.AddScoped<IAiBotOutbound, AiBotOutbound>();
+        services.AddScoped<IAiBusinessHours, AiBusinessHours>();
         // Plan 2026-11-12 (correcciones de la revisión): no se borra una conexión que atiende un bot. Integrations no ve Mensajería.
         services.AddScoped<IConnectionBotOccupancy, IntegrationsConnectionBotOccupancy>();
 
@@ -1410,6 +1469,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetShopifyStoreQuery, ShopifyStoreDto>, GetShopifyStoreHandler>();
         services.AddScoped<IQueryHandler<GetShopifyDocumentSourcesQuery, ShopifyDocumentSourcesDto>, GetShopifyDocumentSourcesHandler>();
         services.AddScoped<ICommandHandler<UpdateShopifyStoreCommand, ShopifyStoreDto>, UpdateShopifyStoreHandler>();
+        // Spec 2026-11-17 (onboarding) §4.1: el asistente de la tienda (integrations.connection.manage, política de Integrations).
+        services.AddScoped<IQueryHandler<GetShopifySetupQuery, ShopifySetupDto>, GetShopifySetupHandler>();
+        services.AddScoped<ICommandHandler<AssignShopifySetupCompanyCommand, ShopifySetupCompanyResultDto>, AssignShopifySetupCompanyHandler>();
         services.AddScoped<IQueryHandler<ListShopifyOrdersQuery, ShopifyOrderPageDto>, ListShopifyOrdersHandler>();
         services.AddScoped<IQueryHandler<GetShopifyOrdersSummaryQuery, ShopifyOrdersSummaryDto>, GetShopifyOrdersSummaryHandler>();
         services.AddScoped<ICommandHandler<RetryShopifyOrderCommand, ShopifyOrderRowDto>, RetryShopifyOrderHandler>();
@@ -1434,6 +1496,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderNumbers, ShopifyOrderNumbers>();
         services.AddScoped<IShopifyTenantConnections, ShopifyTenantConnections>();
         services.AddScoped<IShopifyStoreReferences, ShopifyStoreReferences>();
+        // Spec 2026-11-17 §5.4: productos desde Shopify. El escritor enrola un CatalogDbContext de un scope hijo en la transacción
+        // de Shopify; la imagen va por la subida de servidor de Storage, fuera de esa transacción; la reautorización es el inicio A
+        // de la instalación de Integrations.
+        services.AddScoped<IShopifyCatalogWriter, ShopifyCatalogWriter>();
+        services.AddScoped<IShopifyProductImageStore, ShopifyProductImageStore>();
+        services.AddScoped<IShopifyReauthorization, ShopifyReauthorization>();
+        // Spec 2026-11-17 (onboarding) §4.2: el asistente crea la empresa con el caso de uso de Companies.
+        services.AddScoped<IShopifySetupCompanies, ShopifySetupCompanies>();
         // §6.2: el importador y, con él, el procesador de entregas y su worker. Sin estas tres líneas el webhook
         // responde 200, encola y nadie procesa nunca; CompositionRootTests arma el contenedor con ValidateOnBuild y resuelve el
         // worker para que eso no pase en silencio.
@@ -1473,6 +1543,9 @@ public static class QepServiceCollectionExtensions
         services.AddShopifyOrderEditDecisions();
         // Spec 2026-11-14 §5: el worker que manda a Shopify las correcciones (orderUpdate).
         services.AddShopifyOrderPushes();
+        // Spec 2026-11-17 §5.2: la importación de productos (procesador, cola y worker), sobre los adaptadores de Catalog y Storage
+        // registrados arriba.
+        services.AddShopifyProductSync();
 
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
@@ -1482,6 +1555,9 @@ public static class QepServiceCollectionExtensions
         // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
         // consulta comparta la transacción del PUT.
         services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();
+        // Productos desde Shopify (spec 2026-11-17 §5.4): el camino de sistema de Catalog, sin miembro. Scoped como el
+        // CatalogDbContext sobre el que guarda, para que el adaptador de Shopify lo enrole en su transacción.
+        services.AddScoped<IExternalProductWriter, ExternalProductWriter>();
         // Borrado de producto (spec 2026-11-08): congelar y quitar las líneas de Quotations y las de las solicitudes
         // nuevas de la tienda, que Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que
         // todo comparta la transacción del DELETE.
@@ -1530,6 +1606,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
         // Spec 2026-10-25 D-5: los miembros que pueden responder, los mismos que ofrece «Transferir».
         services.AddScoped<IAutomationMembers, AutomationMembers>();
+        // Spec 2026-11-17 §5.2: los agentes de IA del tenant para el bloque «Agente IA», leídos de Ai.
+        services.AddScoped<IAutomationsAgentDirectory, AutomationsAgentDirectory>();
         // Spec 2026-10-26 D-5, D-7 y D-10: la autorización de datos del cliente de la conversación, en Customers.
         services.AddScoped<IAutomationDataConsents, AutomationDataConsents>();
         services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
@@ -1591,6 +1669,10 @@ public static class QepServiceCollectionExtensions
         // no guarda estado) y el IMeterFactory es el del host, el mismo que lee el exportador.
         services.AddSingleton(provider => new Observability.QueueGauges(
             provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
+        // Spec 2026-11-16: la hora del último webhook de Meta, en la misma vuelta del muestreador.
+        services.AddScoped<Observability.IWebhookArrivalSource, Observability.WebhookArrivalSource>();
+        services.AddSingleton(provider => new Observability.WebhookArrivalGauge(
+            provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
         services.AddHostedService<Observability.QueueSamplerWorker>();
 
         // Registro de llamadas a la API externa: el middleware encola y el escritor inserta, para que la base no demore una respuesta.
@@ -1623,6 +1705,10 @@ public static class QepServiceCollectionExtensions
         // Decisión 4 del spec 2026-09-19: publica/despublica el logo del tenant sobre Storage sin
         // pasar por sus handlers ni sus permisos.
         services.AddScoped<ITenantLogoStorage, TenantLogoStorage>();
+
+        // Spec 2026-11-17: la imagen del encabezado de plantilla sobre Storage, con el mismo criterio que el logo: sin pasar por los
+        // handlers de Storage ni por sus permisos (la autoriza messaging.template.manage).
+        services.AddScoped<IMessagingTemplateImageStore, MessagingTemplateImageStore>();
 
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los
@@ -1873,6 +1959,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationAdvisorLookup, QuotationAdvisorLookup>();
         services.AddScoped<IQuotationProductLookup, QuotationProductLookup>();
         services.AddScoped<IQuotationCompanyLookup, QuotationCompanyLookup>();
+        // Spec 2026-11-17 §5.3: las tasas de IVA por defecto de Colombia que pide Companies, sobre Catalog y Quotations.
+        services.AddScoped<ICompanyDefaultTaxRates, CompanyDefaultTaxRates>();
         // Mismo patron (CAT-05) entre `quotations` y `geography`: resuelve la ciudad de una parte
         // con datos propios para el Excel de pedidos.
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();
@@ -2118,6 +2206,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-29 §1: un agente IA habla con los clientes en nombre de la empresa; de fábrica sólo en admin. De núcleo.
                 AiPermissions.AgentRead,
                 AiPermissions.AgentManage,
+                // Spec 2026-11-17 (copiloto), D-C14 y OC-1: cada pregunta gasta saldo del tenant; de fábrica sólo en admin. De núcleo.
+                AiPermissions.CopilotUse,
+                AiPermissions.CopilotManage,
                 // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
@@ -3036,6 +3127,27 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("ai.agent", "Agentes IA", "manage"),
         });
+        // Spec 2026-11-17 (copiloto), D-C14: de núcleo como los de agentes; cada handler revisa la capacidad copilot.
+        services.AddSingleton(new PermissionDefinition(
+            AiPermissions.CopilotUse,
+            "Usar el copiloto",
+            "Permite preguntarle al copiloto por los datos de la empresa. Sólo ve lo que el miembro ya puede ver.",
+            "Ai",
+            "medium",
+            RequiredModules: [])
+        {
+            Shape = new("ai.copilot", "Copiloto", "use"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            AiPermissions.CopilotManage,
+            "Configurar el copiloto",
+            "Permite elegir el proveedor y el modelo del copiloto, su contexto del negocio, el tope mensual de tokens y la retención.",
+            "Ai",
+            "high",
+            RequiredModules: [])
+        {
+            Shape = new("ai.copilot", "Copiloto", "manage"),
+        });
         // Spec 2026-10-23 D-14: proveedores exige el módulo suppliers.
         services.AddSingleton(new PermissionDefinition(
             SuppliersPermissions.Read,
@@ -3556,6 +3668,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 AiPermissions.AgentManage,
                 policy => AddPermissionRequirement(policy, AiPermissions.AgentManage))
+            // Spec 2026-11-17 (copiloto): la otra mitad de sus permisos; sin ella el síntoma es 500, no 403.
+            .AddPolicy(
+                AiPermissions.CopilotUse,
+                policy => AddPermissionRequirement(policy, AiPermissions.CopilotUse))
+            .AddPolicy(
+                AiPermissions.CopilotManage,
+                policy => AddPermissionRequirement(policy, AiPermissions.CopilotManage))
             // Spec 2026-10-23 D-14: la otra mitad de los permisos de proveedores; sin ella el síntoma es 500.
             .AddPolicy(
                 SuppliersPermissions.Read,

@@ -102,12 +102,15 @@ public sealed class SaveOrderEditsHandler(
 
         // El neto de antes de tocar nada: el recálculo del pago compara contra él (spec 2026-11-10 §3.2).
         var previousNetTotal = order.NetTotal;
-        foreach (var addition in command.Proofs.Add)
-        {
-            await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, orderRepository, command.TenantId, addition.FileId!.Value, exceptProofId: null,
-                cancellationToken);
-        }
+        // Los comprobantes nuevos en dos lecturas, no dos por comprobante. Los reemplazos siguen de a uno: cada uno
+        // excluye su propio comprobante de la pregunta de uso, y el lote sólo admite una exclusión.
+        await OrderPaymentProofResolver.ResolveManyAsync(
+            fileLookup,
+            orderRepository,
+            command.TenantId,
+            command.Proofs.Add.Select(addition => addition.FileId!.Value).ToArray(),
+            exceptProofId: null,
+            cancellationToken);
 
         foreach (var update in command.Proofs.Update)
         {
@@ -209,7 +212,7 @@ public sealed class SaveOrderEditsHandler(
             var withholdingEdits = await OrderWithholdingEdits.ApplyAsync(
                 order, command,
                 new OrderWithholdingEditsContext(
-                    companyLookup, withholdingLookup, geographyLookup, tenantClock, command.TenantId),
+                    companyLookup, withholdingLookup, geographyLookup, tenantClock, command.TenantId, shippingResolver),
                 updatedBy, now, cancellationToken);
             var accountChanged = withholdingEdits.BillingAccountSummary is not null;
             var municipalTexts = await OrderMunicipalHistory.DescribeAsync(
@@ -221,7 +224,7 @@ public sealed class SaveOrderEditsHandler(
             var shippingBefore = order.ShippingDetails;
             var shipping = await shippingResolver.ResolveAsync(
                 command.TenantId, command.Shipping, shippingBefore, order.IsStorePickup, order.Currency,
-                "order.order", cancellationToken);
+                order.ChargesVat, "order.order", cancellationToken);
             var shippingChanged = shipping is not null && shipping != shippingBefore;
             string? shippingSummary = null;
             if (shippingChanged)

@@ -324,6 +324,10 @@ public sealed class SupportReplyOutboundTests
         Assert.False(await ScalarAsync<bool>(f.ConnectionString, "SELECT history_managed FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId)));
 
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET history_managed = true");
+        // Meta da un wamid por mensaje: repetir el del primer envío choca con IX_messages_connection_wamid.
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.OK,
+            """{"messaging_product":"whatsapp","contacts":[{"input":"573001234567","wa_id":"573001234567"}],"messages":[{"id":"wamid.support.template"}]}""");
         Assert.IsType<SupportReplySendResult.Sent>(await SendTemplateAsync(f, Template(f, f.ConversationId)));
         Assert.False(await ScalarAsync<bool>(f.ConnectionString, "SELECT history_managed FROM messaging.conversations WHERE id = @id", ("id", f.ConversationId)));
     }
@@ -803,7 +807,7 @@ public sealed class SupportReplyOutboundTests
             services, tenantId, connectionId, memberId, SupportFormalReplyTemplateDefinition.Name,
             TemplateComponentsBuilder.Components(
                 SupportFormalReplyTemplateDefinition.Draft(SupportFormalReplyTemplateDefinition.Name, SupportFormalReplyTemplateDefinition.BaseBody),
-                "4::handle").ToJsonString(),
+                TemplateMediaHeader.Document("4::handle")).ToJsonString(),
             MessageTemplateKind.SupportFormalReply);
 
     private static Task SeedApprovedSurveyAsync(IServiceProvider services, Guid tenantId, Guid connectionId, Guid memberId) =>
@@ -963,7 +967,7 @@ public sealed class SupportReplyOutboundTests
         var sent = Assert.IsType<SupportReplySendResult.Sent>(await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(
             new SupportFormalTemplateSend(
                 f.Tenant.TenantId, f.ConversationId, null, null, null, "Ana Pérez", Guid.CreateVersion7(), f.MemberId, "SOP-000127",
-                "Revisamos tu caso", FormalPdf(), "Respuesta-SOP-000127.pdf"),
+                "Revisamos tu caso.", FormalPdf(), "Respuesta-SOP-000127.pdf"),
             Ct)));
 
         Assert.Equal(f.ConversationId, sent.ConversationId);
@@ -1003,7 +1007,7 @@ public sealed class SupportReplyOutboundTests
         var result = await WithOutboundAsync(f.Host.Services, outbound => outbound.SendFormalTemplateAsync(
             new SupportFormalTemplateSend(
                 f.Tenant.TenantId, f.ConversationId, null, null, null, "Ana Pérez", Guid.CreateVersion7(), f.MemberId, "SOP-000127",
-                "Revisamos tu caso", FormalPdf(), "Respuesta-SOP-000127.pdf"),
+                "Revisamos tu caso.", FormalPdf(), "Respuesta-SOP-000127.pdf"),
             Ct));
 
         Assert.Equal(new SupportReplySendResult.Rejected("template_not_approved"), result);

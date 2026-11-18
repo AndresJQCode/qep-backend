@@ -89,7 +89,8 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
         bool visible = true,
         Guid? categoryId = null,
         object? scales = null,
-        string? barcode = null)
+        string? barcode = null,
+        Guid? taxRateId = null)
     {
         var response = await Settings.Admin.PostAsJsonAsync(
             $"/api/v1/tenants/{Tenant}/catalog/products",
@@ -97,6 +98,7 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
             {
                 name,
                 categoryId,
+                taxRateId,
                 visibleInStore = visible,
                 variants = new[]
                 {

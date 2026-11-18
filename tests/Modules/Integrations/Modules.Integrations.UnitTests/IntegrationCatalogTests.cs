@@ -39,7 +39,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
         Assert.Equal(
-            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi, IntegrationProviders.Anthropic],
+            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi, IntegrationProviders.Anthropic, IntegrationProviders.OpenAi],
             IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
     }
@@ -88,12 +88,15 @@ public sealed class IntegrationCatalogTests
             [
                 ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes,
                 ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.TokenExpiresAt, ShopifyFieldKeys.RefreshTokenExpiresAt,
-                ShopifyFieldKeys.AccessToken, ShopifyFieldKeys.RefreshToken,
+                ShopifyFieldKeys.AccessToken, ShopifyFieldKeys.RefreshToken, ShopifyFieldKeys.ShopProfile,
             ],
             provider.Fields.Select(field => field.Key));
         Assert.Equal(
-            ["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "tokenExpiresAt", "refreshTokenExpiresAt", "accessToken", "refreshToken"],
+            ["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "tokenExpiresAt", "refreshTokenExpiresAt", "accessToken", "refreshToken", "shopProfile"],
             provider.Fields.Select(field => field.Key));
+        // Spec 2026-11-17 §2: el perfil lleva correo y teléfono; es interno y cabe en el JSON que arma ShopifyShopProfile.
+        Assert.True(provider.FindField("shopProfile")!.Internal);
+        Assert.Equal(Modules.Integrations.Application.Shopify.ShopifyShopProfile.FieldMaxLength, provider.FindField("shopProfile")!.MaxLength);
         Assert.Equal(["shopDomain", "shopName"], provider.CatalogFields.Select(field => field.Key));
         Assert.Equal(["accessToken", "refreshToken"], provider.SecretFields.Select(field => field.Key));
         Assert.True(provider.FindField("accessToken")!.Internal);
@@ -168,7 +171,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal("anthropic", provider.Key);
         Assert.Equal("Anthropic (Claude)", provider.DisplayName);
         Assert.Equal(IntegrationCategory.Ai, provider.Category);
-        Assert.Equal([TenantModuleKeys.Ai], provider.ConsumingModules);
+        Assert.Equal([TenantModuleKeys.Ai, TenantModuleKeys.Copilot], provider.ConsumingModules);
         Assert.Equal(1, provider.MaxConnections);
         Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
         Assert.False(provider.RequiresTenantEnablement);
@@ -189,11 +192,41 @@ public sealed class IntegrationCatalogTests
     public void TheAnthropicKeyHasNoSpaces(string value, bool valid) =>
         Assert.Equal(valid, IntegrationProviders.Anthropic.FindField("apiKey")!.HasValidShape(value.Replace("\\n", "\n", StringComparison.Ordinal)));
 
+    // Spec 2026-10-29 §4.5 y plan 2026-11-12, C-1: la clave de OpenAI tiene la misma forma que la de Anthropic.
+    [Fact]
+    public void OpenAiIsAFormProviderConsumedByAi()
+    {
+        var provider = IntegrationProviders.OpenAi;
+
+        Assert.Equal("openai", provider.Key);
+        Assert.Equal("OpenAI", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Ai, provider.Category);
+        Assert.Equal([TenantModuleKeys.Ai, TenantModuleKeys.Copilot], provider.ConsumingModules);
+        Assert.Equal(1, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
+        Assert.False(provider.RequiresTenantEnablement);
+        Assert.Empty(provider.PublicFields);
+        var apiKey = Assert.Single(provider.SecretFields);
+        Assert.Equal("apiKey", apiKey.Key);
+        Assert.True(apiKey.Required);
+        Assert.Equal(256, apiKey.MaxLength);
+        Assert.Equal(4, apiKey.RevealSuffix);
+        Assert.False(apiKey.Internal);
+        Assert.Same(provider, IntegrationProviders.Parse("openai"));
+    }
+
+    [Theory]
+    [InlineData("sk-proj-abc_DEF-123", true)]
+    [InlineData("sk-proj abc", false)]
+    [InlineData("sk-proj-abc\n", false)]
+    public void TheOpenAiKeyHasNoSpaces(string value, bool valid) =>
+        Assert.Equal(valid, IntegrationProviders.OpenAi.FindField("apiKey")!.HasValidShape(value.Replace("\\n", "\n", StringComparison.Ordinal)));
+
     // Ningún otro campo secreto deja ver una parte: sólo los que lo declaran.
     [Fact]
-    public void OnlyTheAnthropicKeyRevealsASuffix() =>
+    public void OnlyTheModelProviderKeysRevealASuffix() =>
         Assert.Equal(
-            ["anthropic.apiKey"],
+            ["anthropic.apiKey", "openai.apiKey"],
             IntegrationProviders.All
                 .SelectMany(provider => provider.Fields.Where(field => field.RevealSuffix > 0).Select(field => $"{provider.Key}.{field.Key}")));
 
@@ -326,6 +359,20 @@ public sealed class IntegrationCatalogTests
     [Fact]
     public void AContractedButIneffectiveModuleDoesNotMakeItVisible() =>
         Assert.False(IntegrationProviders.Zenvia.IsVisibleFor(TenantModuleSet.FromStored([TenantModuleKeys.Quotations])));
+
+    // Spec 2026-11-17 (copiloto), D-C2: la clave BYOK la consumen los agentes y el copiloto; con cualquiera de los dos encendido se ve.
+    [Fact]
+    public void TheAiProvidersAreVisibleWithAiOrCopilot()
+    {
+        TenantModuleKey[] onlyCopilot = [TenantModuleKeys.Copilot];
+        TenantModuleKey[] onlyAi = [TenantModuleKeys.Messaging, TenantModuleKeys.Ai];
+        foreach (var provider in new[] { IntegrationProviders.Anthropic, IntegrationProviders.OpenAi })
+        {
+            Assert.True(provider.IsVisibleFor(TenantModuleSet.FromStored(onlyCopilot)));
+            Assert.True(provider.IsVisibleFor(TenantModuleSet.FromStored(onlyAi)));
+            Assert.False(provider.IsVisibleFor(TenantModuleSet.FromStored([TenantModuleKeys.Messaging])));
+        }
+    }
 
     [Fact]
     public void TheDevelopmentStubSeesEverything() =>

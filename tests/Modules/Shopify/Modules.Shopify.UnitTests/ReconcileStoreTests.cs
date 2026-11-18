@@ -544,6 +544,20 @@ public sealed class ReconcileStoreTests
         Assert.True(result.DurationMs >= 0);
     }
 
+    // Spec 2026-11-17 (onboarding) §4.2: el resumen del asistente agrupa sólo los pedidos que esta corrida dejó en espera.
+    [Fact]
+    public async Task TheRunReportsTheOrdersLeftWaiting()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Importer.Outcome = row => row.ShopifyOrderId == 2 ? ShopifyImportState.Waiting : ShopifyImportState.Imported;
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1), Order(2), Order(3)], null));
+
+        var result = await world.Reconcile.RunAsync(world.Connection, ShopifyReconcileMode.Manual, Ct);
+
+        Assert.Equal((3, 1), (result.Fetched, result.Waiting));
+        Assert.Equal([2L], result.WaitingOrderIds);
+    }
+
     [Fact]
     public async Task ReconcileNotOperationalConnectionThrowsWithoutCallingShopify()
     {

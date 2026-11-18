@@ -11,8 +11,8 @@ public sealed record AiCredential(Guid ConnectionId, string ApiKey)
     public override string ToString() => $"AiCredential {{ ConnectionId = {ConnectionId} }}";
 }
 
-/// <summary>Por qué un proveedor no se puede usar. <see cref="NotConfigured"/> también cubre un proveedor que Integrations todavía no
-/// ofrece (OpenAI hasta la Tarea 6) o que no es visible: para el agente es lo mismo, no hay clave.</summary>
+/// <summary>Por qué un proveedor no se puede usar. <see cref="NotConfigured"/> también cubre un proveedor que Integrations no ofrece o
+/// que no es visible: para el agente es lo mismo, no hay clave.</summary>
 public enum AiCredentialUnavailableReason
 {
     NotConfigured,
@@ -30,10 +30,12 @@ public sealed record AiCredentialResolution(AiCredential? Credential, AiCredenti
     public static AiCredentialResolution Unusable(AiCredentialUnavailableReason reason) => new(null, reason);
 }
 
-/// <param name="Connectable">Si Integrations ofrece hoy ese proveedor: <c>false</c> en OpenAI hasta su adaptador (plan 2026-11-12,
-/// Tarea 6).</param>
+/// <param name="Connectable">Si Integrations ofrece hoy ese proveedor (los dos desde la Tarea 6 del plan 2026-11-12).</param>
 /// <param name="Status">El estado de la conexión (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>) o <c>null</c> sin conexión.</param>
-public sealed record AiProviderConnectionState(AiProvider Provider, bool Connectable, Guid? ConnectionId, string? Status);
+/// <param name="FailureCode">El motivo de <c>NeedsAttention</c> (<see cref="AiCredentialFailures"/>, <c>provider_unreachable</c>…), sólo en
+/// ese estado; en cualquier otro, <c>null</c> (plan 2026-11-17 A1).</param>
+public sealed record AiProviderConnectionState(
+    AiProvider Provider, bool Connectable, Guid? ConnectionId, string? Status, string? FailureCode = null);
 
 /// <summary>
 /// Plan 2026-11-12, C-1: la clave de cada proveedor es la única conexión de ese proveedor en Integrations. Ai no ve Integrations
@@ -46,6 +48,22 @@ public interface IAiProviderCredentials
 
     /// <summary>Un estado por cada proveedor de <see cref="AiProviders.All"/>, en ese orden. Sin claves.</summary>
     Task<IReadOnlyList<AiProviderConnectionState>> DescribeAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-10-29 §4.5 y plan 2026-11-12 C-19: el proveedor rechazó la cuenta de forma definitiva (clave, permiso o saldo). La conexión de
+    /// ese proveedor pasa de <c>Active</c> a <c>NeedsAttention</c> con <paramref name="failureCode"/> (uno de <see cref="AiCredentialFailures"/>),
+    /// así que sus agentes dejan de tomar conversaciones y los del otro proveedor siguen. La saca una prueba exitosa de la clave en
+    /// Integraciones. Si no estaba <c>Active</c>, no hace nada.
+    /// </summary>
+    Task MarkNeedsAttentionAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken);
+}
+
+/// <summary>Los motivos con que una conexión de proveedor de IA queda en <c>NeedsAttention</c> (<c>last_failure_code</c> en Integrations).</summary>
+public static class AiCredentialFailures
+{
+    public const string CredentialsRejected = "credentials_rejected";
+    public const string PermissionDenied = "permission_denied";
+    public const string QuotaExhausted = "quota_exhausted";
 }
 
 public sealed record GetAiSettingsQuery(Guid TenantId) : IQuery<AiSettingsDto>;
@@ -59,7 +77,10 @@ public sealed record GetAiSettingsQuery(Guid TenantId) : IQuery<AiSettingsDto>;
 public sealed record AiSettingsDto(IReadOnlyList<AiProviderSettingsDto> Providers);
 
 /// <param name="Provider">La clave del proveedor, que es también la de su proveedor en Integrations (para el enlace «Conectar»).</param>
-public sealed record AiProviderSettingsDto(string Provider, bool Connectable, Guid? ConnectionId, string? Status);
+/// <param name="FailureCode">Backend for frontend (plan 2026-11-17 A1, F-3): la pantalla distingue «sin saldo» de «clave rechazada» sin
+/// cruzar con Integraciones. Sólo con <c>Status = NeedsAttention</c>; en cualquier otro estado, <c>null</c>, porque Integrations no limpia
+/// el código al verificar y sería un fallo viejo en una conexión sana.</param>
+public sealed record AiProviderSettingsDto(string Provider, bool Connectable, Guid? ConnectionId, string? Status, string? FailureCode);
 
 public sealed class GetAiSettingsHandler(IExecutionContext executionContext, ITenantModules tenantModules, IAiProviderCredentials credentials)
     : IQueryHandler<GetAiSettingsQuery, AiSettingsDto>
@@ -69,6 +90,7 @@ public sealed class GetAiSettingsHandler(IExecutionContext executionContext, ITe
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AiPermissions.AgentRead, cancellationToken);
         var states = await credentials.DescribeAsync(query.TenantId, cancellationToken);
         return new AiSettingsDto(
-            [.. states.Select(state => new AiProviderSettingsDto(state.Provider.Value, state.Connectable, state.ConnectionId, state.Status))]);
+            [.. states.Select(state => new AiProviderSettingsDto(
+                state.Provider.Value, state.Connectable, state.ConnectionId, state.Status, state.FailureCode))]);
     }
 }

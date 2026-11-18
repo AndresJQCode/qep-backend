@@ -785,4 +785,49 @@ public sealed class PublicOrderRequestApiTests
         Assert.Equal(HttpStatusCode.Created, submit.StatusCode);
         Assert.EndsWith("0001", (string)(await PublicStoreFixture.JsonAsync(submit))["number"]!, StringComparison.Ordinal);
     }
+
+    // ----- Empresa sin cuenta y sin IVA (spec 2026-11-17 §4.3 y §5)
+
+    /// <summary>La tienda cobra COP con una empresa sin cuentas bancarias; <paramref name="chargesVat"/> dice si cobra IVA.</summary>
+    private static Task<Rig> OpenRigWithoutAccountAsync(bool chargesVat) =>
+        OpenRigAsync((fixture, settings) =>
+        {
+            // El tweak es síncrono: la empresa se crea acá, antes del PUT que la guarda en la moneda.
+            var company = StoreApiHarness.CreateCompanyWithoutAccountAsync(
+                fixture.Admin, Tenant, "Sin Cuenta SAS", chargesVat).GetAwaiter().GetResult();
+            settings["currencies"] = new[] { fixture.CurrencyEntry("COP", null, null, companyId: company) };
+        });
+
+    [Fact]
+    public async Task ACheckoutWithoutAccountCreatesTheOrderInTheStoreCurrency()
+    {
+        await using var rig = await OpenRigWithoutAccountAsync(chargesVat: true);
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        Assert.Equal("COP", (string)receipt["currency"]!);
+        var order = await LoadOrderAsync(rig, (Guid)receipt["id"]!);
+        Assert.Equal("COP", order.Currency);
+        Assert.NotNull(order.BillingAccount);
+        Assert.Null(order.BillingAccount.BankName);
+        Assert.Null(order.BillingAccount.AccountNumber);
+        Assert.Equal("COP", order.BillingAccount.Currency);
+    }
+
+    [Fact]
+    public async Task ACheckoutOfACompanyWithoutVatChargesTheListPrice()
+    {
+        await using var rig = await OpenRigWithoutAccountAsync(chargesVat: false);
+        var tax = await StoreApiHarness.CreateTaxRateAsync(rig.Fixture.Settings.Admin, Tenant, "IVA 19", 19);
+        var (_, taxed) = await rig.Fixture.CreateProductAsync("Gorra", "GOR-1", Prices(11_900m), taxRateId: tax);
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig, body =>
+            body["lines"] = new[] { new { variantId = taxed, quantity = 2 } })));
+
+        var order = await LoadOrderAsync(rig, (Guid)receipt["id"]!);
+        Assert.False(order.BillingAccount!.ChargesVat);
+        Assert.Equal(0m, order.TaxAmount);
+        Assert.Equal(23_800m, order.Total);
+        Assert.All(order.Items, item => Assert.Equal(0, item.TaxPercentage));
+    }
 }

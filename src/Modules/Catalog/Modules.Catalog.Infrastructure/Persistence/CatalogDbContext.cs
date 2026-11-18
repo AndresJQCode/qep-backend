@@ -68,6 +68,11 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         product.Property(value => value.VisibleInStore)
             .HasColumnName("visible_in_store")
             .HasDefaultValue(false);
+        // Productos desde Shopify (spec 2026-11-17 §5.4). Nullable: null es un producto propio, que
+        // es lo que son todos los de antes de la importación.
+        product.Property(value => value.ExternalSource)
+            .HasColumnName("external_source")
+            .HasMaxLength(Product.ExternalSourceMaxLength);
         // El predicado de las lecturas de la tienda: sólo los publicados y activos. Incluye el nombre
         // porque la tienda ordena por él; con sólo tenant_id EF lo fundiría con IX_products_tenant.
         product.HasIndex(value => new { value.TenantId, value.Name })

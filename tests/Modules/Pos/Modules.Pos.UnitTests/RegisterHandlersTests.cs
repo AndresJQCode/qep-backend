@@ -144,6 +144,19 @@ public sealed class RegisterHandlersTests
         Assert.Equal(PosTestBed.UserId, audit.ActorId);
     }
 
+    // Spec 2026-11-17 R4: la caja congela si la empresa cobra IVA.
+    [Fact]
+    public async Task OpenFreezesTheCompanyChargesVat()
+    {
+        var bed = new PosTestBed();
+        bed.AddCompany(chargesVat: false);
+
+        await Open(bed, Operator).HandleAsync(
+            new OpenCashSessionCommand(TenantId, null, 100_000m), TestContext.Current.CancellationToken);
+
+        Assert.False(Assert.Single(bed.Sessions.Sessions).CompanyChargesVat);
+    }
+
     [Fact]
     public async Task OpenReadsTheTenantDefaultCurrencyOnce()
     {

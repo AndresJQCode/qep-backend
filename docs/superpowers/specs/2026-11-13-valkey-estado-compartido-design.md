@@ -386,7 +386,9 @@ autenticación es por ACL (`aclfile`, el usuario `default` deshabilitado), con l
 `ADMIN_PASSWORD`, `EXPORTER_PASSWORD`, `PROBE_PASSWORD` (claves vistas con `describe`, sin valores).
 
 **Usuario del backend.** Se da de alta con el procedimiento de `k8s/platform/valkey/README.md` («Dar de alta una
-app»): usuario `qep`, línea `user qep on ><password> ~qep:* &qep:* +@all -@dangerous -@scripting`, y la etiqueta
+app»): usuario `qep`, línea `user qep on ><password> ~qep:* &qep:* +@all -@dangerous -@scripting +info` (el `+info` se
+sumó el 2026-11-17: sin él el cliente sondea la réplica con un `SET` fuera de `~qep:*` cada 60 s y `ValkeyACLDenied` dispara
+por ruido propio; `CONFIG` se apaga en el `CommandMap` del cliente), y la etiqueta
 `valkey.platform/access=true` en el namespace `prod-qep-backend` (sin ella, la `NetworkPolicy` da timeout). La cadena,
 en formato de StackExchange.Redis (no la URL `redis://` que el README pone para ioredis), va a `VALKEY_CONNECTION_STRING`
 en `Backend-prod`: `valkey.valkey.svc.cluster.local:6379,user=qep,password=…,abortConnect=false`. Es prerrequisito del

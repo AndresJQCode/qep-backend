@@ -49,7 +49,8 @@ public sealed class Company
         Guid? cityId,
         string? cityName,
         CompanyContactInfo contact,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool chargesVat)
     {
         Id = id;
         TenantId = tenantId;
@@ -61,6 +62,7 @@ public sealed class Company
         CityName = cityName;
         _bankAccounts.AddRange(bankAccounts);
         Apply(contact);
+        ChargesVat = chargesVat;
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -74,7 +76,9 @@ public sealed class Company
     public string Name { get; private set; }
 
     /// <summary>
-    /// Las cuentas bancarias de la empresa, en el orden en que se cargaron. **Al menos una.**
+    /// Las cuentas bancarias de la empresa, en el orden en que se cargaron. **Pueden ser cero**
+    /// (spec 2026-11-17 §4.1): una empresa nueva todavía no tiene cuenta, y un cobro por tarjeta o
+    /// pasarela no la necesita. El tope es <see cref="CompanyBankAccount.MaxPerCompany"/>.
     ///
     /// La unicidad vive dentro de la empresa —la misma terna banco/numero/moneda no se carga dos
     /// veces— y no en un indice de base. Es invariante del agregado: la coleccion entera se
@@ -124,6 +128,13 @@ public sealed class Company
 
     public bool IsActive { get; private set; }
 
+    /// <summary>
+    /// Si la empresa cobra IVA (spec 2026-11-17 §5.1). Lo que emite una empresa que no lo cobra va
+    /// al 0 % en líneas y envío, y el cliente paga el precio de lista. Cada documento congela su
+    /// propia copia al elegir la empresa: cambiarlo acá no toca lo ya emitido.
+    /// </summary>
+    public bool ChargesVat { get; private set; } = true;
+
     public string? Phone { get; private set; }
 
     public string? Email { get; private set; }
@@ -158,7 +169,8 @@ public sealed class Company
         Guid? cityId,
         string? cityName,
         CompanyContactInfo contact,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool chargesVat = true)
     {
         var normalizedCountry = NormalizeCountry(country);
         EnsureDocumentTypeAllowed(normalizedCountry, documentType);
@@ -175,12 +187,14 @@ public sealed class Company
             location.CityId,
             location.CityName,
             contact,
-            occurredAt);
+            occurredAt,
+            chargesVat);
     }
 
     /// <summary>
     /// Reemplaza el recurso entero, coleccion de cuentas incluida: lo que no viene en el cuerpo se
-    /// **quita**.
+    /// **quita**. <paramref name="chargesVat"/> es obligatorio acá: decidir qué hace un cuerpo sin
+    /// el campo (conservar) es del handler, no del agregado.
     /// </summary>
     public void Update(
         string name,
@@ -191,7 +205,8 @@ public sealed class Company
         Guid? cityId,
         string? cityName,
         CompanyContactInfo contact,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool chargesVat)
     {
         EnsureActive();
 
@@ -218,6 +233,7 @@ public sealed class Company
         _bankAccounts.Clear();
         _bankAccounts.AddRange(normalizedAccounts);
         Assign(normalizedContact);
+        ChargesVat = chargesVat;
         Version++;
         UpdatedAt = occurredAt;
     }
@@ -313,8 +329,8 @@ public sealed class Company
     }
 
     /// <summary>
-    /// Normaliza cada cuenta y hace cumplir los invariantes de la coleccion: cuantas hay y que no
-    /// se repitan.
+    /// Normaliza cada cuenta y hace cumplir los invariantes de la coleccion: el tope y que no se
+    /// repitan. Cero cuentas es válido (spec 2026-11-17 §4.1).
     ///
     /// El orden importa. Los duplicados se buscan sobre las cuentas **ya normalizadas**, porque
     /// sobre las crudas " CTA-1" y "CTA-1" pasan como dos. Y el tope se comprueba antes de
@@ -324,13 +340,6 @@ public sealed class Company
     private static List<CompanyBankAccount> NormalizeBankAccounts(
         IReadOnlyCollection<CompanyBankAccount> bankAccounts)
     {
-        if (bankAccounts.Count == 0)
-        {
-            throw new CompaniesDomainException(
-                "companies.company.bank_accounts_required",
-                "The company needs at least one bank account.");
-        }
-
         if (bankAccounts.Count > CompanyBankAccount.MaxPerCompany)
         {
             throw new CompaniesDomainException(

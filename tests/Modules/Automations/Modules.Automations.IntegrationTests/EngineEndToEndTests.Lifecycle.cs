@@ -402,7 +402,7 @@ public sealed partial class EngineEndToEndTests
         await InboundAsync(f, "w1", "buenas tardes");
         await DrainAutomationsAsync(f.Host);
         await ExecuteAsync(f.ConnectionString,
-            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, version = version + 1",
+            "UPDATE messaging.conversations SET automation_status = 'Active', automation_started_at = now(), automation_chatbot_id = @c, automation_bot_kind = 1, version = version + 1",
             ("c", f.ChatbotId));
         Assert.Equal(HttpStatusCode.OK, (await ChatbotActionAsync(f, "pause")).StatusCode);
 

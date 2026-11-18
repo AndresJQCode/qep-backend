@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BuildingBlocks.Domain;
 using Microsoft.Extensions.Logging;
 using Modules.Automations.Application.Http;
@@ -9,8 +10,13 @@ namespace Modules.Automations.Application.Engine;
 
 /// <summary>Una corrida dentro de una unidad del procesador. <see cref="BaseStepNumber"/> es el <c>StepNumber</c> guardado al empezar la
 /// unidad (0 en una corrida nueva): la base de los clientIds de P2-R5. <see cref="Log"/> (spec 2026-10-25 D-E5) junta los pasos de la unidad
-/// para su fila de <c>run_units</c>; sin él no se registra nada.</summary>
-public sealed record RunUnit(ConversationRun Run, FlowDefinition Flow, EngineSettings Settings, int BaseStepNumber, RunUnitLog? Log = null);
+/// para su fila de <c>run_units</c>; sin él no se registra nada. <see cref="InboundMessageId"/> (spec 2026-11-17 D-B7) es el entrante que
+/// arrancó la unidad cuando la entrada del motor no lo trae (un <see cref="EngineInput.Start"/> por disparador): el que un bloque «Agente IA»
+/// le pasa al agente para que lo responda. <c>null</c> en un arranque sin entrante. <see cref="InboxRowId"/> (revisión de la rama, hallazgo 1)
+/// es la fila de la cola que procesa la unidad, entrante o no: la delegación la nombra para que Mensajería no la mueva a la cola del agente.</summary>
+public sealed record RunUnit(
+    ConversationRun Run, FlowDefinition Flow, EngineSettings Settings, int BaseStepNumber, RunUnitLog? Log = null, Guid? InboundMessageId = null,
+    Guid? InboxRowId = null);
 
 /// <summary>
 /// Spec 2026-10-21 §5.2 paso 5, D-M5 y D-M14: el bucle de efectos que <see cref="RunProcessor"/> delega. Ejecuta en orden lo que pide
@@ -29,8 +35,14 @@ public sealed partial class RunEffects(
     IAutomationsAuditRecorder audit,
     IAutomationDataConsents dataConsents,
     IChatbotRepository chatbots,
+    IAutomationsModuleStatus modules,
     ILogger<RunEffects> logger)
 {
+    private static readonly JsonSerializerOptions BriefOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Conversation {ConversationId} of tenant {TenantId} left the bot during run {RunId}; the run ends Interrupted.")]
     private static partial void LogTakenOver(ILogger logger, Guid tenantId, Guid conversationId, Guid runId);
 
@@ -50,6 +62,14 @@ public sealed partial class RunEffects(
         // número N reusa el clientId del N del primer intento; si ése había salido, Mensajería lo da por enviado y el mensaje nuevo no sale.
         var sends = 0;
         var reentries = 0;
+        // Spec 2026-11-17 D-B7 y plan B3: el motor no guarda el último entrante; el bloque «Agente IA» lo recibe de la entrada de la unidad.
+        var lastInbound = (input as EngineInput.CustomerMessage)?.MessageId ?? unit.InboundMessageId;
+        // Revisión de la rama, hallazgo 5: una respuesta del cliente al chatbot corta la racha de delegaciones de la corrida.
+        if (input is EngineInput.CustomerMessage)
+        {
+            run.RecordCustomerReply();
+        }
+
         EngineInput? next = input;
         while (next is not null)
         {
@@ -121,6 +141,29 @@ public sealed partial class RunEffects(
 
                         next = await ExternalAsync(run, effect, state.Variables, state.StepNumber, cancellationToken);
                         break;
+                    case Effect.DelegateToAgent delegation:
+                        // Spec 2026-11-17 §6.6: un bucle aiAgent → error → aiAgent (con ai apagado vuelve en la misma unidad) cuenta como
+                        // cualquier reentrada (P2-R40). Hallazgo 5 de la revisión: y como cada vuelta del agente es otra unidad, la racha de
+                        // delegaciones sin respuesta del cliente se cuenta en la corrida, con el mismo tope y el mismo corte.
+                        if (++reentries > EngineReentries.Max || run.ConsecutiveDelegations >= EngineReentries.Max)
+                        {
+                            await FailAsync(
+                                run, state,
+                                HandoffCause.FlowFailed(
+                                    AutomationsRunFailures.Of(EndReasons.LoopDetected), effect.NodeId, TitleOf(unit.Flow, effect.NodeId), http),
+                                now, cancellationToken);
+                            return;
+                        }
+
+                        run.RecordDelegation();
+                        var delegated = await DelegateAsync(run, state, delegation, lastInbound, unit.InboxRowId, now, cancellationToken);
+                        if (delegated is null)
+                        {
+                            return;
+                        }
+
+                        next = delegated.Input;
+                        break;
                     case Effect.RecordDataConsent record:
                         // D-5: la respuesta se registra antes de seguir con el bloque siguiente; sin registro, la corrida no sigue.
                         if (!await RecordDataConsentAsync(unit, state, record, http, now, cancellationToken))
@@ -135,16 +178,21 @@ public sealed partial class RunEffects(
                         break;
                     case Effect.Handoff handoff:
                         // D-T9: el motor dice por qué camino llegó; el procesador no lo deduce por el tipo de bloque.
-                        var cause = new HandoffCause(
-                            handoff.Reason switch
-                            {
-                                HandoffReasons.InvalidReply => HandoffCauseKind.InvalidReply,
-                                HandoffReasons.AttemptsExhausted => HandoffCauseKind.AttemptsExhausted,
-                                HandoffReasons.DataConsentRejected => HandoffCauseKind.DataConsentRejected,
-                                HandoffReasons.DataConsentUnavailable => HandoffCauseKind.DataConsentUnavailable,
-                                _ => HandoffCauseKind.Block,
-                            },
-                            null, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null, http);
+                        var cause = handoff.Reason == HandoffReasons.AgentBlockOutputUnhandled
+                            // Spec 2026-11-17 adenda D-6: la salida es el código; el adaptador guarda los nombres del chatbot y del agente.
+                            ? new HandoffCause(
+                                HandoffCauseKind.AgentBlockOutputUnhandled, handoff.Code, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null,
+                                http, run.ChatbotId, AgentOf(unit.Flow, handoff.NodeId))
+                            : new HandoffCause(
+                                handoff.Reason switch
+                                {
+                                    HandoffReasons.InvalidReply => HandoffCauseKind.InvalidReply,
+                                    HandoffReasons.AttemptsExhausted => HandoffCauseKind.AttemptsExhausted,
+                                    HandoffReasons.DataConsentRejected => HandoffCauseKind.DataConsentRejected,
+                                    HandoffReasons.DataConsentUnavailable => HandoffCauseKind.DataConsentUnavailable,
+                                    _ => HandoffCauseKind.Block,
+                                },
+                                null, handoff.NodeId, TitleOf(unit.Flow, handoff.NodeId), null, null, http);
                         // Spec 2026-10-25 D-1: el motor trae el destino; el adaptador decide si todavía puede responder (D-5).
                         if (!await HandsOverAsync(run, state, () => conversations.HandoffAsync(run.TenantId, run.ConversationId, cause, handoff.MemberId, cancellationToken), now))
                         {
@@ -165,6 +213,14 @@ public sealed partial class RunEffects(
                         // D-M14: un bot que terminó no sigue «atendiendo» en la bandeja.
                         await conversations.EndAsync(run.TenantId, run.ConversationId, cancellationToken);
                         Audit(run, AutomationsAuditActions.RunCompleted, now);
+                        break;
+                    case Effect.EndRun { Reason: EndReasons.WindowClosed }:
+                        // Spec 2026-11-17 §6.4: el agente volvió sin salida porque la ventana se cerró; como un envío con la ventana cerrada.
+                        await conversations.EndAsync(run.TenantId, run.ConversationId, cancellationToken);
+                        break;
+                    case Effect.EndRun { Reason: EndReasons.Interrupted }:
+                        // §6.4: contacto bloqueado. Como un envío a un contacto bloqueado: no toca la automatización.
+                        LogContactBlocked(logger, run.TenantId, run.ConversationId, run.Id);
                         break;
                     case Effect.EndRun end:
                         // P2-R13/R14/R17: un ciclo o un bloque que no existe; que lo vea una persona.
@@ -231,6 +287,47 @@ public sealed partial class RunEffects(
         ArgumentNullException.ThrowIfNull(flow);
         return nodeId is null ? null : flow.Nodes.FirstOrDefault(node => node.Id == nodeId)?.Title;
     }
+
+    /// <summary>
+    /// Spec 2026-11-17 §6.1 y D-B16. Con el módulo <c>ai</c> apagado, el bloque sale por <c>error</c> con <c>module_disabled</c> sin delegar (la
+    /// entrada vuelve al motor en esta misma unidad). Si no, Mensajería guarda la delegación, cambia la conversación al agente y encola la fila
+    /// <c>Delegated</c> en un solo guardado, y la corrida queda esperando; si la conversación ya no es del chatbot (una persona la tomó entre
+    /// el claim y el efecto) la corrida termina <c>Interrupted</c>, como con cualquier otro efecto. <c>null</c> = la unidad se corta.
+    /// </summary>
+    private async Task<Delegated?> DelegateAsync(
+        ConversationRun run, RunState state, Effect.DelegateToAgent delegation, Guid? lastInbound, Guid? inboxRowId, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (!await modules.IsAiEnabledAsync(run.TenantId, cancellationToken))
+        {
+            return new Delegated(new EngineInput.AgentResult(delegation.NodeId, null, FlowOutputs.Error, AgentBlockReasons.ModuleDisabled));
+        }
+
+        // §5.3: el brief lo arma Automations y lo lee Ai (AgentBlockBrief); Mensajería no lo interpreta.
+        var brief = JsonSerializer.Serialize(
+            new BriefJson(delegation.Objective, delegation.Context, delegation.FirstTurn, delegation.IdleMinutes), BriefOptions);
+        if (!await HandsOverAsync(
+                run, state,
+                () => conversations.DelegateToAgentAsync(
+                    run.TenantId, run.ConversationId,
+                    new DelegationRequest(run.Id, run.ChatbotId, delegation.NodeId, delegation.AgentId, lastInbound, brief, inboxRowId), cancellationToken),
+                now))
+        {
+            return null;
+        }
+
+        return new Delegated(null);
+    }
+
+    /// <summary>Lo que sigue a delegar: <see cref="Input"/> vuelve al motor (módulo apagado) o es <c>null</c> (la corrida espera).</summary>
+    private sealed record Delegated(EngineInput? Input);
+
+    /// <summary>Spec 2026-11-17 §5.3: <c>{objective, context, firstTurn, idleMinutes}</c> en camelCase.</summary>
+    private sealed record BriefJson(string Objective, string Context, string FirstTurn, int IdleMinutes);
+
+    /// <summary>Spec 2026-11-17: el agente del bloque «Agente IA» con ese id en la versión de la corrida; <c>null</c> si no lo es o no tiene.</summary>
+    private static Guid? AgentOf(FlowDefinition flow, string nodeId) =>
+        flow.Nodes.OfType<AiAgentNode>().FirstOrDefault(node => node.Id == nodeId)?.AgentId;
 
     private static HandoffHttpFailure? FailedHttpOf(FlowDefinition flow, EngineInput input) =>
         input is EngineInput.HttpResult { Ok: false } failed

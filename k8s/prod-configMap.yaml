@@ -59,6 +59,12 @@ data:
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
   OTEL_SERVICE_NAME: "qep-backend"
   OTEL_RESOURCE_ATTRIBUTES: "service.namespace=qep"
+  # Valkey (spec 2026-11-13, § Despliegue paso 2): el cliente conecta con todas las áreas apagadas, y cada área usa
+  # las clases de antes. Se verifica que el log de arranque nombre ConnectionStrings:Valkey y que qep_valkey_connected
+  # valga 1. Recién entonces se prenden las áreas de a una, cada una en su commit y con un día de por medio
+  # (Valkey__Areas__Presence, RateLimiting, Sessions, Permissions, Doorbells, ApiKeyTouch; README § Valkey). La cadena,
+  # con la contraseña del usuario ACL qep, está en prod-secret.yaml. Apagarlo ("false") es el rollback.
+  Valkey__Enabled: "true"
   # Authentication__Authority queda sin definir: por defecto toma el emisor propio de
   # Google (https://accounts.google.com) en QepServiceCollectionExtensions.AddAuthentication.
   # Sólo la audiencia (el client id de OAuth de Google) debe proveerse por entorno.
@@ -134,7 +140,8 @@ data:
   # topics en la URL nueva (ShopifyWebhookRegistration compara topic y URL) y las suscripciones de la vieja siguen ahí.
   Shopify__App__ClientId: "#{SHOPIFY_APP_CLIENT_ID}#"
   Shopify__App__ApiVersion: "2026-10"
-  Shopify__App__Scopes: "read_orders,write_orders,read_customers"
+  # read_products (spec 2026-11-17): agrégalo antes en los scopes de la app del Partner Dashboard.
+  Shopify__App__Scopes: "read_orders,write_orders,read_customers,read_products"
   Shopify__App__WebhookCallbackUrl: "https://qep-api.qcode.co/api/webhooks/shopify"
   Shopify__App__AllowedRedirectOrigins__0: "https://qep.qcode.co"
   # Cada cuánto la conciliación trae de Shopify lo que el webhook no entregó y reintenta lo que espera (spec §5.3). Repite el
