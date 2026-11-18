@@ -272,6 +272,40 @@ public sealed class QuotationWithholdingsPersistenceTests
         Assert.Equal(2_500m, row.Amount);
     }
 
+    // Spec 2026-11-18 §4.2: el alcance viaja en la foto y vuelve igual. Una fila sin alcance es All, como las de antes.
+    [Fact]
+    public async Task AScopedRateSurvivesARoundTrip()
+    {
+        await using var database = await StartEmptyDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateAsync(connectionString);
+
+        var services = RetefuenteServicios with { AppliesTo = BuildingBlocks.Domain.Taxes.WithholdingScope.Services };
+        var quotation = NewQuotation([Retefuente], ColombianAccount);
+        UseOwnBilling(quotation);
+        quotation.SetBillingWithholdings([services], Advisor, Now);
+        await using (var create = NewContext(connectionString))
+        {
+            create.Quotations.Add(quotation);
+            await CustomerReferenceReplica.SaveAsync(create);
+        }
+
+        await using var read = NewContext(connectionString);
+        var reloaded = await FindAsync(read, quotation.Id);
+
+        var selector = Assert.Single(reloaded.BillingWithholdings);
+        Assert.Equal(services, selector.Rate);
+        Assert.Equal(BuildingBlocks.Domain.Taxes.WithholdingScope.Services, selector.AppliesTo);
+        var customer = Assert.Single(reloaded.CustomerWithholdings);
+        Assert.Equal(BuildingBlocks.Domain.Taxes.WithholdingScope.All, customer.Rate.AppliesTo);
+        Assert.Equal(
+            "Services",
+            await ScalarAsync(
+                connectionString,
+                "SELECT applies_to FROM quotations.quotation_withholdings " +
+                $"WHERE document_id = '{quotation.Id.Value}' AND source = 'Billing' AND position = 0"));
+    }
+
     private static async Task<string> ScalarAsync(string connectionString, string sql)
     {
         await using var connection = new NpgsqlConnection(connectionString);

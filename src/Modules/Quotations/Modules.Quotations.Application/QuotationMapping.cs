@@ -76,7 +76,8 @@ internal static class QuotationMapping
         verdict.MinimumBaseAmount,
         verdict.Rate.TaxUnitValue,
         verdict.Rate.TaxUnitYear,
-        verdict.Amount);
+        verdict.Amount,
+        verdict.Rate.AppliesTo.ToString());
 
     /// <summary>Una retención aplicada tal como viaja (spec impuestos por tipo §9.3). La usa también el pedido.</summary>
     internal static WithholdingDto ToDto(DocumentWithholding withholding) => new(

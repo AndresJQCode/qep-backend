@@ -1730,6 +1730,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("boolean")
                                 .HasColumnName("applied");
 
+                            b1.Property<string>("AppliesTo")
+                                .IsRequired()
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("text")
+                                .HasDefaultValue("All")
+                                .HasColumnName("applies_to");
+
                             b1.Property<decimal>("BaseAmount")
                                 .HasPrecision(14, 2)
                                 .HasColumnType("numeric(14,2)")
@@ -1958,6 +1965,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                             b1.Property<bool>("Applied")
                                 .HasColumnType("boolean")
                                 .HasColumnName("applied");
+
+                            b1.Property<string>("AppliesTo")
+                                .IsRequired()
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("text")
+                                .HasDefaultValue("All")
+                                .HasColumnName("applies_to");
 
                             b1.Property<decimal>("BaseAmount")
                                 .HasPrecision(14, 2)

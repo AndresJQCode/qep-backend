@@ -188,6 +188,9 @@ public sealed record WithholdingTaxRateDto(
 /// <param name="MinimumBaseAmount">El umbral en dinero; null sin base mínima o con base en UVT y sin valor cargado.</param>
 /// <param name="TaxUnitYear">El año de la UVT congelada; null sin unidad o en una fila anterior que no casó (§8.2).</param>
 /// <param name="Amount">Lo que guardó el último recálculo; 0 si no aplicó.</param>
+/// <param name="AppliesTo">El nombre de <c>WithholdingScope</c> de la tasa congelada (spec 2026-11-18 §4.4): <c>All</c>,
+/// <c>Goods</c> o <c>Services</c>. Viaja para que la pantalla diga sobre qué líneas se calculó <c>Base</c> sin deducirlo
+/// del nombre de la tasa.</param>
 public sealed record WithholdingVerdictDto(
     Guid TaxRateId,
     string Name,
@@ -205,7 +208,8 @@ public sealed record WithholdingVerdictDto(
     decimal? MinimumBaseAmount,
     decimal? TaxUnitValue,
     int? TaxUnitYear,
-    decimal Amount);
+    decimal Amount,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>
 /// Gemelo HTTP de <see cref="WithholdingVerdictDto"/> más <see cref="TaxUnitOutdated"/>, que sale del calendario del
@@ -236,7 +240,8 @@ public sealed record WithholdingBreakdownResponse(
     int? TaxUnitYear,
     bool TaxUnitOutdated,
     int? TaxUnitLatestYear,
-    decimal Amount);
+    decimal Amount,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>
 /// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.

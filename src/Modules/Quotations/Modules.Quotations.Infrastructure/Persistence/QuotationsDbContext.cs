@@ -1,5 +1,6 @@
 using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
+using BuildingBlocks.Domain.Taxes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Modules.Quotations.Domain;
@@ -300,6 +301,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // catálogo al congelar; `percentage` es el efectivo. Las filas anteriores se rellenan con su `percentage`.
         withholding.Property(value => value.CityId).HasColumnName("city_id");
         withholding.Property(value => value.CatalogPercentage).HasColumnName("catalog_percentage").HasPrecision(6, 3);
+        // Spec 2026-11-18 §4.2: el alcance congelado, por nombre. Las filas de antes quedan All y su total no cambia; el
+        // default coincide con el CLR, así que no hace falta sentinel.
+        withholding.Property(value => value.AppliesTo)
+            .HasColumnName("applies_to")
+            .HasConversion<string>()
+            .HasDefaultValue(WithholdingScope.All);
         withholding.Ignore(value => value.Overridden);
         withholding.Ignore(value => value.Rate);
     }

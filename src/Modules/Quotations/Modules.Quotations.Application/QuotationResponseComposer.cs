@@ -221,7 +221,8 @@ public sealed class QuotationResponseComposer(
                 verdict.MinimumBaseUnit is not null && context.LatestYearByCountry.TryGetValue(verdict.Country, out var latest)
                     ? latest
                     : null,
-                verdict.Amount)),
+                verdict.Amount,
+                verdict.AppliesTo)),
         ];
 
     internal static bool IsOutdated(int? taxUnitYear, int? documentYear) =>
