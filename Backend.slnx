@@ -184,6 +184,15 @@
     <Project Path="tests/Modules/Purchases/Modules.Purchases.UnitTests/Modules.Purchases.UnitTests.csproj" />
     <Project Path="tests/Modules/Purchases/Modules.Purchases.IntegrationTests/Modules.Purchases.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Wholesale/">
+    <Project Path="src/Modules/Wholesale/Modules.Wholesale.Api/Modules.Wholesale.Api.csproj" />
+    <Project Path="src/Modules/Wholesale/Modules.Wholesale.Application/Modules.Wholesale.Application.csproj" />
+    <Project Path="src/Modules/Wholesale/Modules.Wholesale.Domain/Modules.Wholesale.Domain.csproj" />
+    <Project Path="src/Modules/Wholesale/Modules.Wholesale.Infrastructure/Modules.Wholesale.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Wholesale/">
+    <Project Path="tests/Modules/Wholesale/Modules.Wholesale.UnitTests/Modules.Wholesale.UnitTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Support/">
     <Project Path="src/Modules/Support/Modules.Support.Api/Modules.Support.Api.csproj" />
     <Project Path="src/Modules/Support/Modules.Support.Application/Modules.Support.Application.csproj" />
