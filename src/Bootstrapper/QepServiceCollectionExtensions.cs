@@ -1813,6 +1813,12 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-17: la imagen del encabezado de plantilla sobre Storage, con el mismo criterio que el logo: sin pasar por los
         // handlers de Storage ni por sus permisos (la autoriza messaging.template.manage).
         services.AddScoped<IMessagingTemplateImageStore, MessagingTemplateImageStore>();
+        // Spec 2026-11-18: el archivo de un bloque «Mensaje» de chatbot. La política es la columna WhatsApp de Mensajería, el archivo vive en
+        // Storage (dueño ChatbotMedia, sin pasar por sus handlers ni sus permisos: lo autoriza automations.chatbot.manage) y Storage lo
+        // revisa y comprime con el sniffer y el compresor de Mensajería.
+        services.AddScoped<IChatbotMediaPolicy, ChatbotMediaPolicy>();
+        services.AddScoped<IChatbotMediaStore, ChatbotMediaStore>();
+        services.AddScoped<IChatbotMediaProcessing, ChatbotMediaProcessing>();
         // Y al revés, para el barrido diario de Storage: qué imágenes de encabezado usa todavía una plantilla.
         services.AddScoped<ITemplateImageReferences, TemplateImageReferences>();
 
