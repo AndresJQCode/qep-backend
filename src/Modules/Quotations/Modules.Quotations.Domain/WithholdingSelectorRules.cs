@@ -36,7 +36,8 @@ internal static class WithholdingSelectorRules
 
         // Spec 2026-11-18 §4.3: una por tipo y alcance. Del mismo tipo conviven sólo una de bienes y una de servicios.
         if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal)
-            .Any(group => WithholdingScopes.AnyOverlap([.. group.Select(rate => rate.AppliesTo)])))
+            .Any(group => WithholdingScopes.Repeated(
+                [.. group.Select(rate => rate.AppliesTo)], TaxCountries.IsMunicipal(group.First().Country, group.Key))))
         {
             throw new QuotationsDomainException(
                 $"{codePrefix}.withholding_type_repeated",

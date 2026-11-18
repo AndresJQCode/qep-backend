@@ -48,4 +48,16 @@ public static class WithholdingScopes
 
         return false;
     }
+
+    /// <summary>
+    /// La regla de repetición de un grupo de tasas del mismo tipo (spec §4.3). Un tipo municipal (ReteICA) sigue con una
+    /// sola tasa, cualquiera sea su alcance: la edición del porcentaje y la re-resolución por ciudad identifican la fila
+    /// por tipo, y dos filas del mismo tipo las volverían ambiguas. Un tipo nacional admite una de bienes y una de
+    /// servicios (<see cref="AnyOverlap"/>).
+    /// </summary>
+    public static bool Repeated(IReadOnlyList<WithholdingScope> scopes, bool municipal)
+    {
+        ArgumentNullException.ThrowIfNull(scopes);
+        return municipal ? scopes.Count > 1 : AnyOverlap(scopes);
+    }
 }

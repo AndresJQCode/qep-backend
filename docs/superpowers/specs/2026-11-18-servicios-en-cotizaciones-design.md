@@ -175,7 +175,15 @@ Hoy la regla está en cuatro lugares, y los cuatro cambian igual:
 - `CustomerWriteRules` (`Customers.Application`, línea 233, agrupa por `(Country, Type)`).
 
 Regla nueva: dos tasas del mismo tipo (y misma ciudad, donde hoy se compara) conviven sólo si una es `Goods` y la otra
-`Services`. `All` con cualquier otra del mismo tipo sigue siendo repetida: sus bases se solaparían y se retendría dos
+`Services`.
+
+**Los tipos municipales (ReteICA) quedan con una tasa por tipo y municipio, cualquiera sea su alcance** (corrección
+del 2026-11-18 al implementar): la edición del porcentaje municipal (`SetWithholdingPercentage(type, …)`), la
+re-resolución al cambiar de ciudad (`MunicipalOffer` por tipo) y `WithholdingSelection.ReResolved` identifican la fila
+por tipo, y dos filas del mismo tipo las volverían ambiguas. La separación bienes/servicios vale para los nacionales
+(Retefuente), que es el caso de los tenants de servicios. Una ReteICA puede tener alcance y su base se calcula por
+alcance, pero la empresa y el documento llevan una sola por municipio. Separar la ReteICA por actividad es fase 2: pide
+identificar la fila municipal por tasa y no por tipo. La regla vive en `WithholdingScopes.Repeated`. `All` con cualquier otra del mismo tipo sigue siendo repetida: sus bases se solaparían y se retendría dos
 veces. El código de error no cambia.
 
 Companies y Customers no ven el catálogo: si su foto o su lectura de tasas no trae `AppliesTo`, entra por el mismo

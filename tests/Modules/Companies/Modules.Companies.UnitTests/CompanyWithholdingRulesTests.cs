@@ -64,15 +64,17 @@ public sealed class CompanyWithholdingRulesTests
             Fails(() => Validate([first, second], [first.Id, second.Id])));
     }
 
-    // Spec 2026-11-18 §4.3: en el mismo municipio conviven una de bienes y una de servicios; All con cualquier otra, o dos del
-    // mismo alcance, retendrían dos veces sobre las mismas líneas.
+    // Spec 2026-11-18 §4.3: una tasa municipal es una por tipo y municipio, cualquiera sea su alcance (la edición del
+    // porcentaje y la re-resolución por ciudad identifican la fila por tipo).
     [Fact]
-    public void GoodsAndServicesOfTheSameTypeAreAccepted()
+    public void GoodsAndServicesInTheSameMunicipalityAreRepeated()
     {
         var goods = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Goods };
         var services = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
 
-        Validate([goods, services], [goods.Id, services.Id]);
+        Assert.Equal(
+            "companies.company.withholding_municipality_repeated",
+            Fails(() => Validate([goods, services], [goods.Id, services.Id])));
     }
 
     [Fact]

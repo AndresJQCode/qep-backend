@@ -53,4 +53,16 @@ public sealed class WithholdingScopesTests
     {
         Assert.Equal(expected, WithholdingScopes.AnyOverlap(scopes));
     }
+
+    // Spec §4.3: un tipo municipal (ReteICA) sigue con una tasa por tipo y municipio, cualquiera sea su alcance, porque la
+    // edición del porcentaje y la re-resolución por ciudad identifican la fila por tipo. Uno nacional sigue la regla de alcance.
+    [Theory]
+    [InlineData(new[] { WithholdingScope.Goods, WithholdingScope.Services }, true, true)]
+    [InlineData(new[] { WithholdingScope.Services }, true, false)]
+    [InlineData(new[] { WithholdingScope.Goods, WithholdingScope.Services }, false, false)]
+    [InlineData(new[] { WithholdingScope.All, WithholdingScope.Services }, false, true)]
+    public void RepeatedIsOnePerTypeForMunicipalTypes(WithholdingScope[] scopes, bool municipal, bool expected)
+    {
+        Assert.Equal(expected, WithholdingScopes.Repeated(scopes, municipal));
+    }
 }

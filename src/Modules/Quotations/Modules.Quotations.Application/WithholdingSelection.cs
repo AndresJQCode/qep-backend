@@ -137,7 +137,8 @@ public static class WithholdingSelection
         // El mismo id dos veces también es dos del mismo tipo y alcance. Spec 2026-11-18 §4.3: del mismo tipo conviven sólo
         // una de bienes y una de servicios.
         if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal)
-            .Any(group => WithholdingScopes.AnyOverlap([.. group.Select(rate => rate.AppliesTo)])))
+            .Any(group => WithholdingScopes.Repeated(
+                [.. group.Select(rate => rate.AppliesTo)], TaxCountries.IsMunicipal(group.First().Country, group.Key))))
         {
             throw new QuotationsDomainException(
                 $"{codePrefix}.billing.withholding_type_repeated",

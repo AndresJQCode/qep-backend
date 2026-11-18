@@ -75,10 +75,10 @@ public sealed class CompanyWithholdingTaxRatesApiTests
         await AssertCodeAsync(response, "companies.company.withholding_municipality_repeated");
     }
 
-    // Spec 2026-11-18 §4.3: en el mismo municipio conviven una ReteICA de bienes y una de servicios; una All con otra no.
-    // Las tasas se crean por la API de Catalog con su alcance.
+    // Spec 2026-11-18 §4.3: una ReteICA es una por municipio, cualquiera sea su alcance. Las tasas se crean por la API de
+    // Catalog con su alcance.
     [Fact]
-    public async Task CompanyAcceptsGoodsAndServicesOfTheSameType()
+    public async Task CompanyRejectsGoodsAndServicesInTheSameMunicipality()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -90,10 +90,7 @@ public sealed class CompanyWithholdingTaxRatesApiTests
 
         var response = await PutAsync(client, company.Id, first.Id, withholdingTaxRateIds: new[] { goods, services });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(
-            new HashSet<Guid> { goods, services },
-            (await ReadAsync(response)).WithholdingTaxRates.Select(rate => rate.Id).ToHashSet());
+        await AssertCodeAsync(response, "companies.company.withholding_municipality_repeated");
     }
 
     [Fact]

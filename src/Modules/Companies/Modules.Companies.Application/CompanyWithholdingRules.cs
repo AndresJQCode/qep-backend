@@ -41,10 +41,10 @@ public static class CompanyWithholdingRules
             rates.Add(rate);
         }
 
-        // Spec 2026-11-18 §4.3: en el mismo municipio y tipo conviven sólo una de bienes y una de servicios.
+        // Spec 2026-11-18 §4.3: una tasa por tipo y municipio, cualquiera sea su alcance (todas las de la empresa son municipales).
         var repeated = rates
             .GroupBy(rate => (rate.Type, rate.CityId))
-            .FirstOrDefault(group => WithholdingScopes.AnyOverlap([.. group.Select(rate => rate.AppliesTo)]));
+            .FirstOrDefault(group => WithholdingScopes.Repeated([.. group.Select(rate => rate.AppliesTo)], municipal: true));
         if (repeated is not null)
         {
             throw new CompaniesDomainException(
