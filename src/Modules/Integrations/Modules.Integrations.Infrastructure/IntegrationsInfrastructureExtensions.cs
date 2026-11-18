@@ -12,6 +12,7 @@ using Modules.Integrations.Infrastructure.OpenAi;
 using Modules.Integrations.Infrastructure.Persistence;
 using Modules.Integrations.Infrastructure.SecretProtection;
 using Modules.Integrations.Infrastructure.Shopify;
+using Modules.Integrations.Infrastructure.Siigo;
 using Modules.Integrations.Infrastructure.Verification;
 using Modules.Integrations.Infrastructure.Zenvia;
 
@@ -103,6 +104,13 @@ public static class IntegrationsInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => OpenAiConnectionTester.CreatePrimaryHandler())
             .RemoveAllLoggers();
         services.AddSingleton<IProviderConnectionTester, OpenAiConnectionTester>();
+        // Spec 2026-11-18 (integración Siigo): el probador de Siigo, con el mismo patrón (la clave de acceso va en el cuerpo de /auth y el
+        // token como Bearer, que los loggers también escribirían). Lee Siigo:BaseUrl y Siigo:PartnerId de la configuración.
+        services.AddOptions<SiigoTesterOptions>().Bind(configuration.GetSection(SiigoTesterOptions.SectionName));
+        services.AddHttpClient(SiigoConnectionTester.HttpClientName, SiigoConnectionTester.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => SiigoConnectionTester.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<IProviderConnectionTester, SiigoConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production

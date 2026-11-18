@@ -14,6 +14,9 @@ public enum IntegrationCategory
 
     /// <summary>Spec 2026-10-21 D-H1: APIs externas del tenant que el bloque HTTP de los chatbots consume.</summary>
     Automation,
+
+    /// <summary>Spec 2026-11-18 (integración Siigo): software contable donde se emite la factura electrónica de un pedido.</summary>
+    Accounting,
 }
 
 public enum FieldKind
