@@ -350,21 +350,23 @@ public sealed partial class CreateTemplateHandler(
 
         var mimeType = await EnsureUsableImageAsync(command.TenantId, fileId, cancellationToken);
         var publicUrl = await images.PublishAsync(command.TenantId, fileId, cancellationToken);
-        MessageTemplate withImage;
+        // Desde acá la imagen es pública. Hasta que la fila quede guardada, cualquier salida la libera, también una cancelación del
+        // request: una imagen pública sin fila no puede quedar. Con la fila guardada nunca se libera: es su imagen.
+        var saved = false;
         try
         {
             var bytes = await images.ReadAsync(command.TenantId, fileId, cancellationToken);
             var handle = await UploadImageAsync(command, source, bytes, mimeType, cancellationToken);
-            withImage = await CreateAsync(
+            var withImage = await CreateAsync(
                 command, source, draft, TemplateMediaHeader.Image(handle), (template, now) => template.AttachHeaderImage(fileId, publicUrl, now), cancellationToken);
+            saved = true; // CreateAsync termina con SaveChangesAsync.
+            return await ToDtoAsync(command, withImage, cancellationToken);
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception) when (!saved)
         {
             await ReleaseOrDeferAsync(command.TenantId, fileId);
             throw;
         }
-
-        return await ToDtoAsync(command, withImage, cancellationToken);
     }
 
     private async Task<MessageTemplate> CreateAsync(

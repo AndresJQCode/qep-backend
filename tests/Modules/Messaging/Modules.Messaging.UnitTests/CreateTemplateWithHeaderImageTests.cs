@@ -27,19 +27,21 @@ public sealed class CreateTemplateWithHeaderImageTests
 
         public RecordingLogger<CreateTemplateHandler> Logger { get; } = new();
 
-        public Task<ManagedTemplateDto> CreateAsync(Guid? headerImageFileId, string? header = null)
+        public IMessagingMemberNames? MemberNames { get; set; }
+
+        public Task<ManagedTemplateDto> CreateAsync(Guid? headerImageFileId, string? header = null, CancellationToken? cancellationToken = null)
         {
             var membership = new FakeMembershipDirectory();
             membership.Active[(Bed.SubjectId, Bed.TenantId)] = Bed.MemberId;
             var executionContext = new FakeExecutionContext(Bed.TenantId, Bed.SubjectId, MessagingPermissions.TemplateManage);
             var handler = new CreateTemplateHandler(
-                Repository, Bed.Meta, Bed.Connections, new FakeMemberNames(Bed.MemberId), new CallerMembership(membership, executionContext), UnitOfWork,
+                Repository, Bed.Meta, Bed.Connections, MemberNames ?? new FakeMemberNames(Bed.MemberId), new CallerMembership(membership, executionContext), UnitOfWork,
                 Audit, Bed.TenantModules, executionContext, new FakeClock(Bed.Now), new CreateTemplateCommandValidator(), Images, Logger);
             return handler.HandleAsync(
                 new CreateTemplateCommand(
                     Bed.TenantId, Bed.ConnectionId, "promo_imagen", "es", "MARKETING", header, "Hola {{first_name}}, mira la oferta.", null, [],
                     new Dictionary<string, string?> { ["first_name"] = "Ana" }, headerImageFileId),
-                Ct);
+                cancellationToken ?? Ct);
         }
     }
 
@@ -157,6 +159,44 @@ public sealed class CreateTemplateWithHeaderImageTests
         Assert.Contains(rig.Logger.Entries, entry => entry.Level == LogLevel.Error && entry.Message.Contains(fileId.ToString(), StringComparison.Ordinal));
     }
 
+    // Revisión del bloque B: un request cancelado después de publicar no deja una imagen pública sin fila.
+    [Fact]
+    public async Task ACancelledCreateAfterPublishReleasesTheImage()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+        using var request = new CancellationTokenSource();
+        rig.Images.OnPublish = request.Cancel;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => rig.CreateAsync(fileId, cancellationToken: request.Token));
+
+        Assert.Equal(["Complete", "Publish", "Read", "Release"], rig.Images.Calls);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Repository.Rows);
+    }
+
+    [Fact]
+    public async Task ACancellationAfterTheRowIsSavedDoesNotReleaseTheImage()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+        rig.MemberNames = new CancelledMemberNames();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => rig.CreateAsync(fileId));
+
+        Assert.Equal(1, rig.UnitOfWork.Saves);
+        Assert.Equal(["Complete", "Publish", "Read"], rig.Images.Calls);
+    }
+
+    /// <summary>Se cancela al leer los nombres para el DTO, que es lo único que corre después de guardar.</summary>
+    private sealed class CancelledMemberNames : IMessagingMemberNames
+    {
+        public Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
+            throw new OperationCanceledException();
+
+        public Task<string?> FindDisplayNameAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) => throw new OperationCanceledException();
+    }
+
     [Fact]
     public async Task WithoutAnImageNothingTouchesTheStoreAndTheUrlIsNull()
     {
@@ -191,6 +231,9 @@ internal sealed class ScriptedTemplateImageStore : IMessagingTemplateImageStore
 
     public Exception? ReleaseFailure { get; set; }
 
+    /// <summary>Corre al publicar: sirve para cancelar el request justo después.</summary>
+    public Action? OnPublish { get; set; }
+
     public Guid Seed(Guid tenantId, string mimeType, long size, TemplateImageState state = TemplateImageState.Available)
     {
         var fileId = Guid.CreateVersion7();
@@ -212,12 +255,14 @@ internal sealed class ScriptedTemplateImageStore : IMessagingTemplateImageStore
     public Task<byte[]> ReadAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
     {
         Calls.Add("Read");
+        cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(new byte[_files[fileId].File.SizeBytes]);
     }
 
     public Task<string> PublishAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
     {
         Calls.Add("Publish");
+        OnPublish?.Invoke();
         return Task.FromResult($"https://public.test/{fileId}.png");
     }
 
