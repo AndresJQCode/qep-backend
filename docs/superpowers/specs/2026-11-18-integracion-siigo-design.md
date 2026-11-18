@@ -96,8 +96,9 @@ Las decisiones que tomé yo van marcadas **[decisión del diseño]**.
   `{ "access_token", "expires_in", "token_type", "scope" }`, y de ahí `Authorization: Bearer <token>`. `expires_in` dice la
   vida del token. **Sigue sin saberse:** el límite de peticiones y cuánto recuerda Siigo una `Idempotency-Key` (la
   referencia de Apiary respondió 502).
-- **No hay sandbox** (owner, 2026-11-18): Siigo da una empresa de prueba **en producción**. Todo lo que se verifique
-  contra Siigo se hace ahí, a mano y con datos de prueba; las pruebas automáticas usan un fake (§11).
+- **No hay sandbox ni empresa de prueba** (owner, 2026-11-18): se va directo a producción, con envíos normales. Nada de
+  este diseño supone una cuenta de pruebas. Las pruebas automáticas usan un fake (§11); lo que no se pueda saber de antemano
+  se descubre con las primeras facturas reales, que salen con el interruptor «Enviar a la DIAN» apagado (§9).
 
 **QEP:**
 
@@ -156,7 +157,7 @@ Una fila de configuración por conexión, creada vacía al crear la conexión (o
 | `document_type_id` | Id de Siigo del comprobante de venta (FV) | Sí |
 | `seller_id` | Id de usuario de Siigo que va como vendedor | Sí |
 | `cost_center_id` | Centro de costo de Siigo | No |
-| `send_to_dian` | «Enviar a la DIAN al generar», `stamp.send`. Default `true` (con `HasSentinel(true)`, precedente `allow_attachments`) | — |
+| `send_to_dian` | «Enviar a la DIAN al generar», `stamp.send`. Default `true` según el owner (con `HasSentinel(true)`, precedente `allow_attachments`); **propuesta pendiente de su respuesta: `false` al crear la conexión** (§9), porque sin cuenta de pruebas una factura emitida no se borra | — |
 | `send_mail` | `mail.send`: Siigo le manda la factura al cliente. Default `false` **[decisión del diseño]** | — |
 | `freight_product_code` | Código del producto o servicio de Siigo que factura el flete | Sólo si el pedido cobra flete |
 | `warehouse_id` | Bodega de Siigo para los ítems (`items[].warehouse`); el contrato observado la manda en cada ítem | Sólo si los productos llevan control de inventario (V-8) |
@@ -323,7 +324,7 @@ exija, V-6).
   **[decisión del diseño]**. Crear el cliente es una llamada que no se deshace: se hace **después** de la validación
   completa y de armar la petición, no antes, para no dejar clientes sueltos en Siigo si el pedido no estaba listo.
 - El consumidor final (`BillsToFinalConsumer`) va con el documento 222222222222 que define la DIAN **[decisión del diseño;
-  verificar con la empresa de prueba, V-3]**.
+  confirmar con la primera factura real, V-3]**.
 
 ### 6.3 Ítems, impuestos, retenciones, pagos
 
@@ -371,7 +372,7 @@ verificar después de crear. Dos consecuencias: (1) el total que Siigo espera es
 descontadas** (§3), así que los `payments` que arma QEP suman `NetTotal`, no `Total`; (2) el mensaje de rechazo trae el
 total esperado, y la pantalla lo muestra junto al de QEP para que se vea de cuánto es la diferencia. **No se reintenta
 solo con el total que Siigo propone**: ajustar los pagos a lo que Siigo dice tapa justo el error que esta regla quiere
-mostrar. La verificación V-7(a) queda para confirmar el código con la empresa de prueba, no para decidir el flujo.
+mostrar. La verificación V-7(a) queda para confirmar el código con el primer rechazo real, no para decidir el flujo.
 
 ## 7. Seguridad
 
@@ -393,10 +394,21 @@ mostrar. La verificación V-7(a) queda para confirmar el código con la empresa 
 - Un `Partner-Id` de QEP como configuración global (`Siigo:PartnerId`), en el ConfigMap; requerido en `Production` con
   la regla de `#{…}#` como ausente.
 
-## 9. Verificaciones abiertas (antes de escribir el cliente)
+## 9. Verificaciones abiertas y puesta en marcha
 
-Se hacen con la **empresa de prueba de Siigo, que está en producción** (no hay sandbox): con facturas de prueba que no se
-envían a la DIAN (`stamp.send = false`) y que se borran después. Nunca con la empresa de un cliente.
+**No hay empresa de prueba: todo corre contra la cuenta real del tenant** (owner, 2026-11-18). Por eso las verificaciones
+de abajo ya no son un paso previo a escribir el cliente: se resuelven **con las primeras facturas reales**, y el diseño se
+protege para que ninguna de ellas pueda salir mal sin que se vea:
+
+- **Las primeras facturas de cada conexión salen con «Enviar a la DIAN» apagado.** Es el interruptor que ya existe
+  (§5.2), no un modo de pruebas: la factura queda creada en Siigo, sin emitir, y una persona la revisa allá antes de
+  prender el interruptor. Una factura emitida a la DIAN no se borra, y sin cuenta de pruebas es la única red que hay.
+  **[propuesta del diseño, pendiente del owner]** La conexión nace con el interruptor **apagado** y no prendido como
+  dijo el owner (§1, §5.2), y la pantalla de configuración avisa que mientras esté apagado nada llega a la DIAN. Prenderlo
+  es una decisión de quien configura. Si el owner prefiere prendido por defecto, el resto del diseño no cambia.
+- Una factura creada y sin emitir se borra a mano en Siigo; QEP no la borra, y `resolve` con `missing` libera el pedido.
+- Toda respuesta o error inesperado de Siigo se guarda recortado en la fila (sin datos del cliente) para poder ajustar el
+  armado de la petición sin volver a facturar.
 
 - **V-1** Límite de peticiones. (La autenticación y `expires_in` ya salen del contrato observado, §3; la referencia de
   Apiary respondió 502.)
@@ -408,11 +420,11 @@ envían a la DIAN (`stamp.send = false`) y que se borran después. Nunca con la 
 - **V-6** Si una factura electrónica exige `fiscal_responsibilities` y `vat_responsible` en el cliente (el contrato
   observado los omite), y si `person_type` va como `Person`/`Company` (lo que se usa hoy) o en minúscula (lo que dice la
   documentación).
-- **V-7** Con una factura de prueba sin emitir (`stamp.send = false`): **(a)** confirmar el código y el texto de
+- **V-7** Con la primera factura real sin emitir (`stamp.send = false`): **(a)** confirmar el código y el texto de
   `invalid_total_payments` con y sin retenciones; **(b)** si Siigo aplica la base mínima (UVT) configurada en el impuesto
   de retención, cómo redondea cada retención y si se pueden mandar varias del mismo tipo; **(c)** ReteIVA y
   autorretención: dónde van y si QEP las necesita; **(d)** si una factura sin emitir se puede borrar por API
-  (`DELETE /v1/invoices/{id}`), para limpiar las pruebas.
+  (`DELETE /v1/invoices/{id}`), para no depender de borrar a mano.
 - **V-8** Cuándo exige Siigo la bodega en un ítem (productos con control de inventario) y si un servicio la rechaza.
 - **P-1 (decisión del owner, pendiente)** El contrato observado factura el flete **en una factura aparte** (un ítem,
   cantidad 1, observación «Flete del pedido N», su propia clave de idempotencia). Este diseño lo pone como un ítem de la
@@ -441,8 +453,8 @@ después del backend; el backend no rompe nada sin él porque el módulo `siigo`
 - Faltantes juntos en un solo 422.
 - Sin módulo → 403; conexión de otro tenant → 403; empresa repetida → 409.
 - `SiigoLayerTests`, `SiigoNoLeakTests`, `MultiReplicaInventory`.
-- Fake de Siigo en las pruebas de integración (sin red). Ninguna prueba automática llama a Siigo: V-1…V-7 se hacen a
-  mano contra la empresa de prueba (§9) y sus respuestas reales se copian a los fixtures del fake.
+- Fake de Siigo en las pruebas de integración (sin red). Ninguna prueba automática llama a Siigo: lo que se descubra con
+  las primeras facturas reales (§9) se copia a los fixtures del fake, junto con los del contrato observado (§3).
 - `stamp.send` sale con `send_to_dian` de la conexión (prendido y apagado); un rechazo de Siigo por pagos que no suman
   → `Rejected` con `siigo.invoice.totals_mismatch`, pedido sin marcar y nuevo intento posible; una factura creada pero
   rechazada por la DIAN → `StampRejected` con el pedido marcado.
