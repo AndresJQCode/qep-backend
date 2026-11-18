@@ -858,6 +858,22 @@ mínimo que pide P-6; D-7 no cruza datos que el mayorista no viera ya en Distrib
 la fase 1; D-12 sigue el spec («mientras el mayorista no apruebe»); D-16 es la única forma de cumplir «sin precio de venta» sin
 romper la validación del formulario. P-4 y P-5 quedan como están.
 
+### Adenda al «Contrato HTTP» (2026-11-18, tras el plan del frontend; manda sobre el contrato y entra en los bloques B y C)
+
+- **`PurchaseOrderDetail` y `PurchaseOrderSummary`** suman `mode: "External" | "Linked"` (el modo fijado al guardar, D-10); la
+  pantalla decide por `mode`, nunca por `supplier.isLinked`.
+- **`PurchaseOrderDetail`** suma `changes: { changedLines, addedLines, rejectedLines, createdProducts }` (conteos calculados en el
+  servidor, para el banner «2 líneas cambiaron… · 2 productos no estaban en tu catálogo»).
+- **Respuesta del catálogo del mayorista** suma `priceList: { name, discountPercent }` (la tarjeta «Tarifa: Distribuidor estándar»).
+- **Proveedores** (lista y detalle) suman `linkedRelationshipStatus: "Active" | "Blocked" | "Invited" | null` (null si no está
+  vinculado): con `Blocked` la pantalla no pide el catálogo y explica por qué.
+- **Historial del pedido `Wholesale`**: el evento de aprobación tiene su tipo (`WholesaleApproved`), con el miembro que aprobó.
+- **Pedidos**: el listado suma `pendingWholesaleApprovals` (conteo con los filtros vigentes salvo el de estado) para el aviso «N
+  pedidos de distribuidores esperan tu aprobación».
+- **Fuera:** motivo de rechazo por línea (no existe en el dominio: el mayorista edita el pedido) y precio con IVA por línea confirmada
+  (los totales con IVA ya llegan del servidor; D-9 se queda). El aviso del mockup «El precio ya quedó fijo» se reemplaza: con D-4
+  el mayorista puede cambiar precios antes de aprobar.
+
 ## Pendiente del owner
 
 - **D-1/D-2.** «Por aprobar» como marca con `POST /orders/{id}/approve` y permiso `quotations.order.manage`. Alternativa:
