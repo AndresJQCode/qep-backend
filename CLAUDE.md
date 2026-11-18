@@ -1335,8 +1335,9 @@ support.reply.formal_signer_required`. `ticket_reply_documents.signer_member_id`
   hallazgo 4). Pasa cuando una persona se la devuelve: el siguiente entrante abre otra sesión sólo si el agente está `Active`, tiene versión
   legible y la cuenta de su proveedor; si no (pausado, borrado, sin cuenta, módulo apagado) `AiInboxProcessor` la traspasa. Devolver
   `null` sin traspaso la dejaba asignada a un agente que nunca contesta. Un trabajo cuyo agente se borró con la sesión viva (la carrera
-  con `DeleteAgentHandler`, que mira las sesiones sin el candado de la conversación) también termina en traspaso. Pausar un agente no
-  corta sus sesiones vivas (D-A6).
+  con `DeleteAgentHandler`, que mira las sesiones sin el candado de la conversación) también termina en traspaso. Pausar un agente
+  corta sus sesiones vivas (owner, 2026-11-18; revierte D-A6): `AgentSessionJobProcessor` no llama al modelo y traspasa con
+  `agent_paused`. Lo amarra `AJobOfAPausedAgentIsNotAnsweredAndTheConversationIsHandedOff`.
 - **La señal `ReleaseRun` lleva el `bot_kind` del bot que tenía la conversación antes del cambio** (revisión final, hallazgo 5).
   `ReleaseRunSignal.EnqueueIfAssisted` recibe el `AutomationBotKind` leído **antes** (resolver lo borra) y el autoasignado lo devuelve en su
   `RETURNING`. Con el default `1`, la señal de un agente la reclamaba el motor de chatbots y la sesión del agente seguía viva con su
