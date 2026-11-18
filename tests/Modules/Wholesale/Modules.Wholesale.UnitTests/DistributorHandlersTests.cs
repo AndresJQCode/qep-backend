@@ -472,6 +472,19 @@ public sealed class DistributorHandlersTests
         Assert.Equal(2L, detail.Version);
     }
 
+    // Sin conexiones listas la lista llega vacía y el formulario no ofrece el aviso.
+    [Fact]
+    public async Task OptionsBringTheReadyWhatsAppConnections()
+    {
+        var none = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+        var connection = _world.WhatsApp.AddReady("+57 300 999 0000");
+
+        var options = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+
+        Assert.Empty(none.WhatsAppConnections);
+        Assert.Equal([new DistributorWhatsAppConnectionDto(connection, "+57 300 999 0000")], options.WhatsAppConnections);
+    }
+
     private UpdateDistributorCommand UpdateCommand(Distributor distributor, string? phone, Guid? connection) =>
         new(_world.Tenant, distributor.Id.Value, distributor.Version, _world.PriceList.Id.Value, _world.Advisor, _world.Company.Id,
             phone, connection);

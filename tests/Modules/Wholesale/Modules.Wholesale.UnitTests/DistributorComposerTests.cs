@@ -94,9 +94,82 @@ public sealed class DistributorComposerTests
 
         Assert.Equal(new DistributorCompanyDto(world.Company.Id, "Mayorista SAS"), detail.BillingCompany);
         Assert.Equal(
-            new DistributorInvitationDto(DistributorWorld.Now, DistributorWorld.Now.AddHours(72), false, DistributorWorld.Now.AddHours(1)),
+            new DistributorInvitationDto(
+                DistributorWorld.Now, DistributorWorld.Now.AddHours(72), false, DistributorWorld.Now.AddHours(1), null),
             detail.Invitation);
         Assert.Equal((DistributorWorld.Now.AddHours(1), distributor.CustomerId), (detail.ActivatedAt, detail.CustomerId));
         Assert.Equal(nameof(DistributorStatus.Active), detail.Status);
+    }
+
+    // ---- Spec 2026-11-18: aviso por WhatsApp de la invitación ----
+
+    private const string Phone = "+573001234567";
+
+    // BFF: el detalle pinta el estado del aviso y su número sin pedir la conexión aparte.
+    [Fact]
+    public async Task DetailCarriesThePhoneAndTheNoticeWithItsConnectionLabel()
+    {
+        var world = new DistributorWorld();
+        var connection = world.WhatsApp.AddReady("+57 300 999 0000");
+        var distributor = world.SeedInvited(phone: Phone, whatsAppConnectionId: connection);
+
+        var detail = await world.Composer().DetailAsync(distributor, Ct);
+
+        Assert.Equal(Phone, detail.Phone);
+        Assert.Equal(new DistributorWhatsAppNoticeDto("Pending", null, "+57 300 999 0000"), detail.Invitation.WhatsAppNotice);
+    }
+
+    // D-7: sin aviso no se pregunta por la conexión.
+    [Fact]
+    public async Task DetailWithoutPhoneHasANullNotice()
+    {
+        var world = new DistributorWorld();
+        var distributor = world.SeedInvited();
+        world.WhatsApp.ThrowWhenCalled = true;
+
+        var detail = await world.Composer().DetailAsync(distributor, Ct);
+
+        Assert.Null(detail.Phone);
+        Assert.Null(detail.Invitation.WhatsAppNotice);
+    }
+
+    [Fact]
+    public async Task AFailedNoticeCarriesItsCode()
+    {
+        var world = new DistributorWorld();
+        var connection = world.WhatsApp.AddReady("+57 300 999 0000");
+        var distributor = world.SeedInvited(phone: Phone, whatsAppConnectionId: connection);
+        distributor.RecordInvitationNotice(0, InvitationNoticeStatus.Failed, "connection_unavailable:paused");
+
+        var detail = await world.Composer().DetailAsync(distributor, Ct);
+
+        Assert.Equal(
+            new DistributorWhatsAppNoticeDto("Failed", "connection_unavailable:paused", "+57 300 999 0000"),
+            detail.Invitation.WhatsAppNotice);
+    }
+
+    [Fact]
+    public async Task ANoticeOnAConnectionThatIsGoneIsLabeledSinNombre()
+    {
+        var world = new DistributorWorld();
+        var distributor = world.SeedInvited(phone: Phone, whatsAppConnectionId: Guid.CreateVersion7());
+        distributor.RecordInvitationNotice(0, InvitationNoticeStatus.Sent, null);
+
+        var detail = await world.Composer().DetailAsync(distributor, Ct);
+
+        Assert.Equal(new DistributorWhatsAppNoticeDto("Sent", null, "Sin nombre"), detail.Invitation.WhatsAppNotice);
+    }
+
+    [Fact]
+    public async Task SummariesCarryThePhone()
+    {
+        var world = new DistributorWorld();
+        var withPhone = world.SeedInvited("1", phone: Phone, whatsAppConnectionId: Guid.CreateVersion7());
+        var withoutPhone = world.SeedInvited("2");
+        world.WhatsApp.ThrowWhenCalled = true;
+
+        var summaries = await world.Composer().SummariesAsync(world.Tenant, [withPhone, withoutPhone], Ct);
+
+        Assert.Equal([Phone, null], summaries.Select(summary => summary.Phone));
     }
 }

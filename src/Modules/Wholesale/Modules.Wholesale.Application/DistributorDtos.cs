@@ -21,12 +21,26 @@ public sealed record DistributorCompanyDto(Guid Id, string Name);
 /// </summary>
 public sealed record DistributorInvitationSummaryDto(DateTimeOffset ExpiresAt, bool CanResend);
 
-/// <summary>La invitación del detalle. <c>Expired</c> es perezoso: invitada con <c>ExpiresAt</c> pasado.</summary>
-public sealed record DistributorInvitationDto(DateTimeOffset SentAt, DateTimeOffset ExpiresAt, bool Expired, DateTimeOffset? AcceptedAt);
+/// <summary>
+/// El aviso por WhatsApp de la invitación (spec 2026-11-18), con lo que el detalle pinta (BFF): el estado por nombre
+/// (<c>Pending</c>, <c>Sent</c>, <c>Failed</c>), el código sólo con <c>Failed</c> y el número de la conexión por la que sale,
+/// sin pedir la conexión aparte. <c>ConnectionLabel</c> es <c>"Sin nombre"</c> si la conexión ya no está activa (D-7).
+/// </summary>
+public sealed record DistributorWhatsAppNoticeDto(string Status, string? FailureCode, string ConnectionLabel);
+
+/// <summary>La invitación del detalle. <c>Expired</c> es perezoso: invitada con <c>ExpiresAt</c> pasado. <c>WhatsAppNotice</c>
+/// es <c>null</c> sin teléfono y tras un cambio de teléfono o conexión, hasta el próximo «Reenviar» (P-3).</summary>
+public sealed record DistributorInvitationDto(
+    DateTimeOffset SentAt,
+    DateTimeOffset ExpiresAt,
+    bool Expired,
+    DateTimeOffset? AcceptedAt,
+    DistributorWhatsAppNoticeDto? WhatsAppNotice);
 
 /// <summary>
 /// Una fila de la lista de distribuidores (BFF): nombres de lista, asesor y tenant ya resueltos. <c>Version</c> va para que
 /// «Reenviar» desde la fila mande su <c>If-Match</c> sin pedir el detalle (adenda del contrato). <c>Status</c> por nombre.
+/// <c>Phone</c> es el celular del aviso en E.164, o <c>null</c> (spec 2026-11-18).
 /// </summary>
 public sealed record DistributorSummaryDto(
     Guid Id,
@@ -36,6 +50,7 @@ public sealed record DistributorSummaryDto(
     string IdentificationNumber,
     string ContactName,
     string Email,
+    string? Phone,
     DistributorPriceListDto PriceList,
     DistributorAdvisorDto Advisor,
     DistributorTenantDto? DistributorTenant,
@@ -46,7 +61,8 @@ public sealed record DistributorSummaryDto(
 /// <summary>
 /// El distribuidor completo para su pantalla (BFF). <c>AllowedActions</c> ya cruza estado y permiso (en minúscula y en el orden
 /// del contrato: <c>edit</c>, <c>resend</c>, <c>delete</c>, <c>block</c>, <c>unblock</c>); sin
-/// <c>wholesale.distributor.manage</c> llega vacío. El token nunca viaja.
+/// <c>wholesale.distributor.manage</c> llega vacío. El token nunca viaja. <c>Phone</c> es el celular del aviso en E.164, o
+/// <c>null</c> (spec 2026-11-18).
 /// </summary>
 public sealed record DistributorDetailDto(
     Guid Id,
@@ -56,6 +72,7 @@ public sealed record DistributorDetailDto(
     string IdentificationNumber,
     string ContactName,
     string Email,
+    string? Phone,
     DistributorPriceListDto PriceList,
     DistributorAdvisorDto Advisor,
     DistributorCompanyDto BillingCompany,
@@ -89,11 +106,16 @@ public sealed record DistributorsResponse(
 /// pantalla la muestra deshabilitada en vez de esperar el 422.</summary>
 public sealed record DistributorCompanyOptionDto(Guid Id, string Name, string DocumentType, string DocumentNumber, bool Eligible);
 
-/// <summary>Todo lo que el formulario de invitar o editar necesita elegir, en una llamada y por nombre.</summary>
+/// <summary>Un número de WhatsApp para el aviso: <c>Label</c> es su número visible o, sin número, su nombre (D-7).</summary>
+public sealed record DistributorWhatsAppConnectionDto(Guid Id, string Label);
+
+/// <summary>Todo lo que el formulario de invitar o editar necesita elegir, en una llamada y por nombre.
+/// <c>WhatsAppConnections</c> son las listas para el aviso (spec 2026-11-18); vacía = el formulario no ofrece el aviso.</summary>
 public sealed record DistributorOptionsDto(
     IReadOnlyList<DistributorPriceListDto> PriceLists,
     IReadOnlyList<DistributorAdvisorDto> Advisors,
-    IReadOnlyList<DistributorCompanyOptionDto> Companies);
+    IReadOnlyList<DistributorCompanyOptionDto> Companies,
+    IReadOnlyList<DistributorWhatsAppConnectionDto> WhatsAppConnections);
 
 /// <summary>
 /// La invitación vista desde el link, sin sesión (D-20). <c>Status</c> es <c>pending</c>, <c>accepted</c> o <c>expired</c>,
