@@ -46,6 +46,12 @@ public static class WholesaleErrorCodes
 
     public const string DistributorCompanyInvalid = "wholesale.distributor.company_invalid";
 
+    // Spec 2026-11-18 (aviso por WhatsApp): con teléfono y varias conexiones listas sin elegir una; y sin ninguna lista, o
+    // con una elegida que no lo está.
+    public const string DistributorWhatsAppConnectionRequired = "wholesale.distributor.whatsapp_connection_required";
+
+    public const string DistributorWhatsAppUnavailable = "wholesale.distributor.whatsapp_unavailable";
+
     public const string InvitationSelfLink = "wholesale.invitation.self_link";
 
     // Fase 3: una variante fuera de la visibilidad de la lista, inactiva, ajena o sin precio en la moneda del mayorista.

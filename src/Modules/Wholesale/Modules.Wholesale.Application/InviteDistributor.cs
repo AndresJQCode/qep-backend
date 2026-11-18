@@ -66,6 +66,8 @@ public sealed class InviteDistributorHandler(
             executionContext.SubjectId,
             InvitationTokens.HashOf(token),
             Guid.CreateVersion7(),
+            null,
+            null,
             now);
         distributors.Add(distributor);
         auditPublisher.Publish(

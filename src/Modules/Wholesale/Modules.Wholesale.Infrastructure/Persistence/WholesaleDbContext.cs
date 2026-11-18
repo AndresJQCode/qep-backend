@@ -136,6 +136,9 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
             .HasColumnName("version")
             .HasColumnType("bigint")
             .IsConcurrencyToken();
+        // Spec 2026-11-18: el destino del aviso por WhatsApp; la conexión es referencia blanda a Integrations.
+        distributor.Property(value => value.Phone).HasColumnName("phone").HasMaxLength(Distributor.PhoneMaxLength);
+        distributor.Property(value => value.WhatsAppConnectionId).HasColumnName("whatsapp_connection_id");
 
         distributor.HasOne<PriceList>()
             .WithMany()
@@ -173,6 +176,15 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
             invitation.Property(value => value.ReservedTenantId).HasColumnName("reserved_tenant_id");
             invitation.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
             invitation.Property(value => value.AcceptedByUserId).HasColumnName("accepted_by_user_id");
+            // Las invitaciones de antes del aviso quedan en la generación 0 y sin aviso.
+            invitation.Property(value => value.Generation).HasColumnName("generation").HasDefaultValue(0);
+            invitation.Property(value => value.NoticeStatus)
+                .HasColumnName("notice_status")
+                .HasConversion<string>()
+                .HasMaxLength(16);
+            invitation.Property(value => value.NoticeFailureCode)
+                .HasColumnName("notice_failure_code")
+                .HasMaxLength(DistributorInvitation.NoticeFailureCodeMaxLength);
             invitation.HasIndex(value => value.TokenHash).IsUnique().HasDatabaseName(InvitationTokenHashIndex);
             invitation.HasIndex(value => value.ReservedTenantId).IsUnique().HasDatabaseName(InvitationReservedTenantIndex);
         });

@@ -90,6 +90,8 @@ internal sealed class DistributorWorld
             Context.SubjectId,
             tokenHash ?? InvitationTokens.HashOf(InvitationTokens.Generate()),
             Guid.CreateVersion7(),
+            null,
+            null,
             at ?? Now);
         return Distributors.Seed(distributor);
     }

@@ -64,6 +64,37 @@ public sealed class WholesaleDbContextMappingTests
         Assert.Equal(["token_hash"], tokenColumns);
     }
 
+    // Spec 2026-11-18 (aviso por WhatsApp): el destino del aviso en el distribuidor y su estado en la invitación, todo
+    // nullable salvo la generación, que arranca en 0 para las filas existentes.
+    [Fact]
+    public void TheInvitationNoticeColumnsHaveTheirTypesAndLengths()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var distributors = context.Model.FindEntityType(typeof(Distributor))!;
+        var invitations = context.Model.FindEntityType(typeof(DistributorInvitation))!;
+
+        var phone = distributors.FindProperty(nameof(Distributor.Phone))!;
+        Assert.Equal(("phone", (int?)16, true), (phone.GetColumnName(), phone.GetMaxLength(), phone.IsNullable));
+        Assert.Equal(Distributor.PhoneMaxLength, phone.GetMaxLength());
+
+        var connection = distributors.FindProperty(nameof(Distributor.WhatsAppConnectionId))!;
+        Assert.Equal(("whatsapp_connection_id", typeof(Guid?), true),
+            (connection.GetColumnName(), connection.ClrType, connection.IsNullable));
+
+        var generation = invitations.FindProperty(nameof(DistributorInvitation.Generation))!;
+        Assert.Equal(("generation", typeof(int), false, (object?)0),
+            (generation.GetColumnName(), generation.ClrType, generation.IsNullable, generation.GetDefaultValue()));
+
+        var status = invitations.FindProperty(nameof(DistributorInvitation.NoticeStatus))!;
+        Assert.Equal(("notice_status", (int?)16, true, typeof(string)),
+            (status.GetColumnName(), status.GetMaxLength(), status.IsNullable, status.GetProviderClrType()));
+
+        var failure = invitations.FindProperty(nameof(DistributorInvitation.NoticeFailureCode))!;
+        Assert.Equal(("notice_failure_code", (int?)128, true),
+            (failure.GetColumnName(), failure.GetMaxLength(), failure.IsNullable));
+        Assert.Equal(DistributorInvitation.NoticeFailureCodeMaxLength, failure.GetMaxLength());
+    }
+
     [Fact]
     public void TheModelHasNoChangesPendingAMigration()
     {

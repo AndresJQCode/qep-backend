@@ -54,7 +54,7 @@ public sealed class TransitionDistributorHandler(
         {
             case DistributorAction.Resend:
                 var token = InvitationTokens.Generate();
-                distributor.ResendInvitation(InvitationTokens.HashOf(token), now);
+                distributor.ResendInvitation(InvitationTokens.HashOf(token), noticeQueued: false, now);
                 eventPublisher.DistributorInvited(
                     command.TenantId,
                     distributor.Id.Value,
